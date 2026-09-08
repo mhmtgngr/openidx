@@ -1654,12 +1654,20 @@ func (c *Config) ValidateProduction() error {
 // designed rollout, and failing startup for it would punish the safe path.
 //
 // NOTE, corrected in v1.34.0: this comment used to say "the first-run gate and
-// the ops cockpit surface it". They do not, and never have -- this function
-// has no caller anywhere outside its own test, so the list an operator is
-// supposed to read reaches no operator. That is the same defect one layer up
-// from the gates it describes: a report nothing displays. Surfacing it is a
-// follow-up; the comment is corrected now so it stops asserting a reader that
-// does not exist.
+// the ops cockpit surface it". They do not, and never have -- this function had
+// no caller anywhere outside its own test, so the list an operator is supposed
+// to read reached no operator. That is the same defect one layer up from the
+// gates it describes: a report nothing displays. Its own test could not notice,
+// because a test that calls the function IS a caller, and the list therefore
+// looked read.
+//
+// The reader is now ValidateProductionConfig (internal/common/config/
+// security_check.go), which every cmd/*/main.go calls at startup: one line per
+// open control plus a summary carrying the count, in every environment, before
+// the production branch can abort. report_mode_reader_test.go tests the READER
+// rather than the list -- it goes through ValidateProductionConfig, so deleting
+// the call reddens it. Nothing renders this in the console; the startup log is
+// the whole of the claim.
 func (c *Config) ReportModeGates() []string {
 	var open []string
 	if !c.AccessAssignmentEnforce {

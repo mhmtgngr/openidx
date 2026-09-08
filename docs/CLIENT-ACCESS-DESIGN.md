@@ -304,10 +304,32 @@ recommended **14 days, sliding on use**, hard cap 90. Windows agent may keep
 
 (`push_mfa.auto_approve` was listed here on the strength of its name; §3 records
 what it actually does. It is an availability setting, not an MFA bypass, so it
-belongs in `ProductionWarnings` at most. The report-mode warnings themselves —
-`ACCESS_ASSIGNMENT_ENFORCE`, `ABAC_ENFORCE`, `ENABLE_OPA_AUTHZ`,
+belongs in `ProductionWarnings` at most.
+
+**Corrected in v1.34.0.** This paragraph used to end "the report-mode warnings
+themselves — `ACCESS_ASSIGNMENT_ENFORCE`, `ABAC_ENFORCE`, `ENABLE_OPA_AUTHZ`,
 `PAM_SESSION_RISK_GATE`, `POSTURE_DEVICE_TRUST_GATE` — already ship in
-`ProductionWarnings`.)
+`ProductionWarnings`". They do not and never did. `ProductionWarnings` covers
+configuration hygiene — secrets, TLS, CORS, CSRF — and names no gate.
+The gates are in `Config.ReportModeGates`, which until v1.34.0 **had no caller
+outside its own test**: the right list, with a test proving it named every open
+control, that no running process ever asked for. That test could not notice,
+because a test that calls the function is itself a caller, so the list looked
+read.
+
+It now has one reader, and the reader is what the tests pin:
+`ValidateProductionConfig` — the function every `cmd/*/main.go` already calls —
+logs one line per open control plus a summary carrying the count, **before** the
+production branch can abort, so an operator fixing a validation error sees which
+controls are open while they are in there. Every environment, not only
+production: development is where someone writes a deny policy, watches it permit
+the request, and has nothing to read. `Warn` in production, `Info` elsewhere,
+because report mode is the designed default there and a warning nobody can act
+on is one people learn to skip.
+
+Still not done, and said rather than implied: no console surface renders this.
+The startup log reaches whoever runs the stack, which is the operator the
+rollout in §7 is written for, and that is the whole of the claim.)
 
 `ProductionWarnings` (report mode is allowed, but visible):
 

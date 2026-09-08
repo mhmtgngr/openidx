@@ -426,6 +426,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The list of every authorization control that is switched off had no
+  reader.** `Config.ReportModeGates` names each of the eight gates that is
+  configured but not deciding — assignment enforcement, ABAC, step-up, OPA, the
+  PAM session-risk gate, the device-posture gate and the two API auth
+  requirements — with the value each currently has. It was correct, it had a
+  test proving it named every open control, and **no running process ever called
+  it**. A report nothing displays is the defect this branch is about, one layer
+  above the gates it describes; and its own test could not notice, because a test
+  that calls the function is itself a caller, so the list looked read.
+
+  `ValidateProductionConfig` — the function every `cmd/*/main.go` already calls
+  at startup — now logs one line per open control plus a summary carrying the
+  count and a `fully_enforcing` flag, so a log query can alert on the number and
+  can tell "nothing is open" from "this build stopped reporting". It runs
+  **before** the production branch can abort, because an operator fixing a
+  validation error is exactly the operator who needs to see which controls are
+  open. In every environment, not only production: development is where someone
+  writes an ABAC deny policy, watches it permit the request, and has nothing
+  anywhere to read. `Warn` in production, `Info` elsewhere — report mode is the
+  designed default there, and a warning nobody can act on is one people learn to
+  skip.
+
+  The new tests are about the reader rather than the list: they go through
+  `ValidateProductionConfig`, so deleting the call reddens four of them.
+  `docs/CLIENT-ACCESS-DESIGN.md` §5 claimed these warnings "already ship in
+  `ProductionWarnings`" — they do not and never did; `ProductionWarnings` covers
+  configuration hygiene and names no gate. That claim is corrected. Not claimed:
+  no console surface renders this; the startup log is the whole of it.
+
 - **The mobile clients' credentials were in the platform's cloud backup.** The
   engine's config directory is `getFilesDir()` on Android and
   `Library/Application Support` on iOS, and it holds three credentials:
