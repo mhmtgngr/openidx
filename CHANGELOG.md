@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The zero-trust policy editor's conditions never reached the evaluator, and a
+  hardcoded default enforced something else.** `internal/governance` asserts a Go
+  type on every condition it reads (`rule.Condition["start_hour"].(float64)`),
+  and a failed assertion is not an error — the rule is skipped and the evaluator
+  uses the default it was written with. So a condition the evaluator cannot read
+  does not disable the policy; it quietly enforces **09:00–18:00 Monday–Friday**
+  (timebound), **the RFC1918 private ranges** (location) or **a risk threshold of
+  50** (risk-based), while the console shows the administrator the values they
+  typed.
+
+  Both halves were wrong. Three keys did not exist in the evaluator at all — the
+  page offered `days` where it reads `allowed_days`, `allowed_ips` where it reads
+  `allowed_ip_prefixes`, and `min_risk_score`/`max_risk_score` on risk-based
+  where it reads `risk_threshold` — and `blocked_ips` had no evaluator concept
+  whatsoever. On top of that every value was submitted as a **string** while the
+  evaluator wants `float64`, `bool` or a list, so even the keys whose names
+  matched (`start_hour`, `end_hour`, `conflicting_roles`, `require_mfa`,
+  `device_trust_required`) failed their assertion. Of the thirteen inputs the
+  editor offered, three could be read, and all three belong to the one policy
+  type the form cannot create.
+
+  This is on a live enforcement path: `internal/access` calls
+  `POST /api/v1/governance/policies/{id}/evaluate` from the proxy.
+
+  The editor now sends the keys the evaluator reads, coerced to the types it
+  asserts on, and `evaluateSoDPolicy`'s two-step lookup was folded into the same
+  single-statement form the other evaluators use so the contract is stated one
+  way. `internal/governance/policy_condition_test.go` derives that contract from
+  the type assertions themselves and checks the page against it — names and
+  types, both directions. The i18n test's copy of the condition list is derived
+  from the page too; it was the copy that still named `days` and `blocked_ips`.
+
 - **The ABAC policy editor offered seven subject attributes; the evaluator
   populates nine; they overlapped on one.** `abac.SubjectAttributes` builds
   `user_id, username, email, department, job_title, employment_status, enabled,

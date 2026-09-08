@@ -2,6 +2,9 @@ import { describe, it, expect, afterEach } from 'vitest'
 import i18n, { ensureLanguage, setLanguage, supportedLanguages } from './index'
 import en from './locales/en'
 import { API_SPECS } from '@/lib/api-specs'
+import { conditionTemplates as policyConditionTemplatesByType } from '@/pages/policies'
+
+const policyConditionTemplates = Object.values(policyConditionTemplatesByType).flat()
 import {
   resourceTypes as abacResourceTypes,
   attributeOptions as abacAttributeOptions,
@@ -297,22 +300,15 @@ describe('i18n', () => {
       ...['allow', 'deny', 'require_approval', 'step_up_mfa'].map(
         (k) => `pages.policies.effects.${k}`,
       ),
-      // conditionTemplates carries only the field name; both the label and the
-      // example resolve from it, so every field needs both halves present
-      ...[
-        'conflicting_roles',
-        'min_risk_score',
-        'max_risk_score',
-        'start_hour',
-        'end_hour',
-        'days',
-        'allowed_ips',
-        'blocked_ips',
-        'require_mfa',
-        'device_trust_required',
-        'allowed_locations',
-        'blocked_locations',
-      ].flatMap((k) => [`pages.policies.conditions.${k}`, `pages.policies.placeholders.${k}`]),
+      // conditionTemplates carries the field name and the JSON type; both the
+      // label and the example resolve from the name, so every field needs both
+      // halves present. Derived from the page's own table, not copied — this was
+      // a copy, and it named `days`, `allowed_ips`, `blocked_ips` and
+      // `min_risk_score`, none of which the governance evaluator has ever read.
+      ...policyConditionTemplates.flatMap((t) => [
+        `pages.policies.conditions.${t.key}`,
+        `pages.policies.placeholders.${t.placeholderKey || t.key}`,
+      ]),
       'pages.policies.placeholders.conditional_max_risk_score',
       // abac-policies: resourceTypes/attributeOptions/operatorOptions are
       // module-level value lists resolved at render. Derived from the page's

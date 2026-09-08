@@ -269,6 +269,21 @@ product; either wire them or remove them from the UI.
   use the constant, and `internal/abac/vocabulary_test.go` checks the console's
   dropdowns against what the evaluator can decide — in both directions.
 
+- **A8 — The zero-trust policy editor's conditions never reached the evaluator,
+  and a hardcoded default enforced something else.** *Fixed on this branch.* The
+  governance evaluators assert a Go type on every condition
+  (`rule.Condition["start_hour"].(float64)`); a failed assertion skips the rule
+  and falls back to the default the evaluator was written with — 09:00–18:00
+  Mon–Fri, the RFC1918 private ranges, a risk threshold of 50. The page offered
+  `days` (evaluator: `allowed_days`), `allowed_ips` (`allowed_ip_prefixes`),
+  `min_risk_score`/`max_risk_score` on risk-based (`risk_threshold`) and
+  `blocked_ips` (no evaluator concept), and sent every value as a string where
+  the evaluator wants a number, a bool or a list. Three of thirteen inputs could
+  be read, all three on the one policy type the form cannot create — on a live
+  path, since `internal/access` calls `/policies/{id}/evaluate` from the proxy.
+  `internal/governance/policy_condition_test.go` derives the contract from the
+  type assertions and checks the page against it, names and types.
+
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 
 - **B1 — Default admin `admin@openidx.local` / `Admin@123` seeds every

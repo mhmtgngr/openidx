@@ -77,18 +77,90 @@ const policyTypeColors: Record<string, string> = {
 // English. `key` doubles as the catalog key -- both are the backend's own
 // condition field name -- except where one field needs a different example
 // per policy type (`placeholderKey`).
-const conditionTemplates: Record<string, { key: string; placeholderKey?: string }[]> = {
-  separation_of_duty: [{ key: 'conflicting_roles' }],
-  risk_based: [{ key: 'min_risk_score' }, { key: 'max_risk_score' }],
-  timebound: [{ key: 'start_hour' }, { key: 'end_hour' }, { key: 'days' }],
-  location: [{ key: 'allowed_ips' }, { key: 'blocked_ips' }],
-  conditional_access: [
-    { key: 'require_mfa' },
-    { key: 'device_trust_required' },
-    { key: 'allowed_locations' },
-    { key: 'blocked_locations' },
-    { key: 'max_risk_score', placeholderKey: 'conditional_max_risk_score' },
+/**
+ * The condition each policy type accepts — key AND JSON type, because the
+ * evaluator reads both.
+ *
+ * internal/governance/service.go asserts a Go type on every condition it reads
+ * (`rule.Condition["start_hour"].(float64)`), and an assertion that fails is not
+ * an error: the rule is skipped and the evaluator falls back to a HARDCODED
+ * DEFAULT. So a mismatch here does not disable a policy, it silently enforces a
+ * different one — 09:00–18:00 Mon–Fri for timebound, the RFC1918 private ranges
+ * for location, a risk threshold of 50.
+ *
+ * Both halves were wrong. Three keys did not exist in the evaluator at all
+ * (`days` where it reads `allowed_days`, `allowed_ips` where it reads
+ * `allowed_ip_prefixes`, `min_risk_score`/`max_risk_score` on risk_based where
+ * it reads `risk_threshold`), `blocked_ips` had no evaluator concept at all, and
+ * every value was sent as a string while the evaluator wants float64, bool or a
+ * list. internal/governance/policy_condition_test.go now derives the contract
+ * from those type assertions and fails if this table drifts from it.
+ */
+type ConditionType = 'number' | 'boolean' | 'stringList' | 'string'
+
+export const conditionTemplates: Record<
+  string,
+  { key: string; type: ConditionType; placeholderKey?: string }[]
+> = {
+  separation_of_duty: [{ key: 'conflicting_roles', type: 'stringList' }],
+  risk_based: [{ key: 'risk_threshold', type: 'number' }],
+  timebound: [
+    { key: 'start_hour', type: 'number' },
+    { key: 'end_hour', type: 'number' },
+    { key: 'allowed_days', type: 'stringList' },
   ],
+  // The location evaluator is an allow-list of IP prefixes and has no block
+  // list, so one is no longer offered: a `blocked_ips` value was stored, shown
+  // back on edit, and read by nothing.
+  location: [{ key: 'allowed_ip_prefixes', type: 'stringList' }],
+  conditional_access: [
+    { key: 'require_mfa', type: 'boolean' },
+    { key: 'device_trust_required', type: 'boolean' },
+    { key: 'allowed_locations', type: 'string' },
+    { key: 'blocked_locations', type: 'string' },
+    // Read as a string by evaluateConditionalAccessPolicy, unlike the numeric
+    // thresholds above it — kept as the evaluator has it.
+    { key: 'max_risk_score', type: 'string', placeholderKey: 'conditional_max_risk_score' },
+  ],
+}
+
+/**
+ * Turn the text the form holds into the JSON type the evaluator asserts on. An
+ * empty field is omitted rather than sent as "", so a condition left blank does
+ * not become a value the evaluator then reads.
+ */
+function coerceCondition(
+  condition: Record<string, string>,
+  templates: { key: string; type: ConditionType }[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const template of templates) {
+    const raw = (condition[template.key] ?? '').trim()
+    if (raw === '') continue
+    switch (template.type) {
+      case 'number': {
+        const n = Number(raw)
+        if (!Number.isNaN(n)) out[template.key] = n
+        break
+      }
+      case 'boolean':
+        out[template.key] = raw.toLowerCase() === 'true' || raw === '1' || raw.toLowerCase() === 'yes'
+        break
+      case 'stringList':
+        out[template.key] = raw.split(',').map(s => s.trim()).filter(Boolean)
+        break
+      default:
+        out[template.key] = raw
+    }
+  }
+  return out
+}
+
+/** Render a stored condition value back into the form's text input. */
+function conditionValueToInput(value: unknown): string {
+  if (Array.isArray(value)) return value.join(', ')
+  if (value === null || value === undefined) return ''
+  return String(value)
 }
 
 const effectOptions = ['allow', 'deny', 'require_approval', 'step_up_mfa']
@@ -247,7 +319,12 @@ export function PoliciesPage() {
     createPolicyMutation.mutate({
       id: crypto.randomUUID(),
       ...formData,
-      rules: rules.map((r, i) => ({ id: crypto.randomUUID(), condition: r.condition, effect: r.effect, priority: r.priority || i })),
+      rules: rules.map((r, i) => ({
+        id: crypto.randomUUID(),
+        condition: coerceCondition(r.condition, conditionTemplates[formData.type] || []),
+        effect: r.effect,
+        priority: r.priority || i,
+      })),
     })
   }
 
@@ -262,7 +339,7 @@ export function PoliciesPage() {
     })
     setRules(
       (policy.rules || []).map(r => ({
-        condition: Object.fromEntries(Object.entries(r.condition).map(([k, v]) => [k, String(v)])),
+        condition: Object.fromEntries(Object.entries(r.condition).map(([k, v]) => [k, conditionValueToInput(v)])),
         effect: r.effect,
         priority: r.priority,
       }))
@@ -277,7 +354,12 @@ export function PoliciesPage() {
       id: selectedPolicy.id,
       data: {
         ...formData,
-        rules: rules.map((r, i) => ({ id: crypto.randomUUID(), condition: r.condition, effect: r.effect, priority: r.priority || i })),
+        rules: rules.map((r, i) => ({
+        id: crypto.randomUUID(),
+        condition: coerceCondition(r.condition, conditionTemplates[formData.type] || []),
+        effect: r.effect,
+        priority: r.priority || i,
+      })),
       },
     })
   }

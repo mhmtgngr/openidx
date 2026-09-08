@@ -971,13 +971,17 @@ func (s *Service) evaluateSoDPolicy(ctx context.Context, policy *Policy, request
 		}
 	}
 
-	// Check conflict pairs from policy rules (data-driven)
+	// Check conflict pairs from policy rules (data-driven).
+	//
+	// The lookup and the type assertion are one statement so the condition
+	// contract is stated the same way every other evaluator states it:
+	// `rule.Condition["<key>"].(<type>)`. That single line is where
+	// internal/governance/policy_condition_test.go reads what the console must
+	// send, and this read was the one it could not see -- which is how a policy
+	// editor that sent `conflicting_roles` as a comma-separated STRING went
+	// unnoticed while the assertion here has always wanted a list.
 	for _, rule := range policy.Rules {
-		conflicting, ok := rule.Condition["conflicting_roles"]
-		if !ok {
-			continue
-		}
-		conflictList, ok := conflicting.([]interface{})
+		conflictList, ok := rule.Condition["conflicting_roles"].([]interface{})
 		if !ok || len(conflictList) < 2 {
 			continue
 		}
