@@ -1265,6 +1265,7 @@ func TestReportModeGatesNamesEveryOpenControl(t *testing.T) {
 	for _, want := range []string{
 		"ACCESS_ASSIGNMENT_ENFORCE",
 		"ABAC_ENFORCE",
+		"STEPUP_GATE",
 		"ENABLE_OPA_AUTHZ",
 		"PAM_SESSION_RISK_GATE",
 		"POSTURE_DEVICE_TRUST_GATE",
@@ -1288,6 +1289,7 @@ func TestReportModeGatesNamesEveryOpenControl(t *testing.T) {
 	full := &Config{
 		AccessAssignmentEnforce: true,
 		ABACEnforce:             "enforce",
+		StepUpGate:              "enforce",
 		EnableOPAAuthz:          true,
 		PAMSessionRiskGate:      "enforce",
 		PostureDeviceTrustGate:  "enforce",

@@ -39,6 +39,7 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/pwhash"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
+	"github.com/openidx/openidx/internal/common/syssettings"
 	"github.com/openidx/openidx/internal/revocation"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/webhooks"
@@ -1702,24 +1703,26 @@ func (s *Service) recordFailedLogin(ctx context.Context, query, subject string) 
 	return nil
 }
 
-// lockoutPolicy reads the lockout threshold and duration from system_settings,
-// falling back to defaults when unset or malformed.
+// lockoutPolicy reads the lockout threshold and duration the operator set on
+// the console's Security tab, falling back to defaults when unset.
+//
+// Until v1.34.0 this read two system_settings rows keyed
+// 'failed_login_lockout_threshold' and 'failed_login_lockout_duration'.
+// Nothing has ever written a row under either key: the console stores
+// "Max failed logins" and "Lockout duration" as security.max_failed_logins and
+// security.lockout_duration inside the single 'system' document. Both queries
+// therefore returned no rows on every install, and the lockout ran on the
+// hardcoded 5 attempts / 15 minutes regardless of what the operator saved --
+// a setting that displayed without taking effect.
 func (s *Service) lockoutPolicy(ctx context.Context) (maxFailures int, lockout time.Duration) {
 	maxFailures = 5
 	lockoutMinutes := 15
 
-	var settingsValue []byte
-	//orgscope:ignore system_settings is global configuration, not tenant data
-	if err := s.db.Pool.QueryRow(ctx, "SELECT value FROM system_settings WHERE key = 'failed_login_lockout_threshold'").Scan(&settingsValue); err == nil {
-		var v int
-		if json.Unmarshal(settingsValue, &v) == nil && v > 0 {
+	if settings, err := syssettings.Load(ctx, s.db.Pool); err == nil {
+		if v := settings.Security.MaxFailedLogins; v > 0 {
 			maxFailures = v
 		}
-	}
-	//orgscope:ignore system_settings is global configuration, not tenant data
-	if err := s.db.Pool.QueryRow(ctx, "SELECT value FROM system_settings WHERE key = 'failed_login_lockout_duration'").Scan(&settingsValue); err == nil {
-		var v int
-		if json.Unmarshal(settingsValue, &v) == nil && v > 0 {
+		if v := settings.Security.LockoutDuration; v > 0 {
 			lockoutMinutes = v
 		}
 	}

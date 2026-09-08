@@ -280,6 +280,29 @@ type Config struct {
 	// the overlay path.
 	ABACEnforce string `mapstructure:"abac_enforce"`
 
+	// StepUpGate drives the MFA-freshness gate on the two actions the client
+	// access design names: launching a PAM session, and any write made with
+	// admin authority. Until this existed the product had step-up endpoints
+	// that minted a short-lived step_up JWT no handler, middleware or gate has
+	// ever read, so answering a step-up challenge changed nothing about what
+	// the caller could then do. Same tri-state as the posture, PAM and ABAC
+	// gates:
+	//   "off"     (default) — freshness is not consulted; nothing is queried.
+	//   "observe" — evaluate and audit who WOULD be asked to re-authenticate.
+	//   "enforce" — refuse the action and tell the caller to step up.
+	// Off by default for the reason the others are: a control that has never
+	// asked anyone for anything can, turned straight on, interrupt the person
+	// holding the only admin account. Machine identities (API keys, service
+	// accounts, client-credentials tokens) are never gated in any mode --
+	// step-up asks a person to touch a key, and there is nobody to ask.
+	StepUpGate string `mapstructure:"stepup_gate"`
+
+	// StepUpMaxAge is how old a session's last verified second factor may be
+	// before StepUpGate acts. The console's Security tab wins when an operator
+	// has set security.reauth_interval; this is the deployment default when
+	// they have not. 15 minutes, the value the design recommends.
+	StepUpMaxAge time.Duration `mapstructure:"stepup_max_age"`
+
 	// DevAdminBypass, when true, treats every caller as admin across the
 	// access-service admin surface (the inline PAM admin check and the
 	// requireAdminRole gate) — a local-development convenience so a single
@@ -839,6 +862,8 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("selfheal_scripts_dir", "scripts/selfheal")
 	v.SetDefault("pam_session_risk_gate", "off")
 	v.SetDefault("abac_enforce", "off")
+	v.SetDefault("stepup_gate", "off")
+	v.SetDefault("stepup_max_age", "15m")
 	v.SetDefault("pam_session_risk_threshold", 80)
 	v.SetDefault("pam_ssh_require_host_key", false)
 	v.SetDefault("dev_admin_bypass", false)
@@ -1077,6 +1102,8 @@ func bindEnvVars(v *viper.Viper) {
 		"pam_session_risk_gate":                           "PAM_SESSION_RISK_GATE",
 		"pam_ssh_require_host_key":                        "PAM_SSH_REQUIRE_HOST_KEY",
 		"abac_enforce":                                    "ABAC_ENFORCE",
+		"stepup_gate":                                     "STEPUP_GATE",
+		"stepup_max_age":                                  "STEPUP_MAX_AGE",
 		"pam_session_risk_threshold":                      "PAM_SESSION_RISK_THRESHOLD",
 		"dev_admin_bypass":                                "DEV_ADMIN_BYPASS",
 		"access_api_require_auth":                         "ACCESS_API_REQUIRE_AUTH",
@@ -1624,9 +1651,15 @@ func (c *Config) ValidateProduction() error {
 // the PAM session risk gate off and the device posture gate off, which is to
 // say with every authorization control in the product observing rather than
 // deciding. These are NOT errors: shipping in report mode first is the
-// designed rollout, and failing startup for it would punish the safe path. But
-// an operator has to be able to see the list, so the first-run gate and the
-// ops cockpit surface it and RELEASING/DoD can require it be empty.
+// designed rollout, and failing startup for it would punish the safe path.
+//
+// NOTE, corrected in v1.34.0: this comment used to say "the first-run gate and
+// the ops cockpit surface it". They do not, and never have -- this function
+// has no caller anywhere outside its own test, so the list an operator is
+// supposed to read reaches no operator. That is the same defect one layer up
+// from the gates it describes: a report nothing displays. Surfacing it is a
+// follow-up; the comment is corrected now so it stops asserting a reader that
+// does not exist.
 func (c *Config) ReportModeGates() []string {
 	var open []string
 	if !c.AccessAssignmentEnforce {
@@ -1634,6 +1667,9 @@ func (c *Config) ReportModeGates() []string {
 	}
 	if !strings.EqualFold(strings.TrimSpace(c.ABACEnforce), "enforce") {
 		open = append(open, "ABAC_ENFORCE="+valueOrOff(c.ABACEnforce)+" — attribute policies do not refuse anything")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.StepUpGate), "enforce") {
+		open = append(open, "STEPUP_GATE="+valueOrOff(c.StepUpGate)+" — a PAM launch or an admin write never asks for a fresh second factor")
 	}
 	if !c.EnableOPAAuthz {
 		open = append(open, "ENABLE_OPA_AUTHZ=false — OPA is not in the request path")

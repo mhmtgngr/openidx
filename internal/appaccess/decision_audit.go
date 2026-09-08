@@ -167,3 +167,75 @@ func ABACDecisionDetails(enforcementPoint, userID, applicationID, policyID, poli
 	}
 	return d
 }
+
+// --- Step-up freshness decisions -------------------------------------------
+//
+// The STEPUP_GATE freshness gate (internal/stepup) writes through the same
+// table and the same canonical details keys as the assignment and ABAC gates,
+// so one query over unified_audit_events still finds every reason a request
+// was refused or would have been. What differs is the reason and one extra
+// pair of fields — how old the factor was and how old it was allowed to be —
+// because an operator reading these in observe mode is deciding a NUMBER, not
+// a yes or no: "would a 15-minute window interrupt my admins constantly, or
+// twice a day?" is unanswerable from a denial count alone.
+const (
+	// EventTypeStepUpWouldRequire is the observe-mode record: the session's
+	// last second factor was older than the window, STEPUP_GATE was not
+	// "enforce", and the action proceeded. These are the rows an operator
+	// counts, and measures, before moving to enforce.
+	EventTypeStepUpWouldRequire = "access.stepup.would_require"
+
+	// EventTypeStepUpRequired is the enforcement record: the action was
+	// actually refused and the caller told to prove a factor.
+	EventTypeStepUpRequired = "access.stepup.required"
+
+	// EnforcementPointPAMLaunch is a privileged-session launch or credential
+	// reveal in the access service.
+	EnforcementPointPAMLaunch = "pam_launch"
+	// EnforcementPointAdminWrite is a write made with admin authority, in
+	// either the access service or the admin API.
+	EnforcementPointAdminWrite = "admin_write"
+)
+
+// StepUpDecisionEventType maps one freshness decision to its unified
+// event_type. enforced reports whether STEPUP_GATE was on and the action was
+// therefore actually refused, rather than merely recorded.
+func StepUpDecisionEventType(enforced bool) string {
+	if enforced {
+		return EventTypeStepUpRequired
+	}
+	return EventTypeStepUpWouldRequire
+}
+
+// StepUpDecisionDetails builds the details payload for one freshness decision.
+//
+// application_id is empty on both enforcement points: a PAM launch and an
+// admin write are not requests to a registered application. The key is present
+// anyway, because DecisionDetailKeys is the contract that lets one query span
+// all three gates, and a key that is sometimes absent breaks a GROUP BY in a
+// way that is very hard to notice.
+//
+// reason is the stepup package's own vocabulary (stale, never_verified,
+// no_session, lookup_failed) rather than a single constant: those four call
+// for four different operator responses, and collapsing them would hide, in
+// particular, "no_session" — which is a token minted without a session id, a
+// bug in whatever minted it and not a user who needs to tap a phone.
+func StepUpDecisionDetails(enforcementPoint, userID, action, reason string, ageSeconds, maxAgeSeconds int, enforced bool, extra map[string]interface{}) map[string]interface{} {
+	d := map[string]interface{}{
+		"enforcement_point":  enforcementPoint,
+		"user_id":            userID,
+		"application_id":     "",
+		"reason":             reason,
+		"enforced":           enforced,
+		"action":             action,
+		"factor_age_seconds": ageSeconds,
+		"max_age_seconds":    maxAgeSeconds,
+	}
+	for k, v := range extra {
+		if _, canonical := d[k]; canonical {
+			continue
+		}
+		d[k] = v
+	}
+	return d
+}

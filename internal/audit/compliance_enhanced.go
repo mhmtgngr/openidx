@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/syssettings"
 )
 
 // DetailedComplianceReport provides an in-depth compliance assessment with
@@ -168,22 +169,14 @@ func (s *Service) evaluateCC1ControlEnvironment(ctx context.Context, startDate, 
 		}
 	}
 
-	// Check password policy via system_settings
-	var settingsJSON []byte
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(value::text, '{}')
-		FROM system_settings
-		WHERE key = 'security'
-	`).Scan(&settingsJSON)
-	if err == nil && len(settingsJSON) > 0 {
-		var secSettings map[string]interface{}
-		if json.Unmarshal(settingsJSON, &secSettings) == nil {
-			assessment.Evidence = append(assessment.Evidence, "Password policy configured in system settings")
-			if pp, ok := secSettings["password_policy"]; ok {
-				assessment.Evidence = append(assessment.Evidence,
-					fmt.Sprintf("Password policy details: %v", pp))
-			}
-		}
+	// Check password policy in the console's settings document. Keyed
+	// 'security' until v1.34.0, a row that has never existed, so this control
+	// deducted 15 points and reported "No security settings configured" on
+	// every install regardless of its configuration.
+	if settings, err := syssettings.Load(ctx, s.db.Pool); err == nil {
+		assessment.Evidence = append(assessment.Evidence, "Password policy configured in system settings")
+		assessment.Evidence = append(assessment.Evidence,
+			fmt.Sprintf("Password policy details: %+v", settings.Security.PasswordPolicy))
 	} else {
 		score -= 15
 		assessment.Findings = append(assessment.Findings,
@@ -395,13 +388,14 @@ func (s *Service) evaluateCC6LogicalAccess(ctx context.Context, startDate, endDa
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Active sessions: %d", activeSessions))
 
-	// Check for session timeout configuration
+	// Check for session timeout configuration. Read from the row keyed
+	// 'security' until v1.34.0 -- a row nothing writes -- so this control
+	// docked 10 points for "Session timeout not configured" on every install.
 	var sessionTimeout int
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE((value::jsonb->>'session_timeout')::int, 0)
-		FROM system_settings
-		WHERE key = 'security'
-	`).Scan(&sessionTimeout)
+	settings, err := syssettings.Load(ctx, s.db.Pool)
+	if err == nil {
+		sessionTimeout = settings.Security.SessionTimeout
+	}
 	if err != nil || sessionTimeout == 0 {
 		score -= 10
 		assessment.Findings = append(assessment.Findings,
@@ -708,30 +702,23 @@ func (s *Service) evaluateA5Policies(ctx context.Context, startDate, endDate tim
 		return ControlAssessment{}, err
 	}
 
-	// Check for security configuration in system_settings
-	var securityConfigExists bool
-	var settingsJSON []byte
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT value::text FROM system_settings WHERE key = 'security'
-	`).Scan(&settingsJSON)
-	if err == nil && len(settingsJSON) > 0 {
-		securityConfigExists = true
+	// Check for security configuration in the console's settings document.
+	//
+	// This read `WHERE key = 'security'` and `WHERE key = 'authentication'`
+	// until v1.34.0. Neither row has ever existed: security and authentication
+	// are objects INSIDE the single 'system' document. So both queries always
+	// returned no rows, and this control deducted 40 points and reported
+	// "No security policy configuration found in system_settings" on installs
+	// whose security policy was fully configured -- a compliance finding that
+	// was simply false, in the report an auditor reads.
+	settings, settingsErr := syssettings.Load(ctx, s.db.Pool)
+	if settingsErr == nil {
 		assessment.Evidence = append(assessment.Evidence, "Security settings configured in system_settings")
-
-		var secSettings map[string]interface{}
-		if json.Unmarshal(settingsJSON, &secSettings) == nil {
-			if pp, ok := secSettings["password_policy"]; ok {
-				assessment.Evidence = append(assessment.Evidence,
-					fmt.Sprintf("Password policy configured: %v", pp))
-			}
-			if mfa, ok := secSettings["require_mfa"]; ok {
-				assessment.Evidence = append(assessment.Evidence,
-					fmt.Sprintf("MFA requirement: %v", mfa))
-			}
-		}
-	}
-
-	if !securityConfigExists {
+		assessment.Evidence = append(assessment.Evidence,
+			fmt.Sprintf("Password policy configured: %+v", settings.Security.PasswordPolicy))
+		assessment.Evidence = append(assessment.Evidence,
+			fmt.Sprintf("MFA requirement: %v", settings.Security.RequireMFA))
+	} else {
 		score -= 40
 		assessment.Findings = append(assessment.Findings,
 			"No security policy configuration found in system_settings")
@@ -739,12 +726,8 @@ func (s *Service) evaluateA5Policies(ctx context.Context, startDate, endDate tim
 			"Define and configure information security policies in system settings")
 	}
 
-	// Check for authentication settings
-	var authConfigJSON []byte
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT value::text FROM system_settings WHERE key = 'authentication'
-	`).Scan(&authConfigJSON)
-	if err == nil && len(authConfigJSON) > 0 {
+	// Check for authentication settings.
+	if settingsErr == nil && len(settings.Authentication.MFAMethods) > 0 {
 		assessment.Evidence = append(assessment.Evidence, "Authentication settings configured")
 	} else {
 		score -= 15
@@ -878,27 +861,21 @@ func (s *Service) evaluateA9AccessControl(ctx context.Context, startDate, endDat
 		}
 	}
 
-	// Password policy check
-	var settingsJSON []byte
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT value::text FROM system_settings WHERE key = 'security'
-	`).Scan(&settingsJSON)
-	if err == nil {
-		var secSettings map[string]interface{}
-		if json.Unmarshal(settingsJSON, &secSettings) == nil {
-			if pp, ok := secSettings["password_policy"].(map[string]interface{}); ok {
-				minLen, _ := pp["min_length"].(float64)
-				if minLen < 8 {
-					score -= 10
-					assessment.Findings = append(assessment.Findings,
-						fmt.Sprintf("Password minimum length is %.0f (below recommended 8)", minLen))
-					assessment.Remediation = append(assessment.Remediation,
-						"Increase minimum password length to at least 8 characters")
-				}
-				assessment.Evidence = append(assessment.Evidence,
-					fmt.Sprintf("Password min length: %.0f", minLen))
-			}
+	// Password policy check. Read from the console's settings document; this
+	// read a system_settings row keyed 'security' until v1.34.0 and, since
+	// that row has never existed, the whole block was skipped and the minimum
+	// password length was never assessed at all.
+	if settings, err := syssettings.Load(ctx, s.db.Pool); err == nil {
+		minLen := settings.Security.PasswordPolicy.MinLength
+		if minLen < 8 {
+			score -= 10
+			assessment.Findings = append(assessment.Findings,
+				fmt.Sprintf("Password minimum length is %d (below recommended 8)", minLen))
+			assessment.Remediation = append(assessment.Remediation,
+				"Increase minimum password length to at least 8 characters")
 		}
+		assessment.Evidence = append(assessment.Evidence,
+			fmt.Sprintf("Password min length: %d", minLen))
 	}
 
 	// Session management

@@ -52,6 +52,15 @@ func (s *Service) requireAdminRole() gin.HandlerFunc {
 			if roles, ok := rolesRaw.([]string); ok {
 				for _, r := range roles {
 					if r == "admin" || r == "super_admin" {
+						// The caller holds admin authority. Under STEPUP_GATE,
+						// a WRITE made with that authority also needs a
+						// recently verified second factor; reads never do.
+						// Hung off the role gate rather than a list of
+						// sensitive endpoints, so a route added tomorrow
+						// inherits it -- see internal/access/stepup_gate.go.
+						if s.adminWriteNeedsFreshMFA(c) {
+							return // the gate has written its 403 and aborted
+						}
 						c.Next()
 						return
 					}

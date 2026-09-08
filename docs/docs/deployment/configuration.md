@@ -170,6 +170,8 @@ seeing which gates are open.
 | `PAM_SESSION_RISK_THRESHOLD` | int | `70` | Score at or above which the gate bites. |
 | `PAM_SSH_REQUIRE_HOST_KEY` | bool | `false` | Refuse an SSH session to a host whose key is not pinned. |
 | `POSTURE_DEVICE_TRUST_GATE` | string | `off` | `off`, `observe` or `enforce` for the device-trust posture check. |
+| `STEPUP_GATE` | string | `off` | `off`, `observe` or `enforce` for MFA freshness. In `enforce`, a PAM launch or credential reveal, and any write made with admin authority, is refused with `step_up_required` when the session's last verified second factor is older than the window. Reads are never gated; API keys, service accounts and client-credentials tokens are never gated. |
+| `STEPUP_MAX_AGE` | duration | `15m` | The freshness window `STEPUP_GATE` applies. The console's Security &rarr; re-authentication interval (`security.reauth_interval`, in seconds) overrides it when set above zero. |
 | `SHOW_ALL_APPS_WHEN_UNASSIGNED` | bool | `false` | Show every application to a user with no assignments. A convenience for a fresh install; it is not an authorization decision. |
 | `DEV_ADMIN_BYPASS` | bool | `false` | Development-only administrator bypass. Production refuses to start with it on. |
 | `ACCESS_API_REQUIRE_AUTH` | bool | `false` | Require authentication on the access API. `false` yields soft auth in development. |

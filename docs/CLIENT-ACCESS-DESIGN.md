@@ -202,8 +202,40 @@ recommended **14 days, sliding on use**, hard cap 90. Windows agent may keep
   device", and never let browser trust substitute for Tier 2.
 - **Step-up for the two things that matter**: launching a PAM session and any
   admin write, on any client, if the session's last MFA is older than the org's
-  step-up window (recommended 15 minutes; `PAM_SESSION_RISK_GATE` already
-  carries the PAM half).
+  step-up window (15 minutes by default). ✅ *Item 7, landed.*
+
+  The step-up endpoints had shipped long before this and asked nothing of
+  anyone: `/oauth/stepup-verify` minted a `step_up` JWT that no handler, no
+  middleware and no gate in the product has ever read, so completing a
+  challenge left the caller exactly as permitted, or refused, as before. What
+  was missing was not a mechanism but a fact — `sessions.auth_methods` (v133)
+  says a session used MFA and never says *when*, so a ten-hour-old factor and a
+  ten-second-old one are the same row.
+
+  `sessions.mfa_verified_at` (v186) is that fact. It is stamped at login,
+  derived from the auth methods the login already records so a fourth login
+  path cannot record `mfa` and forget the timestamp, and stamped again by
+  `/oauth/stepup-verify` — which is what finally gives step-up an effect.
+  Refreshing an access token deliberately does not refresh it: the refresh
+  grant carries `session_id` forward, so a native client cannot refresh its way
+  out of proving who is holding the laptop.
+
+  The gate reads server state rather than a bearer the client presents. Three
+  carve-outs, each pinned by a test: reads are never gated, machine identities
+  (API keys, service accounts, client-credentials tokens) are never gated
+  because step-up asks a person to touch a key and there is nobody to ask, and
+  a person whose freshness cannot be established at all — no session on the
+  token, or a lookup that failed — is refused under `enforce` and recorded
+  under `observe`. A refusal is `403 step_up_required` naming
+  `/oauth/stepup-challenge`, so the client has somewhere to go.
+
+  The admin-write half hangs off the role gate (`requireAdminRole` in the
+  access service, an `/api/v1` middleware in the admin API) rather than a list
+  of sensitive endpoints, because a list is what lets the next endpoint escape.
+  For the PAM half, where a list is unavoidable, a census requires every
+  mutating `/pam/` route to carry a gate or a written reason — which is what
+  found `POST /pam/apps/:id/launch`, a brokered Windows session the first pass
+  had missed.
 - **Push number-match is the phone's job, not its right.** ✅ *Item 3, landed.*
   A device that is pending approval or revoked cannot approve a challenge:
   `VerifyPushMFAChallenge` checks the approving device's state server-side (the
@@ -277,7 +309,7 @@ belongs in `ProductionWarnings` at most. The report-mode warnings themselves —
 | 4 | ✅ Windows: DPAPI + an explicit file DACL for `user-tokens.json` and `control-endpoint.json`; the Windows-only tests now run on a Windows runner | `agent/internal/secretfile`, `agent/internal/authstore`, `agent/internal/control/listener_windows.go`, `windows-client-build.yml` | medium — done |
 | 5 | ✅ Gate the no-DB enroll fallback on `APP_ENV=development`, refusing when no config is present. (`push_mfa.auto_approve` needed a correction, not a rejection — see §3) | `internal/access/agent_api.go` | small — done |
 | 6 | ✅ The client shows what the server allows: `enrollment_status` + `device_trusted` on `/agent/config`, `DeviceState()` on the engine (+ gomobile and all three plugin bridges), a banner on the home screen | `internal/access`, `agent/internal/control`, `agent/mobile`, `client/plugins/openidx_engine`, `client/lib` | small — done |
-| 7 | Step-up on PAM launch and admin writes when last MFA is older than the window | `internal/oauth`, `internal/access` | medium |
+| 7 | ✅ Step-up when the last factor is stale: `sessions.mfa_verified_at` (v186) stamped at login and by `/oauth/stepup-verify`; `STEPUP_GATE` off\|observe\|enforce at the PAM launch/reveal routes and at every write made with admin authority; a route census keeps the launch set from drifting | v186, `internal/stepup`, `internal/oauth`, `internal/access`, `internal/common/middleware` | medium — done |
 | 8 | Refresh-token lifetime per client (after DECISION) | migration | small |
 
 Each item ships with the same discipline as the rest of this programme: a
@@ -288,7 +320,11 @@ derived guard where a list would drift, a red-proof, and a CHANGELOG entry.
 1. `ACCESS_ASSIGNMENT_ENFORCE=true` — apps and overlay routes scoped to assignees
 2. `DEVICE_AUTOTRUST_MODE=observe` → `enforce` with `DEVICE_AUTOTRUST_REQUIRE_POSTURE=true`
 3. `POSTURE_DEVICE_TRUST_GATE=observe` → `enforce` — Tier 2 follows posture
-4. `PAM_SESSION_RISK_GATE`, then `ABAC_ENFORCE`, then `ENABLE_OPA_AUTHZ`
+4. `STEPUP_GATE=observe` → `enforce` — read the `access.stepup.would_require`
+   rows first: they carry the factor's age and the window, so the number an
+   operator is really choosing (`STEPUP_MAX_AGE`, or the console's
+   re-authentication interval) can be chosen from evidence
+5. `PAM_SESSION_RISK_GATE`, then `ABAC_ENFORCE`, then `ENABLE_OPA_AUTHZ`
 
 Merging turns none of these on. `ProductionWarnings` lists whichever are still
 off at startup.

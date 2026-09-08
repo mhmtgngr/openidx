@@ -35,7 +35,12 @@ var pushGateSchema = []string{
 		app_version VARCHAR(50), enabled BOOLEAN DEFAULT true, trusted BOOLEAN DEFAULT false,
 		last_ip VARCHAR(45), created_at TIMESTAMPTZ DEFAULT NOW(),
 		last_used_at TIMESTAMPTZ, expires_at TIMESTAMPTZ,
-		agent_id VARCHAR(64), device_id VARCHAR(64), enrollment_session_id UUID)`,
+		agent_id VARCHAR(64), device_id VARCHAR(64), enrollment_session_id UUID,
+		-- org_id is NOT NULL on the real table (v1.4 belt) and the gate's read
+		-- names it. The fixture omitted the column, so the query could be
+		-- written without a tenant predicate and this suite would not notice --
+		-- which is exactly what happened until the org-scope lint caught it.
+		org_id UUID NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS mfa_push_challenges (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL,
 		device_id UUID NOT NULL, challenge_code VARCHAR(10) NOT NULL,
@@ -80,11 +85,11 @@ func newPushGateFixture(t *testing.T) *pushGateFixture {
 	}
 	for _, seed := range []string{
 		// A plain self-enrolled authenticator: no agent behind it.
-		`INSERT INTO mfa_push_devices (id, user_id, device_token, platform, enabled) VALUES ('` + pushDevSelf + `','` + pushOwner + `','ntfy:self','android',true)`,
+		`INSERT INTO mfa_push_devices (id, user_id, device_token, platform, enabled, org_id) VALUES ('` + pushDevSelf + `','` + pushOwner + `','ntfy:self','android',true,'` + pushOrg + `')`,
 		// One registered by a device enrolment, tied to an agent (v135 linkage).
-		`INSERT INTO mfa_push_devices (id, user_id, device_token, platform, enabled, agent_id) VALUES ('` + pushDevAgent + `','` + pushOwner + `','ntfy:agent','android',true,'agent-phone')`,
+		`INSERT INTO mfa_push_devices (id, user_id, device_token, platform, enabled, agent_id, org_id) VALUES ('` + pushDevAgent + `','` + pushOwner + `','ntfy:agent','android',true,'agent-phone','` + pushOrg + `')`,
 		// One the user switched off.
-		`INSERT INTO mfa_push_devices (id, user_id, device_token, platform, enabled) VALUES ('` + pushDevOff + `','` + pushOwner + `','ntfy:off','android',false)`,
+		`INSERT INTO mfa_push_devices (id, user_id, device_token, platform, enabled, org_id) VALUES ('` + pushDevOff + `','` + pushOwner + `','ntfy:off','android',false,'` + pushOrg + `')`,
 		`INSERT INTO enrolled_agents (agent_id, status, enrolled_by_user_id) VALUES ('agent-phone','active','` + pushOwner + `')`,
 	} {
 		if _, err := db.Pool.Exec(ctx, seed); err != nil {

@@ -133,7 +133,17 @@ func (b bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if b.token != "" {
 		r.Header.Set("Authorization", "Bearer "+b.token)
 	}
-	return b.rt.RoundTrip(r)
+	// A nil Transport on an http.Client means "use http.DefaultTransport", so a
+	// client built as &http.Client{} carries a nil here. The Unix dialer sets an
+	// explicit Transport (it has to, to dial the socket) and the Windows one
+	// does not — it dials plain loopback — so wrapping it dereferenced nil and
+	// panicked, on Windows only. Nothing caught it until the Windows test job
+	// existed to run these at all.
+	rt := b.rt
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	return rt.RoundTrip(r)
 }
 
 func get(t *testing.T, c *http.Client, base, path string) (int, []byte) {

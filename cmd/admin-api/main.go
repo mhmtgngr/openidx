@@ -335,6 +335,17 @@ func main() {
 		v1.Use(middleware.OPAAuthz(opaClient, log, cfg.IsDevelopment()))
 	}
 
+	// MFA freshness on admin writes (opt-in via STEPUP_GATE). Mounted here,
+	// after auth / permissions / tenant resolution, because it needs the
+	// caller's roles, the sid claim and the resolved org. With the gate off it
+	// makes no query, so it is mounted unconditionally: a gate that is only
+	// wired when a flag is set is a gate whose wiring is never exercised.
+	v1.Use(middleware.RequireFreshMFA(db, middleware.StepUpConfig{
+		Gate:   cfg.StepUpGate,
+		MaxAge: cfg.StepUpMaxAge,
+		Source: "admin-api",
+	}, access.NewUnifiedAuditService(db, log).RecordEvent, log))
+
 	{
 		admin.RegisterRoutes(v1, adminService)
 		organization.RegisterRoutes(v1, orgService)

@@ -72,11 +72,19 @@ func (s *Service) approvingDeviceUsable(ctx context.Context, deviceID string) (b
 		return true, "", nil
 	}
 
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		// No tenant on the context. The RLS belt would make this read return
+		// nothing, and "no row" here means "refuse" -- so failing explicitly is
+		// both honest and the same answer, with a reason a log can carry.
+		return false, "", orgErr
+	}
+
 	var enabled bool
 	var agentID string
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT enabled, COALESCE(agent_id, '')
-		  FROM mfa_push_devices WHERE id = $1`, deviceID).Scan(&enabled, &agentID)
+		  FROM mfa_push_devices WHERE id = $1 AND org_id = $2`, deviceID, org.ID).Scan(&enabled, &agentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// The registration is gone (deleted while the prompt was in flight).

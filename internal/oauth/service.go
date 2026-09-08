@@ -939,6 +939,14 @@ func (s *Service) issuerForOrg(org orgctx.Org) string {
 // recordSessionAuthMethods stamps the authentication methods used to establish
 // a login session (e.g. ["pwd"] or ["pwd","mfa"]) so tokens minted from it can
 // emit an amr claim. Best-effort — a failure never blocks login.
+//
+// When the methods include a second factor it also stamps mfa_verified_at
+// (v186), which is what the step-up freshness gate reads. The timestamp is
+// DERIVED from the methods this call was given rather than written by a
+// separate call at each login site: there are three of those sites today, and
+// a fourth added later would otherwise record "mfa" in amr while leaving the
+// session permanently stale — visibly authenticated with a second factor and
+// unable to prove it. One UPDATE, so the two facts cannot disagree.
 func (s *Service) recordSessionAuthMethods(ctx context.Context, sessionID string, methods []string) {
 	if sessionID == "" || len(methods) == 0 || s.db == nil {
 		return
@@ -947,9 +955,19 @@ func (s *Service) recordSessionAuthMethods(ctx context.Context, sessionID string
 	if err != nil {
 		return
 	}
+	usedMFA := false
+	for _, m := range methods {
+		if m == "mfa" {
+			usedMFA = true
+			break
+		}
+	}
 	if _, err := s.db.Pool.Exec(ctx,
-		`UPDATE sessions SET auth_methods = $2 WHERE id = $1 AND org_id = $3`,
-		sessionID, methods, org.ID); err != nil {
+		`UPDATE sessions
+		    SET auth_methods = $2,
+		        mfa_verified_at = CASE WHEN $4::boolean THEN NOW() ELSE mfa_verified_at END
+		  WHERE id = $1 AND org_id = $3`,
+		sessionID, methods, org.ID, usedMFA); err != nil {
 		s.logger.Warn("record session auth methods failed",
 			zap.String("session_id", sessionID), zap.Error(err))
 	}

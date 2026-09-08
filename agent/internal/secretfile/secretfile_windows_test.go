@@ -3,6 +3,7 @@
 package secretfile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,7 +112,39 @@ func TestDACLIsExplicitAndNotInherited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(dacl, self.String()) {
-		t.Errorf("the writing user (%s) is not in the DACL: %s", self.String(), sddl)
+	// Compare on the token Windows itself uses for this SID, not on the SID
+	// string. SDDL abbreviates well-known accounts to two-letter aliases, and
+	// on a runner whose user is the built-in Administrator (RID 500) the ACE
+	// reads ";LA)" while self.String() is the full S-1-5-21-…-500 — so a
+	// substring match reports the writer as absent from a DACL that names them.
+	// That is what happened the first time this job ran on Windows: a correct
+	// ACL, a test comparing two spellings of the same principal.
+	want, err := sddlToken(self)
+	if err != nil {
+		t.Fatalf("render %s as SDDL: %v", self.String(), err)
 	}
+	if !strings.Contains(dacl, ";"+want+")") {
+		t.Errorf("the writing user (%s, rendered %q) is not in the DACL: %s", self.String(), want, sddl)
+	}
+}
+
+// sddlToken asks Windows how it spells this SID inside an ACE, by round-
+// tripping a one-ACE descriptor through the same conversion that produced the
+// string under test. A well-known account comes back as its alias, anything
+// else as its SID, so the comparison is like for like whoever runs the job.
+func sddlToken(sid *windows.SID) (string, error) {
+	sd, err := windows.SecurityDescriptorFromString("D:P(A;;FA;;;" + sid.String() + ")")
+	if err != nil {
+		return "", err
+	}
+	s := sd.String()
+	close := strings.LastIndex(s, ")")
+	if close < 0 {
+		return "", fmt.Errorf("unexpected descriptor %q", s)
+	}
+	semi := strings.LastIndex(s[:close], ";")
+	if semi < 0 {
+		return "", fmt.Errorf("unexpected descriptor %q", s)
+	}
+	return s[semi+1 : close], nil
 }

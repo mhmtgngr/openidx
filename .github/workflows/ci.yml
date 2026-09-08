@@ -586,11 +586,12 @@ jobs:
           - package: tools
             paths: ./tools/...
             flags: -short
-          # The four leaf packages that decide whether access is allowed,
-          # elevated or revoked. Small enough to share a runner, load-bearing
-          # enough that they must not share one with something unrelated.
-          - package: internal/abac+appaccess+jitgrant+revocation
-            paths: ./internal/abac/... ./internal/appaccess/... ./internal/jitgrant/... ./internal/revocation/...
+          # The five leaf packages that decide whether access is allowed,
+          # elevated, revoked or must be re-proved. Small enough to share a
+          # runner, load-bearing enough that they must not share one with
+          # something unrelated.
+          - package: internal/abac+appaccess+jitgrant+revocation+stepup
+            paths: ./internal/abac/... ./internal/appaccess/... ./internal/jitgrant/... ./internal/revocation/... ./internal/stepup/...
           - package: internal/vault+credentials+signingkeys
             paths: ./internal/vault/... ./internal/credentials/... ./internal/signingkeys/...
           - package: internal/ai+api+backup+intelligence+scimclient+selfheal+sms

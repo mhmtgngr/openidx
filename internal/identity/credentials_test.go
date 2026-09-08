@@ -415,8 +415,20 @@ func TestFailedLoginLocksAtTheThreshold(t *testing.T) {
 func TestFailedLoginRespectsConfiguredThreshold(t *testing.T) {
 	s, db, ctx := newCredentialService(t)
 
+	// The setting is written where the console writes it: security.
+	// max_failed_logins inside the single 'system' settings document.
+	//
+	// This test used to seed a system_settings row keyed
+	// 'failed_login_lockout_threshold', which is what lockoutPolicy read until
+	// v1.34.0 and which no console, handler or migration has ever written. So
+	// the test passed against a shape that exists only in tests: on a real
+	// install the query found no row and the lockout ran on the hardcoded 5
+	// attempts however the operator had configured it. Seeding the real shape
+	// is what makes this test evidence about the product rather than about
+	// itself.
 	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO system_settings (key, value) VALUES ('failed_login_lockout_threshold', '3')`); err != nil {
+		`INSERT INTO system_settings (key, value)
+		 VALUES ('system', '{"security":{"max_failed_logins":3,"lockout_duration":1}}'::jsonb)`); err != nil {
 		t.Fatalf("seed setting: %v", err)
 	}
 
@@ -442,6 +454,19 @@ func TestFailedLoginRespectsConfiguredThreshold(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 	if lockedUntil == nil {
-		t.Error("configured threshold of 3 was not applied")
+		t.Fatal("configured threshold of 3 was not applied")
+	}
+
+	// The configured DURATION was equally unread. A one-minute lockout must not
+	// come out as the hardcoded fifteen.
+	var withinFive bool
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT locked_until < NOW() + INTERVAL '5 minutes'
+		   FROM users WHERE username = 'alice' AND org_id = $1`, credOrg).Scan(&withinFive); err != nil {
+		t.Fatalf("read lock duration: %v", err)
+	}
+	if !withinFive {
+		t.Error("a configured lockout_duration of 1 minute produced a lock more than 5 minutes out; " +
+			"the compiled-in 15 is still in force")
 	}
 }

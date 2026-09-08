@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A fresh second factor for a privileged launch and an admin write**
+  (`STEPUP_GATE`, default `off`). The product has been able to demand a
+  mid-session re-authentication since `/oauth/stepup-challenge`, `-verify` and
+  `-status` shipped, and nothing has ever demanded one: the `step_up` JWT those
+  endpoints mint is read by no handler, no middleware and no gate, so
+  completing a challenge left the caller exactly as permitted, or refused, as
+  before. Meanwhile a laptop that signed in at 09:00 could open an RDP session
+  to a domain controller at 19:00, or reveal a stored credential, or delete a
+  user, and be asked nothing.
+
+  What was missing was a fact, not a mechanism. `sessions.auth_methods` (v133)
+  records that a session used MFA and never records *when*, so a ten-hour-old
+  factor and a ten-second-old one are the same row. Migration **v186** adds
+  `sessions.mfa_verified_at`, stamped at login — derived from the auth methods
+  the login already records, so a login path added later cannot record `mfa`
+  and forget the timestamp — and stamped again by `/oauth/stepup-verify`, which
+  is what finally gives step-up an effect. Refreshing an access token
+  deliberately does not refresh it, so a native client holding a long-lived
+  refresh token cannot refresh its way out of proving who is holding the
+  device. Existing sessions are backfilled from `started_at` where their
+  recorded methods include `mfa` — the moment that session's factor really was
+  verified, not an invention — so an upgrade does not declare every live MFA
+  session stale.
+
+  The gate (`internal/stepup`) is the same tri-state as the assignment, ABAC,
+  PAM-risk and posture gates: `off` (default, no query at all), `observe`
+  (record who would be asked, permit) and `enforce`. Both branches write to
+  `unified_audit_events` through the shared decision shape, carrying the
+  factor's age and the window alongside the canonical keys — an operator in
+  observe mode is choosing a *number*, which a denial count alone cannot
+  inform. Enforcement points: the PAM launch and reveal routes, and every write
+  made with admin authority (hung off `requireAdminRole` in the access service
+  and a `/api/v1` middleware in the admin API, rather than a list of sensitive
+  endpoints, so a route written tomorrow is covered the day it lands). Reads
+  are never gated. Machine identities — API keys, service accounts,
+  client-credentials tokens — are never gated in any mode: step-up asks a
+  person to touch a key, and an unattended integration has nobody to ask, so a
+  gate there would produce an outage rather than a prompt. A refusal is `403
+  step_up_required` naming `/oauth/stepup-challenge`, because a 403 that only
+  says no leaves a user with a legitimate need and no route to it.
+
+  `security.reauth_interval` gets its first reader: it has existed as a v63
+  column, a field of the console's settings document and
+  `SessionPolicy.ReauthInterval`, consulted by nothing. It now sets the window,
+  with `STEPUP_MAX_AGE` (15 minutes) as the deployment default. A window of
+  zero under an enabled gate means the default, not "no window" — otherwise
+  turning the gate on would produce a gate that gates nothing.
+
+  A census requires every mutating `/pam/` route to carry a gate or a written
+  reason. Writing it found `POST /pam/apps/:id/launch`, which opens a brokered
+  Windows session through Guacamole and which the first pass had missed while
+  gating its five obvious siblings.
+
+
 - **A client access design** — `docs/CLIENT-ACCESS-DESIGN.md`: registration,
   MFA, ZTNA tiers, permissions per role per client, revocation, secrets at rest
   and the production gate, for the Windows agent, the Android agent and the
@@ -20,6 +74,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `%ProgramData%` protected by Unix mode bits Windows ignores.
 
 ### Fixed
+
+- **Six settings queries read rows nothing has ever written.** `system_settings`
+  is a key/value table; the console reads and writes the whole settings
+  document under the key `system`. Four other places read settings out of the
+  same table under keys no code and no migration has ever created —
+  `settings` (the OAuth session policy), `security` and `authentication` (the
+  SOC 2 / ISO 27001 assessments, five queries), and
+  `failed_login_lockout_threshold` / `failed_login_lockout_duration` (the
+  account lockout). Every one of those queries returned no rows on every
+  install that has ever run, and every one treated no-rows as "not configured"
+  and carried on with a compiled-in default. Nothing failed and nothing logged.
+
+  Visibly: the console's Security tab could set an idle timeout, an absolute
+  timeout, a remember-me duration, a re-authentication interval, IP binding and
+  a concurrent-session policy, and the OAuth session policy applied its
+  defaults regardless; "Max failed logins" and "Lockout duration" were saved
+  and the lockout ran on 5 attempts and 15 minutes whatever they said; and the
+  ISO 27001 assessment deducted 40 points and reported *"No security policy
+  configuration found in system_settings"* on installs whose policy was fully
+  configured — a compliance finding, in the document an auditor reads, that was
+  simply false.
+
+  All six now read through `internal/common/syssettings`, the single reader,
+  with one key constant. Two field names were wrong as well and are corrected
+  (`require_special`, not `require_special_chars`; `max_age`, not
+  `max_age_days`), and the ISO session-management control now converts the idle
+  timeout from seconds to the minutes it reports. A census test holds the tree
+  to it: both halves are derived from the source — keys read from the SQL
+  string literals, keys written from the INSERT literals, the migration seeds
+  and the settings repository's `PutRaw` calls — and a key read with no writer
+  fails the build. One key is registered as deliberately read-only with its
+  reason (`oauth_rsa_private_key`, the pre-v79 signing key imported once at
+  boot), and an entry that stops reproducing fails too, so the register can
+  only shrink.
+
+  Two dead reads are removed rather than repointed: the ISO cryptography
+  control queried `tls_enabled`, `tls_min_version`, `encryption_at_rest` and
+  `key_rotation_enabled`, none of which exists anywhere in the settings
+  document, so its four values have always been the literals they are
+  initialised to. They still are, and the comment now says so — sourcing them
+  from the deployment's real TLS and encryption configuration is a separate
+  change.
+
 
 - **A device waiting for approval looked exactly like a broken one.** The
   client knew only what was on disk — enrolled, has a Ziti identity, signed in —

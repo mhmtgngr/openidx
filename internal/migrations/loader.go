@@ -1322,5 +1322,12 @@ func allMigrations() []*Migration {
 			UpSQL:       refreshTokenAgentBindingUp,
 			DownSQL:     refreshTokenAgentBindingDown,
 		},
+		{
+			Version:     186,
+			Name:        "session_mfa_verified_at",
+			Description: "Add sessions.mfa_verified_at (nullable, partial index) so a login session records WHEN it last proved a second factor, not merely that it once did. The step-up endpoints minted a step_up JWT that no handler, middleware or gate has ever read, and auth_methods (v133) cannot answer the question a freshness gate asks -- a session that passed MFA ten hours ago still reports [\"pwd\",\"mfa\"]. Stamped at login when a second factor was verified (derived from the same auth_methods call, so a caller recording 'mfa' cannot forget the timestamp) and at /oauth/stepup-verify on success, which is what finally gives step-up an effect. Read by the STEPUP_GATE freshness gate at PAM launch and admin writes. Backfilled to started_at where auth_methods contains 'mfa' -- the moment that session's factor was verified, not an invention -- so an upgrade does not declare every live MFA session stale; sessions without 'mfa' stay NULL.",
+			UpSQL:       sessionMFAVerifiedAtUp,
+			DownSQL:     sessionMFAVerifiedAtDown,
+		},
 	}
 }
