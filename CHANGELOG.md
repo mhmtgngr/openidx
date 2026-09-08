@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The authorization policy was written against an input the product does not
+  send.** `deployments/docker/opa/policies/authz.rego` keys its rules on
+  `input.*`; a rule reading a path the client never marshals is not stricter or
+  looser, it is a rule that cannot fire — OPA answers undefined, the body fails,
+  and nothing logs it. Three separate cases:
+
+  - Two rules in the shipped policy. "Users can modify their own resources"
+    required `input.resource.owner`, and `opa.ResourceContext` had an `Owner`
+    field nothing ever set — the middleware runs before the handler and never
+    loads the row, so it cannot know who owns it. The cross-tenant `deny`
+    required `input.resource.tenant_id`, which that struct did not even declare;
+    the install's cross-tenant control, as far as this policy was concerned, had
+    never produced a message. Both rules and the field are gone, each with a note
+    saying where the control really lives (per-route ownership checks in the
+    services; `org_id` under FORCE ROW LEVEL SECURITY at the database).
+
+  - **`dev-kube/opa.yaml` carried a second, different `package openidx.authz`
+    policy** — the same package the middleware queries — in which *every* rule
+    read something the product does not send: `input.user.role` (singular; the
+    product sends `user.roles`, a list), `input.action` (not a field at all),
+    `input.resource.owner`, and `data.roles` (a data document nothing loads).
+    Under `default allow = false` that policy denies every request, so turning
+    `ENABLE_OPA_AUTHZ` on against that deployment — the first step of the
+    documented rollout — would have 403'd admin-api, governance and provisioning
+    wholesale. It now carries the canonical policy verbatim.
+
+  - **`policies/access_control.rego` (255 lines) and
+    `internal/governance/POLICY_README.md` (385 lines) described a policy engine
+    that does not exist** — no `PolicyEvaluator`, no `LoadPoliciesFromDirectory`,
+    no `internal/governance/policy.go`, and no OPA dependency in `go.mod`. The
+    readiness guide had recorded that policy as deleted while it sat in the tree.
+    Both files are deleted.
+
+  `internal/common/opa/policy_input_test.go` derives all of this rather than
+  listing it: every `openidx.authz` policy in the repository (including rego
+  embedded in a ConfigMap) is checked against the JSON paths `opa.Input` marshals
+  by reflection, the copies must be the same policy, and a `.rego` file that is
+  not the served policy fails the build — because no Go code here reads or
+  compiles rego, so nothing else can ever be evaluated.
+
 - **Three authorization decisions were computed from the URL the caller wrote,
   not the route the router chose.** gin backtracks from a static path segment to
   a parameter when nothing static matches, so a request can read like one route

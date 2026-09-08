@@ -34,11 +34,27 @@ allow if {
 }
 
 # ─── Resource ownership ─────────────────────────────────────────
-# Users can modify their own resources
-allow if {
-    input.resource.owner != ""
-    input.resource.owner == input.user.id
-}
+# REMOVED, because it could never fire. The rule was:
+#
+#     allow if {
+#         input.resource.owner != ""
+#         input.resource.owner == input.user.id
+#     }
+#
+# OPAAuthz builds its input from the REQUEST -- method, matched route, and the
+# caller's claims. It never loads the row being addressed, so it cannot know who
+# owns it: internal/common/opa.ResourceContext has an Owner field and nothing has
+# ever set it, leaving input.resource.owner permanently absent and the first
+# condition permanently false. Writing an owner in from what the middleware DOES
+# know would be worse than deleting the rule -- it would compare the caller to
+# themselves and read like a working ownership check.
+#
+# Ownership is enforced where the row is actually read: identity-service's
+# self-service tier and the per-route ownership checks catalogued in
+# internal/identity/authz_surface_test.go (a WHERE clause carrying the token's
+# user id, or an explicit comparison), and access-service's assignment gate.
+# internal/common/opa/policy_input_test.go fails if a rule here reads an input
+# field the product does not send.
 
 # ─── Fine-grained RBAC ──────────────────────────────────────────
 # Map roles to specific resource types and methods
@@ -163,13 +179,26 @@ allow if {
 }
 
 # ─── Tenant isolation ───────────────────────────────────────────
-# If tenant_id is set on both user and resource, they must match
-deny[msg] if {
-    input.user.tenant_id != ""
-    input.resource.tenant_id != ""
-    input.user.tenant_id != input.resource.tenant_id
-    msg := "cross-tenant access denied"
-}
+# REMOVED, for the same reason and with more at stake. The rule was:
+#
+#     deny[msg] if {
+#         input.user.tenant_id != ""
+#         input.resource.tenant_id != ""
+#         input.user.tenant_id != input.resource.tenant_id
+#         msg := "cross-tenant access denied"
+#     }
+#
+# input.resource.tenant_id is not a field ResourceContext even has, so the second
+# condition was never satisfiable and this deny has never produced a message. It
+# read as the install's cross-tenant control and was not one.
+#
+# Cross-tenant access is refused at the database, not at an HTTP gate: every
+# tenant-scoped table carries org_id under FORCE ROW LEVEL SECURITY, the policy
+# reads app.org_id from the connection, and the request's org is resolved once by
+# the TenantResolver middleware into orgctx. tools/orgscope fails the build on a
+# table or a query that escapes that, derived from the migration registry rather
+# than from a list. That is a stronger control than this rule described, and it
+# does not depend on OPA being switched on.
 
 # ─── Separation of duties ───────────────────────────────────────
 # Prevent conflicting role combinations

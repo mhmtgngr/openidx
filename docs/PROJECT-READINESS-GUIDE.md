@@ -4345,8 +4345,29 @@ class this whole program exists for.
    does not write into `migrations/`, and it refuses to overwrite.
 4. ✅ **OPA `deny` enforced** — *shipped.* — `internal/common/middleware/opa.go`: abort
    unless `Allow && len(Deny)==0`; `authz.rego:15-19`'s "any authenticated
-   user may GET anything" removed; `policies/access_control.rego`
-   (unreachable package, phantom inputs) deleted; allow+deny → 403 test.
+   user may GET anything" removed; allow+deny → 403 test.
+
+   *Correction, and the same defect one layer up.* This entry said the example
+   policy at policies/access_control.rego had been deleted. It had not — it sat
+   in the tree for another twelve commits, 255 lines in package `openidx`,
+   alongside a 385-line POLICY_README under internal/governance documenting the
+   `PolicyEvaluator` that would load it: in-memory compilation, hot reload, a
+   policy cache, Prometheus metrics and `go get
+   github.com/open-policy-agent/opa`. There is no `PolicyEvaluator`, no
+   `LoadPoliciesFromDirectory`, no policy.go in that package, and no OPA
+   dependency in `go.mod`. Both files are gone now, and a scorecard row is not
+   the proof: `internal/common/opa/policy_input_test.go` fails on any `.rego` in
+   the tree that is not the policy actually served.
+
+   The same sweep found the third copy of this problem. `dev-kube/opa.yaml`
+   embedded its own `package openidx.authz` ConfigMap — the package the
+   middleware queries — in which *every* rule read something the product does not
+   send (`input.user.role` singular, `input.action`, `input.resource.owner`,
+   `data.roles`). Under `default allow = false` that policy denies everything, so
+   turning `ENABLE_OPA_AUTHZ` on against a dev-kube deployment — step one of the
+   rollout in §1.1 — would have 403'd admin-api, governance and provisioning
+   wholesale. It now carries the canonical policy verbatim, and drift fails the
+   build.
 5. ✅ **No-op buttons made honest** — *shipped.* — `ai_recommendations.go` "Apply"
    performs each action through the primitive that exists or returns 501
    with the reason (and the console shows it); `ispm.go` "Remediate"

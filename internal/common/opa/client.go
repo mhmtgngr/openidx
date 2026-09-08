@@ -36,10 +36,23 @@ type UserContext struct {
 	Authenticated bool     `json:"authenticated"`
 }
 
-// ResourceContext describes the resource being accessed
+// ResourceContext describes the resource being accessed.
+//
+// Type is derived from the matched route (see middleware.inferResourceType) and
+// is the only thing the authorizer can know about the resource: OPAAuthz runs
+// BEFORE the handler, from the request alone, and never loads the row being
+// addressed.
+//
+// There was an Owner field here, and nothing could ever set it for that reason.
+// It was not harmless: authz.rego carried an "allow if the caller owns the
+// resource" rule written against it, which therefore never fired, and a
+// cross-tenant deny written against a resource tenant_id this struct never even
+// declared. Both rules are gone with a note saying where those two controls
+// really live. Anything added here must be something the middleware can fill
+// from the request, or it invites the same rule again --
+// internal/common/opa/policy_input_test.go is the guard.
 type ResourceContext struct {
-	Type  string `json:"type,omitempty"`
-	Owner string `json:"owner,omitempty"`
+	Type string `json:"type,omitempty"`
 }
 
 // Decision represents OPA's authorization response
