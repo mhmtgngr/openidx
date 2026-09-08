@@ -426,6 +426,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The mobile clients' credentials were in the platform's cloud backup.** The
+  engine's config directory is `getFilesDir()` on Android and
+  `Library/Application Support` on iOS, and it holds three credentials:
+  `agent.json` (the agent's auth token), `user-tokens.json` (the access token
+  and the 30-day refresh token behind it) and `ziti-identity.json` — the private
+  key and certificates that put the device on the ZTNA overlay. Both paths are
+  in their platform's default backup set. The Flutter client's manifest carried
+  no `android:allowBackup`, whose platform default is `true`, so all three were
+  uploaded to the user's Google Drive by Auto Backup and extractable with
+  `adb backup`; the iOS plugin set no `isExcludedFromBackup`, so the same three
+  were in iCloud and in every unencrypted iTunes backup of a machine the phone
+  had synced to.
+
+  The Go code writes those files `0600` and said so in a comment claiming that
+  outside Windows "the mode is the control". That is true on a Linux or macOS
+  desktop and inert in an app sandbox, where every file is already private to
+  the app's own UID and a mode bit has nothing to say about what the backup
+  agent copies out. The protection was an attribute whose *absence* was the
+  danger, which is why reading the manifest did not show it.
+
+  Both clients now deny cloud backup (`android:allowBackup="false"`) **and**
+  device-to-device transfer (`dataExtractionRules` excluding every domain from
+  both channels — from API 31 D2D is governed separately and is allowed by
+  default whatever `allowBackup` says, so either alone still hands the identity
+  to the next phone). The iOS plugin marks the config directory
+  `isExcludedFromBackup` *before* calling `MobileStart`, because after the
+  engine's first write there is a window in which a backup takes the tokens.
+  `scripts/check-mobile-secrets-at-rest.sh` fails the build if either client
+  loses either half, if the iOS call moves after the start, or if the rules
+  resource reads as a control while carrying an `<include>`; 14 self-test cases
+  cover those shapes. The Kotlin agent already had `allowBackup="false"` and
+  keeps its secret in `EncryptedSharedPreferences`; it gained the D2D half so
+  the rule has no exception to explain. Not claimed: the engine's files are
+  still not keystore-wrapped — that needs a callback across the gomobile
+  boundary and is recorded in `docs/CLIENT-ACCESS-DESIGN.md` §4 as its own item.
+
 - **The zero-trust policy editor's conditions never reached the evaluator, and a
   hardcoded default enforced something else.** `internal/governance` asserts a Go
   type on every condition it reads (`rule.Condition["start_hour"].(float64)`),

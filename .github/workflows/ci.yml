@@ -145,6 +145,16 @@ jobs:
         run: bash scripts/check-ios-deeplink-config.test.sh
       - name: An iOS runner must register the URL scheme it was built to receive
         run: bash scripts/check-ios-deeplink-config.sh --enforce
+      - name: Verify the mobile secrets-at-rest guard can go red
+        # Same class as the deep-link guard above, one step further in: the
+        # engine's config directory holds the agent token, the 30-day refresh
+        # token and the ZTNA private key, and on both mobile platforms the only
+        # way those bytes leave the phone is the OS backup. The protection is an
+        # attribute whose absence is the danger (android:allowBackup defaults to
+        # TRUE) and an ordering in Swift, so neither is visible as missing.
+        run: bash scripts/check-mobile-secrets-at-rest.test.sh
+      - name: The mobile clients must keep their secrets out of the platform backup
+        run: bash scripts/check-mobile-secrets-at-rest.sh --enforce
       - name: Verify the toolchain-pin guard can go red
         run: bash scripts/check-go-toolchain-pin.test.sh
       - name: Every setup-go step installs the toolchain go.mod pins

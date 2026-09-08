@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# The two mobile clients hold credentials in their app sandbox. Nothing in the
+# Go code protects them there, and nothing can: the one way those bytes leave a
+# phone is the platform's own backup, which is configured in the manifest on
+# Android and on the directory on iOS. This guard checks both halves.
+#
+# WHY IT IS A GUARD AND NOT A COMMENT. Every part of this is invisible when it
+# is wrong. android:allowBackup defaults to TRUE, so the protection is the
+# ABSENCE of a default rather than the presence of a line — you cannot see it
+# missing by reading the file, only by knowing what is not there. The Flutter
+# client shipped that way: three credentials (agent.json's agent token,
+# user-tokens.json's 30-day refresh token, ziti-identity.json's overlay private
+# key) in Google Drive, and the Go code above them saying 0600 in a comment that
+# was true on a desktop and inert in a sandbox. Nothing failed. The app builds,
+# analyze passes, the APK installs, the user signs in.
+#
+# The three rules, and why each is separate:
+#
+#   1. allowBackup="false" on every shipped <application>. Stops cloud backup on
+#      every API level.
+#   2. dataExtractionRules excluding every domain from BOTH cloud-backup and
+#      device-transfer. From API 31 D2D transfer is a channel of its own and is
+#      allowed by default whatever allowBackup says, so rule 1 alone still hands
+#      the identity to the next phone. The referenced resource must exist and
+#      must actually exclude — a file with an <include> in it satisfies a grep
+#      and defeats the point.
+#   3. The iOS plugin's "start" case must call excludeFromBackup BEFORE
+#      MobileStart. Order is the rule, not presence: after the engine's first
+#      write there is a window in which a backup takes the tokens, and a call
+#      anywhere else in the file would satisfy a grep while leaving it open.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+ENFORCE=0
+[ "${1:-}" = "--enforce" ] && ENFORCE=1
+
+MANIFESTS="${CHECK_MOBILE_SECRETS_MANIFESTS:-client/android/app/src/main/AndroidManifest.xml agent-android/app/src/main/AndroidManifest.xml}"
+SWIFT="${CHECK_MOBILE_SECRETS_SWIFT:-client/plugins/openidx_engine/ios/Classes/OpenidxEnginePlugin.swift}"
+
+python3 - "$ENFORCE" "$SWIFT" $MANIFESTS <<'PYEOF'
+import os
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+enforce = sys.argv[1] == "1"
+swift_path = sys.argv[2]
+manifests = sys.argv[3:]
+
+ANDROID = "{http://schemas.android.com/apk/res/android}"
+DOMAINS = {"root", "file", "database", "sharedpref", "external"}
+
+findings = []
+checked_manifests = 0
+checked_swift = 0
+
+
+def report(where, what, fix):
+    findings.append((where, what, fix))
+
+
+def check_rules_resource(manifest_path, res_name):
+    """The resource the manifest points at must exist and must exclude both
+    channels. A rules file that includes anything is worse than none, because it
+    reads as a control."""
+    res_dir = os.path.join(os.path.dirname(manifest_path), "res", "xml")
+    path = os.path.join(res_dir, res_name + ".xml")
+    if not os.path.exists(path):
+        report(manifest_path,
+               'android:dataExtractionRules points at @xml/%s, which does not exist '
+               'at %s' % (res_name, path),
+               "create it, excluding every domain from cloud-backup and device-transfer")
+        return
+    try:
+        root = ET.parse(path).getroot()
+    except Exception as exc:
+        report(path, "could not be parsed as XML (%s)" % exc, "fix the syntax")
+        return
+    for channel in ("cloud-backup", "device-transfer"):
+        node = root.find(channel)
+        if node is None:
+            report(path,
+                   "has no <%s> section, so that channel keeps its default "
+                   "(allowed)" % channel,
+                   "add <%s> excluding every domain" % channel)
+            continue
+        included = [e.get("domain") for e in node.findall("include")]
+        if included:
+            report(path,
+                   "<%s> INCLUDES %s — an include here is a decision to copy app "
+                   "data off the device" % (channel, ", ".join(sorted(d or "?" for d in included))),
+                   "remove the <include> elements")
+        excluded = {e.get("domain") for e in node.findall("exclude")}
+        missing = DOMAINS - excluded
+        if missing:
+            report(path,
+                   "<%s> does not exclude %s" % (channel, ", ".join(sorted(missing))),
+                   "add <exclude domain=\"…\" /> for each")
+
+
+for manifest_path in manifests:
+    if not os.path.exists(manifest_path):
+        report(manifest_path, "does not exist", "check CHECK_MOBILE_SECRETS_MANIFESTS")
+        continue
+    try:
+        root = ET.parse(manifest_path).getroot()
+    except Exception as exc:
+        report(manifest_path, "could not be parsed as XML (%s)" % exc, "fix the syntax")
+        continue
+    app = root.find("application")
+    if app is None:
+        report(manifest_path, "has no <application> element", "this is not an app manifest")
+        continue
+
+    checked_manifests += 1
+
+    allow = app.get(ANDROID + "allowBackup")
+    if allow != "false":
+        report(manifest_path,
+               'android:allowBackup is %s — the platform default is TRUE, so the '
+               "app's files go to the user's cloud backup"
+               % ("absent" if allow is None else repr(allow)),
+               'set android:allowBackup="false" on <application>')
+
+    rules = app.get(ANDROID + "dataExtractionRules")
+    if not rules:
+        report(manifest_path,
+               "has no android:dataExtractionRules — from API 31 device-to-device "
+               "transfer is a separate channel and is allowed by default, whatever "
+               "allowBackup says",
+               'set android:dataExtractionRules="@xml/data_extraction_rules"')
+    elif not rules.startswith("@xml/"):
+        report(manifest_path,
+               "android:dataExtractionRules is %r, which is not an @xml/ resource "
+               "reference" % rules,
+               "point it at a resource in res/xml")
+    else:
+        check_rules_resource(manifest_path, rules[len("@xml/"):])
+
+# The iOS half. Find the "start" case in dispatch() and read it in order: the
+# exclusion has to happen before the engine is handed the directory.
+if not os.path.exists(swift_path):
+    report(swift_path, "does not exist", "check CHECK_MOBILE_SECRETS_SWIFT")
+else:
+    src = open(swift_path, encoding="utf-8").read()
+    m = re.search(r'^\s*case\s+"start"\s*:\s*$(.*?)(?=^\s*case\s+"|^\s*default\s*:)',
+                  src, re.M | re.S)
+    if m is None:
+        report(swift_path,
+               'has no `case "start":` in the method dispatch',
+               "this guard reads that block; if the plugin was restructured, teach it the new shape")
+    else:
+        checked_swift += 1
+        block = m.group(1)
+        exclude_at = block.find("excludeFromBackup")
+        start_at = block.find("MobileStart")
+        if exclude_at < 0:
+            report(swift_path,
+                   'the "start" case does not call excludeFromBackup, so the engine\'s '
+                   "config directory stays in the iCloud backup set",
+                   "call excludeFromBackup(configDir) before MobileStart")
+        elif start_at >= 0 and exclude_at > start_at:
+            report(swift_path,
+                   'the "start" case calls excludeFromBackup AFTER MobileStart — the '
+                   "engine has already written the tokens by then",
+                   "move the call above MobileStart")
+        if "isExcludedFromBackup" not in src:
+            report(swift_path,
+                   "excludeFromBackup never sets isExcludedFromBackup, so it cannot "
+                   "exclude anything",
+                   "set URLResourceValues.isExcludedFromBackup = true")
+
+if checked_manifests == 0 or checked_swift == 0:
+    print("check-mobile-secrets-at-rest: examined %d manifest(s) and %d iOS start "
+          "path(s). Both must be non-zero — a client that stopped existing and a "
+          "guard looking in the wrong place are equally worth knowing."
+          % (checked_manifests, checked_swift), file=sys.stderr)
+    if not findings:
+        sys.exit(1 if enforce else 0)
+
+if not findings:
+    print("check-mobile-secrets-at-rest: ok — %d manifest(s) deny cloud backup and "
+          "device transfer, and the iOS engine directory is excluded before first write"
+          % checked_manifests)
+    sys.exit(0)
+
+print()
+for where, what, fix in findings:
+    print("%s" % where, file=sys.stderr)
+    print("    %s" % what, file=sys.stderr)
+    print("    fix: %s" % fix, file=sys.stderr)
+print(file=sys.stderr)
+print("check-mobile-secrets-at-rest: %d finding(s). The app sandbox does not stop a "
+      "backup; these rules do." % len(findings), file=sys.stderr)
+sys.exit(1 if enforce else 0)
+PYEOF

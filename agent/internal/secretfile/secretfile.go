@@ -21,8 +21,30 @@
 // ciphertext is useless to another account even with the bytes) plus an
 // explicit DACL on the file itself — SYSTEM, Administrators, and the user that
 // wrote it, with inheritance switched off so the ProgramData ACL stops
-// applying. On every other platform: exactly what happened before, a 0600 file,
+// applying. On Linux and macOS: exactly what happened before, a 0600 file,
 // because there the mode is the control.
+//
+// ON ANDROID AND iOS THE MODE IS NOT THE CONTROL EITHER, and it took a second
+// look to see it. This package builds for both — the engine is bound with
+// gomobile into the companion app — and 0600 inside an app sandbox is not
+// protection that was added, it is protection that was already there: every
+// file in the container is private to the app's own UID whatever its mode. What
+// the mode does not touch is the one way those bytes leave the device, which is
+// the platform backup. Android Auto Backup copies getFilesDir() to the user's
+// Google Drive unless the manifest says otherwise, and iOS backs up
+// Library/Application Support to iCloud unless the directory is flagged. The
+// engine's config directory is exactly those two paths, and it holds three
+// credentials rather than the two above: user-tokens.json, agent.json (the
+// agent's own auth token) and ziti-identity.json (the private key that puts the
+// device on the overlay).
+//
+// So the control on mobile is not in this package at all — it is
+// android:allowBackup="false" plus dataExtractionRules in the client's manifest,
+// and isExcludedFromBackup on the config directory in the iOS plugin. It is
+// named here because this is the file someone reads when they ask what protects
+// the agent's secrets, and the answer for two of the five platforms is
+// elsewhere. scripts/check-mobile-secrets-at-rest.sh fails the build if either
+// half goes missing.
 //
 // The two files this guards belong to the interactive user: the tray, the CLI
 // and `openidx-agent serve` all run in that session (the Windows SERVICE runs
