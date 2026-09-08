@@ -322,6 +322,48 @@ product; either wire them or remove them from the UI.
   four are closed, with the design's reasoning in
   `docs/CLIENT-ACCESS-DESIGN.md` §3.
 
+- **A12 — The companion app reported "Compliant" from posture checks that had
+  never run.** *Fixed on this branch.* Seven of the ten checks dispatch on
+  `runtime.GOOS` with a windows/darwin/linux switch and a default that warns; on
+  a handset `runtime.GOOS` is `"android"`, so all seven took that default, and
+  the summary counted `Failed == 0 && Errored == 0` as compliant. The more
+  checks a device could not run, the more confidently it claimed compliance.
+  `CheckResult.Unsupported` now separates "I looked and I am uneasy" from
+  "I cannot look here", compliance additionally requires `Unsupported == 0` and
+  at least one check that actually ran, and the console grew a third state.
+  Two further checks were answering where they cannot see: `os_version` compared
+  the Linux *kernel* release against an Android version policy (reporting
+  compliant devices as failing), and `process_running` globbed `/proc` and so
+  reported every configured process missing on four of five platforms.
+  `tools/posturevocab` derives per-platform coverage from both clients and fails
+  the build on an unregistered collision.
+
+- **A13 — The mobile clients' credentials were in the platform's cloud
+  backup.** *Fixed on this branch.* The engine's config directory holds the
+  agent token, the user's 30-day refresh token and the ZTNA private key, and it
+  is `getFilesDir()` on Android and `Library/Application Support` on iOS — both
+  in their platform's default backup set. The Flutter client's manifest carried
+  no `android:allowBackup` (platform default: `true`) and the iOS plugin set no
+  `isExcludedFromBackup`, so all three were in Google Drive and iCloud. The Go
+  code writes them `0600` and said that "outside Windows the mode is the
+  control" — true on a desktop, inert in a sandbox, and silent about backups.
+  Both clients now deny cloud backup **and** device-to-device transfer (separate
+  channels from API 31); `scripts/check-mobile-secrets-at-rest.sh` fails the
+  build on either half. Still open and stated: the bytes are not keystore-wrapped
+  (`docs/CLIENT-ACCESS-DESIGN.md` §4).
+
+- **A14 — A refresh-token lifetime that could not bind on the case it existed
+  for.** *Fixed on this branch.* `refresh_token_lifetime` is enforced per token,
+  and rotation restarts the window on every use — so on a client that refreshes
+  hourly the seeded thirty days bounded how long the device could be **offline**
+  and nothing else. A phone taken while unlocked kept a working chain
+  indefinitely. Migration v187 bounds the authorization instead:
+  `family_started_at` (carried through rotation, backfilled per family) and
+  `refresh_token_max_lifetime`; the grant revokes the whole family past the cap
+  before minting anything. 14 days / 90-day cap for the two mobile clients,
+  30 / 90 for the Windows agent; browser clients uncapped by decision. A derived
+  test fails the build on a native client shipped without a cap.
+
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 
 - **B1 — Default admin `admin@openidx.local` / `Admin@123` seeds every
