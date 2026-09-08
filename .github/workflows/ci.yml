@@ -1745,6 +1745,29 @@ jobs:
   # own timeout-minutes remains the outer bound. The underlying cost (a
   # container per test rather than per package) is worth attacking separately;
   # it is not what makes this check lie.
+  #
+  # AND IT LIED A SECOND TIME, IN MEMORY RATHER THAN IN TIME. On run 2448 this
+  # job ended:
+  #
+  #   ok  github.com/openidx/openidx/internal/health  1.032s
+  #   ##[error]The runner has received a shutdown signal.
+  #   ##[error]Process completed with exit code 143.
+  #
+  # No FAIL, no WARNING: DATA RACE, neither timeout reached -- the runner died.
+  # `./...` includes ./tools/..., and two gates there load and type-check the
+  # whole module. Measured on a 4-CPU / 16 GB machine, the runner's own shape:
+  # deadconfig peaks at 8.04 GB under -race, deadservice at 13.03 GB, and the
+  # two together (which -p 4 permits, and which is chance, not design) reached
+  # 14.22 GB before the OOM killer took both test binaries. That is why the
+  # crash landed at a package boundary with no failing test near it, and why
+  # the same command passes locally under -p 1.
+  #
+  # The fix is in the tests, not here: both skip their whole-module half when
+  # the race detector is compiled in, and tools/racecost derives from `go list`
+  # which test binaries must do that, so a third analyzer is named before this
+  # job has to die for it. Nothing stops being proven -- the deadconfig and
+  # deadservice jobs below run the same analysis uninstrumented as a hard gate
+  # on every push, and both are in the Required Checks list.
   test-race:
     name: Race Detector
     runs-on: ubuntu-latest

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Race Detector CI check went red for 13 GB of type-checking, not for a
+  race.** `go test -race ./...` reaches `./tools/...`, where two gates answer a
+  question about the whole module: `deadconfig` type-checks every package and
+  `deadservice` builds SSA over every binary and runs rapid type analysis. Under
+  the race detector those cost **8.04 GB** and **13.03 GB** of peak memory
+  respectively, measured on a 4-CPU / 16 GB machine — the shape of a hosted
+  runner. `go test` runs four packages at a time, so the two together (14.22 GB
+  measured, then the kernel OOM killer) is more than the runner has.
+
+  What that produced was not a test failure: no `FAIL`, no `WARNING: DATA RACE`,
+  neither the job's 30-minute cap nor the per-package `-timeout 20m` reached —
+  just `The runner has received a shutdown signal` and `exit code 143`, under a
+  check whose name says "race". Whether the two overlap is scheduling luck,
+  which is why the same command passed on the runs either side of it.
+
+  Both whole-module halves already skipped under `-short` for this reason; the
+  race job passes no flag, and a blanket `-short` there would have silently
+  stopped running six other packages' real tests (the migration downsweep proof,
+  the RLS enforcement belt, the proxy assignment org scope, the audit chain, the
+  gateway integration case). So the skip is keyed on the race build tag instead
+  — the cost belongs to the instrumentation, not to a flag, and `go test -race
+  ./...` typed by hand on a 16 GB laptop fails the same way. Same command after
+  the fix: **0.82 GB, 2 seconds**.
+
+  Nothing stops being proven: both tools have a dedicated CI job that runs the
+  analysis uninstrumented over the whole module as a hard gate on every push,
+  and both are in the required-checks list.
+  `tools/racecost/racecost_test.go` derives from `go list` which test binaries
+  do module-scale analysis and requires each to carry the skip, so a third
+  analyzer is named before the job has to die for it.
+
 ### Security
 
 - **The zero-trust policy editor's conditions never reached the evaluator, and a

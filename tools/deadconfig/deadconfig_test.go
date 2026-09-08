@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/openidx/openidx/tools/racecost"
 )
 
 // moduleFields is the expensive half of this file, done once.
@@ -19,6 +21,12 @@ import (
 // load below starts from nothing) died with a runner shutdown five pushes
 // running. That job now passes -short, which skips both of these; this makes
 // the cost honest for everyone else who runs them.
+//
+// The Race Detector job then died the same way for the same reason, because
+// `go test -race ./...` reaches ./tools/... with no -short anywhere. Re-measured
+// on a 16 GB machine: 8.04 GB here, 13.03 GB in deadservice, 14.22 GB and an
+// OOM kill for the two at once. So the skip is keyed on racecost.Enabled as
+// well: the cost belongs to the instrumentation, not to a flag.
 var (
 	moduleOnce     sync.Once
 	moduleDeclared []field
@@ -131,7 +139,7 @@ func TestTheFixtureIsRead(t *testing.T) {
 // register entry still reproduces. Slow -- it type-checks the module -- so it is
 // the half that -short skips, like tools/deadservice.
 func TestTheRegisterMatchesTheTree(t *testing.T) {
-	if testing.Short() {
+	if testing.Short() || racecost.Enabled {
 		t.Skip("loads and type-checks the whole module")
 	}
 	declared, read := moduleFields(t)
@@ -159,7 +167,7 @@ func TestTheRegisterMatchesTheTree(t *testing.T) {
 // the five PASSWORD_* and one misspelled MFA_WEBARUTHN_ENABLED, which is the
 // clearest evidence that nobody had ever tried it.
 func TestNoDocumentedSettingIsBoundByNothing(t *testing.T) {
-	if testing.Short() {
+	if testing.Short() || racecost.Enabled {
 		t.Skip("loads and type-checks the whole module")
 	}
 	declared, _ := moduleFields(t)

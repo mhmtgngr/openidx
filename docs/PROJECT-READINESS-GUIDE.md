@@ -571,6 +571,36 @@ All six items landed with this guide (commits on
    test rather than per package, is worth attacking on its own; it is not what
    made the check lie.
 
+   **And it lied a second time, in memory rather than in time.** Go CI run 2448
+   ended `The runner has received a shutdown signal` and `exit code 143` after
+   `ok internal/health 1.032s` — no `FAIL`, no `WARNING: DATA RACE`, and neither
+   bound reached: the job's 30-minute cap was 14 minutes away and the longest
+   package in the run had 9 minutes of its `-timeout 20m` left. `go test -race
+   ./...` includes `./tools/...`, where two gates answer a question about the
+   **whole module**: `deadconfig` type-checks every package, and `deadservice`
+   builds SSA over every binary and runs rapid type analysis. Measured on a
+   4-CPU / 16 GB machine — a hosted runner's own shape — that costs **8.04 GB**
+   and **13.03 GB** of peak memory under `-race`, and the two at once, which
+   four-way package parallelism permits, reached **14.22 GB** before the kernel
+   OOM killer took both test binaries. Which is why the crash landed at a
+   package boundary with nothing failing near it, why the same command was green
+   on the runs either side of it, and why the `-p 1` sweep used to verify every
+   commit on this branch could not catch it: at one package at a time, 13 GB
+   fits.
+   Both halves already skipped under `-short`, for exactly this reason a job
+   earlier: `Unit Tests (tools)` died the same way on five consecutive pushes.
+   Adding `-short` to the race job would have been the wrong fix — six other
+   packages guard real tests behind `testing.Short()`, among them the migration
+   downsweep proof and the RLS enforcement belt — so the skip is keyed on the
+   race build tag instead, because the cost belongs to the instrumentation and
+   not to a flag. Same command afterwards: **0.82 GB, 2 seconds**. Nothing stops
+   being proven: both tools have a dedicated job running the analysis
+   uninstrumented over the whole module as a hard gate on every push, and both
+   are in the required-checks list. `tools/racecost/racecost_test.go` asks
+   `go list` which test binaries do module-scale analysis and requires each to
+   carry the skip, so the third analyzer is named before the job has to die
+   for it.
+
 8. ✅ **Both proxies stop forwarding the caller's own claims about who it
    is.** This started as deprecation cleanup — Go 1.26 deprecates
    `httputil.ReverseProxy.Director`, and the ZTNA route proxy and the Ziti

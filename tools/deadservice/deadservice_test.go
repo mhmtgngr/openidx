@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"golang.org/x/tools/go/ssa"
+
+	"github.com/openidx/openidx/tools/racecost"
 )
 
 // The finding rule decides what this gate says about the tree, so it is tested
@@ -119,8 +121,8 @@ func TestEveryRegisterEntryCarriesAVerdict(t *testing.T) {
 // register that has drifted from the tree is a checker that has quietly stopped
 // checking.
 func TestTheRegisterMatchesTheTree(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping the whole-program analysis under -short")
+	if testing.Short() || racecost.Enabled {
+		t.Skip("skipping the whole-program analysis under -short or -race")
 	}
 	services, reachable, err := analyze("../../cmd/...")
 	if err != nil {
