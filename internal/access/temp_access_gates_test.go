@@ -332,7 +332,11 @@ func TestTheVendorIsNotToldHowThisDeploymentIsBroken(t *testing.T) {
 // and pointed at the vendor's own machine. An unset base is now a refusal at
 // issuance, where the operator can still fix it.
 func TestALinkPointsSomewhereRealOrIsNotIssued(t *testing.T) {
-	const token = "0123456789abcdef"
+	// Named rather than random-looking on purpose. A hex run assigned to
+	// something called `token` is what the secret scan is for, and this test
+	// does not need the value to look like a real one — it only has to come out
+	// the other end of the URL builder.
+	const token = "vendor-link-token-fixture"
 
 	for _, unset := range []string{"", "   ", "\t"} {
 		if _, err := tempAccessURL(unset, token); err == nil {
