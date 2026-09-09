@@ -730,16 +730,16 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.DELETE("/pam/entries/:id", svc.requireAdminRole(), svc.handlePamDeleteEntry)
 		api.POST("/pam/entries/:id/favorite", svc.handlePamFavoriteEntry)
 		api.DELETE("/pam/entries/:id/favorite", svc.handlePamUnfavoriteEntry)
-		api.POST("/pam/entries/:id/connect", svc.handlePamConnect)
+		api.POST("/pam/entries/:id/connect", svc.requireFreshMFA("pam.connect"), svc.handlePamConnect)
 		api.GET("/pam/entries/:id/ws", svc.handlePamWSConnect)
-		api.POST("/pam/entries/:id/reveal", svc.handlePamRevealEntry)
+		api.POST("/pam/entries/:id/reveal", svc.requireFreshMFA("pam.reveal"), svc.handlePamRevealEntry)
 		api.POST("/pam/entries/:id/request", svc.handlePamRequestAccess)
 
 		// v105 checkout controls — break-glass, dual-control (two-person rule),
 		// exclusivity. Break-glass and check-in share the reveal authorization
 		// surface (in-handler); the second-person authorization queue and the
 		// live-checkout ledger are admin-only.
-		api.POST("/pam/entries/:id/break-glass", svc.handlePamBreakGlass)
+		api.POST("/pam/entries/:id/break-glass", svc.requireFreshMFA("pam.break_glass"), svc.handlePamBreakGlass)
 		api.POST("/pam/entries/:id/checkin", svc.handlePamCheckin)
 		api.GET("/pam/checkout-authorizations", svc.requireAdminRole(), svc.handlePamListCheckoutAuthorizations)
 		api.POST("/pam/checkout-authorizations/:id/:decision", svc.requireAdminRole(), svc.handlePamDecideCheckoutAuthorization)
@@ -757,12 +757,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// login). The brokered-session ledger list is admin-only.
 		api.POST("/pam/ssh-ca/init", svc.requireAdminRole(), svc.handleInitSSHCA)
 		api.GET("/pam/ssh-ca", svc.handleGetSSHCA)
-		api.POST("/pam/connect/ssh", svc.handleSSHConnect)
+		api.POST("/pam/connect/ssh", svc.requireFreshMFA("pam.connect_ssh"), svc.handleSSHConnect)
 		// PAM B4: cloud console/CLI JIT elevation. STS AssumeRole → short-lived
 		// credentials + optional federated console URL, recorded in
 		// brokered_sessions (auto-expiring; no standing privilege).
-		api.POST("/pam/connect/cloud", svc.handleCloudConnect)
-		api.POST("/pam/brokered-sessions", svc.handleBrokerSession)
+		api.POST("/pam/connect/cloud", svc.requireFreshMFA("pam.connect_cloud"), svc.handleCloudConnect)
+		api.POST("/pam/brokered-sessions", svc.requireFreshMFA("pam.broker_session"), svc.handleBrokerSession)
 		api.GET("/pam/brokered-sessions", svc.requireAdminRole(), svc.handleListBrokeredSessions)
 		api.POST("/pam/brokered-sessions/:id/end", svc.handleEndBrokeredSession)
 
@@ -800,7 +800,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/apps", svc.requireAdminRole(), svc.handleWindowsAppCreate)
 		api.PUT("/pam/apps/:id", svc.requireAdminRole(), svc.handleWindowsAppUpdate)
 		api.DELETE("/pam/apps/:id", svc.requireAdminRole(), svc.handleWindowsAppDelete)
-		api.POST("/pam/apps/:id/launch", svc.handleWindowsAppLaunch)
+		api.POST("/pam/apps/:id/launch", svc.requireFreshMFA("pam.app_launch"), svc.handleWindowsAppLaunch)
 		api.GET("/pam/apps/:id/icon", svc.handleWindowsAppIcon)
 		// Distinct prefix (not /pam/apps/import) so the static segment doesn't
 		// collide with the /pam/apps/:id wildcard in gin's route tree.

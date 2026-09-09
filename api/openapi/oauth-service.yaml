@@ -323,6 +323,16 @@ paths:
                 code_verifier:
                   type: string
                   description: PKCE code verifier
+                agent_id:
+                  type: string
+                  description: >-
+                    Optional, authorization_code grant, native clients only. The
+                    enrolled device this session belongs to. The server binds the
+                    refresh-token family to it only if the agent is one it records
+                    as enrolled by the same user and not revoked, so that revoking
+                    the device revokes this session. A claim that does not check
+                    out is ignored and the session is left unbound; it is not an
+                    authentication of the device.
                 scope:
                   type: string
       responses:

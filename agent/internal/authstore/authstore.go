@@ -1,6 +1,12 @@
 // Package authstore persists the end-user OAuth tokens for the tray/desktop
-// session. MVP: a 0600 JSON file in the config dir. Hardening follow-up: move
-// secrets to the Windows Credential Manager / DPAPI (per-user).
+// session: the access token and the 30-day refresh token behind it.
+//
+// The file used to be written with os.WriteFile(..., 0600) and a comment
+// promising DPAPI as a "hardening follow-up". On Windows that mode is
+// discarded, so the promise was the only protection there and the file
+// inherited %ProgramData%'s ACL, where every local account can read.
+// agent/internal/secretfile now applies what each platform actually enforces —
+// DPAPI plus an explicit file ACL on Windows, the 0600 mode elsewhere.
 package authstore
 
 import (
@@ -9,26 +15,30 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/openidx/openidx/agent/internal/secretfile"
 	"github.com/openidx/openidx/agent/internal/sso"
 )
 
 const tokenFileName = "user-tokens.json"
 
-// Save writes the tokens to <dir>/user-tokens.json (0600).
+// Path is where the tokens live for a given config dir.
+func Path(dir string) string { return filepath.Join(dir, tokenFileName) }
+
+// Save writes the tokens to <dir>/user-tokens.json, protected per platform.
 func Save(dir string, t *sso.Tokens) error {
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
 	data, err := json.MarshalIndent(t, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, tokenFileName), data, 0600)
+	if err := secretfile.Write(Path(dir), data); err != nil {
+		return fmt.Errorf("saving session: %w", err)
+	}
+	return nil
 }
 
 // Load reads the persisted tokens, or returns (nil, nil) if none exist.
 func Load(dir string) (*sso.Tokens, error) {
-	data, err := os.ReadFile(filepath.Join(dir, tokenFileName))
+	data, err := secretfile.Read(Path(dir))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -44,9 +54,5 @@ func Load(dir string) (*sso.Tokens, error) {
 
 // Clear removes the persisted tokens (sign-out).
 func Clear(dir string) error {
-	err := os.Remove(filepath.Join(dir, tokenFileName))
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return secretfile.Remove(Path(dir))
 }

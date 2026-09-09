@@ -37,7 +37,9 @@ import (
 // live OpenIDX server. The default implementation (realBackend) calls the
 // existing packages verbatim.
 type backend interface {
-	Login(ctx context.Context, serverURL string) (*sso.Tokens, error)
+	// Login carries the enrolled agent id (empty when not enrolled) so the
+	// session can be bound to the device and revoked with it.
+	Login(ctx context.Context, serverURL, agentID string) (*sso.Tokens, error)
 	Enroll(logger *zap.Logger, serverURL, token, configDir string) (agentID, deviceID, zitiIdentity string, err error)
 	PamList(ctx context.Context, serverURL, token string) ([]desktoppam.Entry, error)
 	PamConnect(ctx context.Context, serverURL, token, entryID string) (connectURL string, err error)
@@ -58,8 +60,8 @@ type Engine struct {
 	serverURL string
 	logger    *zap.Logger
 
-	be         backend
-	newDialer  func(identityFile string) (zitiDialer, error)
+	be           backend
+	newDialer    func(identityFile string) (zitiDialer, error)
 	loginTimeout time.Duration
 
 	mu                 sync.Mutex
@@ -165,7 +167,7 @@ func (e *Engine) Login() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), e.loginTimeout)
 	defer cancel()
 
-	tok, err := e.be.Login(ctx, e.serverURL)
+	tok, err := e.be.Login(ctx, e.serverURL, e.enrolledAgentID())
 	if err != nil {
 		return "", fmt.Errorf("login failed: %w", err)
 	}
@@ -194,6 +196,10 @@ func (e *Engine) LoginStart() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("login failed: %w", err)
 	}
+	// Name the device, so the server binds this session's refresh family to it
+	// and revoking the phone revokes the session (v185). Persisted with the
+	// rest of the flow below, so the cold-start path sends it too.
+	m.BindDevice(e.enrolledAgentID())
 	e.mu.Lock()
 	e.pendingMobileLogin = m
 	e.mu.Unlock()
@@ -273,9 +279,42 @@ func (e *Engine) LoginFinish(callbackURL string) (string, error) {
 	return toJSON(userPayload{Sub: sub, Email: email, Exp: exp})
 }
 
-// Logout clears the cached OAuth session.
+// Logout ends the session on the server and then clears the local copy.
+//
+// It used to be authstore.Clear alone. Deleting the file makes the app look
+// signed out; the refresh token it deleted stayed valid on the server for its
+// full 30 days, so anyone who had already copied it — the case "sign out on a
+// shared or lost device" exists for — kept a working credential. RFC 7009
+// revocation is what actually ends it.
+//
+// The local clear happens whichever way the revocation goes: a user who signs
+// out must not remain signed in because the network was down. A failure is
+// logged rather than returned for the same reason.
 func (e *Engine) Logout() error {
+	if tok, err := authstore.Load(e.configDir); err == nil && tok != nil && tok.RefreshToken != "" && e.serverURL != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		// The client id is what the token endpoint authenticates the CALLER as;
+		// handleRevoke identifies the token by its own value, so this names the
+		// public client this engine uses (as AccessToken's refresh does) rather
+		// than deciding which client minted the session.
+		if rerr := sso.Revoke(ctx, e.serverURL, sso.MobileClientID, tok.RefreshToken); rerr != nil {
+			e.logger.Warn("sign-out: server-side revocation failed; the refresh token stays valid until it expires",
+				zap.Error(rerr))
+		}
+	}
 	return authstore.Clear(e.configDir)
+}
+
+// enrolledAgentID is the agent id this installation is enrolled as, or "" when
+// it is not enrolled yet. A login that names it can be revoked with the device
+// (v185); one that cannot name it is simply unbound.
+func (e *Engine) enrolledAgentID() string {
+	cfg, err := agent.LoadConfig(e.configDir)
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return cfg.AgentID
 }
 
 type enrollPayload struct {
@@ -376,21 +415,28 @@ func (e *Engine) RegisterPushDevice(deviceToken, platform string) (string, error
 }
 
 type postureCheck struct {
-	Type     string `json:"type"`
-	Severity string `json:"severity"`
-	Status   string `json:"status"`
+	Type     string  `json:"type"`
+	Severity string  `json:"severity"`
+	Status   string  `json:"status"`
 	Score    float64 `json:"score"`
-	Message  string `json:"message,omitempty"`
+	Message  string  `json:"message,omitempty"`
+	// Unsupported: this check has no implementation for the running OS, so its
+	// status describes the build, not the device.
+	Unsupported bool `json:"unsupported,omitempty"`
 }
 
 type posturePayload struct {
-	Compliant bool           `json:"compliant"`
-	Passed    int            `json:"passed"`
-	Failed    int            `json:"failed"`
-	Warned    int            `json:"warned"`
-	Errored   int            `json:"errored"`
-	RanAt     string         `json:"ran_at"`
-	Checks    []postureCheck `json:"checks"`
+	Compliant bool `json:"compliant"`
+	Passed    int  `json:"passed"`
+	Failed    int  `json:"failed"`
+	Warned    int  `json:"warned"`
+	Errored   int  `json:"errored"`
+	// Unsupported counts the checks that could not run on this operating
+	// system. It is separate from Warned because it is not a fact about the
+	// device at all.
+	Unsupported int            `json:"unsupported"`
+	RanAt       string         `json:"ran_at"`
+	Checks      []postureCheck `json:"checks"`
 }
 
 // Posture runs the device's configured compliance checks locally and returns a
@@ -418,19 +464,32 @@ func (e *Engine) Posture() (string, error) {
 	defer cancel()
 	results := eng.RunChecks(ctx, cfg.Checks)
 
-	out := posturePayload{RanAt: time.Now().UTC().Format(time.RFC3339)}
+	return toJSON(summarisePosture(results, time.Now().UTC().Format(time.RFC3339)))
+}
+
+// summarisePosture turns check results into the payload a GUI reads. It is a
+// pure function separated from Posture() so its arithmetic — which is where
+// the compliance claim is actually made — can be driven by tests with the
+// result shapes of platforms the test host is not. Posture() itself can only
+// ever exercise the platform it runs on, which is precisely why the Android
+// and iOS behaviour went unnoticed.
+func summarisePosture(results []checks.EngineResult, ranAt string) posturePayload {
+	out := posturePayload{RanAt: ranAt}
 	for _, r := range results {
 		pc := postureCheck{Type: r.CheckType, Severity: r.Severity}
 		if r.Result != nil {
 			pc.Status = string(r.Result.Status)
 			pc.Score = r.Result.Score
 			pc.Message = r.Result.Message
-			switch r.Result.Status {
-			case checks.StatusPass:
+			pc.Unsupported = r.Result.Unsupported
+			switch {
+			case r.Result.Unsupported:
+				out.Unsupported++
+			case r.Result.Status == checks.StatusPass:
 				out.Passed++
-			case checks.StatusFail:
+			case r.Result.Status == checks.StatusFail:
 				out.Failed++
-			case checks.StatusWarn:
+			case r.Result.Status == checks.StatusWarn:
 				out.Warned++
 			default:
 				out.Errored++
@@ -438,8 +497,25 @@ func (e *Engine) Posture() (string, error) {
 		}
 		out.Checks = append(out.Checks, pc)
 	}
-	out.Compliant = out.Failed == 0 && out.Errored == 0
-	return toJSON(out)
+
+	// Compliance is a claim about the device, so it may only be made when the
+	// device was actually examined.
+	//
+	// This was `Failed == 0 && Errored == 0`. Every check that has no
+	// implementation for the running OS answers StatusWarn, and warns did not
+	// count -- so on Android and iOS, where seven of the ten checks have no
+	// implementation, the engine reported COMPLIANT and the companion app drew
+	// a green badge on a phone whose disk encryption (severity: critical) and
+	// screen lock had never been looked at. A user reading that badge would
+	// reasonably conclude their device had been checked and had passed.
+	//
+	// Two conditions now, both necessary: nothing failed or errored, AND
+	// nothing was skipped for want of an implementation. A platform with no
+	// checks at all therefore cannot be called compliant either, which is the
+	// right answer to "is this device healthy?" from a build that cannot tell.
+	out.Compliant = out.Failed == 0 && out.Errored == 0 && out.Unsupported == 0 &&
+		(out.Passed+out.Warned) > 0
+	return out
 }
 
 // PamList returns the caller's launchable PAM connections as a JSON array.

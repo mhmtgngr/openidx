@@ -33,6 +33,68 @@ String _asString(Object? v, [String fallback = '']) {
   return v.toString();
 }
 
+/// What the server currently allows this device to do, from `GET /device-state`.
+///
+/// The client used to know only what was on disk — enrolled, has a Ziti
+/// identity, signed in — which cannot tell a device that is waiting for an
+/// administrator from one that is working, or either from one that has been
+/// revoked. A device that is waiting then looks, to its user, exactly like a
+/// device that is broken. These four fields are the server's answer; the words
+/// shown to the user are the UI's job (see DeviceStateBanner).
+class DeviceState {
+  const DeviceState({
+    required this.enrolled,
+    required this.state,
+    required this.deviceTrusted,
+    required this.serverReachable,
+    this.error = '',
+  });
+
+  /// Is there an agent identity on this device at all (local truth).
+  final bool enrolled;
+
+  /// `pending`, `active`, `suspended`, `revoked`, `not_enrolled`, or `unknown`
+  /// when the server could not be asked.
+  final String state;
+
+  /// The IAM device-trust flag the overlay's `#device-trusted` follows. Only
+  /// ever true alongside an `active` state.
+  final bool deviceTrusted;
+
+  /// False means "I could not ask", which must never be rendered as a refusal.
+  final bool serverReachable;
+
+  /// Why the ask failed, when it did.
+  final String error;
+
+  factory DeviceState.fromJson(Map<String, dynamic> json) => DeviceState(
+        enrolled: _asBool(json['enrolled']),
+        state: _asString(json['state'], 'unknown'),
+        deviceTrusted: _asBool(json['device_trusted']),
+        serverReachable: _asBool(json['server_reachable']),
+        error: _asString(json['error']),
+      );
+
+  static const DeviceState unknown = DeviceState(
+    enrolled: false,
+    state: 'unknown',
+    deviceTrusted: false,
+    serverReachable: false,
+  );
+
+  /// True when the device is enrolled and the server has not yet approved it.
+  bool get waitingForApproval => state == 'pending';
+
+  /// True when the device works but has not earned device trust (Tier 1).
+  bool get tierOne => state == 'active' && !deviceTrusted;
+
+  /// True when the device has earned device trust (Tier 2).
+  bool get tierTwo => state == 'active' && deviceTrusted;
+
+  /// True when an administrator has taken this device off the fleet.
+  bool get revoked => state == 'revoked';
+}
+
 /// `GET /status`
 class AgentStatus {
   const AgentStatus({
@@ -133,6 +195,7 @@ class PostureCheck {
     required this.status,
     required this.score,
     required this.message,
+    this.unsupported = false,
   });
 
   final String type;
@@ -141,12 +204,18 @@ class PostureCheck {
   final double score;
   final String message;
 
+  /// The engine has no implementation of this check for this operating system,
+  /// so [status] describes the build and not the device. Seven of the ten
+  /// checks are in this position on Android and iOS.
+  final bool unsupported;
+
   factory PostureCheck.fromJson(Map<String, dynamic> json) => PostureCheck(
         type: _asString(json['type']),
         severity: _asString(json['severity']),
         status: _asString(json['status']),
         score: _asDouble(json['score']),
         message: _asString(json['message']),
+        unsupported: _asBool(json['unsupported']),
       );
 }
 
@@ -160,6 +229,7 @@ class Posture {
     required this.errored,
     required this.ranAt,
     required this.checks,
+    this.unsupported = 0,
   });
 
   final bool compliant;
@@ -169,6 +239,17 @@ class Posture {
   final int errored;
   final String ranAt;
   final List<PostureCheck> checks;
+
+  /// How many checks could not run on this device at all. Separate from
+  /// [warned] because it is not a fact about the device: it says the engine
+  /// has no implementation here, and the engine withholds [compliant] whenever
+  /// it is non-zero.
+  final int unsupported;
+
+  /// Whether this build could examine the device at all. False on a platform
+  /// where nothing ran — which is the honest answer to "is my phone healthy?"
+  /// from a client that cannot tell.
+  bool get assessable => (passed + failed + warned + errored) > 0;
 
   factory Posture.fromJson(Map<String, dynamic> json) {
     final rawChecks = json['checks'];
@@ -188,6 +269,7 @@ class Posture {
       errored: _asInt(json['errored']),
       ranAt: _asString(json['ran_at']),
       checks: checks,
+      unsupported: _asInt(json['unsupported']),
     );
   }
 
@@ -197,6 +279,7 @@ class Posture {
     failed: 0,
     warned: 0,
     errored: 0,
+    unsupported: 0,
     ranAt: '',
     checks: <PostureCheck>[],
   );

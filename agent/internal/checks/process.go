@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -26,6 +27,31 @@ func (c *ProcessCheck) Run(_ context.Context, params map[string]interface{}) *Ch
 			Status:  StatusPass,
 			Score:   1.0,
 			Message: "no processes configured to check",
+		}
+	}
+
+	// The enumeration below globs /proc, which is the process table on Linux
+	// and on nothing else this agent runs on. On Windows and macOS the glob
+	// matches nothing; on Android the kernel has hidden other processes from
+	// unprivileged apps since API 24; on iOS there is no /proc at all. In every
+	// one of those cases listRunningProcesses returns an EMPTY list without an
+	// error, so every configured process was reported missing and the check
+	// returned StatusFail — naming processes that were very likely running.
+	//
+	// A check that cannot see the process table must say so. Reporting a
+	// failure it cannot substantiate is worse than reporting nothing: it puts
+	// a red mark on a healthy machine, and an operator who learns to ignore it
+	// has learned to ignore the real ones too.
+	if runtime.GOOS != "linux" {
+		return &CheckResult{
+			Status:      StatusWarn,
+			Score:       0.5,
+			Unsupported: true,
+			Message:     fmt.Sprintf("process check not supported on %s (no readable process table)", runtime.GOOS),
+			Details: map[string]interface{}{
+				"os":       runtime.GOOS,
+				"required": required,
+			},
 		}
 	}
 

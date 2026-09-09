@@ -7,7 +7,391 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A fresh second factor for a privileged launch and an admin write**
+  (`STEPUP_GATE`, default `off`). The product has been able to demand a
+  mid-session re-authentication since `/oauth/stepup-challenge`, `-verify` and
+  `-status` shipped, and nothing has ever demanded one: the `step_up` JWT those
+  endpoints mint is read by no handler, no middleware and no gate, so
+  completing a challenge left the caller exactly as permitted, or refused, as
+  before. Meanwhile a laptop that signed in at 09:00 could open an RDP session
+  to a domain controller at 19:00, or reveal a stored credential, or delete a
+  user, and be asked nothing.
+
+  What was missing was a fact, not a mechanism. `sessions.auth_methods` (v133)
+  records that a session used MFA and never records *when*, so a ten-hour-old
+  factor and a ten-second-old one are the same row. Migration **v186** adds
+  `sessions.mfa_verified_at`, stamped at login — derived from the auth methods
+  the login already records, so a login path added later cannot record `mfa`
+  and forget the timestamp — and stamped again by `/oauth/stepup-verify`, which
+  is what finally gives step-up an effect. Refreshing an access token
+  deliberately does not refresh it, so a native client holding a long-lived
+  refresh token cannot refresh its way out of proving who is holding the
+  device. Existing sessions are backfilled from `started_at` where their
+  recorded methods include `mfa` — the moment that session's factor really was
+  verified, not an invention — so an upgrade does not declare every live MFA
+  session stale.
+
+  The gate (`internal/stepup`) is the same tri-state as the assignment, ABAC,
+  PAM-risk and posture gates: `off` (default, no query at all), `observe`
+  (record who would be asked, permit) and `enforce`. Both branches write to
+  `unified_audit_events` through the shared decision shape, carrying the
+  factor's age and the window alongside the canonical keys — an operator in
+  observe mode is choosing a *number*, which a denial count alone cannot
+  inform. Enforcement points: the PAM launch and reveal routes, and every write
+  made with admin authority (hung off `requireAdminRole` in the access service
+  and a `/api/v1` middleware in the admin API, rather than a list of sensitive
+  endpoints, so a route written tomorrow is covered the day it lands). Reads
+  are never gated. Machine identities — API keys, service accounts,
+  client-credentials tokens — are never gated in any mode: step-up asks a
+  person to touch a key, and an unattended integration has nobody to ask, so a
+  gate there would produce an outage rather than a prompt. A refusal is `403
+  step_up_required` naming `/oauth/stepup-challenge`, because a 403 that only
+  says no leaves a user with a legitimate need and no route to it.
+
+  `security.reauth_interval` gets its first reader: it has existed as a v63
+  column, a field of the console's settings document and
+  `SessionPolicy.ReauthInterval`, consulted by nothing. It now sets the window,
+  with `STEPUP_MAX_AGE` (15 minutes) as the deployment default. A window of
+  zero under an enabled gate means the default, not "no window" — otherwise
+  turning the gate on would produce a gate that gates nothing.
+
+  A census requires every mutating `/pam/` route to carry a gate or a written
+  reason. Writing it found `POST /pam/apps/:id/launch`, which opens a brokered
+  Windows session through Guacamole and which the first pass had missed while
+  gating its five obvious siblings.
+
+
+- **A client access design** — `docs/CLIENT-ACCESS-DESIGN.md`: registration,
+  MFA, ZTNA tiers, permissions per role per client, revocation, secrets at rest
+  and the production gate, for the Windows agent, the Android agent and the
+  companion app, with an ordered implementation plan (Android and Windows first)
+  and the operator rollout order. Every "today" statement in it was read from
+  the file it names. Its three load-bearing findings: the Android agent's OAuth
+  enrollment could never work (fixed below); **revoking a device leaves its
+  30-day refresh token alive**; and on Windows every secret sits under
+  `%ProgramData%` protected by Unix mode bits Windows ignores.
+
 ### Fixed
+
+- **The companion app told people their phone was Compliant when it had never
+  been examined.** The Go engine's posture checks dispatch on `runtime.GOOS`
+  with branches for linux, darwin and windows; anything else gets a warning
+  saying the check is not supported there. The companion app IS anything else —
+  gomobile builds it as `GOOS=android` and `GOOS=ios` — so seven of the ten
+  checks, disk encryption and screen lock among them, returned that warning
+  without looking at the device. `Engine.Posture()` computed compliance as
+  "nothing failed and nothing errored", and warnings are neither, so the
+  summary came out compliant and the home screen drew a green badge with a
+  tick. Disk encryption is configured at severity `critical`.
+
+  Nothing in the repository could see it. The code compiles for Android, the
+  tests pass on the Linux runner where those same checks take a real branch,
+  the JSON is well-formed, and "0 failures" is perfectly true of a device
+  nobody looked at.
+
+  `CheckResult.Unsupported` now separates "I could not measure this" from "I
+  measured it and it is mildly concerning". Compliance requires that nothing
+  failed, nothing errored, **nothing was skipped for want of an
+  implementation**, and that at least one check actually ran — so a build that
+  cannot examine the device says so instead of calling it healthy. The card
+  gains a third headline state, names the checks that could not run, and says
+  a managed device reports posture through the device agent instead.
+
+  Two more checks were answering where they cannot see:
+
+  - `os_version` reported `uname` on Android and iOS, which is the **Linux
+    kernel release** — "5.10.101" where a `min_version` policy means "14". The
+    comparison is not wrong so much as meaningless, and a mismatch returns
+    `StatusFail`, so it would have marked healthy phones as failing policy.
+  - `process_running` globbed `/proc`, which is the process table on Linux and
+    nowhere else this agent runs. On Windows and macOS the glob matches
+    nothing, on Android the kernel has hidden other processes from unprivileged
+    apps since API 24, and on iOS there is no `/proc` — and in every case the
+    empty list meant every configured process was reported **missing**. A red
+    mark on a healthy machine teaches an operator to ignore the red marks.
+
+  Both now decline where they cannot answer.
+
+- **`tools/posturevocab`**, a new gate: it holds each posture check next to the
+  operating systems it can actually examine, across both clients that report
+  posture to the same `check_type` column — the Go engine and the Kotlin
+  Android agent. Coverage is derived from where a check DECLINES, and an
+  unrecognised declining shape is an error rather than a guess. It fails the
+  build when two clients implement one check for one platform: two
+  implementations of one word, in two languages, reporting to one column will
+  drift, and the server cannot tell which one answered. One collision is
+  registered with its reason (`agent_version`, which describes two different
+  binaries installed side by side); the other two the first run found were
+  defects, and were fixed rather than registered.
+
+
+- **Six settings queries read rows nothing has ever written.** `system_settings`
+  is a key/value table; the console reads and writes the whole settings
+  document under the key `system`. Four other places read settings out of the
+  same table under keys no code and no migration has ever created —
+  `settings` (the OAuth session policy), `security` and `authentication` (the
+  SOC 2 / ISO 27001 assessments, five queries), and
+  `failed_login_lockout_threshold` / `failed_login_lockout_duration` (the
+  account lockout). Every one of those queries returned no rows on every
+  install that has ever run, and every one treated no-rows as "not configured"
+  and carried on with a compiled-in default. Nothing failed and nothing logged.
+
+  Visibly: the console's Security tab could set an idle timeout, an absolute
+  timeout, a remember-me duration, a re-authentication interval, IP binding and
+  a concurrent-session policy, and the OAuth session policy applied its
+  defaults regardless; "Max failed logins" and "Lockout duration" were saved
+  and the lockout ran on 5 attempts and 15 minutes whatever they said; and the
+  ISO 27001 assessment deducted 40 points and reported *"No security policy
+  configuration found in system_settings"* on installs whose policy was fully
+  configured — a compliance finding, in the document an auditor reads, that was
+  simply false.
+
+  All six now read through `internal/common/syssettings`, the single reader,
+  with one key constant. Two field names were wrong as well and are corrected
+  (`require_special`, not `require_special_chars`; `max_age`, not
+  `max_age_days`), and the ISO session-management control now converts the idle
+  timeout from seconds to the minutes it reports. A census test holds the tree
+  to it: both halves are derived from the source — keys read from the SQL
+  string literals, keys written from the INSERT literals, the migration seeds
+  and the settings repository's `PutRaw` calls — and a key read with no writer
+  fails the build. One key is registered as deliberately read-only with its
+  reason (`oauth_rsa_private_key`, the pre-v79 signing key imported once at
+  boot), and an entry that stops reproducing fails too, so the register can
+  only shrink.
+
+  Two dead reads are removed rather than repointed: the ISO cryptography
+  control queried `tls_enabled`, `tls_min_version`, `encryption_at_rest` and
+  `key_rotation_enabled`, none of which exists anywhere in the settings
+  document, so its four values have always been the literals they are
+  initialised to. They still are, and the comment now says so — sourcing them
+  from the deployment's real TLS and encryption configuration is a separate
+  change.
+
+
+- **A device waiting for approval looked exactly like a broken one.** The
+  client knew only what was on disk — enrolled, has a Ziti identity, signed in —
+  which cannot tell "enrolled and waiting for an administrator" from "enrolled
+  and working", or either from "revoked". The server has always known: `GET
+  /agent/config` branches on the agent's status to decide which posture checks
+  to send, and answers `403` for a revoked one. It never said so.
+
+  It does now: `enrollment_status` and `device_trusted` on the config response
+  (the IAM device-trust flag the overlay's `#device-trusted` attribute follows,
+  read from the linked `known_devices` row). The engine gains `DeviceState()`,
+  which asks with the device's own agent credential and returns a flat payload;
+  it is bound for gomobile and wired through all three plugin bridges, and the
+  desktop control server serves it at `GET /device-state`. The companion app
+  renders it as a banner above everything else, with one line of what the state
+  means and one of what changes it.
+
+  Five states rather than three, because two of them were being hidden:
+  **revoked** is named instead of surfacing as a network error, and **cannot
+  check with the server** is kept distinct from a refusal — a phone in a lift
+  must not be told it has been revoked. Trust is only ever shown alongside an
+  active status, and a server too old to report the field produces "unknown"
+  rather than a confident "active" the server never granted.
+
+- **Device enrolment's no-database fallback had no environment gate.**
+  `HandleEnroll` ends in a branch that accepts any non-empty token and mints a
+  working agent credential for it, under the comment "Dev mode: no DB, accept
+  any non-empty token". It is latent rather than live — `cmd/access-service`
+  fatals without `database_url` — and that is why it needed a gate rather than a
+  comment: what keeps it unreachable is a startup check in a different package,
+  so a refactor that makes the pool optional, or a handler constructed without
+  one, would arm an unauthenticated enrolment endpoint silently. It is now
+  allowed only under `APP_ENV=development`, and refused **when no config is
+  present at all** — a gate whose safe state depends on someone having wired
+  configuration is not a gate. The refusal is a `503` and is audited.
+
+- **On Windows the agent's secrets were protected by a mode Windows discards.**
+  `user-tokens.json` (the signed-in user's access token and their 30-day
+  refresh token) and `control-endpoint.json` (the loopback bearer that fully
+  drives the control engine — sign-in, enrolment, PAM launch, Ziti dial) were
+  both written with `os.WriteFile(..., 0600)`. Go maps that to "not read-only"
+  on Windows and nothing else, so each file inherited the ACL of
+  `%ProgramData%\OpenIDX\agent` and, through it, `%ProgramData%`, where
+  `BUILTIN\Users` can read. Every local account could read the refresh token
+  and the control bearer, and both call sites said `0600`, which is what made
+  it invisible. `authstore.go` even carried the note "hardening follow-up:
+  DPAPI".
+
+  New `agent/internal/secretfile` writes each file the way the platform
+  enforces: on Windows **DPAPI** (`CryptProtectData`, per-user scope, so the
+  bytes are useless to another account) plus an **explicit file DACL** —
+  SYSTEM, Administrators and the writing user, with inheritance switched off so
+  `%ProgramData%`'s entries stop applying. Elsewhere it is the same 0600 file as
+  before, re-asserted on every write (`os.WriteFile` applies its mode only when
+  it creates the file, so a token file left world-readable once stayed that way
+  through every later sign-in). A file written before this exists still loads,
+  so an upgrade does not sign anyone out.
+
+  The Windows-only tests are run by a Windows job. `windows-client-build.yml`
+  runs the agent's `go test ./...` on `ubuntu-latest`, where every
+  `//go:build windows` file is compiled out — so its `windows-latest` job now
+  runs the packages with Windows-specific behaviour, and the DPAPI round trip
+  and the DACL assertions execute on the platform they describe.
+
+  Not covered, deliberately: `agent.json` carries the agent's own `auth_token`
+  and is read by both the SYSTEM service and the user's tray, so a per-user
+  blob would break one of them. That one needs a directory-ACL decision and is
+  recorded in `docs/CLIENT-ACCESS-DESIGN.md` §4 rather than half-done here.
+
+- **Any signed-in user could answer another user's push-MFA prompt.**
+  `POST /api/v1/identity/mfa/push/verify` is on the authenticated identity
+  group, and `isIdentitySelfService` admits every authenticated user to
+  anything under `/mfa/` — "the caller's own MFA verification", says the
+  comment. The handler read `challenge_id` and the two-digit number from the
+  body and never compared the challenge's user to the caller, so the comment
+  was not true of this route. `VerifyPushMFAChallenge` now takes the
+  authenticated subject and refuses a challenge that is not theirs (`403`).
+
+  Three things in the same handler, found with it:
+
+  - **The number match had no attempt limit.** A wrong code returned an error
+    and left the challenge pending, so all ninety two-digit values could be
+    tried in turn. Three wrong answers now deny the challenge outright; when
+    no Redis counter is available the first wrong answer is final, because a
+    missing counter must never read as an unlimited one.
+  - **The approving device was never checked.** Revoking a phone deletes its
+    overlay identity, untrusts it and (above) revokes its tokens, and left its
+    push registration on the approver list. An approval now requires the push
+    registration to be enabled and, when it was created by a device enrolment
+    (the v135 `agent_id` linkage), the enrolled agent to be active. A **deny**
+    is never refused on device grounds — a revoked phone reporting "this wasn't
+    me" is a signal worth keeping.
+  - **A prompt could be raised for somebody else.** `POST /mfa/push/challenge`
+    took `user_id` from the request body on that same open route: one account
+    could make another account's phone buzz on demand, and learn the challenge
+    id it got back. It is raised for the caller only now (`403` otherwise). The
+    login flow is unaffected — it calls `CreatePushMFAChallenge` in-process.
+
+  Also corrected: `push_mfa.auto_approve` logged "Auto-approving push
+  challenge" and approved nothing. It skips the FCM/APNs send; the prompt still
+  goes out over ntfy and still needs a tap and the right number. The log line
+  now says that.
+
+- **Revoking a device did not revoke its tokens.** `executeDeviceRevoke` deleted
+  the Ziti identity, terminated the overlay sessions and untrusted the known
+  device — every pillar except the one a phone actually talks to. Nothing
+  recorded which device a token belonged to, and the native clients hold a
+  **30-day** refresh token (`refresh_token_lifetime = 2592000`, v84/v85), so a
+  revoked phone could not dial a service and went on acting as the user over
+  plain HTTP for up to a month, including approving push-MFA challenges.
+
+  Migration **v185** adds `oauth_refresh_tokens.agent_id` (nullable, partial
+  index, no backfill — NULL means "not bound", the pre-v185 state). A native
+  client names its device with `agent_id` at the code exchange and the server
+  binds it only if the agent is one it records as enrolled by that same user and
+  not revoked (`internal/oauth/device_binding.go`); rotation carries the binding
+  forward like `family_id`, so a chain that has refreshed is still findable.
+  `/agent/enroll/oauth` binds the enrolling bearer's own session to the agent it
+  has just issued — the Android path, where the server knows both halves and no
+  client claim is involved. `executeDeviceRevoke` then revokes every bound
+  family, marks the sessions those families ran under revoked, publishes the
+  `revoked_session:<id>` markers the refresh grant honours, and reports both
+  counts; the console's revoke toast says what happened, including when no
+  session was bound to the device.
+
+  **Signing out now reaches the server.** `Engine.Logout`, the Windows tray's
+  Sign out and `openidx-agent logout` call `/oauth/revoke` (RFC 7009) before
+  clearing local state, which used to be all they did — the deleted refresh
+  token stayed valid for its full lifetime. The local session is cleared either
+  way, and a failed revocation is reported rather than swallowed.
+
+  Bounded honestly: an access token already minted to the device keeps working
+  until it expires (one hour for the native clients), because only the refresh
+  grant consults the session marker. `agent_id` is a routing key for revocation,
+  not an authentication of the device — a client can omit it and be handed an
+  unbound token, exactly as before.
+
+- **The Android agent's first screen could not enroll a device, on any
+  install.** `EnrollmentActivity` shows "Sign in with your work email to enroll
+  this device" and runs a PKCE flow as `client_id=openidx-agent-android` with
+  scope `agent.enroll`. No migration ever seeded that client — the native
+  clients were `openidx-mobile` (v84) and `openidx-desktop` (v85) — and
+  `scopeAllowedForClient` refuses a scope the client is not registered for, so
+  the authorize request answered `invalid_client` since the day the screen was
+  written. The QR/token path beside it worked, which is why nobody noticed.
+
+  Migration **v184** seeds the client (public, PKCE, redirect
+  `com.openidx.agent://oauth/redirect`, scopes `openid profile offline_access
+  agent.enroll`). The auth middleware now exposes the token's granted `scope`
+  beside `amr`, and `/agent/enroll/oauth` **requires `agent.enroll`** — so a
+  console session token, which no browser client can obtain that scope for, can
+  no longer enroll a device by accident (`403 insufficient_scope`). The same
+  handler now makes the same auto-trust decision as the enrollment-session
+  path (MFA-verified from `amr`, `DEVICE_AUTOTRUST_MODE`) instead of passing a
+  literal `trusted=false`.
+
+  The guard that would have caught this on the day it was written:
+  `TestEveryShippedClientIsSeededByAMigration` derives every `client_id`,
+  redirect URI and requested scope from the shipped clients' own source
+  (`agent/internal/sso/sso.go` and the Kotlin `OAuthEnrollmentFlow`) and checks
+  each against every migration's `oauth_clients` INSERT. A client named in
+  source and seeded nowhere fails the build rather than the user's first
+  sign-in.
+
+- **The iOS build could finish a login in the browser and never receive the
+  redirect.** Two `openidx://` links arrive from outside the app and must be
+  routed by the operating system — `openidx://oauth-callback`, the server's 302
+  after login (`agent/internal/sso/sso.go`'s `MobileRedirectURI`), and
+  `openidx://enroll`, the QR-free enrolment link. Android routes both through a
+  committed manifest. **iOS routed neither**: `client/.gitignore` excludes
+  `/ios/` because `flutter create` generates it, Flutter's template carries no
+  `CFBundleURLTypes`, and nothing put the entry back. The `.ipa` attached to
+  every release therefore had no way to complete a sign-in, on a build that
+  compiled, analyzed and packaged clean.
+
+  Verified rather than assumed in the other direction too: the remaining two
+  links the client parses — `openidx://qr-login` from the camera scanner and
+  `openidx://approve` from a notification tap — arrive inside the app and need
+  no platform registration, so Android's two intent-filters were already
+  complete.
+
+  `scripts/ci-configure-ios-deeplinks.sh` registers the scheme in the plist
+  `flutter create` just generated, reading the scheme out of the Android
+  manifest so the two platforms cannot drift, and refusing to run rather than
+  no-op when the plist is absent. All five iOS-materializing CI jobs call it,
+  and `scripts/check-ios-deeplink-config.sh` fails the build on the next job
+  that skips it — including one that runs the step *before* the create, where
+  there is nothing to patch.
+
+- **The mobile engine's boundary was unchecked in four different senses, and
+  three of them were invisible.** The gomobile engine in `agent/mobile` is the
+  code that runs on every enrolled phone; its seventeen exported bindings are
+  the whole contract between the Flutter client and the agent.
+
+  1. **No CI job ran its tests.** The agent module's only test invocation was
+     `go test ./internal/...`, and measured with `go list`, exactly two packages
+     holding tests sit outside `./internal/...` — `agent/mobile` and
+     `agent/cmd/openidx-agent`, the agent's own entry point. Five tests, run
+     nowhere, including the one asserting the bindings are gomobile-bindable at
+     all.
+  2. **That invocation could not fail.** It ended `2>&1 | tail -20`, and GitHub
+     runs `run:` under `bash -e` without `pipefail`, so the step reported
+     `tail`'s status. Reproduced: `bash -e -c 'false 2>&1 | tail -20'` exits 0.
+     It was the only instance of the shape in the tree, and
+     `scripts/check-run-blocks-can-fail.sh` now carries a second rule that
+     flags it — with the real line, verbatim, as a self-test case.
+  3. **The signature census was a hand-written list of sixteen** where the
+     package exports seventeen. The one it omitted was `RegisterPushDevice`,
+     the push-registration binding all three platform bridges wire. It now
+     derives the set from the package's own AST.
+  4. **The bindings are re-declared by hand in three more languages** — the
+     Dart plugin, the Kotlin `when` arms, the Swift `case`s — and nothing
+     checked the four agree. They do today. What they permitted is quiet and
+     one-sided: add a binding, wire Dart and Kotlin, forget Swift, and Android
+     is fine while iOS answers `MissingPluginException` at runtime, on a screen
+     that looks finished, in a build that compiled and analyzed clean.
+     `agent/mobile/bridge_test.go` now derives the Go side and requires each
+     platform to answer for it in both directions.
+
+  The workflow's path filter gained `client/plugins/openidx_engine/**` for the
+  same reason: filtering on `agent/**` alone would have left the new census
+  blind exactly where the defect lives — editing the Swift plugin would not
+  have run the test that exists to check the Swift plugin.
 
 - **The Race Detector CI check went red for 13 GB of type-checking, not for a
   race.** `go test -race ./...` reaches `./tools/...`, where two gates answer a
@@ -41,6 +425,205 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   analyzer is named before the job has to die for it.
 
 ### Security
+
+- **The local control socket was world-connectable for the length of one
+  syscall.** On Unix the control server has no bearer token: the socket's
+  filesystem permissions *are* the authentication, and what they guard has no
+  second lock — `/token` hands out the signed-in user's access token,
+  `/pam/connect` launches a privileged session, `/ziti/dial` opens the overlay.
+  That mode was established one step too late. `net.Listen` creates a Unix
+  socket at `0777 &^ umask`, and a daemon's usual umask of `022` leaves it
+  `0755` until the `os.Chmod(0600)` on the following line — at a fixed,
+  predictable path under `$XDG_RUNTIME_DIR` or `/tmp`. A connection accepted in
+  that window is not closed by the chmod that follows it. The bind now happens
+  under a narrowed umask, so the socket is `0600` from the instant it exists;
+  the chmod stays as belt and to repair a socket left by an older build. The
+  test that proves this calls the bind alone and reads the mode with no chmod in
+  between, because reading it afterwards proves only that the chmod ran.
+
+- **The control server's bearer token was compared with `!=`.** Go's string
+  comparison returns at the first differing byte, so the time it takes leaks how
+  many leading bytes were right — and this is the one place in the product where
+  that is most usable, because the caller is on the same machine and can retry
+  without network jitter. `internal/oauth` compares the client secret with
+  `subtle.ConstantTimeCompare` for exactly this reason; this one was missed.
+  `authWrap` also had **no test that sent a wrong token**: every existing case
+  attaches the correct bearer, and on Unix the token is empty so the wrapper is
+  a no-op — meaning on the platform CI runs most, the happy path proved nothing
+  about it either. Twelve cases now cover refusal, including the prefix guesses
+  a timing attack builds toward, and one that states the Unix contract
+  explicitly rather than leaving it to be inferred.
+
+- **The agent executed plugins from a directory anyone could write.**
+  `plugin.Discover` walks `plugin_dir`, takes any file with an executable bit,
+  and hands it to `exec.CommandContext`. Both callers of `LoadPlugins` are
+  long-running daemons — `openidx-agent serve` and, on Windows, the service,
+  **which runs as SYSTEM** — and nothing checked who else could write the file
+  about to be run. A world-writable plugin directory, or a tight directory with
+  a world-writable binary in it, meant the privileged process was running
+  whoever got there last rather than the operator's code.
+
+  This is the rule every tool facing this shape keeps: sudo refuses a
+  world-writable sudoers, ssh a group-writable key, git a repository owned by
+  someone else. The plugin root, each plugin's own directory and the executable
+  are now all checked; a bad plugin is skipped rather than costing the operator
+  the good ones, and a bad root refuses the lot. The error names who can write
+  and what to run to fix it, because a control people cannot act on is one they
+  switch off.
+
+  **On Windows it refuses outright, and says why.** The check is Unix mode bits,
+  which Windows discards — the Go runtime maps `0755` to "not read-only" and
+  nothing else — so the same code there would report every path as trusted while
+  checking nothing, in the one place where the caller is the SYSTEM service.
+  Doing it properly means reading the DACL and resolving which non-privileged
+  SIDs hold a write right; `agent/internal/secretfile` does the writing half of
+  that for two files and there is no reading half, and one written without a
+  Windows machine to test against would be either too strict or a pass that was
+  never earned. Nothing in the repository sets `plugin_dir` — it is read in one
+  place and written nowhere — so no shipped configuration is affected.
+
+- **The agent's self-updater installed an artifact it had not verified, whenever
+  the manifest said not to.** `downloadVerified` checked the downloaded file's
+  SHA-256 only `if wantSHA != ""`, and `Fetch` required a manifest to carry only
+  `version` and `url`. A manifest that omitted `sha256` — or supplied an empty
+  string — therefore reached `apply()` unchecked, and `apply()` runs
+  `msiexec /i` as SYSTEM on Windows, `sudo -n dpkg -i` / `rpm -U --force` /
+  `installer -pkg` on Linux and macOS, or replaces the agent's own executable
+  and `syscall.Exec`s into it. The one control on that path was switched off by
+  the very input it existed to check.
+
+  Three `//nolint:gosec` comments in `apply_other.go` each justified themselves
+  with "artifact is checksum-verified", which was conditionally false — and the
+  `nolint` silenced the linter that would have asked. The package doc said the
+  updater applies "a newer **signed** artifact"; nothing verifies a signature
+  anywhere, and saying so made the weaker control read as the stronger one.
+  Neither URL was scheme-checked either, so a plain-`http` manifest made the
+  digest moot: whoever rewrites the artifact rewrites the digest with it.
+
+  Now: `sha256` is **mandatory** and shape-checked (64 hex characters, so
+  `"TODO"` is rejected as malformed rather than failing later as a confusing
+  mismatch); verification is unconditional, with no path through
+  `downloadVerified` that returns a file it did not check; both the manifest and
+  artifact URLs must be `https` (loopback excepted, documented, for local
+  artifact servers and the tests); and the download is capped at 1 GiB, because
+  the digest catches a substituted artifact only after it is on disk and the
+  agent runs on endpoints. The doc comment now states what is verified, that the
+  manifest is therefore the root of trust, and that signature verification is a
+  separate item rather than something already done.
+
+  `Fetch`, `downloadVerified` and `CheckAndApply` — every function that touches
+  the network or decides what runs — had **no tests**; only the two pure helpers
+  did. Thirteen cases now cover the refusals. A second test reads the release
+  workflow's PowerShell manifest generator and requires the three fields `Fetch`
+  demands over https, because producer and consumer are in different languages
+  with nothing checking they agree.
+
+  **Behaviour change for operators:** an existing `update_manifest_url` whose
+  manifest omits `sha256`, or is served over plain http, will now be refused with
+  an error naming the reason instead of silently installing. The manifest the
+  release workflow publishes already carries a `Get-FileHash` SHA-256 and an
+  https URL, so the shipped path is unaffected.
+
+- **A refresh-token lifetime that could not bind on the case it existed for.**
+  `oauth_clients.refresh_token_lifetime` is enforced — `GetRefreshToken` refuses
+  a token past its `expires_at` — but rotation issues each successor with
+  `now + lifetime`, so the window restarts on every use. Every native client
+  refreshes far more often than the window: the desktop agent hourly, the phone
+  whenever it opens. **The thirty days the three native clients were seeded with
+  therefore bound only on a device that went dark for thirty days**, which is the
+  opposite of the case the number was there for. A phone taken while unlocked, or
+  an agent on a machine that changed hands, kept a working chain for as long as
+  it kept refreshing — indefinitely, until someone noticed and revoked the device
+  by hand.
+
+  Migration **v187** gives the authorization an end rather than the token:
+  `oauth_refresh_tokens.family_started_at`, copied forward by every rotation and
+  backfilled from each family's `MIN(created_at)`, plus
+  `oauth_clients.refresh_token_max_lifetime`. The refresh grant checks it before
+  minting anything and revokes the whole family past the cap — the whole family,
+  because the client's own token is the newest of the chain and revoking only
+  that would leave every earlier entry as a live way back in. A stored column
+  rather than a `MIN()` at read time: rows age out with their own `expires_at`,
+  so a computed origin would recede ahead of the client forever, which is the
+  same never-binding failure one level down.
+
+  Values, and they are a decision rather than a measurement — the one
+  `docs/CLIENT-ACCESS-DESIGN.md` §2 recommended, taken as written: **14 days per
+  token and a 90-day family cap** for `openidx-mobile` and
+  `openidx-agent-android`; **30 days and the same 90-day cap** for
+  `openidx-desktop`, which re-attests posture continuously so a long offline
+  window costs less there. An operator who has already retuned
+  `refresh_token_lifetime` keeps their value — the UPDATE matches only the seeded
+  `2592000`. Browser clients stay uncapped on purpose: their token lives in a
+  browser rather than at rest on a device someone can pick up, and capping the
+  console would sign administrators out on a schedule nobody asked for.
+  `TestEveryNativeClientHasAFamilyCap` derives the native set from the clients'
+  own source, so a fourth one that ships without a cap fails the build.
+
+- **The list of every authorization control that is switched off had no
+  reader.** `Config.ReportModeGates` names each of the eight gates that is
+  configured but not deciding — assignment enforcement, ABAC, step-up, OPA, the
+  PAM session-risk gate, the device-posture gate and the two API auth
+  requirements — with the value each currently has. It was correct, it had a
+  test proving it named every open control, and **no running process ever called
+  it**. A report nothing displays is the defect this branch is about, one layer
+  above the gates it describes; and its own test could not notice, because a test
+  that calls the function is itself a caller, so the list looked read.
+
+  `ValidateProductionConfig` — the function every `cmd/*/main.go` already calls
+  at startup — now logs one line per open control plus a summary carrying the
+  count and a `fully_enforcing` flag, so a log query can alert on the number and
+  can tell "nothing is open" from "this build stopped reporting". It runs
+  **before** the production branch can abort, because an operator fixing a
+  validation error is exactly the operator who needs to see which controls are
+  open. In every environment, not only production: development is where someone
+  writes an ABAC deny policy, watches it permit the request, and has nothing
+  anywhere to read. `Warn` in production, `Info` elsewhere — report mode is the
+  designed default there, and a warning nobody can act on is one people learn to
+  skip.
+
+  The new tests are about the reader rather than the list: they go through
+  `ValidateProductionConfig`, so deleting the call reddens four of them.
+  `docs/CLIENT-ACCESS-DESIGN.md` §5 claimed these warnings "already ship in
+  `ProductionWarnings`" — they do not and never did; `ProductionWarnings` covers
+  configuration hygiene and names no gate. That claim is corrected. Not claimed:
+  no console surface renders this; the startup log is the whole of it.
+
+- **The mobile clients' credentials were in the platform's cloud backup.** The
+  engine's config directory is `getFilesDir()` on Android and
+  `Library/Application Support` on iOS, and it holds three credentials:
+  `agent.json` (the agent's auth token), `user-tokens.json` (the access token
+  and the 30-day refresh token behind it) and `ziti-identity.json` — the private
+  key and certificates that put the device on the ZTNA overlay. Both paths are
+  in their platform's default backup set. The Flutter client's manifest carried
+  no `android:allowBackup`, whose platform default is `true`, so all three were
+  uploaded to the user's Google Drive by Auto Backup and extractable with
+  `adb backup`; the iOS plugin set no `isExcludedFromBackup`, so the same three
+  were in iCloud and in every unencrypted iTunes backup of a machine the phone
+  had synced to.
+
+  The Go code writes those files `0600` and said so in a comment claiming that
+  outside Windows "the mode is the control". That is true on a Linux or macOS
+  desktop and inert in an app sandbox, where every file is already private to
+  the app's own UID and a mode bit has nothing to say about what the backup
+  agent copies out. The protection was an attribute whose *absence* was the
+  danger, which is why reading the manifest did not show it.
+
+  Both clients now deny cloud backup (`android:allowBackup="false"`) **and**
+  device-to-device transfer (`dataExtractionRules` excluding every domain from
+  both channels — from API 31 D2D is governed separately and is allowed by
+  default whatever `allowBackup` says, so either alone still hands the identity
+  to the next phone). The iOS plugin marks the config directory
+  `isExcludedFromBackup` *before* calling `MobileStart`, because after the
+  engine's first write there is a window in which a backup takes the tokens.
+  `scripts/check-mobile-secrets-at-rest.sh` fails the build if either client
+  loses either half, if the iOS call moves after the start, or if the rules
+  resource reads as a control while carrying an `<include>`; 14 self-test cases
+  cover those shapes. The Kotlin agent already had `allowBackup="false"` and
+  keeps its secret in `EncryptedSharedPreferences`; it gained the D2D half so
+  the rule has no exception to explain. Not claimed: the engine's files are
+  still not keystore-wrapped — that needs a callback across the gomobile
+  boundary and is recorded in `docs/CLIENT-ACCESS-DESIGN.md` §4 as its own item.
 
 - **The zero-trust policy editor's conditions never reached the evaluator, and a
   hardcoded default enforced something else.** `internal/governance` asserts a Go

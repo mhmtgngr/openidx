@@ -1308,5 +1308,33 @@ func allMigrations() []*Migration {
 			UpSQL:       dropJITGrantsUp,
 			DownSQL:     dropJITGrantsDown,
 		},
+		{
+			Version:     184,
+			Name:        "seed_android_agent_oauth_client",
+			Description: "Seed the openidx-agent-android public (PKCE) OAuth client -- redirect com.openidx.agent://oauth/redirect, scopes openid profile offline_access agent.enroll -- so the native Android agent's 'Sign in with your work email to enroll this device' screen can complete. The Kotlin agent has requested this client_id and scope since it was written and no migration ever registered either, so internal/oauth refused the authorize request with invalid_client on every install; only the QR/token enrollment path beside it worked. agent.enroll is now required by /agent/enroll/oauth, so a browser-client session token can no longer enroll a device. v184_test.go derives, from the shipped clients' own source, that every hardcoded client_id, redirect and requested scope is registered by some migration. Idempotent (ON CONFLICT DO NOTHING).",
+			UpSQL:       androidAgentClientUp,
+			DownSQL:     androidAgentClientDown,
+		},
+		{
+			Version:     185,
+			Name:        "bind_refresh_tokens_to_agent",
+			Description: "Add oauth_refresh_tokens.agent_id (nullable, partial index) so a refresh-token family records the enrolled device it was issued to. Revoking a device (executeDeviceRevoke) deleted the Ziti identity and terminated the Ziti sessions and touched no OAuth token, because nothing recorded which device a token belonged to; the native clients hold a 30-day refresh token, so a revoked phone kept acting as the user on every HTTP surface for up to a month. The authorization-code grant now stores the agent_id an enrolled native client sends with its code exchange, /agent/enroll/oauth binds the enrolling bearer's session to the agent it just issued, rotation carries the binding forward like family_id, and the device revoke revokes every bound family and session. No backfill: NULL means not bound, the pre-migration state.",
+			UpSQL:       refreshTokenAgentBindingUp,
+			DownSQL:     refreshTokenAgentBindingDown,
+		},
+		{
+			Version:     186,
+			Name:        "session_mfa_verified_at",
+			Description: "Add sessions.mfa_verified_at (nullable, partial index) so a login session records WHEN it last proved a second factor, not merely that it once did. The step-up endpoints minted a step_up JWT that no handler, middleware or gate has ever read, and auth_methods (v133) cannot answer the question a freshness gate asks -- a session that passed MFA ten hours ago still reports [\"pwd\",\"mfa\"]. Stamped at login when a second factor was verified (derived from the same auth_methods call, so a caller recording 'mfa' cannot forget the timestamp) and at /oauth/stepup-verify on success, which is what finally gives step-up an effect. Read by the STEPUP_GATE freshness gate at PAM launch and admin writes. Backfilled to started_at where auth_methods contains 'mfa' -- the moment that session's factor was verified, not an invention -- so an upgrade does not declare every live MFA session stale; sessions without 'mfa' stay NULL.",
+			UpSQL:       sessionMFAVerifiedAtUp,
+			DownSQL:     sessionMFAVerifiedAtDown,
+		},
+		{
+			Version:     187,
+			Name:        "refresh_family_lifetime",
+			Description: "Add oauth_refresh_tokens.family_started_at and oauth_clients.refresh_token_max_lifetime so an authorization has an END, not just a token that expires. refresh_token_lifetime was enforced per token and reset on every rotation (ExpiresAt = now + lifetime), and every native client refreshes far more often than the window -- the desktop agent hourly -- so the seeded 30 days bound only on a device that went dark for thirty days. A phone taken while unlocked kept a valid chain for as long as it kept refreshing. family_started_at is copied forward by rotation and backfilled from each family's MIN(created_at); a stored column rather than a MIN() at read time because rows age out with their own expires_at, so a computed origin would recede ahead of the client forever -- the same never-binding failure one level down. Checked at the refresh grant before an access token is minted: past the cap the family is revoked and the client re-authenticates. Values are the decision recorded in docs/CLIENT-ACCESS-DESIGN.md §2: 14 days per token for the two mobile clients, 30 for the Windows agent (it re-attests posture continuously), 90-day family cap for all three; an operator who already retuned refresh_token_lifetime keeps their value, because the UPDATE matches the seeded 2592000. Browser clients stay uncapped -- their token lives in a browser, not at rest on a device someone can pick up, and capping the console would sign administrators out on a schedule nobody asked for.",
+			UpSQL:       refreshFamilyLifetimeUp,
+			DownSQL:     refreshFamilyLifetimeDown,
+		},
 	}
 }

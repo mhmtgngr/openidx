@@ -3,6 +3,7 @@ package transport
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -31,6 +32,13 @@ type EnrollResponse struct {
 	PushEnrollPath      string `json:"push_enroll_path,omitempty"`
 	PushEnrollExpiresIn int    `json:"push_enroll_expires_in,omitempty"`
 }
+
+// ErrAgentRevoked is returned when the server refuses this device outright.
+// GET /agent/config answers 403 for an agent an administrator has revoked, and
+// that is the one server answer a client must be able to tell apart from a bad
+// network: it is the state the user has to be shown, and retrying will never
+// improve it.
+var ErrAgentRevoked = errors.New("this device has been revoked")
 
 // Client is an HTTP client for communicating with the OpenIDX access API.
 type Client struct {
@@ -135,6 +143,9 @@ func (c *Client) GetConfig() ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusForbidden {
+		return nil, ErrAgentRevoked
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("config request failed with status %d", resp.StatusCode)
 	}

@@ -65,6 +65,15 @@ final currentStatusProvider = Provider<AgentStatus>((ref) {
   return ref.watch(statusProvider).valueOrNull ?? AgentStatus.unknown;
 });
 
+/// What the server currently allows this device to do. Auto-refreshes whenever
+/// enrollment/login state flips, so the banner follows an approval or a revoke
+/// without the user restarting the app.
+final deviceStateProvider = FutureProvider<DeviceState>((ref) async {
+  ref.watch(currentStatusProvider);
+  final engine = ref.watch(engineClientProvider);
+  return engine.deviceState();
+});
+
 /// Device posture. Auto-refreshes whenever status changes.
 final postureProvider = FutureProvider<Posture>((ref) async {
   // Recompute posture when enrollment/login state flips.

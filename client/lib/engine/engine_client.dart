@@ -54,6 +54,12 @@ abstract class EngineClient {
   /// false when there was nothing pending. Mobile-only; desktop is a no-op.
   Future<bool> registerPushDevice(String deviceToken, String platform);
 
+  /// What the server currently allows this device to do: waiting for approval,
+  /// working, trusted, or revoked. Never throws for an ordinary reason — an
+  /// unreachable server is a [DeviceState] with `serverReachable: false`, not
+  /// an exception, because "I could not ask" must not be shown as a refusal.
+  Future<DeviceState> deviceState();
+
   Future<Posture> posture();
 
   Future<List<PamEntry>> pamList();

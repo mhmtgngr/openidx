@@ -616,10 +616,36 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 		return
 	}
 
-	// Dev mode: no DB, accept any non-empty token.
+	// No database: the branch that accepts ANY non-empty token and mints a
+	// working agent credential for it.
+	//
+	// It is latent rather than live — cmd/access-service fatals without
+	// database_url, so a shipped binary never reaches here — and that is
+	// exactly why it needs a gate rather than a comment. The thing that keeps
+	// it unreachable is a startup check in a different package; a refactor that
+	// makes the pool optional, or a handler constructed without one in a new
+	// caller, arms an unauthenticated enrolment endpoint silently.
+	//
+	// So it is now allowed only where it is meant to be used, and refused
+	// everywhere else including when no config is present at all: a gate whose
+	// safe state depends on someone having wired configuration is not a gate.
+	if cfg := h.cfg(); cfg == nil || !cfg.IsDevelopment() {
+		env := "(no config)"
+		if cfg != nil {
+			env = cfg.Environment
+		}
+		h.logger.Error("SECURITY: agent enrolment reached the no-database fallback outside development; refusing",
+			zap.String("environment", env))
+		h.logAuditEvent("agent.enroll_denied", "", "denied", "no-db fallback refused outside development")
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "enrollment is unavailable: the service has no database configured",
+		})
+		return
+	}
+
 	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "token", "")
 	writeEnrollResponse(c, creds, "token", nil)
-	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=token (no-db)")
+	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=token (no-db, development only)")
 }
 
 // writeEnrollResponse serializes the agent credentials into the standard
@@ -699,8 +725,30 @@ func (h *AgentAPIHandler) HandleEnrollOAuth(c *gin.Context) {
 		return
 	}
 
+	// The token must have been issued for device enrolment. A console session
+	// token carries openid/profile/email and nothing more; accepting it here
+	// meant any signed-in browser -- or anything holding its token -- could
+	// register a device against the user. The seeded enrolment clients (v184,
+	// openidx-agent-android) are granted agent.enroll; browser clients are not.
+	if !tokenScopeAllows(c, enrollScope) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":             "insufficient_scope",
+			"error_description": "enrolling a device needs a token issued with the " + enrollScope + " scope",
+		})
+		return
+	}
+
 	var enrollReq enrollRequest
 	_ = c.ShouldBindJSON(&enrollReq)
+
+	org, _ := orgctx.From(c.Request.Context())
+	// Same auto-trust decision the enrollment-session path makes: MFA-verified
+	// (read from the token's amr, which the middleware exposes) and, when the
+	// operator requires it, a compliant posture -- which an enrolment cannot
+	// carry yet, so under DEVICE_AUTOTRUST_REQUIRE_POSTURE this stays pending
+	// until the first report. Before this the OAuth path passed a literal
+	// false: safe, and silently unlike the path next to it.
+	trusted, mode := decideAutoTrust(h.cfg(), h.logger, amrIndicatesMFA(c.GetStringSlice("amr")), false, org.ID)
 
 	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "oauth", userID)
 
@@ -710,13 +758,72 @@ func (h *AgentAPIHandler) HandleEnrollOAuth(c *gin.Context) {
 	// is the join point that lets device trust (IAM) and device compliance
 	// (Ziti posture) be reconciled per physical device. Best-effort: a failure
 	// here never blocks enrollment.
-	org, _ := orgctx.From(c.Request.Context())
-	h.linkAgentToKnownDevice(c.Request.Context(), c.ClientIP(), creds.AgentID, creds.DeviceID, userID, org.ID, enrollReq, false)
+	h.linkAgentToKnownDevice(c.Request.Context(), c.ClientIP(), creds.AgentID, creds.DeviceID, userID, org.ID, enrollReq, trusted)
+
+	// Bind the session that enrolled this device to the device (v185), so
+	// revoking it revokes the tokens too. The Android agent signs in first and
+	// enrols second with the token that sign-in produced, so its refresh family
+	// already exists here and the server -- not the client -- knows both halves:
+	// the session comes from the bearer's own sid claim, the agent from the row
+	// just written. This is the enrolment path's counterpart to the agent_id a
+	// desktop client names at the token exchange.
+	h.bindSessionTokensToAgent(c.Request.Context(), c.GetString("session_id"), userID, org.ID, creds.AgentID)
 
 	writeEnrollResponse(c, creds, "oauth", nil)
 
-	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=oauth user="+userID)
-	h.logAuditEventToDB(c.Request.Context(), "agent.enrolled", creds.AgentID, "success", "method=oauth user="+userID)
+	detail := fmt.Sprintf("method=oauth user=%s auto_trusted=%t autotrust_mode=%s", userID, trusted, mode)
+	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", detail)
+	h.logAuditEventToDB(c.Request.Context(), "agent.enrolled", creds.AgentID, "success", detail)
+}
+
+// enrollScope is the OAuth scope a token must carry to enroll a device through
+// /agent/enroll/oauth. It is granted to the native enrolment clients by
+// migration (v184) and to nothing else by default.
+const enrollScope = "agent.enroll"
+
+// tokenScopeAllows reports whether the bearer's granted scope -- the
+// space-delimited string the auth middleware copies from the token's "scope"
+// claim -- includes want. A token with no scope claim allows nothing here.
+func tokenScopeAllows(c *gin.Context, want string) bool {
+	for _, s := range strings.Fields(c.GetString("scope")) {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// bindSessionTokensToAgent stamps the enrolling session's refresh-token family
+// with the agent it just enrolled, so a later device revoke can find it.
+//
+// Only the caller's OWN unbound, unrevoked chain is touched: the session id is
+// the one in the bearer's sid claim, the user id is the subject of that same
+// token, and the org is the request's. An already-bound row is left alone —
+// re-enrolling a device must not steal another device's chain.
+//
+// Best-effort by design, and loud when it fails: enrolment has already
+// succeeded and the credentials are on their way to the client, so a failure
+// here must not turn into a 500. What it costs is that this session's tokens
+// survive a revoke of this device, which is worth a warning in the log.
+func (h *AgentAPIHandler) bindSessionTokensToAgent(ctx context.Context, sessionID, userID, orgID, agentID string) {
+	if h.db == nil || h.db.Pool == nil || sessionID == "" || userID == "" || orgID == "" || agentID == "" {
+		return
+	}
+	// session_id is a UUID column and the sid claim is a string; comparing as
+	// text keeps a malformed claim a no-match rather than a query error.
+	tag, err := h.db.Pool.Exec(ctx, `
+		UPDATE oauth_refresh_tokens SET agent_id = $1
+		 WHERE session_id::text = $2 AND user_id = $3 AND org_id = $4
+		   AND agent_id IS NULL AND revoked_at IS NULL`,
+		agentID, sessionID, userID, orgID)
+	if err != nil {
+		h.logger.Warn("enroll: binding the session's refresh tokens to the agent failed; revoking this device will not revoke them",
+			zap.String("agent_id", logsafe.Clean(agentID)), zap.Error(err))
+		return
+	}
+	h.logger.Info("enroll: bound refresh tokens to the enrolled device",
+		zap.String("agent_id", logsafe.Clean(agentID)),
+		zap.Int64("tokens_bound", tag.RowsAffected()))
 }
 
 // linkAgentToKnownDevice upserts a known_devices row for a user-bound agent
@@ -1276,11 +1383,25 @@ type agentCheck struct {
 // (or has reconnected mid-session). The agent uses this block to know
 // where to dial the signaling WebSocket.
 type agentConfigResponse struct {
-	Checks            []agentCheck            `json:"checks"`
-	ReportInterval    string                  `json:"report_interval"`
-	EnforcementPolicy string                  `json:"enforcement_policy,omitempty"`
-	KioskPolicy       *kioskPolicyRow         `json:"kiosk_policy,omitempty"`
-	RemoteSupport     *agentRemoteSupportInfo `json:"remote_support,omitempty"`
+	Checks            []agentCheck `json:"checks"`
+	ReportInterval    string       `json:"report_interval"`
+	EnforcementPolicy string       `json:"enforcement_policy,omitempty"`
+	// EnrollmentStatus and DeviceTrusted are the device's own state, told to
+	// the device.
+	//
+	// The server has always known both — this handler already branches on
+	// status to decide which checks to send — and never said either out loud,
+	// so a client could not tell "enrolled and waiting for an admin" from
+	// "enrolled and working". The design's first rule is that a device earns
+	// access by proving things and the user always sees which of those it has;
+	// a client that cannot render the difference makes controlled access read
+	// as broken. DeviceTrusted is the IAM device-trust flag on the linked
+	// known_devices row (v80), which is what the overlay's #device-trusted
+	// attribute follows.
+	EnrollmentStatus string                  `json:"enrollment_status,omitempty"`
+	DeviceTrusted    bool                    `json:"device_trusted"`
+	KioskPolicy      *kioskPolicyRow         `json:"kiosk_policy,omitempty"`
+	RemoteSupport    *agentRemoteSupportInfo `json:"remote_support,omitempty"`
 	// WindowsAppDiscovery is present only when this agent is bound to a
 	// windows_app_host (migration v120). It tells the agent to run the host-prep
 	// script's -Report and POST the JSON back, so the app catalog auto-syncs.
@@ -1506,9 +1627,14 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	//    we can filter posture_checks to the rows applicable to this client.
 	var status string
 	var platform *string
-	err := h.db.Pool.QueryRow(ctx,
-		`SELECT status, platform FROM enrolled_agents WHERE agent_id = $1`, agentID,
-	).Scan(&status, &platform)
+	var deviceTrusted *bool
+	//orgscope:ignore enrolled_agents is a fleet table with no org_id; the agent authenticated with its own credential above
+	err := h.db.Pool.QueryRow(ctx, `
+		SELECT ea.status, ea.platform, kd.trusted
+		  FROM enrolled_agents ea
+		  LEFT JOIN known_devices kd ON kd.id = ea.known_device_id
+		 WHERE ea.agent_id = $1`, agentID,
+	).Scan(&status, &platform, &deviceTrusted)
 	if err != nil {
 		// Agent not found or DB error — return defaults.
 		h.logger.Warn("HandleConfig: could not fetch agent status",
@@ -1520,6 +1646,10 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	if platform != nil {
 		agentPlatform = *platform
 	}
+	// A device with no linked known_devices row (token-enrolled or legacy) is
+	// not trusted rather than unknown: the overlay reads the same absence the
+	// same way.
+	trusted := deviceTrusted != nil && *deviceTrusted
 
 	// 4. Build response based on status.
 	switch status {
@@ -1534,6 +1664,8 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			Checks:            []agentCheck{},
 			ReportInterval:    "24h",
 			EnforcementPolicy: "block",
+			EnrollmentStatus:  status,
+			DeviceTrusted:     trusted,
 		}
 		c.JSON(http.StatusOK, cfg)
 		return
@@ -1545,6 +1677,8 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			},
 			ReportInterval:    "1h",
 			EnforcementPolicy: "monitor",
+			EnrollmentStatus:  status,
+			DeviceTrusted:     trusted,
 		}
 		c.JSON(http.StatusOK, cfg)
 		return
@@ -1611,6 +1745,8 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			Checks:            checks,
 			ReportInterval:    baselinePollInterval,
 			EnforcementPolicy: "enforce",
+			EnrollmentStatus:  status,
+			DeviceTrusted:     trusted,
 		}
 
 		// Embed the effective kiosk policy (Phase 3). Errors during

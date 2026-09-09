@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  android:allowBackup="false" on the <application> tag has always stopped cloud
+  backup here. From API 31 that is only half: device-to-device transfer became a
+  separate channel, allowed by default whatever allowBackup says, and this app
+  targets 34.
+
+  What transfers is EncryptedSharedPreferences ciphertext, whose key lives in
+  the Android Keystore and does NOT move to the new device — so this is not
+  closing a leak, it is removing a set of bytes that could only ever have been
+  useless. It is here because the rule the guard enforces reads better with no
+  exceptions than with one, and because "the ciphertext is safe to copy" is an
+  argument that stops being true the day something writes a plaintext file next
+  to it.
+
+  Same content as the Flutter client's copy; the two clients ship as separate
+  APKs and each needs its own.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

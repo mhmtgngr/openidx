@@ -87,6 +87,14 @@ Future<HttpServer> _startFakeEngine() async {
       case '/token':
         body = {'access_token': 'engine-issued-token'};
         break;
+      case '/device-state':
+        body = {
+          'enrolled': true,
+          'state': 'pending',
+          'device_trusted': false,
+          'server_reachable': true,
+        };
+        break;
       case '/pam/connect':
         body = {
           'launch_type': 'rdp',
@@ -193,6 +201,18 @@ void main() {
       throwsA(isA<EngineException>()
           .having((e) => e.status, 'status', HttpStatus.notFound)),
     );
+  });
+
+  test('deviceState parses what the server allows this device to do', () async {
+    // The state the client could not previously render: enrolled, and waiting
+    // for an administrator. Shown as "everything is fine" it reads as broken.
+    final state = await client.deviceState();
+    expect(state.enrolled, isTrue);
+    expect(state.state, 'pending');
+    expect(state.waitingForApproval, isTrue);
+    expect(state.tierOne, isFalse);
+    expect(state.tierTwo, isFalse);
+    expect(state.serverReachable, isTrue);
   });
 
   test('accessToken returns the session token the engine owns', () async {

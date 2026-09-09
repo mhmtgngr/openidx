@@ -276,13 +276,20 @@ func (s *Service) attachDevicePosture(ctx context.Context, agentIDs []string, by
 
 // DeviceRevokeResult reports what a device-scoped revoke severed.
 type DeviceRevokeResult struct {
-	AgentID              string    `json:"agent_id"`
-	AgentRevoked         bool      `json:"agent_revoked"`
-	ZitiIdentityDeleted  bool      `json:"ziti_identity_deleted"`
-	ZitiEdgeSessions     int       `json:"ziti_edge_sessions_terminated"`
-	ZitiAPISessions      int       `json:"ziti_api_sessions_terminated"`
-	KnownDeviceUntrusted bool      `json:"known_device_untrusted"`
-	ZitiControllerOnline bool      `json:"ziti_controller_online"`
+	AgentID              string `json:"agent_id"`
+	AgentRevoked         bool   `json:"agent_revoked"`
+	ZitiIdentityDeleted  bool   `json:"ziti_identity_deleted"`
+	ZitiEdgeSessions     int    `json:"ziti_edge_sessions_terminated"`
+	ZitiAPISessions      int    `json:"ziti_api_sessions_terminated"`
+	KnownDeviceUntrusted bool   `json:"known_device_untrusted"`
+	ZitiControllerOnline bool   `json:"ziti_controller_online"`
+	// RefreshTokensRevoked and OAuthSessionsRevoked are the IAM half of the
+	// severance (v185). Until the refresh-token family recorded which device it
+	// was issued to, this whole operation touched the overlay only: the revoked
+	// phone could not dial a service and went on acting as the user over plain
+	// HTTP for the life of its 30-day refresh token.
+	RefreshTokensRevoked int64     `json:"iam_refresh_tokens_revoked"`
+	OAuthSessionsRevoked int64     `json:"iam_sessions_revoked"`
 	Warnings             []string  `json:"warnings,omitempty"`
 	ExecutedAt           time.Time `json:"executed_at"`
 }
@@ -349,6 +356,8 @@ func (s *Service) handleRevokeUserDevice(c *gin.Context) {
 				"ziti_edge_sessions_terminated": res.ZitiEdgeSessions,
 				"ziti_api_sessions_terminated":  res.ZitiAPISessions,
 				"known_device_untrusted":        res.KnownDeviceUntrusted,
+				"iam_refresh_tokens_revoked":    res.RefreshTokensRevoked,
+				"iam_sessions_revoked":          res.OAuthSessionsRevoked,
 			}); err != nil {
 			s.logger.Warn("device revoke: unified audit write failed", zap.Error(err))
 		}
@@ -409,12 +418,97 @@ func (s *Service) executeDeviceRevoke(ctx context.Context, orgID, agentID, zitiI
 		}
 	}
 
+	// IAM: the tokens this device holds. See revokeDeviceTokens.
+	s.revokeDeviceTokens(ctx, orgID, agentID, res, warn)
+
 	s.logger.Info("device revoked across pillars",
 		zap.String("agent_id", safeAgentID),
 		zap.Bool("ziti_identity_deleted", res.ZitiIdentityDeleted),
 		zap.Int("ziti_edge_sessions", res.ZitiEdgeSessions),
-		zap.Bool("known_device_untrusted", res.KnownDeviceUntrusted))
+		zap.Bool("known_device_untrusted", res.KnownDeviceUntrusted),
+		zap.Int64("refresh_tokens_revoked", res.RefreshTokensRevoked),
+		zap.Int64("oauth_sessions_revoked", res.OAuthSessionsRevoked))
 	return res
+}
+
+// revokeDeviceTokens severs the OAuth half of a device revoke: every
+// refresh-token family bound to this agent (v185), and the login sessions those
+// families ran under.
+//
+// WHY IT IS TWO STEPS. Revoking the refresh rows stops the device MINTING a new
+// access token; publishing revoked_session:<id> is what the refresh grant reads
+// (internal/oauth/service.go), and marking the sessions revoked is what the
+// console's session list and the identity service read. A device can hold
+// several chains — one per sign-in — so both sets are collected from the rows
+// rather than assumed to be one.
+//
+// WHAT IT DOES NOT DO, said rather than implied: the access token already in the
+// device's memory keeps working until it expires, because nothing on the
+// request path consults the session marker — only the refresh grant does. That
+// window is the client's access_token_lifetime, one hour for the native clients,
+// against the thirty days it was before this existed. Closing it entirely means
+// the auth middleware reading the marker on every request, which is a cost on
+// every request and a change of its own.
+func (s *Service) revokeDeviceTokens(ctx context.Context, orgID, agentID string, res *DeviceRevokeResult, warn func(string, error)) {
+	if s.db == nil || s.db.Pool == nil || agentID == "" || orgID == "" {
+		return
+	}
+
+	// One statement does the revoke and reports which sessions were behind it,
+	// so a chain that is revoked can never fail to have its session collected.
+	rows, err := s.db.Pool.Query(ctx, `
+		UPDATE oauth_refresh_tokens SET revoked_at = NOW()
+		 WHERE agent_id = $1 AND org_id = $2 AND revoked_at IS NULL
+		 RETURNING COALESCE(session_id::text, '')`,
+		agentID, orgID)
+	if err != nil {
+		warn("revoke_device_refresh_tokens", err)
+		return
+	}
+	sessionIDs := map[string]struct{}{}
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			continue
+		}
+		res.RefreshTokensRevoked++
+		if sid != "" {
+			sessionIDs[sid] = struct{}{}
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		warn("revoke_device_refresh_tokens", err)
+	}
+	if len(sessionIDs) == 0 {
+		return
+	}
+
+	ids := make([]string, 0, len(sessionIDs))
+	for id := range sessionIDs {
+		ids = append(ids, id)
+	}
+
+	// The marker is what the refresh grant honours, so publish it before the
+	// row update: if the process dies between the two, a stopped session is
+	// better than a session that still refreshes.
+	if s.redis != nil && s.redis.Client != nil {
+		for _, id := range ids {
+			if err := s.redis.Client.Set(ctx, "revoked_session:"+id, "1", killSwitchRedisMarkerTTL).Err(); err != nil {
+				warn("revocation_marker", err)
+				break
+			}
+		}
+	}
+
+	if tag, err := s.db.Pool.Exec(ctx,
+		`UPDATE sessions SET revoked = true, revoked_at = NOW()
+		  WHERE id::text = ANY($1) AND org_id = $2 AND (revoked IS NULL OR revoked = false)`,
+		ids, orgID); err != nil {
+		warn("revoke_device_sessions", err)
+	} else {
+		res.OAuthSessionsRevoked = tag.RowsAffected()
+	}
 }
 
 func derefStr(s *string) string {

@@ -2,11 +2,15 @@
 package identity
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
+	"go.uber.org/zap"
+
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // WebAuthn Handlers
@@ -291,10 +295,28 @@ func (s *Service) handleCreatePushChallenge(c *gin.Context) {
 		return
 	}
 
-	if request.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+	// A push prompt is raised for the caller, and only for the caller.
+	//
+	// This route took user_id out of the request body, and every authenticated
+	// user reaches it (isIdentitySelfService admits anything under /mfa/). So
+	// one signed-in account could make another account's phone buzz, as often
+	// as it liked — MFA fatigue with the product's own endpoint — and learn the
+	// challenge id it got back. The login flow does not come through here: it
+	// calls CreatePushMFAChallenge in-process (internal/oauth/service.go), so
+	// nothing legitimate raises a prompt for somebody else.
+	callerID := c.GetString("user_id")
+	if callerID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
+	if request.UserID != "" && request.UserID != callerID {
+		s.logger.Warn("SECURITY: push MFA challenge requested for another user",
+			zap.String("caller_user_id", logsafe.Clean(callerID)),
+			zap.String("requested_user_id", logsafe.Clean(request.UserID)))
+		c.JSON(http.StatusForbidden, gin.H{"error": "a push challenge can only be raised for yourself"})
+		return
+	}
+	request.UserID = callerID
 
 	// Auto-fill IP and User-Agent if not provided
 	if request.IPAddress == "" {
@@ -341,8 +363,20 @@ func (s *Service) handleVerifyPushChallenge(c *gin.Context) {
 		return
 	}
 
-	approved, err := s.VerifyPushMFAChallenge(c.Request.Context(), &response)
+	// The route is on the authenticated identity group and isIdentitySelfService
+	// lets any authenticated user reach anything under /mfa/ — "the caller's own
+	// MFA verification". That sentence is only true if the handler says who the
+	// caller is, which is what this argument is for.
+	// Read from the authenticated context only, never the body — the same rule
+	// the WebAuthn handlers at the top of this file are written to.
+	callerID := c.GetString("user_id")
+
+	approved, err := s.VerifyPushMFAChallenge(c.Request.Context(), callerID, &response)
 	if err != nil {
+		if errors.Is(err, ErrPushChallengeNotYours) || errors.Is(err, ErrPushDeviceNotApprovable) {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

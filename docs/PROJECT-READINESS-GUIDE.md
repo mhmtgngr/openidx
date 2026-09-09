@@ -284,6 +284,129 @@ product; either wire them or remove them from the UI.
   `internal/governance/policy_condition_test.go` derives the contract from the
   type assertions and checks the page against it, names and types.
 
+- **A9 — The Android agent's "Sign in with your work email to enroll this
+  device" could never succeed.** *Fixed on this branch.* The screen runs a PKCE
+  flow as `openidx-agent-android` requesting `agent.enroll`; no migration seeded
+  the client and `scopeAllowedForClient` refuses the scope, so the first thing
+  every Android user tapped answered `invalid_client` on every install. Only
+  the QR/token path worked. v184 seeds the client; `/agent/enroll/oauth` now
+  requires `agent.enroll` (a console token can no longer enroll a device) and
+  makes the same auto-trust decision as the session path.
+  `TestEveryShippedClientIsSeededByAMigration` derives every client id,
+  redirect and scope from the clients' own source and checks them against every
+  migration's seed. The full client design — registration, MFA, tiers,
+  revocation, secrets at rest — is in `docs/CLIENT-ACCESS-DESIGN.md`.
+
+- **A10 — Revoking a device left its 30-day refresh token alive.** *Fixed on
+  this branch.* `executeDeviceRevoke` severed the Ziti identity and the overlay
+  sessions and touched no OAuth token, because nothing recorded which device a
+  token belonged to; a revoked phone kept acting as the user over plain HTTP
+  for up to a month, push-MFA approvals included. v185 adds
+  `oauth_refresh_tokens.agent_id`, bound at the code exchange (checked against
+  the server's own record of who enrolled the agent) or at `/agent/enroll/oauth`
+  for the Android flow, and carried through rotation; the revoke now cuts the
+  bound families and their sessions and publishes the revocation markers. Sign
+  out calls `/oauth/revoke` instead of only deleting the local file. Still open
+  by design and stated in `docs/CLIENT-ACCESS-DESIGN.md`: an access token
+  already issued survives up to its one-hour lifetime, since only the refresh
+  grant reads the session marker.
+
+- **A11 — Any signed-in user could answer another user's push-MFA prompt.**
+  *Fixed on this branch.* `/mfa/push/verify` is self-service for every
+  authenticated user (`isIdentitySelfService` admits everything under `/mfa/`)
+  and the handler compared nothing about the caller to the challenge. The same
+  handler counted no failed number-matches, so the two-digit code could be
+  walked through; `/mfa/push/challenge` took its `user_id` from the body, so a
+  prompt could be raised on somebody else's phone at will; and the approving
+  device's state was never read, so a revoked phone stayed an approver. All
+  four are closed, with the design's reasoning in
+  `docs/CLIENT-ACCESS-DESIGN.md` §3.
+
+- **A12 — The companion app reported "Compliant" from posture checks that had
+  never run.** *Fixed on this branch.* Seven of the ten checks dispatch on
+  `runtime.GOOS` with a windows/darwin/linux switch and a default that warns; on
+  a handset `runtime.GOOS` is `"android"`, so all seven took that default, and
+  the summary counted `Failed == 0 && Errored == 0` as compliant. The more
+  checks a device could not run, the more confidently it claimed compliance.
+  `CheckResult.Unsupported` now separates "I looked and I am uneasy" from
+  "I cannot look here", compliance additionally requires `Unsupported == 0` and
+  at least one check that actually ran, and the console grew a third state.
+  Two further checks were answering where they cannot see: `os_version` compared
+  the Linux *kernel* release against an Android version policy (reporting
+  compliant devices as failing), and `process_running` globbed `/proc` and so
+  reported every configured process missing on four of five platforms.
+  `tools/posturevocab` derives per-platform coverage from both clients and fails
+  the build on an unregistered collision.
+
+- **A13 — The mobile clients' credentials were in the platform's cloud
+  backup.** *Fixed on this branch.* The engine's config directory holds the
+  agent token, the user's 30-day refresh token and the ZTNA private key, and it
+  is `getFilesDir()` on Android and `Library/Application Support` on iOS — both
+  in their platform's default backup set. The Flutter client's manifest carried
+  no `android:allowBackup` (platform default: `true`) and the iOS plugin set no
+  `isExcludedFromBackup`, so all three were in Google Drive and iCloud. The Go
+  code writes them `0600` and said that "outside Windows the mode is the
+  control" — true on a desktop, inert in a sandbox, and silent about backups.
+  Both clients now deny cloud backup **and** device-to-device transfer (separate
+  channels from API 31); `scripts/check-mobile-secrets-at-rest.sh` fails the
+  build on either half. Still open and stated: the bytes are not keystore-wrapped
+  (`docs/CLIENT-ACCESS-DESIGN.md` §4).
+
+- **A14 — A refresh-token lifetime that could not bind on the case it existed
+  for.** *Fixed on this branch.* `refresh_token_lifetime` is enforced per token,
+  and rotation restarts the window on every use — so on a client that refreshes
+  hourly the seeded thirty days bounded how long the device could be **offline**
+  and nothing else. A phone taken while unlocked kept a working chain
+  indefinitely. Migration v187 bounds the authorization instead:
+  `family_started_at` (carried through rotation, backfilled per family) and
+  `refresh_token_max_lifetime`; the grant revokes the whole family past the cap
+  before minting anything. 14 days / 90-day cap for the two mobile clients,
+  30 / 90 for the Windows agent; browser clients uncapped by decision. A derived
+  test fails the build on a native client shipped without a cap.
+
+- **A15 — The agent's self-updater installed what it had not verified, whenever
+  the manifest said not to.** *Fixed on this branch.* `downloadVerified` checked
+  the artifact's SHA-256 only `if wantSHA != ""`, and `Fetch` required only
+  `version` and `url` — so a manifest omitting `sha256` reached `apply()`
+  unchecked, which is `msiexec /i` as SYSTEM, `sudo -n dpkg -i` / `rpm -U
+  --force` / `installer -pkg`, or a replace-and-re-exec of the agent's own
+  binary. The control was switched off by the input it existed to check, three
+  `//nolint:gosec` comments asserted "artifact is checksum-verified"
+  unconditionally, and the package doc claimed a "signed artifact" where no
+  signature is verified. Neither URL was scheme-checked, so plain http made the
+  digest moot. The digest is now mandatory and shape-checked, verification
+  unconditional, both URLs https (loopback excepted), and the download capped.
+  `Fetch`, `downloadVerified` and `CheckAndApply` had no tests at all; they do
+  now, and a second test holds the release workflow's manifest generator to what
+  the agent will accept. Still open and stated rather than implied: the manifest
+  is the root of trust — verifying a signature over it is a separate item.
+
+- **A16 — The agent executed plugins from a directory anyone could write.**
+  *Fixed on this branch.* `plugin.Discover` takes any file with an executable
+  bit out of `plugin_dir` and hands it to `exec.CommandContext`; both callers of
+  `LoadPlugins` are daemons, one of them the Windows service running as SYSTEM.
+  Nothing checked who else could write it. The plugin root, each plugin's
+  directory and the executable are now all checked, on the rule every tool
+  facing this shape keeps. On Windows it refuses outright and says why: the
+  check is Unix mode bits, which Windows discards, so the same code there would
+  report every path as trusted while checking nothing — and the DACL read that
+  would do it properly is not written. Nothing sets `plugin_dir`, so no shipped
+  configuration is affected.
+
+- **A17 — The local control socket was world-connectable for one syscall, and
+  its bearer was compared with `!=`.** *Fixed on this branch.* On Unix the
+  control server has no token: the socket's mode *is* the authentication, and it
+  guards `/token` (the signed-in user's access token), `/pam/connect` and
+  `/ziti/dial`. `net.Listen` creates a Unix socket at `0777 &^ umask`, so under a
+  daemon's usual `022` it sat at `0755` until the `chmod` on the next line, at a
+  predictable path — and a connection accepted in that window is not closed by
+  the chmod. The bind now runs under a narrowed umask. On Windows the bearer was
+  compared with a byte-wise `!=` that returns at the first difference, leaking
+  prefix length to a caller on the same machine with no network jitter to hide
+  in; it is `subtle.ConstantTimeCompare` now, as `internal/oauth` already was.
+  `authWrap` had no test that sent a wrong token — every case attached the
+  correct one, and on Unix it is a no-op — so twelve refusal cases were added.
+
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 
 - **B1 — Default admin `admin@openidx.local` / `Admin@123` seeds every

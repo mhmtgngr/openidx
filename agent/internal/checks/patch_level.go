@@ -51,9 +51,10 @@ func (c *PatchLevelCheck) Run(_ context.Context, params map[string]interface{}) 
 		return c.checkWindows(maxDays)
 	default:
 		return &CheckResult{
-			Status:  StatusWarn,
-			Score:   0.5,
-			Message: fmt.Sprintf("patch level check not supported on %s", runtime.GOOS),
+			Status:      StatusWarn,
+			Score:       0.5,
+			Message:     fmt.Sprintf("patch level check not supported on %s", runtime.GOOS),
+			Unsupported: true,
 			Details: map[string]interface{}{
 				"os":       runtime.GOOS,
 				"max_days": maxDays,

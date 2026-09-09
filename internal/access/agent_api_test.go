@@ -12,12 +12,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/config"
 )
 
 // newTestAgentHandler returns an AgentAPIHandler suitable for unit tests.
+//
+// The config says development, and has to: these tests drive HandleEnroll with
+// no database, which is the branch that accepts any non-empty token and mints a
+// credential for it. That branch is now allowed only where it is meant to be
+// used, and a handler with no config at all is refused — see
+// TestEnroll_NoDatabaseFallbackIsDevelopmentOnly. Saying "development" here is
+// what these tests always meant; before the gate they got it by default.
 func newTestAgentHandler() *AgentAPIHandler {
 	logger := zap.NewNop()
-	return NewAgentAPIHandler(logger, nil, nil, nil)
+	return NewAgentAPIHandler(logger, nil, nil, &config.Config{Environment: "development"})
 }
 
 // TestAgentEnroll_ValidToken verifies that a POST to /agent/enroll with an

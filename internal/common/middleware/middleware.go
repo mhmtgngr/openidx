@@ -557,6 +557,14 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 			}
 			c.Set("amr", amrStrings)
 		}
+		// Expose the token's granted scope the same way, as the space-delimited
+		// string the token endpoint minted it (internal/oauth mints "scope" on
+		// every access token). Without this no handler could tell a token
+		// issued to a device-enrolment client from one issued to the console,
+		// and /agent/enroll/oauth accepted either.
+		if scope, ok := claims["scope"].(string); ok && scope != "" {
+			c.Set("scope", scope)
+		}
 
 		// Extract org_id from claims, default to default org
 		if orgID, ok := claims["org_id"].(string); ok && orgID != "" {
@@ -647,6 +655,14 @@ func SoftAuth(jwksURL string) gin.HandlerFunc {
 				amrStrings[i] = fmt.Sprint(m)
 			}
 			c.Set("amr", amrStrings)
+		}
+		// Expose the token's granted scope the same way, as the space-delimited
+		// string the token endpoint minted it (internal/oauth mints "scope" on
+		// every access token). Without this no handler could tell a token
+		// issued to a device-enrolment client from one issued to the console,
+		// and /agent/enroll/oauth accepted either.
+		if scope, ok := claims["scope"].(string); ok && scope != "" {
+			c.Set("scope", scope)
 		}
 		if orgID, ok := claims["org_id"].(string); ok && orgID != "" {
 			c.Set("org_id", orgID)

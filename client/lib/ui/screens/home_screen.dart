@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../engine/models.dart';
 import '../../state/providers.dart';
+import '../widgets/device_state_banner.dart';
 import 'my_access_screen.dart';
 import 'settings_screen.dart';
 
@@ -16,6 +17,7 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final status = ref.watch(currentStatusProvider);
     final postureAsync = ref.watch(postureProvider);
+    final deviceStateAsync = ref.watch(deviceStateProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -27,6 +29,7 @@ class HomeScreen extends ConsumerWidget {
             onPressed: () {
               ref.invalidate(statusProvider);
               ref.invalidate(postureProvider);
+              ref.invalidate(deviceStateProvider);
             },
           ),
           IconButton(
@@ -43,6 +46,13 @@ class HomeScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // What this device is allowed to do, first, because it decides
+          // whether anything below it will work.
+          DeviceStateBanner(
+            state: deviceStateAsync.valueOrNull ?? DeviceState.unknown,
+            onRefresh: () => ref.invalidate(deviceStateProvider),
+          ),
+          const SizedBox(height: 16),
           _StatusCard(status: status),
           const SizedBox(height: 16),
           _PostureCard(postureAsync: postureAsync),
@@ -168,23 +178,39 @@ class _PostureCard extends StatelessWidget {
           ),
           error: (e, _) => Text('Posture unavailable: $e'),
           data: (posture) {
-            final color = posture.compliant
-                ? Colors.green
-                : Theme.of(context).colorScheme.error;
+            // Three headline states, not two. "Not compliant" and "we could
+            // not look" are different sentences, and until v1.34.0 the second
+            // was rendered as a green "Compliant": every check that has no
+            // implementation for the running OS answers with a warning, warns
+            // did not count against compliance, and on Android and iOS seven
+            // of the ten checks are in that position -- including disk
+            // encryption, which is configured critical. A user reading the
+            // badge would reasonably conclude their phone had been examined.
+            final unmeasured = posture.unsupported > 0 || !posture.assessable;
+            final color = unmeasured
+                ? Colors.orange
+                : posture.compliant
+                    ? Colors.green
+                    : Theme.of(context).colorScheme.error;
+            final icon = unmeasured
+                ? Icons.help_outline
+                : posture.compliant
+                    ? Icons.check_circle_outline
+                    : Icons.error_outline;
+            final headline = unmeasured
+                ? 'Cannot be checked on this device'
+                : posture.compliant
+                    ? 'Compliant'
+                    : 'Not compliant';
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    Icon(
-                      posture.compliant
-                          ? Icons.check_circle_outline
-                          : Icons.error_outline,
-                      color: color,
-                    ),
+                    Icon(icon, color: color),
                     const SizedBox(width: 8),
                     Text(
-                      posture.compliant ? 'Compliant' : 'Not compliant',
+                      headline,
                       style: Theme.of(context)
                           .textTheme
                           .titleMedium
@@ -192,6 +218,19 @@ class _PostureCard extends StatelessWidget {
                     ),
                   ],
                 ),
+                if (unmeasured) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    posture.assessable
+                        ? '${posture.unsupported} of ${posture.checks.length} checks have no '
+                            'implementation for this platform, so this app cannot say whether '
+                            'the device is healthy. A managed device reports its posture through '
+                            'the device agent instead.'
+                        : 'This app cannot examine this device. A managed device reports its '
+                            'posture through the device agent instead.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 12,
@@ -202,6 +241,9 @@ class _PostureCard extends StatelessWidget {
                         Theme.of(context).colorScheme.error),
                     _chip(context, 'Warned', posture.warned, Colors.orange),
                     _chip(context, 'Errored', posture.errored, Colors.grey),
+                    if (posture.unsupported > 0)
+                      _chip(context, 'Not checked', posture.unsupported,
+                          Colors.orange),
                   ],
                 ),
                 if (posture.checks.isNotEmpty) ...[
@@ -210,9 +252,16 @@ class _PostureCard extends StatelessWidget {
                     (c) => ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
-                      leading: Icon(_iconFor(c.status), size: 20),
+                      leading: Icon(
+                        c.unsupported ? Icons.remove_circle_outline : _iconFor(c.status),
+                        size: 20,
+                      ),
                       title: Text(c.type),
-                      subtitle: c.message.isEmpty ? null : Text(c.message),
+                      subtitle: c.unsupported
+                          ? const Text('Not available on this platform')
+                          : c.message.isEmpty
+                              ? null
+                              : Text(c.message),
                       trailing: Text(c.severity),
                     ),
                   ),

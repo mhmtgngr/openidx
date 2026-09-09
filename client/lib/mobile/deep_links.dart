@@ -8,18 +8,28 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 //     a <queries> block (so url_launcher can open a browser on Android 11+) and
 //     an openidx://oauth-callback intent-filter (so the OAuth redirect returns
 //     to the app). `flutter create` won't overwrite it.
-//   iOS — TODO: iOS needs a CFBundleURLTypes entry registering the `openidx`
-//     URL scheme in ios/Runner/Info.plist for the deep-link redirect to reach
-//     the app, e.g.:
-//         <key>CFBundleURLTypes</key>
-//         <array>
-//           <dict>
-//             <key>CFBundleURLName</key><string>com.example.openidx_client</string>
-//             <key>CFBundleURLSchemes</key><array><string>openidx</string></array>
-//           </dict>
-//         </array>
-//     Info.plist is not committed here (flutter generates most of it); add this
-//     when wiring iOS. Android is the platform under test.
+//   iOS — ios/Runner/Info.plist needs a CFBundleURLTypes entry registering the
+//     `openidx` scheme, and it is NOT committed: client/.gitignore excludes
+//     /ios/ because `flutter create` generates it, and Flutter's template has no
+//     such entry. So the entry is added to the generated file instead, by
+//     scripts/ci-configure-ios-deeplinks.sh, which every job that materializes
+//     an iOS runner calls immediately afterwards. The scheme it writes is read
+//     out of the Android manifest above rather than repeated, so the two
+//     platforms cannot drift. scripts/check-ios-deeplink-config.sh fails CI on
+//     the next iOS job that skips the step.
+//
+//     Committing an Info.plist the way the Android manifest is committed would
+//     also work -- `flutter create` does not overwrite -- but that file is
+//     mostly Flutter's (bundle name, orientations, launch storyboard) and a
+//     hand-written copy drifts from the pinned Flutter version, breaking things
+//     unrelated to deep links. Patching what Flutter just generated adds one key
+//     and cannot drift.
+//
+// Which links actually need OS routing: openidx://oauth-callback (the server's
+// 302 after login) and openidx://enroll (the QR-free enrolment link) arrive from
+// outside the app. openidx://qr-login arrives through the camera scanner and
+// openidx://approve through a notification tap, both already inside the app, so
+// neither needs a platform registration.
 
 /// A parsed inbound deep link the app knows how to route.
 sealed class OpenidxDeepLink {

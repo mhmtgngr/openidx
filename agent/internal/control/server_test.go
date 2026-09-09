@@ -22,13 +22,15 @@ import (
 // fakeBackend implements the backend seam so the HTTP layer can be exercised
 // without a live OpenIDX server.
 type fakeBackend struct {
-	loginTokens *sso.Tokens
-	loginErr    error
-	entries     []desktoppam.Entry
-	listErr     error
-	connectURL  string
-	connectErr  error
-	requestErr  error
+	loginTokens  *sso.Tokens
+	loginErr     error
+	loginAgentID string
+	loginCalled  bool
+	entries      []desktoppam.Entry
+	listErr      error
+	connectURL   string
+	connectErr   error
+	requestErr   error
 
 	requestedEntry  string
 	requestedReason string
@@ -40,7 +42,9 @@ type fakeBackend struct {
 	pushPlatform    string
 }
 
-func (f *fakeBackend) Login(ctx context.Context, serverURL string) (*sso.Tokens, error) {
+func (f *fakeBackend) Login(ctx context.Context, serverURL, agentID string) (*sso.Tokens, error) {
+	f.loginCalled = true
+	f.loginAgentID = agentID
 	if f.loginErr != nil {
 		return nil, f.loginErr
 	}
@@ -129,7 +133,17 @@ func (b bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if b.token != "" {
 		r.Header.Set("Authorization", "Bearer "+b.token)
 	}
-	return b.rt.RoundTrip(r)
+	// A nil Transport on an http.Client means "use http.DefaultTransport", so a
+	// client built as &http.Client{} carries a nil here. The Unix dialer sets an
+	// explicit Transport (it has to, to dial the socket) and the Windows one
+	// does not — it dials plain loopback — so wrapping it dereferenced nil and
+	// panicked, on Windows only. Nothing caught it until the Windows test job
+	// existed to run these at all.
+	rt := b.rt
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	return rt.RoundTrip(r)
 }
 
 func get(t *testing.T, c *http.Client, base, path string) (int, []byte) {

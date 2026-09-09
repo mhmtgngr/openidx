@@ -30,6 +30,23 @@ type CheckResult struct {
 	Details     map[string]interface{} `json:"details,omitempty"`
 	Message     string                 `json:"message,omitempty"`
 	Remediation string                 `json:"remediation,omitempty"`
+
+	// Unsupported marks a result that says nothing about the device: the check
+	// has no implementation for this operating system and did not run.
+	//
+	// It exists because "we could not measure this" and "we measured it and it
+	// is a bit concerning" were the same value. Seven checks answer an
+	// unimplemented platform with StatusWarn, and warns do not count against
+	// compliance -- so on Android and iOS, where none of disk_encryption,
+	// screen_lock, patch_level, firewall, antivirus, domain_joined or integrity
+	// has an implementation, a device could be reported COMPLIANT on the
+	// strength of checks that never executed. disk_encryption is configured
+	// "critical".
+	//
+	// The Status stays warn so the wire format and the server's ingest are
+	// unchanged; this flag is the extra fact a caller needs to avoid counting
+	// a gap in the measurement as a clean result.
+	Unsupported bool `json:"unsupported,omitempty"`
 }
 
 // Check is the interface that every security check must implement.

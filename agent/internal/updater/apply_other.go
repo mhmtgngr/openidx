@@ -77,7 +77,7 @@ func runInstaller(name string, args ...string) error {
 			name = "sudo"
 		}
 	}
-	cmd := exec.Command(name, args...) //nolint:gosec // installer name is a compile-time constant, artifact is checksum-verified
+	cmd := exec.Command(name, args...) //nolint:gosec // installer name is a compile-time constant; the artifact reached apply() only through downloadVerified, which has no path that returns an unverified file
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s failed: %v: %s", name, err, strings.TrimSpace(string(out)))
 	}
@@ -102,7 +102,7 @@ func applySelfReplace(artifactPath string) error {
 		return err
 	}
 	// Replace the process image with the new binary, preserving args + environment.
-	return syscall.Exec(self, os.Args, os.Environ()) //nolint:gosec // self path from os.Executable, binary is checksum-verified
+	return syscall.Exec(self, os.Args, os.Environ()) //nolint:gosec // self path from os.Executable; the binary now in place came through downloadVerified, whose digest check is unconditional
 }
 
 // atomicReplaceExecutable copies src over the file at dst atomically: it writes a
@@ -111,7 +111,7 @@ func applySelfReplace(artifactPath string) error {
 // directory are atomic on POSIX, so a crash mid-update never leaves a truncated
 // executable. Pure filesystem work, so it is unit-testable without a real update.
 func atomicReplaceExecutable(src, dst string) error {
-	in, err := os.Open(src) //nolint:gosec // src is our downloaded, checksum-verified artifact
+	in, err := os.Open(src) //nolint:gosec // src is our downloaded artifact, digest-checked unconditionally by downloadVerified
 	if err != nil {
 		return fmt.Errorf("open new binary: %w", err)
 	}

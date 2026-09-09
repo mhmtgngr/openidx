@@ -28,10 +28,37 @@
         </intent>
     </queries>
 
+    <!--
+      The engine's config directory is this app's filesDir, and three of the
+      files in it are credentials: agent.json (the agent's auth token),
+      user-tokens.json (the signed-in user's access token and their 30-day
+      refresh token) and ziti-identity.json (the PRIVATE KEY and certificates
+      that put this device on the ZTNA overlay).
+
+      filesDir is in Android Auto Backup's default set. With no allowBackup
+      attribute the platform default is TRUE, so all three were being uploaded
+      to the user's Google Drive and were extractable with `adb backup`. The Go
+      code writes them 0600, which is the whole protection on a Linux desktop
+      and is inert here — inside the sandbox every file is already private to
+      this UID, and a mode bit says nothing about what the backup agent copies
+      out.
+
+      allowBackup="false" stops cloud backup on every API level.
+      dataExtractionRules is needed as well: from API 31 device-to-device
+      transfer is governed separately and is ALLOWED by default, so
+      allowBackup alone would still hand the identity to the next phone.
+
+      agent-android (the managed-device APK) has carried allowBackup="false"
+      since it was written; this app is the one that had it missing.
+      scripts/check-mobile-secrets-at-rest.sh now fails the build if either
+      loses it.
+    -->
     <application
         android:label="OpenIDX"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"

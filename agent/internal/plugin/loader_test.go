@@ -1,3 +1,11 @@
+//go:build !windows
+
+// Discover() now refuses every path on Windows, because the trust check it
+// applies is Unix mode bits and Windows discards them (see trust_windows.go).
+// These cases assert what discovery DOES on a platform where the check can be
+// made; loader_windows_test.go asserts the refusal on the platform where it
+// cannot.
+
 package plugin
 
 import (

@@ -34,9 +34,10 @@ func (c *ScreenLockCheck) Run(_ context.Context, _ map[string]interface{}) *Chec
 		return c.checkWindows()
 	default:
 		return &CheckResult{
-			Status:  StatusWarn,
-			Score:   0.5,
-			Message: fmt.Sprintf("screen lock check not supported on %s", runtime.GOOS),
+			Status:      StatusWarn,
+			Score:       0.5,
+			Message:     fmt.Sprintf("screen lock check not supported on %s", runtime.GOOS),
+			Unsupported: true,
 			Details: map[string]interface{}{
 				"os": runtime.GOOS,
 			},

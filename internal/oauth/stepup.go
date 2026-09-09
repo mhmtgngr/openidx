@@ -15,6 +15,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/stepup"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/identity"
@@ -287,6 +288,27 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 			"error_description": "failed to complete step-up challenge",
 		})
 		return
+	}
+
+	// Record the fresh factor on the session itself. THIS is what gives
+	// step-up an effect.
+	//
+	// Until v1.34.0 the only output of a successful step-up was the JWT minted
+	// below, and nothing in the product ever asked for that JWT: no handler,
+	// no middleware, no gate read it. A user could complete a challenge, be
+	// told "verified", and find the action they were stepping up FOR just as
+	// permitted or refused as before. Stamping sessions.mfa_verified_at (v186)
+	// is what the freshness gate at PAM launch and admin writes reads, so
+	// answering the challenge is now the thing that lets the caller through.
+	//
+	// Best-effort by design: the factor WAS verified, and refusing a verified
+	// step-up because one UPDATE failed would deny the user the very thing
+	// they just proved they were entitled to. A lost stamp means being asked
+	// again, which is the safe direction to fail.
+	if stampErr := stepup.Stamp(ctx, s.db, org.ID, challengeSessionID); stampErr != nil {
+		s.logger.Warn("step-up verified but session freshness not recorded",
+			zap.String("challenge_id", req.ChallengeID),
+			zap.Error(stampErr))
 	}
 
 	// Generate a short-lived step-up JWT (5 minutes)

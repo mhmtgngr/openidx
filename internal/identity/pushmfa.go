@@ -324,12 +324,27 @@ func (s *Service) CreatePushMFAChallenge(ctx context.Context, request *PushMFACh
 	return challenge, nil
 }
 
-// VerifyPushMFAChallenge verifies a push MFA challenge response
-func (s *Service) VerifyPushMFAChallenge(ctx context.Context, response *PushMFAChallengeResponse) (bool, error) {
+// VerifyPushMFAChallenge verifies a push MFA challenge response.
+//
+// callerUserID is the authenticated subject answering the prompt. It is checked
+// against the challenge's own user, the device the challenge went to is checked
+// for whether it may still approve, and wrong number-matches are counted — see
+// pushmfa_approval_gate.go for what each of those three is for.
+func (s *Service) VerifyPushMFAChallenge(ctx context.Context, callerUserID string, response *PushMFAChallengeResponse) (bool, error) {
 	// Get challenge
 	challenge, err := s.getPushChallenge(ctx, response.ChallengeID)
 	if err != nil {
 		return false, fmt.Errorf("challenge not found: %w", err)
+	}
+
+	// The prompt is this user's to answer. Checked before status and expiry so
+	// that a stranger holding a challenge id learns nothing about it.
+	if err := pushChallengeBelongsTo(challenge, callerUserID); err != nil {
+		s.logger.Warn("SECURITY: push MFA challenge answered by another user",
+			zap.String("challenge_id", logsafe.Clean(challenge.ID)),
+			zap.String("challenge_user_id", logsafe.Clean(challenge.UserID)),
+			zap.String("caller_user_id", logsafe.Clean(callerUserID)))
+		return false, err
 	}
 
 	// Check if already responded
@@ -349,11 +364,38 @@ func (s *Service) VerifyPushMFAChallenge(ctx context.Context, response *PushMFAC
 	// they were never shown (the GET response redacts it); requiring it would
 	// make "deny suspicious" impossible and push users toward blind approval.
 	if response.Approved && response.ChallengeCode != challenge.ChallengeCode {
+		// Count it. A wrong code used to leave the challenge pending, so the
+		// ninety possible two-digit codes could be walked through.
+		exhausted := s.registerFailedPushAttempt(ctx, challenge)
 		s.logger.Warn("Push MFA challenge code mismatch",
-			zap.String("challenge_id", challenge.ID),
-			zap.String("expected", challenge.ChallengeCode),
-			zap.String("received", response.ChallengeCode))
+			zap.String("challenge_id", logsafe.Clean(challenge.ID)),
+			zap.Bool("attempts_exhausted", exhausted))
+		if exhausted {
+			s.denyChallengeForFailedAttempts(ctx, challenge)
+			return false, fmt.Errorf("invalid challenge code: too many attempts, this request was denied")
+		}
 		return false, fmt.Errorf("invalid challenge code")
+	}
+
+	// An approval is the device speaking for its user, so the device must still
+	// be one that may. A deny is not: a revoked or disabled phone rejecting a
+	// prompt is a signal to keep, never one to refuse.
+	if response.Approved {
+		usable, why, derr := s.approvingDeviceUsable(ctx, challenge.DeviceID)
+		if derr != nil {
+			// The check could not run. Refusing is the only safe answer for an
+			// MFA approval; the user can retry, and the operator sees why.
+			s.logger.Error("push MFA: could not check the approving device's state; refusing the approval",
+				zap.String("challenge_id", logsafe.Clean(challenge.ID)), zap.Error(derr))
+			return false, fmt.Errorf("%w: device state unavailable", ErrPushDeviceNotApprovable)
+		}
+		if !usable {
+			s.logger.Warn("SECURITY: push MFA approval refused — the approving device may no longer approve",
+				zap.String("challenge_id", logsafe.Clean(challenge.ID)),
+				zap.String("device_id", logsafe.Clean(challenge.DeviceID)),
+				zap.String("reason", why))
+			return false, fmt.Errorf("%w: %s", ErrPushDeviceNotApprovable, why)
+		}
 	}
 
 	// Update challenge status
@@ -671,10 +713,15 @@ func (s *Service) updatePushChallenge(ctx context.Context, challenge *PushMFACha
 }
 
 func (s *Service) sendPushNotification(ctx context.Context, device *PushMFADevice, challenge *PushMFAChallenge) error {
-	// Auto-approve in development mode (for testing without actual push service)
+	// push_mfa.auto_approve skips the provider hop for a development install
+	// with no FCM/APNs credentials. It approves NOTHING: the challenge stays
+	// pending, ntfy still carries the prompt, and the user still has to tap and
+	// match the number. The log line here used to say "Auto-approving push
+	// challenge", which is the only place anyone would have read that claim —
+	// a switch whose name and log describe a bypass it does not perform.
 	if s.cfg.PushMFA.AutoApprove {
-		s.logger.Info("Auto-approving push challenge (development mode)",
-			zap.String("challenge_id", challenge.ID))
+		s.logger.Info("push_mfa.auto_approve is set: skipping the FCM/APNs send (the challenge still requires a tap)",
+			zap.String("challenge_id", logsafe.Clean(challenge.ID)))
 		return nil
 	}
 

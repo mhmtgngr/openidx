@@ -3,12 +3,13 @@ package audit
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/syssettings"
 )
 
 // SOC2Report represents a SOC 2 Type II compliance report
@@ -343,41 +344,22 @@ func (s *Service) getPasswordPolicyMetrics(ctx context.Context) (PasswordPolicyM
 	// deployment that has never opened the security settings page has no row,
 	// and the defaults above are then the policy in force. So this one keeps
 	// its own error handling and does not fail the report.
-	var settingsJSON []byte
-	if q.failed() == nil {
-		if err := s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(value::text, '{}')
-			FROM system_settings
-			WHERE key = 'security'
-		`).Scan(&settingsJSON); err != nil {
-			settingsJSON = nil
-		}
-	}
-
-	if len(settingsJSON) > 0 {
-		var secSettings map[string]interface{}
-		if json.Unmarshal(settingsJSON, &secSettings) == nil {
-			if pp, ok := secSettings["password_policy"].(map[string]interface{}); ok {
-				if ml, ok := pp["min_length"].(float64); ok {
-					metrics.MinLength = int(ml)
-				}
-				if uc, ok := pp["require_uppercase"].(bool); ok {
-					metrics.RequireUppercase = uc
-				}
-				if lc, ok := pp["require_lowercase"].(bool); ok {
-					metrics.RequireLowercase = lc
-				}
-				if num, ok := pp["require_numbers"].(bool); ok {
-					metrics.RequireNumbers = num
-				}
-				if sc, ok := pp["require_special_chars"].(bool); ok {
-					metrics.RequireSpecialChars = sc
-				}
-				if ma, ok := pp["max_age_days"].(float64); ok {
-					metrics.MaxAgeDays = int(ma)
-				}
-			}
-		}
+	//
+	// It read `WHERE key = 'security'` until v1.34.0 and no such row has ever
+	// been written -- security is an object inside the 'system' document -- so
+	// the defaults above were the answer on every install regardless of what
+	// the operator had configured. Two of the field names were wrong as well:
+	// the console writes require_special and max_age, not require_special_chars
+	// and max_age_days, so those two would have stayed default even against the
+	// right row.
+	if settings, err := syssettings.Load(ctx, s.db.Pool); err == nil && q.failed() == nil {
+		pp := settings.Security.PasswordPolicy
+		metrics.MinLength = pp.MinLength
+		metrics.RequireUppercase = pp.RequireUppercase
+		metrics.RequireLowercase = pp.RequireLowercase
+		metrics.RequireNumbers = pp.RequireNumbers
+		metrics.RequireSpecialChars = pp.RequireSpecial
+		metrics.MaxAgeDays = pp.MaxAge
 	}
 
 	q.scan("users with weak passwords", &metrics.UsersWithWeakPasswords, `
@@ -479,26 +461,17 @@ func (s *Service) getSessionManagementMetrics(ctx context.Context) (SessionManag
 	// As in the password section: a deployment that has never saved security
 	// settings has no row, and the zero timeout below is then a real reading of
 	// an unconfigured install, which the compliance status treats as
-	// non-compliant.
-	var settingsJSON []byte
-	if err := s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(value::text, '{}')
-		FROM system_settings
-		WHERE key = 'security'
-	`).Scan(&settingsJSON); err != nil {
-		settingsJSON = nil
-	}
-
-	if len(settingsJSON) > 0 {
-		var secSettings map[string]interface{}
-		if json.Unmarshal(settingsJSON, &secSettings) == nil {
-			if st, ok := secSettings["session_timeout"].(float64); ok {
-				metrics.SessionTimeoutMins = int(st)
-			}
-			if it, ok := secSettings["idle_timeout"].(float64); ok {
-				metrics.IdleTimeoutMins = int(it)
-			}
-		}
+	// non-compliant. Before v1.34.0 the wrong key meant EVERY install read as
+	// unconfigured, so this control reported non-compliant on installs with a
+	// session timeout configured.
+	//
+	// idle_timeout is stored in seconds (the console's default is 1800) and
+	// this metric is in minutes; the old code assigned the raw number, so a
+	// 30-minute idle timeout would have been reported as 1800 minutes had the
+	// read ever returned anything.
+	if settings, err := syssettings.Load(ctx, s.db.Pool); err == nil {
+		metrics.SessionTimeoutMins = settings.Security.SessionTimeout
+		metrics.IdleTimeoutMins = settings.Security.IdleTimeout / 60
 	}
 
 	if metrics.SessionTimeoutMins == 0 {
@@ -584,34 +557,19 @@ func (s *Service) getCryptographyMetrics(ctx context.Context) (CryptographyMetri
 		return CryptographyMetrics{}, err
 	}
 
-	// The settings row may legitimately not exist; the defaults above are then
-	// the configuration in force.
-	var settingsJSON []byte
-	if err := s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(value::text, '{}')
-		FROM system_settings
-		WHERE key = 'security'
-	`).Scan(&settingsJSON); err != nil {
-		settingsJSON = nil
-	}
-
-	if len(settingsJSON) > 0 {
-		var secSettings map[string]interface{}
-		if json.Unmarshal(settingsJSON, &secSettings) == nil {
-			if tls, ok := secSettings["tls_enabled"].(bool); ok {
-				metrics.TLSEnabled = tls
-			}
-			if mv, ok := secSettings["tls_min_version"].(string); ok {
-				metrics.TLSMinVersion = mv
-			}
-			if enc, ok := secSettings["encryption_at_rest"].(bool); ok {
-				metrics.EncryptionAtRest = enc
-			}
-			if kr, ok := secSettings["key_rotation_enabled"].(bool); ok {
-				metrics.KeyRotationEnabled = kr
-			}
-		}
-	}
+	// This read a system_settings row keyed 'security' for tls_enabled,
+	// tls_min_version, encryption_at_rest and key_rotation_enabled. That row
+	// has never existed, and none of those four fields exists anywhere in the
+	// console's settings document either -- there is no screen that sets them.
+	// The read could therefore never return anything, and the four values
+	// above have always been the literals they are initialised to.
+	//
+	// The dead query is removed rather than pointed at the right row, because
+	// the right row does not carry these fields. The literals remain, and they
+	// remain what they were: an assumption this report states, not a
+	// measurement it took. Sourcing them from the deployment's real TLS and
+	// encryption configuration (config.Config carries both) is a separate
+	// change; internal/audit holds no config today.
 
 	// Key rotations are recorded as audit events — the old query hit a
 	// phantom `key_rotation_events` table (no migration creates it) and

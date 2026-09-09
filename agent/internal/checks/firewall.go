@@ -32,9 +32,10 @@ func (c *FirewallCheck) Run(_ context.Context, _ map[string]interface{}) *CheckR
 		return c.checkWindows()
 	default:
 		return &CheckResult{
-			Status:  StatusWarn,
-			Score:   0.5,
-			Message: fmt.Sprintf("firewall check not supported on %s", runtime.GOOS),
+			Status:      StatusWarn,
+			Score:       0.5,
+			Message:     fmt.Sprintf("firewall check not supported on %s", runtime.GOOS),
+			Unsupported: true,
 			Details: map[string]interface{}{
 				"os": runtime.GOOS,
 			},

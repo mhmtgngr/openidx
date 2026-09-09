@@ -130,6 +130,8 @@ interface DeviceRevokeResult {
   ziti_edge_sessions_terminated: number
   ziti_api_sessions_terminated: number
   known_device_untrusted: boolean
+  iam_refresh_tokens_revoked: number
+  iam_sessions_revoked: number
   warnings?: string[]
 }
 
@@ -214,6 +216,14 @@ export function UserAccess360Page() {
       const outcomes = [t('pages.userAccess360.devices.revokedSessions', { count: net })]
       if (res.ziti_identity_deleted) outcomes.push(t('pages.userAccess360.devices.revokedIdentity'))
       if (res.known_device_untrusted) outcomes.push(t('pages.userAccess360.devices.revokedUntrusted'))
+      // The token half is reported either way. Severing the overlay and saying
+      // nothing about the sign-in the device is holding is what made "revoked"
+      // read as more than it was.
+      if (res.iam_sessions_revoked > 0) {
+        outcomes.push(t('pages.userAccess360.devices.revokedTokens', { count: res.iam_sessions_revoked }))
+      } else {
+        outcomes.push(t('pages.userAccess360.devices.revokedNoTokens'))
+      }
       toast({
         title: t('pages.userAccess360.devices.revoked'),
         description: outcomes.join(' '),

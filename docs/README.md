@@ -72,6 +72,9 @@ Posture/EDR: [EDR_MDM_POSTURE.md](./EDR_MDM_POSTURE.md),
 Notifications: [NTFY_PUSH_NOTIFICATIONS.md](./NTFY_PUSH_NOTIFICATIONS.md),
 [mobile/push-mfa-delivery.md](./mobile/push-mfa-delivery.md) (how push-MFA
 prompts reach the phone, and why there is no Firebase SDK in the client).
+Clients — registration, MFA, ZTNA tiers and permissions across the Windows
+agent, the Android agent and the companion app, with the findings that shaped
+it: [CLIENT-ACCESS-DESIGN.md](./CLIENT-ACCESS-DESIGN.md).
 Mobile: the client is the Flutter app in [`client/`](../client), over the same
 Go engine as the desktop agent. The API contracts below are still current; their
 file references point at the deleted Expo prototype and are being retargeted:

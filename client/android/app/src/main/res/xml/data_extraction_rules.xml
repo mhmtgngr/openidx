@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12 (API 31) split what android:allowBackup used to cover in one:
+  cloud backup and device-to-device transfer are now separate channels, and
+  D2D transfer is ALLOWED by default whatever allowBackup says. So opting out
+  of one is not opting out of the other, and this file is the second half.
+
+  Everything is excluded from both channels because everything the engine
+  writes to this app's storage is either a credential or derived from one:
+  agent.json (the agent auth token), user-tokens.json (the access token and
+  the 30-day refresh token behind it) and ziti-identity.json (the private key
+  and certificates that put the device on the ZTNA overlay). There is nothing
+  in here whose loss on a new phone costs the user more than one enrolment,
+  and re-enrolling is the correct outcome — a new device is a new device, and
+  the server decides whether to trust it.
+
+  The domain list is every domain the schema defines for an app's own storage.
+  Naming them all rather than relying on "root" means a file that lands in a
+  database or a shared preference later is covered without an edit here.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

@@ -3,10 +3,10 @@ package oauth
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/syssettings"
 	"go.uber.org/zap"
 )
 
@@ -41,45 +41,36 @@ func DefaultSessionPolicy() SessionPolicy {
 func (s *Service) getEffectiveSessionPolicy(ctx context.Context, clientID string) SessionPolicy {
 	policy := DefaultSessionPolicy()
 
-	// Load global settings from system_settings
-	var settingsJSON string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT value::text FROM system_settings WHERE key = 'settings'").Scan(&settingsJSON)
-	if err == nil && settingsJSON != "" {
-		var allSettings struct {
-			Security struct {
-				IdleTimeout               int    `json:"idle_timeout"`
-				AbsoluteTimeout           int    `json:"absolute_timeout"`
-				RememberMeDuration        int    `json:"remember_me_duration"`
-				ReauthInterval            int    `json:"reauth_interval"`
-				BindSessionToIP           bool   `json:"bind_session_to_ip"`
-				ForceLogoutOnPwdChange    bool   `json:"force_logout_on_password_change"`
-				MaxConcurrentSessions     int    `json:"max_concurrent_sessions"`
-				ConcurrentSessionStrategy string `json:"concurrent_session_strategy"`
-			} `json:"security"`
+	// Load the console's settings document.
+	//
+	// This block read `WHERE key = 'settings'` until v1.34.0. Nothing has ever
+	// written a system_settings row under that key -- the console reads and
+	// writes the whole document under 'system' (seeded by migration 010) --
+	// so the query returned no rows on every install that has ever run and
+	// every value an operator set on the Security tab was silently discarded
+	// in favour of the compiled-in defaults below. See internal/common/
+	// syssettings, which is now the single reader of this table.
+	if settings, err := syssettings.Load(ctx, s.db.Pool); err == nil {
+		sec := settings.Security
+		if sec.IdleTimeout > 0 {
+			policy.IdleTimeout = sec.IdleTimeout
 		}
-		if jsonErr := json.Unmarshal([]byte(settingsJSON), &allSettings); jsonErr == nil {
-			sec := allSettings.Security
-			if sec.IdleTimeout > 0 {
-				policy.IdleTimeout = sec.IdleTimeout
-			}
-			if sec.AbsoluteTimeout > 0 {
-				policy.AbsoluteTimeout = sec.AbsoluteTimeout
-			}
-			if sec.RememberMeDuration > 0 {
-				policy.RememberMeDuration = sec.RememberMeDuration
-			}
-			if sec.ReauthInterval > 0 {
-				policy.ReauthInterval = sec.ReauthInterval
-			}
-			policy.BindSessionToIP = sec.BindSessionToIP
-			policy.ForceLogoutOnPwdChange = sec.ForceLogoutOnPwdChange
-			if sec.MaxConcurrentSessions > 0 {
-				policy.MaxConcurrentSessions = sec.MaxConcurrentSessions
-			}
-			if sec.ConcurrentSessionStrategy != "" {
-				policy.ConcurrentSessionStrategy = sec.ConcurrentSessionStrategy
-			}
+		if sec.AbsoluteTimeout > 0 {
+			policy.AbsoluteTimeout = sec.AbsoluteTimeout
+		}
+		if sec.RememberMeDuration > 0 {
+			policy.RememberMeDuration = sec.RememberMeDuration
+		}
+		if sec.ReauthInterval > 0 {
+			policy.ReauthInterval = sec.ReauthInterval
+		}
+		policy.BindSessionToIP = sec.BindSessionToIP
+		policy.ForceLogoutOnPwdChange = sec.ForceLogoutOnPwdChange
+		if sec.MaxConcurrentSessions > 0 {
+			policy.MaxConcurrentSessions = sec.MaxConcurrentSessions
+		}
+		if sec.ConcurrentSessionStrategy != "" {
+			policy.ConcurrentSessionStrategy = sec.ConcurrentSessionStrategy
 		}
 	}
 

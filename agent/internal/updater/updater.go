@@ -1,15 +1,42 @@
 // Package updater implements cross-platform self-update: poll a version
-// manifest, and when a newer signed artifact is published, download it
-// (checksum-verified) and apply it with the platform-appropriate installer —
-// msiexec on Windows, `installer` for a macOS .pkg, dpkg/rpm for Linux packages,
-// or an atomic executable self-replace + re-exec for a bare binary/AppImage. The
-// manifest URL is configured per-install; empty disables auto-update.
+// manifest, and when it advertises a newer artifact, download it, verify its
+// SHA-256 against the manifest, and apply it with the platform-appropriate
+// installer — msiexec on Windows, `installer` for a macOS .pkg, dpkg/rpm for
+// Linux packages, or an atomic executable self-replace + re-exec for a bare
+// binary/AppImage. The manifest URL is configured per-install; empty disables
+// auto-update.
 //
 // Manifest format (JSON) — the url's file extension selects the install method:
 //
 //	{ "version": "1.2.0",
 //	  "url": "https://.../OpenIDX-1.2.0.msi",   // or .pkg/.deb/.rpm/.AppImage/bare
-//	  "sha256": "<hex>" }
+//	  "sha256": "<64 hex chars>" }
+//
+// WHAT IS VERIFIED, AND WHAT IS NOT. This doc comment used to say "a newer
+// SIGNED artifact"; nothing here verifies a signature, and saying so made the
+// weaker control read as the stronger one. What is verified is the artifact's
+// SHA-256 against the digest the manifest pins.
+//
+// That makes THE MANIFEST THE ROOT OF TRUST: whoever can choose its bytes
+// chooses what this machine installs, because they supply the url and the
+// digest that matches it. Two things follow, and both are enforced below rather
+// than left to the operator:
+//
+//   - both URLs must be https (loopback excepted, see requireSecureURL), since
+//     over plain http the digest is rewritten with the artifact and protects
+//     nothing;
+//   - the digest is MANDATORY. It used to be optional — `if wantSHA != ""` —
+//     so a manifest that omitted sha256 installed an unverified artifact. On
+//     Linux that is `sudo -n dpkg -i` on a file this process just downloaded;
+//     on Windows an msiexec /i as SYSTEM. A control the checked input can
+//     switch off is not a control, and three //nolint:gosec comments in
+//     apply_other.go asserted "artifact is checksum-verified" as though it
+//     always were.
+//
+// Verifying a detached signature over the manifest (the release workflow
+// already cosign-signs what it publishes) would move the root of trust off the
+// hosting and is the right next step; it is NOT done here, and is recorded
+// rather than implied.
 package updater
 
 import (
@@ -20,10 +47,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// maxArtifactBytes caps a download. The digest catches a substituted artifact,
+// but only after it has been written: without a ceiling, a manifest pointing at
+// an endless response fills the disk of every machine that polls it, and the
+// agent runs on endpoints rather than servers. Generous by two orders of
+// magnitude over the ~50 MB the real installers weigh.
+const maxArtifactBytes = 1 << 30 // 1 GiB
 
 // Manifest describes the latest published release.
 type Manifest struct {
@@ -32,8 +67,54 @@ type Manifest struct {
 	SHA256  string `json:"sha256"`
 }
 
-// Fetch retrieves and parses the version manifest.
+// requireSecureURL rejects a URL this package must not fetch from.
+//
+// https, or http to a loopback address. The loopback exception is not a
+// weakening: an attacker who can serve 127.0.0.1 is already running code on the
+// machine and does not need the updater. It is there because the tests and a
+// local artifact server need it, and an exception that is written down is safer
+// than one improvised later.
+func requireSecureURL(what, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s is not a URL: %w", what, err)
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		host := u.Hostname()
+		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+			return nil
+		}
+		return fmt.Errorf("%s uses http://%s: the digest that protects the download "+
+			"travels in the same channel, so plain http protects nothing. Use https", what, host)
+	default:
+		return fmt.Errorf("%s uses scheme %q; only https (or http to loopback) is fetched", what, u.Scheme)
+	}
+}
+
+// validDigest reports whether s is a 64-character hex SHA-256.
+//
+// Shape-checked rather than merely non-empty: "sha256": "TODO" is not a digest,
+// and comparing it against the real one would fail with a confusing mismatch
+// instead of naming the manifest as malformed.
+func validDigest(s string) bool {
+	if len(s) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
+// Fetch retrieves, parses and validates the version manifest. A manifest that
+// does not pin a digest, or that points anywhere this package will not fetch
+// from, is rejected here — before anything is downloaded — so the refusal names
+// the manifest rather than surfacing later as a failed install.
 func Fetch(ctx context.Context, manifestURL string) (*Manifest, error) {
+	if err := requireSecureURL("manifest URL", manifestURL); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
 		return nil, err
@@ -53,6 +134,15 @@ func Fetch(ctx context.Context, manifestURL string) (*Manifest, error) {
 	if m.Version == "" || m.URL == "" {
 		return nil, fmt.Errorf("manifest missing version/url")
 	}
+	if err := requireSecureURL("artifact URL", m.URL); err != nil {
+		return nil, err
+	}
+	if !validDigest(strings.TrimSpace(m.SHA256)) {
+		return nil, fmt.Errorf("manifest does not pin a valid sha256 (got %q): "+
+			"the digest is what makes the downloaded installer safe to run, and this "+
+			"agent will not install an artifact it cannot verify", m.SHA256)
+	}
+	m.SHA256 = strings.TrimSpace(m.SHA256)
 	return &m, nil
 }
 
@@ -125,10 +215,22 @@ func artifactExt(url string) string {
 	return ext
 }
 
-// downloadVerified downloads url to a temp file and verifies its SHA-256 (when
-// the manifest provides one). Returns the temp file path (caller removes it).
-func downloadVerified(ctx context.Context, url, wantSHA string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// downloadVerified downloads artifactURL to a temp file and verifies its
+// SHA-256 against wantSHA. Returns the temp file path (caller removes it).
+//
+// There is no path through this function that returns a file it did not verify.
+// An empty or malformed wantSHA is refused rather than treated as "no digest
+// requested" — Fetch already rejects such a manifest, and a second caller that
+// forgot to must fail here rather than hand an unchecked installer to msiexec.
+func downloadVerified(ctx context.Context, artifactURL, wantSHA string) (string, error) {
+	wantSHA = strings.TrimSpace(wantSHA)
+	if !validDigest(wantSHA) {
+		return "", fmt.Errorf("refusing to download %s without a valid sha256 to check it against", artifactURL)
+	}
+	if err := requireSecureURL("artifact URL", artifactURL); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, artifactURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -141,31 +243,38 @@ func downloadVerified(ctx context.Context, url, wantSHA string) (string, error) 
 		return "", fmt.Errorf("download returned %d", resp.StatusCode)
 	}
 
-	f, err := os.CreateTemp("", "openidx-update-*"+artifactExt(url))
+	f, err := os.CreateTemp("", "openidx-update-*"+artifactExt(artifactURL))
 	if err != nil {
 		return "", err
 	}
 	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(f, h), resp.Body); err != nil {
-		f.Close()
+	// One byte past the cap so a response that reaches it is reported as too
+	// large rather than silently truncated into a digest mismatch, which would
+	// name the wrong cause.
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(resp.Body, maxArtifactBytes+1))
+	f.Close()
+	if err != nil {
 		os.Remove(f.Name())
 		return "", err
 	}
-	f.Close()
+	if n > maxArtifactBytes {
+		os.Remove(f.Name())
+		return "", fmt.Errorf("artifact exceeds %d bytes; refusing to fill the disk", maxArtifactBytes)
+	}
 
-	if wantSHA != "" {
-		got := hex.EncodeToString(h.Sum(nil))
-		if !strings.EqualFold(got, strings.TrimSpace(wantSHA)) {
-			os.Remove(f.Name())
-			return "", fmt.Errorf("checksum mismatch: got %s want %s", got, wantSHA)
-		}
+	got := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(got, wantSHA) {
+		os.Remove(f.Name())
+		return "", fmt.Errorf("checksum mismatch: got %s want %s", got, wantSHA)
 	}
 	return f.Name(), nil
 }
 
 // CheckAndApply fetches the manifest; if it advertises a newer version than
-// currentVersion, downloads (checksum-verified) and applies the MSI. Returns
-// whether an update was applied and the new version.
+// currentVersion, downloads the artifact, verifies its digest, and applies it
+// with the platform installer. Returns whether an update was applied and the
+// new version. Every refusal above — an http URL, a missing or malformed
+// digest, a mismatch — reaches the caller as an error and installs nothing.
 func CheckAndApply(ctx context.Context, manifestURL, currentVersion string) (applied bool, newVersion string, err error) {
 	m, err := Fetch(ctx, manifestURL)
 	if err != nil {

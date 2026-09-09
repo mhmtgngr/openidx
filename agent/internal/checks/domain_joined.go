@@ -34,9 +34,10 @@ func (c *DomainCheck) Run(_ context.Context, _ map[string]interface{}) *CheckRes
 		return c.checkWindows()
 	default:
 		return &CheckResult{
-			Status:  StatusWarn,
-			Score:   0.5,
-			Message: fmt.Sprintf("domain join check not supported on %s", runtime.GOOS),
+			Status:      StatusWarn,
+			Score:       0.5,
+			Message:     fmt.Sprintf("domain join check not supported on %s", runtime.GOOS),
+			Unsupported: true,
 			Details: map[string]interface{}{
 				"os": runtime.GOOS,
 			},

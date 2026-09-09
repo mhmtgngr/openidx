@@ -134,6 +134,14 @@ jobs:
         working-directory: client
         run: flutter create --platforms=ios,android --project-name openidx_client .
 
+      # `flutter create` regenerates ios/ from Flutter's template on every job,
+      # and that template has no CFBundleURLTypes -- so without this the build
+      # cannot receive openidx://oauth-callback and the login never completes on
+      # the device. scripts/check-ios-deeplink-config.sh fails CI if a new
+      # iOS-materializing job forgets it.
+      - name: Register the iOS URL scheme
+        run: bash scripts/ci-configure-ios-deeplinks.sh
+
       - name: Resolve dependencies
         working-directory: client
         run: flutter pub get
@@ -173,6 +181,14 @@ jobs:
       - name: Materialize platform runners
         working-directory: client
         run: flutter create --platforms=ios,android --project-name openidx_client .
+
+      # `flutter create` regenerates ios/ from Flutter's template on every job,
+      # and that template has no CFBundleURLTypes -- so without this the build
+      # cannot receive openidx://oauth-callback and the login never completes on
+      # the device. scripts/check-ios-deeplink-config.sh fails CI if a new
+      # iOS-materializing job forgets it.
+      - name: Register the iOS URL scheme
+        run: bash scripts/ci-configure-ios-deeplinks.sh
 
       - name: Resolve dependencies
         working-directory: client
@@ -218,6 +234,14 @@ jobs:
       - name: Materialize platform runners
         working-directory: client
         run: flutter create --platforms=ios,android --project-name openidx_client .
+
+      # `flutter create` regenerates ios/ from Flutter's template on every job,
+      # and that template has no CFBundleURLTypes -- so without this the build
+      # cannot receive openidx://oauth-callback and the login never completes on
+      # the device. scripts/check-ios-deeplink-config.sh fails CI if a new
+      # iOS-materializing job forgets it.
+      - name: Register the iOS URL scheme
+        run: bash scripts/ci-configure-ios-deeplinks.sh
 
       - name: Resolve dependencies
         working-directory: client
