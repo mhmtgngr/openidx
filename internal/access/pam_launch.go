@@ -223,37 +223,9 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 	userID := c.GetString("user_id")
 	isAdmin := s.pamCallerIsAdmin(c)
 
-	row := s.db.Pool.QueryRow(ctx, `
-		SELECT id, name, entry_type, COALESCE(hostname,''), COALESCE(port,0),
-		       COALESCE(username,''), COALESCE(domain,''), COALESCE(url,''), settings,
-		       COALESCE(vault_secret_id::text,''), COALESCE(credential_entry_id::text,''),
-		       COALESCE(guacamole_connection_id,''), require_approval, record_session,
-		       reach_mode, COALESCE(ziti_intercept_port,0)
-		  FROM pam_entries WHERE id = $1 AND org_id = $2`, entryID, org.ID)
-
-	var entry pamLaunchEntry
-	var settingsJSON []byte
-	if err := row.Scan(
-		&entry.ID, &entry.Name, &entry.EntryType, &entry.Hostname, &entry.Port,
-		&entry.Username, &entry.Domain, &entry.URL, &settingsJSON,
-		&entry.VaultSecretID, &entry.CredentialEntryID,
-		&entry.GuacConnectionID, &entry.RequireApproval, &entry.RecordSession,
-		&entry.ReachMode, &entry.ZitiInterceptPort,
-	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "entry not found"})
-			return
-		}
-		s.logger.Error("handlePamConnect: lookup failed", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load entry"})
-		return
-	}
-	entry.Settings = decodePamSettings(settingsJSON)
-
-	typeInfo, ok := pamEntryTypeByName[entry.EntryType]
-	if !ok || typeInfo.Kind != "session" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "entry is not a launchable session"})
-		return
+	entry, typeInfo, ok := s.loadPamLaunchEntry(c, org.ID, entryID)
+	if !ok {
+		return // loadPamLaunchEntry already wrote the error
 	}
 
 	if !isAdmin {

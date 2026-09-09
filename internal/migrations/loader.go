@@ -1336,5 +1336,12 @@ func allMigrations() []*Migration {
 			UpSQL:       refreshFamilyLifetimeUp,
 			DownSQL:     refreshFamilyLifetimeDown,
 		},
+		{
+			Version:     188,
+			Name:        "temp_link_pam_entry",
+			Description: "Point a vendor access link at a pam_entries row instead of letting it carry its own protocol/host/port, so redemption can run the PAM launch core and inherit every control that path applies. temp_access_links held its own target and handleUseTempAccess redirected to a Guacamole connection created with an EMPTY parameter map, so the one feature in this product built for third-party RDP/SSH had no PAM_REQUIRE_ZTNA check, no broker selection by reach mode (always the direct broker, never the overlay one), no session recording and no credential injection -- the vendor had to be told a password out of band, which is what the vault exists to prevent. A REFERENCE RATHER THAN MORE COLUMNS, because the alternative fails in the worst direction: pam_entry_sessions.entry_id is NOT NULL REFERENCES pam_entries(id) (v81), so a pamLaunchEntry synthesised from link columns violates the foreign key, and recordPamLaunch logs that at WARN and continues -- a ledger write must not abort a launch already in flight -- so the session would open with no row recording it, an outsider on an internal host and nothing to show for it. Pointing at a real entry is the only shape the existing core can be reused in, and it inherits the ACL, approval flag, recording flag, vault credential, reach mode and Ziti intercept port instead of duplicating them where they can drift. Nullable with NO BACKFILL: a link issued before this has nothing to point at, and choosing a pam_entries row from a stored hostname would be inventing an authorization -- those links keep their columns as a record of what was issued and are REFUSED at redemption with a message saying to re-create them, which fails closed on a few in-flight links rather than leaving the old ungated redirect alive as a second path. ON DELETE CASCADE matches pam_entry_sessions, so deleting the target removes the token addressing it.",
+			UpSQL:       tempLinkPamEntryUp,
+			DownSQL:     tempLinkPamEntryDown,
+		},
 	}
 }

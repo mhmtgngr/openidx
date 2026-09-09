@@ -2,14 +2,17 @@
 package access
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -21,6 +24,7 @@ type TempAccessLink struct {
 	Token            string     `json:"token"`
 	Name             string     `json:"name"`
 	Description      string     `json:"description,omitempty"`
+	PamEntryID       string     `json:"pam_entry_id,omitempty"`
 	Protocol         string     `json:"protocol"` // ssh, rdp, vnc
 	TargetHost       string     `json:"target_host"`
 	TargetPort       int        `json:"target_port"`
@@ -54,14 +58,18 @@ type TempAccessUsage struct {
 	Duration       int        `json:"duration_seconds,omitempty"`
 }
 
-// CreateTempAccessRequest is the request to create a temp access link
+// CreateTempAccessRequest is the request to create a temp access link.
+//
+// The target is a PAM entry, not a hostname. Everything that decides HOW the
+// session is brokered — reach mode, recording, the vault credential, the Ziti
+// intercept port — lives on that entry, so a link cannot be issued to a target
+// whose controls nobody configured, and cannot drift from them afterwards.
+// Protocol, host, port and username used to be fields here and are now read
+// from the entry.
 type CreateTempAccessRequest struct {
 	Name         string   `json:"name" binding:"required"`
 	Description  string   `json:"description"`
-	Protocol     string   `json:"protocol" binding:"required,oneof=ssh rdp vnc"`
-	TargetHost   string   `json:"target_host" binding:"required"`
-	TargetPort   int      `json:"target_port" binding:"required,min=1,max=65535"`
-	Username     string   `json:"username"`
+	PamEntryID   string   `json:"pam_entry_id" binding:"required,uuid"`
 	DurationMins int      `json:"duration_mins" binding:"required,min=5,max=10080"` // 5 mins to 7 days
 	MaxUses      int      `json:"max_uses"`                                         // 0 = unlimited
 	AllowedIPs   []string `json:"allowed_ips"`
@@ -107,28 +115,37 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 	linkID := uuid.New().String()
 	expiresAt := time.Now().Add(time.Duration(req.DurationMins) * time.Minute)
 
-	// Default port based on protocol
-	port := req.TargetPort
-	if port == 0 {
-		switch req.Protocol {
-		case "ssh":
-			port = 22
-		case "rdp":
-			port = 3389
-		case "vnc":
-			port = 5900
+	// The entry is the target, and loading it here is also the validation: a
+	// link cannot be issued for a row that does not exist, belongs to another
+	// tenant, or is not a launchable session (a credential or a note has
+	// nothing to broker).
+	entry, typeInfo, err := s.pamLaunchEntryByID(c.Request.Context(), req.PamEntryID, org.ID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errPamEntryNotLaunchable) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "pam_entry_id must name a launchable session entry in this organization"})
+			return
 		}
+		s.logger.Error("temp access: entry lookup failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load the target entry"})
+		return
 	}
 
+	// Protocol/host/port/username are copied from the entry so the list view can
+	// show what a link points at without joining. They are a DISPLAY copy: the
+	// redemption reads the entry again and brokers from that, so an entry edited
+	// after issuance takes effect on the next use rather than the link carrying a
+	// stale target.
 	link := TempAccessLink{
 		ID:             linkID,
 		Token:          token,
 		Name:           req.Name,
 		Description:    req.Description,
-		Protocol:       req.Protocol,
-		TargetHost:     req.TargetHost,
-		TargetPort:     port,
-		Username:       req.Username,
+		PamEntryID:     entry.ID,
+		Protocol:       typeInfo.Protocol,
+		TargetHost:     entry.Hostname,
+		TargetPort:     entry.Port,
+		Username:       entry.Username,
 		CreatedBy:      fmt.Sprintf("%v", userID),
 		CreatedByEmail: fmt.Sprintf("%v", userEmail),
 		ExpiresAt:      expiresAt,
@@ -142,21 +159,12 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 		UpdatedAt:      time.Now(),
 	}
 
-	// Create Guacamole connection for this temp access
-	if s.guacamoleClient != nil {
-		connID, err := s.guacamoleClient.CreateConnection(
-			fmt.Sprintf("temp-%s-%s", req.Protocol, token[:8]),
-			req.Protocol,
-			req.TargetHost,
-			port,
-			map[string]string{},
-		)
-		if err != nil {
-			s.logger.Warn("failed to create guacamole connection", zap.Error(err))
-		} else {
-			link.GuacConnectionID = connID
-		}
-	}
+	// No Guacamole connection is built here any more. It used to be created at
+	// issuance with an EMPTY parameter map — no credential, no recording — and
+	// the redemption merely redirected to it. The connection is now built by
+	// launchPamSession at redemption, from the entry, with the credential
+	// injected and recording configured, which is the entire point of routing
+	// through that core.
 
 	// Build access URL
 	baseURL := s.config.AccessProxyDomain
@@ -168,16 +176,16 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 	// Store in database
 	query := `
 		INSERT INTO temp_access_links (
-			id, token, name, description, protocol, target_host, target_port, username,
+			id, token, name, description, pam_entry_id, protocol, target_host, target_port, username,
 			created_by, created_by_email, expires_at, max_uses, current_uses,
 			allowed_ips, notify_on_use, notify_email, route_id,
 			guacamole_connection_id, access_url, status, created_at, updated_at, org_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
 		)`
 
 	_, err = s.db.Pool.Exec(c.Request.Context(), query,
-		link.ID, link.Token, link.Name, link.Description, link.Protocol,
+		link.ID, link.Token, link.Name, link.Description, link.PamEntryID, link.Protocol,
 		link.TargetHost, link.TargetPort, link.Username, link.CreatedBy,
 		link.CreatedByEmail, link.ExpiresAt, link.MaxUses, link.CurrentUses,
 		link.AllowedIPs, link.NotifyOnUse, link.NotifyEmail,
@@ -212,7 +220,7 @@ func (s *Service) handleListTempAccess(c *gin.Context) {
 	}
 
 	query := `
-		SELECT id, token, name, description, protocol, target_host, target_port, username,
+		SELECT id, token, name, description, COALESCE(pam_entry_id::text,''), protocol, target_host, target_port, username,
 			created_by, created_by_email, expires_at, max_uses, current_uses,
 			allowed_ips, notify_on_use, notify_email, route_id,
 			guacamole_connection_id, access_url, status, last_used_at, last_used_ip,
@@ -234,7 +242,7 @@ func (s *Service) handleListTempAccess(c *gin.Context) {
 	for rows.Next() {
 		var link TempAccessLink
 		err := rows.Scan(
-			&link.ID, &link.Token, &link.Name, &link.Description, &link.Protocol,
+			&link.ID, &link.Token, &link.Name, &link.Description, &link.PamEntryID, &link.Protocol,
 			&link.TargetHost, &link.TargetPort, &link.Username, &link.CreatedBy,
 			&link.CreatedByEmail, &link.ExpiresAt, &link.MaxUses, &link.CurrentUses,
 			&link.AllowedIPs, &link.NotifyOnUse, &link.NotifyEmail,
@@ -272,7 +280,7 @@ func (s *Service) handleGetTempAccess(c *gin.Context) {
 	}
 
 	query := `
-		SELECT id, token, name, description, protocol, target_host, target_port, username,
+		SELECT id, token, name, description, COALESCE(pam_entry_id::text,''), protocol, target_host, target_port, username,
 			created_by, created_by_email, expires_at, max_uses, current_uses,
 			allowed_ips, notify_on_use, notify_email, route_id,
 			guacamole_connection_id, access_url, status, last_used_at, last_used_ip,
@@ -282,7 +290,7 @@ func (s *Service) handleGetTempAccess(c *gin.Context) {
 
 	var link TempAccessLink
 	err = s.db.Pool.QueryRow(c.Request.Context(), query, id, org.ID).Scan(
-		&link.ID, &link.Token, &link.Name, &link.Description, &link.Protocol,
+		&link.ID, &link.Token, &link.Name, &link.Description, &link.PamEntryID, &link.Protocol,
 		&link.TargetHost, &link.TargetPort, &link.Username, &link.CreatedBy,
 		&link.CreatedByEmail, &link.ExpiresAt, &link.MaxUses, &link.CurrentUses,
 		&link.AllowedIPs, &link.NotifyOnUse, &link.NotifyEmail,
@@ -410,7 +418,7 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 
 	//orgscope:ignore public token-redemption path — no authenticated org context; keyed by a globally-unique unguessable secret token, not an enumerable id
 	query := `
-		SELECT id, token, name, protocol, target_host, target_port, username,
+		SELECT id, token, name, COALESCE(pam_entry_id::text,''), protocol, target_host, target_port, username,
 			expires_at, max_uses, current_uses, allowed_ips,
 			notify_on_use, notify_email, guacamole_connection_id, status, org_id
 		FROM temp_access_links
@@ -419,7 +427,7 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 	var link TempAccessLink
 	var linkOrgID string
 	err := s.db.Pool.QueryRow(redeemCtx, query, token).Scan(
-		&link.ID, &link.Token, &link.Name, &link.Protocol, &link.TargetHost,
+		&link.ID, &link.Token, &link.Name, &link.PamEntryID, &link.Protocol, &link.TargetHost,
 		&link.TargetPort, &link.Username, &link.ExpiresAt, &link.MaxUses,
 		&link.CurrentUses, &link.AllowedIPs, &link.NotifyOnUse,
 		&link.NotifyEmail, &link.GuacConnectionID, &link.Status, &linkOrgID,
@@ -435,6 +443,24 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 	clientIP := c.ClientIP()
 	if v := tempLinkGate(link, clientIP, time.Now()); v.Refuse {
 		c.HTML(v.Status, "error.html", gin.H{"title": v.Title, "message": v.Message})
+		return
+	}
+
+	if link.PamEntryID == "" {
+		// A link issued before migration v188 has no entry to launch. There is
+		// nothing to infer it from — target_host is a hostname, and picking a
+		// pam_entries row for the operator would be inventing an authorization —
+		// so it is refused rather than falling back to the old redirect, which
+		// would keep the ungated path alive for exactly the links issued while
+		// it was the only path.
+		s.auditLog(c, "temp_access.refused_legacy", map[string]interface{}{
+			"link_id": link.ID, "ip_address": clientIP,
+		})
+		c.HTML(http.StatusGone, "error.html", gin.H{
+			"title": "Access Link Must Be Re-Issued",
+			"message": "This link was created before privileged sessions were required to run " +
+				"through the brokered launch path. Ask the person who sent it to create a new one.",
+		})
 		return
 	}
 
@@ -471,21 +497,65 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 		"target_host": link.TargetHost,
 	})
 
-	// Redirect to Guacamole
-	if link.GuacConnectionID != "" {
-		guacURL := fmt.Sprintf("/guacamole/#/client/%s", link.GuacConnectionID)
-		c.Redirect(http.StatusFound, guacURL)
+	// Everything below is the launch, and it runs through the SAME core the
+	// console's Connect button uses. Before this, redemption redirected to a
+	// Guacamole connection built at issuance with no parameters: no ZTNA check,
+	// always the direct broker, no recording, and no credential — so the vendor
+	// had to be told a password out of band.
+	// The vendor is anonymous, so the tenant is the link's and every statement
+	// below carries it in SQL. The bypass is the same one the lookup above runs
+	// under and for the same reason (v148): there is no organization on this
+	// request's context to satisfy the belt with.
+	c.Request = c.Request.WithContext(orgctx.WithBypassRLS(c.Request.Context()))
+
+	entry, typeInfo, err := s.pamLaunchEntryByID(c.Request.Context(), link.PamEntryID, linkOrgID)
+	if err != nil {
+		s.logger.Warn("temp access: target entry unavailable",
+			zap.String("link_id", link.ID), zap.Error(err))
+		c.HTML(http.StatusGone, "error.html", gin.H{
+			"title":   "Target Unavailable",
+			"message": "The target this link points at is no longer available.",
+		})
 		return
 	}
 
-	// Fallback: show connection info
-	c.HTML(http.StatusOK, "temp_access.html", gin.H{
-		"name":     link.Name,
-		"protocol": link.Protocol,
-		"host":     link.TargetHost,
-		"port":     link.TargetPort,
-		"username": link.Username,
-	})
+	// The overlay gate, before a credential is resolved — the same ordering and
+	// the same reason as handlePamConnect. userID is empty: the actor here is the
+	// link, and the audit row carries its id.
+	if v := s.checkPamZTNA(c, linkOrgID, "", entry.ID, entry.ReachMode, typeInfo.Protocol); v.Refuse {
+		c.HTML(http.StatusForbidden, "error.html", gin.H{
+			"title":   "Access Denied",
+			"message": v.Reason,
+		})
+		return
+	}
+
+	// The entry's approval gate is NOT consulted here, deliberately. Approval
+	// asks a human to authorise a named user's launch; a vendor link has no user
+	// to name and no way to request one. Issuing the link IS the authorisation —
+	// an admin created it, for this entry, with an expiry — which is the same
+	// reasoning that lets an admin bypass their own approval gate in
+	// handlePamConnect. The link's own limits (window, use cap, IP allowlist)
+	// are what bound it.
+	res, ok := s.launchPamSession(c, linkOrgID, &entry, typeInfo.Protocol, nil,
+		"pam-"+entry.ID, entry.GuacConnectionID,
+		func(ctx context.Context, connID string) {
+			if _, err := s.db.Pool.Exec(ctx,
+				//orgscope:ignore pam_entries UPDATE keyed by the entry id the org-scoped load above resolved
+				`UPDATE pam_entries SET guacamole_connection_id = $2 WHERE id = $1`, entry.ID, connID); err != nil {
+				s.logger.Warn("temp access: connection id persist failed", zap.Error(err))
+			}
+		})
+	if !ok {
+		// launchPamSession has already written its own error. It answers JSON,
+		// which is wrong for a browser that arrived on an HTML route; the paths
+		// that reach here are misconfiguration (no broker, no overlay, vault
+		// unavailable) rather than anything a vendor can cause. Rendering these
+		// as HTML is roadmap V0.5.
+		return
+	}
+
+	c.Redirect(http.StatusFound, res.ConnectURL)
 }
 
 // handleGetTempAccessUsage gets usage history for a temp access link

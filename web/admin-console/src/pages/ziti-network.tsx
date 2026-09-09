@@ -3709,10 +3709,7 @@ function TempAccessLinksSection() {
   const [form, setForm] = useState({
     name: '',
     description: '',
-    protocol: 'ssh',
-    target_host: '',
-    target_port: 22,
-    username: '',
+    pam_entry_id: '',
     duration_mins: 120,
     max_uses: 0,
     allowed_ips: '',
@@ -3726,11 +3723,19 @@ function TempAccessLinksSection() {
     queryFn: () => api.get<{ links: TempAccessLink[] }>('/api/v1/access/temp-access'),
   })
 
+  // The targets a link may point at. Only session entries can be brokered — a
+  // credential or a note has nothing to launch — and the server enforces that
+  // too, so this filter is for the operator's benefit rather than the gate.
+  const { data: entriesData } = useQuery({
+    queryKey: ['pam-entries', 'temp-access-targets'],
+    queryFn: () => api.pam.listEntries({}),
+  })
+  const sessionEntries = (entriesData?.entries || []).filter((e) => e.kind === 'session')
+
   // Create mutation
   const createMutation = useMutation({
     mutationFn: (data: typeof form) => api.post<TempAccessLink>('/api/v1/access/temp-access', {
       ...data,
-      target_port: Number(data.target_port),
       duration_mins: Number(data.duration_mins),
       max_uses: Number(data.max_uses),
       allowed_ips: data.allowed_ips ? data.allowed_ips.split(',').map(ip => ip.trim()).filter(Boolean) : [],
@@ -3758,10 +3763,7 @@ function TempAccessLinksSection() {
   const resetForm = () => setForm({
     name: '',
     description: '',
-    protocol: 'ssh',
-    target_host: '',
-    target_port: 22,
-    username: '',
+    pam_entry_id: '',
     duration_mins: 120,
     max_uses: 0,
     allowed_ips: '',
@@ -3971,47 +3973,30 @@ function TempAccessLinksSection() {
                   placeholder={t('pages.zitiNetwork.tempAccess.descriptionPlaceholder')}
                 />
               </div>
-              <div>
-                <Label htmlFor="ziti-network-protocol-2">{t('pages.zitiNetwork.tempAccess.protocol')}</Label>
-                <select id="ziti-network-protocol-2"
-                  value={form.protocol}
-                  onChange={(e) => {
-                    const proto = e.target.value
-                    const port = proto === 'ssh' ? 22 : proto === 'rdp' ? 3389 : proto === 'vnc' ? 5900 : 22
-                    setForm({ ...form, protocol: proto, target_port: port })
-                  }}
+              {/* The target is a PAM connection, not a hostname typed here.
+                  That entry carries the reach mode, the recording flag and the
+                  vault credential, and redemption launches it through the same
+                  brokered path the console's own Connect button uses — which is
+                  what a link typed as host+port could never inherit. */}
+              <div className="col-span-2">
+                <Label htmlFor="ziti-network-temp-entry">{t('pages.zitiNetwork.tempAccess.targetEntry')}</Label>
+                <select id="ziti-network-temp-entry"
+                  value={form.pam_entry_id}
+                  onChange={(e) => setForm({ ...form, pam_entry_id: e.target.value })}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  required
                 >
-                  <option value="ssh">SSH</option>
-                  <option value="rdp">RDP</option>
-                  <option value="vnc">VNC</option>
+                  <option value="">{t('pages.zitiNetwork.tempAccess.targetEntryPlaceholder')}</option>
+                  {sessionEntries.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name} — {e.entry_type.toUpperCase()} {e.hostname}{e.port ? `:${e.port}` : ''}
+                      {e.ziti_enabled ? ' · ZTNA' : ''}
+                    </option>
+                  ))}
                 </select>
-              </div>
-              <div>
-                <Label>{t('pages.zitiNetwork.tempAccess.targetHost')}</Label>
-                <Input
-                  value={form.target_host}
-                  onChange={(e) => setForm({ ...form, target_host: e.target.value })}
-                  placeholder="10.0.0.10"
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="ziti-network-port-2">{t('pages.zitiNetwork.tempAccess.port')}</Label>
-                <Input id="ziti-network-port-2"
-                  type="number"
-                  value={form.target_port}
-                  onChange={(e) => setForm({ ...form, target_port: parseInt(e.target.value) || 22 })}
-                  required
-                />
-              </div>
-              <div>
-                <Label>{t('pages.zitiNetwork.tempAccess.username')}</Label>
-                <Input
-                  value={form.username}
-                  onChange={(e) => setForm({ ...form, username: e.target.value })}
-                  placeholder="support"
-                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t('pages.zitiNetwork.tempAccess.targetEntryHint')}
+                </p>
               </div>
               <div>
                 <Label htmlFor="ziti-network-duration">{t('pages.zitiNetwork.tempAccess.duration')}</Label>

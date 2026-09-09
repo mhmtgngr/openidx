@@ -126,11 +126,32 @@ Order is by risk, and each item is independently shippable.
    not running. Do it in the same commit as item 2, so the register becomes true
    either by the code catching up or by the claim being withdrawn — never by
    being left as it is.
-1. **Route redemption through the PAM launch core.** `handleUseTempAccess`
-   should resolve the link to an entry-shaped launch and call the same code
-   `handlePamConnect` calls, so it inherits `checkPamZTNA`, broker selection by
-   reach mode, recording and credential injection instead of re-implementing a
-   Guacamole redirect. This single change closes six rows of the table.
+1. ~~**Route redemption through the PAM launch core.**~~ **Done** (migration
+   v188). A link now names a `pam_entries` row instead of carrying its own
+   protocol/host/port, and `handleUseTempAccess` loads that entry and calls
+   `launchPamSession` — the same core `handlePamConnect` uses. Six rows of the
+   table above close at once: the ZTNA check runs, the broker is chosen by reach
+   mode, the session is recorded when the entry says so, and the vault credential
+   is injected so the vendor is never told a password.
+
+   *Why a reference and not more columns,* since the alternative looks easier:
+   `pam_entry_sessions.entry_id` is `NOT NULL REFERENCES pam_entries(id)`, so a
+   `pamLaunchEntry` synthesised from link columns violates the foreign key — and
+   `recordPamLaunch` logs that at WARN and continues, because a ledger write must
+   not abort a launch already in flight. The session would have opened with no
+   row recording it. Pointing at a real entry is the only shape the core can be
+   reused in.
+
+   *Links issued before v188* have no entry and nothing to infer one from, so
+   they are refused at redemption with a message to re-issue. That fails closed
+   on a few in-flight links rather than keeping the old ungated redirect alive
+   for exactly the links created while it was the only path.
+
+   *The entry's approval gate is not consulted* for a vendor link, deliberately:
+   approval authorises a named user's launch, and a link has no user to name.
+   Issuing the link is the authorisation — the same reasoning that lets an admin
+   bypass their own approval gate — and the link's window, use cap and allowlist
+   are what bound it.
 2. ~~**Enforce `require_mfa` or delete it.**~~ **Done — deleted.** With no
    session there is no `mfa_verified_at` for `STEPUP_GATE` to read, so enforcing
    it here would have meant a bespoke OTP: a second, weaker authentication

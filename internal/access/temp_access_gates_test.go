@@ -192,6 +192,41 @@ func TestTheAllowlistIsExactMatchOnly(t *testing.T) {
 	}
 }
 
+// TestALinkMustNameAPamEntry pins the shape the whole V0.1 change rests on.
+//
+// A link used to carry its own protocol/host/port and redemption redirected to
+// a Guacamole connection built from them at issuance with an empty parameter
+// map — no ZTNA check, always the direct broker, no recording, no credential.
+// It now names a pam_entries row instead, and that row carries every one of
+// those decisions, so the launch core can be reused as-is.
+//
+// The binding tag is the load-bearing part: without `required` a caller could
+// omit the entry, the link would be created with a NULL target, and redemption
+// would refuse it as legacy — a link that can never be used, issued silently.
+// The absent fields matter too: leaving TargetHost on the request would let a
+// caller name a host the entry does not point at.
+func TestALinkMustNameAPamEntry(t *testing.T) {
+	f, ok := reflect.TypeOf(CreateTempAccessRequest{}).FieldByName("PamEntryID")
+	if !ok {
+		t.Fatal("CreateTempAccessRequest has no PamEntryID: a vendor link must name the entry " +
+			"it launches, or none of the PAM controls apply to it")
+	}
+	if b := f.Tag.Get("binding"); !containsFold(b, "required") {
+		t.Errorf("PamEntryID binding is %q, want it to include `required`. Without that a link "+
+			"can be created with no target and is then refused at redemption as legacy — issued "+
+			"and unusable, with nothing saying so at creation time.", b)
+	}
+
+	// The target's shape is the entry's business now.
+	for _, gone := range []string{"TargetHost", "TargetPort", "Protocol", "Username"} {
+		if _, present := reflect.TypeOf(CreateTempAccessRequest{}).FieldByName(gone); present {
+			t.Errorf("CreateTempAccessRequest still has %s. The target comes from the PAM entry; "+
+				"accepting it here again lets a caller point a link at a host the entry does not "+
+				"broker, which is how this feature bypassed every control in the first place.", gone)
+		}
+	}
+}
+
 // TestNoMFAFieldSurvives keeps the register honest by construction.
 //
 // public_surface_test.go used to justify this anonymous route by saying the

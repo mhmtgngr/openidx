@@ -93,18 +93,29 @@ func TestTempAccess_BeltAndUsageRecord(t *testing.T) {
 		// the same trap temp_access_isolation_test.go documents. A non-empty
 		// guacamole_connection_id also sends the success path down the redirect
 		// branch rather than c.HTML, which panics with no templates loaded.
+		// Since v188 a link points at a pam_entries row and redemption launches
+		// THAT through the PAM core, so a link with no entry is refused as
+		// legacy. Every seeded link therefore gets a real target.
+		var entryID string
+		if err := db.Pool.QueryRow(ctx, `
+			INSERT INTO pam_entries (org_id, name, entry_type, hostname, port, username)
+			VALUES ($1, $2, 'ssh', 'internal-db.corp', 22, 'vendor')
+			RETURNING id::text`, org, name+" target").Scan(&entryID); err != nil {
+			t.Fatalf("seed entry for %s: %v", name, err)
+		}
+
 		if err := db.Pool.QueryRow(ctx, `
 			INSERT INTO temp_access_links (
-				token, name, description, protocol, target_host, target_port, username,
+				token, name, description, pam_entry_id, protocol, target_host, target_port, username,
 				created_by, created_by_email, expires_at, max_uses, current_uses,
 				allowed_ips, notify_email, guacamole_connection_id, access_url,
 				last_used_ip, status, created_at, updated_at, org_id)
-			VALUES ($1, $2, '', 'ssh', 'internal-db.corp', 22, 'vendor',
+			VALUES ($1, $2, '', $7, 'ssh', 'internal-db.corp', 22, 'vendor',
 				$4, 'vendor@example.test', NOW() + INTERVAL '1 day', 0, 0,
 				'{}', '', $5, $6,
 				'', 'active', NOW(), NOW(), $3)
 			RETURNING id::text`, token, name, org, creator,
-			"guac-"+token, "https://x/temp-access/"+token).Scan(&id); err != nil {
+			"guac-"+token, "https://x/temp-access/"+token, entryID).Scan(&id); err != nil {
 			t.Fatalf("seed link %s: %v", name, err)
 		}
 		return id
@@ -142,10 +153,19 @@ func TestTempAccess_BeltAndUsageRecord(t *testing.T) {
 		c.Params = append(c.Params, gin.Param{Key: "token", Value: tokenA})
 		svc.handleUseTempAccess(c)
 
-		if w.Code != http.StatusFound {
-			t.Fatalf("redemption returned %d with no org on the context, want a 302 to Guacamole. "+
-				"Under FORCE RLS the token lookup must run bypassed; without that every vendor link "+
-				"stops redeeming, which is precisely why v71 declined the belt (body: %s)",
+		// 503, not the 302 this asserted before v188. Redemption now runs the
+		// PAM launch core, and this Service has no Guacamole client, so
+		// brokerFor returns nil and launchPamSession fails closed with
+		// "no session broker is configured" — which is the point: reaching that
+		// refusal proves the bypassed token lookup found the row, the link was
+		// not refused as legacy, and the launch core was entered. A 404 would
+		// mean the belt swallowed the lookup (the failure v71 declined the belt
+		// to avoid); a 410 would mean the link had no entry to launch.
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("redemption returned %d with no org on the context, want 503 "+
+				"(the launch core reached, no broker configured in this test). "+
+				"404 means the FORCE-RLS lookup found nothing and every vendor link has stopped "+
+				"redeeming; 410 means the link was refused as legacy (body: %s)",
 				w.Code, w.Body.String())
 		}
 

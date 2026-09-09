@@ -6628,6 +6628,9 @@ const en = {
         },
       },
       tempAccess: {
+        targetEntry: 'Target connection *',
+        targetEntryPlaceholder: 'Select a PAM connection…',
+        targetEntryHint: 'The vendor is brokered into this connection. Its reach mode, session recording and stored credential all apply — the vendor never sees a password.',
         title: 'Temporary Access Links',
         create: 'Create Temp Access',
         desc: 'Generate time-limited access URLs for support vendors or temporary access needs.',
