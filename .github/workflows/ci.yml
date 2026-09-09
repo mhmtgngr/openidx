@@ -2237,19 +2237,34 @@ jobs:
         working-directory: web/admin-console
         run: npm ci
 
-      # Retried for the reason scripts/ci-retry.sh was written: this step
-      # downloads a browser bundle from Playwright's CDN and runs apt, and it
-      # died on run 2485 before a single test body executed, taking the whole
-      # journey suite red on a commit that touched none of it. Every other
-      # third-party download in this repository is already wrapped; this one
-      # was the exception, and npm's own registry retries do not cover it
-      # because the browser does not come from the registry.
+      # `--with-deps` runs `apt-get update` across EVERY apt source configured
+      # on the runner, and the runner image ships Google's Chrome repository for
+      # its own preinstalled Chrome. On runs 2485 and 2486 that repository
+      # answered with a corrupt index --
       #
-      # The wrapper exits with the LAST attempt's status, so a genuinely broken
-      # install still ends red — just later.
+      #   E: Failed to fetch https://dl.google.com/linux/chrome-stable/deb/...
+      #      /Packages.gz  Hash Sum mismatch
+      #
+      # -- and took the whole journey suite red before a single test body ran,
+      # on commits that touched none of it. Playwright's own CDN was fine
+      # throughout; the browser bundle comes from there, and the system
+      # libraries `--with-deps` installs come from Ubuntu's archives. Google's
+      # Chrome repository is needed for neither, so it is removed rather than
+      # waited on. Nothing else in this job wants it, and the runner's own Chrome
+      # is not what these tests drive.
+      #
+      # Retried on top of that, for the reason scripts/ci-retry.sh was written:
+      # this step also downloads over the network. The wrapper exits with the
+      # LAST attempt's status, so a genuinely broken install still ends red --
+      # just later. Three attempts five seconds apart did NOT clear the hash
+      # mismatch above, which is why the repository removal is the fix and the
+      # retry is only the belt.
       - name: Install Chromium
         working-directory: web/admin-console
-        run: bash ../../scripts/ci-retry.sh 3 5 -- npx playwright install --with-deps chromium
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+                     /etc/apt/sources.list.d/google-chrome.sources
+          bash ../../scripts/ci-retry.sh 3 5 -- npx playwright install --with-deps chromium
 
       - name: Start the stack
         run: |
