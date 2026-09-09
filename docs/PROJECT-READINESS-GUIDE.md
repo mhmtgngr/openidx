@@ -378,8 +378,8 @@ product; either wire them or remove them from the UI.
   unconditional, both URLs https (loopback excepted), and the download capped.
   `Fetch`, `downloadVerified` and `CheckAndApply` had no tests at all; they do
   now, and a second test holds the release workflow's manifest generator to what
-  the agent will accept. Still open and stated rather than implied: the manifest
-  is the root of trust — verifying a signature over it is a separate item.
+  the agent will accept. What that fix could not reach — the manifest itself
+  being the root of trust — is **A18**.
 
 - **A16 — The agent executed plugins from a directory anyone could write.**
   *Fixed on this branch.* `plugin.Discover` takes any file with an executable
@@ -387,11 +387,50 @@ product; either wire them or remove them from the UI.
   `LoadPlugins` are daemons, one of them the Windows service running as SYSTEM.
   Nothing checked who else could write it. The plugin root, each plugin's
   directory and the executable are now all checked, on the rule every tool
-  facing this shape keeps. On Windows it refuses outright and says why: the
-  check is Unix mode bits, which Windows discards, so the same code there would
-  report every path as trusted while checking nothing — and the DACL read that
-  would do it properly is not written. Nothing sets `plugin_dir`, so no shipped
-  configuration is affected.
+  facing this shape keeps. On Windows it first refused outright and said why —
+  the check is Unix mode bits, which Windows discards, so the same code there
+  would have reported every path as trusted while checking nothing. **That half
+  is now written**: it reads the path's owner and DACL, refuses any allow-ACE
+  granting write, delete, delete-child, change-permissions or take-ownership to
+  a principal outside {SYSTEM, Administrators, TrustedInstaller, the account the
+  process runs as}, and refuses an owner outside that set too, because an owner
+  can rewrite a DACL whatever it currently says. TrustedInstaller and read-and-
+  execute for Users are deliberately allowed: they are the `%ProgramFiles%`
+  default, and a check that refuses the ordinary installation layout is a check
+  that gets switched off. The tests build their fixtures as protected DACLs so
+  nothing is inherited from the runner, and include the case a refuse-everything
+  implementation would also pass — a privileged-only tree that must load.
+  **They did not run at first, and finding that out is the rest of this entry.**
+  A `//go:build windows` file is compiled out on Linux, so the only runner that
+  can execute one is `windows-client-build.yml`'s windows-latest job — and that
+  job named its packages by hand. The list had lost `agent/internal/plugin` and
+  `agent/internal/remotesupport` (whose test asserts the Win32 `INPUT` struct is 40
+  bytes, because if it drifts `SendInput` silently no-ops) while carrying
+  `agent/internal/authstore`, which has no Windows-only code at all. Both missing
+  tests had never executed anywhere, and CI was green throughout — the
+  organising defect class arriving through a build tag. The step derives its
+  list from the build tags now, and `scripts/check-windows-tests-run.sh` (six
+  self-test cases) fails the build if it goes back to being typed.
+
+  **What running them finally revealed, and two things left open.** The first
+  real Windows run failed, which is the point of having one. It found that
+  `findExecutable` — the function that locates a plugin's binary — looked for
+  `<name>` and `<name>.sh` and accepted a candidate only when
+  `info.Mode()&0111 != 0`. Windows has no `.sh` to run and no execute bit (Go
+  synthesises a mode there from the read-only attribute, so an ordinary file
+  reads 0666), so it returned "" for every plugin and Discover skipped them all
+  with "no executable found". **The plugin system had never been able to load a
+  plugin on Windows at all** — the same class as the trust check beside it, one
+  function over, and only a real runner could show it. It now takes `.exe`,
+  `.bat` and `.cmd` there, and asks the extension rather than a mode bit.
+  Two items stay open, recorded rather than fixed here because neither is this
+  change's: `agent/internal/plugin`'s protocol tests build a `.sh` fixture and
+  exec it, so `Execute` has never run on Windows — a gap that matters more now
+  that plugins can load there; and `agent/internal/remotesupport`'s
+  `TestPeerTeardownDoesNotDeadlock` fails on Windows (`peer.Run` does not return
+  within 3s), which may be a real platform-specific teardown deadlock in remote
+  support. Nothing sets `plugin_dir`, so no shipped
+  configuration is affected either way.
 
 - **A17 — The local control socket was world-connectable for one syscall, and
   its bearer was compared with `!=`.** *Fixed on this branch.* On Unix the
@@ -406,6 +445,94 @@ product; either wire them or remove them from the UI.
   in; it is `subtle.ConstantTimeCompare` now, as `internal/oauth` already was.
   `authWrap` had no test that sent a wrong token — every case attached the
   correct one, and on Unix it is a no-op — so twelve refusal cases were added.
+
+- **A18 — The update manifest said what to install, and nothing said who wrote
+  it.** *Fixed on this branch.* A15 made the artifact's digest mandatory, which
+  proves the download arrived intact and can prove nothing more: the same
+  document supplies the `url` and the `sha256` that matches it, so whoever
+  chooses the manifest's bytes chooses what the machine installs — `msiexec /i`
+  under SYSTEM, `sudo -n dpkg -i`, or a replace-and-re-exec of the agent's own
+  binary. The Authenticode signature on the MSI is not a second chance: nothing
+  on the apply path reads it, msiexec run by a service installs an unsigned
+  package silently, and on Linux and macOS there is no Authenticode at all. The
+  repository had a signing identity the whole time —
+  `agent/packaging/openidx-codesign.cer`, self-signed, its private half held
+  only as the `WINDOWS_CERT_PFX_BASE64` secret — signing the exe and the MSI but
+  never the document that names them. The manifest now carries an RSA
+  PKCS#1 v1.5 / SHA-256 signature over a canonical form of its fields, verified
+  against that certificate pinned into the agent, **before anything is
+  downloaded**; the trust anchor is a required parameter whose zero value trusts
+  nobody, so a caller that forgets it installs nothing. An on-premise operator
+  publishing their own builds sets `update_trusted_cert` in `agent.json`, which
+  replaces the pin rather than adding to it. Two things are derived rather than
+  asserted: a test compares the embedded certificate byte-for-byte with the
+  packaged one, and another rebuilds the release workflow's PowerShell signing
+  input from the YAML and requires it to equal what Go verifies — the canonical
+  form is written twice, in two languages, and a one-character disagreement
+  would produce signatures that verify nowhere on a release that had already
+  shipped. **Operator-visible:** cutting an `agent-v*` release now fails unless
+  the signing secrets are set, rather than publishing a manifest every agent
+  refuses.
+- **A19 — On a phone, "0600" was the whole answer, and it answers nothing.**
+  *Fixed on this branch.* The companion app's engine writes three credentials
+  into its sandbox: `user-tokens.json` (the 30-day refresh token), `agent.json`
+  (the agent's own auth token) and `ziti-identity.json` (the overlay private
+  key). An earlier increment closed the backup channel — `allowBackup="false"`,
+  `dataExtractionRules`, `isExcludedFromBackup` — and recorded the rest as still
+  open. The rest is that **both platforms decrypt app storage at the first
+  unlock after boot and leave it decrypted**, so on a rooted or jailbroken
+  phone, or one imaged while merely unlocked, the mode bit is decoration and the
+  sandbox has already been left behind. The platform's answer is a key it holds
+  and the file system does not — the Android Keystore, the iOS Keychain — and Go
+  can reach neither. So `agent/mobile.Keystore` is a gomobile **reverse**
+  binding: a Go interface the host implements, with the key never crossing,
+  because an `AndroidKeyStore` key is non-exportable by construction and a
+  boundary carrying key material could therefore never use a hardware one. Four
+  things make it a control rather than a display of one. `Start` takes the
+  keystore as a parameter with **no signature that omits it**, so neither host
+  can forget it and still compile. `secretfile.SelfTest` runs before the engine
+  touches a credential and refuses to start unless the seal differs from the
+  plaintext, **does not contain it**, opens back to it, and differs again on a
+  second wrap — the fourth catches a fixed nonce and the second catches the one
+  that would otherwise pass, a header wrapped round the secret, which
+  round-trips perfectly and leaves the token in the file in full. `Start`
+  re-seals what an earlier build left in the clear, because a control that only
+  protects the *next* write leaves the credential it was added for sitting there
+  on a timer nobody watches. And `scripts/check-mobile-keystore.sh` reads the
+  Kotlin and Swift, which is the only place the remaining question is visible:
+  a constant key compiled into the app produces real ciphertext with a fresh
+  nonce and passes every runtime check there is. **Recorded, not fixed:**
+  `ziti-identity.json` is written and read by the OpenZiti SDK itself, so
+  sealing it would hand the SDK ciphertext; it needs an SDK-side change and is
+  named in `docs/CLIENT-ACCESS-DESIGN.md` §4 rather than half-done.
+
+- **A20 — A privileged session had two ways off the overlay, and took one of
+  them by default.** *Fixed on this branch.* The product's ZTNA story is that
+  privileged access reaches its target through the OpenZiti overlay. A brokered
+  PAM session has two legs and neither was held to it. The **target hop** is
+  `pam_entries.reach_mode`, which migration v82 created `NOT NULL DEFAULT
+  'direct'` — so an entry created without a deliberate choice had guacd open a
+  socket to the target's real address from the broker's network, overlay
+  untouched, and nothing said so. The **user hop** is the connect URL,
+  `{public base}/#/client/{id}?token={t}`. Minting that URL is gated as hard as
+  anything in the product — fresh MFA, entry ACL, approval, moderation,
+  checkout — and *using* it was gated by possession: any browser, any network,
+  no client, no enrolled device. A website entry skipped both, returning a raw
+  URL and brokering nothing. `PAM_REQUIRE_ZTNA` (off/observe/enforce) closes
+  what code can close: under `enforce` a launch that is not `ziti`-reach is
+  refused **before any credential is resolved**, a website entry is refused
+  outright, and every allowed launch is routed through the overlay broker.
+  Observe mode refuses nothing and audits what enforce would refuse, because
+  the operator turning this on needs the list of entries that will stop working
+  before they stop working. **The half code cannot close, said rather than
+  implied:** nothing in an HTTP request proves the caller came over the overlay,
+  and a header claiming it is a control the caller sets — so the user hop is
+  closed by the broker being published at an overlay address and nowhere else.
+  What the code does about *that* is refuse to start under `enforce` unless
+  `GUACAMOLE_ZITI_PUBLIC_URL` is set and differs from the direct broker's
+  public URL, which is the configuration the deployment property requires.
+  `docs/CLIENT-ACCESS-DESIGN.md` §4b carries the operator's own verification —
+  a curl from an unenrolled host that must fail to connect.
 
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 

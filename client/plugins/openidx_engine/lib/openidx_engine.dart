@@ -41,6 +41,17 @@ class OpenidxEngine {
   /// passes the OS sandbox path (see `path_provider`). Idempotent on the Go
   /// side — safe to call on every launch. Returns nothing meaningful (the
   /// gomobile `Start` returns only an error), so we ignore the body.
+  ///
+  /// The gomobile `Start` takes a second argument this channel does not carry:
+  /// the device keystore that seals everything the engine writes. It is
+  /// constructed in the NATIVE plugin — `AndroidKeystoreSealer()` in Kotlin,
+  /// `KeychainSealer()` in Swift — and never passes through Dart, because a key
+  /// Dart could hold is a key in the app's own heap, which is exactly what the
+  /// Android Keystore and the iOS Keychain exist to avoid.
+  ///
+  /// A failure here can therefore be the keystore refusing to prove itself, in
+  /// which case the engine has deliberately not started rather than write the
+  /// refresh token into the sandbox in the clear.
   Future<void> start(String configDir) async {
     await _channel.invokeMethod<void>('start', <String, Object?>{
       'configDir': configDir,

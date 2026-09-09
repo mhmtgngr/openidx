@@ -542,6 +542,28 @@ func TestProductionWarnings(t *testing.T) {
 	})
 }
 
+// productionBaseline is a config that PASSES ValidateProduction, so a case
+// below can change one field and know the error it gets is about that field.
+// Written once rather than copied per case: the cases added after it care about
+// two settings each, and repeating fifteen unrelated ones around them hides
+// which two.
+func productionBaseline() *Config {
+	return &Config{
+		Environment:               "production",
+		AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+		EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+		CORSAllowedOrigins:        "https://example.com",
+		CSRFEnabled:               true,
+		DatabaseSSLMode:           "require",
+		RedisTLSEnabled:           true,
+		TLS:                       TLSConfig{Enabled: true},
+		AuditStreamAllowedOrigins: "https://example.com",
+		DebugOTPInResponse:        false,
+		VaultKEK:                  "vault-kek-32-bytes-long!!!!!!!!!",
+		AuditChainSecret:          "audit-chain-secret-32-bytes!!!!!",
+	}
+}
+
 func TestValidateProduction(t *testing.T) {
 	t.Run("Always passes in development", func(t *testing.T) {
 		cfg := &Config{
@@ -612,6 +634,52 @@ func TestValidateProduction(t *testing.T) {
 		err := cfg.ValidateProduction()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "csrf_enabled")
+	})
+
+	// PAM_REQUIRE_ZTNA=enforce is a promise with a half that is configuration
+	// rather than code. Refusing a direct target hop is the process's decision;
+	// the connect URL being overlay-only is the deployment's, and the setting
+	// that expresses it is GUACAMOLE_ZITI_PUBLIC_URL. These two cases are the
+	// ways an install can read "enforce" and leave that second leg open.
+	t.Run("Fails when ZTNA is enforced with no overlay broker address", func(t *testing.T) {
+		cfg := productionBaseline()
+		cfg.PAMRequireZTNA = "enforce"
+		cfg.GuacamolePublicURL = "https://guacamole.example.com"
+		cfg.GuacamoleZitiPublicURL = ""
+
+		err := cfg.ValidateProduction()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "guacamole_ziti_public_url is empty")
+	})
+
+	t.Run("Fails when the overlay broker is published at the direct broker's address", func(t *testing.T) {
+		cfg := productionBaseline()
+		cfg.PAMRequireZTNA = "enforce"
+		cfg.GuacamolePublicURL = "https://guacamole.example.com"
+		cfg.GuacamoleZitiPublicURL = "https://guacamole.example.com"
+
+		err := cfg.ValidateProduction()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "equals guacamole_public_url")
+	})
+
+	t.Run("Passes when the overlay broker has its own address", func(t *testing.T) {
+		cfg := productionBaseline()
+		cfg.PAMRequireZTNA = "enforce"
+		cfg.GuacamolePublicURL = "https://guacamole.example.com"
+		cfg.GuacamoleZitiPublicURL = "https://guacamole.ziti"
+
+		assert.NoError(t, cfg.ValidateProduction())
+	})
+
+	// And the gate is off by default, so an install that has not asked for this
+	// is not held to it.
+	t.Run("Says nothing about brokers when ZTNA is not enforced", func(t *testing.T) {
+		cfg := productionBaseline()
+		cfg.PAMRequireZTNA = "observe"
+		cfg.GuacamoleZitiPublicURL = ""
+
+		assert.NoError(t, cfg.ValidateProduction())
 	})
 
 	t.Run("Fails with database SSL disabled", func(t *testing.T) {
@@ -1293,6 +1361,7 @@ func TestReportModeGatesNamesEveryOpenControl(t *testing.T) {
 		EnableOPAAuthz:          true,
 		PAMSessionRiskGate:      "enforce",
 		PostureDeviceTrustGate:  "enforce",
+		PAMRequireZTNA:          "enforce",
 		AccessAPIRequireAuth:    true,
 		AdminAPIRequireAuth:     true,
 	}

@@ -314,8 +314,108 @@ fails the build.
 | Platform | Today | Required |
 |---|---|---|
 | **Android agent** | `EncryptedSharedPreferences` (AES-256-GCM); Ziti identity in the KeyStore (`agent-android/core/`) | as is |
-| **Companion app** | ✅ *Backup half landed; keystore half still open.* The engine's config dir is `getFilesDir()` on Android and `Library/Application Support` on iOS, and it holds **three** credentials, not the two Windows has: `agent.json` (the agent's `auth_token`), `user-tokens.json` (access **and 30-day refresh** token) and `ziti-identity.json` (the **private key** that puts the device on the overlay). The Go code writes all three `0600`. In an app sandbox that mode is not protection that was added — every file there is already private to the app's UID — and it says nothing about the one way the bytes leave the phone: **the platform backup**. The Flutter client's manifest carried no `android:allowBackup`, whose default is `true`, so all three were in the user's Google Drive and extractable with `adb backup`; iOS had no `isExcludedFromBackup`, so they were in iCloud and in every unencrypted iTunes backup | **Landed:** `android:allowBackup="false"` **plus** `dataExtractionRules` excluding every domain from cloud backup *and* device-to-device transfer (from API 31 D2D is a separate channel, allowed by default whatever `allowBackup` says, so one without the other still hands the identity to the next phone); `isExcludedFromBackup` set on the config directory in the iOS plugin **before** `MobileStart`, because after the first write there is a window a backup can take. `scripts/check-mobile-secrets-at-rest.sh` fails the build on either half, on either client, and on a rules file that reads as a control while carrying an `<include>`. **Still open:** the bytes are not keystore-wrapped. The Kotlin agent puts the same class of secret in `EncryptedSharedPreferences` under an Android-Keystore master key; the engine cannot without a callback across the gomobile boundary, which is a change to the boundary the bridge census covers and belongs in its own item |
+| **Companion app** | ✅ *Both halves landed (backup: item 4b; keystore: item 9).* The engine's config dir is `getFilesDir()` on Android and `Library/Application Support` on iOS, and it holds **three** credentials, not the two Windows has: `agent.json` (the agent's `auth_token`), `user-tokens.json` (access **and 30-day refresh** token) and `ziti-identity.json` (the **private key** that puts the device on the overlay). The Go code wrote all three `0600`. In an app sandbox that mode is not protection that was added — every file there is already private to the app's UID — and it answers neither of the two ways those bytes get out: **the platform backup**, and **anything reading the file system**. The Flutter client's manifest carried no `android:allowBackup`, whose default is `true`, so all three were in the user's Google Drive and extractable with `adb backup`; iOS had no `isExcludedFromBackup`, so they were in iCloud and in every unencrypted iTunes backup. And both platforms decrypt app storage at the **first unlock after boot** and leave it decrypted while the device is on, so on a rooted or jailbroken phone — or one merely unlocked and imaged — "at rest" meant readable | **Backup, landed:** `android:allowBackup="false"` **plus** `dataExtractionRules` excluding every domain from cloud backup *and* device-to-device transfer (from API 31 D2D is a separate channel, allowed by default whatever `allowBackup` says, so one without the other still hands the identity to the next phone); `isExcludedFromBackup` set on the config directory in the iOS plugin **before** `MobileStart`. `scripts/check-mobile-secrets-at-rest.sh` fails the build on either half. **Keystore, landed:** `agent/mobile.Keystore` is a gomobile **reverse** binding — a Go interface the host implements — so Go calls out to `AndroidKeystoreSealer` (AES-256-GCM under a non-exportable `AndroidKeyStore` key, StrongBox where the hardware has it) and `KeychainSealer` (AES-GCM under a Keychain key marked `…AfterFirstUnlockThisDeviceOnly`). The **key** never crosses: an `AndroidKeyStore` key cannot be exported at all, so a boundary that carried key material could not use one. `Start` takes the keystore as a parameter with no overload that omits it, and `secretfile.SelfTest` refuses to start unless the host's seal differs from the plaintext, does **not contain** it, opens back to it, and differs again on a second wrap — the four ways a "keystore" that compiles and runs can still leave the credential readable. On upgrade `Start` re-seals the files an earlier build left in the clear rather than waiting for the next write. `scripts/check-mobile-keystore.sh` covers the one thing no runtime check can: that the key comes from the OS and is not a constant in the source |
 | **Windows agent** | ✅ *Item 4, landed.* `user-tokens.json` (access **and 30-day refresh** token) and `control-endpoint.json` (the bearer that fully drives the engine) were written with Unix mode `0600` — **which Windows ignores** — so both inherited `%ProgramData%`'s ACL, where `BUILTIN\Users` can read | `agent/internal/secretfile`: **DPAPI** (`CryptProtectData`, per-user scope) plus an explicit **file** DACL — SYSTEM, Administrators, and the writing user, inheritance switched off. A per-file DACL rather than a directory one: the SYSTEM service creates the directory before any user has signed in, so there is no "enrolled user" to name at that moment, and a file's own DACL is what Windows checks. `agent.json` (the agent's `auth_token`) is **not** covered — the service and the user's tray both read it, so a per-user blob would break one of them; that one needs the directory decision and is still open |
+
+### What the keystore does **not** cover, on either platform
+
+Two files, and both are said here rather than left to be discovered:
+
+- **`ziti-identity.json`** — the private key that puts the device on the
+  overlay. The OpenZiti SDK writes it during enrolment and reads it back itself
+  through `ZitiIdentityFile`; neither call goes through `agent/internal/secretfile`.
+  Sealing it would hand the SDK ciphertext, and unsealing it to a temporary file
+  to hand over would put the private key back on disk for no gain. It needs an
+  SDK-side change — an identity loaded from bytes rather than from a path — and
+  is deliberately not half-done. On the phone it is still covered by the backup
+  rules and the sandbox; what it lacks is the key-in-the-OS layer the other two
+  now have.
+- **`agent.json` on Windows** — unchanged, and for the reason it always had:
+  both the SYSTEM service and the user's tray read it, so the per-user DPAPI
+  blob and the writer-named DACL that protect `user-tokens.json` would lock one
+  of the two out. It now goes through `secretfile.WriteShared`, which takes the
+  keystore seal (a phone has one identity, so nothing to lock out) and skips the
+  per-user layer — so the mobile half is closed and the Windows half still wants
+  a directory-ACL decision: which account is "the enrolled user" when the
+  service writes first?
+
+## 4b. PAM travels the overlay, or it does not travel
+
+A brokered privileged session has **two legs**, and before v1.34.0 each could
+leave the overlay on its own — one of them by default.
+
+| Leg | What it is | Before | Now |
+|---|---|---|---|
+| **user → broker** | the connect URL the console opens: `{public base}/#/client/{id}?token={t}` | A bearer URL. Minting it is gated hard (fresh MFA, entry ACL, approval, moderation, checkout); **using** it was gated by possession alone — any browser, any network, no client, no device. | Under `PAM_REQUIRE_ZTNA=enforce` every allowed launch is routed through the **overlay broker**, whose browser-facing base must be its own address (`GUACAMOLE_ZITI_PUBLIC_URL`, distinct from the direct broker's) or the service refuses to start. |
+| **broker → target** | guacd's dial to the machine being administered | `pam_entries.reach_mode`, which migration v82 created `NOT NULL DEFAULT 'direct'`. An entry created without a deliberate choice opened a socket to the target's real address from the broker's network. | Under `enforce`, a launch whose reach mode is not `ziti` is **refused before any credential is resolved**, and audited. A website entry — which returns a URL and brokers nothing — is refused outright. |
+
+**What the code decides, and what it cannot.** The target hop is this
+process's decision and it is made completely. The user→broker leg is not:
+nothing in an HTTP request proves the caller reached the service over the
+overlay, and a header claiming it is set by whoever is calling — a control the
+checked input switches off. That leg is closed by **deployment**: the broker
+published as a Ziti service and at no other address, so the connect URL's host
+routes for a machine running the client and for nothing else. What the code does
+about it is refuse to start without the configuration that property requires,
+and route every enforced launch through that broker. Saying which half is which
+beats implying the flag delivers both.
+
+**Operator verification** (the check the flag cannot make for you) — from a host
+with no OpenIDX client and no overlay membership:
+
+```bash
+curl -sS --max-time 5 "$GUACAMOLE_ZITI_PUBLIC_URL/" -o /dev/null -w '%{http_code}\n'
+```
+
+Anything other than a connection failure means the overlay broker is reachable
+without the client, and the first leg is open however the flag reads.
+
+**What the console shows.** A gate that refuses on the server and nowhere else
+is the branch's defect class inverted: instead of a control that displays
+without enforcing, a control that enforces without displaying. `GET
+/pam/broker/status` — which already exists so the launcher can explain a missing
+broker rather than dead-end on a `503` — therefore reports the mode as
+`require_ztna`, and the console uses it for two things: the Connect button on an
+entry `enforce` would refuse is disabled with the reason on hover, and the
+connection-path diagram draws that entry's network hop as a **refusal** rather
+than as a working direct route. The mode reported is what the service will *do*,
+not the raw setting: an unrecognised value reads `off` in both places, so the
+console cannot show "enforce" over a gate that is not enforcing. When the field
+is absent — an older service, or the probe has not resolved yet — nothing is
+refused in the UI, because guessing `enforce` would grey out a button that
+works. `observe` refuses nothing on the server, so it refuses nothing in the
+console either; greying out what the server would still allow is the same lie in
+the other direction.
+
+**And where the user→broker leg becomes visible.** The paragraph above says
+that leg is closed by deployment rather than by a check. The place a user meets
+it is the session window: an allowed overlay launch returns a URL on the overlay
+broker, which routes only for a machine running the client, so on a machine
+without one the frame never connects. The window used to answer that with its
+generic card — "this may be temporary, or you may not have access to the
+target" — two guesses that are both wrong there, over a **Try again** that would
+fail identically forever. The launch response already carried `reach_mode`, so
+the console now passes it into the window, and an overlay session that never
+connects says what is actually missing and offers enrolment. A direct session,
+and any launch from an opener that does not report the mode, keeps the generic
+card: telling someone on a direct session to install a client they do not need
+is the same kind of wrong answer, just quieter.
+
+Getting that message to the window turned up the reason it could not have
+arrived: there are **two** launchers, and only one used the window. The
+Connections page opens the wrapper and hands the URL over out of band — the URL
+carries a bearer token, and a failed session behind it must show OpenIDX's card
+rather than Guacamole's connection manager. Quick links, the launcher on the
+end-user page, called `window.open` with that URL. Both now build the handoff
+through one helper, and `scripts/check-pam-launch-wrapper.sh` holds the line:
+every caller of `api.pam.connect` must use it and must not read `connect_url`
+itself. The guard fails when it matches no launcher at all, because a rule that
+matches nothing passes forever.
+
+**Rollout.** `observe` first: it refuses nothing and audits every launch
+`enforce` would refuse (`pam.ztna.would_deny`), which is how you get the list of
+entries still on `direct` and the count of website entries, before they stop
+working.
 
 ## 5. Production gate additions
 

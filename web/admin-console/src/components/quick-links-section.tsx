@@ -7,6 +7,7 @@ import { Card, CardContent } from './ui/card'
 import { Badge } from './ui/badge'
 import { Dialog, DialogContent } from './ui/dialog'
 import { api, QuickLink } from '../lib/api'
+import { openPamSessionWindow } from '../lib/pam-session-handoff'
 import { QueryError } from './query-error'
 import { useToast } from '../hooks/use-toast'
 import { TerminalSession } from './remote/terminal-session'
@@ -34,11 +35,19 @@ export function QuickLinksSection({ search }: { search: string }) {
   })
 
   const connect = useMutation({
-    mutationFn: (id: string) => api.pam.connect(id),
-    onSuccess: (res) => {
-      const url = res.connect_url || res.url
-      if (url) window.open(url, '_blank', 'noopener')
-      else toast({ title: t('components.quickLinks.nothingToLaunch'), variant: 'destructive' })
+    // vars carries the link's own title so the session window can name what it
+    // is showing, the way the Connections page passes the entry name.
+    mutationFn: (vars: { id: string; title: string }) => api.pam.connect(vars.id),
+    onSuccess: (res, vars) => {
+      // Through the same wrapper the Connections page uses. This path used to
+      // window.open the connect URL directly, which put a bearer token in the
+      // address bar and history and left the user looking at Guacamole's own
+      // chrome when a session failed — the two things that wrapper exists to
+      // prevent. Nothing about a quick link makes those reasons weaker: it is
+      // the same token and the same broker.
+      if (!openPamSessionWindow(res, vars.title)) {
+        toast({ title: t('components.quickLinks.nothingToLaunch'), variant: 'destructive' })
+      }
     },
     onError: (e: Error & { body?: { approval_required?: boolean } }) => {
       if (e.body?.approval_required || /requires approval/i.test(e.message)) {
@@ -58,7 +67,7 @@ export function QuickLinksSection({ search }: { search: string }) {
     if (link.type === 'pam' && link.pam_entry_id) {
       // Clientless: wasm-ssh opens the in-browser terminal; else the guac/URL flow.
       if (link.pam_renderer === 'wasm-ssh') setTerminalLink(link)
-      else connect.mutate(link.pam_entry_id)
+      else connect.mutate({ id: link.pam_entry_id, title: link.title })
     }
   }
 

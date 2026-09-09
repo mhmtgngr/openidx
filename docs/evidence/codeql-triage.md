@@ -337,11 +337,21 @@ numbers are a convenience for the current UI session, not the criterion:
 > Verify by reading the line — not by looking the number up here.
 
 The class that would be a real defect is guarded in code rather than in this
-document: `TestNoTaintedLogFields`
+document: `TestNoRequestValueReachesALogFieldUnwashed`
 (`internal/common/logsafe/no_tainted_field_test.go`) fails when a handler puts
 a value it read from the request straight into a `zap.String`, and
-`TestNoInterpolatedLogMessages` fails when one reaches a log *message*. Those
-run on every CI run. This file records verdicts; those tests hold the line.
+`TestNoInterpolatedLogMessages`
+(`internal/common/logsafe/no_interpolated_message_test.go`) fails when one
+reaches a log *message*. Those run on every CI run. This file records verdicts;
+those tests hold the line.
+
+Both names above were wrong until v1.34.0 — this paragraph cited
+`TestNoTaintedLogFields`, which has never existed, and gave no file for the
+second. The paragraph's own point is that a verdict is worth less than a test,
+so a reader who doubts it goes looking for the test; sending them after a symbol
+that is not there is the way to make them conclude there isn't one. The guards
+were real and passing the whole time. Cite them by the name `go test -run`
+takes.
 
 ---
 

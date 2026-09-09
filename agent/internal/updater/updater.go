@@ -10,33 +10,28 @@
 //
 //	{ "version": "1.2.0",
 //	  "url": "https://.../OpenIDX-1.2.0.msi",   // or .pkg/.deb/.rpm/.AppImage/bare
-//	  "sha256": "<64 hex chars>" }
+//	  "sha256": "<64 hex chars>",
+//	  "signature": "<base64 RSA PKCS#1 v1.5 over SHA-256>" }
 //
-// WHAT IS VERIFIED, AND WHAT IS NOT. This doc comment used to say "a newer
-// SIGNED artifact"; nothing here verifies a signature, and saying so made the
-// weaker control read as the stronger one. What is verified is the artifact's
-// SHA-256 against the digest the manifest pins.
+// WHAT IS VERIFIED. Two independent things, and it took two rounds to get both:
 //
-// That makes THE MANIFEST THE ROOT OF TRUST: whoever can choose its bytes
-// chooses what this machine installs, because they supply the url and the
-// digest that matches it. Two things follow, and both are enforced below rather
-// than left to the operator:
+//   - the ARTIFACT, against the SHA-256 the manifest pins. Mandatory. It used
+//     to be optional — `if wantSHA != ""` — so a manifest that omitted sha256
+//     installed an unverified artifact; a control the checked input can switch
+//     off is not a control. Both URLs must also be https (loopback excepted,
+//     see requireSecureURL), since over plain http the digest is rewritten
+//     along with the artifact and protects nothing.
 //
-//   - both URLs must be https (loopback excepted, see requireSecureURL), since
-//     over plain http the digest is rewritten with the artifact and protects
-//     nothing;
-//   - the digest is MANDATORY. It used to be optional — `if wantSHA != ""` —
-//     so a manifest that omitted sha256 installed an unverified artifact. On
-//     Linux that is `sudo -n dpkg -i` on a file this process just downloaded;
-//     on Windows an msiexec /i as SYSTEM. A control the checked input can
-//     switch off is not a control, and three //nolint:gosec comments in
-//     apply_other.go asserted "artifact is checksum-verified" as though it
-//     always were.
+//   - the MANIFEST, against the pinned release publisher (see trust.go).
+//     Mandatory. The digest alone could never say anything about WHO chose the
+//     artifact, because the same document supplies the url and the digest that
+//     matches it; the doc comment here used to record that as the next step.
+//     It is done: Fetch refuses a manifest this agent's trusted publisher did
+//     not sign, before a byte is downloaded.
 //
-// Verifying a detached signature over the manifest (the release workflow
-// already cosign-signs what it publishes) would move the root of trust off the
-// hosting and is the right next step; it is NOT done here, and is recorded
-// rather than implied.
+// The order matters. Signature first, on the small document, over the network
+// path an attacker most easily controls; then the download, whose digest is now
+// a claim by a publisher rather than by whoever answered the request.
 package updater
 
 import (
@@ -61,10 +56,19 @@ import (
 const maxArtifactBytes = 1 << 30 // 1 GiB
 
 // Manifest describes the latest published release.
+//
+// Every field but Signature is covered by Signature (see signingInput); adding
+// one without covering it fails TestTheSignatureCoversEveryManifestField,
+// because a field outside the signature is a field an attacker can choose.
 type Manifest struct {
 	Version string `json:"version"`
 	URL     string `json:"url"`
 	SHA256  string `json:"sha256"`
+	// Signature is base64 RSASSA-PKCS1-v1_5 over SHA-256 of signingInput,
+	// made by the pinned release publisher. Verified by Verify, which Fetch
+	// calls before returning; there is no path that returns an unverified
+	// manifest.
+	Signature string `json:"signature"`
 }
 
 // requireSecureURL rejects a URL this package must not fetch from.
@@ -107,11 +111,15 @@ func validDigest(s string) bool {
 	return err == nil
 }
 
-// Fetch retrieves, parses and validates the version manifest. A manifest that
-// does not pin a digest, or that points anywhere this package will not fetch
-// from, is rejected here — before anything is downloaded — so the refusal names
-// the manifest rather than surfacing later as a failed install.
-func Fetch(ctx context.Context, manifestURL string) (*Manifest, error) {
+// Fetch retrieves, parses, validates and VERIFIES the version manifest. A
+// manifest that does not pin a digest, that points anywhere this package will
+// not fetch from, or that the trusted publisher did not sign, is rejected here
+// — before anything is downloaded — so the refusal names the manifest rather
+// than surfacing later as a failed install.
+//
+// trust is a required parameter and its zero value trusts nobody: a caller that
+// has no anchor to offer gets a refusal, never a pass. See trust.go.
+func Fetch(ctx context.Context, manifestURL string, trust Trust) (*Manifest, error) {
 	if err := requireSecureURL("manifest URL", manifestURL); err != nil {
 		return nil, err
 	}
@@ -143,6 +151,13 @@ func Fetch(ctx context.Context, manifestURL string) (*Manifest, error) {
 			"agent will not install an artifact it cannot verify", m.SHA256)
 	}
 	m.SHA256 = strings.TrimSpace(m.SHA256)
+	// The signature is checked LAST of the manifest's properties but BEFORE the
+	// caller sees the manifest at all: the shape checks above produce precise
+	// errors about a malformed document, and this one answers the different
+	// question of whether the document is ours.
+	if err := Verify(&m, trust); err != nil {
+		return nil, fmt.Errorf("manifest at %s: %w", manifestURL, err)
+	}
 	return &m, nil
 }
 
@@ -270,13 +285,15 @@ func downloadVerified(ctx context.Context, artifactURL, wantSHA string) (string,
 	return f.Name(), nil
 }
 
-// CheckAndApply fetches the manifest; if it advertises a newer version than
-// currentVersion, downloads the artifact, verifies its digest, and applies it
-// with the platform installer. Returns whether an update was applied and the
-// new version. Every refusal above — an http URL, a missing or malformed
-// digest, a mismatch — reaches the caller as an error and installs nothing.
-func CheckAndApply(ctx context.Context, manifestURL, currentVersion string) (applied bool, newVersion string, err error) {
-	m, err := Fetch(ctx, manifestURL)
+// CheckAndApply fetches the manifest, verifies the trusted publisher signed it,
+// and if it advertises a newer version than currentVersion, downloads the
+// artifact, verifies its digest, and applies it with the platform installer.
+// Returns whether an update was applied and the new version. Every refusal above
+// — an http URL, a missing or malformed digest, an unsigned or wrongly-signed
+// manifest, a digest mismatch — reaches the caller as an error and installs
+// nothing.
+func CheckAndApply(ctx context.Context, manifestURL, currentVersion string, trust Trust) (applied bool, newVersion string, err error) {
+	m, err := Fetch(ctx, manifestURL, trust)
 	if err != nil {
 		return false, "", err
 	}

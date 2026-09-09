@@ -1,5 +1,5 @@
 import {
-  KeyRound, Lock, Monitor, Route, Server, Shield, Terminal, User, Video,
+  KeyRound, Lock, Monitor, Route, Server, Shield, ShieldOff, Terminal, User, Video,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -17,12 +17,39 @@ export interface ConnectionPathStep {
 const t = (key: string, vars?: Record<string, unknown>) => i18n.t(`pam.path.${key}`, vars ?? {})
 
 /**
+ * Why this entry cannot be launched under the ZTNA gate, or null when it can.
+ *
+ * `PAM_REQUIRE_ZTNA=enforce` refuses a launch whose target hop is not the
+ * overlay, and refuses a website entry outright — it returns a URL and brokers
+ * nothing, so no part of it travels the overlay. The mode comes from
+ * `/pam/broker/status`; when it is undefined (an older service, or the probe
+ * has not resolved yet) nothing is refused, because guessing "enforce" would
+ * grey out a button that works.
+ *
+ * `observe` refuses nothing on the server, so it must refuse nothing here
+ * either. A console that greys out what the server would still allow is the
+ * same lie as one that offers what the server will refuse.
+ */
+export function ztnaRefusal(entry: PamEntry, requireZTNA?: string): string | null {
+  if (requireZTNA !== 'enforce') return null
+  if (entry.kind !== 'session') return t('ztnaRefused.website')
+  if (!entry.ziti_enabled) return t('ztnaRefused.direct')
+  return null
+}
+
+/**
  * The launch chain for a session entry, as displayable steps. This is the
  * "how does clicking Connect actually work" story told with the entry's own
  * configuration: access gate → credential source → session broker → network
  * path → target. Pure function of the entry so it stays testable.
+ *
+ * requireZTNA is the gate's mode. It matters here because the network step used
+ * to draw a direct hop as a working route in every case, and under enforcement
+ * that route does not exist: the launch is refused before a credential is even
+ * resolved. Drawing it as a path anyway would describe a session nobody can
+ * open.
  */
-export function connectionPathSteps(entry: PamEntry): ConnectionPathStep[] {
+export function connectionPathSteps(entry: PamEntry, requireZTNA?: string): ConnectionPathStep[] {
   const remoteApp = typeof entry.settings['remote-app'] === 'string'
     ? String(entry.settings['remote-app']).replace(/^\|\|/, '')
     : ''
@@ -60,7 +87,9 @@ export function connectionPathSteps(entry: PamEntry): ConnectionPathStep[] {
   steps.push(
     entry.ziti_enabled
       ? { icon: Shield, title: t('ziti.title'), desc: t('ziti.desc') }
-      : { icon: Route, title: t('direct.title'), desc: t('direct.desc') },
+      : requireZTNA === 'enforce'
+        ? { icon: ShieldOff, title: t('directRefused.title'), desc: t('directRefused.desc') }
+        : { icon: Route, title: t('direct.title'), desc: t('direct.desc') },
     {
       icon: Server,
       title: entry.hostname

@@ -147,9 +147,19 @@ func (h *handler) updateLoop(ctx context.Context) {
 			if err != nil || cfg == nil || cfg.UpdateManifestURL == "" {
 				continue
 			}
-			applied, newV, err := updater.CheckAndApply(ctx, cfg.UpdateManifestURL, h.version)
+			// Resolved per poll rather than once at startup so an operator who
+			// corrects update_trusted_cert does not have to restart the service
+			// — and so a malformed one is reported every six hours instead of
+			// silently disabling updates for the life of the process.
+			trust, err := updater.TrustForConfig(cfg.UpdateTrustedCertPEM)
 			if err != nil {
-				h.logger.Warn("service: update check failed", zap.Error(err))
+				h.logger.Warn("service: no usable update publisher; not updating", zap.Error(err))
+				continue
+			}
+			applied, newV, err := updater.CheckAndApply(ctx, cfg.UpdateManifestURL, h.version, trust)
+			if err != nil {
+				h.logger.Warn("service: update check failed",
+					zap.String("publisher", trust.Describe()), zap.Error(err))
 			} else if applied {
 				h.logger.Info("service: applying update", zap.String("version", newV))
 			}

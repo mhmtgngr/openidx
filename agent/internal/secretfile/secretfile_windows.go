@@ -101,6 +101,16 @@ func harden(path string) error {
 	)
 }
 
+// hardenShared deliberately does nothing on Windows.
+//
+// harden's ACL names the account that WROTE the file, which is exactly wrong
+// for one more than one identity has to read: agent.json is written by whichever
+// of the SYSTEM service and the user's tray enrolled first, and a PROTECTED_DACL
+// naming that writer locks the other one out. Leaving the inherited ACL is what
+// this file has always had, and the directory-ACL decision it still needs is
+// recorded in docs/CLIENT-ACCESS-DESIGN.md §4 rather than half-made here.
+func hardenShared(path string) error { return nil }
+
 // currentUserSID returns the SID of the account this process runs as.
 func currentUserSID() (*windows.SID, error) {
 	token := windows.GetCurrentProcessToken()

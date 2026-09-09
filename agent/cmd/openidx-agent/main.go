@@ -329,15 +329,22 @@ var updateCmd = &cobra.Command{
 	Short: "Check for and (with --apply) install a newer OpenIDX client",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		url, _ := cmd.Flags().GetString("manifest-url")
-		if url == "" {
-			if cfg, err := agent.LoadConfig(configDir); err == nil {
+		var trustedCert string
+		if cfg, err := agent.LoadConfig(configDir); err == nil {
+			if url == "" {
 				url = cfg.UpdateManifestURL
 			}
+			trustedCert = cfg.UpdateTrustedCertPEM
 		}
 		if url == "" {
 			return fmt.Errorf("no update manifest URL: pass --manifest-url or set update_manifest_url in config")
 		}
-		m, err := updater.Fetch(cmd.Context(), url)
+		trust, err := updater.TrustForConfig(trustedCert)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Trusted update publisher: %s\n", trust.Describe())
+		m, err := updater.Fetch(cmd.Context(), url, trust)
 		if err != nil {
 			return err
 		}
@@ -350,7 +357,7 @@ var updateCmd = &cobra.Command{
 			fmt.Println("Run with --apply to install.")
 			return nil
 		}
-		applied, newV, err := updater.CheckAndApply(cmd.Context(), url, Version)
+		applied, newV, err := updater.CheckAndApply(cmd.Context(), url, Version, trust)
 		if err != nil {
 			return fmt.Errorf("update failed: %w", err)
 		}

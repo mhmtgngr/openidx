@@ -51,7 +51,11 @@ public class OpenidxEnginePlugin: NSObject, FlutterPlugin {
       // the directory, and a backup that ran between the first write and a later
       // call would already have taken the tokens.
       try excludeFromBackup(configDir)
-      try callVoid { MobileStart(configDir, $0) }
+      // The sealer is constructed HERE and not passed down from Dart: a key the
+      // Dart layer could hold is a key in the app's own heap, which is the thing
+      // the Keychain exists to avoid. Go calls back into it for every credential
+      // it writes, and refuses to start if it does not actually seal.
+      try callVoid { MobileStart(configDir, KeychainSealer(), $0) }
       return nil
     case "setServer":
       try callVoid { MobileSetServer(str(args, "url"), $0) }

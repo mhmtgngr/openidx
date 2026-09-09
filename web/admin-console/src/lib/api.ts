@@ -683,6 +683,10 @@ export interface QuickLinkInput {
 export interface PamBrokerStatus {
   available: boolean
   reach_modes: string[]
+  // The PAM_REQUIRE_ZTNA mode as the SERVICE reads it (off | observe |
+  // enforce), not the raw setting. Absent from an older service, in which case
+  // the console refuses nothing.
+  require_ztna?: string
   direct_broker?: boolean
   ziti_broker?: boolean
 }
@@ -766,6 +770,12 @@ export interface PamConnectResult {
   credential_injected?: boolean
   recorded?: boolean
   approval_required?: boolean
+  // How the broker will reach the target: 'ziti' means the connect URL points
+  // at the overlay broker, which routes only for a machine running the OpenIDX
+  // client. The session window needs this to explain a failure correctly — on
+  // an overlay launch the usual cause is a client that is not running, not a
+  // temporary fault. Absent on an older service; treated as not-overlay.
+  reach_mode?: string
 }
 
 export interface PamEntryGrant {

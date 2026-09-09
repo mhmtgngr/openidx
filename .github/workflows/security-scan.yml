@@ -196,6 +196,7 @@ jobs:
           retention-days: 30
 
       - name: Run go list for dependencies
+        if: always()
         run: go list -json -m all > go-deps.json
 
       # Two passes on purpose. SARIF carries no table, so the first blocking
@@ -207,7 +208,13 @@ jobs:
       # scanners: vuln — secret scanning is Gitleaks' job here, with its own
       # reasoned allowlist. Two scanners answering the same question means two
       # allowlists to keep true, and Trivy's would be scanning node_modules.
+      # always() here for the same reason as the npm job below: govulncheck
+      # above is blocking, a failed step skips the rest by default, so on
+      # exactly the runs with a finding the SARIF was never written — and the
+      # always() upload step then reported `Path does not exist` on top of the
+      # real failure.
       - name: Run Trivy filesystem scan (SARIF for the Security tab)
+        if: always()
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
@@ -221,6 +228,7 @@ jobs:
           vuln-type: 'library'
 
       - name: Run Trivy filesystem scan (the gate)
+        if: always()
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
@@ -236,7 +244,7 @@ jobs:
       # is the thing a reviewer needs in order to act on it.
       - name: Upload Trivy FS results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: always() && hashFiles('trivy-fs-results.sarif') != ''
         with:
           sarif_file: 'trivy-fs-results.sarif'
           category: 'go-fs-scan'
@@ -289,7 +297,17 @@ jobs:
 
       # Same split as the Go scan above: SARIF for the Security tab, a table
       # for the gate, so a failure says what it found.
+      #
+      # always() on all three of the steps below, which the Go job does not need
+      # because its scan steps come FIRST. Here `npm audit` runs before them and
+      # can now fail the job — since it stopped being swallowed — and a failed
+      # step skips the rest by default. The SARIF was therefore never written on
+      # exactly the runs that had a finding to report, and the upload step, being
+      # always(), then added `Path does not exist: trivy-npm-results.sarif` on
+      # top of the real error. Two ecosystems' findings in one run also beats
+      # fixing one and discovering the next.
       - name: Run Trivy on package files (SARIF for the Security tab)
+        if: always()
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
@@ -303,6 +321,7 @@ jobs:
           vuln-type: 'library'
 
       - name: Run Trivy on package files (the gate)
+        if: always()
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
@@ -314,9 +333,13 @@ jobs:
           ignore-unfixed: ${{ env.TRIVY_IGNORE_UNFIXED }}
           vuln-type: 'library'
 
+      # The hashFiles guard is belt: the step above now always runs, but if it
+      # ever dies before writing the file — a network failure, a bad action
+      # release — uploading nothing must not add an error of its own on top of
+      # whatever actually went wrong.
       - name: Upload Trivy npm results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: always() && hashFiles('trivy-npm-results.sarif') != ''
         with:
           sarif_file: 'trivy-npm-results.sarif'
           category: 'npm-fs-scan'

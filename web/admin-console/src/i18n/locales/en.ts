@@ -9247,6 +9247,13 @@ const en = {
       failedHeading: "Couldn't connect to {{target}}",
       failedBody:
         'The remote session could not be established. This may be temporary, or you may not have access to the target.',
+      // Shown instead of failedBody when the launch went over the overlay. On
+      // those the session broker has no address off the overlay, so a machine
+      // without a running client cannot reach it at all — naming that beats
+      // offering the two guesses above, neither of which would be the cause.
+      failedOverlayBody:
+        'This session runs over the OpenZiti overlay, so it is reachable only from a device running the OpenIDX client. Check that the client is installed, signed in and connected on this machine, then try again.',
+      setUpClient: 'Set up the client',
       closeWindow: 'Close window',
       tryAgain: 'Try again',
     },
@@ -9321,6 +9328,14 @@ const en = {
       direct: {
         title: 'Direct reach',
         desc: 'The gateway connects straight to the target address.',
+      },
+      directRefused: {
+        title: 'Refused: not on the overlay',
+        desc: 'PAM_REQUIRE_ZTNA is enforcing, and this entry reaches its target directly. The launch is refused before any credential is resolved. Give the entry an overlay service and set its reach mode to ziti.',
+      },
+      ztnaRefused: {
+        direct: 'This entry reaches its target directly rather than over the overlay, and PAM_REQUIRE_ZTNA is enforcing. Set its reach mode to ziti to launch it.',
+        website: 'This is a website entry: it hands back a URL and brokers no session, so nothing about it travels the overlay. PAM_REQUIRE_ZTNA is enforcing.',
       },
       target: {
         title: 'Target',

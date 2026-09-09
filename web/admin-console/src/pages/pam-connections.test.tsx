@@ -28,7 +28,7 @@ vi.mock('../lib/api', () => ({
 vi.mock('../hooks/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }))
 
 import { PamConnectionsPage } from './pam-connections'
-import { connectionPathSteps } from '../lib/connection-path'
+import { connectionPathSteps, ztnaRefusal } from '../lib/connection-path'
 import { api, PamEntry } from '../lib/api'
 
 const pam = api.pam as unknown as Record<string, ReturnType<typeof vi.fn>>
@@ -105,6 +105,35 @@ describe('PamConnectionsPage', () => {
     const key = new URLSearchParams(openArg.split('?')[1]).get('k')!
     const handoff = JSON.parse(localStorage.getItem('pam-session:' + key)!)
     expect(handoff).toMatchObject({ url: 'https://guac/x', title: 'DC01' })
+  })
+
+  // The session window shows a different failure card for an overlay launch —
+  // "the OpenIDX client must be running" instead of "this may be temporary" —
+  // and the only thing that tells it which it got is this flag in the handoff.
+  // Drop the line that writes it and the window silently falls back to blaming
+  // a temporary fault for a launch that will never succeed without a client;
+  // nothing in either page's own tests would notice, which is why it is
+  // asserted at the point it is written.
+  it.each([
+    ['ziti', true],
+    ['direct', false],
+    [undefined, false], // an older service that does not report reach_mode
+  ])('records reach_mode=%s in the handoff as overlay=%s', async (reachMode, overlay) => {
+    localStorage.clear()
+    pam.connect.mockResolvedValue({
+      launch_type: 'guacamole',
+      connect_url: 'https://guac/x',
+      entry_id: 'e1',
+      ...(reachMode === undefined ? {} : { reach_mode: reachMode }),
+    })
+    renderPage()
+    const card = (await screen.findByText('DC01')).closest('[class*="rounded"]') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: /connect/i }))
+
+    await waitFor(() => expect(window.open).toHaveBeenCalled())
+    const openArg = (window.open as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+    const key = new URLSearchParams(openArg.split('?')[1]).get('k')!
+    expect(JSON.parse(localStorage.getItem('pam-session:' + key)!).overlay).toBe(overlay)
   })
 
   it('shows a request-access button only for approval-gated entries', async () => {
@@ -217,9 +246,51 @@ describe('connectionPathSteps', () => {
     ])
   })
 
+  // Under PAM_REQUIRE_ZTNA=enforce a direct-reach entry cannot be launched at
+  // all: the server refuses before resolving a credential. Drawing that hop as
+  // a working route would describe a session nobody can open.
+  it('draws a direct hop as refused when the ZTNA gate enforces', () => {
+    const path = connectionPathSteps({ ...base, ziti_enabled: false }, 'enforce')
+    expect(path.map((s) => s.title)).toContain('Refused: not on the overlay')
+    expect(path.map((s) => s.title)).not.toContain('Direct reach')
+  })
+
+  it('still draws a direct hop as a route in observe and off', () => {
+    for (const mode of ['observe', 'off', undefined]) {
+      const path = connectionPathSteps({ ...base, ziti_enabled: false }, mode)
+      expect(path.map((s) => s.title)).toContain('Direct reach')
+    }
+  })
+
+  it('leaves an overlay entry alone under enforcement', () => {
+    const path = connectionPathSteps({ ...base, ziti_enabled: true }, 'enforce')
+    expect(path.map((s) => s.title)).toContain('Ziti overlay (zero-trust)')
+    expect(path.map((s) => s.title)).not.toContain('Refused: not on the overlay')
+  })
+
   it('describes the wasm-ssh renderer as a browser terminal', () => {
     const steps = connectionPathSteps({ ...base, entry_type: 'ssh', renderer: 'wasm-ssh', record_session: false })
     expect(steps.map((s) => s.title)).toContain('Browser terminal')
     expect(steps.map((s) => s.title)).not.toContain('Session recording')
+  })
+})
+
+describe('ztnaRefusal', () => {
+  const base = rdpEntry as unknown as PamEntry
+
+  // The console must refuse exactly what the server refuses -- no more, no
+  // less. Greying out a button the server would still honour is the same lie
+  // as offering one it will reject.
+  it('refuses only under enforce', () => {
+    for (const mode of ['off', 'observe', undefined]) {
+      expect(ztnaRefusal({ ...base, ziti_enabled: false }, mode)).toBeNull()
+    }
+    expect(ztnaRefusal({ ...base, ziti_enabled: false }, 'enforce')).toContain('directly')
+  })
+
+  it('allows an overlay entry and refuses a website entry', () => {
+    expect(ztnaRefusal({ ...base, ziti_enabled: true }, 'enforce')).toBeNull()
+    const website = { ...base, kind: 'website', ziti_enabled: true } as unknown as PamEntry
+    expect(ztnaRefusal(website, 'enforce')).toContain('brokers no session')
   })
 })

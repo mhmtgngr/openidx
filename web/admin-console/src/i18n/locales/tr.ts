@@ -8965,6 +8965,9 @@ const tr: typeof en = {
       failedHeading: '{{target}} bağlantısı kurulamadı',
       failedBody:
         'Uzak oturum kurulamadı. Bu geçici olabilir ya da hedefe erişiminiz olmayabilir.',
+      failedOverlayBody:
+        'Bu oturum OpenZiti overlay üzerinden çalışır; yalnızca OpenIDX istemcisinin çalıştığı bir cihazdan erişilebilir. İstemcinin bu makinede kurulu, oturum açmış ve bağlı olduğunu doğrulayıp yeniden deneyin.',
+      setUpClient: 'İstemciyi kur',
       closeWindow: 'Pencereyi kapat',
       tryAgain: 'Tekrar dene',
     },
@@ -9036,6 +9039,14 @@ const tr: typeof en = {
       direct: {
         title: 'Doğrudan erişim',
         desc: 'Ağ geçidi doğrudan hedef adrese bağlanır.',
+      },
+      directRefused: {
+        title: 'Reddedildi: örtüşme ağı dışında',
+        desc: 'PAM_REQUIRE_ZTNA uygulama modunda ve bu kayıt hedefine doğrudan erişiyor. Başlatma, hiçbir kimlik bilgisi çözülmeden reddedilir. Kayda bir örtüşme servisi verin ve erişim modunu ziti yapın.',
+      },
+      ztnaRefused: {
+        direct: 'Bu kayıt hedefine örtüşme ağı yerine doğrudan erişiyor ve PAM_REQUIRE_ZTNA uygulama modunda. Başlatabilmek için erişim modunu ziti yapın.',
+        website: 'Bu bir web sitesi kaydı: bir URL döndürür ve hiçbir oturum brokerlamaz, dolayısıyla hiçbir parçası örtüşme ağından geçmez. PAM_REQUIRE_ZTNA uygulama modunda.',
       },
       target: {
         title: 'Hedef',

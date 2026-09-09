@@ -28,20 +28,9 @@ import { useToast } from '../hooks/use-toast'
 import { QueryError } from '../components/query-error'
 import { useRevealedSecret, copyWithWarning } from '../lib/secret-reveal'
 import { TerminalSession } from '../components/remote/terminal-session'
-import { connectionPathSteps } from '../lib/connection-path'
+import { connectionPathSteps, ztnaRefusal } from '../lib/connection-path'
 import { remoteAppArgsLookSecret, remoteAppSecretHint } from '../lib/remote-app'
-
-// Random, unguessable key for the single-use /pam-session localStorage handoff.
-// Prefer crypto.randomUUID, but fall back to getRandomValues hex so this still
-// works in insecure contexts (the console may be served over plain HTTP).
-function randomHandoffKey(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  const bytes = new Uint8Array(16)
-  crypto.getRandomValues(bytes)
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-}
+import { openPamSessionWindow } from '../lib/pam-session-handoff'
 
 // Icon + accent per entry type, so the list reads like RDM's typed tree.
 const typeIcon = (t: string) => {
@@ -241,25 +230,13 @@ export function PamConnectionsPage() {
   const connect = useMutation({
     mutationFn: (vars: { id: string; name: string }) => api.pam.connect(vars.id),
     onSuccess: (res: PamConnectResult, vars) => {
-      const url = res.connect_url || res.url
-      if (url) {
-        // Open each session in its OWN window pointed at our chrome-less
-        // /pam-session wrapper (NOT the raw guac URL). The wrapper frames the
-        // guac client and, on failure/disconnect, shows OpenIDX messaging —
-        // never Guacamole's own home/connection-manager. Users can launch
-        // several connections, each in a separate window.
-        //
-        // The connect URL carries a token, so we must NOT put it in the URL or
-        // browser history: hand it off via a single-use localStorage entry the
-        // wrapper reads and immediately deletes.
-        const key = randomHandoffKey()
-        try {
-          localStorage.setItem(
-            'pam-session:' + key,
-            JSON.stringify({ url, title: vars.name }),
-          )
-        } catch { /* private-mode / quota — window will show the expired card */ }
-        window.open('/pam-session?k=' + key, '_blank')
+      // Each session gets its OWN window pointed at the chrome-less
+      // /pam-session wrapper — never the raw guac URL, because that URL carries
+      // a bearer token and because the wrapper shows OpenIDX messaging on
+      // failure instead of Guacamole's own home/connection-manager. The
+      // handoff, including the overlay flag the wrapper needs to explain a
+      // failed overlay launch, is built in one place for both launchers.
+      if (openPamSessionWindow(res, vars.name)) {
         toast({
           title: t('pages.pamConnections.toasts.launched'),
           description: res.credential_injected
@@ -313,6 +290,7 @@ export function PamConnectionsPage() {
     queryFn: () => api.pam.brokerStatus(),
   })
   const zitiAvailable = broker?.reach_modes?.includes('ziti') ?? false
+  const requireZTNA = broker?.require_ztna
 
   const toggleZiti = useMutation({
     mutationFn: (entry: PamEntry) =>
@@ -481,6 +459,10 @@ export function PamConnectionsPage() {
               {entries.map((entry) => {
                 const Icon = typeIcon(entry.entry_type)
                 const launchable = entry.kind === 'session'
+                // Under PAM_REQUIRE_ZTNA=enforce the server refuses this launch. Say
+                // so on the button rather than firing a call whose 403 is the first
+                // the operator hears of it.
+                const refusedReason = ztnaRefusal(entry, requireZTNA)
                 return (
                   <Card key={entry.id} className="hover:border-primary/40 transition-colors">
                     <CardContent className="flex items-center gap-3 py-3">
@@ -534,7 +516,12 @@ export function PamConnectionsPage() {
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         {launchable && (
-                          <Button size="sm" onClick={() => launch(entry)} disabled={connect.isPending}>
+                          <Button
+                            size="sm"
+                            onClick={() => launch(entry)}
+                            disabled={connect.isPending || !!refusedReason}
+                            title={refusedReason ?? undefined}
+                          >
                             <Play className="h-4 w-4 mr-1" /> {t('pages.pamConnections.actions.connect')}
                           </Button>
                         )}
@@ -829,7 +816,7 @@ export function PamConnectionsPage() {
           </DialogHeader>
           {pathEntry && (
             <div>
-              {connectionPathSteps(pathEntry).map((step, i, arr) => {
+              {connectionPathSteps(pathEntry, requireZTNA).map((step, i, arr) => {
                 const StepIcon = step.icon
                 return (
                   <div key={i} className="flex gap-3">

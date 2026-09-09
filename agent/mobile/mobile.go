@@ -17,6 +17,7 @@ package mobile
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -25,7 +26,10 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/openidx/openidx/agent/internal/agent"
+	"github.com/openidx/openidx/agent/internal/authstore"
 	"github.com/openidx/openidx/agent/internal/control"
+	"github.com/openidx/openidx/agent/internal/secretfile"
 )
 
 var (
@@ -90,17 +94,50 @@ var errNotStarted = errors.New("openidx engine not started; call Start(configDir
 // Start initializes the engine against the app's per-app config directory (the
 // mobile OS sandbox documents dir the host passes in). Idempotent — safe to call
 // on every app launch; a second call with an already-started engine is a no-op.
-func Start(configDir string) error {
+//
+// keystore is the host's Android Keystore / iOS Keychain wrapper and is
+// REQUIRED: everything the engine is about to write into that directory is a
+// credential, and there is no signature of this function that omits it. It is
+// registered, and proved to actually seal, before the engine is constructed —
+// so nothing gets written in the clear and then sealed afterwards.
+func Start(configDir string, keystore Keystore) error {
 	mu.Lock()
 	defer mu.Unlock()
 	if engine != nil {
 		return nil
+	}
+	if err := useKeystore(keystore); err != nil {
+		return err
+	}
+	if err := resealExisting(configDir); err != nil {
+		return err
 	}
 	e, err := control.NewEngine(configDir, newMobileLogger(configDir))
 	if err != nil {
 		return err
 	}
 	engine = e
+	return nil
+}
+
+// resealExisting rewrites the credentials an earlier build left in the clear.
+//
+// Registering a keystore protects what is written NEXT, and on an upgrade the
+// file already sitting in the sandbox is the one holding the 30-day refresh
+// token. Waiting for the next token refresh to rewrite it would make this a
+// control that arrives on a timer nobody is watching — which is the shape of
+// every defect this program has been fixing.
+//
+// ziti-identity.json is not here, and that is a gap rather than an omission:
+// the OpenZiti SDK writes it and reads it back itself, so sealing it would hand
+// the SDK ciphertext. docs/CLIENT-ACCESS-DESIGN.md §4 records it.
+func resealExisting(configDir string) error {
+	if err := secretfile.Reseal(authstore.Path(configDir), secretfile.Write); err != nil {
+		return fmt.Errorf("re-sealing the stored session: %w", err)
+	}
+	if err := secretfile.Reseal(agent.ConfigPath(configDir), secretfile.WriteShared); err != nil {
+		return fmt.Errorf("re-sealing the agent configuration: %w", err)
+	}
 	return nil
 }
 

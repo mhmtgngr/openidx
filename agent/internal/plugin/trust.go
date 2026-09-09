@@ -18,8 +18,15 @@ package plugin
 // agent/internal/secretfile's package doc: agent.json holds plugin_dir, so an
 // account that can write that file chooses the directory this reads. Closing
 // one without the other leaves the chain intact, which is why this refuses
-// rather than warns, and why the Windows half refuses outright (see
-// trust_windows.go) rather than pretending to a check it does not implement.
+// rather than warns.
+//
+// THE TWO IMPLEMENTATIONS ANSWER THE SAME QUESTION DIFFERENTLY, because the
+// platforms record the answer differently: mode bits on Unix (trust_other.go),
+// the DACL and the owner on Windows (trust_windows.go). The Windows half used to
+// refuse every path — the check did not exist, and mode bits there would have
+// returned a pass they never earned. Both halves now decide, and both take the
+// same view of whose rights do not count as a widening: an identity that can
+// already control this process is not a new way to control it.
 //
 // WHAT IS CHECKED, and it is deliberately not the whole ancestry: the plugin
 // root, the individual plugin's directory, and the executable. Those are the

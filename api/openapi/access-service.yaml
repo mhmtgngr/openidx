@@ -2453,6 +2453,16 @@ paths:
                     items: {type: string, enum: [direct, ziti]}
                   direct_broker: {type: boolean}
                   ziti_broker: {type: boolean}
+                  require_ztna:
+                    type: string
+                    enum: [off, observe, enforce]
+                    description: >-
+                      The PAM_REQUIRE_ZTNA mode as the service will apply it, so a
+                      launcher can refuse before the click rather than after the 403.
+                      In `enforce`, a launch is refused unless the entry's reach_mode
+                      is `ziti`, and a website entry is refused outright. An
+                      unrecognised setting is reported as `off`, matching what the
+                      gate does with it. `observe` refuses nothing.
 
   /api/v1/access/pam/broker/ziti-bindings:
     get:

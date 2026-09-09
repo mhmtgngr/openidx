@@ -426,6 +426,201 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A privileged session had two ways off the overlay, and took one of them by
+  default** (`PAM_REQUIRE_ZTNA`, default `off`). The product's ZTNA claim is
+  that privileged access reaches its target through the OpenZiti overlay. A
+  brokered PAM session has two legs, and neither was held to it.
+
+  The **target hop** is `pam_entries.reach_mode`. Migration v82 created it
+  `NOT NULL DEFAULT 'direct'`, so an entry created without a deliberate choice
+  had guacd open a socket to the target's real address from the broker's
+  network — the overlay untouched, nothing refused, nothing recorded.
+
+  The **user hop** is the connect URL, `{public base}/#/client/{id}?token={t}`.
+  Minting it is gated about as hard as anything in this product: fresh MFA, the
+  entry's ACL, the approval gate, moderation, checkout controls. *Using* it was
+  gated by possession — any browser, on any network, with no client and no
+  enrolled device. A website entry skipped both legs, returning a raw URL and
+  brokering nothing at all.
+
+  Under `enforce`: a launch whose reach mode is not `ziti` is refused **before
+  any credential is resolved** (a refusal must not decrypt a vault secret on its
+  way to being refused), a website entry is refused outright with the remedy
+  named, and every allowed launch is routed through the overlay broker.
+  `observe` refuses nothing and audits what `enforce` would refuse — an
+  operator turning this on needs the list of entries that will stop working
+  before they stop working, and the only place that list comes from is the
+  attempts being recorded.
+
+  **The half this flag cannot deliver, stated rather than implied.** The target
+  hop is the service's decision and is made completely. The user hop is not:
+  nothing in an HTTP request proves the caller reached the service over the
+  overlay, and a header saying so is set by whoever is calling — a control the
+  checked input switches off. That leg is closed by the broker being published
+  as a Ziti service and at no other address, so the URL's host routes for a
+  machine running the client and for nothing else. What the code does about it
+  is refuse to START under `enforce` unless `GUACAMOLE_ZITI_PUBLIC_URL` is set
+  and differs from `GUACAMOLE_PUBLIC_URL` — empty means the overlay broker has
+  no address of its own, equal means it is published at the ordinary one, and
+  either way the flag would read "enforce" over an open leg.
+  `docs/CLIENT-ACCESS-DESIGN.md` §4b carries the operator's own check: a curl
+  from an unenrolled host that must fail to connect.
+
+  **And the console had to be told.** A gate that refuses on the server and
+  nowhere else is this branch's defect class inverted — a control that enforces
+  without displaying. The launcher kept offering Connect on entries the service
+  would answer `403`, and the connection-path diagram kept drawing their network
+  hop as a working direct route. `GET /pam/broker/status` — which exists so the
+  launcher can explain a missing broker rather than dead-end on a `503` — now
+  reports the mode as `require_ztna`, and the console disables Connect with the
+  reason on hover and draws that hop as a refusal. The value reported is what the
+  service will *do*, not the raw setting: an unrecognised value reads `off` in
+  both places, so the console cannot show "enforce" over a gate that is not
+  enforcing. An absent field refuses nothing (an older service, or a probe that
+  has not resolved yet — guessing `enforce` would grey out a button that works),
+  and `observe` refuses nothing in the console because it refuses nothing on the
+  server; greying out what the server would allow is the same lie in the other
+  direction.
+
+  **The session window learned which leg failed.** An allowed overlay launch
+  returns a URL on the overlay broker, which routes only for a machine running
+  the client — so on a machine without one the frame never connects and the
+  phase monitor calls it failed. The window answered that with its generic card:
+  "this may be temporary, or you may not have access to the target", two guesses
+  that are both wrong there, above a **Try again** that would fail identically
+  forever. This is the user&rarr;broker leg — the half no check can enforce —
+  arriving as an unexplained failure at the one moment it becomes real. The
+  launch response already carried `reach_mode`, so the console passes it into
+  the window's handoff, and an overlay session that never connects now names the
+  client as what is missing and offers enrolment beside the retry. A direct
+  session keeps the generic card, as does a handoff written without the field:
+  telling someone on a direct session to install a client they do not need is
+  the same wrong answer pointed the other way.
+
+- **The end-user PAM launcher put a session token in the address bar.** There
+  are two places a brokered session is launched. The Connections page opens a
+  chrome-less `/pam-session` wrapper and hands the connect URL over through a
+  single-use `localStorage` entry, and says why in its own comment: the URL
+  carries a bearer token, so it must not reach the address bar or the browser's
+  history, and a failed session behind it must show OpenIDX's card rather than
+  Guacamole's home and connection manager. **Quick links** — the launcher on
+  the end-user page, the one most people actually use — called
+  `window.open(connectURL)`. Same token, same broker, opposite decision, and
+  nothing failed: the second launcher was written later, from the API rather
+  than from the first launcher.
+
+  Both now go through one `openPamSessionWindow`, which builds the handoff —
+  URL, unguessable single-use key, and the overlay flag the window needs to
+  explain a failed ZTNA launch. A launcher that skipped the wrapper also lost
+  that message, so this and the entry above are the same fix. When storage
+  throws (private mode, quota) the wrapper still opens and shows its "expired"
+  card: falling back to the raw URL would put the token in history for exactly
+  the users whose browser is set to keep less of it.
+
+  `scripts/check-pam-launch-wrapper.sh` is what stops a third launcher
+  rediscovering the wrong answer — every caller of `api.pam.connect` must use
+  the helper and must not read `connect_url` itself, since importing the helper
+  does not prove you used it. It fails if it matches no launcher at all, so a
+  rename cannot leave it green over code it no longer sees. `quick-links-section`
+  also gets its first test file: nothing in the suite had touched it.
+
+- **On a phone, the engine's credentials were protected by a mode bit, and a
+  mode bit protects nothing there.** The companion app's engine writes three
+  credentials into its sandbox — `user-tokens.json` (the 30-day refresh token),
+  `agent.json` (the agent's own auth token), `ziti-identity.json` (the overlay
+  private key) — all at `0600`. Inside an app container that mode is not
+  protection that was added; every file there is already private to the app's
+  UID. An earlier entry closed the way those bytes leave the device, the
+  platform backup. What it did not close is that **Android and iOS both decrypt
+  app storage at the first unlock after boot and leave it decrypted**, so a
+  rooted phone, a jailbroken one, or one imaged while merely unlocked reads them
+  as text.
+
+  The control for that is a key the file system does not hold, and Go can reach
+  neither the Android Keystore nor the iOS Keychain. `agent/mobile.Keystore` is
+  therefore a gomobile **reverse** binding — a Go interface implemented by
+  `AndroidKeystoreSealer` in Kotlin (AES-256-GCM under a non-exportable
+  `AndroidKeyStore` key, StrongBox where the hardware offers it) and
+  `KeychainSealer` in Swift (AES-GCM under a Keychain key marked
+  `…AfterFirstUnlockThisDeviceOnly`, so it is in no backup and restores onto no
+  other device). The key never crosses the boundary, and that is the design
+  rather than an omission: an `AndroidKeyStore` key cannot be exported at all,
+  so a boundary that carried key material could not use a hardware-backed one.
+
+  Four things keep it from being a control that displays without enforcing.
+  `Start` takes the keystore as a parameter and has no signature that omits it,
+  so a host cannot forget to pass one and still compile. Before the engine
+  touches a credential, `secretfile.SelfTest` wraps a probe and refuses to start
+  unless the result differs from the plaintext, **does not contain** it, opens
+  back to it, and differs again on a second wrap — the last catches a fixed
+  nonce, and the second catches the one that would otherwise get through, a
+  header wrapped round the secret, which round-trips perfectly while leaving the
+  token in the file in full. `Start` also re-seals what an earlier build wrote
+  in the clear, because a control that protects only the *next* write leaves the
+  credential it was added for sitting there until something happens to rewrite
+  it. And `scripts/check-mobile-keystore.sh` reads the Kotlin and the Swift for
+  the one question no runtime check can answer: a constant key compiled into the
+  app produces real ciphertext with a fresh nonce and passes everything above.
+
+  `agent.json` moved onto `secretfile.WriteShared`, which takes the keystore
+  seal but not the per-user Windows layer — the SYSTEM service and the user's
+  tray both read that file, and a per-user DPAPI blob or a writer-named DACL
+  would lock one of them out. On a desktop, where no keystore is registered, it
+  is byte-for-byte the file it has always been.
+
+  **Not covered, and recorded rather than implied:** `ziti-identity.json` is
+  written and read back by the OpenZiti SDK, not by this code, so sealing it
+  would hand the SDK ciphertext and unsealing it to a temporary file would put
+  the private key back on disk to no purpose. It needs an SDK-side change and is
+  named in `docs/CLIENT-ACCESS-DESIGN.md` §4.
+
+- **The update manifest said what to install, and nothing said who wrote it.**
+  The previous entry in this section made the artifact's SHA-256 mandatory. That
+  proves the download arrived intact and cannot prove anything more: the same
+  document supplies the `url` and the `sha256` that matches it, so whoever
+  chooses the manifest's bytes chooses what the machine installs — `msiexec /i`
+  under SYSTEM on Windows, `sudo -n dpkg -i` on Linux, or a replace-and-re-exec
+  of the agent's own binary. The Authenticode signature on the MSI is not a
+  second chance: nothing on the apply path reads it, `msiexec` run by a service
+  installs an unsigned package without a word, and on Linux and macOS there is
+  no Authenticode at all.
+
+  The signing identity existed the whole time.
+  `agent/packaging/openidx-codesign.cer` is committed, self-signed, and its
+  private half is held only as the `WINDOWS_CERT_PFX_BASE64` secret; it signs
+  `openidx-agent.exe` and the MSI, and never signed the document that names
+  them. `latest.json` now carries a `signature` — base64 RSASSA-PKCS1-v1_5 over
+  SHA-256 of a canonical form of its fields — and the agent verifies it against
+  that certificate, pinned into the binary, **before a byte is downloaded**. The
+  canonical form is signed rather than the JSON bytes, so PowerShell's
+  `ConvertTo-Json` and Go's `encoding/json` never have to agree on key order or
+  spacing, and its first line is a domain separator so a signature the same key
+  made for anything else cannot be replayed as a manifest.
+
+  The trust anchor is a required parameter of `Fetch` and `CheckAndApply` whose
+  zero value trusts nobody, so a caller that forgets to pass one installs
+  nothing rather than anything. An operator publishing their own builds to their
+  own manifest URL sets `update_trusted_cert` in `agent.json` (PEM), which
+  replaces the pinned publisher rather than adding to it.
+
+  Two facts are derived rather than asserted, because both are duplications that
+  would otherwise drift in silence: the embedded certificate is compared
+  byte-for-byte with the packaged one (`//go:embed` cannot read outside its
+  package, so there are two copies), and a test rebuilds the release workflow's
+  PowerShell signing input out of the YAML and requires it to equal what Go
+  verifies — a reordered field or a CRLF would produce signatures that verify
+  nowhere, on a release that had already shipped. The release step also verifies
+  its own signature with the public half before publishing, so a
+  `WINDOWS_CERT_PFX_BASE64` holding the wrong key fails the job instead of
+  shipping a manifest every agent refuses.
+
+  **Behaviour change for operators, two of them.** An `agent-v*` tag now *fails*
+  unless `WINDOWS_CERT_PFX_BASE64` and `WINDOWS_CERT_PASSWORD` are set: an
+  unsigned manifest is not a degraded update channel, it is a file every agent
+  rejects, and failing in CI is better than discovering it on endpoints. And an
+  agent pointed at a manifest published before this change will refuse it,
+  naming the missing signature; re-cut the release to publish a signed one.
+
 - **The local control socket was world-connectable for the length of one
   syscall.** On Unix the control server has no bearer token: the socket's
   filesystem permissions *are* the authentication, and what they guard has no
@@ -471,16 +666,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and what to run to fix it, because a control people cannot act on is one they
   switch off.
 
-  **On Windows it refuses outright, and says why.** The check is Unix mode bits,
-  which Windows discards — the Go runtime maps `0755` to "not read-only" and
-  nothing else — so the same code there would report every path as trusted while
-  checking nothing, in the one place where the caller is the SYSTEM service.
-  Doing it properly means reading the DACL and resolving which non-privileged
-  SIDs hold a write right; `agent/internal/secretfile` does the writing half of
-  that for two files and there is no reading half, and one written without a
-  Windows machine to test against would be either too strict or a pass that was
-  never earned. Nothing in the repository sets `plugin_dir` — it is read in one
-  place and written nowhere — so no shipped configuration is affected.
+  **On Windows the check reads the DACL.** It could not at first, and refused
+  every path instead: mode bits are what the Unix half reads, Windows discards
+  them — the Go runtime maps `0755` to "not read-only" and nothing else — so the
+  same code there would have reported every path as trusted while checking
+  nothing, in the one place where the caller is the SYSTEM service. It now reads
+  the path's owner and DACL and refuses any allow-entry that grants write,
+  append, delete, delete-child, change-permissions or take-ownership to a
+  principal outside `{SYSTEM, BUILTIN\Administrators, NT
+  SERVICE\TrustedInstaller, the account this process runs as}` — and refuses an
+  owner outside that set as well, because an owner can rewrite the permissions of
+  what it owns whatever they currently say. TrustedInstaller, and read-and-execute
+  for Users, are allowed on purpose: both are the `%ProgramFiles%` default, and a
+  check that refuses the ordinary installation layout is a check that gets
+  switched off. Inherit-only entries are skipped, a NULL DACL is refused (it
+  grants everyone full control), and an entry type this code cannot evaluate is
+  refused rather than assumed harmless. The account this process already runs as
+  is trusted for the same reason the Unix half does not compare ownership against
+  the uid: a file only that identity can write is not a new way to control the
+  process. Tests build their fixtures as protected DACLs so nothing is inherited from the
+  runner, and cover the case a refuse-everything implementation would also have
+  passed: a privileged-only tree that must load. They did not run at first: a
+  `//go:build windows` file is compiled out on Linux, and the only job that can
+  execute one named its packages by hand — a list that had lost `agent/internal/plugin`
+  and `internal/remotesupport` while carrying `agent/internal/authstore`, which has no
+  Windows-only code. The list is derived from the build tags now, and
+  `scripts/check-windows-tests-run.sh` keeps it that way.
+  Nothing in the repository sets `plugin_dir` — it is read in one place and
+  written nowhere — so no shipped configuration is affected either way.
 
 - **The agent's self-updater installed an artifact it had not verified, whenever
   the manifest said not to.** `downloadVerified` checked the downloaded file's

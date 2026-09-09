@@ -193,10 +193,54 @@ jobs:
       # Scoped to the packages with Windows-specific behaviour rather than the
       # whole module: this job's purpose is the MSI, and a broad Windows test
       # run would be a second, slower copy of the Linux one.
+      #
+      # THE LIST IS DERIVED, and it has to be. It used to be three package paths
+      # typed by hand, and a hand-typed list is the thing that silently loses an
+      # entry: it named internal/authstore, which has no //go:build windows file
+      # at all and was therefore a second copy of its own Linux run, while
+      # MISSING internal/remotesupport — whose test asserts the Win32 INPUT
+      # struct is 40 bytes, because if it drifts SendInput silently no-ops — and
+      # internal/plugin, whose test decides whether a path is safe for the
+      # SYSTEM service to execute from. Both had never run anywhere: a
+      # //go:build windows test file is compiled out on Linux, so a package this
+      # step does not name has no runner at all.
+      #
+      # Deriving it from the build tags means adding a Windows test is enough to
+      # get it run. scripts/check-windows-tests-run.sh keeps this step from
+      # going back to a literal list.
       - name: go test (Windows-only behaviour)
         working-directory: agent
         shell: bash
-        run: go test ./internal/secretfile/... ./internal/control/... ./internal/authstore/...
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(grep -rl --include='*_test.go' -E '^//go:build windows' .)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No //go:build windows test files found in the agent module. Either the"
+            echo "::error::build-tag spelling changed, or this step is about to test nothing and"
+            echo "::error::report success — which is the failure it exists to prevent."
+            exit 1
+          fi
+          mapfile -t pkgs < <(printf '%s\n' "${files[@]}" | xargs -n1 dirname | sort -u)
+          mapfile -t names < <(grep -hoE '^func (Test|Benchmark|Fuzz)[A-Za-z0-9_]+' "${files[@]}" \
+                               | awk '{print $2}' | sort -u)
+          if [ "${#names[@]}" -eq 0 ]; then
+            echo "::error::Found ${#files[@]} Windows-tagged test file(s) but no test functions in"
+            echo "::error::them. -run would then match nothing and the step would pass having run"
+            echo "::error::no test at all."
+            exit 1
+          fi
+          printf 'Windows-only packages:\n'; printf '  %s\n' "${pkgs[@]}"
+          printf 'Windows-only tests (%d):\n' "${#names[@]}"; printf '  %s\n' "${names[@]}"
+          # Selected BY NAME, not whole packages. The packages holding Windows
+          # tests also hold cross-platform ones that the Linux job already runs
+          # and that were never written for this platform — internal/plugin's
+          # protocol tests write a .sh fixture and exec it, which Windows cannot
+          # do, and internal/remotesupport's teardown test fails here. Running
+          # them again on Windows tests nothing this job is for and reports
+          # failures that belong to the other runner. What only exists here is
+          # what runs here.
+          IFS='|' run="^(${names[*]})$"
+          go test -run "$run" "${pkgs[@]}"
 
       # Native deps for the real screen-share build (VP8 encode via libvpx +
       # pkg-config + the mingw C toolchain the CGO binding uses). This is now a
@@ -458,7 +502,18 @@ jobs:
       # latest.json manifest the self-updater polls. Clients set
       #   update_manifest_url = https://github.com/<owner>/<repo>/releases/latest/download/latest.json
       # which always redirects to the newest release's manifest.
-      - name: Generate latest.json
+      # The manifest is SIGNED, and the release fails rather than publish one
+      # that is not. agent/internal/updater/trust.go pins this same certificate
+      # and refuses a manifest it did not sign — so an unsigned latest.json is
+      # not a degraded update channel, it is a file every agent rejects, and the
+      # symptom would appear months later on endpoints instead of here.
+      #
+      # The signature covers a canonical form of the fields (see signingInput),
+      # not the JSON bytes: PowerShell's ConvertTo-Json and Go's encoding/json
+      # do not have to agree on key order, spacing or escaping for it to verify.
+      # Keep the domain line, the field order and the trailing newline exactly as
+      # written — they are the message.
+      - name: Generate and sign latest.json
         if: steps.ver.outputs.release == 'true'
         shell: pwsh
         env:
@@ -466,11 +521,74 @@ jobs:
           GH_REPOSITORY: ${{ github.repository }}
           GH_REF_NAME: ${{ github.ref_name }}
         run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:WINDOWS_CERT_PFX_BASE64) {
+            throw @"
+          Cannot publish an update manifest: no signing certificate.
+
+          latest.json is what tells every installed agent which MSI to install and
+          run as SYSTEM, so it is signed with the OpenIDX code-signing key and each
+          agent verifies it against the copy pinned in
+          agent/internal/updater/release-publisher.cer. Publishing it unsigned would
+          ship a file every agent refuses.
+
+          Set the WINDOWS_CERT_PFX_BASE64 and WINDOWS_CERT_PASSWORD repository
+          secrets (the same pair that Authenticode-signs openidx-agent.exe and the
+          MSI) and re-run this job. The private key must match
+          agent/packaging/openidx-codesign.cer.
+          "@
+          }
+
           $ver = $env:AGENT_VERSION
           $msi = "dist/OpenIDX-$ver.msi"
           $sha = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLower()
           $url = "https://github.com/$($env:GH_REPOSITORY)/releases/download/$($env:GH_REF_NAME)/OpenIDX-$ver.msi"
-          $manifest = [ordered]@{ version = $ver; url = $url; sha256 = $sha }
+
+          # Canonical signing input — must match signingInput() byte for byte,
+          # LF line endings, one trailing newline.
+          $lines = @(
+            "openidx-agent-update-manifest/v1",
+            "version=$ver",
+            "url=$url",
+            "sha256=$sha"
+          )
+          $canonical = ($lines -join "`n") + "`n"
+          $bytes = [Text.Encoding]::UTF8.GetBytes($canonical)
+
+          # EphemeralKeySet keeps the private key out of the runner's key store.
+          # It is not supported for every PFX, so fall back to the default flags
+          # rather than failing a release over where a key is held for 200ms.
+          try {
+            $pfx = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+              "$env:RUNNER_TEMP\cert.pfx", $env:WINDOWS_CERT_PASSWORD,
+              [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
+          } catch {
+            Write-Host "ephemeral key load failed ($($_.Exception.Message)); retrying with default flags"
+            $pfx = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+              "$env:RUNNER_TEMP\cert.pfx", $env:WINDOWS_CERT_PASSWORD)
+          }
+          $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($pfx)
+          if (-not $rsa) { throw "the signing certificate has no RSA private key" }
+          $sig = $rsa.SignData($bytes,
+            [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+            [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+          $b64 = [Convert]::ToBase64String($sig)
+
+          # Verify what was just produced, with the public half only, before it
+          # is published: a signature nobody checks here is one every endpoint
+          # checks instead.
+          $pub = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new("agent/packaging/openidx-codesign.cer")
+          $pubRsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($pub)
+          $ok = $pubRsa.VerifyData($bytes, $sig,
+            [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+            [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+          if (-not $ok) {
+            throw "the manifest signature does not verify against agent/packaging/openidx-codesign.cer. " +
+                  "The WINDOWS_CERT_PFX_BASE64 secret holds a different key from the certificate the " +
+                  "agent pins, so every agent would refuse this release."
+          }
+
+          $manifest = [ordered]@{ version = $ver; url = $url; sha256 = $sha; signature = $b64 }
           $manifest | ConvertTo-Json | Set-Content -Path dist/latest.json -Encoding utf8
           Get-Content dist/latest.json
 

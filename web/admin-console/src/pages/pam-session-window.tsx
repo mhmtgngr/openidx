@@ -28,6 +28,22 @@ import i18n from '../i18n'
 interface Handoff {
   url: string
   title: string
+  /**
+   * The launch reached its target over the OpenZiti overlay (reach_mode=ziti).
+   *
+   * This window is where the user→broker leg stops being theory. Under
+   * `PAM_REQUIRE_ZTNA=enforce` an allowed launch returns a URL on the overlay
+   * broker, which routes for a machine running the OpenIDX client and for
+   * nothing else — so on a machine without one the frame never reaches a client
+   * route and the phase monitor calls it `failed`. The generic card then offers
+   * two guesses that are both wrong ("may be temporary", "may not have access")
+   * and a Try again that will fail identically forever. Knowing the launch was
+   * an overlay one lets the card name the actual cause and point at enrolment.
+   *
+   * Absent means not-overlay, which is what an opener that predates this field
+   * and every direct launch are: the generic card is right for those.
+   */
+  overlay?: boolean
 }
 
 const HANDOFF_PREFIX = 'pam-session:'
@@ -53,6 +69,10 @@ export function consumeHandoff(key: string): Handoff | null {
     if (typeof parsed?.url === 'string' && parsed.url) {
       return {
         url: parsed.url,
+        // Only a literal true is an overlay launch. An opener that predates
+        // this field, or one that wrote something else into it, gets the
+        // generic card — which is the message this window has always shown.
+        overlay: parsed.overlay === true,
         // The opener normally supplies the connection's own name; the
         // fallback goes through the singleton because this runs outside a
         // component (it is the window title, set before first render).
@@ -148,14 +168,28 @@ export function PamSessionWindow() {
             body={
               phase === 'ended'
                 ? t('pages.pamSessionWindow.endedBody')
-                : t('pages.pamSessionWindow.failedBody')
+                : handoff.overlay
+                  ? t('pages.pamSessionWindow.failedOverlayBody')
+                  : t('pages.pamSessionWindow.failedBody')
             }
             actions={
               <>
                 <Button variant="outline" onClick={() => window.close()}>
                   {t('pages.pamSessionWindow.closeWindow')}
                 </Button>
-                <Button onClick={() => setReloadKey((k) => k + 1)}>
+                {/* An overlay session that never connected will not connect on
+                    a retry either while the client is absent, so the primary
+                    action is the thing that fixes it. Try again stays, demoted:
+                    the client may have come up in the meantime. */}
+                {phase === 'failed' && handoff.overlay && (
+                  <Button onClick={() => window.open('/add-device', '_blank')}>
+                    {t('pages.pamSessionWindow.setUpClient')}
+                  </Button>
+                )}
+                <Button
+                  variant={phase === 'failed' && handoff.overlay ? 'outline' : 'default'}
+                  onClick={() => setReloadKey((k) => k + 1)}
+                >
                   {t('pages.pamSessionWindow.tryAgain')}
                 </Button>
               </>

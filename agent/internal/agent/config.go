@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/openidx/openidx/agent/internal/checks"
+	"github.com/openidx/openidx/agent/internal/secretfile"
 )
 
 // AgentConfig holds the persisted configuration for a registered agent.
@@ -22,6 +23,18 @@ type AgentConfig struct {
 	// UpdateManifestURL, when set, enables self-update: the service polls this
 	// JSON manifest and applies a newer published MSI. Empty disables it.
 	UpdateManifestURL string `json:"update_manifest_url,omitempty"`
+	// UpdateTrustedCertPEM, when set, REPLACES the pinned OpenIDX release
+	// publisher with the operator's own signing certificate (PEM), for an
+	// on-premise install publishing its own builds to its own manifest URL.
+	//
+	// This is a trust anchor, not a preference: whoever it names can install
+	// software on this machine. It belongs in this file because this file
+	// already chooses the manifest URL — anyone who can write one can write the
+	// other — and the file's permissions are what protect both (0600 in a 0700
+	// directory on Unix, an owner-only ACL on Windows). Empty means the pinned
+	// publisher, which is the right answer for anyone consuming OpenIDX
+	// releases.
+	UpdateTrustedCertPEM string `json:"update_trusted_cert,omitempty"`
 	// InsecureSkipVerify skips TLS verification for the signaling WebSocket
 	// (dev/self-signed only). Defaults false. Mirrors the HTTP client posture.
 	InsecureSkipVerify bool `json:"insecure_skip_verify,omitempty"`
@@ -92,9 +105,20 @@ func DefaultServerConfig() ServerConfig {
 
 const configFileName = "agent.json"
 
+// ConfigPath is where agent.json lives for a given config dir.
+func ConfigPath(dir string) string { return filepath.Join(dir, configFileName) }
+
 // Save marshals the AgentConfig to JSON and writes it to agent.json inside dir.
 // The directory is created with mode 0700 if it does not already exist.
 // The file is written with mode 0600.
+//
+// It goes through secretfile because agent.json carries auth_token — the
+// agent's own credential to the server — and on mobile that file sits in an app
+// sandbox where the mode means nothing and the device keystore is the control.
+// WriteShared rather than Write: both the Windows SERVICE and the user's tray
+// load this file, so it must not take the per-user Windows layer. With no
+// keystore registered, which is every desktop, WriteShared is byte-for-byte the
+// os.WriteFile(0600) this has always been.
 func (c *AgentConfig) Save(dir string) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
@@ -105,8 +129,7 @@ func (c *AgentConfig) Save(dir string) error {
 		return fmt.Errorf("marshaling agent config: %w", err)
 	}
 
-	path := filepath.Join(dir, configFileName)
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := secretfile.WriteShared(ConfigPath(dir), data); err != nil {
 		return fmt.Errorf("writing agent config: %w", err)
 	}
 
@@ -115,9 +138,9 @@ func (c *AgentConfig) Save(dir string) error {
 
 // LoadConfig reads agent.json from dir and returns the parsed AgentConfig.
 func LoadConfig(dir string) (*AgentConfig, error) {
-	path := filepath.Join(dir, configFileName)
+	path := ConfigPath(dir)
 
-	data, err := os.ReadFile(path)
+	data, err := secretfile.Read(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading agent config: %w", err)
 	}

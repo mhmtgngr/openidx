@@ -253,6 +253,45 @@ type Config struct {
 	// session is auto-suspended in "enforce" mode. Default 80.
 	PAMSessionRiskThreshold int `mapstructure:"pam_session_risk_threshold"`
 
+	// PAMRequireZTNA decides whether a privileged session may reach its target
+	// by any route other than the OpenZiti overlay.
+	//
+	// A brokered PAM session has TWO legs, and each one can leave the overlay
+	// on its own:
+	//
+	//	user  → broker   the connect URL the console opens. It is
+	//	                 {public base}/#/client/{id}?token={t} — a bearer URL,
+	//	                 usable from any browser on any network. Minting it is
+	//	                 gated (fresh MFA, ACL, approval); USING it is gated by
+	//	                 nothing but possession.
+	//	broker → target  guacd's dial. pam_entries.reach_mode decides: 'ziti'
+	//	                 rides the overlay to an edge-router-hosted target,
+	//	                 'direct' opens a socket to the target's real address.
+	//	                 v82 made 'direct' the column DEFAULT, so an entry
+	//	                 created without a deliberate choice bypasses the
+	//	                 overlay.
+	//
+	//	"off"     (default) — both legs stay as configured per entry.
+	//	"observe" — refuse nothing, but audit every launch that would be
+	//	            refused, so an operator can size the change before making it.
+	//	"enforce" — a launch whose target hop is not 'ziti' is refused, as is a
+	//	            website entry (it hands a raw URL to a browser and brokers
+	//	            nothing), and an entry cannot be created or updated into a
+	//	            non-ziti reach mode.
+	//
+	// WHAT THIS FLAG CANNOT DO, said rather than implied. Enforcing the
+	// broker→target leg is a decision this process makes and can therefore
+	// guarantee. The user→broker leg is not: nothing in an HTTP request proves
+	// the caller reached the service over the overlay, and a header that
+	// claimed it would be a control the caller sets. That leg is closed by
+	// DEPLOYMENT — the broker published only as a Ziti service, so the connect
+	// URL's host routes for a machine running the client and for nothing else.
+	// What the code can do, and does under "enforce", is refuse to start unless
+	// the overlay broker is configured with its own browser-facing base
+	// (GUACAMOLE_ZITI_PUBLIC_URL, distinct from the direct broker's), which is
+	// the configuration that deployment requires.
+	PAMRequireZTNA string `mapstructure:"pam_require_ztna"`
+
 	// PAMSSHRequireHostKey refuses a clientless SSH session to a PAM entry that
 	// pins no host key (settings.ssh_host_key). Default false, which keeps the
 	// existing behaviour: the hop is unpinned, and both the log and the
@@ -861,6 +900,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("selfheal_state_dir", "/home/cmit/oidx-runtime/selfheal")
 	v.SetDefault("selfheal_scripts_dir", "scripts/selfheal")
 	v.SetDefault("pam_session_risk_gate", "off")
+	v.SetDefault("pam_require_ztna", "off")
 	v.SetDefault("abac_enforce", "off")
 	v.SetDefault("stepup_gate", "off")
 	v.SetDefault("stepup_max_age", "15m")
@@ -1100,6 +1140,7 @@ func bindEnvVars(v *viper.Viper) {
 		"selfheal_state_dir":                              "SELFHEAL_STATE_DIR",
 		"selfheal_scripts_dir":                            "SELFHEAL_SCRIPTS_DIR",
 		"pam_session_risk_gate":                           "PAM_SESSION_RISK_GATE",
+		"pam_require_ztna":                                "PAM_REQUIRE_ZTNA",
 		"pam_ssh_require_host_key":                        "PAM_SSH_REQUIRE_HOST_KEY",
 		"abac_enforce":                                    "ABAC_ENFORCE",
 		"stepup_gate":                                     "STEPUP_GATE",
@@ -1634,6 +1675,31 @@ func (c *Config) ValidateProduction() error {
 			"sms.provider is \"mock\" with SMS enabled; the mock provider delivers nothing — configure a real provider or set SMS_ENABLED=false")
 	}
 
+	// Critical: PAM_REQUIRE_ZTNA=enforce is a promise about where privileged
+	// sessions travel, and half of it is configuration rather than code.
+	//
+	// Refusing a non-ziti target hop is this process's decision to make. The
+	// other leg — the connect URL the browser opens — is closed only by the
+	// broker being reachable at an overlay address and nowhere else, and the
+	// setting that expresses it is GUACAMOLE_ZITI_PUBLIC_URL. Left empty, the
+	// client falls back to its internal base; set to the SAME value as the
+	// direct broker's public URL, the "overlay" broker is being published at
+	// the ordinary address and the second leg is open with the flag reading
+	// "enforce". Both are refusals rather than warnings: an operator who set
+	// this flag asked for the property, and starting anyway would hand them the
+	// word without the thing.
+	if strings.EqualFold(strings.TrimSpace(c.PAMRequireZTNA), "enforce") {
+		zitiPublic := strings.TrimSpace(c.GuacamoleZitiPublicURL)
+		switch {
+		case zitiPublic == "":
+			criticalIssues = append(criticalIssues,
+				"pam_require_ztna is \"enforce\" but guacamole_ziti_public_url is empty; the overlay broker has no browser-facing address of its own, so the connect URL cannot be overlay-only")
+		case strings.EqualFold(zitiPublic, strings.TrimSpace(c.GuacamolePublicURL)):
+			criticalIssues = append(criticalIssues,
+				"pam_require_ztna is \"enforce\" but guacamole_ziti_public_url equals guacamole_public_url; the overlay broker is published at the same address as the direct one, so a connect URL reaches it without the client")
+		}
+	}
+
 	if len(criticalIssues) > 0 {
 		return fmt.Errorf("production security validation failed:\n  - %s",
 			strings.Join(criticalIssues, "\n  - "))
@@ -1687,6 +1753,9 @@ func (c *Config) ReportModeGates() []string {
 	}
 	if !strings.EqualFold(strings.TrimSpace(c.PostureDeviceTrustGate), "enforce") {
 		open = append(open, "POSTURE_DEVICE_TRUST_GATE="+valueOrOff(c.PostureDeviceTrustGate)+" — device posture never changes overlay reach")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.PAMRequireZTNA), "enforce") {
+		open = append(open, "PAM_REQUIRE_ZTNA="+valueOrOff(c.PAMRequireZTNA)+" — a privileged session may still dial its target directly, off the overlay")
 	}
 	if !c.AccessAPIRequireAuth {
 		open = append(open, "ACCESS_API_REQUIRE_AUTH=false — the access API accepts anonymous callers under APP_ENV=development")

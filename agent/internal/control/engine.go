@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -28,6 +29,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/authstore"
 	"github.com/openidx/openidx/agent/internal/checks"
 	"github.com/openidx/openidx/agent/internal/desktoppam"
+	"github.com/openidx/openidx/agent/internal/secretfile"
 	"github.com/openidx/openidx/agent/internal/sso"
 	"github.com/openidx/openidx/agent/internal/ziti"
 )
@@ -662,6 +664,16 @@ func (e *Engine) AccessToken() (string, error) {
 	}
 	tok, err := authstore.Load(e.configDir)
 	if err != nil {
+		// A stored session that cannot be OPENED is a session that no longer
+		// exists: the device keystore refused it, or the DPAPI blob belongs to
+		// another account. Reporting that as a fault would leave the app showing
+		// an error the user cannot act on; the honest answer is the one that
+		// sends them to sign in, which the next login overwrites the file with.
+		if errors.Is(err, secretfile.ErrUnsealable) {
+			e.logger.Warn("Stored session could not be opened; sign-in required",
+				zap.Error(err))
+			return "", errNotAuthenticated
+		}
 		return "", fmt.Errorf("loading session: %w", err)
 	}
 	if tok == nil || tok.AccessToken == "" {
@@ -711,6 +723,16 @@ func (e *Engine) userToken() (string, error) {
 	}
 	tok, err := authstore.Load(e.configDir)
 	if err != nil {
+		// A stored session that cannot be OPENED is a session that no longer
+		// exists: the device keystore refused it, or the DPAPI blob belongs to
+		// another account. Reporting that as a fault would leave the app showing
+		// an error the user cannot act on; the honest answer is the one that
+		// sends them to sign in, which the next login overwrites the file with.
+		if errors.Is(err, secretfile.ErrUnsealable) {
+			e.logger.Warn("Stored session could not be opened; sign-in required",
+				zap.Error(err))
+			return "", errNotAuthenticated
+		}
 		return "", fmt.Errorf("loading session: %w", err)
 	}
 	if tok == nil || tok.AccessToken == "" {

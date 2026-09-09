@@ -284,6 +284,17 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 		}
 	}
 
+	// Does this launch stay on the overlay? Asked here, before the website
+	// short-circuit and before launchPamSession resolves a credential, because
+	// a refusal must not have decrypted a vault secret on its way to being
+	// refused — and because the website path never reaches launchPamSession at
+	// all, so a check placed there would miss the one entry type that brokers
+	// nothing.
+	if v := s.checkPamZTNA(c, org.ID, userID, entryID, entry.ReachMode, typeInfo.Protocol); v.Refuse {
+		c.JSON(http.StatusForbidden, gin.H{"error": v.Reason, "code": v.Code})
+		return
+	}
+
 	// Website entries: no brokering — hand back the URL. The password (if
 	// any) stays in the vault, retrievable only via the audited reveal path.
 	if typeInfo.Protocol == "" {

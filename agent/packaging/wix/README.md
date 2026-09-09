@@ -86,7 +86,8 @@ the new `.cer`.
 Push an **`agent-v<version>`** tag (e.g. `agent-v1.2.0`). The Windows Client
 Build workflow then builds + signs the MSI and publishes a GitHub Release with:
 - `OpenIDX-<version>.msi`
-- `latest.json` — `{ "version", "url", "sha256" }` the self-updater polls.
+- `latest.json` — `{ "version", "url", "sha256", "signature" }` the self-updater
+  polls.
 
 Point clients at the stable "latest" URL (redirects to the newest release):
 ```
@@ -94,6 +95,29 @@ update_manifest_url = https://github.com/mhmtgngr/openidx/releases/latest/downlo
 ```
 Set it in the agent config (or via a deployment script); the service checks
 every 6h and applies newer signed MSIs. Manual: `openidx-agent update --apply`.
+
+### The manifest is signed, and the release fails if it cannot be
+`latest.json` is what tells an installed agent which MSI to fetch and run as
+SYSTEM. Its `sha256` proves the download arrived intact and nothing more — the
+same file supplies the URL and the digest that matches it — so the manifest
+carries a `signature` over its own fields, made with the **same code-signing key
+as the MSI** and verified by every agent against the copy of
+`openidx-codesign.cer` pinned at `agent/internal/updater/release-publisher.cer`.
+
+Consequences worth knowing before you tag:
+- **`WINDOWS_CERT_PFX_BASE64` and `WINDOWS_CERT_PASSWORD` are required for an
+  `agent-v*` release.** Without them the job fails rather than publishing an
+  unsigned manifest, which every agent would refuse anyway.
+- **Rotating the signing key means updating three things together**: the two
+  secrets, `agent/packaging/openidx-codesign.cer`, and its byte copy at
+  `agent/internal/updater/release-publisher.cer` (a test compares them and fails
+  the build if they differ). Agents must be running a build that carries the new
+  certificate *before* the first release signed with the new key, or they will
+  refuse it — ship the new agent first, then rotate.
+- **Publishing your own builds** (an on-premise release channel) means signing
+  the manifest with your own key and setting `update_trusted_cert` in the
+  agent's `agent.json` to that certificate in PEM. It *replaces* the pinned
+  OpenIDX publisher, so such an agent accepts your releases and only yours.
 
 ## winget
 `packaging/winget/` holds the three-file manifest (version + installer + en-US
