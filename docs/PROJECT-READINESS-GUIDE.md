@@ -410,7 +410,26 @@ product; either wire them or remove them from the UI.
   tests had never executed anywhere, and CI was green throughout — the
   organising defect class arriving through a build tag. The step derives its
   list from the build tags now, and `scripts/check-windows-tests-run.sh` (six
-  self-test cases) fails the build if it goes back to being typed. Nothing sets `plugin_dir`, so no shipped
+  self-test cases) fails the build if it goes back to being typed.
+
+  **What running them finally revealed, and two things left open.** The first
+  real Windows run failed, which is the point of having one. It found that
+  `findExecutable` — the function that locates a plugin's binary — looked for
+  `<name>` and `<name>.sh` and accepted a candidate only when
+  `info.Mode()&0111 != 0`. Windows has no `.sh` to run and no execute bit (Go
+  synthesises a mode there from the read-only attribute, so an ordinary file
+  reads 0666), so it returned "" for every plugin and Discover skipped them all
+  with "no executable found". **The plugin system had never been able to load a
+  plugin on Windows at all** — the same class as the trust check beside it, one
+  function over, and only a real runner could show it. It now takes `.exe`,
+  `.bat` and `.cmd` there, and asks the extension rather than a mode bit.
+  Two items stay open, recorded rather than fixed here because neither is this
+  change's: `agent/internal/plugin`'s protocol tests build a `.sh` fixture and
+  exec it, so `Execute` has never run on Windows — a gap that matters more now
+  that plugins can load there; and `agent/internal/remotesupport`'s
+  `TestPeerTeardownDoesNotDeadlock` fails on Windows (`peer.Run` does not return
+  within 3s), which may be a real platform-specific teardown deadlock in remote
+  support. Nothing sets `plugin_dir`, so no shipped
   configuration is affected either way.
 
 - **A17 — The local control socket was world-connectable for one syscall, and

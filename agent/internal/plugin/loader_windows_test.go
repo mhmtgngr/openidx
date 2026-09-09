@@ -76,11 +76,27 @@ func TestDiscoverLoadsAPluginFromAPrivilegedOnlyTree(t *testing.T) {
 // TestDiscoverRefusesWhicheverOfTheThreePathsIsWritable. One subtest per path,
 // because "the executable is checked" and "the directory it sits in is checked"
 // are different claims and only one of them stops a swap of the other.
+//
+// THE THREE PATHS DO NOT REFUSE THE SAME WAY, and the first version of this test
+// got two of them wrong by assuming they did. Discover returns an error only for
+// the ROOT, because a writable root means anything can be added and no per-plugin
+// check below could stand on its own. A writable plugin directory or executable
+// SKIPS that plugin and carries on, so the good plugins on a machine are not lost
+// to one bad one. Both are the same security property — the untrusted thing is
+// not executed — and asserting "an error" for all three tested the wrong contract
+// for two of them.
 func TestDiscoverRefusesWhicheverOfTheThreePathsIsWritable(t *testing.T) {
 	users := sidOrSkip(t, windows.WinBuiltinUsersSid, "BUILTIN\\Users")
 
-	for _, which := range []string{"the plugin root", "the plugin's directory", "the executable"} {
-		t.Run(which, func(t *testing.T) {
+	for _, tc := range []struct {
+		which     string
+		wantError bool // the root refuses everything; the other two skip the plugin
+	}{
+		{"the plugin root", true},
+		{"the plugin's directory", false},
+		{"the executable", false},
+	} {
+		t.Run(tc.which, func(t *testing.T) {
 			root := t.TempDir()
 			dir, exe := layout(t, root)
 			paths := map[string]string{
@@ -90,22 +106,32 @@ func TestDiscoverRefusesWhicheverOfTheThreePathsIsWritable(t *testing.T) {
 			}
 			for _, p := range []string{root, dir, exe} {
 				g := privileged(t)
-				if p == paths[which] {
+				if p == paths[tc.which] {
 					g = append(g, grant{users, windows.GENERIC_ALL})
 				}
 				setProtectedDACL(t, p, g...)
 			}
 
 			plugins, err := NewLoader(root, zap.NewNop()).Discover()
-			if err == nil {
-				t.Fatalf("Discover returned %d plugin(s) and no error with %s writable by "+
-					"BUILTIN\\Users; the caller is the service running as SYSTEM", len(plugins), which)
-			}
+
+			// The property that matters, whichever way it is reported: nothing
+			// writable by BUILTIN\Users was loaded for the SYSTEM service to run.
 			if len(plugins) != 0 {
-				t.Errorf("plugins returned alongside the refusal: %d", len(plugins))
+				t.Errorf("Discover returned %d plugin(s) with %s writable by BUILTIN\\Users",
+					len(plugins), tc.which)
 			}
-			if !strings.Contains(err.Error(), "Users") {
-				t.Errorf("the refusal does not name who holds the right: %v", err)
+			if tc.wantError {
+				if err == nil {
+					t.Fatalf("Discover accepted a tree whose ROOT is writable by BUILTIN\\Users. " +
+						"A writable root means anything can be added, so it must refuse the whole " +
+						"directory rather than skip an entry.")
+				}
+				if !strings.Contains(err.Error(), "Users") {
+					t.Errorf("the refusal does not name who holds the right: %v", err)
+				}
+			} else if err != nil {
+				t.Errorf("Discover failed the whole directory because one plugin was untrusted: %v\n\n"+
+					"A bad plugin must cost the operator that plugin, not the good ones.", err)
 			}
 		})
 	}

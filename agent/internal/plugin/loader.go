@@ -107,17 +107,42 @@ func isPlatformSupported(platforms []string) bool {
 	return false
 }
 
+// findExecutable returns the plugin's executable, or "" when there is nothing
+// runnable in dir.
+//
+// IT COULD NOT FIND ONE ON WINDOWS, EVER. This used to look for `<name>` and
+// `<name>.sh` and accept a candidate only when `info.Mode()&0111 != 0` — two
+// Unix assumptions in four lines. Windows has no `.sh` to run and no execute
+// bit: Go synthesises a file mode there from the read-only attribute, so an
+// ordinary file reads as 0666 and every candidate failed the test even if it
+// had been named. The result was that Discover skipped every plugin on Windows
+// with "no executable found", on the platform whose caller is the SYSTEM
+// service. Exactly the class the trust check next door was fixed for — Unix
+// mode bits standing in for a decision Windows records differently — one
+// function over, and it took running the tests on Windows to see it.
+//
+// What replaces it is per-platform: the candidate names, and what makes a file
+// runnable at all. On Windows that is the extension; the ACL question is
+// requireTrustedPath's, and Discover asks it about this path immediately after.
 func findExecutable(dir, dirName, manifestName string) string {
-	candidates := []string{
-		filepath.Join(dir, dirName),
-		filepath.Join(dir, manifestName),
-		filepath.Join(dir, dirName+".sh"),
-		filepath.Join(dir, manifestName+".sh"),
-	}
-	for _, path := range candidates {
-		info, err := os.Stat(path)
-		if err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
-			return path
+	seen := make(map[string]bool, 4)
+	for _, base := range []string{dirName, manifestName} {
+		if base == "" {
+			continue
+		}
+		for _, name := range executableNames(base) {
+			path := filepath.Join(dir, name)
+			if seen[path] {
+				continue
+			}
+			seen[path] = true
+			info, err := os.Stat(path)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			if isRunnable(info) {
+				return path
+			}
 		}
 	}
 	return ""

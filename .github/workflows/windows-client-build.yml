@@ -213,23 +213,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t pkgs < <(grep -rl --include='*_test.go' -E '^//go:build windows' . \
-                              | xargs -n1 dirname | sort -u)
-          if [ "${#pkgs[@]}" -eq 0 ]; then
+          mapfile -t files < <(grep -rl --include='*_test.go' -E '^//go:build windows' .)
+          if [ "${#files[@]}" -eq 0 ]; then
             echo "::error::No //go:build windows test files found in the agent module. Either the"
             echo "::error::build-tag spelling changed, or this step is about to test nothing and"
             echo "::error::report success — which is the failure it exists to prevent."
             exit 1
           fi
-          printf 'Windows-only test packages (derived from //go:build windows):\n'
-          printf '  %s\n' "${pkgs[@]}"
-          # -short because this job is for Windows-only behaviour, not a second
-          # copy of the cross-platform suite the Linux job already ran. It skips
-          # exactly one test across these packages — remotesupport's ICE
-          # negotiation, which marked itself testing.Short() — and no
-          # //go:build windows test gates on it, so nothing this step exists for
-          # is skipped.
-          go test -short "${pkgs[@]}"
+          mapfile -t pkgs < <(printf '%s\n' "${files[@]}" | xargs -n1 dirname | sort -u)
+          mapfile -t names < <(grep -hoE '^func (Test|Benchmark|Fuzz)[A-Za-z0-9_]+' "${files[@]}" \
+                               | awk '{print $2}' | sort -u)
+          if [ "${#names[@]}" -eq 0 ]; then
+            echo "::error::Found ${#files[@]} Windows-tagged test file(s) but no test functions in"
+            echo "::error::them. -run would then match nothing and the step would pass having run"
+            echo "::error::no test at all."
+            exit 1
+          fi
+          printf 'Windows-only packages:\n'; printf '  %s\n' "${pkgs[@]}"
+          printf 'Windows-only tests (%d):\n' "${#names[@]}"; printf '  %s\n' "${names[@]}"
+          # Selected BY NAME, not whole packages. The packages holding Windows
+          # tests also hold cross-platform ones that the Linux job already runs
+          # and that were never written for this platform — internal/plugin's
+          # protocol tests write a .sh fixture and exec it, which Windows cannot
+          # do, and internal/remotesupport's teardown test fails here. Running
+          # them again on Windows tests nothing this job is for and reports
+          # failures that belong to the other runner. What only exists here is
+          # what runs here.
+          IFS='|' run="^(${names[*]})$"
+          go test -run "$run" "${pkgs[@]}"
 
       # Native deps for the real screen-share build (VP8 encode via libvpx +
       # pkg-config + the mingw C toolchain the CGO binding uses). This is now a
