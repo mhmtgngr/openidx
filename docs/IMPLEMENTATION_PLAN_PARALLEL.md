@@ -171,7 +171,7 @@ TOTP funcs in `identity/service.go`, `internal/mfa/**`, `internal/email/**` ·
 | # | Task | Anchor | Done when |
 |---|---|---|---|
 | 1 | **Enforce step-up at checkout/reveal/session** — `require_step_up` flag on vault secrets + Guacamole routes, checked in vault/guacamole handlers using the now-real step-up. | `internal/vault/handlers.go`, `access/guacamole*.go` | Reveal without fresh step-up → 401 (test) |
-| 2 | **Harden temp/vendor access** — route audit through `UnifiedAuditService`; enforce `require_mfa`; implement `notify_on_use` via webhooks; add `org_id`+FORCE-RLS. | `access/temp_access.go:451`, migration | Vendor link is audited, MFA-gated, tenant-scoped (test) |
+| 2 | **Harden temp/vendor access** — route audit through `UnifiedAuditService`; implement `notify_on_use`; add `org_id`+FORCE-RLS (**done**, migrations v71/v148). Superseded on MFA: `require_mfa` was **withdrawn**, not enforced — with no session there is no `mfa_verified_at` for `STEPUP_GATE` to read, so enforcing it here would mean a bespoke OTP on an anonymous URL. Vendor MFA arrives with the identity. | `access/temp_access.go`, `docs/VENDOR-ACCESS-ROADMAP.md` | Vendor link is audited and tenant-scoped; gates proven by `TestEveryGateTheRegisterClaims` |
 
 ### WS-07 — ZTNA honesty
 **Owns:** `internal/access/{ziti,unified_audit,posture,context_evaluator}.go` ·

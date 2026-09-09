@@ -31,7 +31,6 @@ type TempAccessLink struct {
 	MaxUses          int        `json:"max_uses"` // 0 = unlimited
 	CurrentUses      int        `json:"current_uses"`
 	AllowedIPs       []string   `json:"allowed_ips,omitempty"` // IP whitelist
-	RequireMFA       bool       `json:"require_mfa"`
 	NotifyOnUse      bool       `json:"notify_on_use"`
 	NotifyEmail      string     `json:"notify_email,omitempty"`
 	RouteID          string     `json:"route_id,omitempty"`
@@ -66,7 +65,6 @@ type CreateTempAccessRequest struct {
 	DurationMins int      `json:"duration_mins" binding:"required,min=5,max=10080"` // 5 mins to 7 days
 	MaxUses      int      `json:"max_uses"`                                         // 0 = unlimited
 	AllowedIPs   []string `json:"allowed_ips"`
-	RequireMFA   bool     `json:"require_mfa"`
 	NotifyOnUse  bool     `json:"notify_on_use"`
 	NotifyEmail  string   `json:"notify_email"`
 }
@@ -137,7 +135,6 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 		MaxUses:        req.MaxUses,
 		CurrentUses:    0,
 		AllowedIPs:     req.AllowedIPs,
-		RequireMFA:     req.RequireMFA,
 		NotifyOnUse:    req.NotifyOnUse,
 		NotifyEmail:    req.NotifyEmail,
 		Status:         "active",
@@ -173,17 +170,17 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 		INSERT INTO temp_access_links (
 			id, token, name, description, protocol, target_host, target_port, username,
 			created_by, created_by_email, expires_at, max_uses, current_uses,
-			allowed_ips, require_mfa, notify_on_use, notify_email, route_id,
+			allowed_ips, notify_on_use, notify_email, route_id,
 			guacamole_connection_id, access_url, status, created_at, updated_at, org_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
 		)`
 
 	_, err = s.db.Pool.Exec(c.Request.Context(), query,
 		link.ID, link.Token, link.Name, link.Description, link.Protocol,
 		link.TargetHost, link.TargetPort, link.Username, link.CreatedBy,
 		link.CreatedByEmail, link.ExpiresAt, link.MaxUses, link.CurrentUses,
-		link.AllowedIPs, link.RequireMFA, link.NotifyOnUse, link.NotifyEmail,
+		link.AllowedIPs, link.NotifyOnUse, link.NotifyEmail,
 		link.RouteID, link.GuacConnectionID, link.AccessURL, link.Status,
 		link.CreatedAt, link.UpdatedAt, org.ID,
 	)
@@ -217,7 +214,7 @@ func (s *Service) handleListTempAccess(c *gin.Context) {
 	query := `
 		SELECT id, token, name, description, protocol, target_host, target_port, username,
 			created_by, created_by_email, expires_at, max_uses, current_uses,
-			allowed_ips, require_mfa, notify_on_use, notify_email, route_id,
+			allowed_ips, notify_on_use, notify_email, route_id,
 			guacamole_connection_id, access_url, status, last_used_at, last_used_ip,
 			created_at, updated_at
 		FROM temp_access_links
@@ -240,7 +237,7 @@ func (s *Service) handleListTempAccess(c *gin.Context) {
 			&link.ID, &link.Token, &link.Name, &link.Description, &link.Protocol,
 			&link.TargetHost, &link.TargetPort, &link.Username, &link.CreatedBy,
 			&link.CreatedByEmail, &link.ExpiresAt, &link.MaxUses, &link.CurrentUses,
-			&link.AllowedIPs, &link.RequireMFA, &link.NotifyOnUse, &link.NotifyEmail,
+			&link.AllowedIPs, &link.NotifyOnUse, &link.NotifyEmail,
 			&link.RouteID, &link.GuacConnectionID, &link.AccessURL, &link.Status,
 			&link.LastUsedAt, &link.LastUsedIP, &link.CreatedAt, &link.UpdatedAt,
 		)
@@ -277,7 +274,7 @@ func (s *Service) handleGetTempAccess(c *gin.Context) {
 	query := `
 		SELECT id, token, name, description, protocol, target_host, target_port, username,
 			created_by, created_by_email, expires_at, max_uses, current_uses,
-			allowed_ips, require_mfa, notify_on_use, notify_email, route_id,
+			allowed_ips, notify_on_use, notify_email, route_id,
 			guacamole_connection_id, access_url, status, last_used_at, last_used_ip,
 			created_at, updated_at
 		FROM temp_access_links
@@ -288,7 +285,7 @@ func (s *Service) handleGetTempAccess(c *gin.Context) {
 		&link.ID, &link.Token, &link.Name, &link.Description, &link.Protocol,
 		&link.TargetHost, &link.TargetPort, &link.Username, &link.CreatedBy,
 		&link.CreatedByEmail, &link.ExpiresAt, &link.MaxUses, &link.CurrentUses,
-		&link.AllowedIPs, &link.RequireMFA, &link.NotifyOnUse, &link.NotifyEmail,
+		&link.AllowedIPs, &link.NotifyOnUse, &link.NotifyEmail,
 		&link.RouteID, &link.GuacConnectionID, &link.AccessURL, &link.Status,
 		&link.LastUsedAt, &link.LastUsedIP, &link.CreatedAt, &link.UpdatedAt,
 	)
@@ -330,6 +327,70 @@ func (s *Service) handleRevokeTempAccess(c *gin.Context) {
 }
 
 // handleUseTempAccess handles accessing a temp link (redirects to Guacamole)
+// tempLinkVerdict is the outcome of the gates a redemption is held to.
+type tempLinkVerdict struct {
+	Refuse  bool
+	Status  int
+	Title   string
+	Message string
+}
+
+// tempLinkGate decides whether this redemption may proceed.
+//
+// WHY THIS IS A FUNCTION AND NOT FOUR ifs IN THE HANDLER. `GET
+// /temp-access/:token` is one of the very few routes this product serves
+// anonymously, and `public_surface_test.go` makes every such route carry a
+// written justification. The justification for this one is the list of checks
+// performed here — so those checks are the load-bearing security argument for
+// the whole route, and they were, until now, four inline conditionals inside a
+// DB-backed handler with no test of their own. Pulling them out makes the
+// argument provable by a table test that needs no Postgres.
+//
+// WHAT IS DELIBERATELY NOT HERE: MFA. The register used to claim this handler
+// checked it, and it never did — `require_mfa` was stored, selected back, and
+// never compared to anything. The field is gone rather than implemented,
+// because implementing it here would mean a second, weaker authentication
+// system bolted onto an anonymous URL: with no session there is no
+// `sessions.mfa_verified_at` for `STEPUP_GATE` to read, so it would have to be
+// a bespoke OTP. Vendor MFA belongs where every other factor in this product
+// lives — on an identity. `docs/VENDOR-ACCESS-ROADMAP.md` V1 carries that:
+// the vendor becomes a real, time-boxed user reaching the target through
+// BrowZer, at which point the existing gate applies with no new machinery.
+//
+// The IP allowlist is exact string equality, which means a CIDR entry matches
+// nothing. That is a usability trap rather than a hole — it fails closed, and
+// an operator who writes a range locks everyone out including themselves —
+// and it is roadmap item V0.4. `TestTheAllowlistIsExactMatchOnly` pins the
+// present behaviour so that fix arrives with a red proof.
+func tempLinkGate(link TempAccessLink, clientIP string, now time.Time) tempLinkVerdict {
+	if now.After(link.ExpiresAt) {
+		return tempLinkVerdict{true, http.StatusGone, "Access Link Expired",
+			"This temporary access link has expired."}
+	}
+	if link.Status == "revoked" {
+		return tempLinkVerdict{true, http.StatusForbidden, "Access Link Revoked",
+			"This access link has been revoked by an administrator."}
+	}
+	if link.MaxUses > 0 && link.CurrentUses >= link.MaxUses {
+		return tempLinkVerdict{true, http.StatusForbidden, "Access Link Exhausted",
+			"This access link has reached its maximum usage limit."}
+	}
+	if len(link.AllowedIPs) > 0 {
+		allowed := false
+		for _, ip := range link.AllowedIPs {
+			if ip == clientIP {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return tempLinkVerdict{true, http.StatusForbidden, "Access Denied",
+				"Your IP address is not authorized to use this access link."}
+		}
+	}
+	return tempLinkVerdict{}
+}
+
 func (s *Service) handleUseTempAccess(c *gin.Context) {
 	token := c.Param("token")
 
@@ -350,7 +411,7 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 	//orgscope:ignore public token-redemption path — no authenticated org context; keyed by a globally-unique unguessable secret token, not an enumerable id
 	query := `
 		SELECT id, token, name, protocol, target_host, target_port, username,
-			expires_at, max_uses, current_uses, allowed_ips, require_mfa,
+			expires_at, max_uses, current_uses, allowed_ips,
 			notify_on_use, notify_email, guacamole_connection_id, status, org_id
 		FROM temp_access_links
 		WHERE token = $1`
@@ -360,7 +421,7 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 	err := s.db.Pool.QueryRow(redeemCtx, query, token).Scan(
 		&link.ID, &link.Token, &link.Name, &link.Protocol, &link.TargetHost,
 		&link.TargetPort, &link.Username, &link.ExpiresAt, &link.MaxUses,
-		&link.CurrentUses, &link.AllowedIPs, &link.RequireMFA, &link.NotifyOnUse,
+		&link.CurrentUses, &link.AllowedIPs, &link.NotifyOnUse,
 		&link.NotifyEmail, &link.GuacConnectionID, &link.Status, &linkOrgID,
 	)
 	if err != nil {
@@ -371,50 +432,10 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 		return
 	}
 
-	// Check if expired
-	if time.Now().After(link.ExpiresAt) {
-		c.HTML(http.StatusGone, "error.html", gin.H{
-			"title":   "Access Link Expired",
-			"message": "This temporary access link has expired.",
-		})
-		return
-	}
-
-	// Check if revoked
-	if link.Status == "revoked" {
-		c.HTML(http.StatusForbidden, "error.html", gin.H{
-			"title":   "Access Link Revoked",
-			"message": "This access link has been revoked by an administrator.",
-		})
-		return
-	}
-
-	// Check max uses
-	if link.MaxUses > 0 && link.CurrentUses >= link.MaxUses {
-		c.HTML(http.StatusForbidden, "error.html", gin.H{
-			"title":   "Access Link Exhausted",
-			"message": "This access link has reached its maximum usage limit.",
-		})
-		return
-	}
-
-	// Check IP whitelist
 	clientIP := c.ClientIP()
-	if len(link.AllowedIPs) > 0 {
-		allowed := false
-		for _, ip := range link.AllowedIPs {
-			if ip == clientIP {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			c.HTML(http.StatusForbidden, "error.html", gin.H{
-				"title":   "Access Denied",
-				"message": "Your IP address is not authorized to use this access link.",
-			})
-			return
-		}
+	if v := tempLinkGate(link, clientIP, time.Now()); v.Refuse {
+		c.HTML(v.Status, "error.html", gin.H{"title": v.Title, "message": v.Message})
+		return
 	}
 
 	// Update usage stats. Bypassed for the same reason as the read above; the

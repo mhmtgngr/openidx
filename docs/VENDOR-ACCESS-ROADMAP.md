@@ -131,12 +131,17 @@ Order is by risk, and each item is independently shippable.
    `handlePamConnect` calls, so it inherits `checkPamZTNA`, broker selection by
    reach mode, recording and credential injection instead of re-implementing a
    Guacamole redirect. This single change closes six rows of the table.
-2. **Enforce `require_mfa` or delete it.** With no session there is no
-   `mfa_verified_at` to read, so freshness in the PAM sense does not apply. The
-   honest implementations are (a) require the vendor to complete an OTP to an
-   email or phone recorded on the link before redemption, or (b) remove the
-   field and say in the UI that these links are single-factor. Do not leave the
-   field.
+2. ~~**Enforce `require_mfa` or delete it.**~~ **Done — deleted.** With no
+   session there is no `mfa_verified_at` for `STEPUP_GATE` to read, so enforcing
+   it here would have meant a bespoke OTP: a second, weaker authentication
+   system bolted onto an anonymous URL, when this product has already decided
+   authentication belongs to the identity layer. The field is gone from the
+   request and response types and from the SQL; `TestNoMFAFieldSurvives` stops
+   it coming back unwired. Vendor MFA arrives with V1 below, where the vendor is
+   a real user and the existing gate applies with no new machinery.
+   *Leftover:* the `require_mfa` column still exists in `temp_access_links` and
+   is now neither read nor written. Drop it in the next temp-access migration
+   rather than leaving mystery data.
 3. **Send the notification, or remove the switch.** `notify_on_use` and
    `notify_email` are in the console form; wire them to the notification service
    at redemption.

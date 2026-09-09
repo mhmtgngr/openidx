@@ -107,7 +107,7 @@ var publicAccessRoutes = map[string]publicRoute{
 	"GET /downloads/:file": {refusesWithoutState,
 		"serves agent installers to a machine that has no identity yet; the name is matched against ^[A-Za-z0-9._-]+$ and a directory is refused, so it cannot escape the downloads dir"},
 	"GET /temp-access/:token": {servesAnonymously,
-		"a vendor redeems a temporary access link whose path IS the secret; the handler checks expiry, revocation, use count, allowed IPs and MFA before granting anything"},
+		"a vendor redeems a temporary access link whose path IS the secret; tempLinkGate checks expiry, revocation, use count and the IP allowlist before granting anything, and TestEveryGateTheRegisterClaims proves each one. This entry used to end \"...allowed IPs and MFA\": the handler never checked MFA — require_mfa was stored and selected back and never compared — so the field is gone rather than half-kept. Vendor MFA arrives with the identity (docs/VENDOR-ACCESS-ROADMAP.md V1), not as a flag on an anonymous URL"},
 }
 
 // buildPublicSurfaceRouter registers every access-service route with an auth
