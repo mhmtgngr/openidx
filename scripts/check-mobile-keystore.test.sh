@@ -72,7 +72,7 @@ SW_PLUGIN_OK='public class OpenidxEnginePlugin: NSObject {
 }
 '
 
-SW_SEALER_OK='public class KeychainSealer: NSObject, MobileKeystore {
+SW_SEALER_OK='public class KeychainSealer: NSObject, MobileKeystoreProtocol {
   private func load() throws -> Data? {
     let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword]
     let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -153,6 +153,13 @@ run_case "a Keychain item without ThisDeviceOnly" 1 \
 
 run_case "a Keychain item marked Always" 1 \
 	'sed -i "s/kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly/kSecAttrAccessibleAlways/" "$d/Sealer.swift"'
+
+# 4b. The name collision that actually happened. gomobile emits a protocol and a
+#     class both spelled MobileKeystore; Swift picks the class and reports
+#     "Multiple inheritance from classes", which reads like a mistake in the
+#     sealer. It costs a full macOS build to find out.
+run_case "the Swift conforms to the class, not the protocol" 1 \
+	'sed -i "s/MobileKeystoreProtocol/MobileKeystore/" "$d/Sealer.swift"'
 
 # 5. Start stops requiring a keystore -- the whole control, removed.
 run_case "Start no longer takes a Keystore" 1 \

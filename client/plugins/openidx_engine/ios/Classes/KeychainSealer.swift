@@ -2,11 +2,29 @@ import CryptoKit
 import Foundation
 import Security
 
-// `MobileKeystore` is the ObjC protocol produced by
+// `MobileKeystoreProtocol` is the ObjC protocol produced by
 //   gomobile bind -target=ios -o Engine.xcframework ./agent/mobile
 // from the Go interface `Keystore` in package `mobile` (the module is named
 // after -o, the prefix after the package). Conforming to it here is what lets
 // Go call OUT into iOS — the reverse of every other call across this boundary.
+//
+// THE `Protocol` SUFFIX IS NOT A TYPO, and writing the obvious name instead is
+// a build failure with a misleading message. For a reverse-bindable interface
+// gomobile emits TWO things with the same spelling:
+//
+//     @protocol MobileKeystore <NSObject>
+//     @interface MobileKeystore : NSObject <goSeqRefInterface, MobileKeystore>
+//
+// (the class is how a Go-side implementation is handed to ObjC). Objective-C
+// keeps classes and protocols in separate namespaces, so that is legal there.
+// Swift has one namespace, resolves the bare name to the CLASS, and reports
+// `Multiple inheritance from classes 'NSObject' and 'MobileKeystore'` — an
+// error that reads like a design mistake in this file and is really a name
+// collision. The Clang importer exposes the protocol with a `Protocol` suffix.
+//
+// To see the generated declarations without a Mac: from agent/,
+//   go tool gobind -lang=objc -outdir=/tmp/gb ./mobile
+// and read /tmp/gb/src/gobind/Mobile.objc.h.
 import Engine
 
 /// Seals the engine's credentials with a key held by the iOS Keychain.
@@ -52,7 +70,7 @@ import Engine
 ///
 /// Failing any of them means the engine refuses to start rather than write a
 /// credential in the clear.
-public class KeychainSealer: NSObject, MobileKeystore {
+public class KeychainSealer: NSObject, MobileKeystoreProtocol {
 
   private static let account = "org.openidx.engine.secrets.v1"
   private static let service = "org.openidx.engine"
@@ -64,7 +82,8 @@ public class KeychainSealer: NSObject, MobileKeystore {
       else { throw SealError.notBase64 }
       // combined is nonce || ciphertext || tag, and the nonce is freshly
       // generated per call, which is what makes the seal non-deterministic.
-      let sealed = try AES.GCM.seal(plaintext, using: try key())
+      let sealingKey = try key()
+      let sealed = try AES.GCM.seal(plaintext, using: sealingKey)
       guard let combined = sealed.combined else { throw SealError.noCombinedForm }
       return combined
     }
@@ -75,8 +94,9 @@ public class KeychainSealer: NSObject, MobileKeystore {
       guard let encoded = sealedBase64,
             let blob = Data(base64Encoded: encoded, options: [.ignoreUnknownCharacters])
       else { throw SealError.notBase64 }
+      let openingKey = try key()
       let box = try AES.GCM.SealedBox(combined: blob)
-      return try AES.GCM.open(box, using: try key())
+      return try AES.GCM.open(box, using: openingKey)
     }
   }
 
@@ -100,7 +120,7 @@ public class KeychainSealer: NSObject, MobileKeystore {
     guard status == errSecSuccess else { throw SealError.keychain(status) }
     do {
       try store(fresh)
-    } catch let SealError.keychain(status) where status == errSecDuplicateItem {
+    } catch SealError.keychain(let status) where status == errSecDuplicateItem {
       guard let winner = try load() else { throw SealError.corruptKey }
       return SymmetricKey(data: winner)
     }

@@ -169,6 +169,22 @@ require(sw_plugin, src, r"MobileStart\([^)]*Sealer\(\)",
         regex=True)
 
 src = read(sw_sealer)
+
+# gomobile emits a protocol AND a class with the same spelling for a
+# reverse-bindable interface -- legal in ObjC, one namespace in Swift, which
+# resolves the bare name to the CLASS. Conforming to `MobileKeystore` fails with
+# "Multiple inheritance from classes 'NSObject' and 'MobileKeystore'", which
+# reads like a design mistake in the sealer and is really a name collision; the
+# Clang importer exposes the protocol with a `Protocol` suffix. The compiler
+# does catch this -- on a macOS runner, ~25 minutes in, with that message. Here
+# it is a line of grep, and the fix is named.
+if src is not None and re.search(r":\s*NSObject\s*,\s*MobileKeystore\b(?!Protocol)", src):
+    report(sw_sealer,
+           "conforms to `MobileKeystore`, which Swift resolves to gomobile's generated "
+           "CLASS of that name rather than the protocol beside it",
+           "conform to `MobileKeystoreProtocol` (see the comment at the top of the file; "
+           "`go tool gobind -lang=objc` from agent/ prints both declarations)")
+
 for api in ("SecItemAdd", "SecItemCopyMatching", "kSecClass"):
     require(sw_sealer, src, api,
             "never calls %s, so its key is not a Keychain item" % api,
