@@ -2237,9 +2237,19 @@ jobs:
         working-directory: web/admin-console
         run: npm ci
 
+      # Retried for the reason scripts/ci-retry.sh was written: this step
+      # downloads a browser bundle from Playwright's CDN and runs apt, and it
+      # died on run 2485 before a single test body executed, taking the whole
+      # journey suite red on a commit that touched none of it. Every other
+      # third-party download in this repository is already wrapped; this one
+      # was the exception, and npm's own registry retries do not cover it
+      # because the browser does not come from the registry.
+      #
+      # The wrapper exits with the LAST attempt's status, so a genuinely broken
+      # install still ends red — just later.
       - name: Install Chromium
         working-directory: web/admin-console
-        run: npx playwright install --with-deps chromium
+        run: bash ../../scripts/ci-retry.sh 3 5 -- npx playwright install --with-deps chromium
 
       - name: Start the stack
         run: |
