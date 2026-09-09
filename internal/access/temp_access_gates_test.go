@@ -171,24 +171,172 @@ func TestEveryGateTheRegisterClaims(t *testing.T) {
 	}
 }
 
-// TestTheAllowlistIsExactMatchOnly pins a known limitation so the fix for it
-// arrives with a red proof.
+// The allowlist, now that it understands ranges (roadmap V0.4).
 //
-// AllowedIPs is compared with string equality, so a CIDR range matches nothing
-// and an operator who writes one has allowed no address at all. That direction
-// is safe — it fails closed, locking out the vendor and the operator alike
-// rather than admitting anyone — which is why it is roadmap item V0.4 and not
-// an emergency. This test exists so that item cannot land silently: implementing
-// CIDR turns this test red, and whoever does it must delete it deliberately.
-func TestTheAllowlistIsExactMatchOnly(t *testing.T) {
-	link := activeLink()
-	link.AllowedIPs = []string{"203.0.113.0/24"}
+// This replaces TestTheAllowlistIsExactMatchOnly, which pinned the old string
+// equality so the fix could not land silently. It did its job: an operator who
+// wrote 203.0.113.0/24 had allowed no address at all, including their own.
+func TestTheAllowlistUnderstandsRangesAndIPv6(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		allowed []string
+		client  string
+		want    bool
+	}{
+		{"an address inside a v4 CIDR", []string{"203.0.113.0/24"}, "203.0.113.9", true},
+		{"an address outside a v4 CIDR", []string{"203.0.113.0/24"}, "203.0.114.9", false},
+		{"the network address itself", []string{"203.0.113.0/24"}, "203.0.113.0", true},
+		{"a /32 is still a single host", []string{"203.0.113.9/32"}, "203.0.113.9", true},
+		{"a /32 does not admit its neighbour", []string{"203.0.113.9/32"}, "203.0.113.10", false},
+		{"a bare address still works", []string{"198.51.100.7"}, "198.51.100.7", true},
+		{"mixed ranges and addresses", []string{"198.51.100.7", "203.0.113.0/24"}, "203.0.113.5", true},
 
-	v := tempLinkGate(link, "203.0.113.9", time.Now())
-	if !v.Refuse {
-		t.Fatal("an address inside the CIDR was allowed — CIDR support has been added.\n" +
-			"That is roadmap item V0.4 and it is welcome; delete this test as part of it,\n" +
-			"and make sure the fix is covered by a test that asserts the NEW behaviour.")
+		// IPv6 written two ways is one address. As strings these never matched.
+		{"IPv6 in its compressed form", []string{"2001:db8::1"}, "2001:0db8:0000:0000:0000:0000:0000:0001", true},
+		{"IPv6 inside a prefix", []string{"2001:db8::/32"}, "2001:db8:1234::9", true},
+		{"IPv6 outside a prefix", []string{"2001:db8::/32"}, "2001:db9::9", false},
+
+		// A proxy in front of the service can present a v4 client as
+		// IPv4-mapped IPv6; it must still match the v4 rule an operator wrote.
+		{"an IPv4-mapped client against a v4 rule", []string{"203.0.113.9"}, "::ffff:203.0.113.9", true},
+		{"an IPv4-mapped client against a v4 CIDR", []string{"203.0.113.0/24"}, "::ffff:203.0.113.9", true},
+
+		// Anything unparseable matches nothing rather than everything.
+		{"a garbage rule admits nobody", []string{"not-an-ip"}, "203.0.113.9", false},
+		{"a garbage client is refused", []string{"203.0.113.0/24"}, "definitely-not-an-ip", false},
+		{"an empty entry is skipped, not treated as a wildcard", []string{"", "203.0.113.0/24"}, "203.0.113.9", true},
+		{"whitespace around an entry is tolerated", []string{"  203.0.113.0/24  "}, "203.0.113.9", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			link := activeLink()
+			link.AllowedIPs = tc.allowed
+			v := tempLinkGate(link, tc.client, time.Now())
+			if allowed := !v.Refuse; allowed != tc.want {
+				t.Errorf("client %q against %v: allowed = %v, want %v",
+					tc.client, tc.allowed, allowed, tc.want)
+			}
+		})
+	}
+}
+
+// TestABadAllowlistIsRefusedAtCreation. The old failure mode was silent: a CIDR
+// entry matched nothing, the link looked issued, and the vendor could not
+// connect with no indication why. Ranges work now, but a typo still should not
+// produce a link that refuses everyone — so the list is validated where the
+// operator can still fix it.
+func TestABadAllowlistIsRefusedAtCreation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		entries []string
+		wantErr bool
+	}{
+		{"addresses and ranges", []string{"203.0.113.9", "198.51.100.0/24", "2001:db8::/32"}, false},
+		{"empty list means no restriction", nil, false},
+		{"blank entries are tolerated", []string{"", "  "}, false},
+		{"a hostname is not an address", []string{"vendor.example.com"}, true},
+		{"a malformed range", []string{"203.0.113.0/33"}, true},
+		{"a truncated address", []string{"203.0.113"}, true},
+		{"one bad entry rejects the list", []string{"203.0.113.9", "nonsense"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateAllowedIPs(tc.entries)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateAllowedIPs(%v) error = %v, want error: %v", tc.entries, err, tc.wantErr)
+			}
+			if tc.wantErr && !containsFold(err.Error(), "allowed_ips") {
+				t.Errorf("the error does not name the field the operator must fix: %v", err)
+			}
+		})
+	}
+}
+
+// TestALinkPointsSomewhereRealOrIsNotIssued.
+//
+// The address was built as fmt.Sprintf("https://%s/temp-access/%s", domain,
+// token) with domain falling back to browzer.localtest.me when
+// access_proxy_domain was unset. localtest.me resolves to 127.0.0.1, so the
+// link was issued, looked correct in the console, could be mailed to a vendor,
+// and pointed at the vendor's own machine. An unset base is now a refusal at
+// issuance, where the operator can still fix it.
+func TestALinkPointsSomewhereRealOrIsNotIssued(t *testing.T) {
+	const token = "0123456789abcdef"
+
+	for _, unset := range []string{"", "   ", "\t"} {
+		if _, err := tempAccessURL(unset, token); err == nil {
+			t.Errorf("tempAccessURL(%q) returned a URL. An unconfigured base must refuse: a link "+
+				"that resolves nowhere is worse than no link, because it is sent before anyone "+
+				"discovers it is broken.", unset)
+		} else if !containsFold(err.Error(), "access_proxy_domain") {
+			t.Errorf("the refusal does not name the setting the operator must fix: %v", err)
+		}
+	}
+
+	got, err := tempAccessURL(" vendor.example.com ", token)
+	if err != nil {
+		t.Fatalf("a configured domain must produce a URL: %v", err)
+	}
+	if want := "https://vendor.example.com/temp-access/" + token; got != want {
+		t.Errorf("tempAccessURL() = %q, want %q", got, want)
+	}
+
+	// The old fallback must not come back under any input, including the one
+	// that used to trigger it.
+	for _, in := range []string{"", "localhost", "vendor.example.com"} {
+		if u, err := tempAccessURL(in, token); err == nil && containsFold(u, "localtest.me") {
+			t.Errorf("tempAccessURL(%q) = %q — the test-domain fallback is back", in, u)
+		}
+	}
+}
+
+// TestTheNotifiedPartyIsTheIssuer pins who a used-link notification reaches.
+//
+// notify_on_use was stored, selected back into the struct, and never compared to
+// anything — the same shape as require_mfa, on the same row. It notifies now,
+// and this is the decision half: the recipient is the link's issuer, never a
+// value carried on the link itself.
+//
+// The empty-issuer case is the one that must stay red if the creation-side rule
+// is ever relaxed: a link with no resolvable issuer notifies nobody, which is a
+// switch that is on and does nothing.
+func TestTheNotifiedPartyIsTheIssuer(t *testing.T) {
+	const issuer = "6f1b2a4e-0d3c-4f5a-9b8e-1c2d3e4f5a6b"
+	for _, tc := range []struct {
+		name string
+		link TempAccessLink
+		want string
+	}{
+		{"the switch is off", TempAccessLink{NotifyOnUse: false, CreatedBy: issuer}, ""},
+		{"the switch is on", TempAccessLink{NotifyOnUse: true, CreatedBy: issuer}, issuer},
+		{"on, but nobody to tell", TempAccessLink{NotifyOnUse: true, CreatedBy: ""}, ""},
+		{"a padded id still resolves", TempAccessLink{NotifyOnUse: true, CreatedBy: " " + issuer + " "}, issuer},
+		{"whitespace is not a recipient", TempAccessLink{NotifyOnUse: true, CreatedBy: "   "}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tempLinkNotifyRecipient(tc.link); got != tc.want {
+				t.Errorf("tempLinkNotifyRecipient() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNoNotifyEmailFieldSurvives. notify_on_use is real now — it notifies the
+// link's creator — but notify_email was a free-text recipient the product had
+// no way to deliver to, and reinstating it would be the same
+// stored-and-never-sent switch. The creator is also who needs to know: it is
+// their vendor and their link, and they are deliverable through the channels
+// they have already configured.
+func TestNoNotifyEmailFieldSurvives(t *testing.T) {
+	for name, fields := range map[string][]string{
+		"CreateTempAccessRequest": structFieldNames(CreateTempAccessRequest{}),
+		"TempAccessLink":          structFieldNames(TempAccessLink{}),
+	} {
+		for _, f := range fields {
+			if containsFold(f, "notifyemail") {
+				t.Errorf("%s has field %q. If notifications should reach an arbitrary address, "+
+					"that needs a sender and a reason to trust the address — not a column that "+
+					"is stored and never read.", name, f)
+			}
+		}
 	}
 }
 

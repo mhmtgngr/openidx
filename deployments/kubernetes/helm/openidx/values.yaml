@@ -83,6 +83,13 @@ config:
   # until it is right; "*" is not a fix, it restores gin's trust-everything
   # default and lets any caller name its own client IP.
   trustedProxies: ""
+  # Externally reachable host of the access proxy — the host every temporary
+  # vendor-access link is built from. Leave empty to inherit the API ingress
+  # host (ingress.hosts[0].host). It must be a name the OUTSIDE party can
+  # resolve: the in-code default is "localhost", which produces links that open
+  # the recipient's own machine, and services started with APP_ENV=production
+  # refuse to boot on a loopback value.
+  accessProxyDomain: ""
 
 # Identity Service
 identityService:

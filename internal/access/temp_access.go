@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/notifications"
 )
 
 // TempAccessLink represents a temporary access link for support/vendor access
@@ -36,7 +39,6 @@ type TempAccessLink struct {
 	CurrentUses      int        `json:"current_uses"`
 	AllowedIPs       []string   `json:"allowed_ips,omitempty"` // IP whitelist
 	NotifyOnUse      bool       `json:"notify_on_use"`
-	NotifyEmail      string     `json:"notify_email,omitempty"`
 	RouteID          string     `json:"route_id,omitempty"`
 	GuacConnectionID string     `json:"guacamole_connection_id,omitempty"`
 	AccessURL        string     `json:"access_url"`
@@ -74,7 +76,6 @@ type CreateTempAccessRequest struct {
 	MaxUses      int      `json:"max_uses"`                                         // 0 = unlimited
 	AllowedIPs   []string `json:"allowed_ips"`
 	NotifyOnUse  bool     `json:"notify_on_use"`
-	NotifyEmail  string   `json:"notify_email"`
 }
 
 // generateSecureToken generates a cryptographically secure token
@@ -94,15 +95,38 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 		return
 	}
 
+	if err := validateAllowedIPs(req.AllowedIPs); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	org, err := orgctx.From(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
 		return
 	}
 
-	// Get current user from context
-	userID, _ := c.Get("user_id")
+	// Get current user from context.
+	//
+	// The issuer is not decoration. created_by is the accountability record for
+	// who let an outside party onto an internal host, and it is now also the
+	// address the notify_on_use notification is delivered to — so a link with no
+	// resolvable issuer would be both unattributable and silently unnotifiable.
+	// The route is authenticated, but SoftAuth (ACCESS_API_REQUIRE_AUTH=false)
+	// leaves the key unset, and the old code formatted that straight into a UUID
+	// column as the literal "<nil>", which failed the INSERT with a generic 500.
 	userEmail, _ := c.Get("email")
+	creatorID := ""
+	if v, ok := c.Get("user_id"); ok {
+		creatorID = strings.TrimSpace(fmt.Sprintf("%v", v))
+	}
+	if _, err := uuid.Parse(creatorID); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "a temporary access link must record the user who issued it, and this " +
+				"request carries no identified user",
+			"code": "issuer_unresolved"})
+		return
+	}
 
 	// Generate secure token
 	token, err := generateSecureToken(32)
@@ -146,14 +170,13 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 		TargetHost:     entry.Hostname,
 		TargetPort:     entry.Port,
 		Username:       entry.Username,
-		CreatedBy:      fmt.Sprintf("%v", userID),
+		CreatedBy:      creatorID,
 		CreatedByEmail: fmt.Sprintf("%v", userEmail),
 		ExpiresAt:      expiresAt,
 		MaxUses:        req.MaxUses,
 		CurrentUses:    0,
 		AllowedIPs:     req.AllowedIPs,
 		NotifyOnUse:    req.NotifyOnUse,
-		NotifyEmail:    req.NotifyEmail,
 		Status:         "active",
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
@@ -166,29 +189,30 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 	// injected and recording configured, which is the entire point of routing
 	// through that core.
 
-	// Build access URL
-	baseURL := s.config.AccessProxyDomain
-	if baseURL == "" {
-		baseURL = "browzer.localtest.me"
+	accessURL, err := tempAccessURL(s.config.AccessProxyDomain, token)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": err.Error(), "code": "access_proxy_domain_unset"})
+		return
 	}
-	link.AccessURL = fmt.Sprintf("https://%s/temp-access/%s", baseURL, token)
+	link.AccessURL = accessURL
 
 	// Store in database
 	query := `
 		INSERT INTO temp_access_links (
 			id, token, name, description, pam_entry_id, protocol, target_host, target_port, username,
 			created_by, created_by_email, expires_at, max_uses, current_uses,
-			allowed_ips, notify_on_use, notify_email, route_id,
+			allowed_ips, notify_on_use, route_id,
 			guacamole_connection_id, access_url, status, created_at, updated_at, org_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
 		)`
 
 	_, err = s.db.Pool.Exec(c.Request.Context(), query,
 		link.ID, link.Token, link.Name, link.Description, link.PamEntryID, link.Protocol,
 		link.TargetHost, link.TargetPort, link.Username, link.CreatedBy,
 		link.CreatedByEmail, link.ExpiresAt, link.MaxUses, link.CurrentUses,
-		link.AllowedIPs, link.NotifyOnUse, link.NotifyEmail,
+		link.AllowedIPs, link.NotifyOnUse,
 		link.RouteID, link.GuacConnectionID, link.AccessURL, link.Status,
 		link.CreatedAt, link.UpdatedAt, org.ID,
 	)
@@ -222,7 +246,7 @@ func (s *Service) handleListTempAccess(c *gin.Context) {
 	query := `
 		SELECT id, token, name, description, COALESCE(pam_entry_id::text,''), protocol, target_host, target_port, username,
 			created_by, created_by_email, expires_at, max_uses, current_uses,
-			allowed_ips, notify_on_use, notify_email, route_id,
+			allowed_ips, notify_on_use, route_id,
 			guacamole_connection_id, access_url, status, last_used_at, last_used_ip,
 			created_at, updated_at
 		FROM temp_access_links
@@ -245,7 +269,7 @@ func (s *Service) handleListTempAccess(c *gin.Context) {
 			&link.ID, &link.Token, &link.Name, &link.Description, &link.PamEntryID, &link.Protocol,
 			&link.TargetHost, &link.TargetPort, &link.Username, &link.CreatedBy,
 			&link.CreatedByEmail, &link.ExpiresAt, &link.MaxUses, &link.CurrentUses,
-			&link.AllowedIPs, &link.NotifyOnUse, &link.NotifyEmail,
+			&link.AllowedIPs, &link.NotifyOnUse,
 			&link.RouteID, &link.GuacConnectionID, &link.AccessURL, &link.Status,
 			&link.LastUsedAt, &link.LastUsedIP, &link.CreatedAt, &link.UpdatedAt,
 		)
@@ -282,7 +306,7 @@ func (s *Service) handleGetTempAccess(c *gin.Context) {
 	query := `
 		SELECT id, token, name, description, COALESCE(pam_entry_id::text,''), protocol, target_host, target_port, username,
 			created_by, created_by_email, expires_at, max_uses, current_uses,
-			allowed_ips, notify_on_use, notify_email, route_id,
+			allowed_ips, notify_on_use, route_id,
 			guacamole_connection_id, access_url, status, last_used_at, last_used_ip,
 			created_at, updated_at
 		FROM temp_access_links
@@ -293,7 +317,7 @@ func (s *Service) handleGetTempAccess(c *gin.Context) {
 		&link.ID, &link.Token, &link.Name, &link.Description, &link.PamEntryID, &link.Protocol,
 		&link.TargetHost, &link.TargetPort, &link.Username, &link.CreatedBy,
 		&link.CreatedByEmail, &link.ExpiresAt, &link.MaxUses, &link.CurrentUses,
-		&link.AllowedIPs, &link.NotifyOnUse, &link.NotifyEmail,
+		&link.AllowedIPs, &link.NotifyOnUse,
 		&link.RouteID, &link.GuacConnectionID, &link.AccessURL, &link.Status,
 		&link.LastUsedAt, &link.LastUsedIP, &link.CreatedAt, &link.UpdatedAt,
 	)
@@ -334,7 +358,77 @@ func (s *Service) handleRevokeTempAccess(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "access link revoked"})
 }
 
-// handleUseTempAccess handles accessing a temp link (redirects to Guacamole)
+// tempAccessURL builds the address a vendor is sent, or refuses.
+//
+// The link's whole value is a URL someone outside can open, so an unconfigured
+// base is a refusal rather than a guess. It used to fall back to
+// browzer.localtest.me — a test domain that resolves to loopback — which
+// produced a link that looked issued, could be sent to a vendor, and reached
+// nothing. Failing at issuance puts the error in front of the operator who can
+// fix it, instead of in front of the outside party who cannot.
+func tempAccessURL(proxyDomain, token string) (string, error) {
+	domain := strings.TrimSpace(proxyDomain)
+	if domain == "" {
+		return "", fmt.Errorf("access_proxy_domain is not configured, so a vendor link would " +
+			"have no address to point at. Set it before issuing temporary access.")
+	}
+	return fmt.Sprintf("https://%s/temp-access/%s", domain, token), nil
+}
+
+// tempLinkNotifyRecipient returns the user id to be told that this link has
+// just been used, or "" when nobody is.
+//
+// Separated from the send so the decision is provable without a database. The
+// recipient is the link's CREATOR rather than a free-text address, which is a
+// deliberate narrowing of what the console's switch used to imply. The
+// notification service is keyed by user id, so a creator is deliverable through
+// the channels that user has already configured; an arbitrary notify_email
+// would have needed its own sender, and a free-text recipient on a security
+// notification is a way to make the product email anyone. The sponsor is also
+// who actually needs to know — it is their vendor, and their link.
+//
+// A link whose creator is unknown (created_by NULL, which the column permits)
+// notifies nobody, which would be a switch that is on and does nothing — the
+// exact defect this change exists to remove. So handleCreateTempAccess refuses
+// to issue a link at all without a resolvable issuer, and this returns "" only
+// for a row predating that rule.
+func tempLinkNotifyRecipient(link TempAccessLink) string {
+	if !link.NotifyOnUse {
+		return ""
+	}
+	return strings.TrimSpace(link.CreatedBy)
+}
+
+// notifyTempLinkUsed tells the person who issued the link that it has just been
+// used, when they asked to be told.
+//
+// notify_on_use was a switch on the console's create form that sent nothing:
+// stored, read back into the struct, and never once acted on.
+//
+// Best-effort, like every other notification in this package: an outside party
+// has already reached an internal host by the time this runs, the audit row and
+// the usage row are the durable record, and a failed notification must not turn
+// a working session into an error page.
+func (s *Service) notifyTempLinkUsed(ctx context.Context, link TempAccessLink, orgID, clientIP string) {
+	recipient := tempLinkNotifyRecipient(link)
+	if recipient == "" {
+		return
+	}
+	notif := notifications.NewService(s.db, s.logger)
+	body := fmt.Sprintf("The temporary access link %q was just used from %s.", link.Name, clientIP)
+	if err := notif.CreateMultiChannelNotification(ctx, recipient, orgID,
+		notifications.TypeSecurity, "Temporary access link used", body, "/ziti-network",
+		map[string]interface{}{
+			"link_id":    link.ID,
+			"link_name":  link.Name,
+			"ip_address": clientIP,
+			"kind":       "temp_access_link",
+		}); err != nil {
+		s.logger.Warn("temp access: use notification failed",
+			zap.String("link_id", link.ID), zap.Error(err))
+	}
+}
+
 // tempLinkVerdict is the outcome of the gates a redemption is held to.
 type tempLinkVerdict struct {
 	Refuse  bool
@@ -383,22 +477,81 @@ func tempLinkGate(link TempAccessLink, clientIP string, now time.Time) tempLinkV
 		return tempLinkVerdict{true, http.StatusForbidden, "Access Link Exhausted",
 			"This access link has reached its maximum usage limit."}
 	}
-	if len(link.AllowedIPs) > 0 {
-		allowed := false
-		for _, ip := range link.AllowedIPs {
-			if ip == clientIP {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return tempLinkVerdict{true, http.StatusForbidden, "Access Denied",
-				"Your IP address is not authorized to use this access link."}
-		}
+	if len(link.AllowedIPs) > 0 && !ipAllowed(clientIP, link.AllowedIPs) {
+		return tempLinkVerdict{true, http.StatusForbidden, "Access Denied",
+			"Your IP address is not authorized to use this access link."}
 	}
 	return tempLinkVerdict{}
 }
 
+// ipAllowed reports whether clientIP matches any entry, where an entry is
+// either a single address or a CIDR range.
+//
+// This was string equality, so "203.0.113.0/24" matched nothing and an operator
+// who wrote a range had allowed no address at all — including their own. It
+// failed CLOSED, which is why it was a usability trap rather than a hole, but
+// the trap is the kind that gets a control switched off: the link stops working,
+// nobody can see why, and the next one is issued with no allowlist.
+//
+// netip rather than net: it parses and compares without allocating, and it
+// normalises IPv6, so ::1 and 0:0:0:0:0:0:0:1 are the same address here where
+// as strings they were two. An unparseable entry matches nothing rather than
+// erroring — creation validates the list, so a bad entry here means the row
+// predates that validation, and refusing is the safe reading.
+func ipAllowed(clientIP string, allowed []string) bool {
+	addr, err := netip.ParseAddr(clientIP)
+	if err != nil {
+		return false
+	}
+	// An IPv4-mapped IPv6 client address (::ffff:203.0.113.9) must compare
+	// against an IPv4 rule, which is what a proxy in front of the service can
+	// hand us.
+	addr = addr.Unmap()
+
+	for _, entry := range allowed {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			if prefix, err := netip.ParsePrefix(entry); err == nil && prefix.Contains(addr) {
+				return true
+			}
+			continue
+		}
+		if rule, err := netip.ParseAddr(entry); err == nil && rule.Unmap() == addr {
+			return true
+		}
+	}
+	return false
+}
+
+// validateAllowedIPs rejects an allowlist entry that is neither an address nor
+// a CIDR range, at creation, so the operator is told rather than discovering it
+// when the vendor cannot connect and the link looks fine.
+func validateAllowedIPs(entries []string) error {
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			if _, err := netip.ParsePrefix(entry); err != nil {
+				return fmt.Errorf("allowed_ips: %q is not a valid CIDR range", entry)
+			}
+			continue
+		}
+		if _, err := netip.ParseAddr(entry); err != nil {
+			return fmt.Errorf("allowed_ips: %q is not a valid IP address or CIDR range", entry)
+		}
+	}
+	return nil
+}
+
+// handleUseTempAccess redeems a link: it holds the request to tempLinkGate,
+// records the use, then brokers the entry's session through the same launch
+// core as the console's Connect button. It used to redirect to a Guacamole
+// connection built at issuance, which is what let a vendor past every control.
 func (s *Service) handleUseTempAccess(c *gin.Context) {
 	token := c.Param("token")
 
@@ -418,19 +571,19 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 
 	//orgscope:ignore public token-redemption path — no authenticated org context; keyed by a globally-unique unguessable secret token, not an enumerable id
 	query := `
-		SELECT id, token, name, COALESCE(pam_entry_id::text,''), protocol, target_host, target_port, username,
+		SELECT id, token, name, COALESCE(pam_entry_id::text,''), COALESCE(created_by::text,''), protocol, target_host, target_port, username,
 			expires_at, max_uses, current_uses, allowed_ips,
-			notify_on_use, notify_email, guacamole_connection_id, status, org_id
+			notify_on_use, guacamole_connection_id, status, org_id
 		FROM temp_access_links
 		WHERE token = $1`
 
 	var link TempAccessLink
 	var linkOrgID string
 	err := s.db.Pool.QueryRow(redeemCtx, query, token).Scan(
-		&link.ID, &link.Token, &link.Name, &link.PamEntryID, &link.Protocol, &link.TargetHost,
+		&link.ID, &link.Token, &link.Name, &link.PamEntryID, &link.CreatedBy, &link.Protocol, &link.TargetHost,
 		&link.TargetPort, &link.Username, &link.ExpiresAt, &link.MaxUses,
 		&link.CurrentUses, &link.AllowedIPs, &link.NotifyOnUse,
-		&link.NotifyEmail, &link.GuacConnectionID, &link.Status, &linkOrgID,
+		&link.GuacConnectionID, &link.Status, &linkOrgID,
 	)
 	if err != nil {
 		c.HTML(http.StatusNotFound, "error.html", gin.H{
@@ -496,6 +649,8 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 		"ip_address":  clientIP,
 		"target_host": link.TargetHost,
 	})
+
+	s.notifyTempLinkUsed(redeemCtx, link, linkOrgID, clientIP)
 
 	// Everything below is the launch, and it runs through the SAME core the
 	// console's Connect button uses. Before this, redemption redirected to a

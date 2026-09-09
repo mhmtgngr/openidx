@@ -6628,6 +6628,7 @@ const en = {
         },
       },
       tempAccess: {
+        notifyRecipient: 'You will be notified when this link is used.',
         targetEntry: 'Target connection *',
         targetEntryPlaceholder: 'Select a PAM connection…',
         targetEntryHint: 'The vendor is brokered into this connection. Its reach mode, session recording and stored credential all apply — the vendor never sees a password.',

@@ -248,7 +248,6 @@ interface TempAccessLink {
   allowed_ips?: string[]
   require_mfa: boolean
   notify_on_use: boolean
-  notify_email?: string
   access_url: string
   status: 'active' | 'expired' | 'revoked' | 'used'
   last_used_at?: string
@@ -3714,7 +3713,6 @@ function TempAccessLinksSection() {
     max_uses: 0,
     allowed_ips: '',
     notify_on_use: false,
-    notify_email: '',
   })
 
   // Fetch temp access links
@@ -3768,7 +3766,6 @@ function TempAccessLinksSection() {
     max_uses: 0,
     allowed_ips: '',
     notify_on_use: false,
-    notify_email: '',
   })
 
   const copyToClipboard = (text: string, id: string) => {
@@ -4029,7 +4026,7 @@ function TempAccessLinksSection() {
                   id="ziti-network-allowed-ips"
                   value={form.allowed_ips}
                   onChange={(e) => setForm({ ...form, allowed_ips: e.target.value })}
-                  placeholder="1.2.3.4, 5.6.7.8"
+                  placeholder="203.0.113.9, 198.51.100.0/24"
                 />
               </div>
               <div className="col-span-2 flex items-center gap-4">
@@ -4041,12 +4038,9 @@ function TempAccessLinksSection() {
                   <Label htmlFor="ziti-network-notify-on-use" className="text-sm">{t('pages.zitiNetwork.tempAccess.notifyOnUse')}</Label>
                 </div>
                 {form.notify_on_use && (
-                  <Input
-                    value={form.notify_email}
-                    onChange={(e) => setForm({ ...form, notify_email: e.target.value })}
-                    placeholder="admin@company.com"
-                    className="flex-1"
-                  />
+                  <span className="text-xs text-muted-foreground">
+                    {t('pages.zitiNetwork.tempAccess.notifyRecipient')}
+                  </span>
                 )}
               </div>
             </div>

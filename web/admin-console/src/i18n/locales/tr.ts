@@ -6585,6 +6585,7 @@ const tr: typeof en = {
         },
       },
       tempAccess: {
+        notifyRecipient: 'Bu link kullanıldığında size bildirim gönderilir.',
         targetEntry: 'Hedef bağlantı *',
         targetEntryPlaceholder: 'Bir PAM bağlantısı seçin…',
         targetEntryHint: 'Tedarikçi bu bağlantı üzerinden aracılanır. Bağlantının erişim modu, oturum kaydı ve saklanan kimlik bilgisi geçerlidir — tedarikçi parolayı hiç görmez.',

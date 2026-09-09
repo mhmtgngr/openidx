@@ -3,6 +3,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/netip"
 	"regexp"
 	"strings"
 	"time"
@@ -1700,12 +1702,71 @@ func (c *Config) ValidateProduction() error {
 		}
 	}
 
+	// A temporary access link is a URL mailed to somebody outside the network,
+	// and access_proxy_domain is the only thing that decides where it points.
+	// The setting defaults to "localhost", so an install that never set it
+	// issues https://localhost/temp-access/<token> — an address that resolves,
+	// loads, and reaches the VENDOR'S OWN machine. The link looks issued and is
+	// sent before anyone discovers it goes nowhere. The old fallback for an
+	// empty value, browzer.localtest.me, was the same defect wearing a domain
+	// name: *.localtest.me resolves to 127.0.0.1 by design.
+	//
+	// Refused in production only. In development the loopback value is the
+	// correct one — the person redeeming the link is at the same machine — and
+	// the issuing handler still refuses an empty domain everywhere, because that
+	// produces no address at all.
+	if host := loopbackVendorHost(c.AccessProxyDomain); host != "" {
+		criticalIssues = append(criticalIssues, fmt.Sprintf(
+			"access_proxy_domain is %q, which resolves to the loopback interface; a temporary "+
+				"access link built from it points at the recipient's own machine rather than "+
+				"this deployment. Set it to the externally reachable name of the access proxy.",
+			host))
+	}
+
 	if len(criticalIssues) > 0 {
 		return fmt.Errorf("production security validation failed:\n  - %s",
 			strings.Join(criticalIssues, "\n  - "))
 	}
 
 	return nil
+}
+
+// loopbackVendorHost returns the offending host when a domain intended for an
+// outside party would resolve to the machine that opens it, and "" when it is
+// usable.
+//
+// Deliberately narrow. It names values that CANNOT work for an outside party —
+// the config default, the loopback literals, and the two wildcard DNS services
+// whose whole purpose is resolving to 127.0.0.1 — and says nothing about
+// private or split-horizon names, which are a legitimate deployment choice this
+// process has no way to evaluate.
+func loopbackVendorHost(domain string) string {
+	host := strings.TrimSpace(domain)
+	if host == "" {
+		// Empty is refused at issuance instead: it yields no address at all,
+		// and a deployment that never issues vendor links is entitled to leave
+		// the setting unset.
+		return ""
+	}
+	// Strip a port and any IPv6 brackets so "localhost:8443" and "[::1]" are
+	// judged on their host.
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+
+	bare := strings.ToLower(strings.TrimSuffix(host, "."))
+	if bare == "localhost" || strings.HasSuffix(bare, ".localhost") ||
+		strings.HasSuffix(bare, ".localtest.me") || bare == "localtest.me" ||
+		strings.HasSuffix(bare, ".nip.io") {
+		return host
+	}
+	if addr, err := netip.ParseAddr(bare); err == nil {
+		if addr.Unmap().IsLoopback() || addr.IsUnspecified() {
+			return host
+		}
+	}
+	return ""
 }
 
 // ReportModeGates lists the authorization controls that are configured but not

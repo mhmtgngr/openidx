@@ -1324,6 +1324,79 @@ func TestValidateProductionRejectsDevBypassAndMockSMS(t *testing.T) {
 	})
 }
 
+// TestProductionRefusesALoopbackVendorDomain.
+//
+// access_proxy_domain is the host of every temporary vendor-access link. It
+// defaults to "localhost", and the issuing code's own fallback for an empty
+// value used to be browzer.localtest.me — a wildcard DNS service that resolves
+// to 127.0.0.1 by design. Either way the link was issued, looked right in the
+// console, and opened the RECIPIENT'S machine. The link is mailed out before
+// anybody discovers that, which is why this is a boot refusal and not a warning.
+func TestProductionRefusesALoopbackVendorDomain(t *testing.T) {
+	base := func() *Config {
+		c := &Config{Environment: "production"}
+		c.AccessSessionSecret = "0123456789abcdef0123456789abcdef"
+		c.EncryptionKey = "0123456789abcdef0123456789abcdef"
+		c.VaultKEK = "0123456789abcdef0123456789abcdef"
+		c.CORSAllowedOrigins = "https://console.example.test"
+		return c
+	}
+
+	for _, domain := range []string{
+		"localhost",            // the in-code default: nobody set this
+		"LocalHost:8443",       // case and port do not change where it points
+		"api.localhost",        // the RFC 6761 special-use suffix
+		"browzer.localtest.me", // the fallback this replaced
+		"localtest.me",
+		"anything.nip.io", // the other wildcard-to-loopback service
+		"127.0.0.1",
+		"127.0.0.53", // the whole /8 is loopback, not just .1
+		"[::1]",
+		"::1",
+		"0.0.0.0",          // a bind address is not a reachable name
+		"::ffff:127.0.0.1", // the same loopback written as mapped IPv6
+	} {
+		t.Run(domain, func(t *testing.T) {
+			c := base()
+			c.AccessProxyDomain = domain
+			err := c.ValidateProduction()
+			if err == nil || !strings.Contains(err.Error(), "access_proxy_domain") {
+				t.Fatalf("access_proxy_domain=%q must be refused in production: a vendor link "+
+					"built from it opens the recipient's own machine. got: %v", domain, err)
+			}
+		})
+	}
+
+	// Deliberately permitted. This check names values that CANNOT work for an
+	// outside party; it does not audit whether a real name is reachable, which
+	// is a deployment fact this process cannot see.
+	for _, domain := range []string{
+		"", // refused at issuance instead — see tempAccessURL
+		"access.example.com",
+		"vendor-access.internal", // split-horizon DNS is a legitimate choice
+		"198.51.100.7",
+		"2001:db8::1",
+	} {
+		t.Run("allows "+domain, func(t *testing.T) {
+			c := base()
+			c.AccessProxyDomain = domain
+			if err := c.ValidateProduction(); err != nil &&
+				strings.Contains(err.Error(), "access_proxy_domain") {
+				t.Fatalf("access_proxy_domain=%q must be allowed: %v", domain, err)
+			}
+		})
+	}
+
+	// Development is where a loopback value is the RIGHT one: the person opening
+	// the link is at the same machine.
+	dev := base()
+	dev.Environment = "development"
+	dev.AccessProxyDomain = "localhost"
+	if err := dev.ValidateProduction(); err != nil {
+		t.Fatalf("development must tolerate a loopback access_proxy_domain: %v", err)
+	}
+}
+
 // The report-mode list is what makes "every authorization control is off" a
 // visible fact rather than something an operator has to reconstruct from seven
 // environment variables. An install with every gate open must list every gate.

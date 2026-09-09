@@ -426,6 +426,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A temporary vendor-access link went around every control the product has,
+  including the one that vouched for it** (migration **v188**). The feature
+  built for exactly the "let an outside engineer onto this server" question was
+  the one place none of the PAM controls applied. Redemption redirected to a
+  Guacamole connection built at *issuance* with an empty parameter map: no ZTNA
+  check, always the direct broker, no session recording, no credential
+  injection — so the vendor had to be told a password out of band — and no
+  `pam_entry_sessions` row, so the access was unrecorded. A link now names a
+  `pam_entries` row (`pam_entry_id`, required) and redemption runs the same
+  launch core as the console's Connect button, entry controls and all. Links
+  issued before this are refused with an explanation rather than falling back,
+  because keeping the old path alive for them would keep it alive.
+
+  Four claims that surface made and did not keep, found alongside it:
+
+  - `require_mfa` was stored, selected back into the struct, and never compared
+    to anything — and `public_surface_test.go`, the guard that makes every
+    anonymously-reachable route carry a written justification, listed MFA among
+    the checks this route performs. The register vouched for a check that never
+    ran. The field is **gone** rather than implemented: with no session there is
+    no `mfa_verified_at` for `STEPUP_GATE` to read, so enforcing it here would
+    have meant a bespoke OTP bolted onto an anonymous URL. Vendor MFA belongs on
+    a vendor identity; `docs/VENDOR-ACCESS-ROADMAP.md` V1 carries it.
+  - `notify_on_use` was the same shape, and now **notifies the link's issuer**
+    through the multi-channel notification service. `notify_email` is withdrawn:
+    the service is keyed by user id, and a caller-supplied recipient on a
+    security notification is a way to make the product email anyone. Creating a
+    link now requires a resolvable issuer (`issuer_unresolved`), which also
+    fixes a link created under `SoftAuth` writing the literal `"<nil>"` into a
+    UUID column.
+  - The IP allowlist compared **strings**, so every CIDR entry an operator wrote
+    matched nobody and the link silently refused everyone. It now compares with
+    `net/netip` — prefixes, IPv6, and IPv4-mapped clients from a fronting proxy
+    — and a malformed entry is rejected at creation, where it can still be fixed.
+  - The link's address fell back to `browzer.localtest.me` when
+    `access_proxy_domain` was empty; the setting defaults to `localhost`, so the
+    common case issued `https://localhost/temp-access/<token>` — a link that
+    resolves, loads, and reaches the **recipient's** machine. `ValidateProduction`
+    now refuses any loopback value, the Helm chart sets `ACCESS_PROXY_DOMAIN`
+    from the API ingress host, and an empty value is refused at issuance with a
+    message naming the setting.
+
 - **A privileged session had two ways off the overlay, and took one of them by
   default** (`PAM_REQUIRE_ZTNA`, default `off`). The product's ZTNA claim is
   that privileged access reaches its target through the OpenZiti overlay. A

@@ -27,6 +27,18 @@ data:
   # once per hop and export openidx_forwarded_for_from_untrusted_hop_total until
   # it matches. Never "*".
   OIDX_TRUSTED_PROXIES: {{ .Values.config.trustedProxies | default "" | quote }}
+  # The externally reachable name of the access proxy. It is the host of every
+  # temporary vendor-access link, so an unset value (in-code default:
+  # "localhost") issues links that point at the RECIPIENT'S machine. Services
+  # with APP_ENV=production refuse to start on a loopback value for that reason.
+  # Falls back to the API ingress host, and to empty when there is none — empty
+  # makes link issuance refuse with a message naming this setting, which is the
+  # correct outcome for an install that has not said where it is reachable.
+  {{- $accessProxyDomain := .Values.config.accessProxyDomain | default "" }}
+  {{- if and (not $accessProxyDomain) .Values.ingress .Values.ingress.hosts }}
+  {{- $accessProxyDomain = (first .Values.ingress.hosts).host | default "" }}
+  {{- end }}
+  ACCESS_PROXY_DOMAIN: {{ $accessProxyDomain | quote }}
   # PostgreSQL TLS mode. Services with APP_ENV=production refuse to start when
   # this is 'disable' — production must set 'require' or stronger.
   DATABASE_SSL_MODE: {{ .Values.database.sslMode | default "disable" | quote }}

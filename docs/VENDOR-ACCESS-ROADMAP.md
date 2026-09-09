@@ -163,17 +163,40 @@ Order is by risk, and each item is independently shippable.
    *Leftover:* the `require_mfa` column still exists in `temp_access_links` and
    is now neither read nor written. Drop it in the next temp-access migration
    rather than leaving mystery data.
-3. **Send the notification, or remove the switch.** `notify_on_use` and
-   `notify_email` are in the console form; wire them to the notification service
-   at redemption.
-4. **CIDR and IPv6 in the allowlist**, with validation at creation so an
-   operator who types `203.0.113.0/24` is told it is unsupported rather than
-   silently locked out of their own link.
-5. **Fail closed.** No Guacamole connection means no link — refuse at creation.
-   Never render the target's host and port to an anonymous visitor.
-6. **Refuse to start with the placeholder domain.** `browzer.localtest.me` in a
-   production `access_url` is a `ValidateProduction` error, matching how
-   `PAM_REQUIRE_ZTNA=enforce` already validates `GUACAMOLE_ZITI_PUBLIC_URL`.
+3. ~~**Send the notification, or remove the switch.**~~ **Done — one sent, one
+   deleted.** `notify_on_use` now notifies the link's **issuer** through
+   `CreateMultiChannelNotification`, on the channels that user has already
+   configured. `notify_email` is gone: the notification service is keyed by user
+   id, so a free-text address would have needed its own sender, and a
+   caller-supplied recipient on a security notification is a way to make the
+   product email anyone. `TestTheNotifiedPartyIsTheIssuer` pins the decision and
+   `TestNoNotifyEmailFieldSurvives` stops the field returning unwired.
+   The issuer therefore has to be known: `handleCreateTempAccess` refuses a link
+   whose `user_id` does not resolve to a UUID (`issuer_unresolved`), which also
+   fixes a link created under `SoftAuth` writing the literal `"<nil>"` into a
+   UUID column and failing the INSERT with a generic 500.
+4. ~~**CIDR and IPv6 in the allowlist**~~ **Done.** `ipAllowed` compares with
+   `net/netip`: prefixes, both families, and `Addr.Unmap()` so an IPv4-mapped
+   client from a fronting proxy still matches the v4 rule an operator wrote.
+   `validateAllowedIPs` rejects a malformed entry at creation, naming the field.
+   16 + 7 table cases; the old behaviour was exact string equality, so every
+   CIDR entry silently matched nobody.
+5. **Fail closed.** *Half done, as a side effect of V0.1:* the anonymous
+   fallback page that printed the target's host, port and username to whoever
+   opened the link is gone — redemption now either brokers a session or renders
+   an error with no target detail. **Remaining:** `launchPamSession`'s failures
+   still answer JSON on an HTML route (`temp_access.go`, after the `!ok`), so a
+   vendor whose broker is misconfigured gets a raw object rather than a page.
+6. ~~**Refuse to start with the placeholder domain.**~~ **Done, and it was worse
+   than written.** The fallback only applied to an *empty* `access_proxy_domain`
+   — but the setting defaults to `localhost`, so the common case issued
+   `https://localhost/temp-access/<token>`: a link that resolves, loads, and
+   reaches the vendor's own machine. `ValidateProduction` now refuses any
+   loopback value (`localhost`, the `127.0.0.0/8` literals, `::1`, `0.0.0.0`,
+   `*.localtest.me`, `*.nip.io`), development still allows them, and the Helm
+   chart sets `ACCESS_PROXY_DOMAIN` from the API ingress host instead of leaving
+   the in-code default. An empty value is refused at issuance instead, naming the
+   setting.
 7. **A guard, so this cannot recur.** The pattern here — a column written,
    selected and never compared — is mechanically detectable. Extend the existing
    unread-config census idea to struct fields on request objects: a field that
