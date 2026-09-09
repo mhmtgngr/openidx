@@ -403,6 +403,13 @@ func (s *Service) handlePamZitiBindings(c *gin.Context) {
 // handlePamBrokerStatus — GET /pam/broker/status (any authenticated user).
 // Capability probe so the launcher UI can explain a missing broker and show
 // which reach modes are available, instead of dead-ending on a 503.
+//
+// require_ztna rides along for the same reason the reach modes do. The ZTNA
+// gate created a SECOND way for a launch to dead-end — a 403 on an entry whose
+// target hop is not the overlay — and a console that cannot see the mode keeps
+// offering Connect on entries it will be refused for. That is this branch's
+// defect class read backwards: a control that enforces without displaying.
+// One field here is what lets the launcher say so before the click.
 func (s *Service) handlePamBrokerStatus(c *gin.Context) {
 	reachModes := []string{}
 	directOK := s.guacamoleClient != nil
@@ -421,5 +428,6 @@ func (s *Service) handlePamBrokerStatus(c *gin.Context) {
 		"reach_modes":   reachModes,
 		"direct_broker": directOK,
 		"ziti_broker":   zitiOK,
+		"require_ztna":  s.pamZTNAModeName(),
 	})
 }

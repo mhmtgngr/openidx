@@ -683,6 +683,10 @@ export interface QuickLinkInput {
 export interface PamBrokerStatus {
   available: boolean
   reach_modes: string[]
+  // The PAM_REQUIRE_ZTNA mode as the SERVICE reads it (off | observe |
+  // enforce), not the raw setting. Absent from an older service, in which case
+  // the console refuses nothing.
+  require_ztna?: string
   direct_broker?: boolean
   ziti_broker?: boolean
 }

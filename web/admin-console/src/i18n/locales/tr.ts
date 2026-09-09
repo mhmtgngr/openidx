@@ -9037,6 +9037,14 @@ const tr: typeof en = {
         title: 'Doğrudan erişim',
         desc: 'Ağ geçidi doğrudan hedef adrese bağlanır.',
       },
+      directRefused: {
+        title: 'Reddedildi: örtüşme ağı dışında',
+        desc: 'PAM_REQUIRE_ZTNA uygulama modunda ve bu kayıt hedefine doğrudan erişiyor. Başlatma, hiçbir kimlik bilgisi çözülmeden reddedilir. Kayda bir örtüşme servisi verin ve erişim modunu ziti yapın.',
+      },
+      ztnaRefused: {
+        direct: 'Bu kayıt hedefine örtüşme ağı yerine doğrudan erişiyor ve PAM_REQUIRE_ZTNA uygulama modunda. Başlatabilmek için erişim modunu ziti yapın.',
+        website: 'Bu bir web sitesi kaydı: bir URL döndürür ve hiçbir oturum brokerlamaz, dolayısıyla hiçbir parçası örtüşme ağından geçmez. PAM_REQUIRE_ZTNA uygulama modunda.',
+      },
       target: {
         title: 'Hedef',
         signedInAs: '{{user}} olarak oturum açılır.',

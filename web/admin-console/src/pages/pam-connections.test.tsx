@@ -28,7 +28,7 @@ vi.mock('../lib/api', () => ({
 vi.mock('../hooks/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }))
 
 import { PamConnectionsPage } from './pam-connections'
-import { connectionPathSteps } from '../lib/connection-path'
+import { connectionPathSteps, ztnaRefusal } from '../lib/connection-path'
 import { api, PamEntry } from '../lib/api'
 
 const pam = api.pam as unknown as Record<string, ReturnType<typeof vi.fn>>
@@ -217,9 +217,51 @@ describe('connectionPathSteps', () => {
     ])
   })
 
+  // Under PAM_REQUIRE_ZTNA=enforce a direct-reach entry cannot be launched at
+  // all: the server refuses before resolving a credential. Drawing that hop as
+  // a working route would describe a session nobody can open.
+  it('draws a direct hop as refused when the ZTNA gate enforces', () => {
+    const path = connectionPathSteps({ ...base, ziti_enabled: false }, 'enforce')
+    expect(path.map((s) => s.title)).toContain('Refused: not on the overlay')
+    expect(path.map((s) => s.title)).not.toContain('Direct reach')
+  })
+
+  it('still draws a direct hop as a route in observe and off', () => {
+    for (const mode of ['observe', 'off', undefined]) {
+      const path = connectionPathSteps({ ...base, ziti_enabled: false }, mode)
+      expect(path.map((s) => s.title)).toContain('Direct reach')
+    }
+  })
+
+  it('leaves an overlay entry alone under enforcement', () => {
+    const path = connectionPathSteps({ ...base, ziti_enabled: true }, 'enforce')
+    expect(path.map((s) => s.title)).toContain('Ziti overlay (zero-trust)')
+    expect(path.map((s) => s.title)).not.toContain('Refused: not on the overlay')
+  })
+
   it('describes the wasm-ssh renderer as a browser terminal', () => {
     const steps = connectionPathSteps({ ...base, entry_type: 'ssh', renderer: 'wasm-ssh', record_session: false })
     expect(steps.map((s) => s.title)).toContain('Browser terminal')
     expect(steps.map((s) => s.title)).not.toContain('Session recording')
+  })
+})
+
+describe('ztnaRefusal', () => {
+  const base = rdpEntry as unknown as PamEntry
+
+  // The console must refuse exactly what the server refuses -- no more, no
+  // less. Greying out a button the server would still honour is the same lie
+  // as offering one it will reject.
+  it('refuses only under enforce', () => {
+    for (const mode of ['off', 'observe', undefined]) {
+      expect(ztnaRefusal({ ...base, ziti_enabled: false }, mode)).toBeNull()
+    }
+    expect(ztnaRefusal({ ...base, ziti_enabled: false }, 'enforce')).toContain('directly')
+  })
+
+  it('allows an overlay entry and refuses a website entry', () => {
+    expect(ztnaRefusal({ ...base, ziti_enabled: true }, 'enforce')).toBeNull()
+    const website = { ...base, kind: 'website', ziti_enabled: true } as unknown as PamEntry
+    expect(ztnaRefusal(website, 'enforce')).toContain('brokers no session')
   })
 })

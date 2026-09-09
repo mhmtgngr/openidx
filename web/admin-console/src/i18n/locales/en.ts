@@ -9322,6 +9322,14 @@ const en = {
         title: 'Direct reach',
         desc: 'The gateway connects straight to the target address.',
       },
+      directRefused: {
+        title: 'Refused: not on the overlay',
+        desc: 'PAM_REQUIRE_ZTNA is enforcing, and this entry reaches its target directly. The launch is refused before any credential is resolved. Give the entry an overlay service and set its reach mode to ziti.',
+      },
+      ztnaRefused: {
+        direct: 'This entry reaches its target directly rather than over the overlay, and PAM_REQUIRE_ZTNA is enforcing. Set its reach mode to ziti to launch it.',
+        website: 'This is a website entry: it hands back a URL and brokers no session, so nothing about it travels the overlay. PAM_REQUIRE_ZTNA is enforcing.',
+      },
       target: {
         title: 'Target',
         signedInAs: 'Signed in as {{user}}.',

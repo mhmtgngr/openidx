@@ -370,6 +370,23 @@ curl -sS --max-time 5 "$GUACAMOLE_ZITI_PUBLIC_URL/" -o /dev/null -w '%{http_code
 Anything other than a connection failure means the overlay broker is reachable
 without the client, and the first leg is open however the flag reads.
 
+**What the console shows.** A gate that refuses on the server and nowhere else
+is the branch's defect class inverted: instead of a control that displays
+without enforcing, a control that enforces without displaying. `GET
+/pam/broker/status` — which already exists so the launcher can explain a missing
+broker rather than dead-end on a `503` — therefore reports the mode as
+`require_ztna`, and the console uses it for two things: the Connect button on an
+entry `enforce` would refuse is disabled with the reason on hover, and the
+connection-path diagram draws that entry's network hop as a **refusal** rather
+than as a working direct route. The mode reported is what the service will *do*,
+not the raw setting: an unrecognised value reads `off` in both places, so the
+console cannot show "enforce" over a gate that is not enforcing. When the field
+is absent — an older service, or the probe has not resolved yet — nothing is
+refused in the UI, because guessing `enforce` would grey out a button that
+works. `observe` refuses nothing on the server, so it refuses nothing in the
+console either; greying out what the server would still allow is the same lie in
+the other direction.
+
 **Rollout.** `observe` first: it refuses nothing and audits every launch
 `enforce` would refuse (`pam.ztna.would_deny`), which is how you get the list of
 entries still on `direct` and the count of website entries, before they stop

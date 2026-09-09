@@ -67,6 +67,21 @@ func (s *Service) pamZTNAMode() ztnaMode {
 	}
 }
 
+// pamZTNAModeName renders the mode for the broker-status probe the launcher
+// reads. It reports what the service will DO — an unrecognised value is "off",
+// the same reading pamZTNAMode gives it — rather than echoing the raw setting,
+// so the console cannot show "enforce" over a gate that is not enforcing.
+func (s *Service) pamZTNAModeName() string {
+	switch s.pamZTNAMode() {
+	case ztnaEnforce:
+		return "enforce"
+	case ztnaObserve:
+		return "observe"
+	default:
+		return "off"
+	}
+}
+
 // ztnaVerdict is the outcome of the reach check for one launch.
 type ztnaVerdict struct {
 	// Refuse is true when the launch must not proceed.

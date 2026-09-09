@@ -466,6 +466,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/CLIENT-ACCESS-DESIGN.md` §4b carries the operator's own check: a curl
   from an unenrolled host that must fail to connect.
 
+  **And the console had to be told.** A gate that refuses on the server and
+  nowhere else is this branch's defect class inverted — a control that enforces
+  without displaying. The launcher kept offering Connect on entries the service
+  would answer `403`, and the connection-path diagram kept drawing their network
+  hop as a working direct route. `GET /pam/broker/status` — which exists so the
+  launcher can explain a missing broker rather than dead-end on a `503` — now
+  reports the mode as `require_ztna`, and the console disables Connect with the
+  reason on hover and draws that hop as a refusal. The value reported is what the
+  service will *do*, not the raw setting: an unrecognised value reads `off` in
+  both places, so the console cannot show "enforce" over a gate that is not
+  enforcing. An absent field refuses nothing (an older service, or a probe that
+  has not resolved yet — guessing `enforce` would grey out a button that works),
+  and `observe` refuses nothing in the console because it refuses nothing on the
+  server; greying out what the server would allow is the same lie in the other
+  direction.
+
 - **On a phone, the engine's credentials were protected by a mode bit, and a
   mode bit protects nothing there.** The companion app's engine writes three
   credentials into its sandbox — `user-tokens.json` (the 30-day refresh token),

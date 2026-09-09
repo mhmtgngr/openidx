@@ -1,8 +1,13 @@
 package access
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/openidx/openidx/internal/common/config"
 )
@@ -101,5 +106,67 @@ func TestTheModeDecidesRefuseVersusRecord(t *testing.T) {
 func TestNoConfigIsOff(t *testing.T) {
 	if got := (&Service{}).pamZTNAMode(); got != ztnaOff {
 		t.Fatalf("a Service with no config reports mode %v, want off", got)
+	}
+}
+
+// TestTheProbeReportsWhatTheServiceWillDo.
+//
+// The launcher disables Connect from this one field, so two things have to
+// hold and neither is obvious from reading either side alone.
+//
+// First the NAME: the console reads `require_ztna` off GET /pam/broker/status.
+// Rename the key and the console silently reads undefined, which it is required
+// to treat as "refuse nothing" — so the gate would go on refusing on the server
+// while the button went back to offering the launch. That failure is invisible
+// in both test suites unless something pins the wire name; this does.
+//
+// Second the VALUE: it is what the service will DO, not the setting as typed.
+// A typo means "off" to pamZTNAMode, so it must read "off" here too. Echoing
+// the raw string would let the console show "enforce" — greying out buttons and
+// drawing refusals — over a gate that refuses nothing.
+func TestTheProbeReportsWhatTheServiceWillDo(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		setting string
+		want    string
+	}{
+		{"", "off"},
+		{"off", "off"},
+		{"observe", "observe"},
+		{"enforce", "enforce"},
+		{"  ENFORCE  ", "enforce"},
+		{"enfroce", "off"},
+	} {
+		t.Run("setting="+tc.setting, func(t *testing.T) {
+			// No brokers and no overlay: the probe still has to answer, and
+			// the mode is exactly as readable when nothing else is wired.
+			s := &Service{config: &config.Config{PAMRequireZTNA: tc.setting}}
+			if got := s.pamZTNAModeName(); got != tc.want {
+				t.Fatalf("pamZTNAModeName() = %q, want %q", got, tc.want)
+			}
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodGet, "/pam/broker/status", nil)
+			s.handlePamBrokerStatus(c)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("probe answered %d, want 200 — the launcher reads the mode from this", w.Code)
+			}
+			var body map[string]interface{}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("probe body is not JSON: %v", err)
+			}
+			got, ok := body["require_ztna"]
+			if !ok {
+				t.Fatalf("the probe carries no require_ztna key: %s\n"+
+					"the console reads this exact name and treats a missing value as "+
+					"\"refuse nothing\", so dropping or renaming it re-opens the Connect "+
+					"button on every entry the service will answer 403 for", w.Body.String())
+			}
+			if got != tc.want {
+				t.Errorf("require_ztna = %v, want %q (setting was %q)", got, tc.want, tc.setting)
+			}
+		})
 	}
 }

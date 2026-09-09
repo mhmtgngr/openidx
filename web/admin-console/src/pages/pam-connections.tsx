@@ -28,7 +28,7 @@ import { useToast } from '../hooks/use-toast'
 import { QueryError } from '../components/query-error'
 import { useRevealedSecret, copyWithWarning } from '../lib/secret-reveal'
 import { TerminalSession } from '../components/remote/terminal-session'
-import { connectionPathSteps } from '../lib/connection-path'
+import { connectionPathSteps, ztnaRefusal } from '../lib/connection-path'
 import { remoteAppArgsLookSecret, remoteAppSecretHint } from '../lib/remote-app'
 
 // Random, unguessable key for the single-use /pam-session localStorage handoff.
@@ -313,6 +313,7 @@ export function PamConnectionsPage() {
     queryFn: () => api.pam.brokerStatus(),
   })
   const zitiAvailable = broker?.reach_modes?.includes('ziti') ?? false
+  const requireZTNA = broker?.require_ztna
 
   const toggleZiti = useMutation({
     mutationFn: (entry: PamEntry) =>
@@ -481,6 +482,10 @@ export function PamConnectionsPage() {
               {entries.map((entry) => {
                 const Icon = typeIcon(entry.entry_type)
                 const launchable = entry.kind === 'session'
+                // Under PAM_REQUIRE_ZTNA=enforce the server refuses this launch. Say
+                // so on the button rather than firing a call whose 403 is the first
+                // the operator hears of it.
+                const refusedReason = ztnaRefusal(entry, requireZTNA)
                 return (
                   <Card key={entry.id} className="hover:border-primary/40 transition-colors">
                     <CardContent className="flex items-center gap-3 py-3">
@@ -534,7 +539,12 @@ export function PamConnectionsPage() {
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         {launchable && (
-                          <Button size="sm" onClick={() => launch(entry)} disabled={connect.isPending}>
+                          <Button
+                            size="sm"
+                            onClick={() => launch(entry)}
+                            disabled={connect.isPending || !!refusedReason}
+                            title={refusedReason ?? undefined}
+                          >
                             <Play className="h-4 w-4 mr-1" /> {t('pages.pamConnections.actions.connect')}
                           </Button>
                         )}
@@ -829,7 +839,7 @@ export function PamConnectionsPage() {
           </DialogHeader>
           {pathEntry && (
             <div>
-              {connectionPathSteps(pathEntry).map((step, i, arr) => {
+              {connectionPathSteps(pathEntry, requireZTNA).map((step, i, arr) => {
                 const StepIcon = step.icon
                 return (
                   <div key={i} className="flex gap-3">
