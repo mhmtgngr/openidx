@@ -155,6 +155,16 @@ jobs:
         run: bash scripts/check-mobile-secrets-at-rest.test.sh
       - name: The mobile clients must keep their secrets out of the platform backup
         run: bash scripts/check-mobile-secrets-at-rest.sh --enforce
+      - name: Verify the mobile keystore guard can go red
+        # The backup guard above closes the channel off the phone. This one is
+        # about the file itself: both platforms leave app storage decrypted from
+        # the first unlock after boot, so the credentials are sealed with a key
+        # the OS holds. Go refuses to start unless the host's seal proves itself
+        # at runtime -- what it cannot see is WHERE THE KEY LIVES, and a key
+        # compiled into the app passes every runtime check there is.
+        run: bash scripts/check-mobile-keystore.test.sh
+      - name: The mobile engine must seal its secrets with a key the OS holds
+        run: bash scripts/check-mobile-keystore.sh --enforce
       - name: Verify the toolchain-pin guard can go red
         run: bash scripts/check-go-toolchain-pin.test.sh
       - name: Every setup-go step installs the toolchain go.mod pins

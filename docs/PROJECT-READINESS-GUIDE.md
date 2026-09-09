@@ -473,6 +473,38 @@ product; either wire them or remove them from the UI.
   shipped. **Operator-visible:** cutting an `agent-v*` release now fails unless
   the signing secrets are set, rather than publishing a manifest every agent
   refuses.
+- **A19 — On a phone, "0600" was the whole answer, and it answers nothing.**
+  *Fixed on this branch.* The companion app's engine writes three credentials
+  into its sandbox: `user-tokens.json` (the 30-day refresh token), `agent.json`
+  (the agent's own auth token) and `ziti-identity.json` (the overlay private
+  key). An earlier increment closed the backup channel — `allowBackup="false"`,
+  `dataExtractionRules`, `isExcludedFromBackup` — and recorded the rest as still
+  open. The rest is that **both platforms decrypt app storage at the first
+  unlock after boot and leave it decrypted**, so on a rooted or jailbroken
+  phone, or one imaged while merely unlocked, the mode bit is decoration and the
+  sandbox has already been left behind. The platform's answer is a key it holds
+  and the file system does not — the Android Keystore, the iOS Keychain — and Go
+  can reach neither. So `agent/mobile.Keystore` is a gomobile **reverse**
+  binding: a Go interface the host implements, with the key never crossing,
+  because an `AndroidKeyStore` key is non-exportable by construction and a
+  boundary carrying key material could therefore never use a hardware one. Four
+  things make it a control rather than a display of one. `Start` takes the
+  keystore as a parameter with **no signature that omits it**, so neither host
+  can forget it and still compile. `secretfile.SelfTest` runs before the engine
+  touches a credential and refuses to start unless the seal differs from the
+  plaintext, **does not contain it**, opens back to it, and differs again on a
+  second wrap — the fourth catches a fixed nonce and the second catches the one
+  that would otherwise pass, a header wrapped round the secret, which
+  round-trips perfectly and leaves the token in the file in full. `Start`
+  re-seals what an earlier build left in the clear, because a control that only
+  protects the *next* write leaves the credential it was added for sitting there
+  on a timer nobody watches. And `scripts/check-mobile-keystore.sh` reads the
+  Kotlin and Swift, which is the only place the remaining question is visible:
+  a constant key compiled into the app produces real ciphertext with a fresh
+  nonce and passes every runtime check there is. **Recorded, not fixed:**
+  `ziti-identity.json` is written and read by the OpenZiti SDK itself, so
+  sealing it would hand the SDK ciphertext; it needs an SDK-side change and is
+  named in `docs/CLIENT-ACCESS-DESIGN.md` §4 rather than half-done.
 
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 

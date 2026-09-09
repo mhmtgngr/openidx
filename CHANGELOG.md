@@ -426,6 +426,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **On a phone, the engine's credentials were protected by a mode bit, and a
+  mode bit protects nothing there.** The companion app's engine writes three
+  credentials into its sandbox — `user-tokens.json` (the 30-day refresh token),
+  `agent.json` (the agent's own auth token), `ziti-identity.json` (the overlay
+  private key) — all at `0600`. Inside an app container that mode is not
+  protection that was added; every file there is already private to the app's
+  UID. An earlier entry closed the way those bytes leave the device, the
+  platform backup. What it did not close is that **Android and iOS both decrypt
+  app storage at the first unlock after boot and leave it decrypted**, so a
+  rooted phone, a jailbroken one, or one imaged while merely unlocked reads them
+  as text.
+
+  The control for that is a key the file system does not hold, and Go can reach
+  neither the Android Keystore nor the iOS Keychain. `agent/mobile.Keystore` is
+  therefore a gomobile **reverse** binding — a Go interface implemented by
+  `AndroidKeystoreSealer` in Kotlin (AES-256-GCM under a non-exportable
+  `AndroidKeyStore` key, StrongBox where the hardware offers it) and
+  `KeychainSealer` in Swift (AES-GCM under a Keychain key marked
+  `…AfterFirstUnlockThisDeviceOnly`, so it is in no backup and restores onto no
+  other device). The key never crosses the boundary, and that is the design
+  rather than an omission: an `AndroidKeyStore` key cannot be exported at all,
+  so a boundary that carried key material could not use a hardware-backed one.
+
+  Four things keep it from being a control that displays without enforcing.
+  `Start` takes the keystore as a parameter and has no signature that omits it,
+  so a host cannot forget to pass one and still compile. Before the engine
+  touches a credential, `secretfile.SelfTest` wraps a probe and refuses to start
+  unless the result differs from the plaintext, **does not contain** it, opens
+  back to it, and differs again on a second wrap — the last catches a fixed
+  nonce, and the second catches the one that would otherwise get through, a
+  header wrapped round the secret, which round-trips perfectly while leaving the
+  token in the file in full. `Start` also re-seals what an earlier build wrote
+  in the clear, because a control that protects only the *next* write leaves the
+  credential it was added for sitting there until something happens to rewrite
+  it. And `scripts/check-mobile-keystore.sh` reads the Kotlin and the Swift for
+  the one question no runtime check can answer: a constant key compiled into the
+  app produces real ciphertext with a fresh nonce and passes everything above.
+
+  `agent.json` moved onto `secretfile.WriteShared`, which takes the keystore
+  seal but not the per-user Windows layer — the SYSTEM service and the user's
+  tray both read that file, and a per-user DPAPI blob or a writer-named DACL
+  would lock one of them out. On a desktop, where no keystore is registered, it
+  is byte-for-byte the file it has always been.
+
+  **Not covered, and recorded rather than implied:** `ziti-identity.json` is
+  written and read back by the OpenZiti SDK, not by this code, so sealing it
+  would hand the SDK ciphertext and unsealing it to a temporary file would put
+  the private key back on disk to no purpose. It needs an SDK-side change and is
+  named in `docs/CLIENT-ACCESS-DESIGN.md` §4.
+
 - **The update manifest said what to install, and nothing said who wrote it.**
   The previous entry in this section made the artifact's SHA-256 mandatory. That
   proves the download arrived intact and cannot prove anything more: the same

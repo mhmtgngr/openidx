@@ -51,7 +51,11 @@ class OpenidxEnginePlugin : FlutterPlugin, MethodCallHandler {
    *  (or null for void methods); throws are surfaced as `result.error`. */
   private fun dispatch(call: MethodCall): Any? {
     return when (call.method) {
-      "start" -> { Mobile.start(arg(call, "configDir")); null }
+      // The sealer is constructed HERE and not passed down from Dart: a key the
+      // Dart layer could hold is a key in the app's own heap, which is the thing
+      // the Android Keystore exists to avoid. Go calls back into it for every
+      // credential it writes.
+      "start" -> { Mobile.start(arg(call, "configDir"), AndroidKeystoreSealer()); null }
       "setServer" -> { Mobile.setServer(arg(call, "url")); null }
       "status" -> Mobile.status()
       "login" -> Mobile.login()

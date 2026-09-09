@@ -28,3 +28,10 @@ func unprotect(blob []byte) ([]byte, error) {
 func harden(path string) error {
 	return os.Chmod(path, 0o600)
 }
+
+// hardenShared is the same off Windows: the mode is per-file, not per-user, so
+// a second local identity reading the file was never the question here. The two
+// diverge only on Windows, where harden writes an ACL naming the writer.
+func hardenShared(path string) error {
+	return os.Chmod(path, 0o600)
+}
