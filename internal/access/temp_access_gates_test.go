@@ -1,8 +1,11 @@
 package access
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -247,6 +250,76 @@ func TestABadAllowlistIsRefusedAtCreation(t *testing.T) {
 				t.Errorf("the error does not name the field the operator must fix: %v", err)
 			}
 		})
+	}
+}
+
+// TestTheVendorIsNotToldHowThisDeploymentIsBroken.
+//
+// The launch core answered its own failures with c.JSON. Two of its three
+// callers are JSON APIs; the third is `GET /temp-access/:token`, an HTML route
+// an anonymous outside party opens in a browser. So a vendor whose session
+// could not start received, as their page, the raw object — including
+// "the OpenZiti PAM broker is not configured" and its code. That is a
+// description of this deployment's internals delivered to somebody with no
+// account here, and it is not even usable as a page.
+//
+// This reads the failure literals out of the launch core itself rather than
+// listing them, so a failure added later is covered without anybody remembering
+// to add it here.
+func TestTheVendorIsNotToldHowThisDeploymentIsBroken(t *testing.T) {
+	src, err := os.ReadFile("pam_launch.go")
+	if err != nil {
+		t.Fatalf("cannot read the launch core: %v", err)
+	}
+
+	// Every failure is &pamLaunchFailure{status, "code", message}. Take each
+	// construction and every string literal inside it: the code always is one,
+	// the message sometimes is (one wraps an error value instead).
+	sites := regexp.MustCompile(`&pamLaunchFailure\{[^}]*\}`).FindAllString(string(src), -1)
+	if len(sites) < 6 {
+		t.Fatalf("found %d pamLaunchFailure constructions in pam_launch.go. The launch core has "+
+			"more than that, so this test has stopped reading them and would pass while the "+
+			"page leaks.", len(sites))
+	}
+
+	page := tempLinkLaunchFailurePage("11111111-2222-3333-4444-555555555555")
+	rendered := fmt.Sprintf("%v", page)
+
+	literal := regexp.MustCompile(`"([^"]+)"`)
+	codes := 0
+	for _, site := range sites {
+		found := literal.FindAllStringSubmatch(site, -1)
+		if len(found) == 0 {
+			t.Errorf("a pamLaunchFailure with no literal code: %s. The code is what the operator "+
+				"greps for; a computed one cannot be checked here or looked up there.", site)
+			continue
+		}
+		codes++
+		for _, m := range found {
+			if containsFold(rendered, m[1]) {
+				t.Errorf("the anonymous failure page carries %q from the launch core. The vendor "+
+					"can neither cause nor fix a misconfiguration of this deployment, and naming "+
+					"the component that is missing tells them how it is built.", m[1])
+			}
+		}
+	}
+	if codes != len(sites) {
+		t.Errorf("%d of %d failures carry a literal code", codes, len(sites))
+	}
+
+	// What it must carry: the one reference the vendor can quote back, which
+	// they already hold, and which indexes the log line that does say why.
+	if !containsFold(rendered, "11111111-2222-3333-4444-555555555555") {
+		t.Error("the failure page does not name the link, so a vendor reporting it has nothing " +
+			"to quote and the operator has nothing to look up")
+	}
+
+	// The signature is what makes the leak impossible rather than merely absent:
+	// the page is built from the link id alone, so no failure detail is in scope.
+	fn := reflect.TypeOf(tempLinkLaunchFailurePage)
+	if fn.NumIn() != 1 || fn.In(0).Kind() != reflect.String {
+		t.Errorf("tempLinkLaunchFailurePage takes %d argument(s); it must take the link id and "+
+			"nothing else, so a new failure cannot put a new sentence on this page", fn.NumIn())
 	}
 }
 

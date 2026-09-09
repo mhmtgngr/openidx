@@ -375,6 +375,31 @@ func tempAccessURL(proxyDomain, token string) (string, error) {
 	return fmt.Sprintf("https://%s/temp-access/%s", domain, token), nil
 }
 
+// tempLinkLaunchFailurePage is what an anonymous redeemer is shown when the
+// brokered launch fails.
+//
+// THE SIGNATURE IS THE GUARANTEE. It takes the link id and nothing else — not
+// the pamLaunchFailure — so the page cannot vary with the reason, and adding a
+// new failure to the launch core cannot leak a new sentence onto this page.
+//
+// Everything that reaches here is a misconfiguration of THIS deployment: no
+// broker, no overlay, the vault unreachable. The vendor can neither cause it
+// nor fix it, and is not entitled to be told which of those it is — the raw
+// failure names the OpenZiti broker and the credential store, to somebody with
+// no account here. Before this the whole object was serialised to them as JSON,
+// on a route that renders HTML.
+//
+// The link id is deliberately included: it is the one thing the vendor can
+// usefully quote back, they already hold it, and it is the operator's index
+// into the log line and audit row that do carry the reason.
+func tempLinkLaunchFailurePage(linkID string) gin.H {
+	return gin.H{
+		"title": "Session Unavailable",
+		"message": "This session could not be started. Nothing is wrong with your link — ask " +
+			"the person who sent it to check the connection, quoting reference " + linkID + ".",
+	}
+}
+
 // tempLinkNotifyRecipient returns the user id to be told that this link has
 // just been used, or "" when nobody is.
 //
@@ -692,7 +717,7 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 	// reasoning that lets an admin bypass their own approval gate in
 	// handlePamConnect. The link's own limits (window, use cap, IP allowlist)
 	// are what bound it.
-	res, ok := s.launchPamSession(c, linkOrgID, &entry, typeInfo.Protocol, nil,
+	res, fail := s.launchPamSession(c, linkOrgID, &entry, typeInfo.Protocol, nil,
 		"pam-"+entry.ID, entry.GuacConnectionID,
 		func(ctx context.Context, connID string) {
 			if _, err := s.db.Pool.Exec(ctx,
@@ -701,12 +726,16 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 				s.logger.Warn("temp access: connection id persist failed", zap.Error(err))
 			}
 		})
-	if !ok {
-		// launchPamSession has already written its own error. It answers JSON,
-		// which is wrong for a browser that arrived on an HTML route; the paths
-		// that reach here are misconfiguration (no broker, no overlay, vault
-		// unavailable) rather than anything a vendor can cause. Rendering these
-		// as HTML is roadmap V0.5.
+	if fail != nil {
+		// The code and the detail go to the log and the audit row, where the
+		// operator is. The page gets neither — see tempLinkLaunchFailurePage.
+		s.logger.Warn("temp access: launch failed",
+			zap.String("link_id", link.ID), zap.String("code", fail.Code),
+			zap.Int("status", fail.Status), zap.String("detail", fail.Message))
+		s.auditLog(c, "temp_access.launch_failed", map[string]interface{}{
+			"link_id": link.ID, "code": fail.Code, "ip_address": clientIP,
+		})
+		c.HTML(http.StatusServiceUnavailable, "error.html", tempLinkLaunchFailurePage(link.ID))
 		return
 	}
 

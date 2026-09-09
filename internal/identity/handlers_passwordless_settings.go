@@ -13,13 +13,32 @@ import (
 )
 
 // PasswordlessSystemSettings represents the system-wide passwordless authentication settings
+// The whole struct was stored, read back by its own GET, and consulted by
+// nothing: an administrator could turn magic links off for the organization and
+// keep handing them out, because only the PER-USER preference was ever asked.
+// Four of the five settings that remain are now decided in
+// passwordless.go — CreateMagicLink and CreateQRLoginSession consult them
+// before minting anything.
+//
+// TWO ARE GONE rather than wired, because neither named an enforcement point
+// this endpoint owns:
+//
+//   - biometric_only_enabled duplicated PasswordlessPreferences.WebAuthnOnly and
+//     BiometricPreferences.BiometricOnlyEnabled, both per-user and both already
+//     enforced. A third copy at organization scope, with no rule for which wins,
+//     is a switch whose meaning nobody could state.
+//   - require_device_trust named a control that exists and lives elsewhere:
+//     POSTURE_DEVICE_TRUST_GATE, with a posture service behind it. A second flag
+//     with the same name and no gate behind it is how an operator comes to
+//     believe device trust is required when it is not.
+//
+// tools/inertswitch found require_device_trust; the others are its siblings on
+// the same struct, which the census's same-package name suppression hides.
 type PasswordlessSystemSettings struct {
 	MagicLinkEnabled       bool `json:"magic_link_enabled"`
 	MagicLinkExpiryMinutes int  `json:"magic_link_expiry_minutes"`
 	QRLoginEnabled         bool `json:"qr_login_enabled"`
 	QRSessionExpiryMinutes int  `json:"qr_session_expiry_minutes"`
-	BiometricOnlyEnabled   bool `json:"biometric_only_enabled"`
-	RequireDeviceTrust     bool `json:"require_device_trust"`
 	MaxMagicLinksPerHour   int  `json:"max_magic_links_per_hour"`
 }
 
@@ -30,8 +49,6 @@ func defaultPasswordlessSettings() PasswordlessSystemSettings {
 		MagicLinkExpiryMinutes: 15,
 		QRLoginEnabled:         true,
 		QRSessionExpiryMinutes: 5,
-		BiometricOnlyEnabled:   true,
-		RequireDeviceTrust:     false,
 		MaxMagicLinksPerHour:   5,
 	}
 }

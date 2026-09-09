@@ -89,12 +89,12 @@ func TestDeveloperPortal_TenantIsolation(t *testing.T) {
 	// its own back — which the single 'global' row made impossible.
 	t.Run("each organization keeps its own developer settings", func(t *testing.T) {
 		saveA := call(s.handleUpdateDeveloperSettings, orgA, userA, "PUT", "/developer/settings",
-			`{"api_key_max_per_user":3,"rate_limit_default":50,"cors_allowed_origins":["https://a.example.test"],"sandbox_enabled":false}`)
+			`{"api_key_max_per_user":3,"rate_limit_default":50,"cors_allowed_origins":["https://a.example.test"]}`)
 		if saveA.Code != 200 {
 			t.Fatalf("org A save: status %d, body %s", saveA.Code, saveA.Body.String())
 		}
 		saveB := call(s.handleUpdateDeveloperSettings, orgB, userB, "PUT", "/developer/settings",
-			`{"api_key_max_per_user":99,"rate_limit_default":9999,"cors_allowed_origins":["https://evil.example.test"],"sandbox_enabled":true}`)
+			`{"api_key_max_per_user":99,"rate_limit_default":9999,"cors_allowed_origins":["https://evil.example.test"]}`)
 		if saveB.Code != 200 {
 			t.Fatalf("org B save: status %d, body %s", saveB.Code, saveB.Body.String())
 		}
@@ -120,9 +120,6 @@ func TestDeveloperPortal_TenantIsolation(t *testing.T) {
 				"administrator to press Save chose the API-key limits, the CORS "+
 				"origins and the rate limit for every organization",
 				gotA.RateLimitDefault, gotA.APIKeyMaxPerUser)
-		}
-		if gotA.SandboxEnabled {
-			t.Error("org B turned sandbox mode on for org A")
 		}
 		if len(gotA.CORSAllowedOrigins) != 1 || gotA.CORSAllowedOrigins[0] != "https://a.example.test" {
 			t.Errorf("org A's CORS allowlist is %v; org B chose it", gotA.CORSAllowedOrigins)

@@ -277,7 +277,7 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 
 	// Everything from broker selection onward is the shared launch core, reused
 	// by the Windows-app launch path.
-	res, ok := s.launchPamSession(c, org.ID, &entry, typeInfo.Protocol, nil, "pam-"+entry.ID, entry.GuacConnectionID,
+	res, fail := s.launchPamSession(c, org.ID, &entry, typeInfo.Protocol, nil, "pam-"+entry.ID, entry.GuacConnectionID,
 		func(ctx context.Context, connID string) {
 			if _, err := s.db.Pool.Exec(ctx,
 				`UPDATE pam_entries SET guacamole_connection_id = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
@@ -285,7 +285,8 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 				s.logger.Warn("handlePamConnect: persist connection id failed", zap.Error(err))
 			}
 		})
-	if !ok {
+	if fail != nil {
+		fail.writeJSON(c)
 		return
 	}
 
@@ -309,6 +310,39 @@ type pamSessionResult struct {
 	GuacUser   string
 }
 
+// pamLaunchFailure is why a brokered launch did not happen.
+//
+// The launch core used to answer its own failures with c.JSON. Two of its three
+// callers are JSON APIs, so that was right for them and wrong for the third:
+// `GET /temp-access/:token` is an HTML route an outside party opens in a
+// browser, and a vendor whose broker was misconfigured got a raw object
+// reading {"error":"the OpenZiti PAM broker is not configured"} — a page that
+// is both unusable and a description of this deployment's internals to somebody
+// with no account here.
+//
+// So the core decides WHAT failed and each caller decides how to say it: the
+// authenticated APIs render Message and Code, the anonymous page renders
+// neither. Returning the failure rather than writing it is also what makes the
+// distinction impossible to forget — a caller cannot ignore a value the
+// compiler makes it name.
+type pamLaunchFailure struct {
+	Status int
+	// Code is stable and machine-readable. It reaches an authenticated caller
+	// and the server log; never the anonymous redemption page.
+	Code string
+	// Message is operator-facing detail, on the same terms as Code.
+	Message string
+}
+
+// writeJSON answers an authenticated caller, which is entitled to the detail.
+func (f *pamLaunchFailure) writeJSON(c *gin.Context) {
+	body := gin.H{"error": f.Message}
+	if f.Code != "" {
+		body["code"] = f.Code
+	}
+	c.JSON(f.Status, body)
+}
+
 // launchPamSession runs the post-gate brokered-launch core shared by
 // entry-connect (handlePamConnect) and Windows-app launch (handleWindowsAppLaunch):
 // broker selection → credential resolution → vault decrypt → params (entry
@@ -327,7 +361,7 @@ func (s *Service) launchPamSession(
 	c *gin.Context, orgID string, entry *pamLaunchEntry, protocol string,
 	extraSettings map[string]string, connName, existingConnID string,
 	persistConnID func(ctx context.Context, connID string),
-) (*pamSessionResult, bool) {
+) (*pamSessionResult, *pamLaunchFailure) {
 	ctx := c.Request.Context()
 	userID := c.GetString("user_id")
 
@@ -339,21 +373,17 @@ func (s *Service) launchPamSession(
 	broker := s.brokerFor(entry.ReachMode)
 	if broker == nil {
 		if entry.ReachMode == "ziti" {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error": "the OpenZiti PAM broker is not configured", "code": "ziti_broker_unconfigured"})
-			return nil, false
+			return nil, &pamLaunchFailure{http.StatusServiceUnavailable,
+				"ziti_broker_unconfigured", "the OpenZiti PAM broker is not configured"}
 		}
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "no session broker is configured", "code": "broker_unconfigured"})
-		return nil, false
+		return nil, &pamLaunchFailure{http.StatusServiceUnavailable,
+			"broker_unconfigured", "no session broker is configured"}
 	}
 	// A ziti-reach entry also needs a live overlay to carry the target hop;
 	// without it the loopback intercept dials nothing. Fail closed with a code.
 	if entry.ReachMode == "ziti" && s.ziti() == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "OpenZiti overlay is unavailable for this Ziti-reach connection",
-			"code":  "ziti_unavailable"})
-		return nil, false
+		return nil, &pamLaunchFailure{http.StatusServiceUnavailable, "ziti_unavailable",
+			"OpenZiti overlay is unavailable for this Ziti-reach connection"}
 	}
 
 	// Resolve the credential source (own secret or linked credential entry).
@@ -361,8 +391,7 @@ func (s *Service) launchPamSession(
 	if err != nil {
 		s.logger.Warn("launchPamSession: credential resolution failed",
 			zap.String("entry_id", logsafe.Clean(entry.ID)), zap.Error(err))
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		return nil, false
+		return nil, &pamLaunchFailure{http.StatusConflict, "credential_unresolved", err.Error()}
 	}
 
 	// Decrypt server-side. The plaintext never enters any response or log.
@@ -374,8 +403,8 @@ func (s *Service) launchPamSession(
 		if err != nil {
 			s.logger.Warn("launchPamSession: vault credential unavailable",
 				zap.String("secret_id", target.SecretID), zap.Error(err))
-			c.JSON(http.StatusForbidden, gin.H{"error": "credential unavailable"})
-			return nil, false
+			return nil, &pamLaunchFailure{http.StatusForbidden, "credential_unavailable",
+				"credential unavailable"}
 		}
 		// bctx carries an explicit bypass, so the tenant term is the only scoping
 		// on this read; the directive it replaces named the bypass as the reason.
@@ -419,8 +448,8 @@ func (s *Service) launchPamSession(
 	if err != nil {
 		s.logger.Error("launchPamSession: guacamole connection failed",
 			zap.String("entry_id", logsafe.Clean(entry.ID)), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare session"})
-		return nil, false
+		return nil, &pamLaunchFailure{http.StatusInternalServerError, "session_prepare_failed",
+			"failed to prepare session"}
 	}
 
 	if injected {
@@ -449,7 +478,7 @@ func (s *Service) launchPamSession(
 	return &pamSessionResult{
 		ConnectURL: connectURL, ConnID: connID, SessionID: sessionID,
 		Injected: injected, GuacUser: guacUser,
-	}, true
+	}, nil
 }
 
 // decodePamSettings unmarshals a settings JSONB blob, tolerating NULL/garbage.

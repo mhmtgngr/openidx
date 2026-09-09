@@ -57,7 +57,6 @@ interface ApiDeveloperSettings {
   webhook_max_retries: number
   cors_allowed_origins: string[]
   rate_limit_default: number
-  sandbox_enabled: boolean
 }
 
 // "90d" <-> 90. "0"/"" -> 0 (never expires).
@@ -90,7 +89,7 @@ function fromApi(a: ApiDeveloperSettings): DeveloperSettings {
   }
 }
 
-function toApi(s: DeveloperSettings, sandboxEnabled: boolean): ApiDeveloperSettings {
+function toApi(s: DeveloperSettings): ApiDeveloperSettings {
   return {
     api_key_max_per_user: s.api_keys.max_keys_per_user,
     api_key_default_expiry: daysToExpiry(s.api_keys.default_expiry_days),
@@ -99,7 +98,6 @@ function toApi(s: DeveloperSettings, sandboxEnabled: boolean): ApiDeveloperSetti
     webhook_max_retries: s.webhooks.max_retries,
     cors_allowed_origins: s.cors.allowed_origins,
     rate_limit_default: s.rate_limits.default_rate_limit,
-    sandbox_enabled: sandboxEnabled,
   }
 }
 
@@ -158,7 +156,7 @@ export function DeveloperSettingsPage() {
 
   const updateMutation = useMutation({
     mutationFn: (data: DeveloperSettings) =>
-      api.put('/api/v1/developer/settings', toApi(data, apiSettings?.sandbox_enabled ?? false)),
+      api.put('/api/v1/developer/settings', toApi(data)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['developer-settings'] })
       toast({

@@ -181,12 +181,19 @@ Order is by risk, and each item is independently shippable.
    `validateAllowedIPs` rejects a malformed entry at creation, naming the field.
    16 + 7 table cases; the old behaviour was exact string equality, so every
    CIDR entry silently matched nobody.
-5. **Fail closed.** *Half done, as a side effect of V0.1:* the anonymous
-   fallback page that printed the target's host, port and username to whoever
-   opened the link is gone — redemption now either brokers a session or renders
-   an error with no target detail. **Remaining:** `launchPamSession`'s failures
-   still answer JSON on an HTML route (`temp_access.go`, after the `!ok`), so a
-   vendor whose broker is misconfigured gets a raw object rather than a page.
+5. ~~**Fail closed.**~~ **Done, in two halves.** The anonymous fallback page
+   that printed the target's host, port and username to whoever opened the link
+   went with V0.1: redemption now either brokers a session or renders an error
+   with no target detail. The second half was `launchPamSession` answering its
+   own failures with `c.JSON` — right for its two authenticated callers, wrong
+   for the third, so a vendor whose broker was misconfigured received
+   `{"error":"the OpenZiti PAM broker is not configured"}` as their page: both
+   unusable and a description of this deployment's internals to somebody with no
+   account here. The launch core now RETURNS a `pamLaunchFailure` and each
+   caller renders it in its own medium; the anonymous page is built by
+   `tempLinkLaunchFailurePage(linkID)`, whose signature is the guarantee — it
+   cannot vary with the reason, and the code and detail go to the log and the
+   audit row instead.
 6. ~~**Refuse to start with the placeholder domain.**~~ **Done, and it was worse
    than written.** The fallback only applied to an *empty* `access_proxy_domain`
    — but the setting defaults to `localhost`, so the common case issued
@@ -197,10 +204,29 @@ Order is by risk, and each item is independently shippable.
    chart sets `ACCESS_PROXY_DOMAIN` from the API ingress host instead of leaving
    the in-code default. An empty value is refused at issuance instead, naming the
    setting.
-7. **A guard, so this cannot recur.** The pattern here — a column written,
-   selected and never compared — is mechanically detectable. Extend the existing
-   unread-config census idea to struct fields on request objects: a field that
-   is stored and read back but never appears in a conditional is a finding.
+7. ~~**A guard, so this cannot recur.**~~ **Done: `tools/inertswitch`**, wired
+   into CI as a required check. It holds the bool fields a caller can set —
+   derived from the types this tree binds with `ShouldBindJSON` and friends, so
+   nothing has to be remembered onto a list — next to the fields something
+   actually *decides* on, and subtracts. `tools/deadconfig` cannot see this
+   class: that census asks whether a field has a READER, and these have several
+   (the INSERT, the Scan, the JSON response). What they never have is a decider.
+
+   Transfers into a model struct are followed, so the ordinary shape does not
+   report; two blind spots — a value that round-trips through the database into
+   a different struct, and a decision made in SQL — are suppressed rather than
+   guessed at, both in the direction of silence. The suppression is
+   package-scoped, and that is load-bearing: `internal/oauth` decides on a field
+   called `RequireMFA`, so a bare-name rule excused `internal/access`'s
+   `require_mfa` — the switch the tool exists for. Proved by putting that field
+   back and watching the gate go red.
+
+   Its first run over the tree found two more, both fixed rather than
+   registered: `sandbox_enabled` on the developer-settings API (stored,
+   returned, round-tripped by a console that never rendered it, enabling no
+   sandbox) and the entire system-wide passwordless settings object, where an
+   administrator could turn magic links off for the organization and keep
+   handing them out because only the per-user preference was ever asked.
 
 Each item needs a red proof, as everything else on this branch has.
 
