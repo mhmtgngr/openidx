@@ -1,14 +1,16 @@
 package access
 
 import (
-	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // structFieldNames lists a struct's field names by reflection, so the check
@@ -253,6 +255,75 @@ func TestABadAllowlistIsRefusedAtCreation(t *testing.T) {
 	}
 }
 
+// TestEveryRefusalOnThisRouteActuallyRenders.
+//
+// The gates decided correctly and could not say so. Every refusal here was
+// `c.HTML(status, "error.html", …)` — not found, expired, revoked, address not
+// allowed, legacy, target unavailable, ZTNA denied — and NOTHING in this
+// repository has ever registered a template renderer: no LoadHTMLGlob, no
+// LoadHTMLFiles, no SetHTMLTemplate, and no error.html file. gin's HTMLRender
+// was nil, so each of those calls dereferenced it and panicked. The vendor got
+// a dropped request or a bare 500 from the recovery middleware; the reason
+// their access was refused never reached them, and neither did the one for a
+// revoked link, which is the refusal an operator reaches for when a link leaks.
+//
+// It is this branch's defect class pointed the other way: enforcing without
+// displaying. The renderer writes the page itself for that reason — it cannot
+// depend on a deployment step nobody performs.
+func TestEveryRefusalOnThisRouteActuallyRenders(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		title   string
+		message string
+	}{
+		{"expired", http.StatusGone, "Access Link Expired", "This access link has expired."},
+		{"revoked", http.StatusForbidden, "Access Link Revoked", "This link was revoked."},
+		{"address", http.StatusForbidden, "Access Denied", "Your IP address is not authorized."},
+		{"not found", http.StatusNotFound, "Access Link Not Found", "Invalid or removed."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// No template registered, deliberately: this is production's state.
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			renderTempAccessError(c, tc.status, tc.title, tc.message)
+
+			if w.Code != tc.status {
+				t.Errorf("status = %d, want %d", w.Code, tc.status)
+			}
+			body := w.Body.String()
+			if !containsFold(body, tc.title) || !containsFold(body, tc.message) {
+				t.Errorf("the refusal does not carry its own reason. body: %q", body)
+			}
+			if !containsFold(body, "<!doctype html>") {
+				t.Errorf("a browser arrived on an HTML route and got: %q", body)
+			}
+		})
+	}
+}
+
+// TestNoRefusalGoesBackThroughTheTemplateRenderer. The fix above is only as
+// durable as the next person's habit: c.HTML is the obvious thing to write, and
+// it will panic again the moment it is. Nothing registers a template, so a
+// finding here is a refusal that cannot reach anybody.
+func TestNoRefusalGoesBackThroughTheTemplateRenderer(t *testing.T) {
+	src, err := os.ReadFile("temp_access.go")
+	if err != nil {
+		t.Fatalf("cannot read the handler: %v", err)
+	}
+	for i, line := range strings.Split(string(src), "\n") {
+		code := strings.TrimSpace(line)
+		if strings.HasPrefix(code, "//") {
+			continue // the comment explaining this is allowed to name it
+		}
+		if strings.Contains(code, "c.HTML(") {
+			t.Errorf("temp_access.go:%d calls c.HTML. There is no template renderer in this "+
+				"repository and no error.html, so that call panics on a nil HTMLRender and the "+
+				"vendor is told nothing. Use renderTempAccessError.\n  %s", i+1, code)
+		}
+	}
+}
+
 // TestTheVendorIsNotToldHowThisDeploymentIsBroken.
 //
 // The launch core answered its own failures with c.JSON. Two of its three
@@ -282,8 +353,28 @@ func TestTheVendorIsNotToldHowThisDeploymentIsBroken(t *testing.T) {
 			"page leaks.", len(sites))
 	}
 
-	page := tempLinkLaunchFailurePage("11111111-2222-3333-4444-555555555555")
-	rendered := fmt.Sprintf("%v", page)
+	// Rendered the way production renders it: a gin context with NO template
+	// registered, which is the state the product actually runs in — nothing in
+	// this repository ever registers one. Until this change the refusal went
+	// through c.HTML and panicked on the nil HTMLRender, so the vendor never
+	// saw a reason for anything: not this failure, not an expired link, not a
+	// refused address.
+	const linkID = "11111111-2222-3333-4444-555555555555"
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	title, message := tempLinkLaunchFailurePage(linkID)
+	renderTempAccessError(c, http.StatusServiceUnavailable, title, message)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !containsFold(ct, "text/html") {
+		t.Errorf("Content-Type = %q; a browser arrived on an HTML route", ct)
+	}
+	rendered := w.Body.String()
+	if rendered == "" {
+		t.Fatal("the refusal rendered an empty body")
+	}
 
 	literal := regexp.MustCompile(`"([^"]+)"`)
 	codes := 0
@@ -309,7 +400,7 @@ func TestTheVendorIsNotToldHowThisDeploymentIsBroken(t *testing.T) {
 
 	// What it must carry: the one reference the vendor can quote back, which
 	// they already hold, and which indexes the log line that does say why.
-	if !containsFold(rendered, "11111111-2222-3333-4444-555555555555") {
+	if !containsFold(rendered, linkID) {
 		t.Error("the failure page does not name the link, so a vendor reporting it has nothing " +
 			"to quote and the operator has nothing to look up")
 	}

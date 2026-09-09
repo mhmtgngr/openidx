@@ -194,6 +194,14 @@ Order is by risk, and each item is independently shippable.
    `tempLinkLaunchFailurePage(linkID)`, whose signature is the guarantee — it
    cannot vary with the reason, and the code and detail go to the log and the
    audit row instead.
+
+   *Found on the way, and worse:* **none of this route's refusals had ever
+   rendered.** All six were `c.HTML(status, "error.html", …)` and nothing in the
+   repository registers a template renderer — no `LoadHTMLGlob`, no
+   `SetHTMLTemplate`, no `error.html`. gin's `HTMLRender` was nil, so every
+   refusal panicked: expired, revoked, address not allowed, all decided right
+   and none able to say so. `renderTempAccessError` writes the page itself, and
+   a test drives each refusal through a context with no template registered.
 6. ~~**Refuse to start with the placeholder domain.**~~ **Done, and it was worse
    than written.** The fallback only applied to an *empty* `access_proxy_domain`
    — but the setting defaults to `localhost`, so the common case issued

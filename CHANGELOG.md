@@ -474,6 +474,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the anonymous page renders neither — it says the session could not start and
     gives the link id to quote, while the reason goes to the log and the audit
     row, where the operator is.
+  - **And none of those refusals had ever rendered at all.** Every one was
+    `c.HTML(status, "error.html", …)`, and nothing in this repository has ever
+    registered a template renderer — no `LoadHTMLGlob`, no `LoadHTMLFiles`, no
+    `SetHTMLTemplate`, and no `error.html` file. gin's `HTMLRender` was nil, so
+    each call dereferenced it and panicked: an expired link, a revoked one, an
+    address off the allowlist, all decided correctly and none of them able to
+    say so. The vendor got a dropped request or a bare 500 from the recovery
+    middleware. The refusals now write their own page, which is what makes them
+    independent of a deployment step nobody performs, and a test drives each one
+    through a context with no template registered — production's actual state.
 
 - **A guard for switches that decide nothing, and the two it found**
   (`tools/inertswitch`, a required check). `require_mfa` and `notify_on_use`

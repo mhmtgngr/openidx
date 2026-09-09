@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -375,6 +376,49 @@ func tempAccessURL(proxyDomain, token string) (string, error) {
 	return fmt.Sprintf("https://%s/temp-access/%s", domain, token), nil
 }
 
+// renderTempAccessError writes the page an anonymous redeemer is shown when
+// their link is refused.
+//
+// NOT c.HTML, and that is the whole point. Every refusal on this route was
+// written as `c.HTML(status, "error.html", …)` — six of them: not found,
+// expired, revoked, IP not allowed, legacy, target unavailable, ZTNA denied.
+// Nothing in this repository has ever registered a template renderer
+// (no LoadHTMLGlob, no LoadHTMLFiles, no SetHTMLTemplate anywhere) and no
+// error.html exists, so gin's HTMLRender was nil and every one of those calls
+// dereferenced it and panicked. The decisions were right; the vendor got a
+// dropped request or a bare 500 from the recovery middleware, and never the
+// reason.
+//
+// It is the branch's defect class once more, this time in the other direction:
+// the control enforces and cannot say so. Writing the page directly is what
+// makes it independent of a deployment step nobody performs — there is one page
+// shape here, so a template registry buys nothing and costs a whole class of
+// silent failure.
+//
+// Both values are escaped: title and message are ours today, but message
+// carries checkPamZTNA's reason and the link id, and a page that interpolates
+// anything from a row into markup without escaping is one migration away from
+// being a hole.
+func renderTempAccessError(c *gin.Context, status int, title, message string) {
+	page := fmt.Sprintf(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>%s</title>
+<style>
+ body{font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:#1f2933;
+      background:#f5f7fa;margin:0;display:flex;min-height:100vh;
+      align-items:center;justify-content:center;padding:24px}
+ main{background:#fff;border:1px solid #d9e2ec;border-radius:12px;
+      padding:32px;max-width:34rem}
+ h1{font-size:1.25rem;margin:0 0 12px}
+ p{margin:0;color:#3e4c59}
+</style></head>
+<body><main><h1>%s</h1><p>%s</p></main></body></html>
+`, template.HTMLEscapeString(title), template.HTMLEscapeString(title),
+		template.HTMLEscapeString(message))
+	c.Data(status, "text/html; charset=utf-8", []byte(page))
+}
+
 // tempLinkLaunchFailurePage is what an anonymous redeemer is shown when the
 // brokered launch fails.
 //
@@ -392,12 +436,10 @@ func tempAccessURL(proxyDomain, token string) (string, error) {
 // The link id is deliberately included: it is the one thing the vendor can
 // usefully quote back, they already hold it, and it is the operator's index
 // into the log line and audit row that do carry the reason.
-func tempLinkLaunchFailurePage(linkID string) gin.H {
-	return gin.H{
-		"title": "Session Unavailable",
-		"message": "This session could not be started. Nothing is wrong with your link — ask " +
-			"the person who sent it to check the connection, quoting reference " + linkID + ".",
-	}
+func tempLinkLaunchFailurePage(linkID string) (title, message string) {
+	return "Session Unavailable",
+		"This session could not be started. Nothing is wrong with your link — ask " +
+			"the person who sent it to check the connection, quoting reference " + linkID + "."
 }
 
 // tempLinkNotifyRecipient returns the user id to be told that this link has
@@ -611,16 +653,14 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 		&link.GuacConnectionID, &link.Status, &linkOrgID,
 	)
 	if err != nil {
-		c.HTML(http.StatusNotFound, "error.html", gin.H{
-			"title":   "Access Link Not Found",
-			"message": "This access link is invalid or has been removed.",
-		})
+		renderTempAccessError(c, http.StatusNotFound, "Access Link Not Found",
+			"This access link is invalid or has been removed.")
 		return
 	}
 
 	clientIP := c.ClientIP()
 	if v := tempLinkGate(link, clientIP, time.Now()); v.Refuse {
-		c.HTML(v.Status, "error.html", gin.H{"title": v.Title, "message": v.Message})
+		renderTempAccessError(c, v.Status, v.Title, v.Message)
 		return
 	}
 
@@ -634,11 +674,9 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 		s.auditLog(c, "temp_access.refused_legacy", map[string]interface{}{
 			"link_id": link.ID, "ip_address": clientIP,
 		})
-		c.HTML(http.StatusGone, "error.html", gin.H{
-			"title": "Access Link Must Be Re-Issued",
-			"message": "This link was created before privileged sessions were required to run " +
-				"through the brokered launch path. Ask the person who sent it to create a new one.",
-		})
+		renderTempAccessError(c, http.StatusGone, "Access Link Must Be Re-Issued",
+			"This link was created before privileged sessions were required to run through the "+
+				"brokered launch path. Ask the person who sent it to create a new one.")
 		return
 	}
 
@@ -692,10 +730,8 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 	if err != nil {
 		s.logger.Warn("temp access: target entry unavailable",
 			zap.String("link_id", link.ID), zap.Error(err))
-		c.HTML(http.StatusGone, "error.html", gin.H{
-			"title":   "Target Unavailable",
-			"message": "The target this link points at is no longer available.",
-		})
+		renderTempAccessError(c, http.StatusGone, "Target Unavailable",
+			"The target this link points at is no longer available.")
 		return
 	}
 
@@ -703,10 +739,7 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 	// the same reason as handlePamConnect. userID is empty: the actor here is the
 	// link, and the audit row carries its id.
 	if v := s.checkPamZTNA(c, linkOrgID, "", entry.ID, entry.ReachMode, typeInfo.Protocol); v.Refuse {
-		c.HTML(http.StatusForbidden, "error.html", gin.H{
-			"title":   "Access Denied",
-			"message": v.Reason,
-		})
+		renderTempAccessError(c, http.StatusForbidden, "Access Denied", v.Reason)
 		return
 	}
 
@@ -735,7 +768,8 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 		s.auditLog(c, "temp_access.launch_failed", map[string]interface{}{
 			"link_id": link.ID, "code": fail.Code, "ip_address": clientIP,
 		})
-		c.HTML(http.StatusServiceUnavailable, "error.html", tempLinkLaunchFailurePage(link.ID))
+		failTitle, failMessage := tempLinkLaunchFailurePage(link.ID)
+		renderTempAccessError(c, http.StatusServiceUnavailable, failTitle, failMessage)
 		return
 	}
 

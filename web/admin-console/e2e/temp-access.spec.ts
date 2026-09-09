@@ -154,11 +154,38 @@ test.describe('Temporary Access Links', () => {
     }
   });
 
-  test('should create SSH temp access link for 10.0.0.10', async ({ page }) => {
-    // Mock the create endpoint with verification
+  // A link names a PAM CONNECTION, not a hostname typed into the form.
+  //
+  // This test used to fill a `10.0.0.10` host field. That field is gone: the
+  // target is now a pam_entries row, and everything that decides how the
+  // session is brokered — reach mode, session recording, the vault credential —
+  // lives on it. A link typed as host+port could inherit none of that, which is
+  // why redemption used to go around every one of those controls.
+  test('should create an SSH temp access link against a PAM connection', async ({ page }) => {
+    // The picker is populated from the PAM entries API; without this the select
+    // has only its placeholder and there is nothing to choose.
+    await page.route('**/api/v1/access/pam/entries**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          entries: [{
+            id: '9f1c2d3e-4a5b-4c6d-8e9f-0a1b2c3d4e5f',
+            name: 'bastion-01',
+            kind: 'session',
+            entry_type: 'ssh',
+            hostname: '10.0.0.10',
+            port: 22,
+            ziti_enabled: true,
+          }],
+        }),
+      });
+    });
+
+    let posted: Record<string, unknown> | null = null;
     await page.route('**/api/v1/access/temp-access', async (route) => {
       if (route.request().method() === 'POST') {
-        const body = route.request().postDataJSON();
+        posted = route.request().postDataJSON();
 
         await route.fulfill({
           status: 201,
@@ -166,13 +193,14 @@ test.describe('Temporary Access Links', () => {
           body: JSON.stringify({
             id: 'new-ssh-link',
             token: 'secure-token-abc123',
-            name: body.name,
-            protocol: body.protocol || 'ssh',
-            target_host: body.target_host || '10.0.0.10',
-            target_port: body.target_port || 22,
+            name: (posted as { name?: string }).name,
+            pam_entry_id: (posted as { pam_entry_id?: string }).pam_entry_id,
+            protocol: 'ssh',
+            target_host: '10.0.0.10',
+            target_port: 22,
             expires_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
             status: 'active',
-            access_url: 'https://browzer.localtest.me/temp-access/secure-token-abc123',
+            access_url: 'https://vendor.example.com/temp-access/secure-token-abc123',
             created_at: new Date().toISOString(),
           }),
         });
@@ -201,17 +229,23 @@ test.describe('Temporary Access Links', () => {
       // Wait for dialog to open
       await expect(page.getByText('Create Temporary Access Link')).toBeVisible({ timeout: 5000 });
 
-      // Fill the form using actual placeholders
       await page.getByPlaceholder('Vendor SSH Access').fill('Vendor SSH Access');
-      await page.getByPlaceholder('10.0.0.10').fill('10.0.0.10');
 
-      // Protocol is already SSH by default
+      // The target: a connection that already exists, chosen from the picker.
+      // Protocol, host and port come from that row, so the form no longer asks.
+      await page.locator('#ziti-network-temp-entry')
+        .selectOption('9f1c2d3e-4a5b-4c6d-8e9f-0a1b2c3d4e5f');
 
-      // Submit the form
       await page.getByRole('button', { name: /create access link/i }).click();
 
-      // Verify success (dialog should close and we should see the link in the list or a toast)
-      await page.waitForTimeout(500);
+      // What the server is actually asked for is the part worth asserting: the
+      // entry id, and no hand-typed target beside it.
+      await expect.poll(() => posted, { timeout: 5000 }).not.toBeNull();
+      expect(posted).toMatchObject({
+        name: 'Vendor SSH Access',
+        pam_entry_id: '9f1c2d3e-4a5b-4c6d-8e9f-0a1b2c3d4e5f',
+      });
+      expect(posted).not.toHaveProperty('target_host');
     }
   });
 
