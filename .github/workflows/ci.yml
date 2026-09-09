@@ -159,6 +159,16 @@ jobs:
         run: bash scripts/check-go-toolchain-pin.test.sh
       - name: Every setup-go step installs the toolchain go.mod pins
         run: bash scripts/check-go-toolchain-pin.sh --enforce
+      - name: Verify the Windows-test guard can go red
+        run: bash scripts/check-windows-tests-run.test.sh
+      - name: A //go:build windows test must have a job that runs it
+        # A Windows-tagged test file is compiled out on Linux, so `go test ./...`
+        # on ubuntu reports the package ok having executed none of it. The only
+        # runner is windows-client-build.yml's windows-latest job, and its
+        # package list was typed by hand — it had lost internal/plugin and
+        # internal/remotesupport while carrying internal/authstore, which has no
+        # Windows-only code at all.
+        run: bash scripts/check-windows-tests-run.sh --enforce
       - name: Verify the run-block guard can go red
         run: bash scripts/check-run-blocks-can-fail.test.sh
       - name: A gate in a run block without -e must exit 1 itself

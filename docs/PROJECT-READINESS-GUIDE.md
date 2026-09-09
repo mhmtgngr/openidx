@@ -397,11 +397,20 @@ product; either wire them or remove them from the UI.
   can rewrite a DACL whatever it currently says. TrustedInstaller and read-and-
   execute for Users are deliberately allowed: they are the `%ProgramFiles%`
   default, and a check that refuses the ordinary installation layout is a check
-  that gets switched off. The tests run on the Windows runner
-  (`windows-client-build.yml` runs `go test ./...` for the agent module), build
-  their fixtures as protected DACLs so nothing is inherited from the runner, and
-  include the case a refuse-everything implementation would also pass — a
-  privileged-only tree that must load. Nothing sets `plugin_dir`, so no shipped
+  that gets switched off. The tests build their fixtures as protected DACLs so
+  nothing is inherited from the runner, and include the case a refuse-everything
+  implementation would also pass — a privileged-only tree that must load.
+  **They did not run at first, and finding that out is the rest of this entry.**
+  A `//go:build windows` file is compiled out on Linux, so the only runner that
+  can execute one is `windows-client-build.yml`'s windows-latest job — and that
+  job named its packages by hand. The list had lost `agent/internal/plugin` and
+  `agent/internal/remotesupport` (whose test asserts the Win32 `INPUT` struct is 40
+  bytes, because if it drifts `SendInput` silently no-ops) while carrying
+  `agent/internal/authstore`, which has no Windows-only code at all. Both missing
+  tests had never executed anywhere, and CI was green throughout — the
+  organising defect class arriving through a build tag. The step derives its
+  list from the build tags now, and `scripts/check-windows-tests-run.sh` (six
+  self-test cases) fails the build if it goes back to being typed. Nothing sets `plugin_dir`, so no shipped
   configuration is affected either way.
 
 - **A17 — The local control socket was world-connectable for one syscall, and

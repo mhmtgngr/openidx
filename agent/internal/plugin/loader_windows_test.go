@@ -20,9 +20,13 @@ import (
 // plugin's own directory, and the executable — and a check applied to only some
 // of them is a check on none.
 //
-// windows-client-build.yml runs `go test ./...` for the whole agent module on a
-// Windows runner, so these actually execute rather than being a description of
-// what would happen.
+// windows-client-build.yml's windows-latest job derives the packages it tests
+// from //go:build windows test files, so these execute on a real Windows runner.
+//
+// They did not at first: that list was typed by hand and did not name this
+// package, and a Windows-tagged file is compiled out on Linux — so these ran
+// nowhere while CI reported success. scripts/check-windows-tests-run.sh now
+// fails the build if the list goes back to being typed.
 
 // layout writes a minimal plugin under root and returns the plugin directory
 // and the executable, so a test can re-permission any of the three paths.

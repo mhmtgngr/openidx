@@ -10,12 +10,19 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// These run on a real Windows runner: windows-client-build.yml runs
-// `go test ./...` for the whole agent module. That matters more here than
-// anywhere else in this package, because the thing under test is an ACL, and an
-// ACL check written against a mental model of Windows rather than Windows is the
-// failure this file replaced — trust_windows.go used to refuse every path,
-// deliberately, because the check did not exist.
+// These run on a real Windows runner, which matters more here than anywhere
+// else in this package: the thing under test is an ACL, and an ACL check written
+// against a mental model of Windows rather than Windows is the failure this file
+// replaced — trust_windows.go used to refuse every path, deliberately, because
+// the check did not exist.
+//
+// "Run on a real Windows runner" was not true when these were written. The
+// windows-latest job in windows-client-build.yml names the packages it tests,
+// that list was typed by hand, and it did not include this one — so a
+// //go:build windows file compiled out on Linux and executed nowhere, while CI
+// went green. The list is derived from the build tags now, and
+// scripts/check-windows-tests-run.sh fails the build if it goes back to being
+// typed.
 //
 // Every fixture sets a PROTECTED DACL, so the ACL under test is exactly the
 // entries named and never something the runner's directory happened to inherit.

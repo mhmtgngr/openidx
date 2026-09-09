@@ -193,10 +193,43 @@ jobs:
       # Scoped to the packages with Windows-specific behaviour rather than the
       # whole module: this job's purpose is the MSI, and a broad Windows test
       # run would be a second, slower copy of the Linux one.
+      #
+      # THE LIST IS DERIVED, and it has to be. It used to be three package paths
+      # typed by hand, and a hand-typed list is the thing that silently loses an
+      # entry: it named internal/authstore, which has no //go:build windows file
+      # at all and was therefore a second copy of its own Linux run, while
+      # MISSING internal/remotesupport — whose test asserts the Win32 INPUT
+      # struct is 40 bytes, because if it drifts SendInput silently no-ops — and
+      # internal/plugin, whose test decides whether a path is safe for the
+      # SYSTEM service to execute from. Both had never run anywhere: a
+      # //go:build windows test file is compiled out on Linux, so a package this
+      # step does not name has no runner at all.
+      #
+      # Deriving it from the build tags means adding a Windows test is enough to
+      # get it run. scripts/check-windows-tests-run.sh keeps this step from
+      # going back to a literal list.
       - name: go test (Windows-only behaviour)
         working-directory: agent
         shell: bash
-        run: go test ./internal/secretfile/... ./internal/control/... ./internal/authstore/...
+        run: |
+          set -euo pipefail
+          mapfile -t pkgs < <(grep -rl --include='*_test.go' -E '^//go:build windows' . \
+                              | xargs -n1 dirname | sort -u)
+          if [ "${#pkgs[@]}" -eq 0 ]; then
+            echo "::error::No //go:build windows test files found in the agent module. Either the"
+            echo "::error::build-tag spelling changed, or this step is about to test nothing and"
+            echo "::error::report success — which is the failure it exists to prevent."
+            exit 1
+          fi
+          printf 'Windows-only test packages (derived from //go:build windows):\n'
+          printf '  %s\n' "${pkgs[@]}"
+          # -short because this job is for Windows-only behaviour, not a second
+          # copy of the cross-platform suite the Linux job already ran. It skips
+          # exactly one test across these packages — remotesupport's ICE
+          # negotiation, which marked itself testing.Short() — and no
+          # //go:build windows test gates on it, so nothing this step exists for
+          # is skipped.
+          go test -short "${pkgs[@]}"
 
       # Native deps for the real screen-share build (VP8 encode via libvpx +
       # pkg-config + the mingw C toolchain the CGO binding uses). This is now a

@@ -536,10 +536,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refused rather than assumed harmless. The account this process already runs as
   is trusted for the same reason the Unix half does not compare ownership against
   the uid: a file only that identity can write is not a new way to control the
-  process. Tests run on the Windows runner — `windows-client-build.yml` runs
-  `go test ./...` for the agent module — build their fixtures as protected DACLs
-  so nothing is inherited from the runner, and cover the case a refuse-everything
-  implementation would also have passed: a privileged-only tree that must load.
+  process. Tests build their fixtures as protected DACLs so nothing is inherited from the
+  runner, and cover the case a refuse-everything implementation would also have
+  passed: a privileged-only tree that must load. They did not run at first: a
+  `//go:build windows` file is compiled out on Linux, and the only job that can
+  execute one named its packages by hand — a list that had lost `agent/internal/plugin`
+  and `internal/remotesupport` while carrying `agent/internal/authstore`, which has no
+  Windows-only code. The list is derived from the build tags now, and
+  `scripts/check-windows-tests-run.sh` keeps it that way.
   Nothing in the repository sets `plugin_dir` — it is read in one place and
   written nowhere — so no shipped configuration is affected either way.
 
