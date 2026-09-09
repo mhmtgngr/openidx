@@ -289,6 +289,7 @@ Archival, not here: they are per organization.
 | `APISIX_CONFIG_PATH` | path | - | APISIX config file the bootstrapper writes. |
 | `BROWZER_ENABLED` | bool | `false` | Manage a BrowZer bootstrapper for clientless access. |
 | `BROWZER_CLIENT_ID` | string | `browzer-client` | OAuth client BrowZer uses. |
+| `ACCESS_PROXY_DOMAIN` | string | `localhost` | Externally reachable host of the access proxy. It is the host of every temporary vendor-access link, so it must be a name the **outside party** can resolve. Production refuses a loopback value (`localhost`, `127.0.0.0/8`, `::1`, `*.localtest.me`, `*.nip.io`): a link built from one opens the recipient's own machine. Left empty, link issuance refuses with a message naming this setting. |
 
 `ZITI_*`, `BROWZER_*` and `GUACAMOLE_*` have more variables than are useful to
 list here; `internal/common/config/config.go` carries the complete set with a
@@ -466,7 +467,9 @@ on any of:
 - `DATABASE_SSL_MODE=disable`;
 - the default administrator password still in place;
 - `DEV_ADMIN_BYPASS=true` or `DEBUG_OTP_IN_RESPONSE=true`;
-- `SMS_ENABLED=true` with `SMS_PROVIDER=mock`.
+- `SMS_ENABLED=true` with `SMS_PROVIDER=mock`;
+- an `ACCESS_PROXY_DOMAIN` that resolves to loopback — the temporary access
+  links built from it would open the recipient's own machine.
 
 It also **reports** every enforcement gate still in report mode, so the gap
 between what the console displays and what the product enforces is visible at
@@ -482,6 +485,7 @@ startup rather than discovered later.
 - [ ] `ENABLE_RATE_LIMIT=true`
 - [ ] The enforcement gates moved off `off` — in `observe` first, then `enforce`
 - [ ] `OIDX_TRUSTED_PROXIES` set to the real proxies, so the client IP in the audit trail is the client's
+- [ ] `ACCESS_PROXY_DOMAIN` set to a name an outside party can resolve, if temporary vendor access is used
 - [ ] Tracing and audit forwarding pointed somewhere that is read
 - [ ] `ENCRYPTION_KEY` backed up somewhere that survives the database
 - [ ] Backups scheduled and a restore rehearsed

@@ -46,6 +46,7 @@ func TestTempAccess_TenantIsolation(t *testing.T) {
 			current_uses INTEGER DEFAULT 0,
 			allowed_ips TEXT[],
 			require_mfa BOOLEAN DEFAULT false,
+			pam_entry_id UUID,
 			notify_on_use BOOLEAN DEFAULT false,
 			notify_email VARCHAR(255),
 			route_id UUID,

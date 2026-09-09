@@ -27,8 +27,16 @@ type DeveloperSettings struct {
 	WebhookMaxRetries   int      `json:"webhook_max_retries"`
 	CORSAllowedOrigins  []string `json:"cors_allowed_origins"`
 	RateLimitDefault    int      `json:"rate_limit_default"`
-	SandboxEnabled      bool     `json:"sandbox_enabled"`
 }
+
+// sandbox_enabled was here, between rate_limit_default and the closing brace: a
+// bool the API accepted, stored in the settings blob, returned on every read,
+// and round-tripped unchanged by the console — which never rendered a control
+// for it either. Nothing in the product ever consulted it, so there was no
+// sandbox to enable. tools/inertswitch found it; withdrawing the field is the
+// answer rather than registering it, because a caller that keeps sending
+// sandbox_enabled now gets it ignored explicitly rather than stored as a
+// promise. Old rows keep the key in their JSON blob and Unmarshal drops it.
 
 // APIEndpointInfo describes a single API endpoint in the catalog
 type APIEndpointInfo struct {
@@ -96,7 +104,6 @@ func defaultDeveloperSettings() *DeveloperSettings {
 		WebhookMaxRetries:  3,
 		CORSAllowedOrigins: []string{"http://localhost:3000"},
 		RateLimitDefault:   100,
-		SandboxEnabled:     false,
 	}
 }
 

@@ -6585,6 +6585,10 @@ const tr: typeof en = {
         },
       },
       tempAccess: {
+        notifyRecipient: 'Bu link kullanıldığında size bildirim gönderilir.',
+        targetEntry: 'Hedef bağlantı *',
+        targetEntryPlaceholder: 'Bir PAM bağlantısı seçin…',
+        targetEntryHint: 'Tedarikçi bu bağlantı üzerinden aracılanır. Bağlantının erişim modu, oturum kaydı ve saklanan kimlik bilgisi geçerlidir — tedarikçi parolayı hiç görmez.',
         title: 'Geçici Erişim Bağlantıları',
         create: 'Geçici Erişim Oluştur',
         desc: 'Destek sağlayıcıları veya geçici erişim ihtiyaçları için süreli erişim URL’leri üretin.',

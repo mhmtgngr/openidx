@@ -426,6 +426,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A temporary vendor-access link went around every control the product has,
+  including the one that vouched for it** (migration **v188**). The feature
+  built for exactly the "let an outside engineer onto this server" question was
+  the one place none of the PAM controls applied. Redemption redirected to a
+  Guacamole connection built at *issuance* with an empty parameter map: no ZTNA
+  check, always the direct broker, no session recording, no credential
+  injection — so the vendor had to be told a password out of band — and no
+  `pam_entry_sessions` row, so the access was unrecorded. A link now names a
+  `pam_entries` row (`pam_entry_id`, required) and redemption runs the same
+  launch core as the console's Connect button, entry controls and all. Links
+  issued before this are refused with an explanation rather than falling back,
+  because keeping the old path alive for them would keep it alive.
+
+  Four claims that surface made and did not keep, found alongside it:
+
+  - `require_mfa` was stored, selected back into the struct, and never compared
+    to anything — and `public_surface_test.go`, the guard that makes every
+    anonymously-reachable route carry a written justification, listed MFA among
+    the checks this route performs. The register vouched for a check that never
+    ran. The field is **gone** rather than implemented: with no session there is
+    no `mfa_verified_at` for `STEPUP_GATE` to read, so enforcing it here would
+    have meant a bespoke OTP bolted onto an anonymous URL. Vendor MFA belongs on
+    a vendor identity; `docs/VENDOR-ACCESS-ROADMAP.md` V1 carries it.
+  - `notify_on_use` was the same shape, and now **notifies the link's issuer**
+    through the multi-channel notification service. `notify_email` is withdrawn:
+    the service is keyed by user id, and a caller-supplied recipient on a
+    security notification is a way to make the product email anyone. Creating a
+    link now requires a resolvable issuer (`issuer_unresolved`), which also
+    fixes a link created under `SoftAuth` writing the literal `"<nil>"` into a
+    UUID column.
+  - The IP allowlist compared **strings**, so every CIDR entry an operator wrote
+    matched nobody and the link silently refused everyone. It now compares with
+    `net/netip` — prefixes, IPv6, and IPv4-mapped clients from a fronting proxy
+    — and a malformed entry is rejected at creation, where it can still be fixed.
+  - The link's address fell back to `browzer.localtest.me` when
+    `access_proxy_domain` was empty; the setting defaults to `localhost`, so the
+    common case issued `https://localhost/temp-access/<token>` — a link that
+    resolves, loads, and reaches the **recipient's** machine. `ValidateProduction`
+    now refuses any loopback value, the Helm chart sets `ACCESS_PROXY_DOMAIN`
+    from the API ingress host, and an empty value is refused at issuance with a
+    message naming the setting.
+  - A launch that could not start answered the vendor with the launch core's own
+    JSON, on a route that renders HTML: `{"error":"the OpenZiti PAM broker is
+    not configured"}` as their page. The core now returns its failure instead of
+    writing it, so the two authenticated callers render the code and detail and
+    the anonymous page renders neither — it says the session could not start and
+    gives the link id to quote, while the reason goes to the log and the audit
+    row, where the operator is.
+  - **And none of those refusals had ever rendered at all.** Every one was
+    `c.HTML(status, "error.html", …)`, and nothing in this repository has ever
+    registered a template renderer — no `LoadHTMLGlob`, no `LoadHTMLFiles`, no
+    `SetHTMLTemplate`, and no `error.html` file. gin's `HTMLRender` was nil, so
+    each call dereferenced it and panicked: an expired link, a revoked one, an
+    address off the allowlist, all decided correctly and none of them able to
+    say so. The vendor got a dropped request or a bare 500 from the recovery
+    middleware. The refusals now write their own page, which is what makes them
+    independent of a deployment step nobody performs, and a test drives each one
+    through a context with no template registered — production's actual state.
+
+- **A guard for switches that decide nothing, and the two it found**
+  (`tools/inertswitch`, a required check). `require_mfa` and `notify_on_use`
+  above were one shape: bound from a request, stored in a column, selected back,
+  rendered by the console as a switch, and never once compared to anything. That
+  is invisible to everything else here — it type-checks, it round-trips through
+  Postgres so no zero-value check fires, the console renders it so the UI tests
+  pass, and `tools/deadconfig` asks a different question (whether a field has a
+  READER; these have several). What they never have is a decider.
+
+  The census holds the bool fields an API caller can set — derived from the
+  types this tree binds with `ShouldBindJSON`, so nothing has to be remembered
+  onto a list — next to the fields something decides on, and subtracts.
+  Transfers into a model struct are followed; two blind spots (a value that
+  round-trips through the database, a decision made in SQL) are suppressed
+  rather than guessed at, both in the direction of silence.
+
+  Its first run found two more, both fixed rather than registered:
+
+  - `sandbox_enabled` on `PUT /api/v1/developer/settings` was stored, returned,
+    and round-tripped unchanged by a console that never rendered a control for
+    it. There was no sandbox to enable. **The field is withdrawn** from the
+    request and the response; a caller that still sends it is ignored rather
+    than stored as a promise.
+  - The system-wide **passwordless settings** decided nothing at all. An
+    administrator who turned magic links off for the organization still handed
+    them out, because `CreateMagicLink` asked only the per-user preference — the
+    weaker of the two switches was the only one anybody consulted. Magic links
+    and QR login are now refused when the organization has them off,
+    `magic_link_expiry_minutes` and `qr_session_expiry_minutes` replace the
+    hardcoded fifteen and five, and `max_magic_links_per_hour` is enforced over
+    a trailing hour (an unlimited supply of single-use sign-in credentials to
+    one mailbox is the shape of a mailbox-access attack, which is why the
+    setting exists). `biometric_only_enabled` and `require_device_trust` are
+    **withdrawn**: the first duplicated two per-user settings that are already
+    enforced with no rule for which wins, and the second named a control that
+    exists elsewhere — `POSTURE_DEVICE_TRUST_GATE`, with a posture service
+    behind it — so a second flag of the same name with no gate behind it is how
+    an operator comes to believe device trust is required when it is not.
+
 - **A privileged session had two ways off the overlay, and took one of them by
   default** (`PAM_REQUIRE_ZTNA`, default `off`). The product's ZTNA claim is
   that privileged access reaches its target through the OpenZiti overlay. A

@@ -1681,6 +1681,64 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
+  # inertswitch holds the switches an API caller can set next to the switches
+  # something actually decides on.
+  #
+  # `POST /temp-access` accepted require_mfa and notify_on_use. Both bound, both
+  # stored in their column, both selected back on every read, both rendered by
+  # the console as a switch. Neither was ever compared to anything: turning
+  # require_mfa on did not require MFA, and notify_on_use notified nobody. The
+  # public-surface register listed MFA among the checks that anonymous route
+  # performed, so the guard vouched for the switch too.
+  #
+  # Nothing else here can see it. It type-checks; it round-trips through
+  # Postgres, so no zero-value check fires; the console renders it, so the UI
+  # tests pass; and deadconfig does not ask this question -- that census asks
+  # whether a field has a READER, and this field has several. What it never has
+  # is a DECIDER.
+  inertswitch:
+    name: Inert-switch lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Self-test the tool first
+        # A guard whose own cases do not pass has no standing to fail a build.
+        # -short skips the whole-module half, which the gate step runs anyway.
+        run: go test -short ./tools/inertswitch/
+
+      - name: Run inertswitch (hard gate)
+        run: |
+          set +e
+          go run ./tools/inertswitch -fail > is.out 2> is.err
+          rc=$?
+          set -e
+          {
+            echo "## inertswitch — switches nothing decides on"
+            echo
+            if [ "$rc" -ne 0 ]; then
+              echo "❌ **Gate failed.** A NEW finding is a bool an API caller can set that nothing in the product ever tests: they turn it on, nothing changes, and the console shows it as enabled. Wire it to the decision it names, or withdraw the field from the request and the response so a caller who still sends it is ignored explicitly rather than stored as a promise. Record it in \`tools/inertswitch/known.go\` only if the decision is real and this analysis cannot see it -- name the file and line where it happens. A STALE entry is a switch that has gained a decider, and its line in that register must go."
+            else
+              echo "✅ $(head -n1 is.out)"
+            fi
+            echo
+            echo '```'
+            head -60 is.out
+            tail -n3 is.err 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
   # Security vulnerability check
   vulnerability-check:
     name: Vulnerability Check
@@ -2179,9 +2237,34 @@ jobs:
         working-directory: web/admin-console
         run: npm ci
 
+      # `--with-deps` runs `apt-get update` across EVERY apt source configured
+      # on the runner, and the runner image ships Google's Chrome repository for
+      # its own preinstalled Chrome. On runs 2485 and 2486 that repository
+      # answered with a corrupt index --
+      #
+      #   E: Failed to fetch https://dl.google.com/linux/chrome-stable/deb/...
+      #      /Packages.gz  Hash Sum mismatch
+      #
+      # -- and took the whole journey suite red before a single test body ran,
+      # on commits that touched none of it. Playwright's own CDN was fine
+      # throughout; the browser bundle comes from there, and the system
+      # libraries `--with-deps` installs come from Ubuntu's archives. Google's
+      # Chrome repository is needed for neither, so it is removed rather than
+      # waited on. Nothing else in this job wants it, and the runner's own Chrome
+      # is not what these tests drive.
+      #
+      # Retried on top of that, for the reason scripts/ci-retry.sh was written:
+      # this step also downloads over the network. The wrapper exits with the
+      # LAST attempt's status, so a genuinely broken install still ends red --
+      # just later. Three attempts five seconds apart did NOT clear the hash
+      # mismatch above, which is why the repository removal is the fix and the
+      # retry is only the belt.
       - name: Install Chromium
         working-directory: web/admin-console
-        run: npx playwright install --with-deps chromium
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+                     /etc/apt/sources.list.d/google-chrome.sources
+          bash ../../scripts/ci-retry.sh 3 5 -- npx playwright install --with-deps chromium
 
       - name: Start the stack
         run: |
@@ -2269,6 +2352,7 @@ jobs:
       - first-run
       - github-config
       - inerttests
+      - inertswitch
       - lint
       - no-internal-topology
       - orgscope

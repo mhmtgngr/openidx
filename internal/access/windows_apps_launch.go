@@ -169,7 +169,7 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 	}
 
 	connName := fmt.Sprintf("pam-%s-app-%s", chosen.HostEntryID, app.ID)
-	res, ok := s.launchPamSession(c, org.ID, &entry, typeInfo.Protocol, extra, connName, app.GuacConnID,
+	res, fail := s.launchPamSession(c, org.ID, &entry, typeInfo.Protocol, extra, connName, app.GuacConnID,
 		func(ctx context.Context, connID string) {
 			if _, err := s.db.Pool.Exec(ctx,
 				`UPDATE windows_apps SET guac_connection_id = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
@@ -177,7 +177,8 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 				s.logger.Warn("handleWindowsAppLaunch: persist connection id failed", zap.Error(err))
 			}
 		})
-	if !ok {
+	if fail != nil {
+		fail.writeJSON(c)
 		return
 	}
 

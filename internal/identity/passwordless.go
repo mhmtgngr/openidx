@@ -77,10 +77,45 @@ func (s *Service) CreateMagicLink(ctx context.Context, email, purpose, redirectU
 		return nil, errors.New("user not found or disabled")
 	}
 
+	// The administrator's switch, then the user's.
+	//
+	// PasswordlessSystemSettings was saved, read back by its own GET, and
+	// consulted by nothing: an administrator who turned magic links off
+	// system-wide still handed them out, because only the PER-USER preference
+	// below was ever asked. The system switch is the stronger claim of the two —
+	// it is how an organization stops a whole sign-in method — so it is checked
+	// first and it wins.
+	sys, err := s.loadPasswordlessSettings(ctx)
+	if err != nil {
+		// Fail closed on the switch that turns a login method OFF: a settings
+		// read that failed cannot be read as permission.
+		return nil, fmt.Errorf("passwordless settings unavailable: %w", err)
+	}
+	if !sys.MagicLinkEnabled {
+		return nil, errors.New("magic link login is disabled for this organization")
+	}
+
 	// Check if passwordless is enabled for this user
 	prefs, _ := s.GetPasswordlessPreferences(ctx, userID)
 	if prefs != nil && !prefs.MagicLinkEnabled {
 		return nil, errors.New("magic link login is disabled for this user")
+	}
+
+	// max_magic_links_per_hour was the same shape: stored, defaulted to 5, and
+	// enforced nowhere, so the setting named a rate limit that did not exist.
+	// Counted over the trailing hour rather than a fixed window, so a burst
+	// cannot straddle a boundary and double the allowance.
+	if sys.MaxMagicLinksPerHour > 0 {
+		var recent int
+		if err := s.db.Pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM magic_links
+			  WHERE user_id = $1 AND org_id = $2 AND created_at > NOW() - INTERVAL '1 hour'`,
+			userID, org.ID).Scan(&recent); err != nil {
+			return nil, fmt.Errorf("magic link rate check: %w", err)
+		}
+		if recent >= sys.MaxMagicLinksPerHour {
+			return nil, errors.New("too many magic links requested for this account in the last hour")
+		}
 	}
 
 	// Generate secure token
@@ -102,7 +137,13 @@ func (s *Service) CreateMagicLink(ctx context.Context, email, purpose, redirectU
 	}
 
 	linkID := uuid.New().String()
-	expiresAt := time.Now().Add(15 * time.Minute) // 15 min expiry
+	// magic_link_expiry_minutes, which until now was a stored number next to a
+	// hardcoded fifteen.
+	expiryMinutes := sys.MagicLinkExpiryMinutes
+	if expiryMinutes <= 0 {
+		expiryMinutes = defaultPasswordlessSettings().MagicLinkExpiryMinutes
+	}
+	expiresAt := time.Now().Add(time.Duration(expiryMinutes) * time.Minute)
 
 	// Invalidate any existing pending magic links for this user.
 	//
@@ -271,8 +312,25 @@ func (s *Service) CreateQRLoginSession(ctx context.Context, ipAddress string, br
 		return nil, err
 	}
 
+	// The administrator's switch, as above. The per-user preference is checked
+	// at scan time (ScanQRLoginSession), which is the first moment a user is
+	// known; this one is knowable at the start and stops the session being
+	// minted at all.
+	sys, err := s.loadPasswordlessSettings(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("passwordless settings unavailable: %w", err)
+	}
+	if !sys.QRLoginEnabled {
+		return nil, errors.New("QR login is disabled for this organization")
+	}
+
 	sessionID := uuid.New().String()
-	expiresAt := time.Now().Add(5 * time.Minute)
+	// qr_session_expiry_minutes, stored next to a hardcoded five.
+	qrMinutes := sys.QRSessionExpiryMinutes
+	if qrMinutes <= 0 {
+		qrMinutes = defaultPasswordlessSettings().QRSessionExpiryMinutes
+	}
+	expiresAt := time.Now().Add(time.Duration(qrMinutes) * time.Minute)
 
 	query := `
 		INSERT INTO qr_login_sessions (

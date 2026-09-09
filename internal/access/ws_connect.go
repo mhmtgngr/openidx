@@ -23,6 +23,7 @@
 package access
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -418,38 +419,65 @@ func bridgeSSHOverWebSocket(wsConn *websocket.Conn, sshClient *ssh.Client, logge
 // ok=false on not-found / non-session entries. Mirrors the inline load in
 // handlePamConnect so both paths agree on scoping and shape.
 func (s *Service) loadPamLaunchEntry(c *gin.Context, orgID, entryID string) (pamLaunchEntry, PamEntryType, bool) {
-	ctx := c.Request.Context()
-	row := s.db.Pool.QueryRow(ctx, `
+	entry, typeInfo, err := s.pamLaunchEntryByID(c.Request.Context(), entryID, orgID)
+	if err != nil {
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			c.JSON(http.StatusNotFound, gin.H{"error": "entry not found"})
+		case errors.Is(err, errPamEntryNotLaunchable):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "entry is not a launchable session"})
+		default:
+			s.logger.Error("loadPamLaunchEntry: lookup failed", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load entry"})
+		}
+		return entry, PamEntryType{}, false
+	}
+	return entry, typeInfo, true
+}
+
+// errPamEntryNotLaunchable is returned for an entry that exists but is not a
+// session (a credential, a note, a website). Named so callers that do not speak
+// JSON — the anonymous vendor redemption renders HTML — can tell it apart from
+// a missing row without re-deriving the type check.
+var errPamEntryNotLaunchable = errors.New("entry is not a launchable session")
+
+// pamLaunchEntryByID is the entry read every launch path shares, with no HTTP
+// in it.
+//
+// The gin-flavoured loadPamLaunchEntry above and handlePamConnect used to hold
+// two copies of this SELECT — the older one's doc comment says so outright,
+// "mirrors the inline load in handlePamConnect so both paths agree" — and a
+// third caller then arrived that speaks HTML rather than JSON and has no
+// organization on its context. Two copies of a query that decides reach mode,
+// recording and the credential source is how the paths drift; the vendor link
+// was already the proof, having reached its target with none of them consulted.
+//
+// orgID is a parameter rather than a context read because the vendor redemption
+// is anonymous: its tenant comes from the link the token resolved, not from a
+// session.
+func (s *Service) pamLaunchEntryByID(ctx context.Context, entryID, orgID string) (pamLaunchEntry, PamEntryType, error) {
+	var entry pamLaunchEntry
+	var settingsJSON []byte
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, entry_type, COALESCE(hostname,''), COALESCE(port,0),
 		       COALESCE(username,''), COALESCE(domain,''), COALESCE(url,''), settings,
 		       COALESCE(vault_secret_id::text,''), COALESCE(credential_entry_id::text,''),
 		       COALESCE(guacamole_connection_id,''), require_approval, record_session,
 		       reach_mode, COALESCE(ziti_intercept_port,0)
-		  FROM pam_entries WHERE id = $1 AND org_id = $2`, entryID, orgID)
-
-	var entry pamLaunchEntry
-	var settingsJSON []byte
-	if err := row.Scan(
+		  FROM pam_entries WHERE id = $1 AND org_id = $2`, entryID, orgID).Scan(
 		&entry.ID, &entry.Name, &entry.EntryType, &entry.Hostname, &entry.Port,
 		&entry.Username, &entry.Domain, &entry.URL, &settingsJSON,
 		&entry.VaultSecretID, &entry.CredentialEntryID,
 		&entry.GuacConnectionID, &entry.RequireApproval, &entry.RecordSession,
 		&entry.ReachMode, &entry.ZitiInterceptPort,
 	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "entry not found"})
-		} else {
-			s.logger.Error("loadPamLaunchEntry: lookup failed", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load entry"})
-		}
-		return entry, PamEntryType{}, false
+		return entry, PamEntryType{}, err
 	}
 	entry.Settings = decodePamSettings(settingsJSON)
 
 	typeInfo, typeOK := pamEntryTypeByName[entry.EntryType]
 	if !typeOK || typeInfo.Kind != "session" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "entry is not a launchable session"})
-		return entry, PamEntryType{}, false
+		return entry, PamEntryType{}, errPamEntryNotLaunchable
 	}
-	return entry, typeInfo, true
+	return entry, typeInfo, nil
 }
