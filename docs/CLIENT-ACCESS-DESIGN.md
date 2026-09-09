@@ -339,6 +339,42 @@ Two files, and both are said here rather than left to be discovered:
   a directory-ACL decision: which account is "the enrolled user" when the
   service writes first?
 
+## 4b. PAM travels the overlay, or it does not travel
+
+A brokered privileged session has **two legs**, and before v1.34.0 each could
+leave the overlay on its own — one of them by default.
+
+| Leg | What it is | Before | Now |
+|---|---|---|---|
+| **user → broker** | the connect URL the console opens: `{public base}/#/client/{id}?token={t}` | A bearer URL. Minting it is gated hard (fresh MFA, entry ACL, approval, moderation, checkout); **using** it was gated by possession alone — any browser, any network, no client, no device. | Under `PAM_REQUIRE_ZTNA=enforce` every allowed launch is routed through the **overlay broker**, whose browser-facing base must be its own address (`GUACAMOLE_ZITI_PUBLIC_URL`, distinct from the direct broker's) or the service refuses to start. |
+| **broker → target** | guacd's dial to the machine being administered | `pam_entries.reach_mode`, which migration v82 created `NOT NULL DEFAULT 'direct'`. An entry created without a deliberate choice opened a socket to the target's real address from the broker's network. | Under `enforce`, a launch whose reach mode is not `ziti` is **refused before any credential is resolved**, and audited. A website entry — which returns a URL and brokers nothing — is refused outright. |
+
+**What the code decides, and what it cannot.** The target hop is this
+process's decision and it is made completely. The user→broker leg is not:
+nothing in an HTTP request proves the caller reached the service over the
+overlay, and a header claiming it is set by whoever is calling — a control the
+checked input switches off. That leg is closed by **deployment**: the broker
+published as a Ziti service and at no other address, so the connect URL's host
+routes for a machine running the client and for nothing else. What the code does
+about it is refuse to start without the configuration that property requires,
+and route every enforced launch through that broker. Saying which half is which
+beats implying the flag delivers both.
+
+**Operator verification** (the check the flag cannot make for you) — from a host
+with no OpenIDX client and no overlay membership:
+
+```bash
+curl -sS --max-time 5 "$GUACAMOLE_ZITI_PUBLIC_URL/" -o /dev/null -w '%{http_code}\n'
+```
+
+Anything other than a connection failure means the overlay broker is reachable
+without the client, and the first leg is open however the flag reads.
+
+**Rollout.** `observe` first: it refuses nothing and audits every launch
+`enforce` would refuse (`pam.ztna.would_deny`), which is how you get the list of
+entries still on `direct` and the count of website entries, before they stop
+working.
+
 ## 5. Production gate additions
 
 `ValidateProduction` errors:

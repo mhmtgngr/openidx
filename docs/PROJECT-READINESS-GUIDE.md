@@ -506,6 +506,34 @@ product; either wire them or remove them from the UI.
   sealing it would hand the SDK ciphertext; it needs an SDK-side change and is
   named in `docs/CLIENT-ACCESS-DESIGN.md` §4 rather than half-done.
 
+- **A20 — A privileged session had two ways off the overlay, and took one of
+  them by default.** *Fixed on this branch.* The product's ZTNA story is that
+  privileged access reaches its target through the OpenZiti overlay. A brokered
+  PAM session has two legs and neither was held to it. The **target hop** is
+  `pam_entries.reach_mode`, which migration v82 created `NOT NULL DEFAULT
+  'direct'` — so an entry created without a deliberate choice had guacd open a
+  socket to the target's real address from the broker's network, overlay
+  untouched, and nothing said so. The **user hop** is the connect URL,
+  `{public base}/#/client/{id}?token={t}`. Minting that URL is gated as hard as
+  anything in the product — fresh MFA, entry ACL, approval, moderation,
+  checkout — and *using* it was gated by possession: any browser, any network,
+  no client, no enrolled device. A website entry skipped both, returning a raw
+  URL and brokering nothing. `PAM_REQUIRE_ZTNA` (off/observe/enforce) closes
+  what code can close: under `enforce` a launch that is not `ziti`-reach is
+  refused **before any credential is resolved**, a website entry is refused
+  outright, and every allowed launch is routed through the overlay broker.
+  Observe mode refuses nothing and audits what enforce would refuse, because
+  the operator turning this on needs the list of entries that will stop working
+  before they stop working. **The half code cannot close, said rather than
+  implied:** nothing in an HTTP request proves the caller came over the overlay,
+  and a header claiming it is a control the caller sets — so the user hop is
+  closed by the broker being published at an overlay address and nowhere else.
+  What the code does about *that* is refuse to start under `enforce` unless
+  `GUACAMOLE_ZITI_PUBLIC_URL` is set and differs from the direct broker's
+  public URL, which is the configuration the deployment property requires.
+  `docs/CLIENT-ACCESS-DESIGN.md` §4b carries the operator's own verification —
+  a curl from an unenrolled host that must fail to connect.
+
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 
 - **B1 — Default admin `admin@openidx.local` / `Admin@123` seeds every

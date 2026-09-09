@@ -426,6 +426,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A privileged session had two ways off the overlay, and took one of them by
+  default** (`PAM_REQUIRE_ZTNA`, default `off`). The product's ZTNA claim is
+  that privileged access reaches its target through the OpenZiti overlay. A
+  brokered PAM session has two legs, and neither was held to it.
+
+  The **target hop** is `pam_entries.reach_mode`. Migration v82 created it
+  `NOT NULL DEFAULT 'direct'`, so an entry created without a deliberate choice
+  had guacd open a socket to the target's real address from the broker's
+  network — the overlay untouched, nothing refused, nothing recorded.
+
+  The **user hop** is the connect URL, `{public base}/#/client/{id}?token={t}`.
+  Minting it is gated about as hard as anything in this product: fresh MFA, the
+  entry's ACL, the approval gate, moderation, checkout controls. *Using* it was
+  gated by possession — any browser, on any network, with no client and no
+  enrolled device. A website entry skipped both legs, returning a raw URL and
+  brokering nothing at all.
+
+  Under `enforce`: a launch whose reach mode is not `ziti` is refused **before
+  any credential is resolved** (a refusal must not decrypt a vault secret on its
+  way to being refused), a website entry is refused outright with the remedy
+  named, and every allowed launch is routed through the overlay broker.
+  `observe` refuses nothing and audits what `enforce` would refuse — an
+  operator turning this on needs the list of entries that will stop working
+  before they stop working, and the only place that list comes from is the
+  attempts being recorded.
+
+  **The half this flag cannot deliver, stated rather than implied.** The target
+  hop is the service's decision and is made completely. The user hop is not:
+  nothing in an HTTP request proves the caller reached the service over the
+  overlay, and a header saying so is set by whoever is calling — a control the
+  checked input switches off. That leg is closed by the broker being published
+  as a Ziti service and at no other address, so the URL's host routes for a
+  machine running the client and for nothing else. What the code does about it
+  is refuse to START under `enforce` unless `GUACAMOLE_ZITI_PUBLIC_URL` is set
+  and differs from `GUACAMOLE_PUBLIC_URL` — empty means the overlay broker has
+  no address of its own, equal means it is published at the ordinary one, and
+  either way the flag would read "enforce" over an open leg.
+  `docs/CLIENT-ACCESS-DESIGN.md` §4b carries the operator's own check: a curl
+  from an unenrolled host that must fail to connect.
+
 - **On a phone, the engine's credentials were protected by a mode bit, and a
   mode bit protects nothing there.** The companion app's engine writes three
   credentials into its sandbox — `user-tokens.json` (the 30-day refresh token),

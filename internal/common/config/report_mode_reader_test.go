@@ -77,6 +77,7 @@ func TestStartupReportsTheCountEvenWhenFullyEnforcing(t *testing.T) {
 		EnableOPAAuthz:          true,
 		PAMSessionRiskGate:      "enforce",
 		PostureDeviceTrustGate:  "enforce",
+		PAMRequireZTNA:          "enforce",
 		AccessAPIRequireAuth:    true,
 		AdminAPIRequireAuth:     true,
 	}
