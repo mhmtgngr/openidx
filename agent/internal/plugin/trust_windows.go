@@ -99,6 +99,21 @@ func checkTrustedPath(path string) error {
 				path, ace.Header.AceType)
 		}
 
+		// An ACE is a variable-length structure: the SID begins at SidStart and
+		// runs past the end of the fixed part, so reading it is a field-address
+		// cast and there is no safe-Go spelling of it — x/sys/windows offers no
+		// accessor, and the alternative, parsing the descriptor's SDDL text, is
+		// the error-prone approach this check exists to avoid.
+		//
+		// It is also not a lifetime hazard, which is the thing worth checking
+		// about any unsafe.Pointer here. GetNamedSecurityInfo does not hand back
+		// Windows-heap memory: it LocalFrees the descriptor the API allocated and
+		// returns copySelfRelativeSecurityDescriptor(), a copy on the GO heap. So
+		// sd, the DACL inside it, this ACE and this SID are all interior pointers
+		// into one Go allocation — which the collector keeps alive for as long as
+		// any of them is reachable, on a heap that does not move objects.
+		//
+		// nosemgrep: go.lang.security.audit.unsafe.use-of-unsafe-block
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 		if granted := uint32(ace.Mask) & dangerousRights; granted != 0 && !isTrusted(sid, trusted) {
 			return fmt.Errorf("%s grants %s to %s, and this process executes what it finds there. "+
