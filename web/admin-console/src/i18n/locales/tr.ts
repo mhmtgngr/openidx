@@ -8965,6 +8965,9 @@ const tr: typeof en = {
       failedHeading: '{{target}} bağlantısı kurulamadı',
       failedBody:
         'Uzak oturum kurulamadı. Bu geçici olabilir ya da hedefe erişiminiz olmayabilir.',
+      failedOverlayBody:
+        'Bu oturum OpenZiti overlay üzerinden çalışır; yalnızca OpenIDX istemcisinin çalıştığı bir cihazdan erişilebilir. İstemcinin bu makinede kurulu, oturum açmış ve bağlı olduğunu doğrulayıp yeniden deneyin.',
+      setUpClient: 'İstemciyi kur',
       closeWindow: 'Pencereyi kapat',
       tryAgain: 'Tekrar dene',
     },

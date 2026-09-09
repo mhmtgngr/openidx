@@ -294,6 +294,7 @@ jobs:
           bash scripts/check-keyboard-reachable.test.sh
           bash scripts/check-control-names.test.sh
           bash scripts/check-e2e-suite.test.sh
+          bash scripts/check-pam-launch-wrapper.test.sh
       - name: Enforce UI safety guards
         run: |
           bash scripts/check-query-error-coverage.sh --enforce
@@ -303,6 +304,7 @@ jobs:
           bash scripts/check-keyboard-reachable.sh --enforce
           bash scripts/check-control-names.sh --enforce
           bash scripts/check-e2e-suite.sh --enforce
+          bash scripts/check-pam-launch-wrapper.sh --enforce
 
   # The self-heal loop is the ONLY thing allowed to restart box services on its
   # own, so its collectors, ledger dedup, and (most importantly) the remediator

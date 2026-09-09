@@ -9247,6 +9247,13 @@ const en = {
       failedHeading: "Couldn't connect to {{target}}",
       failedBody:
         'The remote session could not be established. This may be temporary, or you may not have access to the target.',
+      // Shown instead of failedBody when the launch went over the overlay. On
+      // those the session broker has no address off the overlay, so a machine
+      // without a running client cannot reach it at all — naming that beats
+      // offering the two guesses above, neither of which would be the cause.
+      failedOverlayBody:
+        'This session runs over the OpenZiti overlay, so it is reachable only from a device running the OpenIDX client. Check that the client is installed, signed in and connected on this machine, then try again.',
+      setUpClient: 'Set up the client',
       closeWindow: 'Close window',
       tryAgain: 'Try again',
     },

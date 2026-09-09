@@ -30,18 +30,7 @@ import { useRevealedSecret, copyWithWarning } from '../lib/secret-reveal'
 import { TerminalSession } from '../components/remote/terminal-session'
 import { connectionPathSteps, ztnaRefusal } from '../lib/connection-path'
 import { remoteAppArgsLookSecret, remoteAppSecretHint } from '../lib/remote-app'
-
-// Random, unguessable key for the single-use /pam-session localStorage handoff.
-// Prefer crypto.randomUUID, but fall back to getRandomValues hex so this still
-// works in insecure contexts (the console may be served over plain HTTP).
-function randomHandoffKey(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  const bytes = new Uint8Array(16)
-  crypto.getRandomValues(bytes)
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-}
+import { openPamSessionWindow } from '../lib/pam-session-handoff'
 
 // Icon + accent per entry type, so the list reads like RDM's typed tree.
 const typeIcon = (t: string) => {
@@ -241,25 +230,13 @@ export function PamConnectionsPage() {
   const connect = useMutation({
     mutationFn: (vars: { id: string; name: string }) => api.pam.connect(vars.id),
     onSuccess: (res: PamConnectResult, vars) => {
-      const url = res.connect_url || res.url
-      if (url) {
-        // Open each session in its OWN window pointed at our chrome-less
-        // /pam-session wrapper (NOT the raw guac URL). The wrapper frames the
-        // guac client and, on failure/disconnect, shows OpenIDX messaging —
-        // never Guacamole's own home/connection-manager. Users can launch
-        // several connections, each in a separate window.
-        //
-        // The connect URL carries a token, so we must NOT put it in the URL or
-        // browser history: hand it off via a single-use localStorage entry the
-        // wrapper reads and immediately deletes.
-        const key = randomHandoffKey()
-        try {
-          localStorage.setItem(
-            'pam-session:' + key,
-            JSON.stringify({ url, title: vars.name }),
-          )
-        } catch { /* private-mode / quota — window will show the expired card */ }
-        window.open('/pam-session?k=' + key, '_blank')
+      // Each session gets its OWN window pointed at the chrome-less
+      // /pam-session wrapper — never the raw guac URL, because that URL carries
+      // a bearer token and because the wrapper shows OpenIDX messaging on
+      // failure instead of Guacamole's own home/connection-manager. The
+      // handoff, including the overlay flag the wrapper needs to explain a
+      // failed overlay launch, is built in one place for both launchers.
+      if (openPamSessionWindow(res, vars.name)) {
         toast({
           title: t('pages.pamConnections.toasts.launched'),
           description: res.credential_injected

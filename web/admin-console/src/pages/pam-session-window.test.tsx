@@ -71,4 +71,63 @@ describe('PamSessionWindow', () => {
     // No frame is ever mounted without a handoff.
     expect(document.querySelector('iframe')).not.toBeInTheDocument()
   })
+
+  // A launch that never reaches a client route inside the 20s grace window is
+  // 'failed'. Which body that card shows is the whole point of the overlay
+  // flag: on an overlay launch the broker has no address off the overlay, so a
+  // machine without a running client cannot reach it — and the generic card's
+  // two guesses ("may be temporary", "may not have access") are both wrong
+  // while its Try again would fail identically forever.
+  function failASession(key: string, handoff: Record<string, unknown>) {
+    localStorage.setItem('pam-session:' + key, JSON.stringify(handoff))
+    currentHash = '#/' // never a client route
+    renderAt('?k=' + key)
+    act(() => { vi.advanceTimersByTime(21_000) })
+  }
+
+  it('names the client as the cause when an OVERLAY session never connects', () => {
+    failASession('k3', { url: 'https://ziti-guac/x', title: 'DC01', overlay: true })
+
+    expect(screen.getByText(/couldn't connect to DC01/i)).toBeInTheDocument()
+    expect(screen.getByText(/only from a device running the OpenIDX client/i)).toBeInTheDocument()
+    // The generic guesses must not be what this user reads.
+    expect(screen.queryByText(/may be temporary/i)).not.toBeInTheDocument()
+    // The action that actually fixes it is offered, alongside a retry.
+    expect(screen.getByRole('button', { name: /set up the client/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
+  })
+
+  it('keeps the generic body for a DIRECT session, where the client is not the cause', () => {
+    failASession('k4', { url: 'https://guac/x', title: 'DC01', overlay: false })
+
+    expect(screen.getByText(/may be temporary/i)).toBeInTheDocument()
+    expect(screen.queryByText(/OpenIDX client/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /set up the client/i })).not.toBeInTheDocument()
+  })
+
+  it('treats a handoff with no overlay field as not-overlay', () => {
+    // An opener that predates the field — the message this window always
+    // showed is the one it keeps. Guessing "overlay" here would tell a user
+    // on a direct session to go install a client they do not need.
+    failASession('k5', { url: 'https://guac/x', title: 'DC01' })
+
+    expect(screen.getByText(/may be temporary/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /set up the client/i })).not.toBeInTheDocument()
+  })
+
+  it('does not blame the client when an overlay session ENDED rather than failed', () => {
+    // Reaching a client route and then leaving it is a session that worked.
+    localStorage.setItem(
+      'pam-session:k6',
+      JSON.stringify({ url: 'https://ziti-guac/x', title: 'DC01', overlay: true }),
+    )
+    renderAt('?k=k6')
+    act(() => { vi.advanceTimersByTime(1100) }) // reaches '#/client/abc' → active
+    currentHash = '#/'
+    act(() => { vi.advanceTimersByTime(1100) }) // → ended
+
+    expect(screen.getByText('Session ended')).toBeInTheDocument()
+    expect(screen.queryByText(/OpenIDX client/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /set up the client/i })).not.toBeInTheDocument()
+  })
 })

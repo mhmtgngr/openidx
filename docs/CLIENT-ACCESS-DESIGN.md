@@ -387,6 +387,31 @@ works. `observe` refuses nothing on the server, so it refuses nothing in the
 console either; greying out what the server would still allow is the same lie in
 the other direction.
 
+**And where the user→broker leg becomes visible.** The paragraph above says
+that leg is closed by deployment rather than by a check. The place a user meets
+it is the session window: an allowed overlay launch returns a URL on the overlay
+broker, which routes only for a machine running the client, so on a machine
+without one the frame never connects. The window used to answer that with its
+generic card — "this may be temporary, or you may not have access to the
+target" — two guesses that are both wrong there, over a **Try again** that would
+fail identically forever. The launch response already carried `reach_mode`, so
+the console now passes it into the window, and an overlay session that never
+connects says what is actually missing and offers enrolment. A direct session,
+and any launch from an opener that does not report the mode, keeps the generic
+card: telling someone on a direct session to install a client they do not need
+is the same kind of wrong answer, just quieter.
+
+Getting that message to the window turned up the reason it could not have
+arrived: there are **two** launchers, and only one used the window. The
+Connections page opens the wrapper and hands the URL over out of band — the URL
+carries a bearer token, and a failed session behind it must show OpenIDX's card
+rather than Guacamole's connection manager. Quick links, the launcher on the
+end-user page, called `window.open` with that URL. Both now build the handoff
+through one helper, and `scripts/check-pam-launch-wrapper.sh` holds the line:
+every caller of `api.pam.connect` must use it and must not read `connect_url`
+itself. The guard fails when it matches no launcher at all, because a rule that
+matches nothing passes forever.
+
 **Rollout.** `observe` first: it refuses nothing and audits every launch
 `enforce` would refuse (`pam.ztna.would_deny`), which is how you get the list of
 entries still on `direct` and the count of website entries, before they stop

@@ -482,6 +482,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server; greying out what the server would allow is the same lie in the other
   direction.
 
+  **The session window learned which leg failed.** An allowed overlay launch
+  returns a URL on the overlay broker, which routes only for a machine running
+  the client — so on a machine without one the frame never connects and the
+  phase monitor calls it failed. The window answered that with its generic card:
+  "this may be temporary, or you may not have access to the target", two guesses
+  that are both wrong there, above a **Try again** that would fail identically
+  forever. This is the user&rarr;broker leg — the half no check can enforce —
+  arriving as an unexplained failure at the one moment it becomes real. The
+  launch response already carried `reach_mode`, so the console passes it into
+  the window's handoff, and an overlay session that never connects now names the
+  client as what is missing and offers enrolment beside the retry. A direct
+  session keeps the generic card, as does a handoff written without the field:
+  telling someone on a direct session to install a client they do not need is
+  the same wrong answer pointed the other way.
+
+- **The end-user PAM launcher put a session token in the address bar.** There
+  are two places a brokered session is launched. The Connections page opens a
+  chrome-less `/pam-session` wrapper and hands the connect URL over through a
+  single-use `localStorage` entry, and says why in its own comment: the URL
+  carries a bearer token, so it must not reach the address bar or the browser's
+  history, and a failed session behind it must show OpenIDX's card rather than
+  Guacamole's home and connection manager. **Quick links** — the launcher on
+  the end-user page, the one most people actually use — called
+  `window.open(connectURL)`. Same token, same broker, opposite decision, and
+  nothing failed: the second launcher was written later, from the API rather
+  than from the first launcher.
+
+  Both now go through one `openPamSessionWindow`, which builds the handoff —
+  URL, unguessable single-use key, and the overlay flag the window needs to
+  explain a failed ZTNA launch. A launcher that skipped the wrapper also lost
+  that message, so this and the entry above are the same fix. When storage
+  throws (private mode, quota) the wrapper still opens and shows its "expired"
+  card: falling back to the raw URL would put the token in history for exactly
+  the users whose browser is set to keep less of it.
+
+  `scripts/check-pam-launch-wrapper.sh` is what stops a third launcher
+  rediscovering the wrong answer — every caller of `api.pam.connect` must use
+  the helper and must not read `connect_url` itself, since importing the helper
+  does not prove you used it. It fails if it matches no launcher at all, so a
+  rename cannot leave it green over code it no longer sees. `quick-links-section`
+  also gets its first test file: nothing in the suite had touched it.
+
 - **On a phone, the engine's credentials were protected by a mode bit, and a
   mode bit protects nothing there.** The companion app's engine writes three
   credentials into its sandbox — `user-tokens.json` (the 30-day refresh token),

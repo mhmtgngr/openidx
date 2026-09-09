@@ -107,6 +107,35 @@ describe('PamConnectionsPage', () => {
     expect(handoff).toMatchObject({ url: 'https://guac/x', title: 'DC01' })
   })
 
+  // The session window shows a different failure card for an overlay launch —
+  // "the OpenIDX client must be running" instead of "this may be temporary" —
+  // and the only thing that tells it which it got is this flag in the handoff.
+  // Drop the line that writes it and the window silently falls back to blaming
+  // a temporary fault for a launch that will never succeed without a client;
+  // nothing in either page's own tests would notice, which is why it is
+  // asserted at the point it is written.
+  it.each([
+    ['ziti', true],
+    ['direct', false],
+    [undefined, false], // an older service that does not report reach_mode
+  ])('records reach_mode=%s in the handoff as overlay=%s', async (reachMode, overlay) => {
+    localStorage.clear()
+    pam.connect.mockResolvedValue({
+      launch_type: 'guacamole',
+      connect_url: 'https://guac/x',
+      entry_id: 'e1',
+      ...(reachMode === undefined ? {} : { reach_mode: reachMode }),
+    })
+    renderPage()
+    const card = (await screen.findByText('DC01')).closest('[class*="rounded"]') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: /connect/i }))
+
+    await waitFor(() => expect(window.open).toHaveBeenCalled())
+    const openArg = (window.open as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+    const key = new URLSearchParams(openArg.split('?')[1]).get('k')!
+    expect(JSON.parse(localStorage.getItem('pam-session:' + key)!).overlay).toBe(overlay)
+  })
+
   it('shows a request-access button only for approval-gated entries', async () => {
     renderPage()
     await screen.findByText('prod-bastion')
