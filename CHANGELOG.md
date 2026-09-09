@@ -518,16 +518,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and what to run to fix it, because a control people cannot act on is one they
   switch off.
 
-  **On Windows it refuses outright, and says why.** The check is Unix mode bits,
-  which Windows discards — the Go runtime maps `0755` to "not read-only" and
-  nothing else — so the same code there would report every path as trusted while
-  checking nothing, in the one place where the caller is the SYSTEM service.
-  Doing it properly means reading the DACL and resolving which non-privileged
-  SIDs hold a write right; `agent/internal/secretfile` does the writing half of
-  that for two files and there is no reading half, and one written without a
-  Windows machine to test against would be either too strict or a pass that was
-  never earned. Nothing in the repository sets `plugin_dir` — it is read in one
-  place and written nowhere — so no shipped configuration is affected.
+  **On Windows the check reads the DACL.** It could not at first, and refused
+  every path instead: mode bits are what the Unix half reads, Windows discards
+  them — the Go runtime maps `0755` to "not read-only" and nothing else — so the
+  same code there would have reported every path as trusted while checking
+  nothing, in the one place where the caller is the SYSTEM service. It now reads
+  the path's owner and DACL and refuses any allow-entry that grants write,
+  append, delete, delete-child, change-permissions or take-ownership to a
+  principal outside `{SYSTEM, BUILTIN\Administrators, NT
+  SERVICE\TrustedInstaller, the account this process runs as}` — and refuses an
+  owner outside that set as well, because an owner can rewrite the permissions of
+  what it owns whatever they currently say. TrustedInstaller, and read-and-execute
+  for Users, are allowed on purpose: both are the `%ProgramFiles%` default, and a
+  check that refuses the ordinary installation layout is a check that gets
+  switched off. Inherit-only entries are skipped, a NULL DACL is refused (it
+  grants everyone full control), and an entry type this code cannot evaluate is
+  refused rather than assumed harmless. The account this process already runs as
+  is trusted for the same reason the Unix half does not compare ownership against
+  the uid: a file only that identity can write is not a new way to control the
+  process. Tests run on the Windows runner — `windows-client-build.yml` runs
+  `go test ./...` for the agent module — build their fixtures as protected DACLs
+  so nothing is inherited from the runner, and cover the case a refuse-everything
+  implementation would also have passed: a privileged-only tree that must load.
+  Nothing in the repository sets `plugin_dir` — it is read in one place and
+  written nowhere — so no shipped configuration is affected either way.
 
 - **The agent's self-updater installed an artifact it had not verified, whenever
   the manifest said not to.** `downloadVerified` checked the downloaded file's

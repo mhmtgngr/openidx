@@ -10,21 +10,25 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
+	"golang.org/x/sys/windows"
 )
 
-// On Windows, Discover refuses. That is a decision rather than an oversight —
-// the trust check is Unix mode bits, Windows discards them, and the caller here
-// is the service running as SYSTEM — so it needs a test that fails if someone
-// quietly removes the refusal, and one that fails if the refusal swallows the
-// pre-existing "an absent plugin_dir is not an error" contract.
+// Discover on Windows used to refuse everything, because the trust check was
+// Unix mode bits and Windows discards them. It reads the DACL now
+// (trust_windows.go, unit-tested in trust_windows_test.go); these two drive the
+// whole loader through it, since the loader checks three paths — the root, the
+// plugin's own directory, and the executable — and a check applied to only some
+// of them is a check on none.
 //
 // windows-client-build.yml runs `go test ./...` for the whole agent module on a
 // Windows runner, so these actually execute rather than being a description of
 // what would happen.
 
-func TestDiscoverRefusesOnWindows(t *testing.T) {
-	root := t.TempDir()
-	dir := filepath.Join(root, "hello")
+// layout writes a minimal plugin under root and returns the plugin directory
+// and the executable, so a test can re-permission any of the three paths.
+func layout(t *testing.T, root string) (dir, exe string) {
+	t.Helper()
+	dir = filepath.Join(root, "hello")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -41,23 +45,65 @@ func TestDiscoverRefusesOnWindows(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), manifest, 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "hello.exe"), []byte("MZ"), 0o755); err != nil {
+	exe = filepath.Join(dir, "hello.exe")
+	if err := os.WriteFile(exe, []byte("MZ"), 0o755); err != nil {
 		t.Fatalf("write exe: %v", err)
+	}
+	return dir, exe
+}
+
+func TestDiscoverLoadsAPluginFromAPrivilegedOnlyTree(t *testing.T) {
+	root := t.TempDir()
+	dir, exe := layout(t, root)
+	for _, p := range []string{root, dir, exe} {
+		setProtectedDACL(t, p, privileged(t)...)
 	}
 
 	plugins, err := NewLoader(root, zap.NewNop()).Discover()
-	if err == nil {
-		t.Fatalf("Discover returned %d plugin(s) and no error on Windows; the permission "+
-			"check that would make executing them safe is not implemented here, and the "+
-			"caller is the SYSTEM service", len(plugins))
+	if err != nil {
+		t.Fatalf("Discover refused a tree writable only by SYSTEM, Administrators and this "+
+			"process: %v", err)
 	}
-	if len(plugins) != 0 {
-		t.Errorf("plugins returned alongside the refusal: %d", len(plugins))
+	if len(plugins) != 1 {
+		t.Fatalf("discovered %d plugins, want 1", len(plugins))
 	}
-	// The message has to name the reason, or the next person reads it as a bug
-	// and deletes the check.
-	if !strings.Contains(err.Error(), "DACL") {
-		t.Errorf("the refusal does not say what is missing: %v", err)
+}
+
+// TestDiscoverRefusesWhicheverOfTheThreePathsIsWritable. One subtest per path,
+// because "the executable is checked" and "the directory it sits in is checked"
+// are different claims and only one of them stops a swap of the other.
+func TestDiscoverRefusesWhicheverOfTheThreePathsIsWritable(t *testing.T) {
+	users := sidOrSkip(t, windows.WinBuiltinUsersSid, "BUILTIN\\Users")
+
+	for _, which := range []string{"the plugin root", "the plugin's directory", "the executable"} {
+		t.Run(which, func(t *testing.T) {
+			root := t.TempDir()
+			dir, exe := layout(t, root)
+			paths := map[string]string{
+				"the plugin root":        root,
+				"the plugin's directory": dir,
+				"the executable":         exe,
+			}
+			for _, p := range []string{root, dir, exe} {
+				g := privileged(t)
+				if p == paths[which] {
+					g = append(g, grant{users, windows.GENERIC_ALL})
+				}
+				setProtectedDACL(t, p, g...)
+			}
+
+			plugins, err := NewLoader(root, zap.NewNop()).Discover()
+			if err == nil {
+				t.Fatalf("Discover returned %d plugin(s) and no error with %s writable by "+
+					"BUILTIN\\Users; the caller is the service running as SYSTEM", len(plugins), which)
+			}
+			if len(plugins) != 0 {
+				t.Errorf("plugins returned alongside the refusal: %d", len(plugins))
+			}
+			if !strings.Contains(err.Error(), "Users") {
+				t.Errorf("the refusal does not name who holds the right: %v", err)
+			}
+		})
 	}
 }
 

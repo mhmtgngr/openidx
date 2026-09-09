@@ -387,11 +387,22 @@ product; either wire them or remove them from the UI.
   `LoadPlugins` are daemons, one of them the Windows service running as SYSTEM.
   Nothing checked who else could write it. The plugin root, each plugin's
   directory and the executable are now all checked, on the rule every tool
-  facing this shape keeps. On Windows it refuses outright and says why: the
-  check is Unix mode bits, which Windows discards, so the same code there would
-  report every path as trusted while checking nothing — and the DACL read that
-  would do it properly is not written. Nothing sets `plugin_dir`, so no shipped
-  configuration is affected.
+  facing this shape keeps. On Windows it first refused outright and said why —
+  the check is Unix mode bits, which Windows discards, so the same code there
+  would have reported every path as trusted while checking nothing. **That half
+  is now written**: it reads the path's owner and DACL, refuses any allow-ACE
+  granting write, delete, delete-child, change-permissions or take-ownership to
+  a principal outside {SYSTEM, Administrators, TrustedInstaller, the account the
+  process runs as}, and refuses an owner outside that set too, because an owner
+  can rewrite a DACL whatever it currently says. TrustedInstaller and read-and-
+  execute for Users are deliberately allowed: they are the `%ProgramFiles%`
+  default, and a check that refuses the ordinary installation layout is a check
+  that gets switched off. The tests run on the Windows runner
+  (`windows-client-build.yml` runs `go test ./...` for the agent module), build
+  their fixtures as protected DACLs so nothing is inherited from the runner, and
+  include the case a refuse-everything implementation would also pass — a
+  privileged-only tree that must load. Nothing sets `plugin_dir`, so no shipped
+  configuration is affected either way.
 
 - **A17 — The local control socket was world-connectable for one syscall, and
   its bearer was compared with `!=`.** *Fixed on this branch.* On Unix the
