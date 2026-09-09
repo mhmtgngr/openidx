@@ -378,8 +378,8 @@ product; either wire them or remove them from the UI.
   unconditional, both URLs https (loopback excepted), and the download capped.
   `Fetch`, `downloadVerified` and `CheckAndApply` had no tests at all; they do
   now, and a second test holds the release workflow's manifest generator to what
-  the agent will accept. Still open and stated rather than implied: the manifest
-  is the root of trust — verifying a signature over it is a separate item.
+  the agent will accept. What that fix could not reach — the manifest itself
+  being the root of trust — is **A18**.
 
 - **A16 — The agent executed plugins from a directory anyone could write.**
   *Fixed on this branch.* `plugin.Discover` takes any file with an executable
@@ -406,6 +406,34 @@ product; either wire them or remove them from the UI.
   in; it is `subtle.ConstantTimeCompare` now, as `internal/oauth` already was.
   `authWrap` had no test that sent a wrong token — every case attached the
   correct one, and on Unix it is a no-op — so twelve refusal cases were added.
+
+- **A18 — The update manifest said what to install, and nothing said who wrote
+  it.** *Fixed on this branch.* A15 made the artifact's digest mandatory, which
+  proves the download arrived intact and can prove nothing more: the same
+  document supplies the `url` and the `sha256` that matches it, so whoever
+  chooses the manifest's bytes chooses what the machine installs — `msiexec /i`
+  under SYSTEM, `sudo -n dpkg -i`, or a replace-and-re-exec of the agent's own
+  binary. The Authenticode signature on the MSI is not a second chance: nothing
+  on the apply path reads it, msiexec run by a service installs an unsigned
+  package silently, and on Linux and macOS there is no Authenticode at all. The
+  repository had a signing identity the whole time —
+  `agent/packaging/openidx-codesign.cer`, self-signed, its private half held
+  only as the `WINDOWS_CERT_PFX_BASE64` secret — signing the exe and the MSI but
+  never the document that names them. The manifest now carries an RSA
+  PKCS#1 v1.5 / SHA-256 signature over a canonical form of its fields, verified
+  against that certificate pinned into the agent, **before anything is
+  downloaded**; the trust anchor is a required parameter whose zero value trusts
+  nobody, so a caller that forgets it installs nothing. An on-premise operator
+  publishing their own builds sets `update_trusted_cert` in `agent.json`, which
+  replaces the pin rather than adding to it. Two things are derived rather than
+  asserted: a test compares the embedded certificate byte-for-byte with the
+  packaged one, and another rebuilds the release workflow's PowerShell signing
+  input from the YAML and requires it to equal what Go verifies — the canonical
+  form is written twice, in two languages, and a one-character disagreement
+  would produce signatures that verify nowhere on a release that had already
+  shipped. **Operator-visible:** cutting an `agent-v*` release now fails unless
+  the signing secrets are set, rather than publishing a manifest every agent
+  refuses.
 
 **B. First-contact failures** — what a new operator/evaluator hits in hour one.
 

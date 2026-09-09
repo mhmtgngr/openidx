@@ -22,6 +22,18 @@ type AgentConfig struct {
 	// UpdateManifestURL, when set, enables self-update: the service polls this
 	// JSON manifest and applies a newer published MSI. Empty disables it.
 	UpdateManifestURL string `json:"update_manifest_url,omitempty"`
+	// UpdateTrustedCertPEM, when set, REPLACES the pinned OpenIDX release
+	// publisher with the operator's own signing certificate (PEM), for an
+	// on-premise install publishing its own builds to its own manifest URL.
+	//
+	// This is a trust anchor, not a preference: whoever it names can install
+	// software on this machine. It belongs in this file because this file
+	// already chooses the manifest URL — anyone who can write one can write the
+	// other — and the file's permissions are what protect both (0600 in a 0700
+	// directory on Unix, an owner-only ACL on Windows). Empty means the pinned
+	// publisher, which is the right answer for anyone consuming OpenIDX
+	// releases.
+	UpdateTrustedCertPEM string `json:"update_trusted_cert,omitempty"`
 	// InsecureSkipVerify skips TLS verification for the signaling WebSocket
 	// (dev/self-signed only). Defaults false. Mirrors the HTTP client posture.
 	InsecureSkipVerify bool `json:"insecure_skip_verify,omitempty"`

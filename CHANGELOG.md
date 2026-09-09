@@ -426,6 +426,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The update manifest said what to install, and nothing said who wrote it.**
+  The previous entry in this section made the artifact's SHA-256 mandatory. That
+  proves the download arrived intact and cannot prove anything more: the same
+  document supplies the `url` and the `sha256` that matches it, so whoever
+  chooses the manifest's bytes chooses what the machine installs — `msiexec /i`
+  under SYSTEM on Windows, `sudo -n dpkg -i` on Linux, or a replace-and-re-exec
+  of the agent's own binary. The Authenticode signature on the MSI is not a
+  second chance: nothing on the apply path reads it, `msiexec` run by a service
+  installs an unsigned package without a word, and on Linux and macOS there is
+  no Authenticode at all.
+
+  The signing identity existed the whole time.
+  `agent/packaging/openidx-codesign.cer` is committed, self-signed, and its
+  private half is held only as the `WINDOWS_CERT_PFX_BASE64` secret; it signs
+  `openidx-agent.exe` and the MSI, and never signed the document that names
+  them. `latest.json` now carries a `signature` — base64 RSASSA-PKCS1-v1_5 over
+  SHA-256 of a canonical form of its fields — and the agent verifies it against
+  that certificate, pinned into the binary, **before a byte is downloaded**. The
+  canonical form is signed rather than the JSON bytes, so PowerShell's
+  `ConvertTo-Json` and Go's `encoding/json` never have to agree on key order or
+  spacing, and its first line is a domain separator so a signature the same key
+  made for anything else cannot be replayed as a manifest.
+
+  The trust anchor is a required parameter of `Fetch` and `CheckAndApply` whose
+  zero value trusts nobody, so a caller that forgets to pass one installs
+  nothing rather than anything. An operator publishing their own builds to their
+  own manifest URL sets `update_trusted_cert` in `agent.json` (PEM), which
+  replaces the pinned publisher rather than adding to it.
+
+  Two facts are derived rather than asserted, because both are duplications that
+  would otherwise drift in silence: the embedded certificate is compared
+  byte-for-byte with the packaged one (`//go:embed` cannot read outside its
+  package, so there are two copies), and a test rebuilds the release workflow's
+  PowerShell signing input out of the YAML and requires it to equal what Go
+  verifies — a reordered field or a CRLF would produce signatures that verify
+  nowhere, on a release that had already shipped. The release step also verifies
+  its own signature with the public half before publishing, so a
+  `WINDOWS_CERT_PFX_BASE64` holding the wrong key fails the job instead of
+  shipping a manifest every agent refuses.
+
+  **Behaviour change for operators, two of them.** An `agent-v*` tag now *fails*
+  unless `WINDOWS_CERT_PFX_BASE64` and `WINDOWS_CERT_PASSWORD` are set: an
+  unsigned manifest is not a degraded update channel, it is a file every agent
+  rejects, and failing in CI is better than discovering it on endpoints. And an
+  agent pointed at a manifest published before this change will refuse it,
+  naming the missing signature; re-cut the release to publish a signed one.
+
 - **The local control socket was world-connectable for the length of one
   syscall.** On Unix the control server has no bearer token: the socket's
   filesystem permissions *are* the authentication, and what they guard has no
