@@ -9,7 +9,7 @@ info:
     live route table in both directions. Operations carry an `x-openidx-handler`
     extension naming the Go handler that serves them; where a payload shape is not
     yet pinned the body is shown as a free-form JSON object rather than invented.
-  version: 1.34.0
+  version: 1.35.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
