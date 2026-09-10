@@ -1941,7 +1941,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: detect-changes
     if: needs.detect-changes.outputs.go_changed == 'true'
-    timeout-minutes: 30
+    # Both bounds raised with release.yml's, and for its reason: this job ran
+    # the identical command in 17m41s the day the release died on the same
+    # test code, so 20m/30m was a coin toss on a busy runner rather than a
+    # margin. See the note above `Run tests` in release.yml for the evidence.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -1952,7 +1956,7 @@ jobs:
           cache: true
 
       - name: Run race detector
-        run: go test -race -timeout 20m ./...
+        run: go test -race -timeout 45m ./...
 
   # The Definition of Done's §6.1 exit test, which nothing had ever run.
   #

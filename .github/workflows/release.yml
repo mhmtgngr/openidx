@@ -26,6 +26,11 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # A bound on the whole job, because the per-binary -timeout below is not
+    # one: `go test` applies it to each package separately, so the run as a
+    # whole was previously bounded only by GitHub's 360-minute default. A
+    # genuine deadlock should cost an hour and a half, not six hours.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
         with:
@@ -49,8 +54,31 @@ jobs:
       # is a bound for uninstrumented tests, and under -race a slow runner
       # produces the same failure as a hung one. On this workflow that failure
       # costs a release, not a re-push.
+      #
+      # It cost one. The v1.35.0 release died here with `internal/access`
+      # reporting 1200.070s against a 20m bound, and the bound was measuring
+      # the wrong thing. Nothing had hung: the goroutine dump showed no
+      # goroutine blocked for even five minutes, only forty tests queued on
+      # t.Parallel behind a serial phase that was running and not finishing --
+      # the signature of a starved runner, not a deadlock. The same package
+      # takes 5.8s under -race on a developer machine, and the same command
+      # over the whole module had passed on this runner class the day before
+      # in 17m41s, on test code identical to the commit that failed.
+      #
+      # So 20m sat below normal variance rather than above it, on the one
+      # workflow where a false red costs a release. The bound is raised to be
+      # a hang detector again: well above the worst honest run, still far
+      # below "wedged forever", with the job-level timeout above it as the
+      # outer bound.
+      #
+      # Worth knowing before trusting this step: it is a WEAKER check than the
+      # CI that already ran on this commit, not a stronger one. ci.yml sharded
+      # these packages across ~20 jobs with Postgres and Redis beside them;
+      # here they run in one process with neither, so every database-backed
+      # test skips -- 149 of them in internal/access alone. It re-runs less
+      # than CI did and is the only thing that can cost a release.
       - name: Run tests
-        run: go test -race -timeout 20m ./...
+        run: go test -race -timeout 45m ./...
 
       - name: Build Linux binaries
         run: |
