@@ -149,6 +149,34 @@ func main() {
 	// (bypasses device-trust known-IP auto-approve, geo-block, spoofs audit IPs).
 	middleware.ConfigureTrustedProxies(router, log)
 	router.Use(gin.Recovery())
+	// Both knobs are refused at startup rather than defaulted: a duration that
+	// does not parse, or a cost mode spelled "enfroce", must not look like a
+	// working configuration.
+	admissionQueueTimeout, admissionRetryAfter, admissionErr := middleware.ParseAdmissionDurations(
+		cfg.AdmissionQueueTimeout, cfg.AdmissionRetryAfter)
+	if admissionErr != nil {
+		log.Fatal("Invalid admission control configuration", zap.Error(admissionErr))
+	}
+	costMode, costModeErr := middleware.ParseCostMode(cfg.RateLimitCostMode)
+	if costModeErr != nil {
+		log.Fatal("Invalid RATELIMIT_COST_MODE", zap.Error(costModeErr))
+	}
+
+	// Admission control (task 3.5): a bound on how many requests this process
+	// carries AT ONCE, which is a different question from how fast they arrive.
+	// Mounted this early on purpose -- a request refused here costs one channel
+	// send, and everything below it (tracing, access logging, the limiter's
+	// Redis round trip) is work a process that is already full cannot afford.
+	// The plane name matches the database plane this service connects as
+	// (values.yaml database.planeRoles.assignments), so the two halves of the
+	// same design read the same in metrics. Off until an operator sizes
+	// ADMISSION_MAX_INFLIGHT against the pool behind this service.
+	router.Use(middleware.Admission(middleware.AdmissionConfig{
+		Plane:        "issue",
+		MaxInflight:  cfg.AdmissionMaxInflight,
+		QueueTimeout: admissionQueueTimeout,
+		RetryAfter:   admissionRetryAfter,
+	}))
 	// Body cap (token, login and SAML POST bindings are all well under 1 MiB); oversize is 413 before any handler runs (task 0.3).
 	router.Use(middleware.MaxBodySize(1 << 20))
 	router.Use(otelgin.Middleware("oauth-service"))
@@ -209,6 +237,17 @@ func main() {
 		OnPlatformCrossOrg:     audit.CrossOrgAuditor(db.Pool, log),
 		Logger:                 log,
 	}))
+
+	// Per-tenant request-cost budget (task 3.5). Mounted AFTER the tenant
+	// resolver, which is not a matter of taste: the budget is per tenant, and
+	// before the resolver every request falls into the unattributed "_" bucket,
+	// so one tenant's flood would shed every other tenant's expensive work --
+	// the exact failure the budget exists to prevent. Off by default.
+	router.Use(middleware.TenantCostLimit(redis.RateLimitDB(), middleware.CostConfig{
+		Mode:   costMode,
+		Budget: cfg.RateLimitCostBudget,
+		Window: time.Duration(cfg.RateLimitCostWindow) * time.Second,
+	}, log))
 
 	// Metrics endpoint
 	router.GET("/metrics", metrics.Handler())

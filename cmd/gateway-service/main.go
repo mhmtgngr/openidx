@@ -106,6 +106,36 @@ func main() {
 	// (bypasses device-trust known-IP auto-approve, geo-block, spoofs audit IPs).
 	commonmiddleware.ConfigureTrustedProxies(router, log)
 	router.Use(gin.Recovery())
+	// Refused at startup rather than defaulted: a duration that does not parse
+	// must not look like a working configuration.
+	admissionQueueTimeout, admissionRetryAfter, admissionErr := commonmiddleware.ParseAdmissionDurations(
+		cfg.AdmissionQueueTimeout, cfg.AdmissionRetryAfter)
+	if admissionErr != nil {
+		log.Fatal("Invalid admission control configuration", zap.Error(admissionErr))
+	}
+	// No per-tenant cost budget here, and it is not an oversight: this service
+	// never resolves a tenant. It derives an X-Org-Slug from the Host for the
+	// backends to resolve (internal/gateway/middleware/tenant.go) and does no
+	// lookup of its own, so there is no org id to key a budget by. Keying by
+	// slug instead would open a second key space for the same tenant, and the
+	// two budgets would each be wrong. Budgeting at the edge needs the
+	// slug-to-org resolution the gateway deliberately does not do.
+
+	// Admission control (task 3.5): a bound on how many requests this process
+	// carries AT ONCE, which is a different question from how fast they arrive.
+	// Mounted this early on purpose -- a request refused here costs one channel
+	// send, and everything below it (tracing, access logging, the limiter's
+	// Redis round trip) is work a process that is already full cannot afford.
+	// The plane name matches the database plane this service connects as
+	// (values.yaml database.planeRoles.assignments), so the two halves of the
+	// same design read the same in metrics. Off until an operator sizes
+	// ADMISSION_MAX_INFLIGHT against the pool behind this service.
+	router.Use(commonmiddleware.Admission(commonmiddleware.AdmissionConfig{
+		Plane:        "admin",
+		MaxInflight:  cfg.AdmissionMaxInflight,
+		QueueTimeout: admissionQueueTimeout,
+		RetryAfter:   admissionRetryAfter,
+	}))
 	// Security response headers, on the service that faces the internet.
 	//
 	// The other seven service mains have mounted this since it existed; the

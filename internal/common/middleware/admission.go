@@ -1,9 +1,11 @@
 package middleware
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -190,4 +192,32 @@ func (g *admissionGate) refuse(c *gin.Context, start time.Time, reason string) {
 		"error":             "service_unavailable",
 		"error_description": "The service is shedding load. Retry after the interval in the Retry-After header.",
 	})
+}
+
+// ParseAdmissionDurations reads the two duration strings a service carries in
+// its config (ADMISSION_QUEUE_TIMEOUT, ADMISSION_RETRY_AFTER). Empty means "use
+// the default", which is the only silent case: a value that is present and
+// unparseable is an error, so "250" -- which is not a Go duration and is almost
+// certainly meant as milliseconds -- cannot be read as "default" and leave the
+// operator believing they set something.
+func ParseAdmissionDurations(queueTimeout, retryAfter string) (queue, retry time.Duration, err error) {
+	if s := strings.TrimSpace(queueTimeout); s != "" {
+		queue, err = time.ParseDuration(s)
+		if err != nil {
+			return 0, 0, fmt.Errorf("ADMISSION_QUEUE_TIMEOUT %q: %w (want a Go duration, e.g. 250ms)", s, err)
+		}
+		if queue <= 0 {
+			return 0, 0, fmt.Errorf("ADMISSION_QUEUE_TIMEOUT %q must be positive", s)
+		}
+	}
+	if s := strings.TrimSpace(retryAfter); s != "" {
+		retry, err = time.ParseDuration(s)
+		if err != nil {
+			return 0, 0, fmt.Errorf("ADMISSION_RETRY_AFTER %q: %w (want a Go duration, e.g. 2s)", s, err)
+		}
+		if retry <= 0 {
+			return 0, 0, fmt.Errorf("ADMISSION_RETRY_AFTER %q must be positive", s)
+		}
+	}
+	return queue, retry, nil
 }

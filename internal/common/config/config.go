@@ -173,6 +173,24 @@ type Config struct {
 	RateLimitLocalFallbackMax int `mapstructure:"rate_limit_local_fallback_max"`
 	RateLimitReplicaHint      int `mapstructure:"rate_limit_replica_hint"`
 
+	// Per-tenant request-COST budget (global-scale plan task 3.5). The limiter
+	// above counts requests, and a request is not a unit of anything: measured
+	// against this codebase's Argon2id parameters, a password verification is
+	// 37ms and 19.9MB while a JWKS response is 6us and 540 bytes. The budget
+	// ranks routes into classes and, when a tenant has spent it, sheds the
+	// expensive classes while the cheap ones keep flowing.
+	//
+	// off (default) does not account at all. observe accounts and reports what
+	// it WOULD refuse, which is how a budget gets sized. enforce refuses. An
+	// unrecognised value is refused at startup, not read as off -- see
+	// middleware.ParseCostMode.
+	RateLimitCostMode string `mapstructure:"ratelimit_cost_mode"`
+	// Cost units one tenant may spend per window. Zero disables the budget
+	// however the mode is set: a budget nobody has sized is a guess.
+	RateLimitCostBudget int `mapstructure:"ratelimit_cost_budget"`
+	// The accounting window, in seconds.
+	RateLimitCostWindow int `mapstructure:"ratelimit_cost_window"`
+
 	// SMTP configuration (for email notifications)
 	SMTPHost     string `mapstructure:"smtp_host"`
 	SMTPPort     int    `mapstructure:"smtp_port"`
@@ -1043,6 +1061,11 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("rate_limit_per_user", false)
 	v.SetDefault("rate_limit_local_fallback_max", 60)
 	v.SetDefault("rate_limit_replica_hint", 3)
+	// The tenant cost budget is off, and unsized, until an operator has run it
+	// in observe mode and read openidx_ratelimit_cost_rejected_total.
+	v.SetDefault("ratelimit_cost_mode", "off")
+	v.SetDefault("ratelimit_cost_budget", 0)
+	v.SetDefault("ratelimit_cost_window", 60)
 
 	// Public base URL of the end-user web app. The localhost default keeps
 	// local development working; PUBLIC_BASE_URL must be set in any real
@@ -1461,6 +1484,9 @@ func bindEnvVars(v *viper.Viper) {
 		"rate_limit_per_user":               "RATE_LIMIT_PER_USER",
 		"rate_limit_local_fallback_max":     "RATE_LIMIT_LOCAL_FALLBACK_MAX",
 		"rate_limit_replica_hint":           "RATE_LIMIT_REPLICA_HINT",
+		"ratelimit_cost_mode":               "RATELIMIT_COST_MODE",
+		"ratelimit_cost_budget":             "RATELIMIT_COST_BUDGET",
+		"ratelimit_cost_window":             "RATELIMIT_COST_WINDOW",
 		"cors_allowed_origins":              "CORS_ALLOWED_ORIGINS",
 		"oauth_protocol_cors_wildcard":      "OAUTH_PROTOCOL_CORS_WILDCARD",
 		"audit_stream_allowed_origins":      "AUDIT_STREAM_ALLOWED_ORIGINS",
