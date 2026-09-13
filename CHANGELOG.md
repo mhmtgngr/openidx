@@ -9,6 +9,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Each service can connect as its availability plane's Postgres role
+  (`database.planeRoles`).** Migration v189 created `openidx_issue`,
+  `openidx_admin` and `openidx_event` with their own `statement_timeout` (2s /
+  10s / 30s) and said in its own description that nothing used them yet: a
+  deployment opts in by pointing a service's `DATABASE_URL` at one. This is
+  that switch, off by default, with a per-service assignment table so it can be
+  changed without editing a template.
+
+  **The open question was the grants, and it is now measured.** The roles
+  *inherit* their privileges through `openidx_app` and hold none of their own,
+  while the 220 tables arrive across 190-odd migrations — some granting
+  explicitly, the rest relying on the default privileges v53 set. A table that
+  got neither would be a service that starts, passes its health check, and
+  answers one endpoint with `permission denied for table`. Applying the whole
+  chain as a NOSUPERUSER NOCREATEROLE NOBYPASSRLS owner and asking the
+  database: all three roles reach every table and every sequence.
+
+  **One interaction would have been silent.** `DB_STATEMENT_TIMEOUT` is sent as
+  a connection runtime parameter, and a runtime parameter beats the value
+  `ALTER ROLE ... SET` attaches to the role. `values-prod.yaml` sets
+  `database.statementTimeout: "30s"`, so a production install that simply
+  flipped the flag would have given all three planes 30 seconds, on every
+  service, with nothing in any log to say so — measured at 45 000 ms for all
+  three with `DB_STATEMENT_TIMEOUT=45s`. The chart refuses that combination and
+  names the file to clear it in.
+
+  Six interlocks in all, each naming the knob that resolves it, including
+  `pgcat.enabled`: both inject `DATABASE_URL` as a pod `env` entry, and more to
+  the point a transaction pooler opens its server connections as its own pool
+  user, so restoring the budgets means giving pgcat three pool users and
+  splitting the cell's backend budget three ways — a sizing decision with a
+  real cost, not a flag. Every interlock, the rendered per-service assignment,
+  and the fact that the migration and bootstrap Jobs keep the owner DSN are
+  asserted in CI, and each assertion was checked by breaking what it guards.
+
+- **identity-service runs as one plane or the other (`SERVICE_PROFILE`).** The
+  service straddles two availability classes: finishing a login (ISSUE) and
+  running the console (ADMIN). ADMIN is the first plane shed under load, which
+  buys nothing while the same process serves both — a flood at the admin
+  console lands on the code path that answers logins. `SERVICE_PROFILE=auth`
+  now registers only the login surface and the caller's own authentication
+  factors; `SERVICE_PROFILE=admin` registers only user/role/group CRUD,
+  providers, policies, settings, analytics and lifecycle, plus the portal and
+  notification groups. Unset (or `all`) registers everything, exactly as
+  before, so an existing deployment is unaffected.
+
+  The filter is in the **type**, not in the call sites: `planeGroup` stands in
+  for `*gin.RouterGroup` and declines what this profile does not serve, so all
+  182 registration lines are untouched — the same move that put the tenant
+  scope in `database.ScopedPool` rather than in 1,967 edits. All 182 routes are
+  classified (71 ISSUE, 111 ADMIN); a route missing from the table is served by
+  **both** profiles, because a route that quietly vanished from a running
+  deployment is worse than one served twice, and a test fails until it is
+  classified. An unrecognised `SERVICE_PROFILE` is fatal at startup rather than
+  treated as `all`: the flag exists to remove routes, and silently keeping them
+  would hand back the isolation the deployment was split to get.
+
+  **The chart renders the split** (`identityService.planeSplit`), off by
+  default — with it off, the rendered Deployment is byte-for-byte what it was.
+  On, it is `-identity-auth` and `-identity-admin`, and the Ingress sends the
+  ISSUE paths to the first and everything else to the second. Both halves keep
+  the `identity-service` component label on purpose: the NetworkPolicy, the
+  ServiceMonitor and the PodDisruptionBudget all select on it, and a rename
+  would drop the pods out of all three. They are told apart by an added
+  `openidx.io/plane` label, absent when the split is off, so an existing
+  Deployment's immutable selector is unchanged.
+
+  The edge rules are **generated** from the same table the process registers
+  routes with (`files/identity-planes.json`, `go run ./tools/identityplanes`) —
+  77 ISSUE routes reduced to 65 rules, with everything else falling through to
+  ADMIN. They could not have been a prefix: `POST /users/forgot-password` is
+  ISSUE while `GET /users` is ADMIN.
+
+  Routability is now a constraint the classification has to satisfy, not
+  something to remember: no path may be served by two planes (an Ingress cannot
+  match on the method), and no ISSUE prefix may reach over an ADMIN route. Six
+  entries do not follow the ISSUE/ADMIN rule because of it, each with its
+  reason recorded — and all six move *to* ISSUE, because a route wrongly on
+  ISSUE costs a little surface while one wrongly on ADMIN stops working the
+  moment the admin plane is shed.
+
+  Three of those six were found by disagreement: the CI step that drives the
+  **rendered** Ingress rules with all 182 concrete paths contradicted the Go
+  test, which had treated a Kubernetes `Prefix` as a string prefix. It is
+  element-wise — `/invitations` claims `/invitations` itself, not just what is
+  under it — so the whole invitations family belongs to one plane. Both sides
+  now use the same matcher.
+
 - **The audit event list pages by cursor, not by `OFFSET`.** `ORDER BY
   timestamp DESC OFFSET 50000 LIMIT 50` asks Postgres to produce fifty thousand
   rows and throw them away before returning fifty, so the deepest pages — an

@@ -44,6 +44,35 @@ spec:
       http:
         paths:
           # Identity Service
+          {{- if $.Values.identityService.planeSplit.enabled }}
+          # The plane split (task 3.4). These rules are GENERATED from the same
+          # table the process registers routes with -- files/identity-planes.json,
+          # written by `go run ./tools/identityplanes` -- because the split is
+          # not a prefix: POST /users/forgot-password is ISSUE while GET /users
+          # is ADMIN, and an Ingress cannot match on the method at all.
+          #
+          # Exact takes precedence over Prefix in Kubernetes path matching, so
+          # the catch-all below only gets what no rule above claimed. That is
+          # deliberate: a route added to the service and not yet classified
+          # lands on ADMIN, which answers it (ProfileAdmin serves every
+          # unclassified route) rather than 404ing it.
+          {{- range $rule := ($.Files.Get "files/identity-planes.json" | fromJson).issue_rules }}
+          - path: {{ $rule.path }}
+            pathType: {{ $rule.type }}
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-identity-auth
+                port:
+                  name: http
+          {{- end }}
+          - path: /api/v1/identity
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-identity-admin
+                port:
+                  name: http
+          {{- else }}
           - path: /api/v1/identity
             pathType: Prefix
             backend:
@@ -51,6 +80,7 @@ spec:
                 name: {{ include "openidx.fullname" $ }}-identity-service
                 port:
                   name: http
+          {{- end }}
           # Governance Service
           - path: /api/v1/governance
             pathType: Prefix

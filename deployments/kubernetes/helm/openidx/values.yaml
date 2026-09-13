@@ -110,6 +110,29 @@ config:
 
 # Identity Service
 identityService:
+  # Split this service into two Deployments, one per availability plane
+  # (global-scale plan task 3.4, ADR-2). Off by default: one Deployment serving
+  # both planes is what every install has today.
+  #
+  # On, it renders `-identity-auth` with SERVICE_PROFILE=auth (the ISSUE plane)
+  # and `-identity-admin` with SERVICE_PROFILE=admin, and the Ingress sends the
+  # ISSUE paths to the first and everything else to the second. The path rules
+  # are GENERATED from the same table the process registers routes with
+  # (files/identity-planes.json, `go run ./tools/identityplanes`) -- they are
+  # not a prefix, because POST /users/forgot-password is ISSUE while GET /users
+  # is ADMIN.
+  #
+  # Why it is worth two Deployments: ADMIN is the first plane shed under load,
+  # and shedding it buys nothing while the same process also answers logins.
+  planeSplit:
+    enabled: false
+    auth:
+      # Both fall back to identityService.replicaCount / .resources when unset.
+      replicaCount: null
+      resources: null
+    admin:
+      replicaCount: null
+      resources: null
   enabled: true
   replicaCount: 2
   image:
@@ -605,6 +628,75 @@ database:
   #                    its own connection and is not subject to this cap.
   connectTimeout: ""
   statementTimeout: ""
+
+  # Per-plane Postgres roles (global-scale plan task 2.4, ADR-2).
+  #
+  # Migration v189 creates openidx_issue / openidx_admin / openidx_event, each
+  # IN ROLE openidx_app (so it inherits v53's DML grants and, with them, the
+  # v37 FORCE RLS policies) and each carrying its own budget on the SERVER:
+  # statement_timeout 2s / 10s / 30s, idle_in_transaction_session_timeout
+  # 60s / 120s / 300s. Attaching the budget to the role rather than to a DSN
+  # means an operator cannot lose it by editing a secret, and it holds for a
+  # psql session opened as that role too.
+  #
+  # Why it matters: every service connects as one role today with NO query time
+  # limit, so one expensive ADMIN or EVENT query is indistinguishable to
+  # Postgres from the login path and holds a backend for as long as it likes.
+  # Once a query is RUNNING, the database cancelling it is the only layer that
+  # can stop it -- cancelling a Go context abandons the call while the backend
+  # keeps burning CPU and holding locks.
+  #
+  # OFF by default because the roles ship passwordless: turning this on means
+  # giving them credentials. Measured in
+  # internal/migrations/plane_roles_test.go against a real database with the
+  # full chain: all three roles reach all 220 tables and every sequence, none
+  # can escape the tenant belt, and an 8s query as openidx_issue is cancelled
+  # after 2s with SQLSTATE 57014.
+  planeRoles:
+    enabled: false
+
+    # Bundled PostgreSQL: one password for the three roles, from which the
+    # chart builds the three DSNs. They all inherit openidx_app, so three
+    # different passwords would not narrow the blast radius of a leak -- they
+    # would only be three things to rotate.
+    #
+    # `password` is deliberately NOT declared with an empty default, for the
+    # same reason pgcat.password is not: templates/plane-dsn.yaml refuses to
+    # render without it, and a missing key fails that check exactly as an empty
+    # string does -- so the behaviour is identical while the file no longer
+    # carries a literal blank credential for a scanner (or a reader) to take at
+    # face value. Supply it with --set or a values file:
+    #   --set database.planeRoles.password=...
+    #
+    # Set it on the server too, because v189 creates the roles passwordless:
+    #   ALTER ROLE openidx_issue PASSWORD '...';  (and openidx_admin, openidx_event)
+
+    # External or managed database: the three DSNs in full, instead of
+    # `password`. All three must be set together.
+    issueUrl: ""
+    adminUrl: ""
+    eventUrl: ""
+
+    # Which plane each service connects as. The design (§4.3) draws the planes
+    # by availability class, not by data ownership.
+    #
+    # identityService is `admin` rather than `issue` because one unsplit
+    # identity-service serves BOTH planes -- the login surface and the console
+    # -- so it has to take the looser budget or admin queries would be
+    # cancelled at 2s. Once SERVICE_PROFILE splits it into two deployments the
+    # auth half moves to `issue`.
+    #
+    # accessService is `admin` because its VERIFY paths (forward-auth) touch no
+    # database at all, while its PAM and kill-switch work does.
+    assignments:
+      identityService: admin
+      oauthService: issue
+      accessService: admin
+      adminApi: admin
+      governanceService: admin
+      provisioningService: admin
+      auditService: event
+      gatewayService: admin
 
 # PostgreSQL
 postgresql:

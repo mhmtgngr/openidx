@@ -101,6 +101,15 @@ database:
   # Cap any single query at 30s. Generous enough for audit/governance reports
   # while preventing a query on a degraded primary from pinning a connection
   # indefinitely. Migrations run out-of-band and are unaffected by this chart.
+  #
+  # ONE CAP FOR EVERY PLANE is the thing task 2.4 replaces: 30s is the EVENT
+  # plane's budget, and giving it to the login path too is what makes an
+  # expensive admin query indistinguishable from a token exchange. Enabling
+  # database.planeRoles means clearing this -- DB_STATEMENT_TIMEOUT is sent as
+  # a connection runtime parameter, which BEATS the ALTER ROLE ... SET the
+  # roles carry, so leaving it here would silently hand all three planes 30s.
+  # The chart refuses to render that combination rather than let it happen
+  # quietly (templates/plane-dsn.yaml).
   statementTimeout: "30s"
 
 # ----- Production hardening -----

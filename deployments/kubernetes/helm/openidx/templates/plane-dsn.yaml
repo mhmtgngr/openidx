@@ -1,0 +1,83 @@
+{{- if .Values.database.planeRoles.enabled }}
+{{/*
+Per-plane Postgres credentials (global-scale plan task 2.4).
+
+THE INTERLOCKS COME FIRST, because each of these combinations fails in a way a
+rollout does not show you.
+*/}}
+
+{{- if .Values.pgcat.enabled }}
+{{- fail "database.planeRoles.enabled and pgcat.enabled cannot both be on. Both inject DATABASE_URL as a pod `env` entry, so the rendered Deployment would carry the name twice; and a transaction pooler multiplexes many clients onto a few server connections, which is where the per-role budget comes from -- pgcat would need openidx_issue/openidx_admin/openidx_event as three pool users, splitting the cell's backend budget three ways. That is a design decision, not a flag: see docs/architecture/db-pooling.md." }}
+{{- end }}
+
+{{- if .Values.database.statementTimeout }}
+{{- fail "database.planeRoles.enabled requires database.statementTimeout to be empty. DB_STATEMENT_TIMEOUT is sent as a connection runtime parameter, and a runtime parameter BEATS the value ALTER ROLE ... SET attached to the role -- so a fleet-wide 30s would silently replace the 2s the ISSUE plane was given, on every service, with nothing in any log to say so. The per-role budgets are the replacement for the fleet-wide one; note that values-prod.yaml sets statementTimeout, so clear it there when enabling this." }}
+{{- end }}
+
+{{- $pr := .Values.database.planeRoles }}
+{{- $explicit := and $pr.issueUrl $pr.adminUrl $pr.eventUrl }}
+{{- $anyExplicit := or $pr.issueUrl $pr.adminUrl $pr.eventUrl }}
+{{- if and $anyExplicit (not $explicit) }}
+{{- fail "database.planeRoles.issueUrl, adminUrl and eventUrl must be set together or not at all. Two of three would leave one plane connecting as the fleet-wide role, which is the case this task exists to remove -- and nothing would report it." }}
+{{- end }}
+{{- if and (not $explicit) (not $pr.password) }}
+{{- fail "database.planeRoles.enabled needs credentials: either database.planeRoles.password (bundled PostgreSQL -- the chart builds the three DSNs from it) or all three of issueUrl/adminUrl/eventUrl (external or managed database). Migration v189 creates the roles passwordless, so set the password on the server too: ALTER ROLE openidx_issue PASSWORD '...' (and openidx_admin, openidx_event)." }}
+{{- end }}
+{{- if and (not $explicit) (not .Values.postgresql.enabled) }}
+{{- fail "database.planeRoles.password only builds a DSN for the BUNDLED PostgreSQL (postgresql.enabled). With an external database the host, port, database name and TLS mode are not the chart's to guess -- set database.planeRoles.issueUrl/adminUrl/eventUrl instead." }}
+{{- end }}
+
+{{- if not .Values.externalSecrets.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "openidx.fullname" . }}-plane-dsn
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: plane-dsn
+type: Opaque
+stringData:
+  {{- if $explicit }}
+  DATABASE_URL_ISSUE: {{ $pr.issueUrl | quote }}
+  DATABASE_URL_ADMIN: {{ $pr.adminUrl | quote }}
+  DATABASE_URL_EVENT: {{ $pr.eventUrl | quote }}
+  {{- else }}
+  {{- $host := printf "%s-postgresql:5432" (include "openidx.fullname" .) }}
+  {{- $db := .Values.postgresql.auth.database | default "openidx" }}
+  {{- $ssl := .Values.database.sslMode | default "disable" }}
+  DATABASE_URL_ISSUE: "postgres://openidx_issue:{{ $pr.password }}@{{ $host }}/{{ $db }}?sslmode={{ $ssl }}"
+  DATABASE_URL_ADMIN: "postgres://openidx_admin:{{ $pr.password }}@{{ $host }}/{{ $db }}?sslmode={{ $ssl }}"
+  DATABASE_URL_EVENT: "postgres://openidx_event:{{ $pr.password }}@{{ $host }}/{{ $db }}?sslmode={{ $ssl }}"
+  {{- end }}
+{{- else }}
+# The three plane DSNs come from the secret store, like every other credential
+# in external-secrets mode. Store them under <remoteKeyPrefix>/database-url-issue,
+# /database-url-admin and /database-url-event; each is a full DSN whose user is
+# the matching role.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: {{ include "openidx.fullname" . }}-plane-dsn
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: plane-dsn
+spec:
+  refreshInterval: {{ .Values.externalSecrets.refreshInterval | default "1h" }}
+  secretStoreRef:
+    name: {{ .Values.externalSecrets.secretStoreRef.name }}
+    kind: {{ .Values.externalSecrets.secretStoreRef.kind | default "ClusterSecretStore" }}
+  target:
+    name: {{ include "openidx.fullname" . }}-plane-dsn
+    creationPolicy: Owner
+  data:
+    - secretKey: DATABASE_URL_ISSUE
+      remoteRef:
+        key: {{ .Values.externalSecrets.remoteKeyPrefix | default "openidx" }}/database-url-issue
+    - secretKey: DATABASE_URL_ADMIN
+      remoteRef:
+        key: {{ .Values.externalSecrets.remoteKeyPrefix | default "openidx" }}/database-url-admin
+    - secretKey: DATABASE_URL_EVENT
+      remoteRef:
+        key: {{ .Values.externalSecrets.remoteKeyPrefix | default "openidx" }}/database-url-event
+{{- end }}
+{{- end }}

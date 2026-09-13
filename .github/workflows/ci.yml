@@ -365,9 +365,12 @@ jobs:
       # application's own role cannot do -- which is the point of v53 and the
       # reason the chart provisions roles from a bootstrap hook.
       #
-      # The cancellation test sleeps 15s against a 10s ceiling on purpose, so
-      # this step is slower than it looks; it is the acceptance criterion of
-      # 2.4 and there is no faster way to prove a server-side timeout fires.
+      # The cancellation test sleeps 15s against a 10s ceiling on purpose, and
+      # the two cutover tests apply the WHOLE migration chain as a
+      # least-privileged owner, so this step is slower than it looks. Both are
+      # acceptance criteria of 2.4: there is no faster way to prove a
+      # server-side timeout fires, and no way at all to know the roles reach
+      # every table without creating every table.
       - name: Per-plane roles inherit the tenant belt and bound their queries
         env:
           TEST_POSTGRES_SUPERUSER_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
@@ -377,7 +380,9 @@ jobs:
           echo "$out"
           for want in TestV189PlaneRolesInheritTheTenantBelt \
                       TestV189AdminQueryIsCancelledAndIssueIsNot \
-                      TestV189IdleTransactionsAreClosedOut; do
+                      TestV189IdleTransactionsAreClosedOut \
+                      TestV189PlaneRolesReachEveryTableAfterTheFullChain \
+                      TestV189PlaneRoleBudgetsSurviveTheApplicationPool; do
             grep -q -- "--- PASS: $want " <<<"$out" \
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done

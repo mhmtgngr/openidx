@@ -231,6 +231,200 @@ jobs:
                 f"transaction mode, statement cache {size}")
           PYEOF
 
+      - name: Each plane connects as its own role, or none of them does
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+          }
+          on=(--set database.planeRoles.enabled=true
+              --set database.planeRoles.password=render-only-not-a-credential)
+
+          # Off by default, and off means the DSN keys do not exist at all --
+          # not a Secret nobody reads. Here-string, not a pipe: see the note in
+          # the origin-cloaking step.
+          if grep -q 'DATABASE_URL_' <<<"$(render)"; then
+            echo "a plane DSN rendered with database.planeRoles unset"; exit 1
+          fi
+
+          # Each interlock must refuse AND name the knob that resolves it. A
+          # refusal an operator cannot act on is a wall, not a guard.
+          refuses() {
+            local want="$1"; shift
+            if out=$(render "$@" 2>&1); then
+              echo "rendered when it should have refused: $want"; exit 1
+            fi
+            grep -q "$want" <<<"$out" || { echo "the refusal does not name $want: $out"; exit 1; }
+          }
+          refuses 'pgcat.enabled' "${on[@]}" --set pgcat.enabled=true --set config.rlsMode=local \
+                  --set pgcat.password=x --set pgcat.adminPassword=x --set pgcat.postgresHost=h
+          refuses 'database.statementTimeout' "${on[@]}" --set database.statementTimeout=30s
+          refuses 'database.planeRoles.password' --set database.planeRoles.enabled=true
+          refuses 'issueUrl' --set database.planeRoles.enabled=true \
+                  --set database.planeRoles.issueUrl=postgres://i --set database.planeRoles.adminUrl=postgres://a
+          refuses 'postgresql.enabled' "${on[@]}" --set postgresql.enabled=false
+          refuses 'not a plane' "${on[@]}" --set database.planeRoles.assignments.auditService=events
+
+          render "${on[@]}" > /tmp/render-planes.yaml
+          python3 - /tmp/render-planes.yaml <<'PYEOF'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+
+          def containers(o, out):
+              if isinstance(o, dict):
+                  out += (o.get("containers") or []) + (o.get("initContainers") or [])
+                  for v in o.values():
+                      containers(v, out)
+              elif isinstance(o, list):
+                  for v in o:
+                      containers(v, out)
+
+          secret = next(d for d in docs if d["kind"] == "Secret"
+                        and d["metadata"]["name"] == "openidx-plane-dsn")
+          keys = set(secret["stringData"])
+          assert keys == {"DATABASE_URL_ISSUE", "DATABASE_URL_ADMIN", "DATABASE_URL_EVENT"}, keys
+          for k, role in (("DATABASE_URL_ISSUE", "openidx_issue"),
+                          ("DATABASE_URL_ADMIN", "openidx_admin"),
+                          ("DATABASE_URL_EVENT", "openidx_event")):
+              assert f"://{role}:" in secret["stringData"][k], (k, "does not connect as", role)
+
+          # The assignment table in values.yaml is the claim; this is the
+          # rendered fact. A service silently left on the fleet-wide DSN is the
+          # failure this task exists to remove, and it looks healthy.
+          want = {
+              "identity-service": "DATABASE_URL_ADMIN",
+              "oauth-service": "DATABASE_URL_ISSUE",
+              "access-service": "DATABASE_URL_ADMIN",
+              "admin-api": "DATABASE_URL_ADMIN",
+              "governance-service": "DATABASE_URL_ADMIN",
+              "provisioning-service": "DATABASE_URL_ADMIN",
+              "audit-service": "DATABASE_URL_EVENT",
+              "gateway-service": "DATABASE_URL_ADMIN",
+          }
+          got = {}
+          for d in docs:
+              if d["kind"] != "Deployment":
+                  continue
+              name = d["metadata"]["name"].removeprefix("openidx-")
+              cs = []
+              containers(d, cs)
+              for c in cs:
+                  for e in (c.get("env") or []):
+                      ref = (e.get("valueFrom") or {}).get("secretKeyRef") or {}
+                      if e["name"] == "DATABASE_URL" and ref.get("name") == "openidx-plane-dsn":
+                          got[name] = ref["key"]
+          assert got == want, f"plane assignments differ: got {got}, want {want}"
+
+          # The Jobs keep the owner DSN: the migration does DDL the runtime
+          # roles do not have, and the bootstrap connects as the superuser.
+          for d in docs:
+              if d["kind"] != "Job":
+                  continue
+              cs = []
+              containers(d, cs)
+              for c in cs:
+                  for e in (c.get("env") or []):
+                      ref = (e.get("valueFrom") or {}).get("secretKeyRef") or {}
+                      assert ref.get("name") != "openidx-plane-dsn", \
+                          f"{d['metadata']['name']} was routed through a plane role; its DDL would be refused"
+          print(f"{len(got)} services connect as their plane role; the Jobs stay on the owner DSN")
+          PYEOF
+
+
+      - name: The plane split sends every login path to the auth pod
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set ingress.enabled=true --set ingress.hosts[0].host=openidx.example "$@"
+          }
+
+          # Off by default, and off means one Deployment -- not two with one
+          # scaled to zero. Here-string, not a pipe: see the origin-cloaking step.
+          if grep -q 'openidx-identity-auth' <<<"$(render)"; then
+            echo "the split rendered with identityService.planeSplit unset"; exit 1
+          fi
+
+          render --set identityService.planeSplit.enabled=true \
+                 --set identityService.autoscaling.enabled=true \
+                 --set networkPolicy.enabled=true > /tmp/render-split.yaml
+          python3 - /tmp/render-split.yaml deployments/kubernetes/helm/openidx/files/identity-planes.json <<'PYEOF'
+          import json, sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          manifest = json.load(open(sys.argv[2]))
+
+          def by(kind, name):
+              for d in docs:
+                  if d["kind"] == kind and d["metadata"]["name"] == name:
+                      return d
+              raise AssertionError(f"{kind}/{name} did not render")
+
+          # Each half runs one profile, and BOTH keep the identity-service
+          # component label. The NetworkPolicy, the ServiceMonitor and the PDB
+          # all select on it; a rename would drop the pods out of all three, and
+          # the NetworkPolicy is the one that matters.
+          for half, profile in (("auth", "auth"), ("admin", "admin")):
+              dep = by("Deployment", f"openidx-identity-{half}")
+              labels = dep["spec"]["template"]["metadata"]["labels"]
+              assert labels["app.kubernetes.io/component"] == "identity-service", labels
+              assert labels["openidx.io/plane"] == half, labels
+              env = {e["name"]: e.get("value") for e in dep["spec"]["template"]["spec"]["containers"][0]["env"]}
+              assert env.get("SERVICE_PROFILE") == profile, env.get("SERVICE_PROFILE")
+              # The Service must not select both halves.
+              sel = by("Service", f"openidx-identity-{half}")["spec"]["selector"]
+              assert sel.get("openidx.io/plane") == half, sel
+              # An HPA names its target, so it has to have followed the rename.
+              assert by("HorizontalPodAutoscaler", f"openidx-identity-{half}")["spec"]["scaleTargetRef"]["name"] \
+                     == f"openidx-identity-{half}"
+
+          npol = by("NetworkPolicy", "openidx-identity-service-allow")["spec"]["podSelector"]["matchLabels"]
+          for half in ("auth", "admin"):
+              labels = by("Deployment", f"openidx-identity-{half}")["spec"]["template"]["metadata"]["labels"]
+              missing = {k: v for k, v in npol.items() if labels.get(k) != v}
+              assert not missing, f"identity-{half} pods fall outside the NetworkPolicy: {missing}"
+
+          # Now the routing itself, driven the way Kubernetes matches: Exact
+          # first, then the longest Prefix. Every route in the manifest is
+          # driven with a value in each parameter slot, because that is what
+          # arrives -- the rule has to match the request, not the template.
+          paths = []
+          for rule in by("Ingress", "openidx-api")["spec"]["rules"][0]["http"]["paths"]:
+              paths.append((rule["path"], rule["pathType"], rule["backend"]["service"]["name"]))
+
+          def route(p):
+              exact = [b for (path, t, b) in paths if t == "Exact" and path == p]
+              if exact:
+                  return exact[0]
+              best, backend = -1, None
+              for (path, t, b) in paths:
+                  if t == "Prefix" and (p == path.rstrip("/") or p.startswith(path.rstrip("/") + "/")):
+                      if len(path) > best:
+                          best, backend = len(path), b
+              return backend
+
+          def concrete(path):
+              return "/".join("0a1b2c3d-0000-4000-8000-000000000000" if s.startswith(":") else s
+                              for s in path.split("/"))
+
+          wrong = []
+          for plane, want in (("issue", "openidx-identity-auth"), ("admin", "openidx-identity-admin")):
+              for entry in manifest[plane]:
+                  method, path = entry.split(" ", 1)
+                  full = manifest["prefix"] + concrete(path)
+                  got = route(full)
+                  if got != want:
+                      wrong.append(f"{entry} -> {full} routed to {got}, want {want}")
+          assert not wrong, "the edge would send these to a pod that does not serve them:\n  " + "\n  ".join(wrong)
+          print(f"{len(manifest['issue'])} ISSUE and {len(manifest['admin'])} ADMIN routes "
+                f"reach the right plane through {len(paths)} Ingress rules")
+          PYEOF
+
 
       - name: The bootstrap hook runs before the migration hook
         run: |

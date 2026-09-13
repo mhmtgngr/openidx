@@ -48,6 +48,16 @@ type Config struct {
 	// can multiplex safely. See internal/common/database/tx.go.
 	RLSMode string `mapstructure:"rls_mode"`
 
+	// ServiceProfile selects which availability plane a service process serves
+	// (global-scale plan task 3.4, ADR-2). Empty or "all" is the default and
+	// registers every route, which is what each service did before the split.
+	// identity-service also understands "auth" (ISSUE plane: the login surface
+	// and the user's own authentication factors) and "admin" (ADMIN plane:
+	// user/role/group CRUD, policies, settings, analytics). An unrecognised
+	// value is refused at startup rather than treated as "all" -- see
+	// identity.ParseProfile.
+	ServiceProfile string `mapstructure:"service_profile"`
+
 	// Database connections
 	DatabaseURL      string `mapstructure:"database_url"`
 	RedisURL         string `mapstructure:"redis_url"`
@@ -986,6 +996,8 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
 	v.SetDefault("rls_mode", "session")
+	// Empty = "all": every route, i.e. today's behaviour.
+	v.SetDefault("service_profile", "")
 	v.SetDefault("redis_url", "redis://:redis_secret@localhost:6379")
 	// Role URLs default to empty = alias the primary (see RedisRateLimitURL).
 	v.SetDefault("redis_ratelimit_url", "")
@@ -1200,6 +1212,7 @@ func bindEnvVars(v *viper.Viper) {
 	envMappings := map[string]string{
 		"database_url":                                    "DATABASE_URL",
 		"rls_mode":                                        "RLS_MODE",
+		"service_profile":                                 "SERVICE_PROFILE",
 		"redis_url":                                       "REDIS_URL",
 		"redis_ratelimit_url":                             "REDIS_RATELIMIT_URL",
 		"trusted_proxies":                                 "OIDX_TRUSTED_PROXIES",

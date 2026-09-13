@@ -21,6 +21,16 @@ between waves and each flap is a cold start under fire.
   "access-service" .Values.accessService
   "admin-console" .Values.adminConsole
 }}
+{{- if and .Values.identityService.enabled .Values.identityService.planeSplit.enabled }}
+{{- /* The plane split renders two Deployments in place of one, and an HPA
+       names its target by name, so the entry has to follow. Both halves take
+       the identityService autoscaling settings: planeSplit's per-half
+       replicaCount sets the Deployment's starting replicas, which the HPA then
+       governs. */}}
+{{- $services = unset $services "identity-service" }}
+{{- $_ := set $services "identity-auth" .Values.identityService }}
+{{- $_ := set $services "identity-admin" .Values.identityService }}
+{{- end }}
 {{- $beh := .Values.autoscaling.behavior }}
 
 {{- range $name, $svc := $services }}
