@@ -22,6 +22,17 @@ routes:
         rate: 100
         burst: 50
         key: remote_addr
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 200
+        burst: 50
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
       cors:
         allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
         allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
@@ -40,6 +51,17 @@ routes:
         rate: 50
         burst: 25
         key: remote_addr
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 100
+        burst: 25
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
       cors:
         allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
         allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
@@ -58,6 +80,17 @@ routes:
         rate: 30
         burst: 15
         key: remote_addr
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 100
+        burst: 25
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
       cors:
         allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
         allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
@@ -77,6 +110,17 @@ routes:
         rate: 200
         burst: 100
         key: remote_addr
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 100
+        burst: 50
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
       cors:
         allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
         allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
@@ -95,6 +139,17 @@ routes:
         rate: 100
         burst: 50
         key: remote_addr
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 200
+        burst: 50
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
       cors:
         allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
         allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
@@ -104,6 +159,14 @@ routes:
       type: roundrobin
       nodes:
         "oauth-service:8006": 1
+      # ISSUE plane: never retry (a retry under load multiplies the attack it
+      # is failing under) and give up fast so a stalled backend sheds instead
+      # of queueing.
+      retries: 0
+      timeout:
+        connect: 3
+        send: 10
+        read: 10
 
   # OIDC discovery endpoints
   - uri: /.well-known/*
@@ -113,6 +176,17 @@ routes:
         rate: 50
         burst: 25
         key: remote_addr
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 1000
+        burst: 200
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
       cors:
         allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
         allow_methods: "GET,OPTIONS"
@@ -131,6 +205,17 @@ routes:
         rate: 100
         burst: 50
         key: remote_addr
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 200
+        burst: 50
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
       cors:
         allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
         allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
@@ -233,6 +318,17 @@ routes:
         rate: 100
         burst: 50
         key: remote_addr
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 100
+        burst: 25
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
       cors:
         allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
         allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
@@ -251,6 +347,17 @@ routes:
         rate: 50
         burst: 25
         key: remote_addr
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 100
+        burst: 25
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
       cors:
         allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
         allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"

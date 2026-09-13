@@ -197,13 +197,16 @@ func main() {
 	// engine panics ("handlers are already registered for path '/health'").
 
 	// Create HTTP server
-	httpServer := &http.Server{
+	// Hardened listener: ReadHeaderTimeout 5s, 16 KiB header cap and 100 HTTP/2
+	// streams per connection come from server.NewHTTP and cannot be disabled
+	// here (global-scale plan task 0.3).
+	httpServer := server.NewHTTP(server.HTTPOptions{
 		Addr:         cfg.ListenAddr(),
 		Handler:      router,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
-	}
+	})
 
 	// Setup graceful shutdown
 	shutdownables := []server.Shutdownable{

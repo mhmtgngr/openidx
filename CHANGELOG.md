@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Every listener refuses to wait for a slow attacker.** A slowloris needs
+  no bandwidth, only a server that keeps a half-sent request alive; Go's
+  `http.Server` does so indefinitely unless told otherwise, and each of the
+  eight services built its own server literal with read, write and idle
+  timeouts and no header timeout — seven mains, seven chances to forget it,
+  all seven forgot. `server.NewHTTP` is now the one way a service constructs
+  its listener: `ReadHeaderTimeout` 5 s, a 16 KiB header cap (Go's default is
+  1 MiB, an allocation the attacker sizes) and 100 HTTP/2 streams per
+  connection, none of which a caller can disable. Body caps are mounted per
+  service (1 MiB on oauth, governance and audit; 5 MiB on admin-api and SCIM
+  provisioning for `/Bulk`; 10 MiB on identity for CSV import), answering
+  413 before any handler runs; the access proxy and gateway are left to the
+  edge's cap because they forward published applications. The compose nginx
+  gains `client_header_timeout`/`client_body_timeout` 10 s, `send_timeout`,
+  `reset_timedout_connection` and a per-source `limit_conn` of 100 with a
+  commented realip block for when a provider sits in front. Every
+  rate-limited APISIX route, in compose and in the edge seed script, now also
+  carries `limit-conn` keyed on the real client address, and the OAuth
+  upstream stops retrying (`retries: 0`, 3/10/10 s timeouts): a retry under
+  load multiplies the attack it is failing under. Tests pin each layer: a
+  trickled header is cut inside the timeout while `ReadTimeout` is still 10 s
+  away, an 8 KiB header gets 431 with no handler run, and the compose and
+  edge configurations are parsed rather than grepped. Task 0.3.
+
 - **The client-IP chain survives an edge in front of it.** Every per-IP
   control — the auth-path rate limiter, audit actor IPs, known-IP device
   trust, geo rules — reads gin's `ClientIP()`, which is the client only when

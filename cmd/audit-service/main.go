@@ -140,6 +140,8 @@ func main() {
 	// (bypasses device-trust known-IP auto-approve, geo-block, spoofs audit IPs).
 	middleware.ConfigureTrustedProxies(router, log)
 	router.Use(gin.Recovery())
+	// Body cap (audit reads are query-driven; no legitimate large body); oversize is 413 before any handler runs (task 0.3).
+	router.Use(middleware.MaxBodySize(1 << 20))
 	router.Use(otelgin.Middleware("audit-service"))
 	router.Use(middleware.SecurityHeadersForEnv(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
@@ -271,13 +273,16 @@ func main() {
 	router.GET("/ready", healthService.ReadyHandler())
 
 	// Create HTTP server
-	httpServer := &http.Server{
+	// Hardened listener: ReadHeaderTimeout 5s, 16 KiB header cap and 100 HTTP/2
+	// streams per connection come from server.NewHTTP and cannot be disabled
+	// here (global-scale plan task 0.3).
+	httpServer := server.NewHTTP(server.HTTPOptions{
 		Addr:         cfg.ListenAddr(),
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
-	}
+	})
 
 	// Build shutdownables list
 	var shutdownables []server.Shutdownable

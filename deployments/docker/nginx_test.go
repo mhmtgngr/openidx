@@ -910,3 +910,39 @@ func TestNginxLoggingFormat(t *testing.T) {
 		}
 	}
 }
+
+// TestNginxSlowRequestHardening pins the slowloris / slow-body / connection-flood
+// floor at the compose edge (global-scale plan task 0.3). nginx's defaults hold
+// a half-sent request for a minute; a flood does not need bandwidth, only a
+// server willing to wait.
+func TestNginxSlowRequestHardening(t *testing.T) {
+	content, err := os.ReadFile("nginx/nginx.conf")
+	if err != nil {
+		t.Fatalf("Failed to read nginx.conf: %v", err)
+	}
+	conf := string(content)
+
+	for _, want := range []string{
+		"client_header_timeout 10s;",
+		"client_body_timeout 10s;",
+		"send_timeout 30s;",
+		"reset_timedout_connection on;",
+		"limit_conn_zone $binary_remote_addr zone=perip:10m;",
+		"limit_conn perip 100;",
+		"limit_conn_status 429;",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("nginx.conf must carry %q (slow-request / connection-flood floor)", want)
+		}
+	}
+
+	// The realip block is guidance, not active: with nothing in front of this
+	// nginx the TCP peer IS the client, and trusting a header here would let
+	// any caller pick its own limit_conn key.
+	for _, line := range strings.Split(conf, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "set_real_ip_from") || strings.HasPrefix(trimmed, "real_ip_header") {
+			t.Errorf("realip must stay commented until an edge provider is in front: %q", trimmed)
+		}
+	}
+}

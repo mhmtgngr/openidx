@@ -135,6 +135,8 @@ func main() {
 	// (bypasses device-trust known-IP auto-approve, geo-block, spoofs audit IPs).
 	middleware.ConfigureTrustedProxies(router, log)
 	router.Use(gin.Recovery())
+	// Body cap (SCIM /Bulk (RFC 7644 §3.7) allows multi-MiB payloads); oversize is 413 before any handler runs (task 0.3).
+	router.Use(middleware.MaxBodySize(5 << 20))
 	router.Use(otelgin.Middleware("provisioning-service"))
 	router.Use(middleware.SecurityHeadersForEnv(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
@@ -215,13 +217,16 @@ func main() {
 	// Keep legacy /ready endpoint for backward compatibility
 	router.GET("/ready", healthService.ReadyHandler())
 
-	httpServer := &http.Server{
+	// Hardened listener: ReadHeaderTimeout 5s, 16 KiB header cap and 100 HTTP/2
+	// streams per connection come from server.NewHTTP and cannot be disabled
+	// here (global-scale plan task 0.3).
+	httpServer := server.NewHTTP(server.HTTPOptions{
 		Addr:         cfg.ListenAddr(),
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
-	}
+	})
 
 	// Setup graceful shutdown manager
 	shutdownables := []server.Shutdownable{

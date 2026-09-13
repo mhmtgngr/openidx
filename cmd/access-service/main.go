@@ -579,13 +579,16 @@ func main() {
 		port = 8007
 	}
 
-	httpServer := &http.Server{
+	// Hardened listener: ReadHeaderTimeout 5s, 16 KiB header cap and 100 HTTP/2
+	// streams per connection come from server.NewHTTP and cannot be disabled
+	// here (global-scale plan task 0.3).
+	httpServer := server.NewHTTP(server.HTTPOptions{
 		Addr:         fmt.Sprintf("%s:%d", cfg.BindAddr, port),
 		Handler:      router,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,
-	}
+	})
 
 	// Build shutdownables list
 	var shutdownables []server.Shutdownable

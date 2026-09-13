@@ -118,4 +118,20 @@ grep -q 'trusted_addresses' seed-edge-routes.sh || fail "real-ip: must carry a t
 grep -q '0.0.0.0/0' seed-edge-routes.sh && fail "real-ip: trusting 0.0.0.0/0 lets any caller forge its address" || true
 echo "OK real-ip (global rule gated on EDGE_TRUSTED_CIDRS)"
 
+# --- connection ceilings (task 0.3): every openidx route carries limit-conn ---
+#
+# Rate limits bound requests per second; a slow-body or long-poll flood spends
+# OPEN connections instead. Each public openidx route must carry a limit-conn
+# ceiling, keyed on remote_addr (the client after real-ip), and the ISSUE
+# upstream must not retry: a retry under load multiplies the attack it fails under.
+for r in openidx-api-enroll openidx-oauth openidx-wellknown openidx-api-identity openidx-api-governance openidx-api-provisioning openidx-api-audit openidx-api-access openidx-api-oauth openidx-api-saml openidx-api-admin openidx-scim; do
+  grep -E "^\s*put $r " seed-edge-routes.sh | grep -q 'LC_' || fail "limit-conn: route $r has no connection ceiling"
+done
+grep -q '"key":"remote_addr"' seed-edge-routes.sh || fail "limit-conn: must key on remote_addr"
+grep -E '^put openidx-oauth ' seed-edge-routes.sh | grep -q 'UP_ISSUE' || fail "oauth upstream must carry retries:0 + short timeouts"
+grep -q '"retries":0' seed-edge-routes.sh || fail "ISSUE upstream must not retry"
+# The rendered JSON must still be valid once the shell expands the variables.
+DRY_RUN=1 EDGE_TRUSTED_CIDRS="" bash -c 'source <(sed -n "/^LC_ISSUE=/,/^UP_ISSUE=/p" seed-edge-routes.sh); H="\"hosts\":[\"x\"]"; printf "%s" "{$H,\"priority\":30,\"plugins\":{$LC_ISSUE},\"upstream\":{\"type\":\"roundrobin\",$UP_ISSUE,\"nodes\":{\"127.0.0.1:8006\":1}}}"' | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["plugins"]["limit-conn"]["conn"]==200 and d["upstream"]["retries"]==0' || fail "limit-conn/upstream JSON does not parse after expansion"
+echo "OK limit-conn (connection ceilings on every openidx route, no ISSUE retries)"
+
 echo "ALL PASS"

@@ -75,21 +75,34 @@ fi
 
 H='"hosts":["openidx.tdv.org"]'
 
+# --- Per-source concurrent-connection ceilings (global-scale plan task 0.3) ---
+# A slow-body or long-poll flood spends OPEN connections, not request rate.
+# limit-conn bounds how many one source may hold at once; keyed on remote_addr,
+# which is the client after the real-ip rule above (or natively when this APISIX
+# is the true edge). ISSUE-facing routes (oauth, identity, enroll, well-known)
+# get more headroom than management routes, which are the first to shed.
+LC_ISSUE='"limit-conn":{"conn":200,"burst":50,"default_conn_delay":0.1,"key_type":"var","key":"remote_addr","rejected_code":429}'
+LC_ADMIN='"limit-conn":{"conn":100,"burst":25,"default_conn_delay":0.1,"key_type":"var","key":"remote_addr","rejected_code":429}'
+LC_DISCOVERY='"limit-conn":{"conn":1000,"burst":200,"default_conn_delay":0.1,"key_type":"var","key":"remote_addr","rejected_code":429}'
+# ISSUE upstream: never retry (a retry multiplies the attack it fails under),
+# give up fast so a stalled backend sheds instead of queueing.
+UP_ISSUE='"retries":0,"timeout":{"connect":3,"send":10,"read":10}'
+
 # ===========================================================================
 # TIER 0 — always public (the bootstrap gate; darking it bricks enrollment).
 # ===========================================================================
 # The enroll door: the ONLY /api/v1/access/* path public in dark mode. Higher
 # priority than the (off-mode) /api/v1/access/* catch-all so it always wins.
-put openidx-api-enroll       "{$H,\"uri\":\"/api/v1/access/enroll\",\"priority\":45,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8007\":1}}}"
+put openidx-api-enroll       "{$H,\"uri\":\"/api/v1/access/enroll\",\"priority\":45,\"plugins\":{$LC_ISSUE},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8007\":1}}}"
 # OAuth login/token/JWKS surface — required to obtain a token / for BrowZer login.
-put openidx-oauth            "{$H,\"uri\":\"/oauth/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
-put openidx-wellknown        "{$H,\"uri\":\"/.well-known/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
+put openidx-oauth            "{$H,\"uri\":\"/oauth/*\",\"priority\":30,\"plugins\":{$LC_ISSUE},\"upstream\":{\"type\":\"roundrobin\",$UP_ISSUE,\"nodes\":{\"127.0.0.1:8006\":1}}}"
+put openidx-wellknown        "{$H,\"uri\":\"/.well-known/*\",\"priority\":30,\"plugins\":{$LC_DISCOVERY},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
 
 # ===========================================================================
 # TIER 1 — self-service + SPA (public in off/tier2, dark in tier1).
 # ===========================================================================
 if [ "$DARK_MODE" = "off" ] || [ "$DARK_MODE" = "tier2" ]; then
-  put openidx-api-identity     "{$H,\"uri\":\"/api/v1/identity/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8001\":1}}}"
+  put openidx-api-identity     "{$H,\"uri\":\"/api/v1/identity/*\",\"priority\":30,\"plugins\":{$LC_ISSUE},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8001\":1}}}"
   # enable_websocket: this /* catch-all fronts nginx :8443, which serves the
   # Guacamole PAM console at /guacamole/*. Guacamole's session tunnel is a
   # WebSocket; without this APISIX drops the Upgrade and the browser authenticates
@@ -101,17 +114,17 @@ fi
 # TIER 2 — management/data planes (public only in off; dark in tier2 + tier1).
 # ===========================================================================
 if [ "$DARK_MODE" = "off" ]; then
-  put openidx-api-governance   "{$H,\"uri\":\"/api/v1/governance/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8002\":1}}}"
-  put openidx-api-provisioning "{$H,\"uri\":\"/api/v1/provisioning/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8003\":1}}}"
-  put openidx-api-audit        "{$H,\"uri\":\"/api/v1/audit/*\",\"priority\":30,\"enable_websocket\":true,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8004\":1}}}"
-  put openidx-api-access       "{$H,\"uri\":\"/api/v1/access/*\",\"priority\":30,\"enable_websocket\":true,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8007\":1}}}"
+  put openidx-api-governance   "{$H,\"uri\":\"/api/v1/governance/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8002\":1}}}"
+  put openidx-api-provisioning "{$H,\"uri\":\"/api/v1/provisioning/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8003\":1}}}"
+  put openidx-api-audit        "{$H,\"uri\":\"/api/v1/audit/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"enable_websocket\":true,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8004\":1}}}"
+  put openidx-api-access       "{$H,\"uri\":\"/api/v1/access/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"enable_websocket\":true,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8007\":1}}}"
   # /api/v1/oauth/* (OAuth client management) is owned by the oauth-service :8006,
   # NOT admin-api — it must out-prioritize the /api/* admin catch-all below.
-  put openidx-api-oauth        "{$H,\"uri\":\"/api/v1/oauth/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
+  put openidx-api-oauth        "{$H,\"uri\":\"/api/v1/oauth/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
   # /api/v1/saml/* (SAML SP management) is also oauth-service :8006.
-  put openidx-api-saml         "{$H,\"uri\":\"/api/v1/saml/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
-  put openidx-api-admin        "{$H,\"uri\":\"/api/*\",\"priority\":20,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8005\":1}}}"
-  put openidx-scim             "{$H,\"uri\":\"/scim/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8003\":1}}}"
+  put openidx-api-saml         "{$H,\"uri\":\"/api/v1/saml/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
+  put openidx-api-admin        "{$H,\"uri\":\"/api/*\",\"priority\":20,\"plugins\":{$LC_ADMIN},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8005\":1}}}"
+  put openidx-scim             "{$H,\"uri\":\"/scim/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8003\":1}}}"
 fi
 
 # --- infra hosts ---
