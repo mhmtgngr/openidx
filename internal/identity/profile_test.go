@@ -3,6 +3,7 @@ package identity
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -203,7 +204,7 @@ var adminSurface = []string{
 	"GET /risk/stats",
 	"GET /risk/login-history",
 	"GET /lifecycle/executions",
-	"POST /providers",
+	"PUT /providers/:id",
 	"GET /device-trust-requests",
 	"GET /mfa/bypass-codes",
 	"GET /passwordless/stats",
@@ -325,4 +326,186 @@ func TestPlaneManifestMatchesTheRouteTable(t *testing.T) {
 	if len(m.Issue) == 0 || len(m.Admin) == 0 {
 		t.Fatal("manifest has an empty plane; the edge would route everything one way")
 	}
+}
+
+// THE SPLIT HAS TO BE ROUTABLE, NOT JUST CORRECT.
+//
+// Classifying a route decides which POD serves it. Something in front has to
+// decide which pod to SEND it to, and the routers in play -- a Kubernetes
+// Ingress, an APISIX uri rule -- match on the PATH. A Kubernetes Ingress cannot
+// match on the method at all.
+//
+// So a path served by two planes cannot be routed: whichever pod the rule picks
+// answers one of its methods and 404s the other. The same goes for a prefix
+// rule derived from a parameterised route that reaches over a route on the
+// other plane.
+//
+// The resolution, whenever this test finds one, is always the same direction:
+// the whole path goes to ISSUE. A route wrongly on ISSUE costs a little surface
+// on the cheap plane; a route wrongly on ADMIN stops working the moment the
+// admin plane is shed, which is the failure the split exists to prevent.
+
+func TestThePlaneSplitIsRoutable(t *testing.T) {
+	byPath := map[string]map[string][]string{} // path -> plane -> methods
+	for route, plane := range routePlanes {
+		method, path, ok := strings.Cut(route, " ")
+		if !ok {
+			t.Fatalf("malformed route key %q", route)
+		}
+		if byPath[path] == nil {
+			byPath[path] = map[string][]string{}
+		}
+		byPath[path][plane.String()] = append(byPath[path][plane.String()], method)
+	}
+
+	// 1. No path may be served by both planes: no path router can split it.
+	var collisions []string
+	for _, path := range sortedPaths(byPath) {
+		if len(byPath[path]) > 1 {
+			issue, admin := byPath[path]["issue"], byPath[path]["admin"]
+			sort.Strings(issue)
+			sort.Strings(admin)
+			collisions = append(collisions, fmt.Sprintf("%s: issue=%v admin=%v", path, issue, admin))
+		}
+	}
+	if len(collisions) > 0 {
+		t.Errorf("%d path(s) are served by both planes, so no path router can split them. Move the whole path to ISSUE:\n  %s",
+			len(collisions), strings.Join(collisions, "\n  "))
+	}
+
+	// 2. No prefix rule an ISSUE route forces may reach over an ADMIN route.
+	var prefixes []PlaneRule
+	for route, plane := range routePlanes {
+		if plane != planeIssue {
+			continue
+		}
+		_, path, _ := strings.Cut(route, " ")
+		if r := PlaneRuleFor(path); r.Type == "Prefix" {
+			prefixes = append(prefixes, r)
+		}
+	}
+	var reachOver []string
+	for _, route := range sortedKeys(mapKeysAsSet(routePlanes)) {
+		if routePlanes[route] != planeAdmin {
+			continue
+		}
+		_, path, _ := strings.Cut(route, " ")
+		for _, p := range prefixes {
+			if PlaneRuleMatches(p, RoutePrefix+path) {
+				reachOver = append(reachOver, fmt.Sprintf("%s is ADMIN but falls under the ISSUE prefix %q", route, p.Path))
+				break // one prefix is enough; several ISSUE routes share them
+			}
+		}
+	}
+	if len(reachOver) > 0 {
+		sort.Strings(reachOver)
+		t.Errorf("%d ADMIN route(s) sit under a prefix an ISSUE route forces; a path router would send them to the auth pod, which does not serve them:\n  %s",
+			len(reachOver), strings.Join(reachOver, "\n  "))
+	}
+
+	// 3. The mirror image, with one exemption that is a real routing rule
+	// rather than a convenience: Kubernetes gives an Exact path precedence over
+	// a Prefix that also matches, so an ISSUE route with no parameter survives
+	// an ADMIN prefix reaching over it. An ISSUE route that can only be
+	// expressed as a prefix does not, and would be swallowed.
+	var adminPrefixes []PlaneRule
+	for route, plane := range routePlanes {
+		if plane != planeAdmin {
+			continue
+		}
+		_, path, _ := strings.Cut(route, " ")
+		if r := PlaneRuleFor(path); r.Type == "Prefix" {
+			adminPrefixes = append(adminPrefixes, r)
+		}
+	}
+	var swallowed []string
+	for route, plane := range routePlanes {
+		if plane != planeIssue {
+			continue
+		}
+		_, path, _ := strings.Cut(route, " ")
+		if PlaneRuleFor(path).Type != "Prefix" {
+			continue // Exact wins; nothing to answer for.
+		}
+		for _, p := range adminPrefixes {
+			if RoutePrefix+path != p.Path && PlaneRuleMatches(p, RoutePrefix+path) {
+				swallowed = append(swallowed,
+					fmt.Sprintf("%s is ISSUE and can only be a prefix rule, but sits under the ADMIN prefix %q", route, p.Path))
+			}
+		}
+	}
+	if len(swallowed) > 0 {
+		sort.Strings(swallowed)
+		t.Errorf("%d ISSUE route(s) would be swallowed by an ADMIN prefix; a login request would reach the admin pod:\n  %s",
+			len(swallowed), strings.Join(swallowed, "\n  "))
+	}
+}
+
+func sortedPaths(m map[string]map[string][]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func mapKeysAsSet(m map[string]servicePlane) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for k := range m {
+		out[k] = true
+	}
+	return out
+}
+
+// The rule list is the whole of the edge configuration -- what it does not
+// match falls through to the ADMIN plane -- so it has to cover every ISSUE
+// route and reach over no ADMIN one. This drives the rules the way a router
+// would, against the real route table.
+func TestTheGeneratedRulesRouteEveryRoute(t *testing.T) {
+	m := BuildPlaneManifest()
+	if len(m.IssueRules) == 0 {
+		t.Fatal("no routing rules; the edge would send every request to the admin plane, logins included")
+	}
+
+	matches := func(full string) bool {
+		for _, r := range m.IssueRules {
+			if PlaneRuleMatches(r, full) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, route := range m.Issue {
+		_, path, _ := strings.Cut(route, " ")
+		// A parameterised route is driven with a value in the slot, because
+		// that is what arrives: the rule has to match the real request, not the
+		// template it was derived from.
+		full := RoutePrefix + strings.ReplaceAll(replaceParams(path), "//", "/")
+		if !matches(full) {
+			t.Errorf("ISSUE route %s (as %s) matches no rule, so the edge would send it to the admin plane", route, full)
+		}
+	}
+	for _, route := range m.Admin {
+		_, path, _ := strings.Cut(route, " ")
+		full := RoutePrefix + replaceParams(path)
+		if matches(full) {
+			t.Errorf("ADMIN route %s (as %s) matches an ISSUE rule, so the edge would send it to the auth plane, which 404s it", route, full)
+		}
+	}
+	if !t.Failed() {
+		t.Logf("%d rules cover %d ISSUE routes and no ADMIN route", len(m.IssueRules), len(m.Issue))
+	}
+}
+
+// replaceParams substitutes a concrete value for every ":param" segment.
+func replaceParams(path string) string {
+	segs := strings.Split(path, "/")
+	for i, s := range segs {
+		if strings.HasPrefix(s, ":") {
+			segs[i] = "0a1b2c3d-0000-4000-8000-000000000000"
+		}
+	}
+	return strings.Join(segs, "/")
 }

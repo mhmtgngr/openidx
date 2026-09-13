@@ -2,15 +2,18 @@
   "generated_by": "go run ./tools/identityplanes (source: internal/identity/profile.go routePlanes)",
   "prefix": "/api/v1/identity",
   "issue": [
+    "DELETE /invitations/:id",
     "DELETE /mfa/email",
     "DELETE /mfa/phone",
     "DELETE /mfa/push/devices/:device_id",
     "DELETE /mfa/sms",
     "DELETE /mfa/totp",
     "DELETE /mfa/webauthn/credentials/:credential_id",
+    "DELETE /trusted-browsers",
     "GET /biometric/authenticators",
     "GET /biometric/preferences",
     "GET /branding",
+    "GET /invitations",
     "GET /mfa/backup/count",
     "GET /mfa/email/status",
     "GET /mfa/hardware-token",
@@ -25,11 +28,13 @@
     "GET /passwordless/qr-login/poll",
     "GET /providers",
     "GET /risk-assessment",
+    "GET /trusted-browsers",
     "GET /trusted-browsers/check",
     "GET /users/me/mfa/status",
     "POST /biometric/disable-only",
     "POST /biometric/enable-only",
     "POST /federation/discover",
+    "POST /invitations",
     "POST /invitations/:token/accept",
     "POST /mfa/backup/generate",
     "POST /mfa/backup/verify",
@@ -64,6 +69,7 @@
     "POST /passwordless/qr-login/approve",
     "POST /passwordless/qr-login/reject",
     "POST /passwordless/qr-login/scan",
+    "POST /providers",
     "POST /trusted-browsers",
     "POST /users/forgot-password",
     "POST /users/me/mfa/disable",
@@ -78,14 +84,12 @@
     "DELETE /biometric/policies/:policy_id",
     "DELETE /groups/:id",
     "DELETE /groups/:id/members/:userId",
-    "DELETE /invitations/:id",
     "DELETE /lifecycle/workflows/:id",
     "DELETE /mfa/bypass-codes/:code_id",
     "DELETE /providers/:id",
     "DELETE /risk/policies/:id",
     "DELETE /roles/:id",
     "DELETE /sessions/:id",
-    "DELETE /trusted-browsers",
     "DELETE /trusted-browsers/:browser_id",
     "DELETE /users/:id",
     "DELETE /users/:id/bypass-codes",
@@ -106,7 +110,6 @@
     "GET /hardware-tokens",
     "GET /hardware-tokens/:token_id",
     "GET /hardware-tokens/:token_id/events",
-    "GET /invitations",
     "GET /lifecycle/executions",
     "GET /lifecycle/executions/:id",
     "GET /lifecycle/workflows",
@@ -124,7 +127,6 @@
     "GET /roles",
     "GET /roles/:id",
     "GET /roles/:id/permissions",
-    "GET /trusted-browsers",
     "GET /users",
     "GET /users/:id",
     "GET /users/:id/role-assignments",
@@ -154,12 +156,10 @@
     "POST /hardware-tokens/:token_id/report-lost",
     "POST /hardware-tokens/:token_id/revoke",
     "POST /hardware-tokens/:token_id/unassign",
-    "POST /invitations",
     "POST /lifecycle/workflows",
     "POST /lifecycle/workflows/:id/execute",
     "POST /mfa/bypass-codes",
     "POST /passwordless/magic-link/test",
-    "POST /providers",
     "POST /resend-verification",
     "POST /risk/evaluate",
     "POST /risk/policies",
@@ -186,5 +186,267 @@
     "PUT /users/:id",
     "PUT /users/:id/roles",
     "PUT /users/me"
+  ],
+  "issue_rules": [
+    {
+      "path": "/api/v1/identity/biometric/authenticators",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/biometric/disable-only",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/biometric/enable-only",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/biometric/preferences",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/branding",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/federation/discover",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/invitations",
+      "type": "Prefix"
+    },
+    {
+      "path": "/api/v1/identity/mfa/backup/count",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/backup/generate",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/backup/verify",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/bypass-codes/verify",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/email",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/email/challenge",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/email/enroll",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/email/status",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/email/verify",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/hardware-token",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/hardware-token/verify",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/methods",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/otp/verify",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/phone",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/phone/callback",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/phone/enroll",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/phone/status",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/phone/verify",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/push/challenge",
+      "type": "Prefix"
+    },
+    {
+      "path": "/api/v1/identity/mfa/push/devices",
+      "type": "Prefix"
+    },
+    {
+      "path": "/api/v1/identity/mfa/push/enroll/complete",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/push/enroll/start",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/push/register",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/push/verify",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/sms",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/sms/challenge",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/sms/enroll",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/sms/status",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/sms/verify",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/totp",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/totp/enroll",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/totp/setup",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/totp/status",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/totp/verify",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/webauthn/authenticate/begin",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/webauthn/authenticate/finish",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/webauthn/credentials",
+      "type": "Prefix"
+    },
+    {
+      "path": "/api/v1/identity/mfa/webauthn/register/begin",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/mfa/webauthn/register/finish",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/passwordless/magic-link",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/passwordless/magic-link/verify",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/passwordless/preferences",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/passwordless/qr-login",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/passwordless/qr-login/approve",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/passwordless/qr-login/poll",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/passwordless/qr-login/reject",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/passwordless/qr-login/scan",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/providers",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/risk-assessment",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/trusted-browsers",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/trusted-browsers/check",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/users/forgot-password",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/users/me/mfa/disable",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/users/me/mfa/enable",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/users/me/mfa/setup",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/users/me/mfa/status",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/users/reset-password",
+      "type": "Exact"
+    },
+    {
+      "path": "/api/v1/identity/verify-email",
+      "type": "Exact"
+    }
   ]
 }

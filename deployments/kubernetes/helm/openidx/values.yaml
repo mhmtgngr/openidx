@@ -110,6 +110,29 @@ config:
 
 # Identity Service
 identityService:
+  # Split this service into two Deployments, one per availability plane
+  # (global-scale plan task 3.4, ADR-2). Off by default: one Deployment serving
+  # both planes is what every install has today.
+  #
+  # On, it renders `-identity-auth` with SERVICE_PROFILE=auth (the ISSUE plane)
+  # and `-identity-admin` with SERVICE_PROFILE=admin, and the Ingress sends the
+  # ISSUE paths to the first and everything else to the second. The path rules
+  # are GENERATED from the same table the process registers routes with
+  # (files/identity-planes.json, `go run ./tools/identityplanes`) -- they are
+  # not a prefix, because POST /users/forgot-password is ISSUE while GET /users
+  # is ADMIN.
+  #
+  # Why it is worth two Deployments: ADMIN is the first plane shed under load,
+  # and shedding it buys nothing while the same process also answers logins.
+  planeSplit:
+    enabled: false
+    auth:
+      # Both fall back to identityService.replicaCount / .resources when unset.
+      replicaCount: null
+      resources: null
+    admin:
+      replicaCount: null
+      resources: null
   enabled: true
   replicaCount: 2
   image:

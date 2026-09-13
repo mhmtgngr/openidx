@@ -95,6 +95,33 @@ func (p Profile) serves(plane servicePlane) bool {
 // factors (enrol, challenge, verify, remove). Everything else is ADMIN —
 // including self-service profile, tokens, consents and privacy, which belong
 // to the portal rather than to the login.
+//
+// SIX ENTRIES DO NOT FOLLOW THAT RULE, and say so here rather than looking
+// like mistakes. Classifying a route decides which pod serves it; something in
+// front has to decide which pod to send it to, and that something matches on
+// the PATH — a Kubernetes Ingress cannot match on the method at all. So a path
+// whose methods straddle the two planes cannot be routed: whichever pod the
+// rule picks answers one method and 404s the other.
+//
+// Where that happens the whole path goes to ISSUE, never to ADMIN, because the
+// costs are not symmetric: a route wrongly on ISSUE adds a little surface to
+// the cheap plane, while a route wrongly on ADMIN stops working the moment the
+// admin plane is shed — which is the failure this split exists to prevent.
+//
+//	POST   /providers          GET /providers is the login page's IdP list.
+//	GET    /trusted-browsers   POST /trusted-browsers is the login-time
+//	DELETE /trusted-browsers   "remember this device".
+//	GET    /invitations        POST /invitations/:token/accept is anonymous, and
+//	POST   /invitations        a parameterised route can only be expressed as a
+//	DELETE /invitations/:id    prefix. Kubernetes matches a Prefix on path
+//	                           ELEMENTS, so "/invitations" claims "/invitations"
+//	                           itself as well as everything under it -- the
+//	                           whole family travels together or none of it does.
+//
+// TestThePlaneSplitIsRoutable found all six, and fails again if a new route
+// reintroduces the problem. The /invitations three were found only after the
+// rendered-Ingress check in CI disagreed with an earlier version of that test
+// that had treated a Prefix as a string prefix rather than an element one.
 var routePlanes = map[string]servicePlane{
 	"POST /users/forgot-password":                     planeIssue,
 	"POST /users/reset-password":                      planeIssue,
@@ -135,7 +162,7 @@ var routePlanes = map[string]servicePlane{
 	"DELETE /users/:id":                               planeAdmin,
 	"POST /users/:id/reset-password":                  planeAdmin,
 	"POST /users/:id/set-password":                    planeAdmin,
-	"POST /providers":                                 planeAdmin,
+	"POST /providers":                                 planeIssue,
 	"GET /providers/:id":                              planeAdmin,
 	"PUT /providers/:id":                              planeAdmin,
 	"DELETE /providers/:id":                           planeAdmin,
@@ -198,15 +225,15 @@ var routePlanes = map[string]servicePlane{
 	"POST /mfa/otp/verify":                            planeIssue,
 	"GET /mfa/methods":                                planeIssue,
 	"POST /trusted-browsers":                          planeIssue,
-	"GET /trusted-browsers":                           planeAdmin,
+	"GET /trusted-browsers":                           planeIssue,
 	"DELETE /trusted-browsers/:browser_id":            planeAdmin,
-	"DELETE /trusted-browsers":                        planeAdmin,
+	"DELETE /trusted-browsers":                        planeIssue,
 	"GET /trusted-browsers/check":                     planeIssue,
 	"GET /risk-assessment":                            planeIssue,
 	"POST /resend-verification":                       planeAdmin,
-	"GET /invitations":                                planeAdmin,
-	"POST /invitations":                               planeAdmin,
-	"DELETE /invitations/:id":                         planeAdmin,
+	"GET /invitations":                                planeIssue,
+	"POST /invitations":                               planeIssue,
+	"DELETE /invitations/:id":                         planeIssue,
 	"POST /users/:id/offboard":                        planeAdmin,
 	"GET /hardware-tokens":                            planeAdmin,
 	"POST /hardware-tokens":                           planeAdmin,
@@ -363,6 +390,48 @@ type PlaneManifest struct {
 	// Issue and Admin are "METHOD /path", sorted.
 	Issue []string `json:"issue"`
 	Admin []string `json:"admin"`
+	// IssueRules is Issue reduced to what a path router needs: the smallest
+	// set of Exact and Prefix matches that covers every ISSUE route and no
+	// ADMIN one. Everything not matched falls through to the ADMIN plane, so
+	// this list is the whole of the edge configuration.
+	IssueRules []PlaneRule `json:"issue_rules"`
+}
+
+// PlaneRule is one routing rule: the full path a router matches, and how.
+// "Exact" and "Prefix" are spelled as Kubernetes Ingress spells them, because
+// that is where they are rendered.
+type PlaneRule struct {
+	Path string `json:"path"`
+	Type string `json:"type"`
+}
+
+// PlaneRuleFor derives the rule a path router needs for a route path. A route
+// with no parameter is an exact path; one with a parameter can only be
+// expressed as the prefix ending before it, which is why
+// TestThePlaneSplitIsRoutable checks what those prefixes reach over.
+//
+// The trailing slash is dropped because Kubernetes drops it: a Prefix match is
+// element-wise, so "/invitations/" and "/invitations" are the same rule and
+// BOTH match a request for "/invitations". Leaving the slash on would make the
+// rule look narrower than it is, which is exactly the mistake the first version
+// of this made -- and the reason the whole /invitations family is ISSUE.
+func PlaneRuleFor(path string) PlaneRule {
+	if i := strings.Index(path, ":"); i >= 0 {
+		return PlaneRule{Path: strings.TrimSuffix(RoutePrefix+path[:i], "/"), Type: "Prefix"}
+	}
+	return PlaneRule{Path: RoutePrefix + path, Type: "Exact"}
+}
+
+// PlaneRuleMatches reports whether a rule claims a concrete request path, using
+// Kubernetes Ingress semantics: an Exact rule matches the whole path, and a
+// Prefix rule matches on path ELEMENTS -- "/a/b" matches "/a/b" and "/a/b/c",
+// but not "/a/bc".
+func PlaneRuleMatches(r PlaneRule, path string) bool {
+	if r.Type == "Exact" {
+		return path == r.Path
+	}
+	p := strings.TrimSuffix(r.Path, "/")
+	return path == p || strings.HasPrefix(path, p+"/")
 }
 
 // BuildPlaneManifest renders the manifest from routePlanes.
@@ -382,6 +451,35 @@ func BuildPlaneManifest() PlaneManifest {
 	}
 	sort.Strings(m.Issue)
 	sort.Strings(m.Admin)
+
+	// One rule per distinct match; a prefix rule subsumes any exact rule under
+	// it, so the exact one would be noise in the Ingress.
+	seen := map[PlaneRule]bool{}
+	for _, route := range m.Issue {
+		_, path, _ := strings.Cut(route, " ")
+		seen[PlaneRuleFor(path)] = true
+	}
+	for r := range seen {
+		if r.Type != "Exact" {
+			continue
+		}
+		for p := range seen {
+			if p.Type == "Prefix" && PlaneRuleMatches(p, r.Path) {
+				delete(seen, r)
+				break
+			}
+		}
+	}
+	m.IssueRules = make([]PlaneRule, 0, len(seen))
+	for r := range seen {
+		m.IssueRules = append(m.IssueRules, r)
+	}
+	sort.Slice(m.IssueRules, func(i, j int) bool {
+		if m.IssueRules[i].Path == m.IssueRules[j].Path {
+			return m.IssueRules[i].Type < m.IssueRules[j].Type
+		}
+		return m.IssueRules[i].Path < m.IssueRules[j].Path
+	})
 	return m
 }
 
