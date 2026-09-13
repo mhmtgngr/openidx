@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The audit event list pages by cursor, not by `OFFSET`.** `ORDER BY
+  timestamp DESC OFFSET 50000 LIMIT 50` asks Postgres to produce fifty thousand
+  rows and throw them away before returning fifty, so the deepest pages — an
+  auditor walking a year, an export paging to the end — are the slowest. A
+  cursor costs the same at page 1 and page 100,000. `?cursor=` takes an opaque,
+  version-prefixed position and `X-Next-Cursor` hands back the next one; a
+  malformed cursor is a **400**, never a silent fall back to the first page,
+  which would give the caller a page they have already read and call it the
+  next one. Migration v190 adds `(org_id, timestamp DESC, id DESC)`, because
+  neither existing index could answer the query: `idx_audit_events_timestamp`
+  is single-column and install-wide, so scanning it walks every tenant's events
+  and discards the ones that are not yours, and `(org_id, event_type)` leads
+  with the wrong second column.
+
+  Two findings came out of it. **`ORDER BY timestamp DESC` alone is not a total
+  order** — the column defaults to `NOW()` and a burst writes several rows in
+  the same microsecond, so tied rows may come back in any order and not the
+  same order twice; under `OFFSET` paging that let a row appear on two
+  consecutive pages or on neither, which on an audit log is the worst available
+  wrong answer. The `id` tie-break is a correctness fix the cursor happened to
+  need anyway. And **the `COUNT(*)` is the other half of the cost, which keyset
+  does not touch**: it reads every matching row whatever the page number, so a
+  cursor that fixed only the `OFFSET` would still blow the deep-page budget. It
+  is not run at all on the cursor path, and `X-Total-Count` is then omitted
+  rather than sent as a zero. The offset path keeps its published behaviour
+  exactly.
+
+  Measured against a real PostgreSQL: cursor paging visits every row exactly
+  once, in order, across a run of rows sharing one timestamp; no other tenant's
+  row appears; `EXPLAIN` uses v190's index and does not sort. Three mutations
+  turn it red. A fourth — removing the tie-break — does **not**, because
+  Postgres returns tied rows in the chosen index's order and that index carries
+  `id`, so the hazard stays latent; the ordering is therefore pinned as a
+  decision in one place rather than pretended to be covered by behaviour.
+  Task 2.5, audit half; SCIM `/Users` still pages by offset.
+
+
 - **One Postgres login role per availability plane, with a query ceiling the
   server enforces.** Migration v189 provisions `openidx_issue`
   (`statement_timeout` 2s), `openidx_admin` (10s) and `openidx_event` (30s).

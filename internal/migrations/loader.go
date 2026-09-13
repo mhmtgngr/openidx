@@ -1350,5 +1350,12 @@ func allMigrations() []*Migration {
 			UpSQL:       planeRolesUp,
 			DownSQL:     planeRolesDown,
 		},
+		{
+			Version:     190,
+			Name:        "audit_events_keyset_index",
+			Description: "Index audit_events on (org_id, timestamp DESC, id DESC) so the event list can page by cursor instead of OFFSET. `ORDER BY timestamp DESC OFFSET 50000 LIMIT 50` asks Postgres to produce fifty thousand rows and throw them away before returning fifty, so the deepest pages -- an auditor walking a year, an export paging to the end -- are the slowest, and on a large table slow enough to hold a backend for seconds. A cursor costs the same at page 1 and page 100,000, but only if an index can seek straight to it, and neither existing index can: idx_audit_events_timestamp is (timestamp) alone and install-wide, so scanning it walks every tenant's events in the range and discards the ones that are not yours (the defect v176 fixed for (org_id, event_type)), and the (org_id, event_type) index leads with the wrong second column for an ordering query. DESC on both columns is not cosmetic: a composite index read backwards must reverse every column, so declaring the order the query asks for is what keeps the scan a plain forward one. id is in the ordering because timestamp is NOT a total order -- it defaults to NOW() and a burst writes several rows in the same microsecond, and tied rows may come back in any order and not the same order twice, which under OFFSET paging let a row appear on two consecutive pages or on neither; on an audit log that is the worst available wrong answer, so the tie-break is a correctness fix the cursor happens to need anyway. NOT built CONCURRENTLY: that cannot run inside a transaction block and applyMigration wraps every migration in one (which is what carries the bypass_rls GUC the seeds need), so on a large existing table this takes a write lock for the build -- stated rather than discovered. Down drops it; the queries keep working the way they did before, correctly and slowly.",
+			UpSQL:       auditKeysetIndexUp,
+			DownSQL:     auditKeysetIndexDown,
+		},
 	}
 }
