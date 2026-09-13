@@ -90,7 +90,7 @@ const (
 // rather than a silent fallback to off: "costmode=enfroce" must not look like
 // a working enforcement.
 func ParseCostMode(v string) (CostMode, error) {
-	switch m := CostMode(strings.ToLower(strings.TrimSpace(string(v)))); m {
+	switch m := CostMode(strings.ToLower(strings.TrimSpace(v))); m {
 	case "", CostModeOff:
 		return CostModeOff, nil
 	case CostModeObserve, CostModeEnforce:
