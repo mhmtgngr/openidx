@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **An anycast edge as code, provider chosen by one variable.** DDoS at
+  L3/L4 and volumetric L7 is bought, not built (design ADR-3), and the
+  provider is an open decision. `deployments/terraform/edge` is a root whose
+  `edge_provider` selects one of three modules behind one interface:
+  `edge-cloudflare` (proxied DNS, zone TLS floor, Managed Ruleset,
+  Authenticated Origin Pulls, rate-limit and cache rulesets),
+  `edge-aws` (CloudFront with HTTP/3, WAFv2 in CloudFront scope with the
+  AWS managed groups, per-source rate-based rules and size constraints,
+  optional Shield Advanced, a secret origin header) and `edge-azure` (Front
+  Door Premium, Microsoft Default Rule Set 2.1 + Bot Manager, rate-limit and
+  size custom rules, cache rule set, `X-Azure-FDID` origin verification).
+  All three render the same `modules/edge-common/rules.json` — the design's
+  §5.3 table as data — and export `edge_cidrs` (for `OIDX_EDGE_TRUSTED_CIDRS`
+  and the origin firewall) and `origin_verification` (what the origin must
+  demand so an IP allow-list is not the only cloak). A Go test keeps the rule
+  file and the design table naming the same paths and the size limits equal
+  to the services' own caps; CI validates the root and the standalone
+  modules. Task 1.1.
+
 ### Changed
 
 - **A Redis blip is no longer a login outage of its own length.** The

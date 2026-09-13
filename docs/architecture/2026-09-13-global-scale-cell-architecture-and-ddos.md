@@ -373,6 +373,8 @@ Go kullanıcıyı, riski ve maliyeti bilir.
 
 ### 5.1 Katman 0 — Kenar sağlayıcısı (satın alınır)
 
+> **Durum (2026-09-13):** Görev 1.1 kodlandı: `deployments/terraform/edge` kökü + `modules/edge-{cloudflare,aws,azure}`, ortak arayüz ve tek kural kaynağı `modules/edge-common/rules.json` (bu tablo). Üçü de `terraform validate` geçer; CI'da. Sağlayıcı seçimi (K1) hâlâ açık — kök tek değişkenle seçer.
+
 - Anycast PoP ağı, L3/L4 otomatik emilim, TLS 1.3 + HTTP/3 sonlandırma, HTTP/2 rapid
   reset koruması, WAF (OWASP CRS + kimlik ürününe özel kurallar), bot yönetimi
   ("managed challenge"), hız kuralları (IP, ASN, JA4, ülke), önbellek.
@@ -398,9 +400,9 @@ Go kullanıcıyı, riski ve maliyeti bilir.
 |---|---|
 | Statik SPA, `/.well-known/*`, JWKS | Önbellekten servis; origin'e dakikada 1 |
 | `/oauth/login`, `/oauth/mfa-*`, `/oauth/passwordless/*` | IP başına 30/dk; ASN anomalisi → managed challenge; risk başlığı ile Go'ya `X-Edge-Bot-Score` |
-| `/oauth/token` | client_id (POST gövdesi kenar tarafında ayrıştırılmaz; IP + kiracı host) 300/dk; `grant_type=password` yok |
-| `/scim/*` | Bearer olmadan gelen → 401 kenarda; kiracı başına 600/dk |
-| `/api/v1/audit/*search*` | Kiracı başına 60/dk; body boyutu 8 KB |
+| `/oauth/token` | Kaynak başına 300/dk (kenar POST gövdesini ayrıştırmaz; client_id bütçesi APISIX'te); `grant_type=password` yok |
+| `/scim/` | Kaynak başına 600/dk (kenar); Bearer olmadan gelen → 401 APISIX'te |
+| `/api/v1/audit/events/search` | Kaynak başına 60/dk (kenar); kiracı başına bütçe APISIX'te |
 | Tüm | Gövde 1 MB (SCIM bulk 5 MB istisna), URL 8 KB, başlık 16 KB, `Content-Type` beyaz liste |
 | Ziti controller hostname | Yalnız mTLS; HTTP kuralı yok, L4 hız sınırı (yeni bağlantı/sn) |
 

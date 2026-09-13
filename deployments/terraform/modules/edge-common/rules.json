@@ -1,0 +1,49 @@
+{
+  "_comment": "Edge rule set from docs/architecture/2026-09-13-global-scale-cell-architecture-and-ddos.md §5.3. ONE source of truth: every provider module (edge-cloudflare, edge-aws, edge-azure) renders these into its own rate-limit, cache and size-limit primitives, so a change here is a change everywhere and the count in the design table equals the count in the code. Paths are prefixes. requests_per_minute is per source address at the edge; the tenant- and user-aware budgets live in APISIX and the Go admission layer, which know things the edge cannot.",
+  "rate_rules": [
+    {
+      "name": "auth-ui",
+      "description": "Credential-submitting UI paths: login, MFA, passwordless, magic link, password reset.",
+      "paths": ["/oauth/login", "/oauth/mfa-", "/oauth/passwordless/", "/oauth/magic-link", "/oauth/stepup-verify", "/api/v1/identity/users/login", "/api/v1/identity/users/forgot-password", "/api/v1/identity/users/reset-password"],
+      "requests_per_minute": 30
+    },
+    {
+      "name": "token",
+      "description": "Token endpoint. Public clients retry on 401; the budget is generous per source and the per-client budget lives in APISIX.",
+      "paths": ["/oauth/token"],
+      "requests_per_minute": 300
+    },
+    {
+      "name": "scim",
+      "description": "SCIM provisioning. Bulk callers are few and known; a flood here is a directory-sync bug or an attack.",
+      "paths": ["/scim/"],
+      "requests_per_minute": 600
+    },
+    {
+      "name": "audit-search",
+      "description": "Full-text audit search is the most expensive read the platform serves.",
+      "paths": ["/api/v1/audit/events/search"],
+      "requests_per_minute": 60
+    }
+  ],
+  "cache_rules": [
+    {
+      "name": "discovery",
+      "description": "OIDC discovery and JWKS: public, identical for every caller, and the first thing a JWKS flood hits.",
+      "paths": ["/.well-known/"],
+      "ttl_seconds": 300
+    },
+    {
+      "name": "spa-assets",
+      "description": "Hashed console bundles are immutable by name.",
+      "paths": ["/assets/"],
+      "ttl_seconds": 31536000
+    }
+  ],
+  "limits": {
+    "body_bytes": 1048576,
+    "scim_bulk_body_bytes": 5242880,
+    "url_bytes": 8192,
+    "header_bytes": 16384
+  }
+}

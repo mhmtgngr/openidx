@@ -111,10 +111,10 @@ kod bitmiş olması M0 değildir.
 ### 1.1 Kenar sağlayıcı modülü (ADR-3)
 
 **Dosyalar:** `deployments/terraform/modules/edge-cloudflare/`, `modules/edge-aws/` (CloudFront + Shield Advanced + WAFv2), `modules/edge-azure/` (Front Door Premium)
-- [ ] Ortak arayüz: girdi `origin_hostnames[]`, `tenant_base_domain`, `rate_rules[]`, `cache_rules[]`; çıktı `edge_cidrs[]`, `origin_client_cert`.
-- [ ] Her modül `terraform validate` ile CI'da (`.github/workflows/terraform.yml`).
-- [ ] Kural seti Git'te (§5.3 tablosu birebir); değişiklik PR ile.
-- **Kabul:** Üç modül aynı `terraform plan` girdisiyle geçer; kural sayısı belgede ve kodda eşit.
+- [x] Ortak arayüz: girdi `edge_hostnames[]`, `zone_domain`, `origin_hostname`, `rules_file`; çıktı `edge_cidrs[]`, `origin_verification` (mTLS CA / gizli başlık / `X-Azure-FDID`), `edge_hostname`. Kök: `deployments/terraform/edge` tek `edge_provider` değişkeniyle seçer.
+- [x] Her modül `terraform validate` ile CI'da (`.github/workflows/terraform.yml`): kök + cloudflare + azure; aws kök üzerinden (us-east-1 alias gerektirir).
+- [x] Kural seti Git'te: `modules/edge-common/rules.json` (§5.3 tablosu); `deployments/terraform/edge_rules_test.go` her kuralın tabloda adlandırıldığını ve boyut sınırlarının Go tabanıyla eşit olduğunu doğrular.
+- **Kabul:** Üç modül aynı kök girdisiyle `terraform validate` geçer (ölçüldü: 3/3); kural seti belgede ve kodda aynı (test). *`terraform plan` gerçek hesap ister — K1 verilince.*
 
 ### 1.2 Origin gizleme (§5.2)
 
