@@ -214,7 +214,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     on the highest-volume path the product has, at exactly the moment ES is
     already behind — which is the only time the reconciler has anything to do.
 
-  All three now run through `leader.RunPeriodic`. A **derived census**
+- **The usage counter a customer is billed from was inflated by the replica
+  count.** The metering rollup reads a singleton cursor row, fetches the events
+  after it, does `count = count + 1` for each — an **increment**, not an
+  idempotent write — and advances the cursor. The cursor was read with no lock,
+  so all three `audit-service` replicas read the same cursor, fetched the same
+  batch, incremented every counter and advanced the cursor to the same place.
+  The comment above the rollup said "the cursor guarantees each event is rolled
+  up at most once", which is true of one process and false of three.
+
+  Fixed with a `FOR UPDATE SKIP LOCKED` on the cursor row, held for the whole
+  batch in one transaction — **not** with leader gating, which is what the rest
+  of this tree uses for sweeps: leader election runs on Redis and falls back to
+  "every replica runs" when there is no client, which is fine for work that
+  merely repeats and not for a counter that must not double-count during a Redis
+  outage. The lock lives in the same database as the number it protects.
+  Measured: four concurrent aggregators over 40 events bill 40, and with the
+  lock removed they bill more.
+
+  A **missing** cursor row is now an error log rather than silence — rolling
+  nothing up for ever loses exactly as much revenue as double-billing gets
+  wrong, and it looks like a healthy idle worker.
+
+  All three sweeps above now run through `leader.RunPeriodic`. A **derived census**
   (`internal/common/leader/sweeps_census_test.go`) finds every `time.NewTicker`
   in `internal/` and `cmd/` and fails on one no entry names, so the fourth
   cannot be added silently: the author must say which answer applies — leader,

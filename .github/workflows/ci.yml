@@ -400,6 +400,25 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # Usage metering (task 3.4 census). The rollup is an INCREMENT and the
+      # cursor was read with no lock, so three audit-service replicas billed a
+      # customer three times for the same overlay traffic. Two processes
+      # incrementing the same row from the same cursor is not a race a mock can
+      # have, so this runs against the real database.
+      - name: Concurrent replicas do not double-bill
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/audit/ -run 'DoubleBill|SinglePass|MissingCursor' -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestConcurrentRepicasDoNotDoubleBill \
+                      TestASinglePassCountsEveryEventOnce \
+                      TestAMissingCursorRowIsNotSilence; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # The per-plane login roles (task 2.4, migration v189). These need a
       # SUPERUSER connection, because CREATE ROLE is exactly what the
       # application's own role cannot do -- which is the point of v53 and the

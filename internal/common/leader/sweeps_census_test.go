@@ -71,6 +71,8 @@ var tickerCensus = map[string]sweep{
 		"claims SSF outbox rows with FOR UPDATE SKIP LOCKED"},
 	"internal/provisioning/outbound_worker.go": {coordClaim,
 		"claims queue items with FOR UPDATE SKIP LOCKED and requeues its own abandoned claims"},
+	"internal/audit/usage_metering.go": {coordClaim,
+		"holds the singleton billing cursor row with FOR UPDATE SKIP LOCKED for the whole batch; the rollup is an increment, so a second replica must not read the same cursor"},
 
 	// -- Once per process on purpose. Gating any of these would be the defect.
 	"internal/common/leader/leader.go": {coordPerProcess,
@@ -102,7 +104,6 @@ var tickerCensus = map[string]sweep{
 	"internal/access/ziti_user_sync.go":           {coordUndecided, "Ziti user sync; not yet audited"},
 	"internal/audit/chain.go":                     {coordUndecided, "audit chain sealing sweep; not yet audited"},
 	"internal/audit/siem_forwarder.go":            {coordUndecided, "SIEM forwarding poll; not yet audited"},
-	"internal/audit/usage_metering.go":            {coordUndecided, "usage aggregation for billing; not yet audited"},
 	"internal/identity/sms_config_watcher.go":     {coordUndecided, "SMS provider config watcher; not yet audited"},
 }
 
@@ -183,7 +184,7 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 // register becoming the place drift hides. This pins its size: shrinking it is
 // free, growing it takes an edit here and a sentence about why.
 func TestTheUndecidedBacklogDoesNotGrow(t *testing.T) {
-	const known = 14
+	const known = 13
 	n := 0
 	for _, s := range tickerCensus {
 		if s.how == coordUndecided {
