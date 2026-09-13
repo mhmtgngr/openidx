@@ -45,3 +45,11 @@ var (
 		},
 	)
 )
+
+var outboxSweptTotal = promauto.NewCounter(
+	prometheus.CounterOpts{
+		Namespace: "openidx",
+		Name:      "outbox_swept_total",
+		Help:      "Delivered outbox rows aged out by the retention sweep. Only rows with published_at set are ever eligible, so this can never be a count of lost events.",
+	},
+)

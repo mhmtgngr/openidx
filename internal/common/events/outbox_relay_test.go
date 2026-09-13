@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
@@ -263,4 +264,104 @@ func keysOf(m map[string]int) []string {
 // relay serves the whole install.
 func bypassCtx() context.Context {
 	return orgctx.WithBypassRLS(context.Background())
+}
+
+// The sweep must never be able to delete an undelivered event. That is the
+// only way a retention policy turns into data loss, and it is one predicate
+// away at all times.
+func TestTheSweepNeverTouchesTheBacklog(t *testing.T) {
+	pool := openOutboxPool(t)
+	db, orgA, _ := seedOutbox(t, pool)
+	sink := &recordingSink{}
+	relay := NewRelay(db, sink, RelayConfig{BatchSize: 10, MaxAttempts: 1000}, zap.NewNop())
+
+	produce(t, db, orgA, 4)
+	_, err := relay.DrainOnce(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, unpublishedCount(t, db))
+
+	// Age the four delivered rows past any plausible retention.
+	require.NoError(t, db.WithTx(bypassCtx(), func(tx pgx.Tx) error {
+		_, e := tx.Exec(context.Background(),
+			"UPDATE outbox SET published_at = NOW() - interval '40 days' WHERE published_at IS NOT NULL")
+		return e
+	}))
+
+	// Then add fresh, UNDELIVERED events -- and one the sink refused, which is
+	// the case a careless predicate gets wrong: it is old and it is not
+	// published.
+	produce(t, db, orgA, 2)
+	require.NoError(t, db.WithTx(bypassCtx(), func(tx pgx.Tx) error {
+		_, e := tx.Exec(context.Background(),
+			"UPDATE outbox SET created_at = NOW() - interval '90 days' WHERE published_at IS NULL")
+		return e
+	}))
+
+	deleted, err := relay.SweepPublished(context.Background(), SweepConfig{KeepFor: 30 * 24 * time.Hour})
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), deleted, "only the delivered, aged rows")
+	assert.Equal(t, 2, unpublishedCount(t, db),
+		"a ninety-day-old UNDELIVERED event is still owed and must survive every retention pass")
+}
+
+// Zero is off. Starting to delete delivery receipts because a struct was
+// zero-valued is not a default anyone would choose deliberately.
+func TestTheSweepIsOffUntilItIsConfigured(t *testing.T) {
+	pool := openOutboxPool(t)
+	db, orgA, _ := seedOutbox(t, pool)
+	sink := &recordingSink{}
+	relay := NewRelay(db, sink, RelayConfig{BatchSize: 10, MaxAttempts: 1000}, zap.NewNop())
+
+	produce(t, db, orgA, 3)
+	_, err := relay.DrainOnce(context.Background())
+	require.NoError(t, err)
+
+	deleted, err := relay.SweepPublished(context.Background(), SweepConfig{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), deleted)
+	assert.Equal(t, 3, totalOutboxRows(t, db), "nothing was deleted")
+}
+
+// The batch bound is what keeps the lock short on a table every service writes
+// to. A pass that hits its limit reports it by returning the limit.
+func TestTheSweepDeletesInBoundedBatches(t *testing.T) {
+	pool := openOutboxPool(t)
+	db, orgA, _ := seedOutbox(t, pool)
+	sink := &recordingSink{}
+	relay := NewRelay(db, sink, RelayConfig{BatchSize: 50, MaxAttempts: 1000}, zap.NewNop())
+
+	produce(t, db, orgA, 10)
+	_, err := relay.DrainOnce(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, db.WithTx(bypassCtx(), func(tx pgx.Tx) error {
+		_, e := tx.Exec(context.Background(),
+			"UPDATE outbox SET published_at = NOW() - interval '40 days'")
+		return e
+	}))
+
+	cfg := SweepConfig{KeepFor: 30 * 24 * time.Hour, BatchSize: 4}
+	n, err := relay.SweepPublished(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), n, "one pass never deletes more than its batch")
+
+	var total int64
+	for {
+		n, err = relay.SweepPublished(context.Background(), cfg)
+		require.NoError(t, err)
+		total += n
+		if n < int64(cfg.BatchSize) {
+			break
+		}
+	}
+	assert.Equal(t, int64(6), total)
+	assert.Equal(t, 0, totalOutboxRows(t, db))
+}
+
+func totalOutboxRows(t *testing.T, db *database.PostgresDB) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.WithTx(bypassCtx(), func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(), "SELECT count(*) FROM outbox").Scan(&n)
+	}))
+	return n
 }

@@ -135,6 +135,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and **stays in the table** with its last error: something to investigate, not
   something to delete.
 
+- **Retention: delivered rows age out, the backlog never does.** A delivered
+  outbox row is a receipt — after an incident the first question is "was this
+  published, and when" — but the table sits on the write path of every service,
+  so keeping them for ever makes every vacuum slower for a benefit that expired
+  weeks ago. `SweepPublished` deletes in **bounded batches**: one `DELETE` of a
+  month's events takes a long lock on the table every service writes to, which
+  is a self-inflicted outage on the write path.
+
+  `published_at IS NOT NULL` is in the predicate, so an undelivered event can
+  never be aged out — measured with the case a careless predicate gets wrong: a
+  **ninety-day-old event the sink refused** survives every pass while the
+  forty-day-old delivered rows go. Zero `KeepFor` is off: deleting delivery
+  receipts is not something to start doing because a struct was zero-valued.
+
 ### Removed
 
 - **The in-process event bus, which nothing imported.** `internal/common/events`

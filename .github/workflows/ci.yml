@@ -390,7 +390,10 @@ jobs:
                       TestACrashAfterTheSinkAcceptsRedeliversAndAnIdempotentConsumerAbsorbsIt \
                       TestFourConcurrentRelaysDeliverEveryEventExactlyOnce \
                       TestAPoisonEventStopsBeingRetriedAndKeepsItsError \
-                      TestTheRelayDrainsEveryTenant; do
+                      TestTheRelayDrainsEveryTenant \
+                      TestTheSweepNeverTouchesTheBacklog \
+                      TestTheSweepIsOffUntilItIsConfigured \
+                      TestTheSweepDeletesInBoundedBatches; do
             # The trailing space matters: without it a test renamed to
             # "<name>X" still matches as a prefix and the guard reads green.
             grep -q -- "--- PASS: $want " <<<"$out" \

@@ -228,3 +228,68 @@ func (r *Relay) deliver(ctx context.Context, tx pgx.Tx, d Delivery) {
 	outboxRelayDeliveredTotal.WithLabelValues(d.EventType).Inc()
 	outboxRelayLagSeconds.Observe(time.Since(d.CreatedAt).Seconds())
 }
+
+// RETENTION. A delivered outbox row is a receipt, and receipts are worth
+// keeping for a while: after an incident the first question is "was this event
+// published, and when", and published_at answers it. They are not worth keeping
+// for ever -- the table is on the write path of every service, and an
+// append-only table nobody prunes makes every vacuum slower for a benefit that
+// stopped existing weeks ago.
+//
+// The sweep is bounded per pass rather than one big DELETE. A delete of a
+// month's events in one statement takes a long lock on the table every service
+// writes to, which is a self-inflicted outage on the write path -- the exact
+// shape this programme keeps finding. Deleting in chunks means the table is
+// available between them, and a pass that hits its limit simply runs again.
+//
+// The backlog is never touched: published_at IS NOT NULL is in the predicate,
+// which is also what lets the partial retention index answer it without walking
+// the rows the relay still needs.
+
+// SweepConfig bounds one retention pass.
+type SweepConfig struct {
+	// KeepFor is how long a delivered row is kept. Zero disables the sweep,
+	// which is the safe default: deleting delivery receipts is not something to
+	// start doing because a struct was zero-valued.
+	KeepFor time.Duration
+	// BatchSize bounds one DELETE so the lock stays short.
+	BatchSize int
+}
+
+const defaultSweepBatchSize = 1000
+
+// SweepPublished deletes delivered rows older than KeepFor, up to BatchSize,
+// and returns how many it removed. A return equal to BatchSize means there is
+// more to do.
+func (r *Relay) SweepPublished(ctx context.Context, cfg SweepConfig) (int64, error) {
+	if cfg.KeepFor <= 0 {
+		return 0, nil
+	}
+	if cfg.BatchSize <= 0 {
+		cfg.BatchSize = defaultSweepBatchSize
+	}
+	ctx = orgctx.WithBypassRLS(ctx)
+
+	var deleted int64
+	err := r.db.WithTx(ctx, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			//orgscope:ignore outbox retention (runs under bypass_rls) ageing out DELIVERED rows across every tenant; one relay serves the install and the predicate is published_at, never a tenant
+			`DELETE FROM outbox
+			  WHERE id IN (
+			      SELECT id FROM outbox
+			       WHERE published_at IS NOT NULL AND published_at < NOW() - $1::interval
+			       ORDER BY published_at
+			       LIMIT $2
+			  )`,
+			fmt.Sprintf("%d seconds", int(cfg.KeepFor.Seconds())), cfg.BatchSize)
+		if err != nil {
+			return fmt.Errorf("sweep published outbox rows: %w", err)
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if deleted > 0 {
+		outboxSweptTotal.Add(float64(deleted))
+	}
+	return deleted, err
+}
