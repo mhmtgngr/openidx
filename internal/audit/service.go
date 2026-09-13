@@ -13,10 +13,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -358,23 +360,23 @@ func (s *Service) LogEvent(ctx context.Context, event *ServiceAuditEvent) error 
 // a batch of rows with indexed_at IS NULL that are older than a short grace, then
 // stamps indexed_at. Runs under a bypass-RLS background context (cross-org
 // maintenance). No-op when ES is unconfigured.
-func (s *Service) StartESReconciler(ctx context.Context) {
+// LEADER-GATED, and it was not: this ran on a bare ticker in every replica, so
+// each pass indexed the SAME five hundred documents once per replica and
+// stamped indexed_at once per replica. Elasticsearch writes are idempotent by
+// document id, so nothing was corrupted -- what it cost was N times the write
+// load on the highest-volume path the product has, exactly when ES is already
+// behind, which is the only time this reconciler has anything to do. audit-
+// service ships at three replicas in production and autoscales to ten.
+//
+// rdb may be nil (no Redis configured), in which case leader.RunPeriodic runs
+// every tick -- the single-replica behaviour, which is correct for a
+// single-replica deployment.
+func (s *Service) StartESReconciler(ctx context.Context, rdb *redis.Client) {
 	if s.es == nil {
 		return
 	}
 	ctx = orgctx.WithBypassRLS(ctx)
-	go func() {
-		ticker := time.NewTicker(60 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				s.reconcileUnindexedToES(ctx)
-			}
-		}
-	}()
+	leader.RunPeriodic(ctx, rdb, s.logger, "audit:es-reconciler", 60*time.Second, s.reconcileUnindexedToES)
 }
 
 func (s *Service) reconcileUnindexedToES(ctx context.Context) {

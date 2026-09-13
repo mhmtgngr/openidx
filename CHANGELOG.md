@@ -185,6 +185,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CI asserts no ScaledObject carries a `cpu` or `memory` query, because that
   would put the lagging indicator back and nothing would look wrong.
 
+### Fixed
+
+- **Three background sweeps ran once per replica, and two of them had external
+  consequences.** A sweep started in a service's `main` runs in every pod of
+  that Deployment. `access-service` ships at two replicas and autoscales to
+  eight in production; `audit-service` at three, to ten. Twelve sweeps in this
+  tree already run through `leader.RunPeriodic`. These three did not, and
+  nothing about them was special:
+
+  - **The EDR ingestion poller** called the customer's CrowdStrike / Intune /
+    Jamf tenant **once per replica** — it selects sources whose `last_sync_at`
+    is older than their interval, and `last_sync_at` is only written when the
+    sync *finishes*, so every replica sees the same source as due in the same
+    minute. A source configured to poll every five minutes polled two to eight
+    times in that window, on the customer's own rate limit, and each sync writes
+    posture results the Ziti enforcement path reads to revoke access.
+  - **The Guacamole external audit sync** inserts each remote session with a
+    **fresh UUID primary key**, so its `ON CONFLICT DO NOTHING` can never fire
+    for a logically duplicate event: two replicas polling the same window wrote
+    two audit rows for one recorded session. On a compliance product that is not
+    waste, it is a wrong answer — an auditor counting privileged remote sessions
+    gets the replica count times the truth. It also advances a single shared
+    cursor no replica holds a lock on.
+  - **The Elasticsearch reconciler** indexed the same 500 documents once per
+    replica and stamped `indexed_at` once per replica. ES writes are idempotent
+    by document id so nothing was corrupted; what it cost was N× the write load
+    on the highest-volume path the product has, at exactly the moment ES is
+    already behind — which is the only time the reconciler has anything to do.
+
+  All three now run through `leader.RunPeriodic`. A **derived census**
+  (`internal/common/leader/sweeps_census_test.go`) finds every `time.NewTicker`
+  in `internal/` and `cmd/` and fails on one no entry names, so the fourth
+  cannot be added silently: the author must say which answer applies — leader,
+  a `FOR UPDATE SKIP LOCKED` claim, or genuinely per-process. A `claim` entry
+  that contains no `SKIP LOCKED`, and an entry for a file that no longer has a
+  ticker, both fail. Fourteen tickers remain **explicitly undecided**, counted
+  and named rather than silently passed — the same shape as orgscope's
+  `needsScoping` register, and for the same reason.
+
 ### Removed
 
 - **The in-process event bus, which nothing imported.** `internal/common/events`
