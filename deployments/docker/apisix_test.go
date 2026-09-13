@@ -82,3 +82,66 @@ func TestAPISIXRoutesCarryConnectionCeilings(t *testing.T) {
 		t.Error("global_rules must carry real-ip: without it every per-IP key is the TLS proxy's address")
 	}
 }
+
+// TestAPISIXOperationalEndpointsAreClosed pins task 0.4 for the compose edge:
+// /health, /health/*, /ready and /metrics answer 404 at APISIX with a priority
+// above every other route, so neither a dependency-status feed nor the
+// Prometheus surface is reachable from outside and a flood on them never
+// reaches the data tier.
+func TestAPISIXOperationalEndpointsAreClosed(t *testing.T) {
+	raw, err := os.ReadFile("apisix/apisix.yaml")
+	if err != nil {
+		t.Fatalf("read apisix.yaml: %v", err)
+	}
+	var doc struct {
+		Routes []struct {
+			Name     string                 `yaml:"name"`
+			URIs     []string               `yaml:"uris"`
+			Priority int                    `yaml:"priority"`
+			Plugins  map[string]interface{} `yaml:"plugins"`
+		} `yaml:"routes"`
+	}
+	if err := yaml.Unmarshal([]byte(strings.ReplaceAll(string(raw), "#END", "")), &doc); err != nil {
+		t.Fatalf("parse apisix.yaml: %v", err)
+	}
+	var deny *struct {
+		Name     string                 `yaml:"name"`
+		URIs     []string               `yaml:"uris"`
+		Priority int                    `yaml:"priority"`
+		Plugins  map[string]interface{} `yaml:"plugins"`
+	}
+	maxOther := 0
+	for i := range doc.Routes {
+		r := &doc.Routes[i]
+		if r.Name == "deny-health-metrics" {
+			deny = r
+			continue
+		}
+		if r.Priority > maxOther {
+			maxOther = r.Priority
+		}
+	}
+	if deny == nil {
+		t.Fatal("deny-health-metrics route missing")
+	}
+	if deny.Priority <= maxOther {
+		t.Errorf("deny route priority %d must outrank every other route (max %d)", deny.Priority, maxOther)
+	}
+	fi, ok := deny.Plugins["fault-injection"].(map[string]interface{})
+	if !ok {
+		t.Fatal("deny route must answer at the edge via fault-injection")
+	}
+	abort, _ := fi["abort"].(map[string]interface{})
+	if abort["http_status"] != 404 {
+		t.Errorf("deny route must answer 404, got %v", abort["http_status"])
+	}
+	have := map[string]bool{}
+	for _, u := range deny.URIs {
+		have[u] = true
+	}
+	for _, want := range []string{"/health", "/health/*", "/ready", "/metrics"} {
+		if !have[want] {
+			t.Errorf("deny route must cover %s", want)
+		}
+	}
+}

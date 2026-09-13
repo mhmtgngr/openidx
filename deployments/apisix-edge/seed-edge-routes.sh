@@ -88,6 +88,12 @@ LC_DISCOVERY='"limit-conn":{"conn":1000,"burst":200,"default_conn_delay":0.1,"ke
 # give up fast so a stalled backend sheds instead of queueing.
 UP_ISSUE='"retries":0,"timeout":{"connect":3,"send":10,"read":10}'
 
+# --- Operational endpoints: closed at the edge (task 0.4), every DARK_MODE ---
+# /health/ready pings every dependency and reports each one's status and
+# latency; /metrics is the whole Prometheus surface. Probes and the scraper are
+# local to the box; the internet gets 404 before any upstream is consulted.
+put openidx-deny-health "{$H,\"uris\":[\"/health\",\"/health/*\",\"/ready\",\"/metrics\",\"/oauth/health\"],\"priority\":100,\"plugins\":{\"fault-injection\":{\"abort\":{\"http_status\":404,\"body\":\"{\\\"error\\\":\\\"not found\\\"}\"}}},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8005\":1}}}"
+
 # ===========================================================================
 # TIER 0 — always public (the bootstrap gate; darking it bricks enrollment).
 # ===========================================================================

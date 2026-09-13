@@ -1,4 +1,35 @@
 routes:
+  # Operational endpoints never leave the cluster (global-scale plan task 0.4).
+  # /health/ready pings Postgres, Redis and Elasticsearch on every call and
+  # answers with each dependency's status and latency; /metrics is the full
+  # Prometheus surface. Public, they are both a reconnaissance feed and a free
+  # way to make the edge hammer the data tier. Kubernetes probes and the
+  # Prometheus scraper reach the pods directly; the edge answers 404 before any
+  # upstream is consulted. Priority 100 outranks every route below.
+  - uris:
+      - /health
+      - /health/*
+      - /ready
+      - /metrics
+      - /api/v1/identity/health
+      - /api/v1/governance/health
+      - /api/v1/provisioning/health
+      - /api/v1/audit/health
+      - /api/v1/admin/health
+      - /api/v1/access/health
+      - /oauth/health
+    name: deny-health-metrics
+    priority: 100
+    plugins:
+      fault-injection:
+        abort:
+          http_status: 404
+          body: "{\"error\":\"not found\"}"
+    upstream:
+      type: roundrobin
+      nodes:
+        "admin-api:8005": 1
+
   # Simple CORS preflight handling
   - uri: /.*
     name: cors-preflight

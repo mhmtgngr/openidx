@@ -664,72 +664,31 @@ create_route 'admin-api-users' '{
 echo
 
 # ============================================================================
-# Health Check Routes (no auth required)
+# Operational endpoints: closed at the edge (global-scale plan task 0.4)
 # ============================================================================
+# This block used to publish /api/v1/<svc>/health and /oauth/health with no
+# plugins. /health/ready pings Postgres, Redis and Elasticsearch on every call
+# and answers with each dependency's status and latency; /metrics is the whole
+# Prometheus surface. Public, they were a reconnaissance feed and a free way to
+# make the edge hammer the data tier under a flood. Probes and the scraper
+# reach the containers directly; an external load balancer checks nginx's own
+# static /health (or L4). One high-priority route answers 404 first.
 
-log "Creating health check routes..."
+log "Closing operational endpoints at the edge..."
 
-create_route 'health-identity' '{
-    "uris": ["/api/v1/identity/health"],
-    "name": "health-identity",
-    "methods": ["GET"],
-    "priority": 1,
-    "upstream_id": "identity-service-upstream",
-    "plugins": {}
-}'
-
-create_route 'health-governance' '{
-    "uris": ["/api/v1/governance/health"],
-    "name": "health-governance",
-    "methods": ["GET"],
-    "priority": 1,
-    "upstream_id": "governance-service-upstream",
-    "plugins": {}
-}'
-
-create_route 'health-provisioning' '{
-    "uris": ["/api/v1/provisioning/health"],
-    "name": "health-provisioning",
-    "methods": ["GET"],
-    "priority": 1,
-    "upstream_id": "provisioning-service-upstream",
-    "plugins": {}
-}'
-
-create_route 'health-audit' '{
-    "uris": ["/api/v1/audit/health"],
-    "name": "health-audit",
-    "methods": ["GET"],
-    "priority": 1,
-    "upstream_id": "audit-service-upstream",
-    "plugins": {}
-}'
-
-create_route 'health-admin' '{
-    "uris": ["/api/v1/admin/health"],
-    "name": "health-admin",
-    "methods": ["GET"],
-    "priority": 1,
+create_route 'deny-health-metrics' '{
+    "uris": ["/health", "/health/*", "/ready", "/metrics",
+             "/api/v1/identity/health", "/api/v1/governance/health",
+             "/api/v1/provisioning/health", "/api/v1/audit/health",
+             "/api/v1/admin/health", "/api/v1/access/health", "/oauth/health"],
+    "name": "deny-health-metrics",
+    "priority": 100,
     "upstream_id": "admin-api-upstream",
-    "plugins": {}
-}'
-
-create_route 'health-oauth' '{
-    "uris": ["/oauth/health"],
-    "name": "health-oauth",
-    "methods": ["GET"],
-    "priority": 1,
-    "upstream_id": "oauth-service-upstream",
-    "plugins": {}
-}'
-
-create_route 'health-access' '{
-    "uris": ["/api/v1/access/health"],
-    "name": "health-access",
-    "methods": ["GET"],
-    "priority": 1,
-    "upstream_id": "access-service-upstream",
-    "plugins": {}
+    "plugins": {
+        "fault-injection": {
+            "abort": {"http_status": 404, "body": "{\"error\":\"not found\"}"}
+        }
+    }
 }'
 
 echo

@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Operational endpoints no longer leave the cluster.** The production
+  route loader published `/api/v1/<service>/health` and `/oauth/health` for
+  every service with no plugins, and nothing at any edge stood in front of a
+  root `/health`, `/ready` or `/metrics`. `/health/ready` pings Postgres,
+  Redis and Elasticsearch on every call and answers with each dependency's
+  status and latency; `/metrics` is the whole Prometheus surface. Public,
+  they were a reconnaissance feed and a free way to make the edge hammer
+  the data tier under a flood. All three APISIX configurations (compose
+  file, production loader, edge seed script) now carry one route at
+  priority 100 that answers 404 at the edge via `fault-injection` for
+  `/health`, `/health/*`, `/ready`, `/metrics` and the loader's old public
+  paths, in every `DARK_MODE`. Probes and the scraper reach the pods
+  directly; an external load balancer checks nginx's static `/health` or
+  L4. The compose route test that required the public health routes now
+  requires their absence. Task 0.4.
+
 - **Every listener refuses to wait for a slow attacker.** A slowloris needs
   no bandwidth, only a server that keeps a half-sent request alive; Go's
   `http.Server` does so indefinitely unless told otherwise, and each of the

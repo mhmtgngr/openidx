@@ -296,50 +296,43 @@ func TestRoutesSCIMService(t *testing.T) {
 	}
 }
 
-// TestRoutesHealthChecks validates health check routes
-func TestRoutesHealthChecks(t *testing.T) {
-	scriptPath := "load-production-routes.sh"
-
-	content, err := os.ReadFile(scriptPath)
+// TestRoutesOperationalEndpointsAreClosed pins task 0.4 of the global-scale
+// plan: the route loader used to publish every service's /health with no
+// plugins. /health/ready pings each dependency and reports its status and
+// latency; /metrics is the whole Prometheus surface. Neither may leave the
+// cluster — probes and the scraper reach the containers directly — so one
+// route outranks everything else and answers 404 at the edge.
+func TestRoutesOperationalEndpointsAreClosed(t *testing.T) {
+	content, err := os.ReadFile("load-production-routes.sh")
 	if err != nil {
 		t.Fatalf("Failed to read load-production-routes.sh: %v", err)
 	}
-
 	contentStr := string(content)
 
-	// Validate health check routes for all services
-	healthRoutes := []string{
-		"'health-identity'",
-		"'health-governance'",
-		"'health-provisioning'",
-		"'health-audit'",
-		"'health-admin'",
-		"'health-oauth'",
-		"'health-access'",
-	}
-
-	for _, route := range healthRoutes {
-		if !strings.Contains(contentStr, route) {
-			t.Errorf("Missing health route: %s", route)
+	for _, gone := range []string{
+		"'health-identity'", "'health-governance'", "'health-provisioning'",
+		"'health-audit'", "'health-admin'", "'health-oauth'", "'health-access'",
+	} {
+		if strings.Contains(contentStr, gone) {
+			t.Errorf("public health route %s must not be published at the edge", gone)
 		}
 	}
 
-	// Validate health check paths
-	healthPaths := []string{
-		`"/api/v1/identity/health"`,
-		`"/api/v1/governance/health"`,
-		`"/oauth/health"`,
+	i := strings.Index(contentStr, "create_route 'deny-health-metrics'")
+	if i == -1 {
+		t.Fatal("deny-health-metrics route missing: operational endpoints would reach the services")
 	}
-
-	for _, path := range healthPaths {
-		if !strings.Contains(contentStr, path) {
-			t.Errorf("Missing health path: %s", path)
+	block := contentStr[i : i+900]
+	for _, want := range []string{
+		`"priority": 100`,
+		`"fault-injection"`,
+		`"http_status": 404`,
+		`"/health"`, `"/health/*"`, `"/ready"`, `"/metrics"`,
+		`"/oauth/health"`, `"/api/v1/identity/health"`,
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("deny-health-metrics must carry %s", want)
 		}
-	}
-
-	// Validate health routes have no auth (plugins: {})
-	if !strings.Contains(contentStr, `"plugins": {}`) {
-		t.Error("Health check routes should have no plugins (no auth)")
 	}
 }
 

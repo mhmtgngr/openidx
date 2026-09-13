@@ -134,4 +134,16 @@ grep -q '"retries":0' seed-edge-routes.sh || fail "ISSUE upstream must not retry
 DRY_RUN=1 EDGE_TRUSTED_CIDRS="" bash -c 'source <(sed -n "/^LC_ISSUE=/,/^UP_ISSUE=/p" seed-edge-routes.sh); H="\"hosts\":[\"x\"]"; printf "%s" "{$H,\"priority\":30,\"plugins\":{$LC_ISSUE},\"upstream\":{\"type\":\"roundrobin\",$UP_ISSUE,\"nodes\":{\"127.0.0.1:8006\":1}}}"' | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["plugins"]["limit-conn"]["conn"]==200 and d["upstream"]["retries"]==0' || fail "limit-conn/upstream JSON does not parse after expansion"
 echo "OK limit-conn (connection ceilings on every openidx route, no ISSUE retries)"
 
+# --- operational endpoints closed in every mode (task 0.4) ---
+for m in off tier2 tier1; do
+  out=$(DARK_MODE=$m DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+  has "$out" openidx-deny-health || fail "$m: /health,/ready,/metrics deny route MUST be seeded"
+done
+line=$(grep -E '^put openidx-deny-health ' seed-edge-routes.sh)
+echo "$line" | grep -q 'priority\\":100' || fail "deny-health: must outrank every other route (priority 100)"
+echo "$line" | grep -q 'fault-injection' || fail "deny-health: must answer at the edge (fault-injection), not proxy"
+echo "$line" | grep -q 'http_status\\":404' || fail "deny-health: must answer 404"
+for u in /health /health/\* /ready /metrics; do echo "$line" | grep -qF "$u" || fail "deny-health: must cover $u"; done
+echo "OK deny-health (operational endpoints 404 at the edge in every mode)"
+
 echo "ALL PASS"

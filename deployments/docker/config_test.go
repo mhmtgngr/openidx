@@ -347,9 +347,10 @@ func TestLoadProductionRoutesScript(t *testing.T) {
 		t.Error("Should configure CORS for production domain")
 	}
 
-	// Validate health check routes
-	if strings.Count(contentStr, "health-") < 3 {
-		t.Error("Should create health check routes for all services")
+	// Operational endpoints are CLOSED at the edge (task 0.4): one deny route,
+	// no per-service public health routes.
+	if !strings.Contains(contentStr, "create_route 'deny-health-metrics'") {
+		t.Error("Should close /health, /ready and /metrics at the edge")
 	}
 
 	// Validate OIDC discovery route
@@ -744,7 +745,12 @@ func TestCORSEnabledForProductionDomain(t *testing.T) {
 	}
 }
 
-// TestHealthCheckEndpoints validates health check configuration
+// TestHealthCheckEndpoints validates that service health endpoints are NOT
+// published at the edge (global-scale plan task 0.4). They used to be: seven
+// routes with `"plugins": {}` proxied /api/v1/<svc>/health and /oauth/health to
+// the services, whose readiness handler pings every dependency and reports its
+// status and latency. Probes and the scraper reach the containers directly;
+// the internet gets 404 from the deny route (see routes_test.go).
 func TestHealthCheckEndpoints(t *testing.T) {
 	scriptPath := "load-production-routes.sh"
 
@@ -755,21 +761,16 @@ func TestHealthCheckEndpoints(t *testing.T) {
 
 	contentStr := string(content)
 
-	// Validate health check routes for all services
-	healthRoutes := []string{
-		"health-identity",
-		"health-governance",
-		"health-provisioning",
-		"health-audit",
-		"health-admin",
-		"health-oauth",
-		"health-access",
-	}
-
-	for _, route := range healthRoutes {
-		if !strings.Contains(contentStr, "'"+route+"'") {
-			t.Errorf("Missing health check route: %s", route)
+	for _, route := range []string{
+		"health-identity", "health-governance", "health-provisioning",
+		"health-audit", "health-admin", "health-oauth", "health-access",
+	} {
+		if strings.Contains(contentStr, "'"+route+"'") {
+			t.Errorf("public health route %s must not be published: it exposes dependency status and lets a flood reach the data tier", route)
 		}
+	}
+	if !strings.Contains(contentStr, "create_route 'deny-health-metrics'") {
+		t.Error("deny-health-metrics route missing")
 	}
 }
 
