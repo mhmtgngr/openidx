@@ -122,6 +122,8 @@ yasaklıyor. Sonuç: PG'ye açık bağlantı sayısı = servis × replika × `DB
 
 ### B2 — Tek Redis, dört farklı işi aynı bellekte yapıyor
 
+> **Durum (2026-09-13):** Kod düzeyinde kapandı (görev 0.1): üç rol istemcisi, `RevocationDB()`/`RateLimitDB()`, census testi, compose'da üç örnek, Helm `redis.roles`/`externalSecrets.redisRoles`. Staging ölçümü bekliyor.
+
 Hız sınırı sayaçları (`ratelimit.go`), login/MFA/authcode oturum durumu
 (`internal/oauth/handlers_passwordless.go:216`, `authorize.go:548`), iptal işaretleri
 (`internal/revocation`), lider kilitleri (`internal/common/leader`) aynı örnekte.
@@ -132,6 +134,8 @@ Redis OOM döner → hız sınırı auth yollarında **kapalı-başarısız** ç
 Çözüm: rol başına ayrı Redis (§4.4.2), sayaç Redis'i `allkeys-lru` + sıkı TTL.
 
 ### B3 — Kenar arkasında gerçek istemci IP'si kaybolur; hız sınırı tek kovaya çöker
+
+> **Durum (2026-09-13):** Kod düzeyinde kapandı (görev 0.2): `OIDX_EDGE_TRUSTED_CIDRS` birleşimi, prod'da `*` reddi, APISIX `real-ip` (compose + edge seed), `edge-cidr-sync` CronJob. Staging ölçümü bekliyor.
 
 APISIX `limit-req` `key: remote_addr` kullanıyor (`deployments/docker/apisix/apisix.yaml`).
 Go tarafı `ConfigureTrustedProxies` varsayılan olarak yalnız loopback'e güvenir
@@ -152,6 +156,8 @@ kaybolabilir. Çözüm: outbox'ı platform ilkelini yap, NATS JetStream ile taş
 
 ### B5 — Kenar savunması IaC'de yok
 
+> **Durum (2026-09-13):** Kısmen kapandı: nginx/APISIX/Go zaman aşımı ve bağlantı tavanları (görev 0.3), health/metrics kenarda 404 (0.4). WAF/Shield/CDN modülleri Faz 1.1'de.
+
 `deployments/terraform` içinde WAF, Shield, CloudFront, Front Door veya herhangi bir
 DDoS kaynağı **yok** (grep sonucu boş). nginx'te `limit_conn`/`limit_req`/`client_body_timeout`
 yok (`deployments/docker/nginx/nginx.conf`); APISIX'te `limit-conn` yok; etcd tek
@@ -159,11 +165,15 @@ yok (`deployments/docker/nginx/nginx.conf`); APISIX'te `limit-conn` yok; etcd te
 
 ### Y1 — HPA varsayılan kapalı ve yalnız CPU'ya bakıyor
 
+> **Durum (2026-09-13):** Kod düzeyinde kapandı (görev 0.5): access ve gateway HPA/PDB kapsamına alındı (eksikti), `behavior` blokları, CPU hedefi %60. KEDA Faz 3.6'da.
+
 `values.yaml`'da `autoscaling.enabled: false`, hedef CPU %80. Kimlik trafiği CPU'dan önce
 **bağlantı ve PG bekleme** ile boğulur; CPU %80'e geldiğinde p99 çoktan patlamıştır.
 Çözüm: RPS/gecikme/kuyruk derinliği tabanlı ölçekleme (KEDA veya custom metrics, §7).
 
 ### Y2 — Servis içinde yük atma ve öncelik yok
+
+> **Durum (2026-09-13):** Kısmen: `server.NewHTTP` başlık zaman aşımı/boyut/HTTP2 akış sınırı ve gövde tavanları (0.3). Kabul denetleyicisi ve öncelik sınıfları Faz 3.5'te.
 
 Go sunucularda `ReadTimeout` var (`cmd/oauth-service/main.go:299`) ama eşzamanlılık
 sınırı, kuyruk, öncelik sınıfı yok. `/oauth/token` ile `/api/v1/audit/search` aynı
@@ -186,12 +196,16 @@ uçlarının OpenIDX üzerinden ön-onaylı token ile açılması (§6.4).
 
 ### O1 — CORS `*` oauth-service'te satır içi ve koşulsuz
 
+> **Durum (2026-09-13):** Kapandı (görev 0.6): `middleware.OAuthCORS` — protokol uçları `*` (tasarım gereği, çerez taşımaz), UI yolları yapılandırılan liste; tehdit modeli TB1 güncellendi.
+
 `cmd/oauth-service/main.go:159-170` her yanıta `Access-Control-Allow-Origin: *` yazar;
 tehdit modeli `ValidateProduction()`'ın joker CORS'u reddettiğini söyler
 (`docs/THREAT-MODEL.md` TB1). İkisi çelişiyor; belge veya kod düzelmeli. OAuth uçları için
 `*` kabul edilebilir olabilir (kimlik bilgisi taşımayan uçlar) ama **bilinçli** olmalı.
 
 ### O2 — APISIX rota tablosunda CORS listesi 9 kez kopyalanmış
+
+> **Durum (2026-09-13):** Kapandı (görev 0.6): compose ve loader'da tek global `cors` kuralı; protokol rotalarında `*` override; test liste sayısını 1'e sabitler.
 
 Kiracı alan adları çoğaldığında bu liste yönetilemez. Global plugin + kiracı bazlı
 origin çözümü gerekir (kiracı→izinli origin tablosu zaten `orgs` ile modellenebilir).
