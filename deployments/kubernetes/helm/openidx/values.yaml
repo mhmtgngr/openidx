@@ -121,7 +121,7 @@ identityService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # Governance Service
@@ -149,7 +149,7 @@ governanceService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # Provisioning Service
@@ -177,7 +177,7 @@ provisioningService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # Audit Service
@@ -217,7 +217,7 @@ auditService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # Admin API
@@ -245,7 +245,7 @@ adminApi:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # OAuth/OIDC Service
@@ -273,7 +273,7 @@ oauthService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # Gateway Service
@@ -301,7 +301,7 @@ gatewayService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # Access Service
@@ -336,7 +336,7 @@ accessService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # PAM dedicated session brokers (two Guacamole stacks + a ziti-tunnel sidecar +
@@ -471,7 +471,7 @@ adminConsole:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # OPA — the policy engine the governance service consults (config.opaUrl).
@@ -767,6 +767,26 @@ monitoring:
       secretName: alertmanager-pagerduty
       secretKey: routing-key
       sendResolved: true
+
+# ----- Autoscaling behaviour (global-scale plan task 0.5) -----
+# Shared by every per-service HPA (templates/hpa.yaml). Per-service blocks set
+# min/max and the utilisation targets; this sets HOW the controller moves.
+# Up fast, down slowly: a login flood or a launch arrives in seconds, the quiet
+# after it may be a lull between waves. CPU targets default to 60% rather than
+# 80% because identity traffic saturates connections and database waits before
+# CPU — by the time CPU reads 80%, p99 has already gone. KEDA replaces the CPU
+# signal with queue-wait and request-rate triggers in plan task 3.6.
+autoscaling:
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      percent: 100      # may double...
+      pods: 4           # ...or add four pods, whichever is more (selectPolicy: Max)
+      periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      percent: 25       # shed at most a quarter per period
+      periodSeconds: 60
 
 # ----- Edge provider (global-scale plan task 0.2) -----
 # The client-IP chain behind an anycast/CDN edge. Every per-IP control in the

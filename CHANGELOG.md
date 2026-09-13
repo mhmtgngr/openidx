@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Every request-serving deployment autoscales, and scales the right way
+  round.** The HPA and PDB templates listed seven services; `access-service`
+  and `gateway-service` were not among them, so `values-prod.yaml`'s
+  `autoscaling: { enabled: true }` for the two proxies rendered nothing and
+  they ran at a fixed replica count under load with no disruption budget.
+  Both are now covered (11 PDBs render where 9 did). Every HPA carries a
+  `behavior` block shared from `autoscaling.behavior`: scale-up has no
+  stabilisation window and may double or add four pods per minute, whichever
+  is more; scale-down waits five minutes and sheds at most a quarter per
+  minute, because the quiet after a wave is often the gap before the next
+  one and a flapping HPA is a cold start under fire. The default CPU target
+  drops from 80% to 60%: identity traffic saturates connections and database
+  waits before CPU, and by the time CPU reads 80% p99 is already gone. KEDA
+  replaces the CPU signal in plan task 3.6. Task 0.5.
+
 - **Operational endpoints no longer leave the cluster.** The production
   route loader published `/api/v1/<service>/health` and `/oauth/health` for
   every service with no plugins, and nothing at any edge stood in front of a

@@ -1,3 +1,15 @@
+{{- /*
+HorizontalPodAutoscalers for every request-serving deployment (global-scale
+plan task 0.5). access-service and gateway-service were missing from this
+list, so values-prod.yaml's `autoscaling: { enabled: true }` for them rendered
+nothing and the two proxies ran at a fixed replica count under load.
+
+Scaling behaviour is asymmetric on purpose: an attack or a launch arrives in
+seconds, so scale-up doubles every minute with no stabilisation window; the
+quiet after it can be a lull between waves, so scale-down waits five minutes
+and sheds a quarter at a time. Without the down-side window an HPA flaps
+between waves and each flap is a cold start under fire.
+*/}}
 {{- $services := dict
   "identity-service" .Values.identityService
   "governance-service" .Values.governanceService
@@ -5,8 +17,11 @@
   "audit-service" .Values.auditService
   "admin-api" .Values.adminApi
   "oauth-service" .Values.oauthService
+  "gateway-service" .Values.gatewayService
+  "access-service" .Values.accessService
   "admin-console" .Values.adminConsole
 }}
+{{- $beh := .Values.autoscaling.behavior }}
 
 {{- range $name, $svc := $services }}
 {{- if and $svc.enabled (dig "autoscaling" "enabled" false $svc) }}
@@ -38,5 +53,23 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ dig "autoscaling" "targetMemoryUtilizationPercentage" 80 $svc }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: {{ $beh.scaleUp.stabilizationWindowSeconds }}
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: {{ $beh.scaleUp.percent }}
+          periodSeconds: {{ $beh.scaleUp.periodSeconds }}
+        - type: Pods
+          value: {{ $beh.scaleUp.pods }}
+          periodSeconds: {{ $beh.scaleUp.periodSeconds }}
+    scaleDown:
+      stabilizationWindowSeconds: {{ $beh.scaleDown.stabilizationWindowSeconds }}
+      selectPolicy: Min
+      policies:
+        - type: Percent
+          value: {{ $beh.scaleDown.percent }}
+          periodSeconds: {{ $beh.scaleDown.periodSeconds }}
 {{- end }}
 {{- end }}

@@ -5,6 +5,8 @@
   "audit-service" .Values.auditService
   "admin-api" .Values.adminApi
   "oauth-service" .Values.oauthService
+  "gateway-service" .Values.gatewayService
+  "access-service" .Values.accessService
   "admin-console" .Values.adminConsole
 }}
 
