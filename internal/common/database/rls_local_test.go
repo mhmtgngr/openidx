@@ -382,3 +382,44 @@ func TestScopedPool_BatchIsScopedAndResultsLineUp(t *testing.T) {
 	assert.Equal(t, 1, count)
 	require.NoError(t, br.Close())
 }
+
+// TestRLSLocal_SurvivesATransactionPooler is the end-to-end claim: with a REAL
+// transaction pooler in front (pgbouncer/pgcat, pool_mode=transaction), the
+// tenant scope still holds. Everything else in this file proves the mechanism
+// against Postgres directly; this proves it against the thing the mechanism
+// exists to make possible.
+//
+// Gated on TEST_POSTGRES_POOLER_DSN so it runs only where a pooler is actually
+// in front. Note the pooler must be configured with max_prepared_statements > 0
+// (pgbouncer >= 1.21): pgx caches prepared statements, and a transaction pooler
+// that does not track them fails with "prepared statement ... already exists"
+// long before RLS is reached. That is a prerequisite for task 2.2, not an
+// optional tuning.
+func TestRLSLocal_SurvivesATransactionPooler(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_POOLER_DSN")
+	if dsn == "" {
+		t.Skip("TEST_POSTGRES_POOLER_DSN not set; skipping the transaction-pooler test")
+	}
+	t.Setenv("TEST_POSTGRES_DSN", dsn)
+
+	pool := openTestPool(t)
+	withMode(t, RLSModeLocal)
+	db := seedTenantTable(t, pool, orgA, orgB)
+	tbl := probeTable(t)
+
+	// Alternating tenants through the pooler: the backend is shared by
+	// construction, which is the whole hazard.
+	for i := 0; i < 20; i++ {
+		var got string
+		require.NoError(t, db.Pool.QueryRow(orgctx.With(context.Background(), orgctx.Org{ID: orgA}), "SELECT secret FROM "+tbl).Scan(&got))
+		assert.Equal(t, "tenant-a-secret", got, "iteration %d", i)
+		require.NoError(t, db.Pool.QueryRow(orgctx.With(context.Background(), orgctx.Org{ID: orgB}), "SELECT secret FROM "+tbl).Scan(&got))
+		assert.Equal(t, "tenant-b-secret", got, "iteration %d", i)
+	}
+
+	// And the scope does not ride the pooled backend into the next client.
+	var leaked string
+	require.NoError(t, pool.QueryRow(context.Background(),
+		"SELECT coalesce(current_setting('app.org_id', true), '')").Scan(&leaked))
+	assert.Empty(t, leaked, "a scope that survives the transaction is the leak this mode exists to prevent")
+}

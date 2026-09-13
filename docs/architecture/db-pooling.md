@@ -85,6 +85,24 @@ The suite refuses to run as a superuser (Postgres exempts superusers from every
 policy, so it would pass vacuously), and both mutations of the scope statement —
 making it session-scoped, and omitting it — turn it red.
 
+### Measured behind a real pooler (2026-09-13)
+
+`docs/evidence/2026-09-13-rls-transaction-pooling.md` records the run. Two
+results worth carrying here:
+
+1. **The leak is real and reproducible.** Behind PgBouncer in transaction mode,
+   a client that stamps `app.org_id` session-scoped and disconnects leaves it on
+   the backend; the *next, different* client reads that tenant's value. In
+   `local` mode the same experiment leaves nothing behind. Under FORCE RLS the
+   first case is a cross-tenant read.
+2. **Two prerequisites the plan did not list.** pgx caches prepared statements,
+   so the pooler must track them (`max_prepared_statements > 0` on PgBouncer
+   ≥ 1.21, or the pgcat equivalent) or every query fails with
+   `prepared statement … already exists`. And the RLS checkout hook must do
+   nothing in `local` mode, or pgxpool cannot acquire a connection at all
+   behind the pooler. Both are fixed in the tree; both are hard requirements
+   for task 2.2.
+
 **Still do not put pgcat in front until** `RLS_MODE=local` has run on a canary
 cell for two weeks and `tools/orgscope` enforces that no query reaches the pool
 outside a scoped wrapper (task 2.1b). The flag makes the transport safe; the
