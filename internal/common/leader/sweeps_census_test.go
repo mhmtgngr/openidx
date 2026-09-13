@@ -117,7 +117,16 @@ var tickerCensus = map[string]sweep{
 	"internal/access/ziti_hardening.go": {coordUndecided,
 		"hourly hardening pass against the Ziti controller: N replicas is N times the controller API calls even if each pass converges"},
 	"internal/access/ziti_reconciler.go": {coordUndecided,
-		"runLocked holds a PROCESS-LOCAL mutex, which coordinates nothing across replicas: does runOnce create-if-missing against the controller, and is the create keyed so two replicas cannot both make one?"},
+		"READ, NOT MEASURED. runLocked holds a process-local mutex, which reads like coordination and coordinates " +
+			"nothing across replicas. ensureService is check-then-act (GetServiceByName, then create), so two replicas " +
+			"converging a NEW route can both see 'missing' and both create it; if the controller enforces unique " +
+			"service names the loser gets a conflict, marks the route 'error' and self-heals on the next tick -- noisy " +
+			"rather than corrupting, but the noise looks like a real failure. Separately, every replica reconciles " +
+			"every route every tick, so a large install multiplies the controller's API load by the replica count. " +
+			"The likely fix gates the TICKER path only and leaves Enqueue() ungated: a replica that just changed " +
+			"something should converge it immediately, and only the periodic sweep needs one owner. NOT done here " +
+			"because there is no Ziti controller to measure against, and a claim about this subsystem that is read " +
+			"rather than measured is the kind this register exists to keep out of the 'decided' column."},
 	"internal/access/ziti_user_sync.go": {coordUndecided,
 		"syncs users into Ziti: same question as the reconciler, plus whether enrolment tokens are minted per pass"},
 	"internal/identity/sms_config_watcher.go": {coordUndecided,
