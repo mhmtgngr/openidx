@@ -434,7 +434,13 @@ func (s *Service) ListReportExports(ctx context.Context, orgID string, limit, of
 		       COALESCE(error_message, ''), generated_by, created_at, completed_at
 		FROM report_exports
 		WHERE org_id = $1
-		ORDER BY created_at DESC
+		-- created_at DESC alone is not a total order: report_exports rows
+		-- created by one scheduled run share a transaction timestamp, and
+		-- tied rows may land on two pages or on neither. id breaks the tie.
+		-- No cursor here, unlike the event list: this is a per-tenant list of
+		-- tens of reports, so the deep-page cost task 2.5 targets has nobody
+		-- to pay it.
+		ORDER BY created_at DESC, id DESC
 		OFFSET $2 LIMIT $3
 	`, orgID, offset, limit)
 	if err != nil {

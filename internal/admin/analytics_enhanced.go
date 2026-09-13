@@ -85,7 +85,7 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 
 	// Method breakdown
 	methodBreakdown := make(map[string]int)
-	rows, err := s.db.Pool.Query(ctx, `
+	rows, err := s.db.Reader().Query(ctx, `
 		SELECT COALESCE(action, 'unknown'), COUNT(*)
 		FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
@@ -109,7 +109,7 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 	// Peak hour
 	var peakHour *int
 	var peakCount int
-	s.db.Pool.QueryRow(ctx, `
+	s.db.Reader().QueryRow(ctx, `
 		SELECT EXTRACT(HOUR FROM timestamp)::int AS hour, COUNT(*) AS cnt
 		FROM audit_events
 		WHERE event_type = 'authentication'
@@ -127,7 +127,7 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 
 	// Geo top 5 countries from login_history
 	geoTop5 := []map[string]interface{}{}
-	geoRows, err := s.db.Pool.Query(ctx, `
+	geoRows, err := s.db.Reader().Query(ctx, `
 		SELECT COALESCE(location, 'Unknown'), COUNT(*) AS cnt
 		FROM login_history
 		WHERE created_at > NOW() - $1::interval
@@ -312,7 +312,7 @@ func (s *Service) handleFeatureAdoption(c *gin.Context) {
 
 	for _, fs := range featureSources {
 		var count int
-		if err := s.db.Pool.QueryRow(ctx, fs.Query, fs.Args...).Scan(&count); err != nil {
+		if err := s.db.Reader().QueryRow(ctx, fs.Query, fs.Args...).Scan(&count); err != nil {
 			s.logger.Warn("feature adoption source failed",
 				zap.String("feature", fs.Name), zap.Error(err))
 		}
@@ -363,7 +363,7 @@ func (s *Service) handleRiskScoreTimeline(c *gin.Context) {
 		return
 	}
 
-	rows, err := s.db.Pool.Query(ctx, `
+	rows, err := s.db.Reader().Query(ctx, `
 		SELECT DATE(created_at) AS day,
 		       AVG(risk_score) AS avg_score,
 		       MAX(risk_score) AS max_score,
@@ -426,7 +426,7 @@ func (s *Service) handleUserActivityHeatmap(c *gin.Context) {
 	interval := periodToInterval(period)
 
 	// Query: hour of day (0-23) x day of week (0=Sunday through 6=Saturday)
-	rows, err := s.db.Pool.Query(ctx, `
+	rows, err := s.db.Reader().Query(ctx, `
 		SELECT EXTRACT(DOW FROM timestamp)::int AS dow,
 		       EXTRACT(HOUR FROM timestamp)::int AS hour,
 		       COUNT(*) AS cnt

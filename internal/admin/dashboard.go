@@ -88,7 +88,7 @@ func (s *Service) aggregateDashboardStats(ctx context.Context) (*DashboardStats,
 
 	// Get total user count from identity service
 	var totalUsers int64
-	err = s.db.Pool.QueryRow(ctx, `
+	err = s.db.Reader().QueryRow(ctx, `
 		SELECT COUNT(*) FROM users WHERE org_id = $1
 	`, org.ID).Scan(&totalUsers)
 	if err != nil {
@@ -98,7 +98,7 @@ func (s *Service) aggregateDashboardStats(ctx context.Context) (*DashboardStats,
 
 	// Get active session count from sessions table
 	var activeSessions int64
-	err = s.db.Pool.QueryRow(ctx, `
+	err = s.db.Reader().QueryRow(ctx, `
 		SELECT COUNT(*) FROM sessions
 		WHERE expires_at > NOW()
 		AND (revoked IS NULL OR revoked = false)
@@ -112,7 +112,7 @@ func (s *Service) aggregateDashboardStats(ctx context.Context) (*DashboardStats,
 	// Calculate MFA adoption rate (enabled users / total users * 100)
 	if totalUsers > 0 {
 		var mfaEnabledUsers int64
-		err = s.db.Pool.QueryRow(ctx, `
+		err = s.db.Reader().QueryRow(ctx, `
 			SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true AND org_id = $1
 		`, org.ID).Scan(&mfaEnabledUsers)
 		if err != nil {
@@ -124,7 +124,7 @@ func (s *Service) aggregateDashboardStats(ctx context.Context) (*DashboardStats,
 
 	// Get recent security events from audit log (last 24 hours)
 	twentyFourHoursAgo := time.Now().Add(-24 * time.Hour)
-	rows, err := s.db.Pool.Query(ctx, `
+	rows, err := s.db.Reader().Query(ctx, `
 		SELECT id, timestamp, event_type, category, action, outcome,
 		       COALESCE(actor_id, ''), COALESCE(actor_ip, '')
 		FROM audit_events

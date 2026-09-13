@@ -101,7 +101,7 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 
 	// Login forecast
 	loginHist := []DailyMetric{}
-	rows, err := s.db.Pool.Query(ctx, `
+	rows, err := s.db.Reader().Query(ctx, `
 		SELECT DATE(timestamp) as d, COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '30 days'
 		  AND org_id = $1
@@ -122,7 +122,7 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 
 	// Risk forecast
 	riskHist := []DailyFloat{}
-	rRows, err := s.db.Pool.Query(ctx, `
+	rRows, err := s.db.Reader().Query(ctx, `
 		SELECT DATE(timestamp) as d, AVG(COALESCE((details->>'risk_score')::float, 0)) FROM audit_events
 		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '30 days'
 		  AND org_id = $1
@@ -143,7 +143,7 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 
 	// Capacity forecast
 	var peakSessions, avgSessions int
-	if err := s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Reader().QueryRow(ctx, `
 		SELECT COALESCE(MAX(cnt), 0), COALESCE(AVG(cnt)::int, 0) FROM (
 			SELECT DATE_TRUNC('hour', created_at) as h, COUNT(*) as cnt FROM user_sessions
 			WHERE created_at > NOW() - INTERVAL '7 days' AND org_id = $1 GROUP BY h
@@ -194,7 +194,7 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 	// can say "not enough history" rather than "0%".
 	var sessionGrowthRate *float64
 	var thisWeek, lastWeek float64
-	if err := s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Reader().QueryRow(ctx, `
 		SELECT
 			COALESCE(COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days'), 0)::float8,
 			COALESCE(COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '14 days'
@@ -218,7 +218,7 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 
 	// Account growth
 	growthHist := []DailyMetric{}
-	gRows, err := s.db.Pool.Query(ctx, `
+	gRows, err := s.db.Reader().Query(ctx, `
 		SELECT DATE(created_at) as d, COUNT(*) FROM users
 		WHERE created_at > NOW() - INTERVAL '90 days'
 		  AND org_id = $1
@@ -247,7 +247,7 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 
 	// Churn risk - users with declining login frequency
 	churnUsers := []ChurnRiskUser{}
-	cRows, err := s.db.Pool.Query(ctx, `
+	cRows, err := s.db.Reader().Query(ctx, `
 		WITH recent AS (
 			SELECT actor_id, COUNT(*) as cnt FROM audit_events
 			WHERE event_type = 'authentication' AND outcome = 'success'
@@ -313,7 +313,7 @@ func (s *Service) handleLoginForecast(c *gin.Context) {
 	}
 
 	hist := []DailyMetric{}
-	rows, err := s.db.Pool.Query(ctx, `
+	rows, err := s.db.Reader().Query(ctx, `
 		SELECT DATE(timestamp) as d, COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '60 days'
 		  AND org_id = $1
@@ -353,7 +353,7 @@ func (s *Service) handleRiskForecast(c *gin.Context) {
 	}
 
 	hist := []DailyFloat{}
-	rows, err := s.db.Pool.Query(ctx, `
+	rows, err := s.db.Reader().Query(ctx, `
 		SELECT DATE(timestamp) as d, AVG(COALESCE((details->>'risk_score')::float, 0)) FROM audit_events
 		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '60 days'
 		  AND org_id = $1
@@ -394,7 +394,7 @@ func (s *Service) handleCapacityForecast(c *gin.Context) {
 
 	// Hourly session distribution
 	hourly := []map[string]interface{}{}
-	hRows, err := s.db.Pool.Query(ctx, `
+	hRows, err := s.db.Reader().Query(ctx, `
 		SELECT EXTRACT(HOUR FROM created_at)::int as h, COUNT(*) FROM user_sessions
 		WHERE created_at > NOW() - INTERVAL '7 days'
 		  AND org_id = $1
@@ -410,7 +410,7 @@ func (s *Service) handleCapacityForecast(c *gin.Context) {
 
 	// Weekly trend
 	weekly := []map[string]interface{}{}
-	wRows, err := s.db.Pool.Query(ctx, `
+	wRows, err := s.db.Reader().Query(ctx, `
 		SELECT DATE_TRUNC('week', created_at)::date as w, COUNT(*) FROM user_sessions
 		WHERE created_at > NOW() - INTERVAL '12 weeks'
 		  AND org_id = $1

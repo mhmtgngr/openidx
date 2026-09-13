@@ -96,7 +96,7 @@ func (s *Service) handleLoginAnomalies(c *gin.Context) {
 		}
 	}
 
-	rows, err := s.db.Pool.Query(ctx, `
+	rows, err := s.db.Reader().Query(ctx, `
 		SELECT lh.id, lh.user_id, u.username, lh.ip_address,
 		       COALESCE(lh.location, '') as location, lh.risk_score, lh.success,
 		       COALESCE(lh.auth_methods, '{}') as auth_methods,
@@ -152,7 +152,7 @@ func (s *Service) handleUserRiskProfile(c *gin.Context) {
 	var profile UserRiskProfile
 	profile.UserID = userID
 
-	err = s.db.Pool.QueryRow(ctx, `
+	err = s.db.Reader().QueryRow(ctx, `
 		SELECT urb.user_id, u.username, urb.typical_login_hours, urb.typical_countries,
 		       urb.typical_ips, urb.avg_risk_score, urb.login_count, urb.last_updated_at
 		FROM user_risk_baselines urb
@@ -175,11 +175,11 @@ func (s *Service) handleUserRiskProfile(c *gin.Context) {
 		profile.LastUpdatedAt = nil
 
 		// Try to get the username
-		_ = s.db.Pool.QueryRow(ctx, `SELECT username FROM users WHERE id = $1 AND org_id = $2`, userID, org.ID).Scan(&profile.Username)
+		_ = s.db.Reader().QueryRow(ctx, `SELECT username FROM users WHERE id = $1 AND org_id = $2`, userID, org.ID).Scan(&profile.Username)
 	}
 
 	// Fetch the last 10 login_history entries for this user
-	loginRows, err := s.db.Pool.Query(ctx, `
+	loginRows, err := s.db.Reader().Query(ctx, `
 		SELECT lh.id, lh.user_id, u.username, lh.ip_address,
 		       COALESCE(lh.location, '') as location, lh.risk_score, lh.success,
 		       COALESCE(lh.auth_methods, '{}') as auth_methods,
@@ -233,7 +233,7 @@ func (s *Service) handleRiskOverview(c *gin.Context) {
 
 	var overview RiskOverview
 
-	err = s.db.Pool.QueryRow(ctx, `
+	err = s.db.Reader().QueryRow(ctx, `
 		SELECT
 		    COUNT(*) as total_logins,
 		    SUM(CASE WHEN risk_score >= 50 THEN 1 ELSE 0 END) as high_risk_logins,
@@ -263,7 +263,7 @@ func (s *Service) handleRiskOverview(c *gin.Context) {
 		"critical": 0,
 	}
 
-	distRows, err := s.db.Pool.Query(ctx, `
+	distRows, err := s.db.Reader().Query(ctx, `
 		SELECT
 		    CASE
 		        WHEN risk_score < 20 THEN 'low'

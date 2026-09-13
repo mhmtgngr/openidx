@@ -63,7 +63,7 @@ func (s *Service) computeOrgIntelligence(ctx context.Context, orgID string) (*or
 		lastLogin           *time.Time
 	}
 	var users []userRow
-	rows, err := s.db.Pool.Query(ctx, `
+	rows, err := s.db.Reader().Query(ctx, `
 		SELECT id::text, username, COALESCE(email,''), enabled,
 		       (locked_until IS NOT NULL AND locked_until > NOW()),
 		       last_login_at
@@ -85,7 +85,7 @@ func (s *Service) computeOrgIntelligence(ctx context.Context, orgID string) (*or
 		failed int
 	}
 	logins := make(map[string]loginAgg)
-	rows, err = s.db.Pool.Query(ctx, `
+	rows, err = s.db.Reader().Query(ctx, `
 		SELECT user_id::text, COALESCE(AVG(risk_score),0), COALESCE(MAX(risk_score),0),
 		       COUNT(*) FILTER (WHERE NOT success AND created_at > NOW() - INTERVAL '7 days')
 		  FROM login_history
@@ -105,7 +105,7 @@ func (s *Service) computeOrgIntelligence(ctx context.Context, orgID string) (*or
 	alerts := make(map[string][]string)
 	alertsBySev := map[string]int{}
 	openAlerts := 0
-	rows, err = s.db.Pool.Query(ctx, `
+	rows, err = s.db.Reader().Query(ctx, `
 		SELECT COALESCE(user_id::text,''), severity FROM security_alerts
 		 WHERE org_id = $1 AND status = 'open'`, orgID)
 	if err == nil {
@@ -123,7 +123,7 @@ func (s *Service) computeOrgIntelligence(ctx context.Context, orgID string) (*or
 	}
 
 	mfa := make(map[string]bool)
-	rows, err = s.db.Pool.Query(ctx, `
+	rows, err = s.db.Reader().Query(ctx, `
 		SELECT u.id::text FROM users u
 		 WHERE u.org_id = $1 AND (
 		       EXISTS(SELECT 1 FROM mfa_totp t WHERE t.user_id = u.id AND t.enabled = true)
@@ -140,7 +140,7 @@ func (s *Service) computeOrgIntelligence(ctx context.Context, orgID string) (*or
 
 	type devAgg struct{ trusted, untrusted int }
 	devices := make(map[string]devAgg)
-	rows, err = s.db.Pool.Query(ctx, `
+	rows, err = s.db.Reader().Query(ctx, `
 		SELECT user_id::text,
 		       COUNT(*) FILTER (WHERE trusted), COUNT(*) FILTER (WHERE NOT trusted)
 		  FROM known_devices WHERE org_id = $1 GROUP BY user_id`, orgID)
@@ -161,7 +161,7 @@ func (s *Service) computeOrgIntelligence(ctx context.Context, orgID string) (*or
 	// predicate that holds: it holds only for as long as every consumer keeps
 	// joining, and nothing made that true.
 	breaches := make(map[string]int)
-	rows, err = s.db.Pool.Query(ctx, `
+	rows, err = s.db.Reader().Query(ctx, `
 		SELECT unnest(affected_user_ids) FROM breach_incidents
 		 WHERE created_at > NOW() - INTERVAL '30 days' AND status NOT IN ('resolved','closed')
 		   AND org_id = $1`, orgID)
@@ -179,7 +179,7 @@ func (s *Service) computeOrgIntelligence(ctx context.Context, orgID string) (*or
 	// OpenIDX user ID, so identity_name = users.id::text is the join.
 	zitiAnomalies := make(map[string]int)
 	zitiOpenTotal := 0
-	rows, err = s.db.Pool.Query(ctx,
+	rows, err = s.db.Reader().Query(ctx,
 		`SELECT COALESCE(identity_name,''), COUNT(*) FROM ziti_ai_anomalies
 		  WHERE status = 'open' GROUP BY identity_name`)
 	if err == nil {
@@ -200,7 +200,7 @@ func (s *Service) computeOrgIntelligence(ctx context.Context, orgID string) (*or
 	// discarded error reported "0 sign-ins, 0 failures" -- the reading an
 	// operator takes as a quiet day rather than as a broken query.
 	var logins24h, failed24h int
-	if err := s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Reader().QueryRow(ctx, `
 		SELECT COUNT(*), COUNT(*) FILTER (WHERE NOT success)
 		  FROM login_history WHERE org_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`,
 		orgID).Scan(&logins24h, &failed24h); err != nil {

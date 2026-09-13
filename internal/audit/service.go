@@ -1182,7 +1182,10 @@ func (s *Service) ListComplianceReports(ctx context.Context, offset, limit int) 
 		SELECT id, type, framework, name, status, start_date, end_date, generated_at, summary, findings
 		FROM compliance_reports
 		WHERE org_id = $1
-		ORDER BY generated_at DESC
+		-- Same tie-break, same reason as report_exports above: a batch of
+		-- reports generated together shares generated_at, and a tie with no
+		-- second key can show a report twice or not at all.
+		ORDER BY generated_at DESC, id DESC
 		OFFSET $2 LIMIT $3
 	`, org.ID, offset, limit)
 	if err != nil {

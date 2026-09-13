@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The SCIM list endpoints page in a total order, and stop dropping users.**
+  SCIM cannot become a cursor the way the audit event list did: RFC 7644
+  §3.4.2.4 pages by `startIndex` and requires `totalResults`, so the client
+  picks the offset and the count has to be computed. What could be fixed was
+  the ordering, and it needed fixing for correctness before it needed an index.
+  `ORDER BY created_at` alone is not a total order, and here the ties are
+  **guaranteed** rather than unlucky: `created_at` defaults to `NOW()`, which
+  in Postgres is the *transaction* timestamp, so every row one transaction
+  writes carries the identical value — measured at 200 rows sharing one
+  `created_at`. Tied rows with no second key can land on two pages or on
+  neither, which on a provisioning API is an account created twice downstream
+  or one that never arrives. The lists now order by `(created_at, id)` from one
+  place, and migration **v191** indexes `(org_id, created_at, id)` on `users`
+  and `groups` so that ordering is a seek rather than a sort.
+
+  Writing that test found a live defect. `first_name`, `last_name` and `email`
+  are nullable and the list scanned them into plain strings, so `rows.Scan`
+  failed for every user without a name — and the loop answered with
+  `continue`. The response carried `totalResults = N` with **none** of the N
+  users in it, HTTP 200, nothing logged; a SCIM client reads a short page as
+  the whole directory. Fixed with `COALESCE` and by returning the scan error
+  instead of swallowing it, in both the user and group lists. The two halves of
+  that fix overlap — with `COALESCE` in place no scan fails, so restoring the
+  `continue` leaves every behaviour test green — so the loop's error handling
+  is pinned in the source as well.
+
+  The audit report listings (`report_exports`, `compliance_reports`) carried
+  the same ordering defect and got the same tie-break. They did **not** get a
+  cursor, deliberately: these are per-tenant lists of tens of rows, and the
+  deep-page cost this task targets has nobody to pay it there.
+
+  What this still does not fix, because the protocol does not allow it: a row
+  inserted ahead of the client's position between two pages shifts every later
+  `OFFSET` and the row at the boundary is never returned — measured as one user
+  in two hundred silently missing after a single concurrent insert. That is a
+  property of index-based paging; a cursor removes it, and SCIM has nowhere to
+  put one.
+
+- **The admin console's analytics read from the replica, not the primary.** 26
+  queries across `analytics_enhanced.go`, `risk_analytics.go`,
+  `predictive_analytics.go` and `dashboard.go` now go through
+  `PostgresDB.Reader()`. They are aggregates over `audit_events`,
+  `login_history`, `user_sessions` and `users`, bucketed by day, hour and week
+  — simultaneously the most expensive ADMIN queries and the ones least able to
+  notice a second of replication lag, which is what the offload exists for.
+  Behaviour is unchanged by default: with no replica configured `Reader()`
+  returns the primary pool, so every call lands exactly where it did.
+
+  A second batch follows the same way: `ai_intelligence.go` and
+  `pam_overview.go`, 15 more queries — risk averages, alert counts, secret and
+  rotation and access-request tallies. Summaries of the past, none of which
+  decides anything.
+
+  The census is now complete, and its boundary was measured rather than
+  guessed. Every one of the 22 remaining files both reads and writes, and every
+  one is a CRUD surface — which matters because of what the console does after
+  a write: it is a TanStack Query application and it invalidates the list it
+  just changed. Counted: **384 `invalidateQueries` calls across 81 files**, out
+  of 90 that mutate at all. So "list" is not a lag-tolerant read on those
+  screens; it is a read-after-write issued milliseconds after the POST returns,
+  and an administrator who cannot see the rule they just created creates it
+  again. File-level offloading therefore ends here — the two batches took
+  everything on the other side of that line — and every file carries its
+  recorded decision. What remains is finer than a file: the stats, score and
+  trend handlers inside those CRUD files are lag-tolerant and need the census at
+  function granularity to move.
+
+  The census records the **deliberate non-offloads** too, which is what
+  saves the next batch from re-deriving them. A file with reads and no writes
+  looks offloadable by the same test the batches pass, and not all of them are:
+  `dsar_processor.go` is a worker polling for work it is about to act on — a
+  lagging replica would hand it a request another replica already took, or hide
+  one that is waiting — and `tilequery.go` runs whatever SQL its caller hands
+  it, so offloading it would offload every caller at once. A file with reads and
+  no writes must now be in exactly one of the two lists; one in neither is an
+  undecided file, and an undecided file is how the next person ends up guessing.
+
+  The guard runs in both directions, because only one of them is obvious. A
+  declared file must use **only** the replica and must not write — a write
+  through `Reader()` is refused by the server with SQLSTATE 25006, which is an
+  error in production rather than in CI. And a file that is **not** declared
+  may not touch `Reader()` at all, which is what stops a query being offloaded
+  in passing without anyone deciding whether it tolerates lag. Each entry has
+  to say why it does; "it is a read" is rejected, because a read-after-write is
+  also a read.
+
 ### Added
 
 - **Each service can connect as its availability plane's Postgres role

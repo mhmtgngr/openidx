@@ -94,7 +94,7 @@ func (s *Service) aggregatePAMOverview(ctx context.Context, orgID string) (*PAMO
 	}
 
 	// Vault inventory.
-	rows, err := s.db.Pool.Query(ctx,
+	rows, err := s.db.Reader().Query(ctx,
 		`SELECT type, COUNT(*) FROM vault_secrets WHERE org_id = $1 GROUP BY type`, orgID)
 	if err != nil {
 		return nil, err
@@ -115,7 +115,7 @@ func (s *Service) aggregatePAMOverview(ctx context.Context, orgID string) (*PAMO
 	}
 
 	// Rotation health.
-	err = s.db.Pool.QueryRow(ctx,
+	err = s.db.Reader().QueryRow(ctx,
 		`SELECT COUNT(*),
 		        COUNT(*) FILTER (WHERE enabled),
 		        COUNT(*) FILTER (WHERE last_status = 'failed'),
@@ -127,7 +127,7 @@ func (s *Service) aggregatePAMOverview(ctx context.Context, orgID string) (*PAMO
 	if err != nil {
 		return nil, err
 	}
-	err = s.db.Pool.QueryRow(ctx,
+	err = s.db.Reader().QueryRow(ctx,
 		`SELECT COUNT(*),
 		        COUNT(*) FILTER (WHERE status = 'failed')
 		   FROM credential_rotations
@@ -138,7 +138,7 @@ func (s *Service) aggregatePAMOverview(ctx context.Context, orgID string) (*PAMO
 	}
 
 	// Checkout / lease activity.
-	err = s.db.Pool.QueryRow(ctx,
+	err = s.db.Reader().QueryRow(ctx,
 		`SELECT COUNT(*) FILTER (WHERE status = 'active'
 		                           AND (expires_at IS NULL OR expires_at > NOW())),
 		        COUNT(*) FILTER (WHERE leased_at > NOW() - INTERVAL '30 days')
@@ -148,7 +148,7 @@ func (s *Service) aggregatePAMOverview(ctx context.Context, orgID string) (*PAMO
 	if err != nil {
 		return nil, err
 	}
-	err = s.db.Pool.QueryRow(ctx,
+	err = s.db.Reader().QueryRow(ctx,
 		`SELECT COUNT(*)
 		   FROM access_requests
 		  WHERE org_id = $1 AND resource_type = 'vault_credential' AND status = 'pending'`, orgID).
@@ -158,7 +158,7 @@ func (s *Service) aggregatePAMOverview(ctx context.Context, orgID string) (*PAMO
 	}
 
 	// Privileged sessions.
-	err = s.db.Pool.QueryRow(ctx,
+	err = s.db.Reader().QueryRow(ctx,
 		`SELECT COUNT(*) FILTER (WHERE status = 'active'),
 		        COUNT(*) FILTER (WHERE started_at > NOW() - INTERVAL '30 days'),
 		        COUNT(*) FILTER (WHERE EXISTS (
@@ -171,7 +171,7 @@ func (s *Service) aggregatePAMOverview(ctx context.Context, orgID string) (*PAMO
 	if err != nil {
 		return nil, err
 	}
-	err = s.db.Pool.QueryRow(ctx,
+	err = s.db.Reader().QueryRow(ctx,
 		`SELECT COUNT(*)
 		   FROM guacamole_session_requests
 		  WHERE org_id = $1 AND status = 'pending'
