@@ -2,6 +2,7 @@
 
 > **Tasarım:** `docs/architecture/2026-09-13-global-scale-cell-architecture-and-ddos.md`
 > (önce onu oku; bu plan oradan argüman alır, tekrar etmez).
+> **Takvim ve kilometre taşları:** `docs/plans/2026-09-13-global-scale-roadmap.md` (fazların haftalara, sprintlere ve karar noktalarına bağlanması).
 > **Biçim:** Her görev dosya adı, kabul ölçütü ve onay kutusu taşır. Bir görev
 > "bitti" sayılmak için kabul ölçütünün **ölçülmüş** olması gerekir; "yaptım" yetmez
 > (`docs/openidx-k8s-always-on.md` §4'ün dersi).
