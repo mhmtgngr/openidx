@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The admin console's analytics read from the replica, not the primary.** 26
+  queries across `analytics_enhanced.go`, `risk_analytics.go`,
+  `predictive_analytics.go` and `dashboard.go` now go through
+  `PostgresDB.Reader()`. They are aggregates over `audit_events`,
+  `login_history`, `user_sessions` and `users`, bucketed by day, hour and week
+  — simultaneously the most expensive ADMIN queries and the ones least able to
+  notice a second of replication lag, which is what the offload exists for.
+  Behaviour is unchanged by default: with no replica configured `Reader()`
+  returns the primary pool, so every call lands exactly where it did.
+
+  The guard runs in both directions, because only one of them is obvious. A
+  declared file must use **only** the replica and must not write — a write
+  through `Reader()` is refused by the server with SQLSTATE 25006, which is an
+  error in production rather than in CI. And a file that is **not** declared
+  may not touch `Reader()` at all, which is what stops a query being offloaded
+  in passing without anyone deciding whether it tolerates lag. Each entry has
+  to say why it does; "it is a read" is rejected, because a read-after-write is
+  also a read.
+
 ### Added
 
 - **Each service can connect as its availability plane's Postgres role
