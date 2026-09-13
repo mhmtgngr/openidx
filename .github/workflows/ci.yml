@@ -360,6 +360,28 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # The per-plane login roles (task 2.4, migration v189). These need a
+      # SUPERUSER connection, because CREATE ROLE is exactly what the
+      # application's own role cannot do -- which is the point of v53 and the
+      # reason the chart provisions roles from a bootstrap hook.
+      #
+      # The cancellation test sleeps 15s against a 10s ceiling on purpose, so
+      # this step is slower than it looks; it is the acceptance criterion of
+      # 2.4 and there is no faster way to prove a server-side timeout fires.
+      - name: Per-plane roles inherit the tenant belt and bound their queries
+        env:
+          TEST_POSTGRES_SUPERUSER_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/migrations/ -run 'V189' -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestV189PlaneRolesInheritTheTenantBelt \
+                      TestV189AdminQueryIsCancelledAndIssueIsNot \
+                      TestV189IdleTransactionsAreClosedOut; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
   ui-safety-guards:
     name: UI safety guards
     runs-on: ubuntu-latest

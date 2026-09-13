@@ -1343,5 +1343,12 @@ func allMigrations() []*Migration {
 			UpSQL:       tempLinkPamEntryUp,
 			DownSQL:     tempLinkPamEntryDown,
 		},
+		{
+			Version:     189,
+			Name:        "plane_roles_statement_timeout",
+			Description: "Provision one Postgres LOGIN role per availability plane -- openidx_issue (statement_timeout 2s), openidx_admin (10s), openidx_event (30s) -- each created IN ROLE openidx_app so it inherits v53's DML grants and, with them, the v37 FORCE RLS policies that are granted TO openidx_app. Every service connects as openidx_app today with NO query time limit, so one expensive ADMIN or EVENT query (an audit search, a governance report, a SCIM bulk page with a bad predicate) is indistinguishable to Postgres from the login path and holds a backend for as long as it likes; the design's premise is that the expensive planes are sheddable without the cheap one noticing, and once a query is RUNNING the database cancelling it is the only layer that can do that -- cancelling a Go context abandons the call while the backend keeps burning CPU and holding locks. Attached to a role rather than passed in the DSN so it is a property of the server (\\drds lists it, an operator cannot lose it by editing a secret) and so it holds for a psql session opened as that role too. NOBYPASSRLS is spelled out on each role because one that quietly bypassed the belt would not fail, it would return every tenant's rows. idle_in_transaction_session_timeout (60s/120s/300s) is set alongside, which the plan did not ask for: without it the statement timeout is bypassed by BEGIN, one fast query, and holding the transaction open -- the backend stays pinned, its locks held, and vacuum cannot pass the oldest snapshot. VERIFY gets no role because the design gives it no database. Passwordless like v53 and NOTHING USES THEM YET: a deployment opts in by pointing a service's DATABASE_URL at one, so until it does this migration changes no behaviour. Idempotent; Down drops the three (they own nothing and hold no direct grants, so no REVOKE sweep is needed).",
+			UpSQL:       planeRolesUp,
+			DownSQL:     planeRolesDown,
+		},
 	}
 }

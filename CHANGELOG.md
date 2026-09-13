@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **One Postgres login role per availability plane, with a query ceiling the
+  server enforces.** Migration v189 provisions `openidx_issue`
+  (`statement_timeout` 2s), `openidx_admin` (10s) and `openidx_event` (30s).
+  Every service connects as `openidx_app` today with no limit at all, so one
+  expensive ADMIN or EVENT query — an audit search, a governance report, a SCIM
+  bulk page with a bad predicate — is indistinguishable to Postgres from the
+  login path and holds a backend for as long as it likes. Cancelling a Go
+  context does not help: it abandons the call while the backend keeps burning
+  CPU and holding locks, so once a query is *running* the database is the only
+  layer that can stop it. Each role is created `IN ROLE openidx_app`, so it
+  inherits v53's DML grants and, with them, the v37 `FORCE` RLS policies that
+  are granted `TO openidx_app` — a plane role is exactly as tenant-scoped as
+  `openidx_app`, never more. `NOBYPASSRLS` is spelled out on each one because a
+  role that quietly bypassed the belt would not fail; it would return every
+  tenant's rows. `idle_in_transaction_session_timeout` is set alongside (60s /
+  120s / 300s), which the plan did not ask for: without it the statement
+  timeout is bypassed by `BEGIN`, one fast query, and holding the transaction
+  open. Measured against a real PostgreSQL — all three roles see their own
+  tenant and no other, a cross-tenant write is refused, and a 15s query on the
+  ADMIN role is cancelled by the server at ~10s while ISSUE is untouched — and
+  verified by four mutations, of which `BYPASSRLS` is the one that matters: the
+  role then sees both tenants' rows. The roles ship passwordless and **nothing
+  points at them yet**, so until a deployment cuts a service's `DATABASE_URL`
+  over, this changes no behaviour. Task 2.4.
+
 ### Fixed
 
 - **"A replica outage transparently falls back to the primary" was true only at
