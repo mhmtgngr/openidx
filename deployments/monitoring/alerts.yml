@@ -55,7 +55,7 @@ groups:
         labels: { severity: warning }
         annotations:
           summary: "DB pool >80% saturated on {{ $labels.service }}"
-          description: "{{ $labels.service }} is holding >80% of its pgx pool — raise DB_MAX_CONNS or add pgbouncer."
+          description: "{{ $labels.service }} is holding >80% of its pgx pool — raise DB_MAX_CONNS, or put the transaction pooler in front (pgcat.enabled with RLS_MODE=local; anything less than local mode leaks tenant scope across clients — docs/evidence/2026-09-13-rls-transaction-pooling.md). Once the pooler is in front, OpenIDXPoolerClientsWaiting is the alert that sees the wall."
 
       - alert: OpenIDXGoroutineLeak
         expr: openidx_process_goroutines > 5000

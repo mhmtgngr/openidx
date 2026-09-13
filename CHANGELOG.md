@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A transaction pooler in the chart, with the unsafe combination made
+  unrenderable.** `pgcat` ×2 behind one Service, off by default. The connection
+  budget becomes `replicaCount × poolSize` (2 × 40), a constant — without it the
+  fleet is `services × replicas × DB_MAX_CONNS`, which autoscaling multiplies.
+  Enabling it repoints the eight request-serving Deployments at the pooler and
+  deliberately leaves the migration Job, the bootstrap hook and the backup
+  CronJob on the direct DSN: a migration's advisory lock is session-scoped and
+  `pg_dump` needs one session to hold its snapshot, so neither survives
+  transaction pooling. The chart **refuses to render** `pgcat.enabled=true`
+  while `config.rlsMode` is not `local`, with no override, because a pooler in
+  front of session-scoped tenant state hands one tenant's scope to the next
+  client — measured in
+  `docs/evidence/2026-09-13-rls-transaction-pooling.md`, not theorised. It also
+  refuses a zero `preparedStatementsCacheSize`, which is pgcat's own default and
+  means every pgx query fails with SQLSTATE 42P05. pgcat's Prometheus exporter
+  is scraped by its own ServiceMonitor; `OpenIDXPoolerClientsWaiting` replaces
+  `OpenIDXDBPoolSaturation` as the alert that sees the wall, and
+  `OpenIDXPoolerNoRedundancy` covers the new single point of failure in front of
+  the database. Five CI assertions cover all of it, each verified by breaking
+  the thing it guards. Auditing the generated config against pgcat v1.2.0's own
+  source caught three things every render-time check passed: the pinned tag
+  `1.1.1` does not exist (the registry's only released tag is `v1.2.0`),
+  `prepared_statements` is not a `[general]` key and pgcat ignores unknown keys
+  in silence, and the image declares `CMD ["pgcat"]` with no `ENTRYPOINT`, so
+  `args` alone would have replaced the binary with the path to its config file.
+  The canary gate is unchanged: nothing turns this on until `RLS_MODE=local` has
+  run for two weeks. Task 2.2.
+
+### Added
+
 - **An anycast edge as code, provider chosen by one variable.** DDoS at
   L3/L4 and volumetric L7 is bought, not built (design ADR-3), and the
   provider is an open decision. `deployments/terraform/edge` is a root whose

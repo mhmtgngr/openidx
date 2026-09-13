@@ -283,6 +283,7 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
       - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
       - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OPA_URL=http://opa:8281
@@ -337,6 +338,7 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
       - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
       - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OPA_URL=http://opa:8281
@@ -386,6 +388,7 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
       - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
       - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
@@ -480,6 +483,7 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
       - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
       - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OPA_URL=http://opa:8281
@@ -533,6 +537,7 @@ services:
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
       - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
       - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
@@ -585,6 +590,7 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
       - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
       - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - LOG_LEVEL=debug
@@ -1281,6 +1287,7 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
       - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
       - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446

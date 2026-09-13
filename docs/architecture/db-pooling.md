@@ -107,3 +107,36 @@ results worth carrying here:
 cell for two weeks and `tools/orgscope` enforces that no query reaches the pool
 outside a scoped wrapper (task 2.1b). The flag makes the transport safe; the
 linter is what makes it complete.
+
+## Update 2026-09-13 — the chart ships the pooler (task 2.2)
+
+The Helm chart now has a `pgcat` block, **off by default**. What it changes when
+turned on:
+
+- **Who talks to whom.** The eight request-serving Deployments get a
+  `DATABASE_URL` pointing at `<release>-pgcat:6432`; the migration Job, the
+  bootstrap hook and the backup CronJob keep the direct DSN. None of those three
+  survives transaction pooling — a migration's advisory lock is session-scoped,
+  and `pg_dump` needs one session to hold its snapshot for the whole dump.
+- **What bounds the connection count.** `replicaCount × poolSize` (2 × 40 by
+  default), a constant. Without the pooler it is
+  `services × replicas × DB_MAX_CONNS`, which autoscaling multiplies. So
+  `DB_MAX_CONNS` keeps its meaning but stops being the number that protects
+  Postgres; it then sizes cheap client connections to the pooler.
+- **What watches it.** pgcat's Prometheus exporter is enabled and scraped;
+  `OpenIDXPoolerClientsWaiting` replaces `OpenIDXDBPoolSaturation` as the alert
+  that sees the wall, and `OpenIDXPoolerNoRedundancy` covers the new single
+  point of failure in front of the database.
+
+**The chart refuses to render** `pgcat.enabled=true` while `config.rlsMode` is
+anything but `local` — there is no override, because the override is the thing
+that makes it safe. It also refuses a `preparedStatementsCacheSize` of 0, which
+is pgcat's own default and means a fleet that cannot run one query. Both
+refusals, plus the routing above, are asserted in CI (`.github/workflows/
+helm.yml`, "The transaction pooler is safe by construction") and each assertion
+was checked by breaking the thing it guards.
+
+The gate in the previous section still stands: `RLS_MODE=local` on a canary cell
+for two weeks, and `tools/orgscope` finished, **before** anything turns this on.
+Shipping the chart support is not the same as having run it — no pgcat process
+has been started against OpenIDX yet (see the evidence note, §6).

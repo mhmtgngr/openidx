@@ -80,12 +80,34 @@ consequence; removing the scope call entirely turns
 whole suite refuses to run, because Postgres exempts superusers from every
 policy and every assertion would otherwise pass with the belt cut.
 
-## 5. What this does *not* prove
+## 5. pgcat (task 2.2): what was checked, and how
+
+The chart ships pgcat, not PgBouncer, so the two prerequisites above had to be
+re-established for it. Both were checked against **pgcat v1.2.0's own source and
+registry**, not against a running pooler:
+
+| Claim | How it was checked |
+|---|---|
+| `ghcr.io/postgresml/pgcat:1.1.1` exists | **False.** The registry's only released tag is `v1.2.0`; everything else is a commit SHA or branch. The chart now pins `v1.2.0`. |
+| `prepared_statements = true` is a `[general]` key | **False.** No such key exists in `struct General` (`src/config.rs`). pgcat does not use `deny_unknown_fields`, so it would have been ignored in silence. |
+| `prepared_statements_cache_size` is pool-level, default 0 | True — `Pool::default_prepared_statements_cache_size() -> 0`. Zero means disabled, i.e. §3.1's failure on every query. The chart refuses to render a zero. |
+| Every rendered key exists in pgcat's structs | True — all 22 keys of the rendered `pgcat.toml` matched `General` / `Pool` / `User` / `Shard`. |
+| The image needs an explicit `command` | True — it declares `CMD ["pgcat"]` and **no** `ENTRYPOINT`, so `args` alone replaces the binary with the path to the TOML file. |
+
+`cleanup_server_connections` (pgcat's `DISCARD ALL` between transactions, on by
+default) would also clear a session GUC — PgBouncer's equivalent is not run in
+transaction mode by default, which is why §1's leak was measurable. That
+difference is exactly why the interlock does not rest on it: it is one
+performance flag away from being off, and `RLS_MODE=local` holds either way.
+
+## 6. What this does *not* prove
 
 - No production or canary cell has run `RLS_MODE=local`. The plan's gate stands:
   two weeks on a canary before pgcat goes in front of anything.
-- PgBouncer was the pooler here; pgcat is what the plan names for production and
-  it has not been exercised.
+- PgBouncer was the pooler measured in §1–§2. **No pgcat process has been
+  started**: §5 is a source and registry audit of the configuration the chart
+  generates, which is what catches a key in the wrong section — not a
+  substitute for running it.
 - `default_pool_size=1` maximises the hazard deliberately. Real pool sizing and
   the connection-budget claim behind task 2.2 are unmeasured.
 

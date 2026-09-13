@@ -80,6 +80,17 @@ render_and_check "volumePermissions" "${PLACEHOLDER_SECRETS[@]}" \
   --set postgresql.volumePermissions.enabled=true \
   --set redis.volumePermissions.enabled=true \
   --set elasticsearch.volumePermissions.enabled=true
+# The transaction pooler is off in every values file above, so its image would
+# never be rendered and never be checked. It shipped with a tag that does not
+# exist (`1.1.1`; the registry's only released tag is `v1.2.0`) and every
+# render-time check passed, because a tag is only wrong at pull time — which is
+# the exact failure this script exists to catch.
+render_and_check "pgcat" "${PLACEHOLDER_SECRETS[@]}" \
+  --set config.rlsMode=local \
+  --set pgcat.enabled=true \
+  --set pgcat.password=render-only-not-a-credential \
+  --set pgcat.adminPassword=render-only-not-a-credential \
+  --set pgcat.postgresHost=openidx-postgresql
 
 echo "chart-image offenders: $offenders"
 if [ "$ENFORCE" = 1 ] && [ "$offenders" -gt 0 ]; then exit 1; fi

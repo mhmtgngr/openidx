@@ -187,9 +187,22 @@ func buildPoolConfig(connString string) (*pgxpool.Config, error) {
 	// 2 min per service (8*10=80, leaving headroom for migrations, admin, psql and
 	// monitoring); raise DB_MAX_CONNS for a hot service (and Postgres
 	// max_connections to match) if the openidx_db_connections saturation alert
-	// fires. NOTE: do NOT front this with a transaction-pooling pgbouncer — RLS
-	// sets app.org_id as a SESSION GUC at pool checkout (see rls.go), which
-	// transaction pooling does not preserve (cross-tenant risk). See
+	// fires.
+	//
+	// A transaction pooler in front of this is safe ONLY in RLS_MODE=local. In
+	// the default session mode RLS stamps app.org_id as a SESSION GUC at pool
+	// checkout (rls.go), the pooler hands that backend to the next client, and
+	// the next tenant reads the previous tenant's rows — measured, not
+	// theorised: docs/evidence/2026-09-13-rls-transaction-pooling.md. The Helm
+	// chart refuses to render the unsafe combination.
+	//
+	// In local mode these numbers change meaning. They then size the pool of
+	// CLIENT connections to the pooler, which are cheap, while the Postgres
+	// backend budget belongs to the pooler (pgcat replicas × pool_size) and no
+	// longer grows when a service autoscales. That is the point of the pooler:
+	// keeping DB_MAX_CONNS small stops being the thing that protects Postgres,
+	// so a hot service can be given a larger one without renegotiating
+	// max_connections with every other service. See
 	// docs/architecture/db-pooling.md.
 	config.MaxConns = envInt32("DB_MAX_CONNS", 10, 1)
 	config.MinConns = envInt32("DB_MIN_CONNS", 2, 0)

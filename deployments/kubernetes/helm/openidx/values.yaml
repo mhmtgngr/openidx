@@ -93,6 +93,10 @@ config:
   # loginFailWindowSeconds the next attempt answers challenge_required.
   # off (default) | observe (record who would be challenged) | enforce.
   # TURNSTILE_SECRET, if used, belongs in the secret store, not here.
+  # Tenant-scope transport (task 2.1): session | local. Default session is
+  # today's behaviour. "local" is required before any transaction pooler
+  # (pgcat below) may be put in front of Postgres.
+  rlsMode: "session"
   botGate: "off"
   loginFailChallengeAfter: 5
   loginFailWindowSeconds: 900
@@ -795,6 +799,80 @@ autoscaling:
       stabilizationWindowSeconds: 300
       percent: 25       # shed at most a quarter per period
       periodSeconds: 60
+
+# ----- Transaction pooler (global-scale plan task 2.2) -----
+# pgcat decouples the fleet's client connections from Postgres backends. Without
+# it the backend count is services x replicas x DB_MAX_CONNS and autoscaling
+# multiplies it; with it the budget is replicaCount x poolSize, a constant.
+#
+# DISABLED by default, and the chart REFUSES TO RENDER if it is enabled while
+# config.rlsMode is not "local": a transaction pooler with session-scoped tenant
+# state hands one tenant's scope to the next client. That is measured, not
+# theoretical — docs/evidence/2026-09-13-rls-transaction-pooling.md.
+#
+# Before enabling: run config.rlsMode=local on a canary cell for two weeks with
+# the isolation suite green (the plan's gate), then turn this on. The chart
+# repoints the request-serving services at <release>-pgcat itself -- leaving
+# that to an operator meant a pooler could render with nothing using it, or
+# with half the fleet using it. The migration Job, the bootstrap hook and the
+# backup CronJob keep the DIRECT DSN: none of the three survives transaction
+# pooling (session-scoped advisory locks, one snapshot per dump).
+pgcat:
+  enabled: false
+  replicaCount: 2
+  port: 6432
+  # pgcat's Prometheus exporter (pgcat_pools_* gauges). Its own port, scraped by
+  # its own ServiceMonitor; see the OpenIDXPooler* alerts.
+  metricsPort: 9930
+  # The fleet's Postgres backend budget, PER REPLICA. replicaCount x poolSize is
+  # what Postgres sees; keep it comfortably under max_connections with room for
+  # migrations, psql and monitoring. At the defaults: 2 x 40 = 80 backends,
+  # CONSTANT -- it does not move when a service scales out, which is the whole
+  # reason this exists. Without the pooler the same fleet is
+  # 8 services x replicas x DB_MAX_CONNS (=10), so 80 at one replica each and
+  # 400 at five.
+  #
+  # DB_MAX_CONNS keeps its meaning on the service side but stops being the
+  # thing that protects Postgres: it then sizes cheap client connections to the
+  # pooler. Raise it for a hot service without renegotiating max_connections
+  # with every other service (internal/common/database/database.go says the
+  # same next to the default).
+  poolSize: 40
+  minPoolSize: 5
+  workerThreads: 4
+  # pgx caches prepared statements; a pooler that does not track them fails
+  # every query with SQLSTATE 42P05. pgcat's own default is 0, which means
+  # disabled, so this is not optional and the chart refuses to render a zero.
+  preparedStatementsCacheSize: 500
+  # Connection details for the UPSTREAM Postgres. username/password must be the
+  # unprivileged application role (openidx_app), never the owner or a superuser:
+  # a superuser bypasses every RLS policy, which would make the tenant belt
+  # decorative.
+  postgresHost: ""
+  postgresPort: 5432
+  databaseName: openidx
+  username: openidx_app
+  password: ""
+  adminPassword: ""
+  # Client -> pooler, inside the cluster. pgcat here terminates no TLS, so this
+  # is "disable" and not database.sslMode: a "require" that nothing serves is a
+  # fleet that cannot connect. Give the pooler a certificate first, then raise
+  # this.
+  sslMode: disable
+  image:
+    # v1.2.0 is the only released tag in this registry -- everything else is a
+    # commit SHA or a branch. Verified against the registry, because a tag that
+    # does not exist is invisible until the kubelet tries to pull it.
+    repository: ghcr.io/postgresml/pgcat
+    tag: "v1.2.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
 
 # ----- Edge provider (global-scale plan task 0.2) -----
 # The client-IP chain behind an anycast/CDN edge. Every per-IP control in the

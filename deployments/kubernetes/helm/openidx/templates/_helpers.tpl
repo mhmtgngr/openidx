@@ -181,3 +181,27 @@ on their images rather than silently moving them to the default.
 {{- if not $r -}}{{- $r = dig "imageRegistry" "" $g -}}{{- end -}}
 {{- $r | default "ghcr.io/mhmtgngr/openidx" -}}
 {{- end }}
+
+{{/*
+The DSN a REQUEST-SERVING service uses, when the transaction pooler is in front
+of Postgres (global-scale plan task 2.2).
+
+It is an `env` entry rather than another `envFrom` source on purpose. `env`
+beats `envFrom` by documented Kubernetes precedence, so this cleanly replaces
+the direct DATABASE_URL that the -db-url secret carries; the alternative --
+mounting a second secret after -db-url and relying on later-source-wins for a
+duplicate key -- works today but is not a promise the API makes.
+
+The migration Job, the bootstrap hook and the backup CronJob deliberately do
+NOT include this and keep the direct DSN. None of the three survives
+transaction pooling: migrations take session-scoped advisory locks, and
+pg_dump needs one session to hold its snapshot for the whole dump. A pooler
+would hand each of them a different backend mid-flight.
+*/}}
+{{- define "openidx.pooledDatabaseUrl" -}}
+- name: DATABASE_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "openidx.fullname" . }}-pgcat-dsn
+      key: DATABASE_URL
+{{- end }}

@@ -110,6 +110,11 @@ spec:
               value: "/tls-ca/ca.crt"
             {{- end }}
             {{- end }}
+          {{- if .Values.pgcat.enabled }}
+          # Through the transaction pooler, not straight at Postgres (task 2.2).
+          # This replaces the direct DSN in -db-url; see openidx.pooledDatabaseUrl.
+          {{- include "openidx.pooledDatabaseUrl" . | nindent 12 }}
+          {{- end }}
           envFrom:
             - secretRef:
                 name: {{ include "openidx.fullname" . }}-db-url

@@ -280,4 +280,38 @@ spec:
           annotations:
             summary: "Ziti data plane has no redundancy"
             description: "Only {{ "{{ $value }}" }} edge router available. Losing it takes every overlay-published application offline at once."
+
+{{- if .Values.pgcat.enabled }}
+    # The pooler becomes the fleet's connection bottleneck the moment it is
+    # enabled: DB_MAX_CONNS stops being the number that protects Postgres
+    # (see values.yaml `pgcat`), so OpenIDXDBPoolSaturation stops being the
+    # alert that sees the wall coming. These two watch the new one.
+    #
+    # Metric names are pgcat's own (src/prometheus.rs, v1.2.0): pools_* gauges
+    # labelled by pool and user, prefixed pgcat_.
+    - name: openidx.pgcat
+      rules:
+        - alert: OpenIDXPoolerClientsWaiting
+          # A client waiting is a request already blocked: every backend in the
+          # pool is busy and pool_size is the ceiling. This is the direct
+          # replacement for a saturated per-service pgx pool.
+          expr: max by (pool, user) (pgcat_pools_cl_waiting) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Requests are queueing for a database connection"
+            description: "{{ "{{ $value }}" }} client(s) waiting on pool {{ "{{ $labels.pool }}" }}/{{ "{{ $labels.user }}" }} for 5m. Raise pgcat.poolSize (and Postgres max_connections to match), or find the slow query holding backends."
+
+        - alert: OpenIDXPoolerNoRedundancy
+          # Every service's every query goes through this. One replica is a
+          # single point of failure in front of the database.
+          expr: kube_deployment_status_replicas_available{deployment=~".*-pgcat"} < 2
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "The transaction pooler has no redundancy"
+            description: "Only {{ "{{ $value }}" }} pgcat replica available. Losing it takes every service's database access with it."
+{{- end }}
 {{- end }}
