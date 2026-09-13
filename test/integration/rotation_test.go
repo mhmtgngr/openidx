@@ -72,7 +72,9 @@ func newCredsVaultService(t *testing.T, pool *pgxpool.Pool) *vault.Service {
 		EncryptionKey: "vault-integration-test-kek-00000",
 	})
 	require.NoError(t, err, "build test keyring")
-	db := &database.PostgresDB{Pool: pool}
+	// Pool is a *ScopedPool since task 2.1b; the suite builds a raw pgx pool
+	// of its own (integrationDB) and wraps it here.
+	db := &database.PostgresDB{Pool: database.NewScopedPool(pool)}
 	svc, err := vault.NewService(db, ring, nil, 5*time.Minute, logger)
 	require.NoError(t, err, "construct vault Service")
 	return svc
@@ -82,7 +84,9 @@ func newCredsVaultService(t *testing.T, pool *pgxpool.Pool) *vault.Service {
 func newCredsService(t *testing.T, pool *pgxpool.Pool, vaultSvc *vault.Service, fake *fakeDirectoryRotator) *credentials.Service {
 	t.Helper()
 	logger, _ := zap.NewDevelopment()
-	db := &database.PostgresDB{Pool: pool}
+	// Pool is a *ScopedPool since task 2.1b; the suite builds a raw pgx pool
+	// of its own (integrationDB) and wraps it here.
+	db := &database.PostgresDB{Pool: database.NewScopedPool(pool)}
 	return credentials.NewService(db, vaultSvc, []credentials.Rotator{fake}, nil, 24, logger)
 }
 

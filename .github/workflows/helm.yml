@@ -114,14 +114,21 @@ jobs:
               --set secrets.redisPassword=render-only-not-a-credential \
               --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
           }
-          if render | grep -q 'configuration-snippet'; then
+          # grep -q against a here-string, NOT `echo "$x" | grep -q`.
+          # `grep -q` exits at the first match and closes the pipe; `echo` then
+          # dies on SIGPIPE, and `set -o pipefail` (above) turns that into a
+          # failed pipeline -- so the assertion FAILS precisely because it
+          # matched. It is a race against how much output follows the match, so
+          # it passed for months and then failed on every run once the chart
+          # grew. A here-string has no pipe and no race.
+          if grep -q 'configuration-snippet' <<<"$(render)"; then
             echo "origin-verify annotation rendered with no edge.originVerify.header set"; exit 1
           fi
           got=$(render --set edge.originVerify.header=X-Azure-FDID \
                        --set edge.originVerify.value=a-profile-guid)
-          echo "$got" | grep -q 'if ($http_x_azure_fdid != "a-profile-guid")' \
+          grep -q 'if ($http_x_azure_fdid != "a-profile-guid")' <<<"$got" \
             || { echo "origin-verify check did not render"; exit 1; }
-          echo "$got" | grep -q 'return 403;' || { echo "origin-verify does not refuse"; exit 1; }
+          grep -q 'return 403;' <<<"$got" || { echo "origin-verify does not refuse"; exit 1; }
           if render --set edge.originVerify.header=X-Azure-FDID >/dev/null 2>&1; then
             echo "a header with no value rendered anyway; the origin would accept any value"; exit 1
           fi
@@ -158,7 +165,8 @@ jobs:
                 --set pgcat.postgresHost=openidx-postgresql)
 
           # Off by default, and off means absent -- not a scaled-to-zero Deployment.
-          if render | grep -q 'openidx-pgcat'; then
+          # Here-string, not a pipe: see the note in the origin-cloaking step.
+          if grep -q 'openidx-pgcat' <<<"$(render)"; then
             echo "the pooler rendered with pgcat.enabled unset"; exit 1
           fi
 
@@ -168,7 +176,7 @@ jobs:
                           --set pgcat.adminPassword=x --set pgcat.postgresHost=h 2>&1); then
             echo "the pooler rendered with config.rlsMode=session"; exit 1
           fi
-          echo "$out" | grep -q 'config.rlsMode' \
+          grep -q 'config.rlsMode' <<<"$out" \
             || { echo "the refusal does not name config.rlsMode: $out"; exit 1; }
 
           # A zero prepared-statement cache is pgcat's own default and it is a

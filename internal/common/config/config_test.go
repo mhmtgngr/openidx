@@ -537,7 +537,7 @@ func TestProductionWarnings(t *testing.T) {
 			TLS:                 TLSConfig{Enabled: true},
 			// A secure production config names the hops it believes: without
 			// this every request resolves to the edge's address.
-			TrustedProxies: "10.42.0.0/16",
+			TrustedProxies: "192.0.2.0/24",
 		}
 
 		warnings := cfg.ProductionWarnings()
@@ -641,7 +641,7 @@ func TestValidateProduction(t *testing.T) {
 		assert.Contains(t, err.Error(), "OIDX_TRUSTED_PROXIES must not be")
 
 		// A concrete CIDR list is the fix, and passes this check.
-		cfg.TrustedProxies = "10.42.0.0/16, 173.245.48.0/20"
+		cfg.TrustedProxies = "192.0.2.0/24, 173.245.48.0/20"
 		err = cfg.ValidateProduction()
 		if err != nil {
 			assert.NotContains(t, err.Error(), "OIDX_TRUSTED_PROXIES")

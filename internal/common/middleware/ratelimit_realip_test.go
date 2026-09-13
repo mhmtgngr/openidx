@@ -54,18 +54,18 @@ func viaEdge(r *gin.Engine, peer, xff string) (int, string) {
 }
 
 func TestRateLimit_TrustedEdgeYieldsOneBucketPerClient(t *testing.T) {
-	r, mini := newRealIPRouter(t, "10.42.0.0/16", "")
+	r, mini := newRealIPRouter(t, "192.0.2.0/24", "")
 
 	// Two clients, same edge hop. Each gets its own budget of 2.
 	for i := 0; i < 2; i++ {
-		code, ip := viaEdge(r, "10.42.7.7", "203.0.113.10")
+		code, ip := viaEdge(r, "192.0.2.7", "203.0.113.10")
 		assert.Equal(t, http.StatusOK, code)
 		assert.Equal(t, "203.0.113.10", ip)
 	}
-	code, _ := viaEdge(r, "10.42.7.7", "203.0.113.10")
+	code, _ := viaEdge(r, "192.0.2.7", "203.0.113.10")
 	assert.Equal(t, http.StatusTooManyRequests, code, "third attempt from client A is refused")
 
-	code, ip := viaEdge(r, "10.42.7.7", "203.0.113.11")
+	code, ip := viaEdge(r, "192.0.2.7", "203.0.113.11")
 	assert.Equal(t, http.StatusOK, code, "client B behind the same edge hop is a different bucket")
 	assert.Equal(t, "203.0.113.11", ip)
 
@@ -77,7 +77,7 @@ func TestRateLimit_TrustedEdgeYieldsOneBucketPerClient(t *testing.T) {
 	}
 	assert.Len(t, buckets, 2, "one counter per real client, none for the edge's own address")
 	for _, k := range buckets {
-		assert.NotContains(t, k, "10.42.7.7", "the edge hop must never be the bucket key")
+		assert.NotContains(t, k, "192.0.2.7", "the edge hop must never be the bucket key")
 	}
 }
 
@@ -86,25 +86,25 @@ func TestRateLimit_UntrustedEdgeCollapsesToOneBucket(t *testing.T) {
 	// loopback, so the edge's address is the client for everyone.
 	r, mini := newRealIPRouter(t, "", "")
 
-	code, ip := viaEdge(r, "10.42.7.7", "203.0.113.10")
+	code, ip := viaEdge(r, "192.0.2.7", "203.0.113.10")
 	assert.Equal(t, http.StatusOK, code)
-	assert.Equal(t, "10.42.7.7", ip, "with the edge untrusted the client IS the edge")
-	viaEdge(r, "10.42.7.7", "203.0.113.11")
-	code, _ = viaEdge(r, "10.42.7.7", "203.0.113.12")
+	assert.Equal(t, "192.0.2.7", ip, "with the edge untrusted the client IS the edge")
+	viaEdge(r, "192.0.2.7", "203.0.113.11")
+	code, _ = viaEdge(r, "192.0.2.7", "203.0.113.12")
 	assert.Equal(t, http.StatusTooManyRequests, code, "a third, unrelated client is refused: one shared bucket")
 
 	n := 0
 	for _, k := range mini.Keys() {
 		if strings.HasPrefix(k, "ratelimit:ip:") {
 			n++
-			assert.Contains(t, k, "10.42.7.7")
+			assert.Contains(t, k, "192.0.2.7")
 		}
 	}
 	assert.Equal(t, 1, n)
 }
 
 func TestRateLimit_CallerCannotChooseItsBucketByForgingTheHeader(t *testing.T) {
-	r, _ := newRealIPRouter(t, "10.42.0.0/16", "")
+	r, _ := newRealIPRouter(t, "192.0.2.0/24", "")
 
 	// A direct caller (not a trusted hop) sends a forged header. gin must
 	// resolve it to its own peer address and keep it in ONE bucket no matter
@@ -123,12 +123,12 @@ func TestRateLimit_CallerCannotChooseItsBucketByForgingTheHeader(t *testing.T) {
 func TestRateLimit_EdgeCIDRListIsUnionedAndCannotBeWildcard(t *testing.T) {
 	// The provider list arrives through OIDX_EDGE_TRUSTED_CIDRS and adds to
 	// the operator's list. A "*" in it is dropped, not honoured.
-	r, _ := newRealIPRouter(t, "10.42.0.0/16", "173.245.48.0/20, *")
+	r, _ := newRealIPRouter(t, "192.0.2.0/24", "173.245.48.0/20, *")
 
 	_, ip := viaEdge(r, "173.245.48.5", "203.0.113.20")
 	assert.Equal(t, "203.0.113.20", ip, "a hop in the edge CIDR list is trusted")
 
-	_, ip = viaEdge(r, "10.42.1.1", "203.0.113.21")
+	_, ip = viaEdge(r, "192.0.2.1", "203.0.113.21")
 	assert.Equal(t, "203.0.113.21", ip, "the operator's own list still applies")
 
 	_, ip = viaEdge(r, "198.51.100.9", "203.0.113.22")

@@ -852,8 +852,13 @@ pgcat:
   postgresPort: 5432
   databaseName: openidx
   username: openidx_app
-  password: ""
-  adminPassword: ""
+  # password and adminPassword are deliberately NOT declared with an empty
+  # default. templates/pgcat.yaml `required`s both, and `required` fails on a
+  # missing key exactly as it fails on an empty string -- so the behaviour is
+  # identical while the file no longer carries a literal blank credential for
+  # a scanner (or a reader) to take at face value. Supply them with --set or a
+  # values file:
+  #   --set pgcat.password=... --set pgcat.adminPassword=...
   # Client -> pooler, inside the cluster. pgcat here terminates no TLS, so this
   # is "disable" and not database.sslMode: a "require" that nothing serves is a
   # fleet that cannot connect. Give the pooler a certificate first, then raise

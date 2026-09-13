@@ -71,7 +71,7 @@ func newVaultService(t *testing.T, pool *pgxpool.Pool) *vault.Service {
 		EncryptionKey: "vault-integration-test-kek-00000",
 	})
 	require.NoError(t, err, "build test keyring")
-	db := &database.PostgresDB{Pool: pool}
+	db := &database.PostgresDB{Pool: database.NewScopedPool(pool)}
 	svc, err := vault.NewService(db, ring, nil, 5*time.Minute, logger)
 	require.NoError(t, err, "construct vault Service")
 	return svc

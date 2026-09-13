@@ -47,8 +47,8 @@ func TestWebhookSecretEncryptedAtRest(t *testing.T) {
 	// request context and the RLS WITH CHECK on webhook_subscriptions rejects a
 	// row whose org_id does not match app.org_id. So the whole test runs inside
 	// a real org context rather than a bare background context.
-	orgID := seedOrg(t, db.Pool, "wh-enc-"+suffix)
-	t.Cleanup(func() { bypassExec(t, db.Pool, "DELETE FROM organizations WHERE id=$1", orgID) })
+	orgID := seedOrg(t, db.Pool.Raw(), "wh-enc-"+suffix)
+	t.Cleanup(func() { bypassExec(t, db.Pool.Raw(), "DELETE FROM organizations WHERE id=$1", orgID) })
 	ctx = orgctx.With(orgctx.WithBypassRLS(ctx), orgctx.Org{ID: orgID})
 
 	const plaintext = "whsec_ABC123_do_not_store_plaintext"
