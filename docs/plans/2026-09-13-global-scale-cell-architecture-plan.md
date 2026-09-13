@@ -280,7 +280,16 @@ kod bitmiş olması M0 değildir.
 ### 3.5 Kabul denetleyicisi ve maliyet kotası (ADR-10)
 
 **Dosyalar:** `internal/common/middleware/admission.go`, `ratelimit.go`
-- [ ] `Admission(cfg)`: `MaxInflight`, `QueueTimeout`, 503 + `Retry-After`; metrik `openidx_admission_{inflight,rejected_total,queue_wait_seconds}`.
+- [x] `Admission(cfg)`: `MaxInflight`, `QueueTimeout`, 503 + `Retry-After`; metrik `openidx_admission_{inflight,rejected_total,queue_wait_seconds}`. **(2026-09-13)**
+  - **Bu bir hız sınırı değil ve fark önemli.** Depodaki hız sınırlayıcı **varışları** sınırlıyor ve sürecin *hâlihazırda ne taşıdığını göremiyor*: saniyede 200 istek, her biri 5 ms sürerken iyi, bozulmuş bir veritabanına karşı 2 s sürerken ölümcül — dakikalık bir sayaç ikisini ayırt edemez. Sabit bir kaynağı (bağlantı havuzu, CPU, bekleyen isteğin tuttuğu bellek) koruyan şey **aynı anda uçuşta kaç istek olduğuna** konan sınırdır.
+  - **Önlediği başarısızlık "yavaş" değil.** Sınır yokken aşırı yüklü servis her şeyi kabul eder: goroutine'ler birikir, her biri gövdesini ve havuz sırasındaki yerini tutar, gecikme her istemcinin zaman aşımını geçer, istemciler yeniden dener, yük artar. Hiçbir şey tamamlanmaz ve süreç, kimsenin artık beklemediği işlerle dolu bir kuyrukla ölür. Sınırlı kuyruk + hızlı ret bunu *bozulmuş ama ayakta*'ya çevirir.
+  - **Neden kuyruk var:** 20 ms süren bir patlama aşırı yük değil; onu reddetmek servisi sıradan titreşimde bozuk gösterirdi. Kuyruk patlamayı emer; kuyruğun **zaman aşımı** ise bir kesintiyi emmesini engeller.
+  - **Varsayılan geçişli:** `MaxInflight <= 0` iken middleware hiçbir şey yapmıyor. Ölçülmeden tahmin edilen bir sınır, kendi eliyle yaratılmış bir kesintidir.
+  - `/health`, `/ready`, `/metrics` **asla** kapıdan geçmiyor: kapının yük attığını operatörün öğrendiği yer orası, ve kendi aşırı yükünü gizleyen bir kapı hiç kapı olmamasından kötüdür.
+  - Kuyrukta beklerken bağlantıyı kapatan istemci yerini **anında** bırakıyor; yoksa kuyruk gerçek talebi değil terk edilmiş istekleri ölçer.
+  - `queue_wait_seconds` hem kabul edilen hem reddedilen istekler için gözleniyor — yalnız başarıda ölçülen bir kuyruk, var olma sebebi olan aşırı yükü gizler.
+  - **Kanıt:** altı mutasyon kırmızı — slotu bırakmamak, `Retry-After`'ı göndermemek, kuyruğu kaldırmak, istemci iptalini dinlememek, health yolunu kapıya sokmak, ve `MaxInflight=0`'ı 1 slotlu kapıya çevirmek.
+  - **Bir mutasyon yeşil kaldı, testin şekli değişti:** "geçişli" testi yalnız durum kodlarını sayıyordu ve 1 slotlu kapı onu geçiyordu (30 × 2 ms tek slottan 60 ms'de akıyor, varsayılan kuyruk bütçesinin çok altında). Özellik *eşzamanlılık* olduğu için ölçülen de artık eşzamanlılık; o mutasyon şimdi kırmızı.
 - [ ] Rota maliyeti tablosu (`RouteCost`), kiracı bütçesi birim/dk; bayrak `RATELIMIT_COST_MODE=off|observe|enforce`.
 - **Kabul:** Token floodu (maliyet 5) kiracı bütçesini tüketir, aynı kiracının JWKS/okuma istekleri (maliyet 1) **etkilenmez**; komşu kiracı hiç etkilenmez.
 

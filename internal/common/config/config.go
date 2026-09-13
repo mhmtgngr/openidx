@@ -58,6 +58,26 @@ type Config struct {
 	// identity.ParseProfile.
 	ServiceProfile string `mapstructure:"service_profile"`
 
+	// Admission control (global-scale plan task 3.5, ADR-10). A bound on how
+	// many requests this process carries AT ONCE, which is not a rate limit: a
+	// rate limiter bounds arrivals and cannot see what the process is already
+	// holding, so it reads 200/s as fine whether each request takes 5ms or,
+	// against a degraded database, two seconds.
+	//
+	// OFF by default (0). A limit guessed rather than measured against the pool
+	// behind the service is a self-inflicted outage, so an operator opts in
+	// with a number they have sized. See internal/common/middleware/admission.go.
+	AdmissionMaxInflight int `mapstructure:"admission_max_inflight"`
+	// How long a request may wait for a slot before it is refused with 503.
+	// Keep it well UNDER the caller's own timeout: a refusal at 5s when the
+	// client gave up at 3s cost the server everything and bought the client
+	// nothing. Go duration; empty uses the middleware's 250ms.
+	AdmissionQueueTimeout string `mapstructure:"admission_queue_timeout"`
+	// The Retry-After sent with that 503. A promise about when there might be
+	// room, so it must not be optimistic: a client that retries immediately
+	// turns one refusal into the retry storm the gate exists to prevent.
+	AdmissionRetryAfter string `mapstructure:"admission_retry_after"`
+
 	// Database connections
 	DatabaseURL      string `mapstructure:"database_url"`
 	RedisURL         string `mapstructure:"redis_url"`
@@ -998,6 +1018,10 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("rls_mode", "session")
 	// Empty = "all": every route, i.e. today's behaviour.
 	v.SetDefault("service_profile", "")
+	// Admission control is off until an operator sizes it (task 3.5).
+	v.SetDefault("admission_max_inflight", 0)
+	v.SetDefault("admission_queue_timeout", "")
+	v.SetDefault("admission_retry_after", "")
 	v.SetDefault("redis_url", "redis://:redis_secret@localhost:6379")
 	// Role URLs default to empty = alias the primary (see RedisRateLimitURL).
 	v.SetDefault("redis_ratelimit_url", "")
@@ -1213,6 +1237,9 @@ func bindEnvVars(v *viper.Viper) {
 		"database_url":                                    "DATABASE_URL",
 		"rls_mode":                                        "RLS_MODE",
 		"service_profile":                                 "SERVICE_PROFILE",
+		"admission_max_inflight":                          "ADMISSION_MAX_INFLIGHT",
+		"admission_queue_timeout":                         "ADMISSION_QUEUE_TIMEOUT",
+		"admission_retry_after":                           "ADMISSION_RETRY_AFTER",
 		"redis_url":                                       "REDIS_URL",
 		"redis_ratelimit_url":                             "REDIS_RATELIMIT_URL",
 		"trusted_proxies":                                 "OIDX_TRUSTED_PROXIES",

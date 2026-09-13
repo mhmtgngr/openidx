@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Admission control: a bound on concurrency, which is not a rate limit.**
+  `middleware.Admission` caps how many requests a process carries *at once* and
+  refuses the rest with 503 and an honest `Retry-After`. The rate limiter
+  already here bounds arrivals and cannot see what the process is already
+  holding — 200 requests a second is fine at 5ms each and fatal at two seconds
+  against a degraded database, and a per-minute counter cannot tell those
+  apart.
+
+  The failure it prevents is not "slow". Without a bound an overloaded service
+  accepts everything: goroutines pile up, latency passes every client's
+  timeout, the clients retry, and the process dies with a queue full of work
+  nobody is waiting for. A bounded queue with a fast refusal turns that into
+  degraded-but-alive. There is a queue at all because a 20ms burst is not
+  overload; the queue's *timeout* is what stops it absorbing an outage.
+
+  Off by default (`MaxInflight <= 0` is a pass-through): a limit guessed rather
+  than measured against the pool behind the service is a self-inflicted outage.
+  `/health`, `/ready` and `/metrics` are never gated — a gate that hides its own
+  overload is worse than no gate. A client that hangs up while queued releases
+  its place immediately, and `queue_wait_seconds` is observed for refused
+  requests as well as admitted ones, because a queue measured only when it
+  succeeds hides the overload it exists to report.
+
 ### Changed
 
 - **The SCIM list endpoints page in a total order, and stop dropping users.**
