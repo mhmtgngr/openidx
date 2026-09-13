@@ -46,6 +46,11 @@ type PostgresDB struct {
 // or for a read that must see a just-committed write from the same request — use
 // Pool for those.
 //
+// A replica outage really is transparent: the pool it returns retries on the
+// primary when the replica stops answering, and a breaker stops it re-dialling
+// a dead replica on every request (readerfallback.go). That was a claim in
+// three comments before it was code.
+//
 // It is scoped, like Pool. It was NOT, for one commit: task 2.1b moved the
 // tenant scope into Pool's type and left Reader() handing out the bare pgx
 // pool, which meant roughly a dozen read-path queries — user by id, by
@@ -150,7 +155,11 @@ func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, e
 			readURL = applyPostgresTLS(readURL, tlsCfg[0])
 		}
 		if rp, rerr := openReadPool(readURL); rerr == nil {
-			db.readPool = NewScopedPool(rp)
+			// Wired to the primary so a replica that dies AFTER startup falls
+			// back per call instead of failing every read until a restart --
+			// which is what "transparently falls back" used to mean here, and
+			// did not (readerfallback.go).
+			db.readPool = NewScopedPool(rp).withFallback(db.Pool)
 		}
 		// On error: leave db.readPool nil. The audit checker (registered
 		// separately) surfaces replica health; startup continues on the primary.

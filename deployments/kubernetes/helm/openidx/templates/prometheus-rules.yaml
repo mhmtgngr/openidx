@@ -281,6 +281,37 @@ spec:
             summary: "Ziti data plane has no redundancy"
             description: "Only {{ "{{ $value }}" }} edge router available. Losing it takes every overlay-published application offline at once."
 
+    # The read replica (global-scale plan task 2.3). Losing it is a
+    # degradation, never an outage: the pool retries on the primary and opens a
+    # breaker (internal/common/database/readerfallback.go). These two say so
+    # rather than leaving the operator to infer it from silence.
+    - name: openidx.read_replica
+      rules:
+        - alert: OpenIDXReadReplicaOffloadLost
+          # The breaker is open: reads are being served, by the primary. Nothing
+          # is failing, so this is a warning -- but the primary is now carrying
+          # load it was sized without, and a replica nobody notices is gone
+          # stays gone.
+          expr: max by (service) (openidx_db_replica_breaker_open) == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Read offload lost on {{ "{{ $labels.service }}" }}"
+            description: "The read replica has not answered for 5m, so {{ "{{ $labels.service }}" }} is serving its read-mostly queries from the primary. Requests are fine; the offload is not. Check the replica and openidx_db_replica_fallback_total."
+
+        - alert: OpenIDXReadReplicaFlapping
+          # Falling back repeatedly WITHOUT the breaker settling means the
+          # replica answers just often enough to keep being tried: every failed
+          # attempt is a wasted dial on the request path.
+          expr: sum by (service) (rate(openidx_db_replica_fallback_total{reason="retry"}[5m])) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Read replica is flapping on {{ "{{ $labels.service }}" }}"
+            description: "{{ "{{ $value | humanize }}" }} reads/s are failing on the replica and being retried on the primary. Each one costs a failed connection attempt on the request path. Investigate the replica rather than waiting for the breaker."
+
 {{- if .Values.pgcat.enabled }}
     # The pooler becomes the fleet's connection bottleneck the moment it is
     # enabled: DB_MAX_CONNS stops being the number that protects Postgres

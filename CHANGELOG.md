@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **"A replica outage transparently falls back to the primary" was true only at
+  startup.** Three places said it — the `Reader()` doc, the read-replica health
+  checker, and `values-prod.yaml` — and all three were describing
+  `NewPostgres`: if the replica pool fails to open, `readPool` stays nil and
+  `Reader()` returns the primary forever after. Once the pool was open,
+  `Reader()` handed it back unconditionally. A replica that died later — a
+  failover, a reboot, a partition, an RDS maintenance window — failed every
+  read that had been offloaded to it, and kept failing until someone restarted
+  the process, with readiness green throughout because the replica checker is
+  non-critical by design. The read pool now retries on the primary when the
+  replica does not answer, and opens a breaker after three consecutive
+  infrastructure failures so a dead replica costs one failed dial per 30s
+  rather than one per request. A `PgError` is deliberately *not* treated as the
+  replica being down: the server answered, the statement is at fault, and that
+  includes `25006` (a write on a read-only replica) — which is what keeps
+  "NEVER use `Reader()` for writes" enforceable instead of silently re-aiming
+  writes at the primary. Measured against a replica pool pointed at a dead
+  port: `QueryRow`, `Query` and `Begin` all keep answering, still tenant-scoped,
+  and the breaker opens. `openidx_db_replica_fallback_total` and
+  `openidx_db_replica_breaker_open` with two alerts; `make ha-drill` gained a
+  section. Task 2.3.
+
+- **The `ScopedPool` suite had never run in CI.** The `rls-isolation` job ran
+  `go test -run 'RLS'`, and `TestScopedPool_*` does not contain those three
+  letters — so the tests proving ~1,950 unedited call sites carry the tenant
+  scope (task 2.1b) only ever ran on a developer's machine. The regex now names
+  them, and because `-run` matching nothing exits 0, the step asserts each of
+  four tests actually reported `PASS` rather than trusting the regex.
+
 - **The read path was outside the tenant belt, and nothing could have told
   you.** Task 2.1b moved the tenant scope into the type of `PostgresDB.Pool`
   and left `Reader()` returning the bare pgx pool. With no read replica

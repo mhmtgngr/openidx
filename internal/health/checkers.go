@@ -68,9 +68,16 @@ func (p *PostgresChecker) Check(ctx context.Context) ComponentStatus {
 }
 
 // ReadReplicaChecker checks the health of the optional read-replica pool. It is
-// NON-critical by design: a replica outage must not fail readiness (traffic
-// transparently falls back to the primary via PostgresDB.Reader()), it only
+// NON-critical by design: a replica outage must not fail readiness, it only
 // surfaces the degradation so operators can see when read offload is lost.
+//
+// Non-critical is only defensible because the fallback is real. Reader()'s pool
+// retries on the primary when the replica stops answering and opens a breaker
+// after repeated failures (internal/common/database/readerfallback.go). Until
+// that existed this comment was describing startup behaviour: a replica that
+// died later kept being handed out, every offloaded read failed, and readiness
+// stayed green through it. Watch openidx_db_replica_breaker_open for the state
+// this checker reports.
 type ReadReplicaChecker struct {
 	db *database.PostgresDB
 }

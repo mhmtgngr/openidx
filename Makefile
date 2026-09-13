@@ -155,6 +155,9 @@ ha-drill:
 		'BuildPoolConfigConnectTimeoutDefault|BuildPoolConfigStatementTimeout|ReaderFallsBackToPrimary|PingReadNoReplicaIsNil'
 	@bash scripts/ha-drill.sh "Tier 1: read-replica health checker (non-critical)" \
 		./internal/health/ 'ReadReplicaCheckerNonCritical'
+	@bash scripts/ha-drill.sh "Tier 1: a replica that dies AFTER startup still serves reads" \
+		./internal/common/database/ \
+		'ReaderFallback_deadReplicaStillServesReads|ReaderFallback_ahealthyReplicaServesItsOwnReads|IsReplicaInfraError|ReplicaBreaker_opensOnlyAfterRepeatedFailures|ReplicaBreaker_cooldownProbesRatherThanAssumes'
 	@bash scripts/ha-drill.sh "Tier 2: issue-path brownout + Redis breaker" \
 		./internal/oauth/ \
 		'IsDependencyUnavailable|WriteServerOrUnavailable|RevocationBreakerFastFailsOnRedisOutage'

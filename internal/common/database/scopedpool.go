@@ -32,6 +32,24 @@ import (
 // that name is greppable.
 type ScopedPool struct {
 	pool *pgxpool.Pool
+
+	// Set only on the READ-REPLICA pool (see readerfallback.go): the primary to
+	// retry on when the replica does not answer, and the breaker that stops
+	// re-dialling a dead replica on every request. nil on the primary pool, so
+	// every deployment without a replica pays nothing for this.
+	fallback *ScopedPool
+	breaker  replicaBreaker
+}
+
+// withFallback returns p wired to retry on primary when p (a read replica)
+// stops answering. Returns p unchanged when either pool is nil, so a
+// replica-less install keeps exactly today's object.
+func (p *ScopedPool) withFallback(primary *ScopedPool) *ScopedPool {
+	if p == nil || primary == nil || p == primary {
+		return p
+	}
+	p.fallback = primary
+	return p
 }
 
 // NewScopedPool wraps a pgx pool. Exported for tests and for callers that own a
@@ -57,7 +75,22 @@ func (p *ScopedPool) Raw() *pgxpool.Pool {
 }
 
 // Query runs a row-returning query under the request's tenant scope.
+//
+// On the read replica it falls back to the primary when the replica does not
+// answer -- see readerfallback.go for what counts as "does not answer" and why
+// a server-side error deliberately does not.
 func (p *ScopedPool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if p.breakerIsOpen() {
+		return p.fallbackTarget().Query(ctx, sql, args...)
+	}
+	rows, err := p.query(ctx, sql, args...)
+	if p.noteReplicaResult(err) {
+		return p.fallbackTarget().Query(ctx, sql, args...)
+	}
+	return rows, err
+}
+
+func (p *ScopedPool) query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
 	if CurrentRLSMode() == RLSModeSession {
 		return p.pool.Query(ctx, sql, args...)
 	}
@@ -80,7 +113,22 @@ func (p *ScopedPool) Query(ctx context.Context, sql string, args ...any) (pgx.Ro
 // QueryRow runs a single-row query under the request's tenant scope. The
 // returned Row owns the transaction until Scan is called, which pgx's contract
 // already requires exactly once.
+//
+// The replica fallback has to happen at SCAN time here, not now: QueryRow
+// returns no error, so whether the replica answered is only known once the
+// caller scans. fallbackRow (readerfallback.go) does that.
 func (p *ScopedPool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if p.breakerIsOpen() {
+		return p.fallbackTarget().QueryRow(ctx, sql, args...)
+	}
+	row := p.queryRow(ctx, sql, args...)
+	if p.fallbackTarget() == nil {
+		return row
+	}
+	return &fallbackRow{pool: p, ctx: ctx, sql: sql, args: args, row: row}
+}
+
+func (p *ScopedPool) queryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	if CurrentRLSMode() == RLSModeSession {
 		return p.pool.QueryRow(ctx, sql, args...)
 	}
@@ -113,6 +161,17 @@ func (p *ScopedPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.
 // the ~25 call sites that manage their own transaction get the scope without
 // changing a line. The caller still owns Commit and Rollback.
 func (p *ScopedPool) Begin(ctx context.Context) (pgx.Tx, error) {
+	if p.breakerIsOpen() {
+		return p.fallbackTarget().Begin(ctx)
+	}
+	tx, err := p.begin(ctx)
+	if p.noteReplicaResult(err) {
+		return p.fallbackTarget().Begin(ctx)
+	}
+	return tx, err
+}
+
+func (p *ScopedPool) begin(ctx context.Context) (pgx.Tx, error) {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return nil, err

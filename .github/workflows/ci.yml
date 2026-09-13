@@ -334,10 +334,31 @@ jobs:
           fi
           echo "negative control ok: the suite refuses a bypassing role"
 
-      - name: Tenant isolation under both RLS modes
+      # 'RLS' alone missed the ScopedPool suite entirely -- TestScopedPool_*
+      # does not contain those three letters, so the tests proving the ~1,950
+      # unedited call sites are scoped (task 2.1b) ran only on a developer's
+      # machine. Same for the replica fallback (task 2.3). Name them.
+      #
+      # -run matching nothing exits 0, so a regex that stops matching is a
+      # silent false green; the step below fails when a name disappears.
+      - name: Tenant isolation, scoped pool and replica fallback
         env:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
-        run: go test ./internal/common/database/ -run 'RLS' -count=1 -v
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/common/database/ \
+            -run 'RLS|ScopedPool|ReaderFallback|ReplicaBreaker|IsReplicaInfraError' \
+            -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestRLSLocal_ConcurrentTenantsNeverCross \
+                      TestScopedPool_UneditedCallSitesAreScoped \
+                      TestScopedPool_ReaderIsScopedToo \
+                      TestReaderFallback_deadReplicaStillServesReads; do
+            # The trailing space matters: without it a test renamed to
+            # "<name>X" still matches as a prefix and the guard reads green.
+            echo "$out" | grep -q -- "--- PASS: $want " \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
 
   ui-safety-guards:
     name: UI safety guards
