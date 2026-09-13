@@ -42,6 +42,9 @@ import (
 //	                per interval, cluster-wide.
 //	coordClaim      claims its work in the database (FOR UPDATE SKIP LOCKED), so
 //	                any number of replicas is safe and none duplicates.
+//	coordAdvisory   takes a Postgres advisory lock over the unit of work, which
+//	                is the right answer when the work is not a set of claimable
+//	                ROWS but a sequence only one writer may extend.
 //	coordPerProcess legitimately once per process: it reports this pod's own
 //	                metrics, refreshes this pod's own cache, or serves one
 //	                connection. Gating these would be the bug.
@@ -52,6 +55,7 @@ import (
 const (
 	coordLeader     = "leader"
 	coordClaim      = "claim"
+	coordAdvisory   = "advisory-lock"
 	coordPerProcess = "per-process"
 	coordUndecided  = "undecided"
 )
@@ -71,6 +75,10 @@ var tickerCensus = map[string]sweep{
 		"claims SSF outbox rows with FOR UPDATE SKIP LOCKED"},
 	"internal/provisioning/outbound_worker.go": {coordClaim,
 		"claims queue items with FOR UPDATE SKIP LOCKED and requeues its own abandoned claims"},
+	"internal/audit/chain.go": {coordAdvisory,
+		"SealOrg takes pg_advisory_xact_lock per org: the tamper-evident chain is a sequence only one writer may extend, so a row claim would be the wrong shape"},
+	"internal/audit/siem_forwarder.go": {coordClaim,
+		"holds the singleton forward cursor with FOR UPDATE SKIP LOCKED for the whole batch; the SIEM dedupes on event id but bills by ingest volume, so steady-state duplication costs the customer"},
 	"internal/audit/usage_metering.go": {coordClaim,
 		"holds the singleton billing cursor row with FOR UPDATE SKIP LOCKED for the whole batch; the rollup is an increment, so a second replica must not read the same cursor"},
 
@@ -102,8 +110,6 @@ var tickerCensus = map[string]sweep{
 	"internal/access/ziti_hardening.go":           {coordUndecided, "hourly Ziti hardening pass; not yet audited"},
 	"internal/access/ziti_reconciler.go":          {coordUndecided, "Ziti identity/service reconciliation; not yet audited"},
 	"internal/access/ziti_user_sync.go":           {coordUndecided, "Ziti user sync; not yet audited"},
-	"internal/audit/chain.go":                     {coordUndecided, "audit chain sealing sweep; not yet audited"},
-	"internal/audit/siem_forwarder.go":            {coordUndecided, "SIEM forwarding poll; not yet audited"},
 	"internal/identity/sms_config_watcher.go":     {coordUndecided, "SMS provider config watcher; not yet audited"},
 }
 
@@ -126,8 +132,8 @@ func TestEveryTickerIsAccountedFor(t *testing.T) {
 	if len(unlisted) != 0 {
 		t.Errorf("file(s) starting a ticker that the census does not name: %s\n\n"+
 			"Every replica runs every ticker. Decide which answer applies -- leader.RunPeriodic (one "+
-			"replica per interval), a FOR UPDATE SKIP LOCKED claim (safe at any count), or genuinely "+
-			"per-process -- and add the file to tickerCensus in this file with the reason.",
+			"replica per interval), a FOR UPDATE SKIP LOCKED claim, a pg_advisory lock over the unit "+
+			"of work, or genuinely per-process -- and add the file to tickerCensus with the reason.",
 			strings.Join(unlisted, ", "))
 	}
 
@@ -145,7 +151,8 @@ func TestEveryTickerIsAccountedFor(t *testing.T) {
 }
 
 func TestEveryCensusEntryHasAValidAnswerAndAReason(t *testing.T) {
-	valid := map[string]bool{coordLeader: true, coordClaim: true, coordPerProcess: true, coordUndecided: true}
+	valid := map[string]bool{coordLeader: true, coordClaim: true, coordAdvisory: true,
+		coordPerProcess: true, coordUndecided: true}
 	for f, s := range tickerCensus {
 		if !valid[s.how] {
 			t.Errorf("%s: %q is not one of leader/claim/per-process/undecided", f, s.how)
@@ -171,6 +178,10 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 			if !strings.Contains(src, "SKIP LOCKED") {
 				t.Errorf("%s is recorded as claim-based but contains no FOR UPDATE SKIP LOCKED", f)
 			}
+		case coordAdvisory:
+			if !strings.Contains(src, "pg_advisory") {
+				t.Errorf("%s is recorded as advisory-locked but takes no pg_advisory lock", f)
+			}
 		case coordLeader:
 			if !strings.Contains(src, "leader.RunPeriodic") && !strings.Contains(src, "leader.IsLeaderForTick") &&
 				!strings.Contains(src, "RunPeriodic(") {
@@ -184,7 +195,7 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 // register becoming the place drift hides. This pins its size: shrinking it is
 // free, growing it takes an edit here and a sentence about why.
 func TestTheUndecidedBacklogDoesNotGrow(t *testing.T) {
-	const known = 13
+	const known = 11
 	n := 0
 	for _, s := range tickerCensus {
 		if s.how == coordUndecided {

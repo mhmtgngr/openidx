@@ -236,6 +236,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing up for ever loses exactly as much revenue as double-billing gets
   wrong, and it looks like a healthy idle worker.
 
+- **The SIEM forwarder shipped the same audit feed once per replica.** Same
+  shape as the metering cursor: unlocked read, batch, deliver, advance. The data
+  downstream is not wrong — a SIEM dedupes on event id, which is why the
+  existing code already tolerates a failed cursor advance — but SIEM products
+  **bill by ingest volume**, so a customer paid the replica count times for one
+  audit feed and every correlation rule saw each event three times. Fixed the
+  same way: the cursor row held with `FOR UPDATE SKIP LOCKED` for the whole
+  batch, because "the customer's SIEM bill triples whenever Redis is down" is
+  not a degradation anyone would sign off on. A missing cursor row is now an
+  error rather than a silently stopped feed.
+
+- **The audit chain sealer was already safe, and is now recorded as such.** It
+  takes `pg_advisory_xact_lock` per org — the right primitive when the work is
+  not a set of claimable *rows* but a sequence only one writer may extend. The
+  census gained `advisory-lock` as a fourth valid answer rather than forcing it
+  into a shape it does not have.
+
   All three sweeps above now run through `leader.RunPeriodic`. A **derived census**
   (`internal/common/leader/sweeps_census_test.go`) finds every `time.NewTicker`
   in `internal/` and `cmd/` and fails on one no entry names, so the fourth

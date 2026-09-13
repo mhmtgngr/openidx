@@ -18,14 +18,17 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // SIEMConfig configures the forwarder. All fields come from environment
@@ -192,12 +195,53 @@ func (f *siemForwarder) ensureCursorTable(ctx context.Context) error {
 
 // forwardBatch ships the next batch of events past the cursor and, on successful
 // delivery, advances + persists the cursor.
+// forwardBatch holds the cursor row for the whole batch.
+//
+// It did not, and every replica ran this ticker: audit-service ships at three
+// replicas and autoscales to ten, so all of them read the same cursor, fetched
+// the same events and delivered them. The data downstream is not wrong -- a
+// SIEM dedupes on event id, which is also why the cursor-advance failure below
+// is tolerated -- but the duplication is not free: SIEM products bill by ingest
+// volume, so a customer paid the replica count times for the same audit feed,
+// and the correlation rules on the far side saw every event three times.
+//
+// The lock is on the cursor row rather than through leader.RunPeriodic for the
+// same reason as the metering rollup next door: leader election runs on Redis
+// and lets every replica run when there is no client, and "the customer's SIEM
+// bill triples whenever Redis is down" is not a degradation anyone would sign
+// off on. SKIP LOCKED so a replica that cannot have the cursor skips its tick
+// rather than queueing behind a batch and a network delivery.
+//
+// The delivery happens inside the transaction, which holds it open across a
+// network send. That is the same trade the outbox relay makes and it lives
+// inside the EVENT plane's idle_in_transaction budget (300s, task 2.4); a SIEM
+// slow enough to breach it is one the forwarder should be shouting about.
 func (f *siemForwarder) forwardBatch(ctx context.Context) error {
+	return f.svc.db.WithTx(ctx, func(tx pgx.Tx) error {
+		return f.forwardLockedBatch(ctx, tx)
+	})
+}
+
+func (f *siemForwarder) forwardLockedBatch(ctx context.Context, tx pgx.Tx) error {
 	var lastTS time.Time
 	var lastID *string
-	if err := f.svc.db.Pool.QueryRow(ctx,
-		`SELECT last_ts, last_id FROM siem_forward_cursor WHERE id = 1`).
-		Scan(&lastTS, &lastID); err != nil {
+	//orgscope:ignore install-wide SIEM cursor claimed with FOR UPDATE SKIP LOCKED; one cursor row for the install
+	err := tx.QueryRow(ctx,
+		`SELECT last_ts, last_id FROM siem_forward_cursor WHERE id = 1 FOR UPDATE SKIP LOCKED`).
+		Scan(&lastTS, &lastID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Another replica holds the cursor (the normal case), or the row is
+		// missing -- which would mean the audit feed silently stops, so it is
+		// reported rather than read as "nothing to forward".
+		var exists bool
+		//orgscope:ignore install-wide SIEM cursor presence check
+		if cerr := tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM siem_forward_cursor WHERE id = 1)`).Scan(&exists); cerr == nil && !exists {
+			f.logger.Error("SIEM forward cursor row is missing; no audit events are being forwarded")
+		}
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("read cursor: %w", err)
 	}
 	// Fetch events strictly after the cursor, ordered by (timestamp,id) so the
@@ -206,7 +250,7 @@ func (f *siemForwarder) forwardBatch(ctx context.Context) error {
 	if lastID != nil {
 		lastIDArg = *lastID
 	}
-	rows, err := f.svc.db.Pool.Query(ctx, `
+	rows, err := tx.Query(ctx, `
         SELECT id, timestamp, COALESCE(org_id::text,''), COALESCE(actor_id,''),
                COALESCE(actor_type,''), COALESCE(actor_ip,''), COALESCE(target_id,''),
                COALESCE(target_type,''), COALESCE(event_type,''), COALESCE(category,''),
@@ -248,7 +292,8 @@ func (f *siemForwarder) forwardBatch(ctx context.Context) error {
 	}
 
 	last := batch[len(batch)-1]
-	if _, err := f.svc.db.Pool.Exec(ctx,
+	if _, err := tx.Exec(ctx,
+		//orgscope:ignore install-wide SIEM cursor advance on the row this transaction holds
 		`UPDATE siem_forward_cursor SET last_ts = $1, last_id = $2, updated_at = NOW() WHERE id = 1`,
 		last.Timestamp, last.ID); err != nil {
 		// Delivered but cursor not advanced: acceptable (at-least-once) — the
