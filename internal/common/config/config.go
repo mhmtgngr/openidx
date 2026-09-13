@@ -42,6 +42,12 @@ type Config struct {
 	// HTTP server. Non-positive falls back to 30s (see ShutdownTimeout).
 	ShutdownTimeoutSeconds int `mapstructure:"shutdown_timeout_seconds"`
 
+	// RLSMode selects how the tenant scope reaches Postgres (global-scale plan
+	// task 2.1): "session" (default) stamps the pooled connection at checkout,
+	// "local" stamps each transaction with SET LOCAL so a transaction pooler
+	// can multiplex safely. See internal/common/database/tx.go.
+	RLSMode string `mapstructure:"rls_mode"`
+
 	// Database connections
 	DatabaseURL      string `mapstructure:"database_url"`
 	RedisURL         string `mapstructure:"redis_url"`
@@ -979,6 +985,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
+	v.SetDefault("rls_mode", "session")
 	v.SetDefault("redis_url", "redis://:redis_secret@localhost:6379")
 	// Role URLs default to empty = alias the primary (see RedisRateLimitURL).
 	v.SetDefault("redis_ratelimit_url", "")
@@ -1192,6 +1199,7 @@ func bindEnvVars(v *viper.Viper) {
 	// Common environment variable mappings
 	envMappings := map[string]string{
 		"database_url":                                    "DATABASE_URL",
+		"rls_mode":                                        "RLS_MODE",
 		"redis_url":                                       "REDIS_URL",
 		"redis_ratelimit_url":                             "REDIS_RATELIMIT_URL",
 		"trusted_proxies":                                 "OIDX_TRUSTED_PROXIES",

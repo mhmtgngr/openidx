@@ -281,6 +281,64 @@ jobs:
       - name: Run the README quick start and check compose resolves
         run: bash scripts/check-first-run.test.sh
 
+  # The tenant boundary is the one thing this product cannot get wrong, and
+  # task 2.1 changes how it is transported to Postgres. These tests need a REAL
+  # Postgres (the property under test is that set_config(..., true) resets at
+  # COMMIT and set_config(..., false) does not) and a role that does NOT bypass
+  # RLS -- as a superuser every assertion would pass with the belt cut.
+  rls-isolation:
+    name: Tenant isolation (RLS_MODE=session and local)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: openidx_rls
+          POSTGRES_PASSWORD: test_secret
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # A non-superuser, non-BYPASSRLS role: production's openidx_app shape.
+      - name: Create the unprivileged application role
+        env:
+          PGPASSWORD: test_secret
+        run: |
+          psql -h 127.0.0.1 -p 5433 -U postgres -d openidx_rls -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE openidx_app LOGIN PASSWORD 'apppw';
+          GRANT ALL ON SCHEMA public TO openidx_app;
+          ALTER DATABASE openidx_rls OWNER TO openidx_app;
+          SQL
+
+      # Negative control first: pointed at the superuser, the suite must REFUSE
+      # to run. A row-level-security test that a superuser can pass is not a
+      # test, and this is the shape in which it would silently become one.
+      - name: The suite refuses a role that bypasses RLS
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          if go test ./internal/common/database/ -run 'TestRLSLocal_NoTenantContextYieldsNoRows' -count=1; then
+            echo "the isolation suite passed as a superuser; it proves nothing in that configuration"
+            exit 1
+          fi
+          echo "negative control ok: the suite refuses a bypassing role"
+
+      - name: Tenant isolation under both RLS modes
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: go test ./internal/common/database/ -run 'RLS' -count=1 -v
+
   ui-safety-guards:
     name: UI safety guards
     runs-on: ubuntu-latest

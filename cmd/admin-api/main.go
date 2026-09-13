@@ -124,6 +124,11 @@ func main() {
 		opaCancel()
 	}
 
+	// Tenant scope transport (global-scale plan task 2.1): RLS_MODE=local makes
+	// the scope transaction-local (SET LOCAL) so a transaction pooler can
+	// multiplex safely; the default "session" is today's checkout stamping.
+	database.SetRLSMode(database.ParseRLSMode(cfg.RLSMode))
+
 	db, err := database.NewPostgres(cfg.DatabaseURL, database.PostgresTLSConfig{
 		SSLMode:     cfg.DatabaseSSLMode,
 		SSLRootCert: cfg.DatabaseSSLRootCert,

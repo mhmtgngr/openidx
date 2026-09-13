@@ -152,10 +152,10 @@ kod bitmiş olması M0 değildir.
 ### 2.1 RLS `SET LOCAL` refactor (B1, ADR-4)
 
 **Dosyalar:** `internal/common/database/rls.go`, `database.go`, yeni `tx.go`, `tools/orgscope`
-- [ ] `database.WithTx(ctx, fn)`: `BEGIN` → `SET LOCAL app.org_id / app.bypass_rls` → fn → `COMMIT`. Tek-ifade sorgular için `db.Exec/Query` sarmalayıcıları aynı paketlemeyi `pgx.Batch` ile yapar.
-- [ ] `beforeAcquire` kancası bayrakla kapatılabilir: `RLS_MODE=session|local` (varsayılan `session`).
+- [x] `database.WithTx(ctx, fn)`: `BEGIN` → `set_config(..., true)` (SET LOCAL; `SET LOCAL app.org_id = $1` geçerli SQL değil, parametreli `set_config` kullanılır) → fn → `COMMIT`. Tek-ifade sorgular için `db.Exec/Query/QueryRow` sarmalayıcıları; `Query`/`QueryRow` işlemi satırların ömrü boyunca açık tutar ve `Close`/`Scan` ile kapatır.
+- [x] `beforeAcquire` kancası bayrakla kapatılır: `RLS_MODE=session|local` (varsayılan `session`); yedi servis başlangıçta `SetRLSMode` çağırır (migrate hariç: DDL, tek bağlantı, bypass).
 - [ ] `orgscope`: `local` modda ham `pool.Query` çağrısı **hata** (sarmalayıcı dışı sorgu yok).
-- [ ] `rls_enforcement_test.go` iki modda da koşar; ek test: transaction pooler arkasında iki kiracı eşzamanlı 10k sorgu, sızıntı = 0.
+- [x] `rls_local_test.go` iki modda da koşar, **tek bağlantılı** havuzda (pooler'ın yarattığı şekil): iki kiracı dönüşümlü 25 tur, 200 eşzamanlı okuma, sızıntı = 0; commit sonrası kapsam bağlantıda kalmıyor (pooling'i güvenli kılan özellik); çapraz-kiracı yazma `WITH CHECK` ile reddediliyor; hata yollarında bağlantı sızıntısı yok. Süit **superuser rolü reddeder** (Postgres superuser'ı her politikadan muaf tutar — aksi halde kemer kesikken de yeşil yanardı) ve iki mutasyonla kırmızıya döndüğü doğrulandı. CI işi: `rls-isolation`.
 - **Kabul:** Kanarya hücrede `RLS_MODE=local` 2 hafta; `orgscope` yeşil; sızıntı testi 0.
 
 ### 2.2 pgcat transaction pooler

@@ -30,6 +30,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The tenant scope can travel with the transaction, which is what a
+  connection pooler needs.** The scope is stamped onto the pooled *connection*
+  at checkout, and that is a hard ceiling on scale: session state belongs to a
+  connection, so the fleet's Postgres connection count is services × replicas ×
+  pool size, and autoscaling multiplies it. The standard answer, a transaction
+  pooler, has been forbidden here for a good reason — transaction pooling does
+  not carry session state, so `app.org_id` set at checkout would follow a
+  backend handed to another tenant's client, which is a cross-tenant leak.
+  `RLS_MODE=local` sets the scope *inside* each transaction with
+  `set_config(..., true)`, which Postgres resets at COMMIT, so a recycled
+  backend carries nothing. `database.WithTx` plus `Query`, `QueryRow` and
+  `Exec` wrappers provide it; in `session` mode, still the default, they pass
+  straight through and nothing changes for any existing deployment.
+
+  Measured against a real Postgres as a non-superuser role, on a pool
+  restricted to one connection so every tenant reuses the same backend: two
+  tenants alternating twenty-five times each see only their own rows; two
+  hundred concurrent readers produce zero cross-tenant reads; after a scoped
+  transaction commits an unscoped query sees zero rows rather than the previous
+  tenant's; a cross-tenant write is refused by `WITH CHECK`; the bypass marker
+  does not outlive its transaction; and error paths leak no connections. The
+  suite refuses to run as a superuser, because Postgres exempts superusers from
+  every policy and the assertions would otherwise pass with the belt cut — the
+  new `rls-isolation` CI job asserts that refusal as a negative control before
+  running the real thing. Both mutations of the scope statement, making it
+  session-scoped and omitting it, turn the suite red. pgcat still waits on two
+  weeks of canary and the `orgscope` rule (task 2.1b). Task 2.1a.
+
 - **The origin refuses anyone who did not come through our edge.** Edge
   decision K1 is Azure Front Door Premium (the stack already runs on AKS with
   Flexible Server and Azure Cache), so origin cloaking takes two layers rather
