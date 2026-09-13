@@ -124,8 +124,8 @@ kod bitmiş olması M0 değildir.
 
 ### 1.3 Önbellek ve statik yük
 
-- [ ] SPA hash'li varlıklar `Cache-Control: immutable, max-age=31536000`; `index.html` `no-cache`; `/.well-known/openid-configuration` ve `jwks.json` 300 s kenar önbelleği (`internal/oauth` handler'larında başlık).
-- **Kabul:** 100k rps JWKS floodu → origin'e ≤ 10 rps.
+- [x] SPA hash'li varlıklar `Cache-Control: public, immutable` + 1 yıl (üç nginx yapılandırmasında: üretim imajı, geliştirme imajı, kenar kutusu); `index.html` `no-cache` (güvenlik başlıkları tekrarlanarak — nginx `add_header` birleştirmez); `/.well-known/openid-configuration` 3600 s ve `jwks.json` 300 s başlıkları zaten handler'larda vardı. **Bulgu:** compose TLS proxy'sindeki `proxy_cache_valid` yıllardır zone'suzdu — hiçbir şey önbelleklenmiyordu; `openidx_edge` zone'u tanımlandı, `proxy_cache_lock` + `use_stale` eklendi.
+- **Kabul:** 100k rps JWKS floodu → origin'e ≤ 10 rps. *(Kenar sağlayıcısı önbelleği `edge-common/rules.json` `cache_rules` ile geldi; ölçüm oyun günü #1'de.)*
 
 ### 1.4 Bot direnci ve hesap-başına sayaç (Y3)
 

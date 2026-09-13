@@ -946,3 +946,65 @@ func TestNginxSlowRequestHardening(t *testing.T) {
 		}
 	}
 }
+
+// TestNginxEdgeCacheZoneIsReal pins global-scale plan task 1.3. The site config
+// carried proxy_cache_valid on the discovery and JWKS locations with no cache
+// zone anywhere — and proxy_cache_valid without proxy_cache is a comment, so
+// every discovery and JWKS request reached the oauth-service. A JWKS flood is
+// the cheapest way to make the edge hammer the ISSUE plane.
+func TestNginxEdgeCacheZoneIsReal(t *testing.T) {
+	main, err := os.ReadFile("nginx/nginx.conf")
+	if err != nil {
+		t.Fatalf("read nginx.conf: %v", err)
+	}
+	site, err := os.ReadFile("nginx/conf.d/openidx.tdv.org.conf")
+	if err != nil {
+		t.Fatalf("read site conf: %v", err)
+	}
+	if !strings.Contains(string(main), "proxy_cache_path") || !strings.Contains(string(main), "keys_zone=openidx_edge:") {
+		t.Fatal("nginx.conf must define the openidx_edge cache zone; proxy_cache_valid without a zone caches nothing")
+	}
+	for _, loc := range []string{"location = /.well-known/jwks.json", "location = /.well-known/openid-configuration"} {
+		i := strings.Index(string(site), loc)
+		if i == -1 {
+			t.Fatalf("%s missing", loc)
+		}
+		block := string(site)[i : i+strings.Index(string(site)[i:], "\n    }")]
+		for _, want := range []string{"proxy_cache openidx_edge;", "proxy_cache_valid 200", "proxy_cache_lock on;", "proxy_cache_use_stale"} {
+			if !strings.Contains(block, want) {
+				t.Errorf("%s must carry %q", loc, want)
+			}
+		}
+	}
+}
+
+// TestSPAEntryDocumentIsNeverCached pins the other half of task 1.3 across the
+// three nginx configs that serve the console: hashed assets immutable for a
+// year, index.html no-cache, and — because add_header does not merge — the
+// security headers repeated inside the index.html location.
+func TestSPAEntryDocumentIsNeverCached(t *testing.T) {
+	for _, f := range []string{"nginx/admin-console.conf", "oidx-nginx/nginx.conf", "../../web/admin-console/nginx.conf"} {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		conf := string(raw)
+		if !strings.Contains(conf, `add_header Cache-Control "public, immutable"`) || !strings.Contains(conf, "expires 1y;") {
+			t.Errorf("%s: hashed assets must be immutable for a year", f)
+		}
+		i := strings.Index(conf, "location = /index.html")
+		if i == -1 {
+			t.Errorf("%s: index.html must have its own location with Cache-Control no-cache", f)
+			continue
+		}
+		block := conf[i : i+strings.Index(conf[i:], "\n    }")+1]
+		if !strings.Contains(block, `Cache-Control "no-cache"`) {
+			t.Errorf("%s: index.html must be no-cache", f)
+		}
+		for _, h := range []string{"X-Frame-Options", "X-Content-Type-Options", "Referrer-Policy"} {
+			if !strings.Contains(block, h) {
+				t.Errorf("%s: index.html location must repeat %s (add_header does not merge)", f, h)
+			}
+		}
+	}
+}

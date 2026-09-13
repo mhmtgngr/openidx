@@ -30,6 +30,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The edge actually caches discovery and JWKS, and never caches the entry
+  document.** The compose TLS proxy's `/.well-known/jwks.json` and
+  `openid-configuration` locations had carried `proxy_cache_valid` for years
+  with no cache zone defined anywhere — and `proxy_cache_valid` without
+  `proxy_cache` is a comment, so every discovery and JWKS request reached
+  the oauth-service and a JWKS flood was the cheapest way to make the edge
+  hammer the ISSUE plane. An `openidx_edge` zone now exists and both
+  locations use it with `proxy_cache_lock` (one origin fetch per miss) and
+  `proxy_cache_use_stale` (a verifier never sees a JWKS outage). All three
+  nginx configurations that serve the console mark hashed assets immutable
+  for a year and `index.html` `no-cache`, repeating the security headers in
+  that location because nginx's `add_header` replaces rather than merges.
+  Tests pin the zone, its use, and the entry-document policy. Task 1.3.
+
 - **A Redis blip is no longer a login outage of its own length.** The
   auth-path rate limiter fails closed when its Redis is unreachable, and
   that stays the default: brute-force protection must not silently vanish
