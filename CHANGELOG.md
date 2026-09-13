@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CORS says one thing everywhere.** The oauth-service wrote
+  `Access-Control-Allow-Origin: *` on every response by hand while the
+  production gate refused a wildcard `CORS_ALLOWED_ORIGINS` — the gate held
+  for seven services and the eighth ignored it, and the threat model claimed
+  the gate. The policy is now explicit in `middleware.OAuthCORS`: the
+  OAuth/OIDC *protocol* endpoints (token, introspect, revoke, userinfo,
+  device flow, dynamic registration, discovery, JWKS) answer `*` by design,
+  because a public client on a relying party's origin must reach them and
+  `*` can never carry cookies; the session-carrying login, MFA, consent and
+  step-up pages follow the configured origin list like every other service
+  and refuse an unlisted origin instead of reflecting it.
+  `OAUTH_PROTOCOL_CORS_WILDCARD=false` closes the exception for a deployment
+  where every relying party is known. At the edge, the tenant origin list
+  that was copied into eleven compose routes and seven production services
+  becomes one global `cors` rule each (the plugin answers preflight itself,
+  so the catch-all OPTIONS routes are gone), with route-level `*` only on the
+  protocol routes. Tests pin the list to exactly one copy and the wildcard to
+  the protocol routes; the threat model's TB1 row now says what the code
+  does. Task 0.6.
+
 - **Every request-serving deployment autoscales, and scales the right way
   round.** The HPA and PDB templates listed seven services; `access-service`
   and `gateway-service` were not among them, so `values-prod.yaml`'s

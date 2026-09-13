@@ -84,7 +84,7 @@ Trust boundaries, from least to most trusted:
 
 | # | Boundary | What crosses it | Primary control |
 |---|---|---|---|
-| **TB1** | Internet → APISIX edge | All user/API traffic | TLS, security headers, rate limiting, CSRF, CORS gates (`ValidateProduction()` refuses wildcard CORS / disabled CSRF in prod) |
+| **TB1** | Internet → APISIX edge | All user/API traffic | TLS, security headers, rate limiting, CSRF, CORS gates (`ValidateProduction()` refuses wildcard CORS / disabled CSRF in prod). One deliberate exception: the OAuth/OIDC *protocol* endpoints (token, introspect, revoke, userinfo, device flow, DCR, discovery, JWKS) answer `Access-Control-Allow-Origin: *` because a public client on a relying party's origin must reach them and `*` can never carry cookies (`middleware.OAuthCORS`, `OAUTH_PROTOCOL_CORS_WILDCARD`); the session-carrying login/MFA/consent surface follows `CORS_ALLOWED_ORIGINS` like every other service |
 | **TB2** | Edge → Go services | Authenticated requests | RS256 JWT verification (JWKS), role checks per route, org resolution per request |
 | **TB3** | Services → data plane | SQL, cache ops, audit events | **FORCE row-level security** on every tenant table; parameterized queries; `tools/orgscope` merge-blocking linter |
 | **TB4** | Endpoints → Ziti overlay | mTLS dials to dark services | Ziti PKI (per-identity certs), dial policies derived from app assignments; services have **no public listener** |

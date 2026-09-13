@@ -159,19 +159,16 @@ func main() {
 		}, log))
 	}
 
-	// Enable CORS for OAuth endpoints
-	router.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-control-Allow-Headers", "Content-Type, Authorization")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
-	})
+	// CORS (global-scale plan task 0.6). This used to write
+	// Access-Control-Allow-Origin: * on every response, which contradicted the
+	// production gate that refuses a wildcard CORS_ALLOWED_ORIGINS: the gate
+	// held for seven services and this one wrote the wildcard by hand. The
+	// protocol endpoints (token, introspect, revoke, userinfo, discovery, JWKS,
+	// device flow, DCR) keep "*" by design — a public client on a relying
+	// party's origin must reach them and "*" can never carry cookies. The
+	// session-carrying UI paths (login, MFA, consent, step-up) follow the
+	// configured origin list like every other service.
+	router.Use(middleware.OAuthCORS(cfg.OAuthProtocolCORSWildcard, cfg.GetCORSOrigins()...))
 	router.Use(middleware.PrometheusMetrics("oauth-service"))
 	router.Use(api.StandardVersionMiddleware())
 

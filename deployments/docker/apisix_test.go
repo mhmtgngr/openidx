@@ -145,3 +145,75 @@ func TestAPISIXOperationalEndpointsAreClosed(t *testing.T) {
 		}
 	}
 }
+
+// TestAPISIXCORSIsOneTenantRulePlusProtocolWildcards pins task 0.6 for the
+// compose edge: the tenant origin list lives in ONE place (the global rule),
+// the catch-all preflight route is gone because the cors plugin answers
+// OPTIONS itself, and only the OAuth/OIDC protocol routes (and the
+// host-scoped guacamole/demo routes, which are not the tenant surface) carry a
+// route-level override.
+func TestAPISIXCORSIsOneTenantRulePlusProtocolWildcards(t *testing.T) {
+	raw, err := os.ReadFile("apisix/apisix.yaml")
+	if err != nil {
+		t.Fatalf("read apisix.yaml: %v", err)
+	}
+	text := strings.ReplaceAll(string(raw), "#END", "")
+	var doc struct {
+		Routes []struct {
+			Name    string                 `yaml:"name"`
+			Plugins map[string]interface{} `yaml:"plugins"`
+		} `yaml:"routes"`
+		GlobalRules []struct {
+			Plugins map[string]interface{} `yaml:"plugins"`
+		} `yaml:"global_rules"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
+		t.Fatalf("parse apisix.yaml: %v", err)
+	}
+
+	tenantList := ""
+	for _, g := range doc.GlobalRules {
+		if c, ok := g.Plugins["cors"].(map[string]interface{}); ok {
+			tenantList, _ = c["allow_origins"].(string)
+		}
+	}
+	if tenantList == "" {
+		t.Fatal("global cors rule with the tenant origin list missing")
+	}
+	if n := strings.Count(text, tenantList); n != 1 {
+		t.Errorf("tenant origin list must appear exactly once (the global rule), found %d copies", n)
+	}
+
+	wildcardOK := map[string]bool{"oauth-protocol": true, "oidc-discovery": true, "guacamole-gateway": true}
+	for _, r := range doc.Routes {
+		if r.Name == "cors-preflight" {
+			t.Error("catch-all preflight route must be gone; the cors plugin answers OPTIONS")
+		}
+		c, ok := r.Plugins["cors"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		origins, _ := c["allow_origins"].(string)
+		if origins == "*" && !wildcardOK[r.Name] {
+			t.Errorf("route %q must not answer \"*\": only protocol endpoints are wildcard by design", r.Name)
+		}
+		if origins == tenantList {
+			t.Errorf("route %q repeats the tenant origin list; the global rule owns it", r.Name)
+		}
+	}
+	for _, must := range []string{"oauth-protocol", "oidc-discovery"} {
+		found := false
+		for _, r := range doc.Routes {
+			if r.Name == must {
+				found = true
+				c, _ := r.Plugins["cors"].(map[string]interface{})
+				if c["allow_origins"] != "*" {
+					t.Errorf("protocol route %q must allow any relying-party origin", must)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("protocol route %q missing", must)
+		}
+	}
+}

@@ -30,21 +30,6 @@ routes:
       nodes:
         "admin-api:8005": 1
 
-  # Simple CORS preflight handling
-  - uri: /.*
-    name: cors-preflight
-    methods: ["OPTIONS"]
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With,Accept,Origin"
-        max_age: 86400
-    upstream:
-      type: roundrobin
-      nodes:
-        "admin-api:8005": 1
-
   # Identity service
   - uri: /api/v1/identity/*
     name: identity-service
@@ -64,11 +49,6 @@ routes:
         key_type: var
         key: remote_addr
         rejected_code: 429
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With"
-        max_age: 3600
     upstream:
       type: roundrobin
       nodes:
@@ -93,11 +73,6 @@ routes:
         key_type: var
         key: remote_addr
         rejected_code: 429
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With"
-        max_age: 3600
     upstream:
       type: roundrobin
       nodes:
@@ -122,11 +97,6 @@ routes:
         key_type: var
         key: remote_addr
         rejected_code: 429
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With"
-        max_age: 3600
     upstream:
       type: roundrobin
       nodes:
@@ -152,15 +122,52 @@ routes:
         key_type: var
         key: remote_addr
         rejected_code: 429
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With,Upgrade,Connection"
-        max_age: 3600
     upstream:
       type: roundrobin
       nodes:
         "audit-service:8004": 1
+
+  # OAuth/OIDC PROTOCOL endpoints (task 0.6): token, introspection, revocation,
+  # userinfo, device flow, dynamic registration. A public client (PKCE) on a
+  # relying party's origin must be able to call these, and there is no origin
+  # list an IdP could keep for it — that is what client registration is for.
+  # "*" never carries cookies. Outranks the /oauth/* route below, which keeps
+  # the tenant origin list for the session-carrying login/MFA/consent pages.
+  - uris:
+      - /oauth/token
+      - /oauth/introspect
+      - /oauth/revoke
+      - /oauth/userinfo
+      - /oauth/device_authorization
+      - /oauth/register
+    name: oauth-protocol
+    priority: 5
+    plugins:
+      cors:
+        allow_origins: "*"
+        allow_methods: "GET,POST,OPTIONS"
+        allow_headers: "Content-Type,Authorization,DPoP"
+        max_age: 86400
+      limit-req:
+        rate: 100
+        burst: 50
+        key: remote_addr
+      limit-conn:
+        conn: 200
+        burst: 50
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
+    upstream:
+      type: roundrobin
+      nodes:
+        "oauth-service:8006": 1
+      retries: 0
+      timeout:
+        connect: 3
+        send: 10
+        read: 10
 
   # OAuth/OIDC service - authorization and token endpoints
   - uri: /oauth/*
@@ -181,11 +188,6 @@ routes:
         key_type: var
         key: remote_addr
         rejected_code: 429
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With,Accept,Origin"
-        max_age: 3600
     upstream:
       type: roundrobin
       nodes:
@@ -203,6 +205,14 @@ routes:
   - uri: /.well-known/*
     name: oidc-discovery
     plugins:
+      # Protocol endpoint: any relying-party origin may read discovery and the
+      # JWKS. Route-level cors overrides the global tenant list; "*" can never
+      # carry cookies, so this is the standard IdP posture (task 0.6).
+      cors:
+        allow_origins: "*"
+        allow_methods: "GET,OPTIONS"
+        allow_headers: "Content-Type,Accept"
+        max_age: 86400
       limit-req:
         rate: 50
         burst: 25
@@ -218,11 +228,6 @@ routes:
         key_type: var
         key: remote_addr
         rejected_code: 429
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,OPTIONS"
-        allow_headers: "Content-Type,Accept"
-        max_age: 86400
     upstream:
       type: roundrobin
       nodes:
@@ -247,11 +252,6 @@ routes:
         key_type: var
         key: remote_addr
         rejected_code: 429
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Forwarded-Host,X-Forwarded-Uri,X-Forwarded-Method,X-Forwarded-For,Cookie"
-        max_age: 3600
     upstream:
       type: roundrobin
       nodes:
@@ -260,12 +260,6 @@ routes:
   # Access proxy auth flow
   - uri: /access/.auth/*
     name: access-auth-flow
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie"
-        max_age: 3600
     upstream:
       type: roundrobin
       nodes:
@@ -360,11 +354,6 @@ routes:
         key_type: var
         key: remote_addr
         rejected_code: 429
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With"
-        max_age: 3600
     upstream:
       type: roundrobin
       nodes:
@@ -389,11 +378,6 @@ routes:
         key_type: var
         key: remote_addr
         rejected_code: 429
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With,Accept,Origin"
-        max_age: 3600
     upstream:
       type: roundrobin
       nodes:
@@ -403,6 +387,17 @@ global_rules:
   - id: 1
     plugins:
       request-id: {}
+      # One CORS policy for the tenant-facing surface (task 0.6). This list
+      # used to be copied into eleven routes; copies drift, and a tenant domain
+      # added to ten of them is a console that works on every page but one.
+      # The cors plugin answers OPTIONS preflight itself, so the old catch-all
+      # preflight route is gone too. Protocol endpoints override this with "*"
+      # at route level (oauth-protocol, oidc-discovery).
+      cors:
+        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
+        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
+        allow_headers: "Content-Type,Authorization,X-Requested-With,Accept,Origin,Upgrade,Connection,X-Forwarded-Host,X-Forwarded-Uri,X-Forwarded-Method,X-Forwarded-For,Cookie"
+        max_age: 3600
       # Client-IP chain (global-scale plan task 0.2). In this stack APISIX is
       # not the TLS edge: tls-proxy (nginx) terminates TLS and forwards with
       # X-Forwarded-For, so without this plugin every limit-req key below is

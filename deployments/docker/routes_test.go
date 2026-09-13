@@ -173,9 +173,10 @@ func TestRoutesServicePlugins(t *testing.T) {
 		t.Error("Services should have rate limiting plugin")
 	}
 
-	// Validate CORS plugin
-	if !strings.Contains(contentStr, `"cors":`) {
-		t.Error("Services should have CORS plugin")
+	// CORS is ONE global rule for the tenant surface (task 0.6), not a plugin
+	// copied into every service. Services carry limit-req and prometheus only.
+	if !strings.Contains(contentStr, "create_global_rule 'cors-tenant'") {
+		t.Error("tenant CORS must be a single global rule")
 	}
 
 	// Validate Prometheus plugin
@@ -183,9 +184,10 @@ func TestRoutesServicePlugins(t *testing.T) {
 		t.Error("Services should have Prometheus metrics plugin")
 	}
 
-	// Validate CORS allow_origins uses production domain
-	if !strings.Contains(contentStr, "https://'$DOMAIN'") {
-		t.Error("CORS should be configured for production domain")
+	// The production domain appears in exactly one CORS allow_origins: the
+	// global rule. A second copy is the drift this change removed.
+	if n := strings.Count(contentStr, `"allow_origins": "https://'$DOMAIN'"`); n != 1 {
+		t.Errorf("tenant allow_origins must appear exactly once (global rule), found %d", n)
 	}
 }
 
@@ -336,35 +338,41 @@ func TestRoutesOperationalEndpointsAreClosed(t *testing.T) {
 	}
 }
 
-// TestRoutesCORSPreflight validates CORS preflight route
-func TestRoutesCORSPreflight(t *testing.T) {
-	scriptPath := "load-production-routes.sh"
-
-	content, err := os.ReadFile(scriptPath)
+// TestRoutesCORSPolicy pins task 0.6 of the global-scale plan: one global CORS
+// rule carries the tenant origin (the cors plugin answers OPTIONS preflight
+// itself, so the old catch-all preflight route is gone), and the OAuth/OIDC
+// protocol routes override it with "*" — a public client on a relying party's
+// origin must reach token, introspection, userinfo and discovery, and "*" can
+// never carry cookies. The authorize and login surface must NOT be wildcard.
+func TestRoutesCORSPolicy(t *testing.T) {
+	content, err := os.ReadFile("load-production-routes.sh")
 	if err != nil {
 		t.Fatalf("Failed to read load-production-routes.sh: %v", err)
 	}
-
 	contentStr := string(content)
 
-	// Validate CORS preflight route
-	if !strings.Contains(contentStr, "'cors-preflight'") {
-		t.Error("Missing CORS preflight route")
+	if strings.Contains(contentStr, "'cors-preflight'") {
+		t.Error("the catch-all preflight route must be gone; the global cors plugin answers OPTIONS")
+	}
+	if !strings.Contains(contentStr, "create_global_rule 'cors-tenant'") {
+		t.Fatal("global cors-tenant rule missing")
 	}
 
-	// Validate OPTIONS method
-	if !strings.Contains(contentStr, `"methods": ["OPTIONS"]`) {
-		t.Error("CORS preflight should handle OPTIONS method")
+	routeBlock := func(name string) string {
+		i := strings.Index(contentStr, "create_route '"+name+"'")
+		if i == -1 {
+			t.Fatalf("route %s missing", name)
+		}
+		j := strings.Index(contentStr[i:], "\n}'")
+		return contentStr[i : i+j]
 	}
-
-	// Validate catch-all URI pattern
-	if !strings.Contains(contentStr, `"uri": "/.*"`) {
-		t.Error("CORS preflight should catch all URIs")
+	for _, proto := range []string{"oauth-service-token", "oauth-service-introspect", "oauth-service-userinfo", "oidc-discovery"} {
+		if !strings.Contains(routeBlock(proto), `"allow_origins": "*"`) {
+			t.Errorf("protocol route %s must allow any relying-party origin", proto)
+		}
 	}
-
-	// Validate high priority for preflight
-	if !strings.Contains(contentStr, `"priority": 1000`) {
-		t.Error("CORS preflight should have high priority")
+	if strings.Contains(routeBlock("oauth-service-authorize"), `"allow_origins": "*"`) {
+		t.Error("the authorize/login surface must follow the tenant list, never \"*\"")
 	}
 }
 
@@ -571,13 +579,18 @@ func TestRoutesMethodsConfiguration(t *testing.T) {
 		`"PUT"`,
 		`"DELETE"`,
 		`"PATCH"`,
-		`"OPTIONS"`,
 	}
 
 	for _, method := range commonMethods {
 		if !strings.Contains(contentStr, method) {
 			t.Errorf("Routes should support method: %s", method)
 		}
+	}
+
+	// OPTIONS is answered by the cors plugin (global rule + protocol routes),
+	// not by a catch-all route with methods: ["OPTIONS"] — task 0.6.
+	if !strings.Contains(contentStr, ",OPTIONS\"") {
+		t.Error("cors allow_methods must include OPTIONS so preflight is answered at the edge")
 	}
 }
 
@@ -684,8 +697,9 @@ func TestRoutesURIPatterns(t *testing.T) {
 		t.Error("Should use exact URI matching where appropriate")
 	}
 
-	// Validate wildcard URI
-	if !strings.Contains(contentStr, `"uri":`) {
+	// Validate wildcard URI (prefix wildcards inside a uris list; the singular
+	// "uri" catch-all belonged to the preflight route removed in task 0.6)
+	if !strings.Contains(contentStr, `/*"`) {
 		t.Error("Should support wildcard URI patterns")
 	}
 
@@ -716,9 +730,10 @@ func TestRoutesProductionDomain(t *testing.T) {
 		t.Error("Should default to openidx.tdv.org")
 	}
 
-	// Validate domain variable is used in routes
-	if strings.Count(contentStr, "'$DOMAIN'") < 2 {
-		t.Error("Domain variable should be used in route configuration")
+	// The domain variable feeds CORS in exactly one place — the global
+	// cors-tenant rule (task 0.6); a second copy would be the drift removed.
+	if strings.Count(contentStr, "'$DOMAIN'") != 1 {
+		t.Errorf("Domain variable should appear in exactly one CORS rule, found %d", strings.Count(contentStr, "'$DOMAIN'"))
 	}
 }
 
@@ -896,6 +911,7 @@ func TestRoutesWildcardMatching(t *testing.T) {
 		`"/*"`,
 		`"/.*"`,
 		`"~^/"`,
+		`/*"`,
 	}
 
 	hasWildcard := false

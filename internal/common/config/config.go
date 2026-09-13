@@ -106,6 +106,15 @@ type Config struct {
 	// See retired.go.
 	EncryptionKey      string `mapstructure:"encryption_key"`
 	CORSAllowedOrigins string `mapstructure:"cors_allowed_origins"`
+	// OAuthProtocolCORSWildcard lets the OAuth/OIDC protocol endpoints (token,
+	// introspect, revoke, userinfo, device_authorization, register, discovery,
+	// JWKS) answer Access-Control-Allow-Origin: * regardless of
+	// CORSAllowedOrigins. A public client on a relying party's origin has to be
+	// able to call them, and "*" can never carry cookies, so this is the
+	// standard IdP posture. Session-carrying UI paths always follow
+	// CORSAllowedOrigins. Default true; set false for a closed deployment
+	// where every relying-party origin is known and listed.
+	OAuthProtocolCORSWildcard bool `mapstructure:"oauth_protocol_cors_wildcard"`
 
 	// EnableRateLimit turns the per-service rate limiter on. It is the only
 	// survivor of a "Feature flags" block that also carried EnableMFA and
@@ -1056,6 +1065,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
+	v.SetDefault("oauth_protocol_cors_wildcard", true)
 
 	// WebAuthn defaults
 	v.SetDefault("webauthn.rp_id", "localhost")
@@ -1367,6 +1377,7 @@ func bindEnvVars(v *viper.Viper) {
 		"rate_limit_auth_window":            "RATE_LIMIT_AUTH_WINDOW",
 		"rate_limit_per_user":               "RATE_LIMIT_PER_USER",
 		"cors_allowed_origins":              "CORS_ALLOWED_ORIGINS",
+		"oauth_protocol_cors_wildcard":      "OAUTH_PROTOCOL_CORS_WILDCARD",
 		"audit_stream_allowed_origins":      "AUDIT_STREAM_ALLOWED_ORIGINS",
 		"recordings_storage_path":           "RECORDINGS_STORAGE_PATH",
 		"recordings_default_retention_days": "RECORDINGS_DEFAULT_RETENTION_DAYS",
