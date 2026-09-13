@@ -655,12 +655,21 @@ database:
   planeRoles:
     enabled: false
 
-    # Bundled PostgreSQL: one password for the three roles. They all inherit
-    # openidx_app, so three different passwords would not narrow the blast
-    # radius of a leak -- they would only be three things to rotate.
-    # Set it on the server too (the roles are created passwordless):
+    # Bundled PostgreSQL: one password for the three roles, from which the
+    # chart builds the three DSNs. They all inherit openidx_app, so three
+    # different passwords would not narrow the blast radius of a leak -- they
+    # would only be three things to rotate.
+    #
+    # `password` is deliberately NOT declared with an empty default, for the
+    # same reason pgcat.password is not: templates/plane-dsn.yaml refuses to
+    # render without it, and a missing key fails that check exactly as an empty
+    # string does -- so the behaviour is identical while the file no longer
+    # carries a literal blank credential for a scanner (or a reader) to take at
+    # face value. Supply it with --set or a values file:
+    #   --set database.planeRoles.password=...
+    #
+    # Set it on the server too, because v189 creates the roles passwordless:
     #   ALTER ROLE openidx_issue PASSWORD '...';  (and openidx_admin, openidx_event)
-    password: ""
 
     # External or managed database: the three DSNs in full, instead of
     # `password`. All three must be set together.
