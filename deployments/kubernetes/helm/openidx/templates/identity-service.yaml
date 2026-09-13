@@ -80,6 +80,10 @@ spec:
           # Through the transaction pooler, not straight at Postgres (task 2.2).
           # This replaces the direct DSN in -db-url; see openidx.pooledDatabaseUrl.
           {{- include "openidx.pooledDatabaseUrl" . | nindent 12 }}
+          {{- else if .Values.database.planeRoles.enabled }}
+          # As this service's availability plane, so an expensive query is
+          # bounded by the server and not by the service (task 2.4).
+          {{- include "openidx.planeDatabaseUrl" (dict "ctx" . "service" "identityService") | nindent 12 }}
           {{- end }}
           envFrom:
             - secretRef:

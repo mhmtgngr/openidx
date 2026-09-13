@@ -140,3 +140,74 @@ The gate in the previous section still stands: `RLS_MODE=local` on a canary cell
 for two weeks, and `tools/orgscope` finished, **before** anything turns this on.
 Shipping the chart support is not the same as having run it — no pgcat process
 has been started against OpenIDX yet (see the evidence note, §6).
+
+## Update 2026-09-13 — per-plane roles, and why they and the pooler are exclusive (task 2.4)
+
+Migration v189 created `openidx_issue`, `openidx_admin` and `openidx_event` —
+one Postgres LOGIN role per availability plane, each `IN ROLE openidx_app` and
+each carrying its own budget on the **server**: `statement_timeout` 2s / 10s /
+30s, `idle_in_transaction_session_timeout` 60s / 120s / 300s. Nothing used
+them: the migration provisions the roles, and a deployment opts in by pointing
+a service's `DATABASE_URL` at one. `database.planeRoles.enabled` is that
+switch, and it is off by default.
+
+**Why the budget belongs to the role.** Every service connects as one role
+today with no query time limit, so one expensive ADMIN or EVENT query — an
+audit search, a governance report, a SCIM page with a bad predicate — is
+indistinguishable to Postgres from a token exchange, and holds a backend for as
+long as it likes. Once a query is *running*, the database cancelling it is the
+only layer that can stop it: cancelling a Go context abandons the call while
+the backend keeps burning CPU and holding its locks. Attaching the limit to the
+role rather than to a DSN also means `\drds` lists it, an operator cannot lose
+it by editing a secret, and it holds for a `psql` session opened as that role.
+
+**What was measured** (`internal/migrations/plane_roles_test.go`, against a
+real PostgreSQL with the **whole** migration chain applied by a NOSUPERUSER
+NOCREATEROLE NOBYPASSRLS owner — the shape the bundled chart creates):
+
+- All three roles reach **every one of 220 tables** and every sequence. This
+  was the open question: the roles *inherit* their grants and hold none of
+  their own, and the tables arrive across 190-odd migrations, some granting to
+  `openidx_app` explicitly and the rest relying on the default privileges v53
+  set. One table that got neither would be a service that starts, passes its
+  health check, and answers a single endpoint with `permission denied for
+  table`.
+- The budgets survive `database.NewPostgres` — the pool the services actually
+  open, not a bare `pgx` connection.
+
+**The interaction that would have been silent.** `DB_STATEMENT_TIMEOUT` is sent
+as a connection *runtime parameter*, and a runtime parameter **beats** the
+value `ALTER ROLE ... SET` attached to the role. `values-prod.yaml` sets
+`database.statementTimeout: "30s"`, so a production install that simply flipped
+`planeRoles.enabled` would have handed all three planes 30 seconds, on every
+service, with nothing in any log to say so. Measured: with
+`DB_STATEMENT_TIMEOUT=45s` the test reports 45 000 ms for all three roles. The
+chart therefore **refuses to render** `planeRoles.enabled` while
+`database.statementTimeout` is set, and names the file to clear it in.
+
+**Why pgcat and the plane roles cannot both be on.** Two reasons, and the
+second is the real one:
+
+1. Both inject `DATABASE_URL` as a pod `env` entry, so the rendered Deployment
+   would carry the name twice.
+2. A transaction pooler multiplexes many clients onto a few *server*
+   connections, and the per-role budget is a property of the server connection
+   — which pgcat opens as its own pool user, once, for everybody. Getting the
+   budgets back means giving pgcat three pool users
+   (`openidx_issue`/`openidx_admin`/`openidx_event`) and splitting the cell's
+   backend budget three ways. That is a sizing decision with a real cost, not a
+   flag, and it is not made here.
+
+So the chart refuses the combination and says which decision is outstanding.
+Six interlocks in total are asserted in CI (`.github/workflows/helm.yml`, "Each
+plane connects as its own role, or none of them does"), together with the
+rendered fact that all eight services take the plane their assignment names and
+that the migration and bootstrap Jobs keep the owner DSN — the migration does
+DDL the runtime roles do not have.
+
+**Still not run in anger.** The roles have never served production traffic. The
+assignment table starts deliberately loose: `identity-service` takes `admin`
+(10s) rather than `issue` (2s), because one unsplit identity-service serves
+both planes and the tighter budget would cancel legitimate console queries.
+`SERVICE_PROFILE` (task 3.4) splits that process in two; the auth half moves to
+`issue` when the chart renders both halves.

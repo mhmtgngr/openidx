@@ -205,3 +205,36 @@ would hand each of them a different backend mid-flight.
       name: {{ include "openidx.fullname" . }}-pgcat-dsn
       key: DATABASE_URL
 {{- end }}
+
+{{/*
+The availability plane a service connects as, validated.
+
+A misspelled plane must not render: the value picks a Postgres role, and a name
+nothing created would fail at connect time, on one service, after the rollout
+looked healthy.
+*/}}
+{{- define "openidx.planeFor" -}}
+{{- $ctx := .ctx -}}
+{{- $svc := .service -}}
+{{- $plane := index $ctx.Values.database.planeRoles.assignments $svc | default "" -}}
+{{- if not (has $plane (list "issue" "admin" "event")) -}}
+{{- fail (printf "database.planeRoles.assignments.%s = %q, which is not a plane. Set one of \"issue\" (statement_timeout 2s), \"admin\" (10s) or \"event\" (30s); each names a Postgres role migration v189 creates." $svc $plane) -}}
+{{- end -}}
+{{- $plane -}}
+{{- end -}}
+
+{{/*
+DATABASE_URL for a service's plane role (task 2.4).
+
+Placed in `env:` rather than `envFrom:` on purpose: an `env` entry beats a
+`secretRef` key of the same name, so this overrides the fleet-wide DSN in
+-db-url for this one service without the two disagreeing anywhere else.
+*/}}
+{{- define "openidx.planeDatabaseUrl" -}}
+{{- $plane := include "openidx.planeFor" . -}}
+- name: DATABASE_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "openidx.fullname" .ctx }}-plane-dsn
+      key: DATABASE_URL_{{ upper $plane }}
+{{- end }}

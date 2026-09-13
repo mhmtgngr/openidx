@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Each service can connect as its availability plane's Postgres role
+  (`database.planeRoles`).** Migration v189 created `openidx_issue`,
+  `openidx_admin` and `openidx_event` with their own `statement_timeout` (2s /
+  10s / 30s) and said in its own description that nothing used them yet: a
+  deployment opts in by pointing a service's `DATABASE_URL` at one. This is
+  that switch, off by default, with a per-service assignment table so it can be
+  changed without editing a template.
+
+  **The open question was the grants, and it is now measured.** The roles
+  *inherit* their privileges through `openidx_app` and hold none of their own,
+  while the 220 tables arrive across 190-odd migrations — some granting
+  explicitly, the rest relying on the default privileges v53 set. A table that
+  got neither would be a service that starts, passes its health check, and
+  answers one endpoint with `permission denied for table`. Applying the whole
+  chain as a NOSUPERUSER NOCREATEROLE NOBYPASSRLS owner and asking the
+  database: all three roles reach every table and every sequence.
+
+  **One interaction would have been silent.** `DB_STATEMENT_TIMEOUT` is sent as
+  a connection runtime parameter, and a runtime parameter beats the value
+  `ALTER ROLE ... SET` attaches to the role. `values-prod.yaml` sets
+  `database.statementTimeout: "30s"`, so a production install that simply
+  flipped the flag would have given all three planes 30 seconds, on every
+  service, with nothing in any log to say so — measured at 45 000 ms for all
+  three with `DB_STATEMENT_TIMEOUT=45s`. The chart refuses that combination and
+  names the file to clear it in.
+
+  Six interlocks in all, each naming the knob that resolves it, including
+  `pgcat.enabled`: both inject `DATABASE_URL` as a pod `env` entry, and more to
+  the point a transaction pooler opens its server connections as its own pool
+  user, so restoring the budgets means giving pgcat three pool users and
+  splitting the cell's backend budget three ways — a sizing decision with a
+  real cost, not a flag. Every interlock, the rendered per-service assignment,
+  and the fact that the migration and bootstrap Jobs keep the owner DSN are
+  asserted in CI, and each assertion was checked by breaking what it guards.
+
 - **identity-service runs as one plane or the other (`SERVICE_PROFILE`).** The
   service straddles two availability classes: finishing a login (ISSUE) and
   running the console (ADMIN). ADMIN is the first plane shed under load, which
