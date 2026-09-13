@@ -75,3 +75,11 @@ allow client/plugins/openidx_engine/android/libs/engine.aar        a gomobile bu
 allow client/plugins/openidx_engine/ios/Frameworks/Engine.xcframework  a gomobile build output
 allow docs/superpowers/specs/2026-05-15-android-client-design.md   never committed here; agent-android/README.md says so where it used to link it
 allow agent/internal/posture           never existed; the readiness guide names it as one of the two bad citations this guard's first run caught
+
+# ---------------------------------------------------------------------------
+# Global-scale plan (docs/architecture/2026-09-13-...-ddos.md): files a later
+# phase creates. The design cites them as the planned location; the waiver
+# fails the day the file lands, which is exactly when the design should stop
+# saying "will live at" and the waiver should go.
+# ---------------------------------------------------------------------------
+allow internal/common/middleware/admission.go  planned in Phase 3.5 (admission controller / cost quota); the design §5.4/§5.5 names its location. Remove this waiver when task 3.5 creates it

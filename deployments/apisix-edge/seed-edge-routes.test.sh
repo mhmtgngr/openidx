@@ -103,4 +103,65 @@ else
 fi
 echo "OK ziti control plane (management API internal-only)"
 
+# --- client-IP chain: the real-ip global rule follows EDGE_TRUSTED_CIDRS ---
+#
+# With nothing in front of this APISIX, remote_addr is already the client and a
+# real-ip rule would only add a way to forge it — so none is seeded. With an
+# edge provider in front, every peer is the provider and the rule is what keeps
+# per-IP limits per-IP; its trusted list must be exactly the provider's CIDRs.
+noedge=$(DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+echo "$noedge" | grep -qx "global edge-real-ip" && fail "real-ip: MUST NOT be seeded without EDGE_TRUSTED_CIDRS"
+withedge=$(EDGE_TRUSTED_CIDRS="173.245.48.0/20, 2400:cb00::/32" DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+echo "$withedge" | grep -qx "global edge-real-ip" || fail "real-ip: MUST be seeded when EDGE_TRUSTED_CIDRS is set"
+grep -q '"recursive\\":true' seed-edge-routes.sh || fail "real-ip: must walk X-Forwarded-For recursively past trusted hops"
+grep -q 'trusted_addresses' seed-edge-routes.sh || fail "real-ip: must carry a trusted_addresses list"
+grep -q '0.0.0.0/0' seed-edge-routes.sh && fail "real-ip: trusting 0.0.0.0/0 lets any caller forge its address" || true
+echo "OK real-ip (global rule gated on EDGE_TRUSTED_CIDRS)"
+
+# --- connection ceilings (task 0.3): every openidx route carries limit-conn ---
+#
+# Rate limits bound requests per second; a slow-body or long-poll flood spends
+# OPEN connections instead. Each public openidx route must carry a limit-conn
+# ceiling, keyed on remote_addr (the client after real-ip), and the ISSUE
+# upstream must not retry: a retry under load multiplies the attack it fails under.
+for r in openidx-api-enroll openidx-oauth openidx-wellknown openidx-api-identity openidx-api-governance openidx-api-provisioning openidx-api-audit openidx-api-access openidx-api-oauth openidx-api-saml openidx-api-admin openidx-scim; do
+  grep -E "^\s*put $r " seed-edge-routes.sh | grep -q 'LC_' || fail "limit-conn: route $r has no connection ceiling"
+done
+grep -q '"key":"remote_addr"' seed-edge-routes.sh || fail "limit-conn: must key on remote_addr"
+grep -E '^put openidx-oauth ' seed-edge-routes.sh | grep -q 'UP_ISSUE' || fail "oauth upstream must carry retries:0 + short timeouts"
+grep -q '"retries":0' seed-edge-routes.sh || fail "ISSUE upstream must not retry"
+# The rendered JSON must still be valid once the shell expands the variables.
+DRY_RUN=1 EDGE_TRUSTED_CIDRS="" bash -c 'source <(sed -n "/^LC_ISSUE=/,/^UP_ISSUE=/p" seed-edge-routes.sh); H="\"hosts\":[\"x\"]"; printf "%s" "{$H,\"priority\":30,\"plugins\":{$LC_ISSUE},\"upstream\":{\"type\":\"roundrobin\",$UP_ISSUE,\"nodes\":{\"127.0.0.1:8006\":1}}}"' | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["plugins"]["limit-conn"]["conn"]==200 and d["upstream"]["retries"]==0' || fail "limit-conn/upstream JSON does not parse after expansion"
+echo "OK limit-conn (connection ceilings on every openidx route, no ISSUE retries)"
+
+# --- operational endpoints closed in every mode (task 0.4) ---
+for m in off tier2 tier1; do
+  out=$(DARK_MODE=$m DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+  has "$out" openidx-deny-health || fail "$m: /health,/ready,/metrics deny route MUST be seeded"
+done
+line=$(grep -E '^put openidx-deny-health ' seed-edge-routes.sh)
+echo "$line" | grep -q 'priority\\":100' || fail "deny-health: must outrank every other route (priority 100)"
+echo "$line" | grep -q 'fault-injection' || fail "deny-health: must answer at the edge (fault-injection), not proxy"
+echo "$line" | grep -q 'http_status\\":404' || fail "deny-health: must answer 404"
+for u in /health /health/\* /ready /metrics; do echo "$line" | grep -qF "$u" || fail "deny-health: must cover $u"; done
+echo "OK deny-health (operational endpoints 404 at the edge in every mode)"
+
+# --- origin cloaking, application half (task 1.2) ---
+#
+# A network allow-list admits every tenant of the same edge provider (an Azure
+# service tag covers all of Front Door, a CloudFront range covers every
+# distribution). The origin must therefore also demand a header only OUR edge
+# profile sends, refuse without it, and do so above every route.
+noverify=$(DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+echo "$noverify" | grep -qx "global edge-origin-verify" && fail "origin-verify: MUST NOT be seeded without EDGE_ORIGIN_VERIFY_HEADER/VALUE"
+withverify=$(EDGE_ORIGIN_VERIFY_HEADER=X-Azure-FDID EDGE_ORIGIN_VERIFY_VALUE=abc-123 DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+echo "$withverify" | grep -qx "global edge-origin-verify" || fail "origin-verify: MUST be seeded when header+value are set"
+# Half-configured is not configured: a header with no value must seed nothing,
+# or the origin would accept any value for it.
+half=$(EDGE_ORIGIN_VERIFY_HEADER=X-Azure-FDID DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+echo "$half" | grep -qx "global edge-origin-verify" && fail "origin-verify: a header without a value must seed nothing"
+grep -q 'rejected_code\\":403' seed-edge-routes.sh || fail "origin-verify: must refuse with 403"
+grep -q 'request-validation' seed-edge-routes.sh || fail "origin-verify: must validate the header at the edge"
+echo "OK origin-verify (header gate seeded only when fully configured)"
+
 echo "ALL PASS"

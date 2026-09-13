@@ -730,7 +730,7 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 		rows.Close()
 		if s.redis != nil {
 			for _, id := range sessionIDs {
-				if err := s.redis.Client.Set(ctx, "revoked_session:"+id, "1", revokedSessionTTL).Err(); err != nil {
+				if err := s.redis.RevocationDB().Set(ctx, "revoked_session:"+id, "1", revokedSessionTTL).Err(); err != nil {
 					log.Warn("deprovision: publish revoked-session marker failed", zap.Error(err))
 				}
 			}
@@ -743,7 +743,7 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 	// line the access token already in a leaver's browser keeps answering for
 	// the rest of its hour after the account is disabled.
 	if s.redis != nil {
-		if err := revocation.RevokeUserTokens(ctx, s.redis.Client, userID); err != nil {
+		if err := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); err != nil {
 			log.Warn("deprovision: revoke outstanding access tokens failed", zap.Error(err))
 		}
 	}

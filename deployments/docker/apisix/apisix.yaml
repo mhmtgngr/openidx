@@ -1,14 +1,30 @@
 routes:
-  # Simple CORS preflight handling
-  - uri: /.*
-    name: cors-preflight
-    methods: ["OPTIONS"]
+  # Operational endpoints never leave the cluster (global-scale plan task 0.4).
+  # /health/ready pings Postgres, Redis and Elasticsearch on every call and
+  # answers with each dependency's status and latency; /metrics is the full
+  # Prometheus surface. Public, they are both a reconnaissance feed and a free
+  # way to make the edge hammer the data tier. Kubernetes probes and the
+  # Prometheus scraper reach the pods directly; the edge answers 404 before any
+  # upstream is consulted. Priority 100 outranks every route below.
+  - uris:
+      - /health
+      - /health/*
+      - /ready
+      - /metrics
+      - /api/v1/identity/health
+      - /api/v1/governance/health
+      - /api/v1/provisioning/health
+      - /api/v1/audit/health
+      - /api/v1/admin/health
+      - /api/v1/access/health
+      - /oauth/health
+    name: deny-health-metrics
+    priority: 100
     plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With,Accept,Origin"
-        max_age: 86400
+      fault-injection:
+        abort:
+          http_status: 404
+          body: "{\"error\":\"not found\"}"
     upstream:
       type: roundrobin
       nodes:
@@ -22,11 +38,17 @@ routes:
         rate: 100
         burst: 50
         key: remote_addr
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With"
-        max_age: 3600
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 200
+        burst: 50
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
     upstream:
       type: roundrobin
       nodes:
@@ -40,11 +62,17 @@ routes:
         rate: 50
         burst: 25
         key: remote_addr
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With"
-        max_age: 3600
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 100
+        burst: 25
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
     upstream:
       type: roundrobin
       nodes:
@@ -58,11 +86,17 @@ routes:
         rate: 30
         burst: 15
         key: remote_addr
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With"
-        max_age: 3600
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 100
+        burst: 25
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
     upstream:
       type: roundrobin
       nodes:
@@ -77,15 +111,63 @@ routes:
         rate: 200
         burst: 100
         key: remote_addr
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With,Upgrade,Connection"
-        max_age: 3600
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 100
+        burst: 50
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
     upstream:
       type: roundrobin
       nodes:
         "audit-service:8004": 1
+
+  # OAuth/OIDC PROTOCOL endpoints (task 0.6): token, introspection, revocation,
+  # userinfo, device flow, dynamic registration. A public client (PKCE) on a
+  # relying party's origin must be able to call these, and there is no origin
+  # list an IdP could keep for it — that is what client registration is for.
+  # "*" never carries cookies. Outranks the /oauth/* route below, which keeps
+  # the tenant origin list for the session-carrying login/MFA/consent pages.
+  - uris:
+      - /oauth/token
+      - /oauth/introspect
+      - /oauth/revoke
+      - /oauth/userinfo
+      - /oauth/device_authorization
+      - /oauth/register
+    name: oauth-protocol
+    priority: 5
+    plugins:
+      cors:
+        allow_origins: "*"
+        allow_methods: "GET,POST,OPTIONS"
+        allow_headers: "Content-Type,Authorization,DPoP"
+        max_age: 86400
+      limit-req:
+        rate: 100
+        burst: 50
+        key: remote_addr
+      limit-conn:
+        conn: 200
+        burst: 50
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
+    upstream:
+      type: roundrobin
+      nodes:
+        "oauth-service:8006": 1
+      retries: 0
+      timeout:
+        connect: 3
+        send: 10
+        read: 10
 
   # OAuth/OIDC service - authorization and token endpoints
   - uri: /oauth/*
@@ -95,29 +177,57 @@ routes:
         rate: 100
         burst: 50
         key: remote_addr
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With,Accept,Origin"
-        max_age: 3600
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 200
+        burst: 50
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
     upstream:
       type: roundrobin
       nodes:
         "oauth-service:8006": 1
+      # ISSUE plane: never retry (a retry under load multiplies the attack it
+      # is failing under) and give up fast so a stalled backend sheds instead
+      # of queueing.
+      retries: 0
+      timeout:
+        connect: 3
+        send: 10
+        read: 10
 
   # OIDC discovery endpoints
   - uri: /.well-known/*
     name: oidc-discovery
     plugins:
+      # Protocol endpoint: any relying-party origin may read discovery and the
+      # JWKS. Route-level cors overrides the global tenant list; "*" can never
+      # carry cookies, so this is the standard IdP posture (task 0.6).
+      cors:
+        allow_origins: "*"
+        allow_methods: "GET,OPTIONS"
+        allow_headers: "Content-Type,Accept"
+        max_age: 86400
       limit-req:
         rate: 50
         burst: 25
         key: remote_addr
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,OPTIONS"
-        allow_headers: "Content-Type,Accept"
-        max_age: 86400
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 1000
+        burst: 200
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
     upstream:
       type: roundrobin
       nodes:
@@ -131,11 +241,17 @@ routes:
         rate: 100
         burst: 50
         key: remote_addr
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Forwarded-Host,X-Forwarded-Uri,X-Forwarded-Method,X-Forwarded-For,Cookie"
-        max_age: 3600
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 200
+        burst: 50
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
     upstream:
       type: roundrobin
       nodes:
@@ -144,12 +260,6 @@ routes:
   # Access proxy auth flow
   - uri: /access/.auth/*
     name: access-auth-flow
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie"
-        max_age: 3600
     upstream:
       type: roundrobin
       nodes:
@@ -233,11 +343,17 @@ routes:
         rate: 100
         burst: 50
         key: remote_addr
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With"
-        max_age: 3600
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 100
+        burst: 25
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
     upstream:
       type: roundrobin
       nodes:
@@ -251,11 +367,17 @@ routes:
         rate: 50
         burst: 25
         key: remote_addr
-      cors:
-        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
-        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With,Accept,Origin"
-        max_age: 3600
+      # Per-source concurrent-connection ceiling (task 0.3). limit-req above
+      # bounds the RATE; this bounds how many requests one source may hold
+      # OPEN at once, which is what a slow-body or long-poll flood spends.
+      # Keyed on remote_addr AFTER the real-ip global rule, so it is the client.
+      limit-conn:
+        conn: 100
+        burst: 25
+        default_conn_delay: 0.1
+        key_type: var
+        key: remote_addr
+        rejected_code: 429
     upstream:
       type: roundrobin
       nodes:
@@ -265,4 +387,32 @@ global_rules:
   - id: 1
     plugins:
       request-id: {}
+      # One CORS policy for the tenant-facing surface (task 0.6). This list
+      # used to be copied into eleven routes; copies drift, and a tenant domain
+      # added to ten of them is a console that works on every page but one.
+      # The cors plugin answers OPTIONS preflight itself, so the old catch-all
+      # preflight route is gone too. Protocol endpoints override this with "*"
+      # at route level (oauth-protocol, oidc-discovery).
+      cors:
+        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
+        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
+        allow_headers: "Content-Type,Authorization,X-Requested-With,Accept,Origin,Upgrade,Connection,X-Forwarded-Host,X-Forwarded-Uri,X-Forwarded-Method,X-Forwarded-For,Cookie"
+        max_age: 3600
+      # Client-IP chain (global-scale plan task 0.2). In this stack APISIX is
+      # not the TLS edge: tls-proxy (nginx) terminates TLS and forwards with
+      # X-Forwarded-For, so without this plugin every limit-req key below is
+      # tls-proxy's container address and all clients share one bucket. The
+      # plugin rewrites remote_addr from X-Forwarded-For, walking right-to-left
+      # past trusted hops. trusted_addresses is the private space the compose
+      # network lives in — the only hops that can reach APISIX here. On a
+      # public edge (deployments/apisix-edge) the list is the edge provider's
+      # published CIDRs instead, never a private range and never 0.0.0.0/0.
+      real-ip:
+        source: http_x_forwarded_for
+        recursive: true
+        trusted_addresses:
+          - 127.0.0.0/8
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
 #END

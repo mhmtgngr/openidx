@@ -1,0 +1,264 @@
+{{- if .Values.pgcat.enabled }}
+{{- /*
+  INTERLOCK (global-scale plan task 2.2). A transaction pooler in front of
+  Postgres is safe ONLY when the tenant scope is transaction-local. With
+  RLS_MODE=session the scope is stamped on the connection at checkout, the
+  pooler hands that backend to the next client, and the next tenant reads the
+  previous tenant's rows -- measured, not theorised:
+  docs/evidence/2026-09-13-rls-transaction-pooling.md.
+
+  So the chart refuses to render rather than letting a values file arrive at
+  that combination. There is no override: an operator who wants the pooler sets
+  config.rlsMode=local, which is the thing that makes it safe.
+*/}}
+{{- if not (gt (int .Values.pgcat.preparedStatementsCacheSize) 0) }}
+{{- fail "pgcat.preparedStatementsCacheSize must be greater than 0. pgx sends every query as a prepared statement; with the pooler's cache disabled (pgcat's default is 0) each one fails with SQLSTATE 42P05 -- see docs/evidence/2026-09-13-rls-transaction-pooling.md section 3.1." }}
+{{- end }}
+{{- if ne (.Values.config.rlsMode | default "session") "local" }}
+{{- fail "pgcat.enabled=true requires config.rlsMode=\"local\". A transaction pooler with RLS_MODE=session hands one tenant's session scope to the next client (see docs/evidence/2026-09-13-rls-transaction-pooling.md). Set config.rlsMode=local, roll the services, and only then enable the pooler." }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openidx.fullname" . }}-pgcat
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgcat
+data:
+  pgcat.toml: |
+    [general]
+    host = "0.0.0.0"
+    port = {{ .Values.pgcat.port }}
+    # Health checks and failover behaviour. A pooler that hides a dead primary
+    # is worse than no pooler: it turns a failover into a stall.
+    healthcheck_timeout = 1000
+    healthcheck_delay = 30000
+    ban_time = 60
+    server_lifetime = 3600000
+    worker_threads = {{ .Values.pgcat.workerThreads }}
+
+    # Once the pooler is in front of Postgres it OWNS the connection budget, so
+    # a blind pooler means nobody can see the wall coming. Off in pgcat's own
+    # defaults; on here, and scraped by the ServiceMonitor below.
+    enable_prometheus_exporter = true
+    prometheus_exporter_port = {{ .Values.pgcat.metricsPort }}
+
+    admin_username = "pgcat"
+    admin_password = "{{ required "pgcat.adminPassword is required when pgcat.enabled" .Values.pgcat.adminPassword }}"
+
+    [pools.{{ .Values.pgcat.databaseName }}]
+    # transaction is the whole point: it is what decouples the fleet's client
+    # connections from Postgres backends. It is also what makes RLS_MODE=local
+    # mandatory (see the interlock above).
+    pool_mode = "transaction"
+    default_role = "primary"
+    query_parser_enabled = false
+    primary_reads_enabled = true
+
+    # pgx keeps a prepared-statement cache. A pooler that does not track
+    # prepared statements fails every query with
+    #   ERROR: prepared statement "stmtcache_..." already exists (SQLSTATE 42P05)
+    # long before RLS is reached. Measured on PgBouncer 1.22 and recorded in
+    # docs/evidence/2026-09-13-rls-transaction-pooling.md; pgcat has the same
+    # constraint.
+    #
+    # This key is POOL-level, not [general] -- and pgcat's config parser does
+    # not reject unknown keys, so writing it in the wrong section is silently
+    # ignored and the default applies. The default is 0, which means DISABLED.
+    # A zero here is therefore a fleet that cannot run a single query, so the
+    # chart refuses to render one (values.yaml pins it, the check is below).
+    prepared_statements_cache_size = {{ .Values.pgcat.preparedStatementsCacheSize }}
+
+    # DISCARD ALL between transactions. Keep it on -- but note what it is NOT:
+    # it is not the reason the tenant scope is safe here. PgBouncer does not run
+    # its reset query in transaction mode by default, which is how the leak in
+    # the evidence note was measured, and this flag can be turned off for
+    # throughput with nothing in the chart noticing. RLS_MODE=local holds
+    # whatever the pooler does; this is only a second belt.
+    cleanup_server_connections = true
+
+    [pools.{{ .Values.pgcat.databaseName }}.users.0]
+    username = "{{ .Values.pgcat.username }}"
+    password = "{{ required "pgcat.password is required when pgcat.enabled" .Values.pgcat.password }}"
+    # The backend budget for the WHOLE fleet, not per service. This is the
+    # number task 2.2 exists to make constant: without a pooler it is
+    # services x replicas x DB_MAX_CONNS and autoscaling multiplies it.
+    pool_size = {{ .Values.pgcat.poolSize }}
+    min_pool_size = {{ .Values.pgcat.minPoolSize }}
+    server_lifetime = 3600000
+
+    [pools.{{ .Values.pgcat.databaseName }}.shards.0]
+    servers = [["{{ required "pgcat.postgresHost is required when pgcat.enabled" .Values.pgcat.postgresHost }}", {{ .Values.pgcat.postgresPort }}, "primary"]]
+    database = "{{ .Values.pgcat.databaseName }}"
+---
+# The DSN the request-serving services use while the pooler is enabled. It is
+# rendered here rather than in secrets.yaml because it exists only with the
+# pooler, and because it must work for an external database too (secrets.yaml's
+# plaintext block is gated on the bundled one).
+#
+# The credential is the POOL user, not the database owner: a client
+# authenticates to pgcat, and pgcat holds its own upstream credential. Both are
+# openidx_app by default -- NOSUPERUSER, NOBYPASSRLS, the role the FORCE RLS
+# belt is actually enforced against.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "openidx.fullname" . }}-pgcat-dsn
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgcat
+type: Opaque
+stringData:
+  DATABASE_URL: "postgres://{{ .Values.pgcat.username }}:{{ required "pgcat.password is required when pgcat.enabled" .Values.pgcat.password }}@{{ include "openidx.fullname" . }}-pgcat:{{ .Values.pgcat.port }}/{{ .Values.pgcat.databaseName }}?sslmode={{ .Values.pgcat.sslMode | default "disable" }}"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openidx.fullname" . }}-pgcat
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgcat
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgres
+      port: {{ .Values.pgcat.port }}
+      targetPort: postgres
+      protocol: TCP
+    - name: metrics
+      port: {{ .Values.pgcat.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    {{- include "openidx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: pgcat
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openidx.fullname" . }}-pgcat
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgcat
+spec:
+  # Two, never one: every service's every query goes through this. A single
+  # replica would be a new single point of failure in front of the database,
+  # which is the opposite of what the pooler is for. Each replica keeps its own
+  # backend pool, so the Postgres budget is replicas x pool_size -- size
+  # pool_size with that in mind.
+  replicas: {{ .Values.pgcat.replicaCount }}
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: pgcat
+  template:
+    metadata:
+      labels:
+        {{- include "openidx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: pgcat
+        app.kubernetes.io/part-of: openidx
+      annotations:
+        # Restart the pooler when its own configuration changes. Computed from the
+        # values that feed pgcat.toml -- including it from this template would
+        # recurse, since the Deployment lives in the same file as the ConfigMap.
+        checksum/config: {{ toYaml .Values.pgcat | sha256sum }}
+    spec:
+      {{- include "openidx.topologySpread" (dict "ctx" . "component" "pgcat") | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podAntiAffinity.enabled }}
+      # Spread the replicas across nodes. Two poolers on one node is one node
+      # away from every service losing its database.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: {{ .Values.podAntiAffinity.weight | default 100 }}
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: pgcat
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
+      containers:
+        - name: pgcat
+          image: "{{ .Values.pgcat.image.repository }}:{{ .Values.pgcat.image.tag }}"
+          imagePullPolicy: {{ .Values.pgcat.image.pullPolicy | default "IfNotPresent" }}
+          # The image declares CMD ["pgcat"] and no ENTRYPOINT. `args` alone
+          # REPLACES that command, so the kubelet would try to exec the TOML
+          # file. Both halves, explicitly.
+          command: ["pgcat"]
+          args: ["/etc/pgcat/pgcat.toml"]
+          ports:
+            - name: postgres
+              containerPort: {{ .Values.pgcat.port }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.pgcat.metricsPort }}
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: postgres
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: postgres
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.pgcat.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/pgcat
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "openidx.fullname" . }}-pgcat
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "openidx.fullname" . }}-pgcat
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgcat
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: pgcat
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled }}
+---
+# Its own monitor: the platform ServiceMonitor selects the Go services by
+# component, and pgcat is neither one of them nor on their `http` port.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "openidx.fullname" . }}-pgcat
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgcat
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: pgcat
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+{{- end }}
+{{- end }}

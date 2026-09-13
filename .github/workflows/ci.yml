@@ -71,6 +71,8 @@ jobs:
         run: bash scripts/check-shell-prose.test.sh
       - name: Scan shell scripts
         run: bash scripts/check-shell-prose.sh
+      - name: DDoS game-day scenarios validate (global-scale plan task 1.5)
+        run: bash scripts/ddos-drill.test.sh
       - name: Verify the docs-drift guard can go red
         # Same mutation discipline: it must flag a citation that does not
         # resolve AND stay green on globs, brace sets, elisions and Go symbols
@@ -278,6 +280,107 @@ jobs:
       - uses: actions/checkout@v7
       - name: Run the README quick start and check compose resolves
         run: bash scripts/check-first-run.test.sh
+
+  # The tenant boundary is the one thing this product cannot get wrong, and
+  # task 2.1 changes how it is transported to Postgres. These tests need a REAL
+  # Postgres (the property under test is that set_config(..., true) resets at
+  # COMMIT and set_config(..., false) does not) and a role that does NOT bypass
+  # RLS -- as a superuser every assertion would pass with the belt cut.
+  rls-isolation:
+    name: Tenant isolation (RLS_MODE=session and local)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: openidx_rls
+          POSTGRES_PASSWORD: test_secret
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # A non-superuser, non-BYPASSRLS role: production's openidx_app shape.
+      - name: Create the unprivileged application role
+        env:
+          PGPASSWORD: test_secret
+        run: |
+          psql -h 127.0.0.1 -p 5433 -U postgres -d openidx_rls -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE openidx_app LOGIN PASSWORD 'apppw';
+          GRANT ALL ON SCHEMA public TO openidx_app;
+          ALTER DATABASE openidx_rls OWNER TO openidx_app;
+          SQL
+
+      # Negative control first: pointed at the superuser, the suite must REFUSE
+      # to run. A row-level-security test that a superuser can pass is not a
+      # test, and this is the shape in which it would silently become one.
+      - name: The suite refuses a role that bypasses RLS
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          if go test ./internal/common/database/ -run 'TestRLSLocal_NoTenantContextYieldsNoRows' -count=1; then
+            echo "the isolation suite passed as a superuser; it proves nothing in that configuration"
+            exit 1
+          fi
+          echo "negative control ok: the suite refuses a bypassing role"
+
+      # 'RLS' alone missed the ScopedPool suite entirely -- TestScopedPool_*
+      # does not contain those three letters, so the tests proving the ~1,950
+      # unedited call sites are scoped (task 2.1b) ran only on a developer's
+      # machine. Same for the replica fallback (task 2.3). Name them.
+      #
+      # -run matching nothing exits 0, so a regex that stops matching is a
+      # silent false green; the step below fails when a name disappears.
+      - name: Tenant isolation, scoped pool and replica fallback
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/common/database/ \
+            -run 'RLS|ScopedPool|ReaderFallback|ReplicaBreaker|IsReplicaInfraError' \
+            -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestRLSLocal_ConcurrentTenantsNeverCross \
+                      TestScopedPool_UneditedCallSitesAreScoped \
+                      TestScopedPool_ReaderIsScopedToo \
+                      TestReaderFallback_deadReplicaStillServesReads; do
+            # The trailing space matters: without it a test renamed to
+            # "<name>X" still matches as a prefix and the guard reads green.
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
+      # The per-plane login roles (task 2.4, migration v189). These need a
+      # SUPERUSER connection, because CREATE ROLE is exactly what the
+      # application's own role cannot do -- which is the point of v53 and the
+      # reason the chart provisions roles from a bootstrap hook.
+      #
+      # The cancellation test sleeps 15s against a 10s ceiling on purpose, so
+      # this step is slower than it looks; it is the acceptance criterion of
+      # 2.4 and there is no faster way to prove a server-side timeout fires.
+      - name: Per-plane roles inherit the tenant belt and bound their queries
+        env:
+          TEST_POSTGRES_SUPERUSER_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/migrations/ -run 'V189' -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestV189PlaneRolesInheritTheTenantBelt \
+                      TestV189AdminQueryIsCancelledAndIssueIsNot \
+                      TestV189IdleTransactionsAreClosedOut; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
 
   ui-safety-guards:
     name: UI safety guards
@@ -622,8 +725,8 @@ jobs:
           # elevated, revoked or must be re-proved. Small enough to share a
           # runner, load-bearing enough that they must not share one with
           # something unrelated.
-          - package: internal/abac+appaccess+jitgrant+revocation+stepup
-            paths: ./internal/abac/... ./internal/appaccess/... ./internal/jitgrant/... ./internal/revocation/... ./internal/stepup/...
+          - package: internal/abac+appaccess+botgate+jitgrant+revocation+stepup
+            paths: ./internal/abac/... ./internal/appaccess/... ./internal/botgate/... ./internal/jitgrant/... ./internal/revocation/... ./internal/stepup/...
           - package: internal/vault+credentials+signingkeys
             paths: ./internal/vault/... ./internal/credentials/... ./internal/signingkeys/...
           - package: internal/ai+api+backup+intelligence+scimclient+selfheal+sms
@@ -1155,10 +1258,16 @@ jobs:
           version: v2.13.2
 
   # orgscope is the v2.0-multi-tenancy static helper: it walks
-  # internal/ looking for SQL statements that target a scoped table
-  # without an org_id mention. As of v1.7.0 every service is org-scope
-  # aware (0 findings), so this is a HARD GATE: the job runs the tool
-  # with -fail and the build goes red on any reintroduced unscoped query.
+  # internal/ and cmd/ looking for SQL statements that target a scoped table
+  # without an org_id mention, and for the tenant belt's deliberate exit --
+  # ScopedPool.Raw() -- being taken on a tenant path (tools/orgscope/rawpool.go).
+  # As of v1.7.0 every service is org-scope aware (0 findings), so this is a
+  # HARD GATE: the job runs the tool with -fail and the build goes red on any
+  # reintroduced unscoped query.
+  #
+  # cmd/ is in scope because that is where the legitimate Raw() handoffs live
+  # (migrations, pool statistics, the install-wide signing-key store); a new one
+  # there is exactly as invisible as one in internal/.
   orgscope:
     name: Org-scope lint
     runs-on: ubuntu-latest
@@ -1178,7 +1287,7 @@ jobs:
       - name: Run orgscope (hard gate)
         run: |
           set +e
-          go run ./tools/orgscope -fail ./internal > orgscope.out 2> orgscope.err
+          go run ./tools/orgscope -fail ./internal ./cmd > orgscope.out 2> orgscope.err
           rc=$?
           set -e
           count=$(tail -n1 orgscope.err 2>/dev/null | grep -oE '^orgscope: [0-9]+' | awk '{print $2}' || echo "?")
@@ -1194,7 +1303,7 @@ jobs:
             echo "$(tail -n1 census.err)"
             echo
             if [ "$rc" -ne 0 ]; then
-              echo "❌ **Gate failed** — either a table is not classified (see tools/orgscope/scoped.go) or a query touching a tenant-scoped table does not filter/populate org_id (or carry an //orgscope:ignore <reason>)."
+              echo "❌ **Gate failed** — a table is not classified (see tools/orgscope/scoped.go), or a query touching a tenant-scoped table does not filter/populate org_id, or a tenant path went through ScopedPool.Raw() (see tools/orgscope/rawpool.go). Each has an //orgscope:ignore <reason> escape; a Raw() handoff can also be added to rawHandoffAllowed with its reason."
             else
               echo "✅ Every table is classified and no unscoped tenant query was found."
             fi
@@ -2361,6 +2470,7 @@ jobs:
       - no-internal-topology
       - orgscope
       - posturevocab
+      - rls-isolation
       - routereach
       - selfheal
       - shell-prose

@@ -26,6 +26,13 @@ jobs:
         dir:
           - deployments/terraform
           - deployments/terraform/bootstrap
+          # Edge (global-scale plan task 1.1): the root selects the provider
+          # and exercises all three modules, which also covers edge-aws (it
+          # needs the root's aliased us-east-1 provider). The two modules that
+          # validate standalone are checked on their own as well.
+          - deployments/terraform/edge
+          - deployments/terraform/modules/edge-cloudflare
+          - deployments/terraform/modules/edge-azure
     steps:
       - uses: actions/checkout@v7
 
@@ -40,8 +47,17 @@ jobs:
 
       # -backend=false installs providers/modules without touching the real
       # S3 backend, so validate runs without AWS credentials.
+      #
+      # Retried for the same reason `helm dependency build` is (scripts/
+      # ci-retry.sh): this step downloads provider binaries from someone else's
+      # CDN, and it has died with
+      #   Error while installing cloudflare/cloudflare v4.52.9: ...
+      #   read tcp ...:443: read: connection reset by peer
+      # on a commit that touched no Terraform. Nothing in this repository can
+      # make that CDN answer, and ci-retry.sh still exits with terraform's own
+      # status once it gives up -- a slower red, never a false green.
       - name: Init (no backend)
-        run: terraform init -backend=false -input=false
+        run: bash "${{ github.workspace }}/scripts/ci-retry.sh" 3 5 -- terraform init -backend=false -input=false
         working-directory: ${{ matrix.dir }}
 
       - name: Validate

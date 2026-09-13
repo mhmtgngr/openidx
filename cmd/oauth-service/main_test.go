@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -376,44 +377,42 @@ func TestOAuthService_MiddlewareConfiguration(t *testing.T) {
 	})
 }
 
-// TestOAuthService_CORSConfiguration tests CORS configuration
+// TestOAuthService_CORSConfiguration pins the split CORS policy the service
+// mounts (middleware.OAuthCORS): protocol endpoints answer "*" for any origin
+// because a public client on a relying party's origin must reach them and "*"
+// can never carry cookies; session-carrying UI paths follow the configured
+// origin list and refuse anything else.
 func TestOAuthService_CORSConfiguration(t *testing.T) {
-	t.Run("OAuth service uses wildcard CORS for development", func(t *testing.T) {
-		// OAuth service has special CORS handling for development
-		// It sets wildcard headers in main.go
-		router := gin.New()
+	router := gin.New()
+	router.Use(middleware.OAuthCORS(true, "https://console.example.com"))
+	router.Any("/*any", func(c *gin.Context) { c.String(200, "ok") })
 
-		// Simulate the OAuth CORS middleware
-		router.Use(func(c *gin.Context) {
-			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-			c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-			if c.Request.Method == "OPTIONS" {
-				c.AbortWithStatus(204)
-				return
-			}
-
-			c.Next()
-		})
-
-		router.GET("/test", func(c *gin.Context) {
-			c.String(200, "ok")
-		})
-
-		// Test preflight request
+	do := func(method, path, origin string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("OPTIONS", "/test", nil)
+		req, _ := http.NewRequest(method, path, nil)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
 		router.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("token endpoint is wildcard for a relying party on another origin", func(t *testing.T) {
+		w := do("OPTIONS", "/oauth/token", "https://rp.example")
 		assert.Equal(t, 204, w.Code)
 		assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
-
-		// Test actual request
-		w = httptest.NewRecorder()
-		req, _ = http.NewRequest("GET", "/test", nil)
-		router.ServeHTTP(w, req)
+		w = do("POST", "/oauth/token", "https://rp.example")
 		assert.Equal(t, 200, w.Code)
 		assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
+		assert.Empty(t, w.Header().Get("Access-Control-Allow-Credentials"))
+	})
+
+	t.Run("login page follows the configured list", func(t *testing.T) {
+		w := do("POST", "/oauth/login", "https://console.example.com")
+		assert.Equal(t, 200, w.Code)
+		assert.Equal(t, "https://console.example.com", w.Header().Get("Access-Control-Allow-Origin"))
+		w = do("POST", "/oauth/login", "https://rp.example")
+		assert.Equal(t, 403, w.Code, "a session-carrying path never reflects an unlisted origin")
 	})
 }
 

@@ -1,6 +1,7 @@
-// Command orgscope is the tenant-boundary lint. It answers two questions:
-// is every table in the schema classified, and does every query against a
-// tenant table carry its org_id.
+// Command orgscope is the tenant-boundary lint. It answers three questions:
+// is every table in the schema classified, does every query against a tenant
+// table carry its org_id, and does any tenant path take the belt's deliberate
+// exit -- ScopedPool.Raw().
 //
 // Usage:
 //
@@ -37,6 +38,17 @@
 // The directive may sit on the same line as the SQL or on the line directly
 // above the statement. A reason-less directive does not suppress anything (and
 // is reported to stderr), so an exception can never slip in unexplained.
+//
+// RAW POOLS. Task 2.1b moved the tenant scope into the type of
+// PostgresDB.Pool, and ScopedPool.Raw() is the way out for the cases that
+// genuinely have no tenant. rawpool.go checks that the exit is only taken
+// where it is safe: a tenant table reached through Raw(), a database call
+// through Raw() whose SQL this tool cannot read, or an unscoped pool handed to
+// a function that is not on rawHandoffAllowed. The failure it guards is not an
+// error but a silence -- in RLS_MODE=local an unscoped query returns zero rows
+// under FORCE RLS, so a user lookup answers "no such user". Note that adding
+// org_id to the SQL does NOT clear these findings: the policy compares it to
+// current_setting('app.org_id'), which is not set.
 //
 // REGISTERS. scoped.go also carries needsScoping, needsBelt and
 // predicateAuditPending: findings that predate the inversion, each with what

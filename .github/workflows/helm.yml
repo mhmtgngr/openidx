@@ -97,12 +97,141 @@ jobs:
           done
           echo "every service honours replicaCount 0"
 
+      # Origin cloaking (global-scale plan task 1.2): the ingress must refuse a
+      # caller that does not carry the edge profile's own header. A network
+      # allow-list is not enough on its own -- an Azure service tag admits
+      # every tenant's Front Door -- so this is what makes the origin OURS.
+      # Three properties, each a way it has silently failed elsewhere:
+      # unset renders no annotation (a local cluster still works), set renders
+      # the refusal, and half-set fails the render instead of accepting any
+      # value for the header.
+      - name: The ingress enforces origin cloaking when configured
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+          }
+          # grep -q against a here-string, NOT `echo "$x" | grep -q`.
+          # `grep -q` exits at the first match and closes the pipe; `echo` then
+          # dies on SIGPIPE, and `set -o pipefail` (above) turns that into a
+          # failed pipeline -- so the assertion FAILS precisely because it
+          # matched. It is a race against how much output follows the match, so
+          # it passed for months and then failed on every run once the chart
+          # grew. A here-string has no pipe and no race.
+          if grep -q 'configuration-snippet' <<<"$(render)"; then
+            echo "origin-verify annotation rendered with no edge.originVerify.header set"; exit 1
+          fi
+          got=$(render --set edge.originVerify.header=X-Azure-FDID \
+                       --set edge.originVerify.value=a-profile-guid)
+          grep -q 'if ($http_x_azure_fdid != "a-profile-guid")' <<<"$got" \
+            || { echo "origin-verify check did not render"; exit 1; }
+          grep -q 'return 403;' <<<"$got" || { echo "origin-verify does not refuse"; exit 1; }
+          if render --set edge.originVerify.header=X-Azure-FDID >/dev/null 2>&1; then
+            echo "a header with no value rendered anyway; the origin would accept any value"; exit 1
+          fi
+          echo "ingress enforces origin cloaking, and refuses to render half-configured"
+
       # The runtime role openidx_app has to exist before migration v53 looks
       # for it, and the migration Job's own role cannot create it. That is
       # ordering, and ordering here is one annotation: a bootstrap hook at a
       # lower weight than the migration hook. Helm completes a weight before
       # starting the next, so getting these two numbers wrong is the whole
       # install failing -- silently, in a rendered manifest that looks fine.
+      # The transaction pooler (global-scale plan task 2.2). Everything about it
+      # is a combination that is fine alone and wrong together, which is exactly
+      # what a rendered manifest hides:
+      #   - a pooler in front of session-scoped tenant state hands one tenant's
+      #     scope to the next client (measured:
+      #     docs/evidence/2026-09-13-rls-transaction-pooling.md),
+      #   - a pooler with no prepared-statement cache fails every pgx query,
+      #   - a pooler nothing is routed to is a Deployment that does nothing,
+      #   - a pooler the MIGRATION is routed through breaks the install, because
+      #     an advisory lock is session-scoped.
+      # Each is asserted below rather than left to a comment.
+      - name: The transaction pooler is safe by construction
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+          }
+          safe=(--set config.rlsMode=local --set pgcat.enabled=true
+                --set pgcat.password=render-only --set pgcat.adminPassword=render-only
+                --set pgcat.postgresHost=openidx-postgresql)
+
+          # Off by default, and off means absent -- not a scaled-to-zero Deployment.
+          # Here-string, not a pipe: see the note in the origin-cloaking step.
+          if grep -q 'openidx-pgcat' <<<"$(render)"; then
+            echo "the pooler rendered with pgcat.enabled unset"; exit 1
+          fi
+
+          # Enabled while the tenant scope is still session-scoped: refuse, and
+          # say which knob makes it safe.
+          if out=$(render --set pgcat.enabled=true --set pgcat.password=x \
+                          --set pgcat.adminPassword=x --set pgcat.postgresHost=h 2>&1); then
+            echo "the pooler rendered with config.rlsMode=session"; exit 1
+          fi
+          grep -q 'config.rlsMode' <<<"$out" \
+            || { echo "the refusal does not name config.rlsMode: $out"; exit 1; }
+
+          # A zero prepared-statement cache is pgcat's own default and it is a
+          # fleet that cannot run one query. Refuse that too.
+          if render "${safe[@]}" --set pgcat.preparedStatementsCacheSize=0 >/dev/null 2>&1; then
+            echo "rendered with the prepared-statement cache disabled"; exit 1
+          fi
+
+          render "${safe[@]}" > /tmp/render-pgcat.yaml
+          python3 - /tmp/render-pgcat.yaml <<'PYEOF'
+          import sys, tomllib, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+
+          def containers(o, out):
+              if isinstance(o, dict):
+                  out += (o.get("containers") or []) + (o.get("initContainers") or [])
+                  for v in o.values():
+                      containers(v, out)
+              elif isinstance(o, list):
+                  for v in o:
+                      containers(v, out)
+
+          pooled, direct = set(), set()
+          for d in docs:
+              cs = []
+              containers(d, cs)
+              for c in cs:
+                  names = [e["name"] for e in (c.get("env") or [])]
+                  (pooled if "DATABASE_URL" in names else direct).add((d["kind"], d["metadata"]["name"]))
+
+          services = {("Deployment", f"openidx-{s}") for s in (
+              "identity-service", "governance-service", "provisioning-service",
+              "audit-service", "admin-api", "oauth-service", "gateway-service",
+              "access-service")}
+          missing = services - pooled
+          assert not missing, f"these services still talk straight to Postgres: {sorted(missing)}"
+
+          for job in (("Job", "openidx-migrate"), ("Job", "openidx-db-bootstrap")):
+              assert job not in pooled, f"{job[1]} was routed through the pooler; its session state would not survive"
+
+          cm = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "openidx-pgcat")
+          cfg = tomllib.loads(cm["data"]["pgcat.toml"])
+          pool = cfg["pools"]["openidx"]
+          assert pool["pool_mode"] == "transaction", pool["pool_mode"]
+          # Pool-level, not [general]: pgcat ignores unknown keys silently, so a
+          # cache size in the wrong section reads as "configured" and is not.
+          size = pool.get("prepared_statements_cache_size", 0)
+          assert size > 0, "prepared_statements_cache_size is missing from the POOL section"
+          assert "prepared_statements_cache_size" not in cfg["general"], \
+              "prepared_statements_cache_size is in [general], where pgcat ignores it"
+          print(f"pooler routes {len(services)} services, leaves the Jobs direct, "
+                f"transaction mode, statement cache {size}")
+          PYEOF
+
+
       - name: The bootstrap hook runs before the migration hook
         run: |
           set -euo pipefail

@@ -88,6 +88,11 @@ func main() {
 	}
 
 	// Initialize database connection
+	// Tenant scope transport (global-scale plan task 2.1): RLS_MODE=local makes
+	// the scope transaction-local (SET LOCAL) so a transaction pooler can
+	// multiplex safely; the default "session" is today's checkout stamping.
+	database.SetRLSMode(database.ParseRLSMode(cfg.RLSMode))
+
 	db, err := database.NewPostgres(cfg.DatabaseURL, database.PostgresTLSConfig{
 		SSLMode:     cfg.DatabaseSSLMode,
 		SSLRootCert: cfg.DatabaseSSLRootCert,
@@ -110,7 +115,7 @@ func main() {
 
 	// Initialize Redis connection
 	// Export DB pool saturation gauges (openidx_db_connections{state=...}).
-	metrics.NewTracedPool(db.Pool, "oauth-service").StartPoolStatsCollector(context.Background())
+	metrics.NewTracedPool(db.Pool.Raw(), "oauth-service").StartPoolStatsCollector(context.Background())
 
 	redis, err := database.NewRedisFromConfig(database.RedisConfig{
 		URL:                cfg.RedisURL,
@@ -124,6 +129,8 @@ func main() {
 		TLSCert:            cfg.RedisTLSCert,
 		TLSKey:             cfg.RedisTLSKey,
 		TLSSkipVerify:      cfg.RedisTLSSkipVerify,
+		RateLimitURL:       cfg.RedisRateLimitURL,
+		RevocationURL:      cfg.RedisRevocationURL,
 	})
 	if err != nil {
 		log.Fatal("Failed to connect to Redis", zap.Error(err))
@@ -142,32 +149,35 @@ func main() {
 	// (bypasses device-trust known-IP auto-approve, geo-block, spoofs audit IPs).
 	middleware.ConfigureTrustedProxies(router, log)
 	router.Use(gin.Recovery())
+	// Body cap (token, login and SAML POST bindings are all well under 1 MiB); oversize is 413 before any handler runs (task 0.3).
+	router.Use(middleware.MaxBodySize(1 << 20))
 	router.Use(otelgin.Middleware("oauth-service"))
 	router.Use(middleware.SecurityHeadersForEnv(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
 	if cfg.EnableRateLimit {
-		router.Use(middleware.DistributedRateLimit(redis.Client, middleware.RateLimitConfig{
+		router.Use(middleware.DistributedRateLimit(redis.RateLimitDB(), middleware.RateLimitConfig{
 			Requests:     cfg.RateLimitRequests,
 			Window:       time.Duration(cfg.RateLimitWindow) * time.Second,
 			AuthRequests: cfg.RateLimitAuthRequests,
 			AuthWindow:   time.Duration(cfg.RateLimitAuthWindow) * time.Second,
 			PerUser:      cfg.RateLimitPerUser,
+			// Ride out a Redis restart/failover on a bounded local counter
+			// before failing closed (task 0.7).
+			LocalFallbackMax: time.Duration(cfg.RateLimitLocalFallbackMax) * time.Second,
+			ReplicaCountHint: cfg.RateLimitReplicaHint,
 		}, log))
 	}
 
-	// Enable CORS for OAuth endpoints
-	router.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-control-Allow-Headers", "Content-Type, Authorization")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
-	})
+	// CORS (global-scale plan task 0.6). This used to write
+	// Access-Control-Allow-Origin: * on every response, which contradicted the
+	// production gate that refuses a wildcard CORS_ALLOWED_ORIGINS: the gate
+	// held for seven services and this one wrote the wildcard by hand. The
+	// protocol endpoints (token, introspect, revoke, userinfo, discovery, JWKS,
+	// device flow, DCR) keep "*" by design — a public client on a relying
+	// party's origin must reach them and "*" can never carry cookies. The
+	// session-carrying UI paths (login, MFA, consent, step-up) follow the
+	// configured origin list like every other service.
+	router.Use(middleware.OAuthCORS(cfg.OAuthProtocolCORSWildcard, cfg.GetCORSOrigins()...))
 	router.Use(middleware.PrometheusMetrics("oauth-service"))
 	router.Use(api.StandardVersionMiddleware())
 
@@ -293,13 +303,16 @@ func main() {
 		port = 8006
 	}
 
-	httpServer := &http.Server{
+	// Hardened listener: ReadHeaderTimeout 5s, 16 KiB header cap and 100 HTTP/2
+	// streams per connection come from server.NewHTTP and cannot be disabled
+	// here (global-scale plan task 0.3).
+	httpServer := server.NewHTTP(server.HTTPOptions{
 		Addr:         fmt.Sprintf("%s:%d", cfg.BindAddr, port),
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
-	}
+	})
 
 	// Build shutdownables list
 	var shutdownables []server.Shutdownable

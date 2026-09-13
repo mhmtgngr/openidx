@@ -38,7 +38,12 @@ var publicQueryParams = map[string]string{
 	// authorises anything; they are the shape of the page being asked for.
 	"page": "pagination", "page_size": "pagination", "limit": "pagination",
 	"offset": "pagination", "count": "pagination", "startIndex": "pagination (SCIM)",
-	"start": "time window", "end": "time window", "start_date": "time window",
+	// The keyset cursor (task 2.5). Opaque, but not secret: it encodes a
+	// timestamp and an event id the caller was just given, so logging it says
+	// nothing the caller does not already hold -- and it is the one field that
+	// makes a paging complaint reproducible.
+	"cursor": "pagination (keyset position)",
+	"start":  "time window", "end": "time window", "start_date": "time window",
 	"end_date": "time window", "start_time": "time window", "end_time": "time window",
 	"since": "time window", "from": "time window", "to": "time window",
 	"days": "time window", "period": "time window", "threshold_days": "time window",

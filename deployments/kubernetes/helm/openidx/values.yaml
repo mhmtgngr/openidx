@@ -30,6 +30,11 @@ externalSecrets:
   # so services open a read-replica pool (PostgresDB.Reader()). Off by default;
   # a replica outage transparently falls back to the primary.
   readReplica: false
+  # When true, also pull <remoteKeyPrefix>/redis-ratelimit-url and
+  # /redis-revocation-url so rate-limit counters and revocation markers run on
+  # their own instances (see redis.roles below and design §4.4.2). Off by
+  # default; a missing role aliases REDIS_URL.
+  redisRoles: false
 
 global:
   # Image namespace for OpenIDX's OWN images. Matches the GHCR pipeline in
@@ -83,6 +88,18 @@ config:
   # until it is right; "*" is not a fix, it restores gin's trust-everything
   # default and lets any caller name its own client IP.
   trustedProxies: ""
+  # Bot gate at the login door (task 1.4). Per-account failure counter across
+  # every source address; after loginFailChallengeAfter failures in
+  # loginFailWindowSeconds the next attempt answers challenge_required.
+  # off (default) | observe (record who would be challenged) | enforce.
+  # TURNSTILE_SECRET, if used, belongs in the secret store, not here.
+  # Tenant-scope transport (task 2.1): session | local. Default session is
+  # today's behaviour. "local" is required before any transaction pooler
+  # (pgcat below) may be put in front of Postgres.
+  rlsMode: "session"
+  botGate: "off"
+  loginFailChallengeAfter: 5
+  loginFailWindowSeconds: 900
   # Externally reachable host of the access proxy — the host every temporary
   # vendor-access link is built from. Leave empty to inherit the API ingress
   # host (ingress.hosts[0].host). It must be a name the OUTSIDE party can
@@ -116,7 +133,7 @@ identityService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # Governance Service
@@ -144,7 +161,7 @@ governanceService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # Provisioning Service
@@ -172,7 +189,7 @@ provisioningService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # Audit Service
@@ -212,7 +229,7 @@ auditService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # Admin API
@@ -240,7 +257,7 @@ adminApi:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # OAuth/OIDC Service
@@ -268,7 +285,7 @@ oauthService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # Gateway Service
@@ -296,7 +313,7 @@ gatewayService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # Access Service
@@ -331,7 +348,7 @@ accessService:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # PAM dedicated session brokers (two Guacamole stacks + a ziti-tunnel sidecar +
@@ -466,7 +483,7 @@ adminConsole:
     enabled: false
     minReplicas: 2
     maxReplicas: 10
-    targetCPUUtilizationPercentage: 80
+    targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
 
 # OPA — the policy engine the governance service consults (config.opaUrl).
@@ -650,6 +667,15 @@ redis:
     masterName: "mymaster"
     # When sentinel.enabled=true, deploy Redis in Sentinel mode for HA failover.
     # Sentinel addresses are auto-discovered from the Helm chart's headless service.
+  # Role instances (design §4.4.2, plan task 0.1). The in-cluster subchart above
+  # is the SESSION role. Point these at separate instances to move rate-limit
+  # counters (the flood-able role; run it allkeys-lru) and revocation markers
+  # (must never be evicted; run it noeviction + persistence) off the session
+  # instance. Empty = alias REDIS_URL. In externalSecrets mode use
+  # externalSecrets.redisRoles instead and store the URLs in the secret store.
+  roles:
+    rateLimitUrl: ""
+    revocationUrl: ""
 
 # Elasticsearch
 elasticsearch:
@@ -753,6 +779,155 @@ monitoring:
       secretName: alertmanager-pagerduty
       secretKey: routing-key
       sendResolved: true
+
+# ----- Autoscaling behaviour (global-scale plan task 0.5) -----
+# Shared by every per-service HPA (templates/hpa.yaml). Per-service blocks set
+# min/max and the utilisation targets; this sets HOW the controller moves.
+# Up fast, down slowly: a login flood or a launch arrives in seconds, the quiet
+# after it may be a lull between waves. CPU targets default to 60% rather than
+# 80% because identity traffic saturates connections and database waits before
+# CPU — by the time CPU reads 80%, p99 has already gone. KEDA replaces the CPU
+# signal with queue-wait and request-rate triggers in plan task 3.6.
+autoscaling:
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      percent: 100      # may double...
+      pods: 4           # ...or add four pods, whichever is more (selectPolicy: Max)
+      periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      percent: 25       # shed at most a quarter per period
+      periodSeconds: 60
+
+# ----- Transaction pooler (global-scale plan task 2.2) -----
+# pgcat decouples the fleet's client connections from Postgres backends. Without
+# it the backend count is services x replicas x DB_MAX_CONNS and autoscaling
+# multiplies it; with it the budget is replicaCount x poolSize, a constant.
+#
+# DISABLED by default, and the chart REFUSES TO RENDER if it is enabled while
+# config.rlsMode is not "local": a transaction pooler with session-scoped tenant
+# state hands one tenant's scope to the next client. That is measured, not
+# theoretical — docs/evidence/2026-09-13-rls-transaction-pooling.md.
+#
+# Before enabling: run config.rlsMode=local on a canary cell for two weeks with
+# the isolation suite green (the plan's gate), then turn this on. The chart
+# repoints the request-serving services at <release>-pgcat itself -- leaving
+# that to an operator meant a pooler could render with nothing using it, or
+# with half the fleet using it. The migration Job, the bootstrap hook and the
+# backup CronJob keep the DIRECT DSN: none of the three survives transaction
+# pooling (session-scoped advisory locks, one snapshot per dump).
+pgcat:
+  enabled: false
+  replicaCount: 2
+  port: 6432
+  # pgcat's Prometheus exporter (pgcat_pools_* gauges). Its own port, scraped by
+  # its own ServiceMonitor; see the OpenIDXPooler* alerts.
+  metricsPort: 9930
+  # The fleet's Postgres backend budget, PER REPLICA. replicaCount x poolSize is
+  # what Postgres sees; keep it comfortably under max_connections with room for
+  # migrations, psql and monitoring. At the defaults: 2 x 40 = 80 backends,
+  # CONSTANT -- it does not move when a service scales out, which is the whole
+  # reason this exists. Without the pooler the same fleet is
+  # 8 services x replicas x DB_MAX_CONNS (=10), so 80 at one replica each and
+  # 400 at five.
+  #
+  # DB_MAX_CONNS keeps its meaning on the service side but stops being the
+  # thing that protects Postgres: it then sizes cheap client connections to the
+  # pooler. Raise it for a hot service without renegotiating max_connections
+  # with every other service (internal/common/database/database.go says the
+  # same next to the default).
+  poolSize: 40
+  minPoolSize: 5
+  workerThreads: 4
+  # pgx caches prepared statements; a pooler that does not track them fails
+  # every query with SQLSTATE 42P05. pgcat's own default is 0, which means
+  # disabled, so this is not optional and the chart refuses to render a zero.
+  preparedStatementsCacheSize: 500
+  # Connection details for the UPSTREAM Postgres. username/password must be the
+  # unprivileged application role (openidx_app), never the owner or a superuser:
+  # a superuser bypasses every RLS policy, which would make the tenant belt
+  # decorative.
+  postgresHost: ""
+  postgresPort: 5432
+  databaseName: openidx
+  username: openidx_app
+  # password and adminPassword are deliberately NOT declared with an empty
+  # default. templates/pgcat.yaml `required`s both, and `required` fails on a
+  # missing key exactly as it fails on an empty string -- so the behaviour is
+  # identical while the file no longer carries a literal blank credential for
+  # a scanner (or a reader) to take at face value. Supply them with --set or a
+  # values file:
+  #   --set pgcat.password=... --set pgcat.adminPassword=...
+  # Client -> pooler, inside the cluster. pgcat here terminates no TLS, so this
+  # is "disable" and not database.sslMode: a "require" that nothing serves is a
+  # fleet that cannot connect. Give the pooler a certificate first, then raise
+  # this.
+  sslMode: disable
+  image:
+    # v1.2.0 is the only released tag in this registry -- everything else is a
+    # commit SHA or a branch. Verified against the registry, because a tag that
+    # does not exist is invisible until the kubelet tries to pull it.
+    repository: ghcr.io/postgresml/pgcat
+    tag: "v1.2.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+# ----- Edge provider (global-scale plan task 0.2) -----
+# The client-IP chain behind an anycast/CDN edge. Every per-IP control in the
+# services (the auth-path rate limiter, audit actor IPs, known-IP device trust,
+# geo rules) reads gin's ClientIP, which is only the client when the hop that
+# forwarded the request is trusted. Behind a provider, that hop is one of the
+# provider's published ranges — and those change on the provider's schedule.
+edge:
+  # Static list of provider CIDRs, unioned into the services' trusted-proxy
+  # set via OIDX_EDGE_TRUSTED_CIDRS. Ignored when cidrSync.enabled (the job
+  # owns the list then). config.trustedProxies still carries YOUR hops (the
+  # ingress controller's pod CIDR); this carries the provider's.
+  trustedCidrs: []
+  # Keep the list at the provider's current ranges with a CronJob
+  # (files/edge-cidr-sync.sh). On a changed list it rolls the service
+  # deployments, since env from a ConfigMap is read at pod start. Any fetch,
+  # parse or sanity failure leaves the current list untouched and fails the
+  # Job (alert OpenIDXEdgeCidrSyncFailed). Trigger the first run by hand:
+  #   kubectl create job --from=cronjob/<release>-edge-cidr-sync edge-cidr-sync-now
+  # Origin cloaking, application half (task 1.2). The edge proves WHICH edge it
+  # is with a header only our profile sends; the ingress refuses anything
+  # without it. Network-layer allow-lists are not enough on their own: an Azure
+  # service tag covers every tenant's Front Door, a CloudFront range every
+  # distribution.
+  #   Azure Front Door : header "X-Azure-FDID", value = the profile's resource
+  #                      GUID (terraform output origin_verification).
+  #   AWS CloudFront   : header "X-Edge-Origin-Verify", value = the module's
+  #                      generated secret (keep it in the secret store).
+  #   Cloudflare       : leave EMPTY — mTLS (Authenticated Origin Pulls) proves
+  #                      it on the listener, which is stronger than a header.
+  # Empty header disables the check entirely (local clusters, no edge).
+  originVerify:
+    header: ""
+    value: ""
+  cidrSync:
+    enabled: false
+    # cloudflare | aws-cloudfront | static (static uses trustedCidrs above)
+    provider: cloudflare
+    schedule: "17 */6 * * *"
+    image:
+      repository: alpine/k8s
+      tag: "1.31.1"
+      pullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 20m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
 
 # Ingress
 ingress:

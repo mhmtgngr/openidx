@@ -67,6 +67,16 @@ controller:
     default: false
   ingressClass: nginx
 
+  # The OpenIDX chart's Ingress carries a configuration-snippet that enforces
+  # origin cloaking (global-scale plan task 1.2): it refuses any request that
+  # does not carry the edge profile's own header, so a caller who finds the
+  # origin address walks into a 403 rather than around the WAF. Snippets are
+  # off by default since ingress-nginx 1.9; without this the annotation is
+  # silently ignored and the origin is open to anything the network admits.
+  # Only OpenIDX's own Ingresses are rendered into this controller.
+  config:
+    allow-snippet-annotations: "true"
+
   # Surface controller metrics for the same Prometheus stack the services use.
   metrics:
     enabled: true

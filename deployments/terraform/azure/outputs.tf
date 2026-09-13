@@ -37,3 +37,8 @@ output "key_vault_uri" {
   description = "Key Vault URI that ExternalSecrets reads from."
   value       = azurerm_key_vault.this.vault_uri
 }
+
+output "origin_locked_to_front_door" {
+  description = "True when the AKS subnet's NSG admits only the AzureFrontDoor.Backend service tag on 80/443 (task 1.2). The network half of origin cloaking; the application half is the ingress requiring X-Azure-FDID, which a service tag alone cannot give you because the tag covers every tenant's Front Door."
+  value       = contains([for r in azurerm_network_security_group.aks.security_rule : r.source_address_prefix], "AzureFrontDoor.Backend")
+}

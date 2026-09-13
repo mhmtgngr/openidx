@@ -173,7 +173,7 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 		rows.Close()
 		if s.redis != nil {
 			for _, id := range sessionIDs {
-				if err := s.redis.Client.Set(ctx, "revoked_session:"+id, "1", killSwitchRedisMarkerTTL).Err(); err != nil {
+				if err := s.redis.RevocationDB().Set(ctx, "revoked_session:"+id, "1", killSwitchRedisMarkerTTL).Err(); err != nil {
 					warn("revocation_marker", err)
 					break
 				}
@@ -189,7 +189,7 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 	// other step here rather than swallowed: a kill switch that could not cut
 	// the tokens must say so in its result.
 	if s.redis != nil {
-		if err := revocation.RevokeUserTokens(ctx, s.redis.Client, userID); err != nil {
+		if err := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); err != nil {
 			warn("revoke_access_tokens", err)
 		} else {
 			res.AccessTokensRevoked = true

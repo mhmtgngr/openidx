@@ -42,10 +42,43 @@ type Config struct {
 	// HTTP server. Non-positive falls back to 30s (see ShutdownTimeout).
 	ShutdownTimeoutSeconds int `mapstructure:"shutdown_timeout_seconds"`
 
+	// RLSMode selects how the tenant scope reaches Postgres (global-scale plan
+	// task 2.1): "session" (default) stamps the pooled connection at checkout,
+	// "local" stamps each transaction with SET LOCAL so a transaction pooler
+	// can multiplex safely. See internal/common/database/tx.go.
+	RLSMode string `mapstructure:"rls_mode"`
+
 	// Database connections
 	DatabaseURL      string `mapstructure:"database_url"`
 	RedisURL         string `mapstructure:"redis_url"`
 	ElasticsearchURL string `mapstructure:"elasticsearch_url"`
+
+	// Redis roles. OpenIDX keeps four kinds of state in Redis with four
+	// different loss profiles: rate-limit counters (cheap, high-churn, may be
+	// evicted), login/MFA/authcode session state (must not be evicted, TTL'd),
+	// token/session revocation markers (must NEVER be evicted: an evicted
+	// marker un-revokes a token), and leader locks. One instance serving all
+	// four means a counter flood — the very traffic the limiter exists to
+	// absorb — can push Redis to maxmemory and either OOM the login path
+	// (noeviction) or evict a revocation marker (allkeys-lru). Either way the
+	// defence becomes the attack. These URLs split the roles onto separate
+	// instances. Each is OPTIONAL: an empty value aliases that role to
+	// REDIS_URL, so a single-Redis install keeps working unchanged. See
+	// docs/architecture/2026-09-13-global-scale-cell-architecture-and-ddos.md §4.4.2.
+	RedisRateLimitURL  string `mapstructure:"redis_ratelimit_url"`
+	RedisRevocationURL string `mapstructure:"redis_revocation_url"`
+
+	// TrustedProxies mirrors OIDX_TRUSTED_PROXIES: the hops whose
+	// X-Forwarded-For the services believe (internal/common/middleware
+	// ConfigureTrustedProxies reads the same variable). It is surfaced on
+	// Config so the production gate can refuse "*", which restores gin's
+	// trust-everything default and lets any caller name its own client IP —
+	// and with it choose which per-IP rate-limit bucket it lands in.
+	TrustedProxies string `mapstructure:"trusted_proxies"`
+	// EdgeTrustedCIDRs mirrors OIDX_EDGE_TRUSTED_CIDRS: the edge provider's
+	// published ranges, unioned with TrustedProxies by the middleware. Kept on
+	// Config so the "nothing trusted" warning knows the list may arrive here.
+	EdgeTrustedCIDRs string `mapstructure:"edge_trusted_cidrs"`
 
 	// OPA configuration
 	OPAURL         string `mapstructure:"opa_url"`
@@ -79,6 +112,15 @@ type Config struct {
 	// See retired.go.
 	EncryptionKey      string `mapstructure:"encryption_key"`
 	CORSAllowedOrigins string `mapstructure:"cors_allowed_origins"`
+	// OAuthProtocolCORSWildcard lets the OAuth/OIDC protocol endpoints (token,
+	// introspect, revoke, userinfo, device_authorization, register, discovery,
+	// JWKS) answer Access-Control-Allow-Origin: * regardless of
+	// CORSAllowedOrigins. A public client on a relying party's origin has to be
+	// able to call them, and "*" can never carry cookies, so this is the
+	// standard IdP posture. Session-carrying UI paths always follow
+	// CORSAllowedOrigins. Default true; set false for a closed deployment
+	// where every relying-party origin is known and listed.
+	OAuthProtocolCORSWildcard bool `mapstructure:"oauth_protocol_cors_wildcard"`
 
 	// EnableRateLimit turns the per-service rate limiter on. It is the only
 	// survivor of a "Feature flags" block that also carried EnableMFA and
@@ -94,6 +136,12 @@ type Config struct {
 	RateLimitAuthRequests int  `mapstructure:"rate_limit_auth_requests"`
 	RateLimitAuthWindow   int  `mapstructure:"rate_limit_auth_window"`
 	RateLimitPerUser      bool `mapstructure:"rate_limit_per_user"`
+	// RateLimitLocalFallbackMax (seconds) bounds the auth tier's process-local
+	// fallback while the rate-limit Redis is unavailable; 0 = fail closed on
+	// the first failure. RateLimitReplicaHint divides the auth limit into a
+	// per-replica share during that window. See middleware.RateLimitConfig.
+	RateLimitLocalFallbackMax int `mapstructure:"rate_limit_local_fallback_max"`
+	RateLimitReplicaHint      int `mapstructure:"rate_limit_replica_hint"`
 
 	// SMTP configuration (for email notifications)
 	SMTPHost     string `mapstructure:"smtp_host"`
@@ -337,6 +385,21 @@ type Config struct {
 	// accounts, client-credentials tokens) are never gated in any mode --
 	// step-up asks a person to touch a key, and there is nobody to ask.
 	StepUpGate string `mapstructure:"stepup_gate"`
+
+	// BotGate is the tri-state BOT_GATE (off|observe|enforce) for the login
+	// door: after LoginFailChallengeAfter failed password checks against one
+	// typed account name in LoginFailWindowSeconds — from ANY address — the
+	// next attempt must solve a challenge. A low edge bot score in
+	// EdgeBotScoreHeader (below EdgeBotScoreChallengeBelow) is a challenge
+	// before the first failure. TurnstileSecret enables Cloudflare Turnstile
+	// as the challenge verifier; empty means a challenged account waits out
+	// the window. See internal/botgate and global-scale plan task 1.4.
+	BotGate                    string `mapstructure:"bot_gate"`
+	LoginFailChallengeAfter    int    `mapstructure:"login_fail_challenge_after"`
+	LoginFailWindowSeconds     int    `mapstructure:"login_fail_window_seconds"`
+	EdgeBotScoreHeader         string `mapstructure:"edge_bot_score_header"`
+	EdgeBotScoreChallengeBelow int    `mapstructure:"edge_bot_score_challenge_below"`
+	TurnstileSecret            string `mapstructure:"turnstile_secret"`
 
 	// StepUpMaxAge is how old a session's last verified second factor may be
 	// before StepUpGate acts. The console's Security tab wins when an operator
@@ -905,6 +968,12 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("pam_require_ztna", "off")
 	v.SetDefault("abac_enforce", "off")
 	v.SetDefault("stepup_gate", "off")
+	v.SetDefault("bot_gate", "off")
+	v.SetDefault("login_fail_challenge_after", 5)
+	v.SetDefault("login_fail_window_seconds", 900)
+	v.SetDefault("edge_bot_score_header", "X-Edge-Bot-Score")
+	v.SetDefault("edge_bot_score_challenge_below", 30)
+	v.SetDefault("turnstile_secret", "")
 	v.SetDefault("stepup_max_age", "15m")
 	v.SetDefault("pam_session_risk_threshold", 80)
 	v.SetDefault("pam_ssh_require_host_key", false)
@@ -916,7 +985,11 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
+	v.SetDefault("rls_mode", "session")
 	v.SetDefault("redis_url", "redis://:redis_secret@localhost:6379")
+	// Role URLs default to empty = alias the primary (see RedisRateLimitURL).
+	v.SetDefault("redis_ratelimit_url", "")
+	v.SetDefault("redis_revocation_url", "")
 	v.SetDefault("elasticsearch_url", "http://localhost:9200")
 
 	// OPA defaults
@@ -932,6 +1005,8 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("rate_limit_auth_requests", 20)
 	v.SetDefault("rate_limit_auth_window", 60)
 	v.SetDefault("rate_limit_per_user", false)
+	v.SetDefault("rate_limit_local_fallback_max", 60)
+	v.SetDefault("rate_limit_replica_hint", 3)
 
 	// Public base URL of the end-user web app. The localhost default keeps
 	// local development working; PUBLIC_BASE_URL must be set in any real
@@ -1026,6 +1101,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
+	v.SetDefault("oauth_protocol_cors_wildcard", true)
 
 	// WebAuthn defaults
 	v.SetDefault("webauthn.rp_id", "localhost")
@@ -1123,7 +1199,12 @@ func bindEnvVars(v *viper.Viper) {
 	// Common environment variable mappings
 	envMappings := map[string]string{
 		"database_url":                                    "DATABASE_URL",
+		"rls_mode":                                        "RLS_MODE",
 		"redis_url":                                       "REDIS_URL",
+		"redis_ratelimit_url":                             "REDIS_RATELIMIT_URL",
+		"trusted_proxies":                                 "OIDX_TRUSTED_PROXIES",
+		"edge_trusted_cidrs":                              "OIDX_EDGE_TRUSTED_CIDRS",
+		"redis_revocation_url":                            "REDIS_REVOCATION_URL",
 		"elasticsearch_url":                               "ELASTICSEARCH_URL",
 		"opa_url":                                         "OPA_URL",
 		"environment":                                     "APP_ENV",
@@ -1146,6 +1227,12 @@ func bindEnvVars(v *viper.Viper) {
 		"pam_ssh_require_host_key":                        "PAM_SSH_REQUIRE_HOST_KEY",
 		"abac_enforce":                                    "ABAC_ENFORCE",
 		"stepup_gate":                                     "STEPUP_GATE",
+		"bot_gate":                                        "BOT_GATE",
+		"login_fail_challenge_after":                      "LOGIN_FAIL_CHALLENGE_AFTER",
+		"login_fail_window_seconds":                       "LOGIN_FAIL_WINDOW_SECONDS",
+		"edge_bot_score_header":                           "EDGE_BOT_SCORE_HEADER",
+		"edge_bot_score_challenge_below":                  "EDGE_BOT_SCORE_CHALLENGE_BELOW",
+		"turnstile_secret":                                "TURNSTILE_SECRET",
 		"stepup_max_age":                                  "STEPUP_MAX_AGE",
 		"pam_session_risk_threshold":                      "PAM_SESSION_RISK_THRESHOLD",
 		"dev_admin_bypass":                                "DEV_ADMIN_BYPASS",
@@ -1332,7 +1419,10 @@ func bindEnvVars(v *viper.Viper) {
 		"rate_limit_auth_requests":          "RATE_LIMIT_AUTH_REQUESTS",
 		"rate_limit_auth_window":            "RATE_LIMIT_AUTH_WINDOW",
 		"rate_limit_per_user":               "RATE_LIMIT_PER_USER",
+		"rate_limit_local_fallback_max":     "RATE_LIMIT_LOCAL_FALLBACK_MAX",
+		"rate_limit_replica_hint":           "RATE_LIMIT_REPLICA_HINT",
 		"cors_allowed_origins":              "CORS_ALLOWED_ORIGINS",
+		"oauth_protocol_cors_wildcard":      "OAUTH_PROTOCOL_CORS_WILDCARD",
 		"audit_stream_allowed_origins":      "AUDIT_STREAM_ALLOWED_ORIGINS",
 		"recordings_storage_path":           "RECORDINGS_STORAGE_PATH",
 		"recordings_default_retention_days": "RECORDINGS_DEFAULT_RETENTION_DAYS",
@@ -1512,6 +1602,17 @@ func (c *Config) ProductionWarnings() []string {
 	if !c.RedisTLSEnabled {
 		warnings = append(warnings, "redis_tls_enabled is false; enable TLS for Redis in production")
 	}
+
+	// Empty is the secure default (loopback only) and, in every topology this
+	// repo ships, also the useless one: the edge is a different container or
+	// pod, so every request resolves to its address and per-IP rate limits,
+	// audit IPs, known-IP device trust and geo rules all see one client. Behind
+	// a CDN or anycast edge the effect is worse — the whole world shares a
+	// bucket and one attacker can 429 everyone. The services already warn
+	// once per untrusted hop; this names the setting up front.
+	if strings.TrimSpace(c.TrustedProxies) == "" && strings.TrimSpace(c.EdgeTrustedCIDRs) == "" {
+		warnings = append(warnings, "OIDX_TRUSTED_PROXIES is empty; every request resolves to the edge's address (one shared per-IP rate-limit bucket). Set it to the edge/ingress CIDRs, or use OIDX_EDGE_TRUSTED_CIDRS for a provider list kept in sync")
+	}
 	if !c.TLS.Enabled {
 		warnings = append(warnings, "tls.enabled is false; enable inter-service TLS for production")
 	}
@@ -1575,6 +1676,16 @@ func (c *Config) ValidateProduction() error {
 	if c.AuditChainSecret == "" || strings.Contains(strings.ToLower(c.AuditChainSecret), "change") {
 		criticalIssues = append(criticalIssues,
 			"audit_chain_secret must be set to a secure random value; without it the audit hash chain does not run and the trail carries no tamper evidence")
+	}
+
+	// Critical: "*" trusts every hop's X-Forwarded-For, so the caller picks
+	// its own client IP. Behind an edge that means one attacker can spread a
+	// flood across as many per-IP rate-limit buckets as it likes, or drop a
+	// victim's address into the auth-path bucket and lock them out; audit
+	// records, known-IP device trust and geo rules all read the same lie.
+	if strings.TrimSpace(c.TrustedProxies) == "*" {
+		criticalIssues = append(criticalIssues,
+			"OIDX_TRUSTED_PROXIES must not be \"*\" in production: list the edge's CIDRs (and the pod/compose network the edge forwards from) so the client IP comes from a hop you run, not from the caller")
 	}
 
 	// Critical: Wildcard CORS in production allows any origin
@@ -1805,6 +1916,9 @@ func (c *Config) ReportModeGates() []string {
 	}
 	if !strings.EqualFold(strings.TrimSpace(c.StepUpGate), "enforce") {
 		open = append(open, "STEPUP_GATE="+valueOrOff(c.StepUpGate)+" — a PAM launch or an admin write never asks for a fresh second factor")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.BotGate), "enforce") {
+		open = append(open, "BOT_GATE="+valueOrOff(c.BotGate)+" — a credential spray spread across many addresses is never asked to prove a human")
 	}
 	if !c.EnableOPAAuthz {
 		open = append(open, "ENABLE_OPA_AUTHZ=false — OPA is not in the request path")

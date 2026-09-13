@@ -58,7 +58,7 @@ func main() {
 	defer db.Close()
 
 	// Create migrator
-	migrator := migrations.NewMigrator(db.Pool, log)
+	migrator := migrations.NewMigrator(db.Pool.Raw(), log)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()

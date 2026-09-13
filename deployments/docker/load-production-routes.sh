@@ -140,6 +140,28 @@ create_service() {
     fi
 }
 
+# Function to create/replace a global rule (applies to every route)
+create_global_rule() {
+    local rule_id="$1"
+    local rule_data="$2"
+
+    echo -n "Creating global rule: ${BLUE}$rule_id${NC}... "
+
+    response=$(curl -s -X PUT "$ADMIN_API_URL/apisix/admin/global_rules/$rule_id" \
+        -H "X-API-KEY: $ADMIN_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$rule_data")
+
+    if echo "$response" | grep -q '"error"'; then
+        echo -e "${RED}FAILED${NC}"
+        error "Error: $response"
+        return 1
+    else
+        echo -e "${GREEN}OK${NC}"
+        return 0
+    fi
+}
+
 # Wait for APISIX to be ready
 log "Waiting for APISIX to be ready..."
 max_attempts=30
@@ -293,14 +315,6 @@ create_service 'identity-service-svc' '{
             "key": "remote_addr",
             "rejected_code": 429
         },
-        "cors": {
-            "allow_origins": "https://'$DOMAIN'",
-            "allow_methods": "GET,POST,PUT,DELETE,PATCH,OPTIONS",
-            "allow_headers": "Content-Type,Authorization,X-Requested-With,Accept,Origin",
-            "expose_headers": "Content-Length,Content-Range",
-            "max_age": 3600,
-            "allow_credential": true
-        },
         "prometheus": {
             "prefer_name": true
         }
@@ -315,13 +329,6 @@ create_service 'governance-service-svc' '{
             "burst": 25,
             "key": "remote_addr",
             "rejected_code": 429
-        },
-        "cors": {
-            "allow_origins": "https://'$DOMAIN'",
-            "allow_methods": "GET,POST,PUT,DELETE,PATCH,OPTIONS",
-            "allow_headers": "Content-Type,Authorization,X-Requested-With,Accept,Origin",
-            "max_age": 3600,
-            "allow_credential": true
         },
         "prometheus": {
             "prefer_name": true
@@ -338,13 +345,6 @@ create_service 'provisioning-service-svc' '{
             "key": "remote_addr",
             "rejected_code": 429
         },
-        "cors": {
-            "allow_origins": "https://'$DOMAIN'",
-            "allow_methods": "GET,POST,PUT,DELETE,PATCH,OPTIONS",
-            "allow_headers": "Content-Type,Authorization,X-Requested-With,Accept,Origin",
-            "max_age": 3600,
-            "allow_credential": true
-        },
         "prometheus": {
             "prefer_name": true
         }
@@ -359,13 +359,6 @@ create_service 'audit-service-svc' '{
             "burst": 100,
             "key": "remote_addr",
             "rejected_code": 429
-        },
-        "cors": {
-            "allow_origins": "https://'$DOMAIN'",
-            "allow_methods": "GET,POST,PUT,DELETE,PATCH,OPTIONS",
-            "allow_headers": "Content-Type,Authorization,X-Requested-With,Accept,Origin",
-            "max_age": 3600,
-            "allow_credential": true
         },
         "prometheus": {
             "prefer_name": true
@@ -382,13 +375,6 @@ create_service 'admin-api-svc' '{
             "key": "remote_addr",
             "rejected_code": 429
         },
-        "cors": {
-            "allow_origins": "https://'$DOMAIN'",
-            "allow_methods": "GET,POST,PUT,DELETE,PATCH,OPTIONS",
-            "allow_headers": "Content-Type,Authorization,X-Requested-With,Accept,Origin",
-            "max_age": 3600,
-            "allow_credential": true
-        },
         "prometheus": {
             "prefer_name": true
         }
@@ -403,13 +389,6 @@ create_service 'oauth-service-svc' '{
             "burst": 50,
             "key": "remote_addr",
             "rejected_code": 429
-        },
-        "cors": {
-            "allow_origins": "https://'$DOMAIN'",
-            "allow_methods": "GET,POST,OPTIONS",
-            "allow_headers": "Content-Type,Authorization,X-Requested-With,Accept,Origin",
-            "max_age": 3600,
-            "allow_credential": true
         },
         "prometheus": {
             "prefer_name": true
@@ -426,13 +405,6 @@ create_service 'access-service-svc' '{
             "key": "remote_addr",
             "rejected_code": 429
         },
-        "cors": {
-            "allow_origins": "https://'$DOMAIN'",
-            "allow_methods": "GET,POST,PUT,DELETE,PATCH,OPTIONS",
-            "allow_headers": "Content-Type,Authorization,X-Requested-With,X-Forwarded-Host,X-Forwarded-Uri,X-Forwarded-Method,X-Forwarded-For,Cookie",
-            "max_age": 3600,
-            "allow_credential": true
-        },
         "prometheus": {
             "prefer_name": true
         }
@@ -447,21 +419,24 @@ echo
 
 log "Creating API routes..."
 
-# 1. CORS preflight route (catch-all for OPTIONS)
-create_route 'cors-preflight' '{
-    "uri": "/.*",
-    "name": "cors-preflight",
-    "methods": ["OPTIONS"],
-    "priority": 1000,
+# 1. One CORS policy for the tenant-facing surface (global-scale plan task 0.6).
+# This list used to be copied into seven services plus a catch-all preflight
+# route; copies drift, and a tenant domain added to six of seven is a console
+# that works on every page but one. The cors plugin answers OPTIONS preflight
+# itself, so the catch-all route is gone. Protocol endpoints override with "*"
+# at route level below (token, introspect/revoke, userinfo, discovery): a
+# public client on a relying party's origin must reach them and "*" can never
+# carry cookies.
+create_global_rule 'cors-tenant' '{
     "plugins": {
         "cors": {
             "allow_origins": "https://'$DOMAIN'",
             "allow_methods": "GET,POST,PUT,DELETE,PATCH,OPTIONS",
             "allow_headers": "Content-Type,Authorization,X-Requested-With,Accept,Origin",
+            "expose_headers": "Content-Length,Content-Range",
             "max_age": 86400
         }
-    },
-    "upstream_id": "admin-api-upstream"
+    }
 }'
 
 # 2. Identity service routes
@@ -566,6 +541,14 @@ create_route 'oauth-service-authorize' '{
 }'
 
 create_route 'oauth-service-token' '{
+    "plugins": {
+        "cors": {
+            "allow_origins": "*",
+            "allow_methods": "GET,POST,OPTIONS",
+            "allow_headers": "Content-Type,Authorization,DPoP",
+            "max_age": 86400
+        }
+    },
     "uris": ["/oauth/token"],
     "name": "oauth-service-token",
     "methods": ["POST"],
@@ -574,6 +557,14 @@ create_route 'oauth-service-token' '{
 }'
 
 create_route 'oauth-service-introspect' '{
+    "plugins": {
+        "cors": {
+            "allow_origins": "*",
+            "allow_methods": "GET,POST,OPTIONS",
+            "allow_headers": "Content-Type,Authorization,DPoP",
+            "max_age": 86400
+        }
+    },
     "uris": ["/oauth/introspect", "/oauth/revoke"],
     "name": "oauth-service-introspect",
     "methods": ["POST"],
@@ -582,6 +573,14 @@ create_route 'oauth-service-introspect' '{
 }'
 
 create_route 'oauth-service-userinfo' '{
+    "plugins": {
+        "cors": {
+            "allow_origins": "*",
+            "allow_methods": "GET,POST,OPTIONS",
+            "allow_headers": "Content-Type,Authorization,DPoP",
+            "max_age": 86400
+        }
+    },
     "uris": ["/oauth/userinfo"],
     "name": "oauth-service-userinfo",
     "methods": ["GET"],
@@ -591,6 +590,14 @@ create_route 'oauth-service-userinfo' '{
 
 # 7. OIDC discovery endpoints
 create_route 'oidc-discovery' '{
+    "plugins": {
+        "cors": {
+            "allow_origins": "*",
+            "allow_methods": "GET,POST,OPTIONS",
+            "allow_headers": "Content-Type,Authorization,DPoP",
+            "max_age": 86400
+        }
+    },
     "uris": ["/.well-known/*"],
     "name": "oidc-discovery",
     "methods": ["GET"],
@@ -664,72 +671,31 @@ create_route 'admin-api-users' '{
 echo
 
 # ============================================================================
-# Health Check Routes (no auth required)
+# Operational endpoints: closed at the edge (global-scale plan task 0.4)
 # ============================================================================
+# This block used to publish /api/v1/<svc>/health and /oauth/health with no
+# plugins. /health/ready pings Postgres, Redis and Elasticsearch on every call
+# and answers with each dependency's status and latency; /metrics is the whole
+# Prometheus surface. Public, they were a reconnaissance feed and a free way to
+# make the edge hammer the data tier under a flood. Probes and the scraper
+# reach the containers directly; an external load balancer checks nginx's own
+# static /health (or L4). One high-priority route answers 404 first.
 
-log "Creating health check routes..."
+log "Closing operational endpoints at the edge..."
 
-create_route 'health-identity' '{
-    "uris": ["/api/v1/identity/health"],
-    "name": "health-identity",
-    "methods": ["GET"],
-    "priority": 1,
-    "upstream_id": "identity-service-upstream",
-    "plugins": {}
-}'
-
-create_route 'health-governance' '{
-    "uris": ["/api/v1/governance/health"],
-    "name": "health-governance",
-    "methods": ["GET"],
-    "priority": 1,
-    "upstream_id": "governance-service-upstream",
-    "plugins": {}
-}'
-
-create_route 'health-provisioning' '{
-    "uris": ["/api/v1/provisioning/health"],
-    "name": "health-provisioning",
-    "methods": ["GET"],
-    "priority": 1,
-    "upstream_id": "provisioning-service-upstream",
-    "plugins": {}
-}'
-
-create_route 'health-audit' '{
-    "uris": ["/api/v1/audit/health"],
-    "name": "health-audit",
-    "methods": ["GET"],
-    "priority": 1,
-    "upstream_id": "audit-service-upstream",
-    "plugins": {}
-}'
-
-create_route 'health-admin' '{
-    "uris": ["/api/v1/admin/health"],
-    "name": "health-admin",
-    "methods": ["GET"],
-    "priority": 1,
+create_route 'deny-health-metrics' '{
+    "uris": ["/health", "/health/*", "/ready", "/metrics",
+             "/api/v1/identity/health", "/api/v1/governance/health",
+             "/api/v1/provisioning/health", "/api/v1/audit/health",
+             "/api/v1/admin/health", "/api/v1/access/health", "/oauth/health"],
+    "name": "deny-health-metrics",
+    "priority": 100,
     "upstream_id": "admin-api-upstream",
-    "plugins": {}
-}'
-
-create_route 'health-oauth' '{
-    "uris": ["/oauth/health"],
-    "name": "health-oauth",
-    "methods": ["GET"],
-    "priority": 1,
-    "upstream_id": "oauth-service-upstream",
-    "plugins": {}
-}'
-
-create_route 'health-access' '{
-    "uris": ["/api/v1/access/health"],
-    "name": "health-access",
-    "methods": ["GET"],
-    "priority": 1,
-    "upstream_id": "access-service-upstream",
-    "plugins": {}
+    "plugins": {
+        "fault-injection": {
+            "abort": {"http_status": 404, "body": "{\"error\":\"not found\"}"}
+        }
+    }
 }'
 
 echo

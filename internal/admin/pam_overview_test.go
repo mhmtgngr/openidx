@@ -48,7 +48,7 @@ func setupPAMTestDB(t *testing.T) (*database.PostgresDB, func()) {
 				t.Fatalf("reset test schema (%s): %v", stmt, err)
 			}
 		}
-		if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+		if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 			db.Close()
 			t.Fatalf("migrate to latest: %v", err)
 		}
@@ -95,7 +95,7 @@ func setupPAMTestDB(t *testing.T) (*database.PostgresDB, func()) {
 		return nil, func() {}
 	}
 
-	if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 		db.Close()
 		container.Terminate(ctx)
 		t.Fatalf("migrate to latest: %v", err)

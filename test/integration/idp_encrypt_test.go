@@ -40,8 +40,8 @@ func TestIDPClientSecretEncryptedAtRest(t *testing.T) {
 	svc := identity.NewService(db, rc, cfg, zaptest.NewLogger(t))
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	orgID := seedOrg(t, db.Pool, "idp-enc-"+suffix)
-	t.Cleanup(func() { bypassExec(t, db.Pool, "DELETE FROM organizations WHERE id=$1", orgID) })
+	orgID := seedOrg(t, db.Pool.Raw(), "idp-enc-"+suffix)
+	t.Cleanup(func() { bypassExec(t, db.Pool.Raw(), "DELETE FROM organizations WHERE id=$1", orgID) })
 	octx := orgctx.With(orgctx.WithBypassRLS(ctx), orgctx.Org{ID: orgID})
 
 	const plaintext = "idp_secret_ABC123_recoverable"
@@ -55,7 +55,7 @@ func TestIDPClientSecretEncryptedAtRest(t *testing.T) {
 		Enabled:      true,
 	}
 	require.NoError(t, svc.CreateIdentityProvider(octx, idp))
-	t.Cleanup(func() { bypassExec(t, db.Pool, "DELETE FROM identity_providers WHERE id=$1", idp.ID) })
+	t.Cleanup(func() { bypassExec(t, db.Pool.Raw(), "DELETE FROM identity_providers WHERE id=$1", idp.ID) })
 
 	// At rest the column holds tagged ciphertext, never the plaintext.
 	var stored string

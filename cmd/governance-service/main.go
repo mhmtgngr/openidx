@@ -97,6 +97,11 @@ func main() {
 	}
 
 	// Initialize database connection
+	// Tenant scope transport (global-scale plan task 2.1): RLS_MODE=local makes
+	// the scope transaction-local (SET LOCAL) so a transaction pooler can
+	// multiplex safely; the default "session" is today's checkout stamping.
+	database.SetRLSMode(database.ParseRLSMode(cfg.RLSMode))
+
 	db, err := database.NewPostgres(cfg.DatabaseURL, database.PostgresTLSConfig{
 		SSLMode:     cfg.DatabaseSSLMode,
 		SSLRootCert: cfg.DatabaseSSLRootCert,
@@ -109,7 +114,7 @@ func main() {
 
 	// Initialize Redis connection
 	// Export DB pool saturation gauges (openidx_db_connections{state=...}).
-	metrics.NewTracedPool(db.Pool, "governance-service").StartPoolStatsCollector(context.Background())
+	metrics.NewTracedPool(db.Pool.Raw(), "governance-service").StartPoolStatsCollector(context.Background())
 
 	redis, err := database.NewRedisFromConfig(database.RedisConfig{
 		URL:                cfg.RedisURL,
@@ -123,6 +128,8 @@ func main() {
 		TLSCert:            cfg.RedisTLSCert,
 		TLSKey:             cfg.RedisTLSKey,
 		TLSSkipVerify:      cfg.RedisTLSSkipVerify,
+		RateLimitURL:       cfg.RedisRateLimitURL,
+		RevocationURL:      cfg.RedisRevocationURL,
 	})
 	if err != nil {
 		log.Fatal("Failed to connect to Redis", zap.Error(err))
@@ -140,16 +147,22 @@ func main() {
 	// (bypasses device-trust known-IP auto-approve, geo-block, spoofs audit IPs).
 	middleware.ConfigureTrustedProxies(router, log)
 	router.Use(gin.Recovery())
+	// Body cap (policy and review payloads are small JSON); oversize is 413 before any handler runs (task 0.3).
+	router.Use(middleware.MaxBodySize(1 << 20))
 	router.Use(otelgin.Middleware("governance-service"))
 	router.Use(middleware.SecurityHeadersForEnv(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
 	if cfg.EnableRateLimit {
-		router.Use(middleware.DistributedRateLimit(redis.Client, middleware.RateLimitConfig{
+		router.Use(middleware.DistributedRateLimit(redis.RateLimitDB(), middleware.RateLimitConfig{
 			Requests:     cfg.RateLimitRequests,
 			Window:       time.Duration(cfg.RateLimitWindow) * time.Second,
 			AuthRequests: cfg.RateLimitAuthRequests,
 			AuthWindow:   time.Duration(cfg.RateLimitAuthWindow) * time.Second,
 			PerUser:      cfg.RateLimitPerUser,
+			// Ride out a Redis restart/failover on a bounded local counter
+			// before failing closed (task 0.7).
+			LocalFallbackMax: time.Duration(cfg.RateLimitLocalFallbackMax) * time.Second,
+			ReplicaCountHint: cfg.RateLimitReplicaHint,
 		}, log))
 	}
 	router.Use(metrics.Middleware("governance-service"))
@@ -240,13 +253,16 @@ func main() {
 	router.GET("/ready", healthService.ReadyHandler())
 
 	// Create HTTP server
-	httpServer := &http.Server{
+	// Hardened listener: ReadHeaderTimeout 5s, 16 KiB header cap and 100 HTTP/2
+	// streams per connection come from server.NewHTTP and cannot be disabled
+	// here (global-scale plan task 0.3).
+	httpServer := server.NewHTTP(server.HTTPOptions{
 		Addr:         cfg.ListenAddr(),
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
-	}
+	})
 
 	// Setup graceful shutdown manager
 	shutdownables := []server.Shutdownable{

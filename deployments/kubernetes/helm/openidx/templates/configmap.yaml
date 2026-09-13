@@ -27,6 +27,17 @@ data:
   # once per hop and export openidx_forwarded_for_from_untrusted_hop_total until
   # it matches. Never "*".
   OIDX_TRUSTED_PROXIES: {{ .Values.config.trustedProxies | default "" | quote }}
+  # How the tenant scope reaches Postgres (global-scale plan task 2.1):
+  #   session (default) — stamped on the pooled connection at checkout.
+  #   local             — stamped on each transaction (SET LOCAL), which is the
+  #                       ONLY mode a transaction pooler may sit in front of.
+  # pgcat.enabled requires "local"; the chart refuses to render otherwise.
+  RLS_MODE: {{ .Values.config.rlsMode | default "session" | quote }}
+  # Bot gate at the login door (global-scale plan task 1.4): off | observe |
+  # enforce. Start in observe and read the bot_gate audit rows before enforce.
+  BOT_GATE: {{ .Values.config.botGate | default "off" | quote }}
+  LOGIN_FAIL_CHALLENGE_AFTER: {{ .Values.config.loginFailChallengeAfter | default 5 | quote }}
+  LOGIN_FAIL_WINDOW_SECONDS: {{ .Values.config.loginFailWindowSeconds | default 900 | quote }}
   # The externally reachable name of the access proxy. It is the host of every
   # temporary vendor-access link, so an unset value (in-code default:
   # "localhost") issues links that point at the RECIPIENT'S machine. Services
@@ -52,3 +63,21 @@ data:
   # pin a connection indefinitely (in-code default: off when unset).
   DB_STATEMENT_TIMEOUT: {{ .Values.database.statementTimeout | quote }}
   {{- end }}
+{{- if and (not .Values.edge.cidrSync.enabled) .Values.edge.trustedCidrs }}
+---
+# Edge provider address ranges the services trust as forwarding hops, in
+# addition to config.trustedProxies (global-scale plan task 0.2). Static form:
+# the list is whatever the chart was installed with. When edge.cidrSync.enabled
+# is true this object is NOT rendered — the CronJob owns it and keeps it at the
+# provider's current ranges, so Helm never overwrites a fresher list.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openidx.fullname" . }}-edge-cidrs
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge
+data:
+  OIDX_EDGE_TRUSTED_CIDRS: {{ join "," .Values.edge.trustedCidrs | quote }}
+  PROVIDER: "static"
+{{- end }}

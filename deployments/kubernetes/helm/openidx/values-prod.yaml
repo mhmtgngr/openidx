@@ -33,9 +33,30 @@ externalSecrets:
   # and security-critical reads stay on the primary — proven by `make ha-drill`):
   #   1. store <remoteKeyPrefix>/database-read-url = the RDS reader endpoint
   #   2. flip this to true and `helm upgrade`.
-  # Left false so the ExternalSecret does not reference a missing key on a fresh
-  # cutover. Turn on as a follow-on step (see docs/tier3b-cutover-runbook.md §1b).
+  #
+  # Losing the replica is now a degradation and not an outage (global-scale plan
+  # task 2.3): the read pool retries on the primary when the replica stops
+  # answering and opens a breaker so a dead replica is not re-dialled on every
+  # request (internal/common/database/readerfallback.go). Before that, "falls
+  # back to the primary" was true only at STARTUP — a replica that died later
+  # failed every offloaded read until the process was restarted, with readiness
+  # green throughout. Watch OpenIDXReadReplicaOffloadLost.
+  #
+  # STILL false, and deliberately: flipping it without step 1 makes the
+  # ExternalSecret reference a key that is not there, which fails the sync for
+  # the WHOLE secret — every connection string, on a fresh cutover. The default
+  # has to be the one that installs. Turn it on as a follow-on step (see
+  # docs/tier3b-cutover-runbook.md §1b).
   readReplica: false
+  # Task 0.1 (global-scale plan): dedicated Redis per loss profile. Production
+  # runs three managed cache endpoints —
+  #   <remoteKeyPrefix>/redis-url             session state, noeviction
+  #   <remoteKeyPrefix>/redis-ratelimit-url   counters, small, allkeys-lru
+  #   <remoteKeyPrefix>/redis-revocation-url  markers, noeviction, persistent
+  # — so a rate-limit key flood can neither OOM the login path nor evict a
+  # revocation marker. Store all three before flipping this on; a missing key
+  # fails the ExternalSecret sync.
+  redisRoles: true
 
 # ----- Managed datastores: disable the in-cluster subcharts -----
 postgresql:
@@ -48,6 +69,16 @@ elasticsearch:
 # Point the services at managed endpoints (Elasticsearch via config; Postgres
 # and Redis via the DATABASE_URL/REDIS_URL external secret above).
 config:
+  # Task 0.2 (global-scale plan): the ingress controller's pod CIDR, so the
+  # services believe the ingress's X-Forwarded-For. Without it every request
+  # resolves to the ingress pod and the whole world shares one rate-limit
+  # bucket. `kubectl get pod -n ingress-nginx -o wide` shows the range to
+  # cover; the edge PROVIDER's ranges go in edge.* below, not here.
+  trustedProxies: "10.0.0.0/8"   # <-- your cluster's pod network CIDR
+  # Task 1.4: observe first. Two weeks of bot_gate audit rows say who WOULD
+  # have been challenged; flip to enforce when the false-positive count is one
+  # you can defend. Never straight to enforce on a live tenant base.
+  botGate: "observe"
   elasticsearchUrl: "https://opensearch.prod.internal:9200"
   oauthIssuer: "https://auth.openidx.example.com"
   oauthJwksUrl: "https://auth.openidx.example.com/.well-known/jwks.json"
@@ -207,3 +238,22 @@ zitiFabric:
       size: 10Gi
   router:
     replicas: 2
+
+# ----- Edge provider CIDRs kept in sync (task 0.2) -----
+# Production sits behind an anycast edge (decision K1 in the roadmap picks the
+# provider). The provider's published ranges are the only hops whose
+# X-Forwarded-For the services may believe; they change on the provider's
+# schedule, so a CronJob keeps them current and rolls the services on change.
+edge:
+  # K1 decided 2026-09-13: Azure Front Door Premium. Front Door's ranges are a
+  # service tag rather than a published CIDR list, so the sync job runs in
+  # static mode over the tag's current prefixes (see files/edge-cidr-sync.sh);
+  # the NSG on the AKS subnet is what actually enforces the network half.
+  cidrSync:
+    enabled: true
+    provider: static
+  # The application half: only OUR Front Door profile, not every tenant's.
+  # Fill in the profile GUID from `terraform output -raw origin_verification`.
+  originVerify:
+    header: "X-Azure-FDID"
+    value: "REPLACE-WITH-FRONT-DOOR-PROFILE-GUID"

@@ -675,7 +675,7 @@ func (s *Service) killUserSessions(ctx context.Context, userID string) {
 	if s.redis == nil || s.redis.Client == nil {
 		return
 	}
-	if err := s.redis.Client.Set(ctx, revocation.UserTokensRevokedAtKey(userID),
+	if err := s.redis.RevocationDB().Set(ctx, revocation.UserTokensRevokedAtKey(userID),
 		revocation.MarkerValue(time.Now()), revocation.MarkerTTL).Err(); err != nil {
 		s.logger.Warn("failed to invalidate sessions after access-review revocation",
 			zap.String("user_id", userID), zap.Error(err))

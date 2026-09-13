@@ -1,0 +1,122 @@
+{{- if .Values.edge.cidrSync.enabled }}
+# Keeps the edge provider's published address ranges in the services'
+# trusted-proxy list (global-scale plan task 0.2). See files/edge-cidr-sync.sh
+# for the fail-safe contract: a bad or empty feed leaves the current list alone
+# and fails the Job rather than trusting nothing or everything.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openidx.fullname" . }}-edge-cidr-sync
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge
+data:
+  edge-cidr-sync.sh: |
+{{ .Files.Get "files/edge-cidr-sync.sh" | indent 4 }}
+---
+# Least privilege for the job: it rewrites ONE ConfigMap and restarts the
+# service deployments. It cannot read Secrets and cannot touch anything outside
+# this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "openidx.fullname" . }}-edge-cidr-sync
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["{{ include "openidx.fullname" . }}-edge-cidrs"]
+    verbs: ["update", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "openidx.fullname" . }}-edge-cidr-sync
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "openidx.fullname" . }}-edge-cidr-sync
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "openidx.fullname" . }}-edge-cidr-sync
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "openidx.fullname" . }}-edge-cidr-sync
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "openidx.fullname" . }}-edge-cidr-sync
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge
+spec:
+  schedule: {{ .Values.edge.cidrSync.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            {{- include "openidx.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: edge-cidr-sync
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "openidx.fullname" . }}-edge-cidr-sync
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: sync
+              image: "{{ .Values.edge.cidrSync.image.repository }}:{{ .Values.edge.cidrSync.image.tag }}"
+              imagePullPolicy: {{ .Values.edge.cidrSync.image.pullPolicy | default "IfNotPresent" }}
+              command: ["/bin/sh", "/opt/openidx/edge-cidr-sync.sh"]
+              env:
+                - name: PROVIDER
+                  value: {{ .Values.edge.cidrSync.provider | quote }}
+                - name: OUTPUT
+                  value: configmap
+                - name: CONFIGMAP
+                  value: {{ include "openidx.fullname" . }}-edge-cidrs
+                - name: NAMESPACE
+                  value: {{ .Release.Namespace }}
+                - name: RESTART_SELECTOR
+                  value: "app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/part-of=openidx"
+                {{- if .Values.edge.trustedCidrs }}
+                - name: STATIC_CIDRS
+                  value: {{ join "," .Values.edge.trustedCidrs | quote }}
+                {{- end }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              resources:
+                {{- toYaml .Values.edge.cidrSync.resources | nindent 16 }}
+              volumeMounts:
+                - name: script
+                  mountPath: /opt/openidx
+                  readOnly: true
+          volumes:
+            - name: script
+              configMap:
+                name: {{ include "openidx.fullname" . }}-edge-cidr-sync
+                defaultMode: 0555
+{{- end }}

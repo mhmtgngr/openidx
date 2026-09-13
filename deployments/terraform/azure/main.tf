@@ -89,6 +89,74 @@ resource "azurerm_subnet" "aks" {
   address_prefixes     = ["10.0.1.0/24"]
 }
 
+# Origin cloaking, network half (global-scale plan task 1.2, design §5.2).
+#
+# Front Door is the only door. Without this NSG the cluster's public load
+# balancer answers anyone who finds its address, and an attacker who does has
+# walked around every edge rule, the WAF, the bot manager and the rate limits
+# in one step. Certificate Transparency publishes the hostnames, so "nobody
+# knows the origin" is not a control; this is.
+#
+# The service tag is the mechanism: Azure keeps AzureFrontDoor.Backend current
+# as Front Door's ranges change, which a hand-copied CIDR list would not. The
+# application half (requiring X-Azure-FDID, so another tenant's Front Door
+# cannot reach this origin either) lives at the ingress — a service tag admits
+# ALL of Front Door, not just our profile, and one without the other is half a
+# control.
+resource "azurerm_network_security_group" "aks" {
+  name                = "openidx-aks-${var.environment}"
+  location            = azurerm_resource_group.this.location
+  resource_group_name = azurerm_resource_group.this.name
+  tags                = local.common_tags
+
+  security_rule {
+    name                       = "AllowFrontDoorInbound"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_ranges    = ["80", "443"]
+    source_address_prefix      = "AzureFrontDoor.Backend"
+    destination_address_prefix = "*"
+    description                = "Only Azure Front Door may reach the ingress; the application half checks X-Azure-FDID."
+  }
+
+  # Health probes come from the platform LB, not from Front Door.
+  security_rule {
+    name                       = "AllowAzureLoadBalancerInbound"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_range     = "*"
+    source_address_prefix      = "AzureLoadBalancer"
+    destination_address_prefix = "*"
+    description                = "Platform health probes."
+  }
+
+  # Explicit, above the platform default, so the intent is readable in the
+  # portal and a later rule cannot quietly out-prioritise it.
+  security_rule {
+    name                       = "DenyInternetInbound"
+    priority                   = 4000
+    direction                  = "Inbound"
+    access                     = "Deny"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_range     = "*"
+    source_address_prefix      = "Internet"
+    destination_address_prefix = "*"
+    description                = "Everything that is not Front Door is refused at the network, before TLS."
+  }
+}
+
+resource "azurerm_subnet_network_security_group_association" "aks" {
+  subnet_id                 = azurerm_subnet.aks.id
+  network_security_group_id = azurerm_network_security_group.aks.id
+}
+
 # Postgres Flexible Server requires its own delegated subnet for private access.
 # Keeping the database off the public internet is not optional for an identity
 # platform.

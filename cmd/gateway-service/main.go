@@ -87,6 +87,8 @@ func main() {
 		TLSCert:            cfg.RedisTLSCert,
 		TLSKey:             cfg.RedisTLSKey,
 		TLSSkipVerify:      cfg.RedisTLSSkipVerify,
+		RateLimitURL:       cfg.RedisRateLimitURL,
+		RevocationURL:      cfg.RedisRevocationURL,
 	})
 	if err != nil {
 		log.Fatal("Failed to connect to Redis", zap.Error(err))
@@ -139,12 +141,16 @@ func main() {
 	// auth paths when Redis is unavailable, which is the property that matters
 	// on the host taking the traffic.
 	if cfg.EnableRateLimit {
-		router.Use(commonmiddleware.DistributedRateLimit(redisClient.Client, commonmiddleware.RateLimitConfig{
+		router.Use(commonmiddleware.DistributedRateLimit(redisClient.RateLimitDB(), commonmiddleware.RateLimitConfig{
 			Requests:     cfg.RateLimitRequests,
 			Window:       time.Duration(cfg.RateLimitWindow) * time.Second,
 			AuthRequests: cfg.RateLimitAuthRequests,
 			AuthWindow:   time.Duration(cfg.RateLimitAuthWindow) * time.Second,
 			PerUser:      cfg.RateLimitPerUser,
+			// Ride out a Redis restart/failover on a bounded local counter
+			// before failing closed (task 0.7).
+			LocalFallbackMax: time.Duration(cfg.RateLimitLocalFallbackMax) * time.Second,
+			ReplicaCountHint: cfg.RateLimitReplicaHint,
 		}, log))
 	}
 
@@ -195,13 +201,16 @@ func main() {
 	// engine panics ("handlers are already registered for path '/health'").
 
 	// Create HTTP server
-	httpServer := &http.Server{
+	// Hardened listener: ReadHeaderTimeout 5s, 16 KiB header cap and 100 HTTP/2
+	// streams per connection come from server.NewHTTP and cannot be disabled
+	// here (global-scale plan task 0.3).
+	httpServer := server.NewHTTP(server.HTTPOptions{
 		Addr:         cfg.ListenAddr(),
 		Handler:      router,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
-	}
+	})
 
 	// Setup graceful shutdown
 	shutdownables := []server.Shutdownable{

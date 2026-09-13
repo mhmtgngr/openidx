@@ -45,6 +45,16 @@ func newRLSApplier() *rlsApplier {
 }
 
 func (a *rlsApplier) beforeAcquire(ctx context.Context, conn *pgx.Conn) bool {
+	// RLS_MODE=local (task 2.1): the scope belongs to the TRANSACTION, not the
+	// connection — see tx.go. Stamping the session here as well would be
+	// harmless today and actively wrong the moment a transaction pooler sits in
+	// front: the session GUC would follow a backend that gets handed to another
+	// tenant's client. So in local mode this hook does nothing and the scope
+	// arrives with each transaction.
+	if CurrentRLSMode() == RLSModeLocal {
+		return true
+	}
+
 	orgID, bypass := rlsValuesFromContext(ctx)
 	want := rlsState{orgID: orgID, bypass: bypass}
 

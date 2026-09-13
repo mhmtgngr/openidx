@@ -41,7 +41,7 @@ func TestV172SSFReceivedTenant(t *testing.T) {
 			t.Fatalf("reset schema (%s): %v", stmt, err)
 		}
 	}
-	m := migrations.NewMigrator(pool, zap.NewNop())
+	m := migrations.NewMigrator(pool.Raw(), zap.NewNop())
 
 	// Stop one short of v172 and seed the shape the table has had since v99:
 	// a recorded inbound event with no tenant at all.

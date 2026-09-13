@@ -92,6 +92,11 @@ type AuditQuery struct {
 	Outcome   ServiceEventOutcome `json:"outcome,omitempty"`
 	Offset    int                 `json:"offset"`
 	Limit     int                 `json:"limit"`
+
+	// Cursor is the keyset position to resume from (task 2.5, keyset.go).
+	// When set, Offset is ignored and the total count is NOT computed -- see
+	// QueryEvents for why that is the point rather than a shortcut.
+	Cursor *EventCursor `json:"-"`
 }
 
 // ComplianceReport represents a compliance report
@@ -499,16 +504,40 @@ func (s *Service) QueryEvents(ctx context.Context, query *AuditQuery) ([]Service
 		argIndex++
 	}
 
-	// Get total count
+	// THE COUNT IS THE OTHER HALF OF THE COST, and keyset paging does not
+	// touch it. COUNT(*) over the same filters reads every matching row: on a
+	// large table it is the expensive statement in this function whatever the
+	// page number, so a cursor that fixed only the OFFSET would still leave
+	// the deep-page budget blown. On the cursor path it is therefore not run
+	// at all -- a caller paging by cursor is walking the log, not jumping to
+	// page 1,000, and has no use for a total.
+	//
+	// The offset path keeps it exactly as it was: X-Total-Count is a published
+	// header and the console reads it, so the old shape has to keep answering
+	// the old way.
 	var total int
-	err = s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
-	if err != nil {
-		return nil, 0, err
+	if query.Cursor == nil {
+		if err = s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
 	}
 
-	// Add ordering and pagination
-	baseQuery += " ORDER BY timestamp DESC OFFSET $" + strconv.Itoa(argIndex) + " LIMIT $" + strconv.Itoa(argIndex+1)
-	args = append(args, query.Offset, query.Limit)
+	// ORDER BY timestamp DESC alone is NOT a total order -- timestamp defaults
+	// to NOW() and a burst writes several rows in the same microsecond, so tied
+	// rows may come back in any order and not the same order twice. With OFFSET
+	// paging that lets a row appear on two consecutive pages or on neither,
+	// which on an audit log is the worst available wrong answer. id breaks the
+	// tie and is also what the cursor resumes from.
+	if query.Cursor != nil {
+		baseQuery += " AND (timestamp, id) < ($" + strconv.Itoa(argIndex) + ", $" + strconv.Itoa(argIndex+1) + "::uuid)"
+		args = append(args, query.Cursor.Timestamp, query.Cursor.ID)
+		argIndex += 2
+		baseQuery += " " + eventOrdering + " LIMIT $" + strconv.Itoa(argIndex)
+		args = append(args, query.Limit)
+	} else {
+		baseQuery += " " + eventOrdering + " OFFSET $" + strconv.Itoa(argIndex) + " LIMIT $" + strconv.Itoa(argIndex+1)
+		args = append(args, query.Offset, query.Limit)
+	}
 
 	rows, err := s.db.Pool.Query(ctx, baseQuery, args...)
 	if err != nil {
@@ -1383,6 +1412,19 @@ func (s *Service) handleListEvents(c *gin.Context) {
 		Limit:  50,
 	}
 
+	// A cursor supersedes offset (task 2.5). A BAD cursor is refused rather
+	// than ignored: falling back to offset 0 would hand the caller a page they
+	// have already read and call it the next one, which on an audit log is a
+	// silently wrong answer rather than an error.
+	if raw := c.Query("cursor"); raw != "" {
+		cur, err := DecodeEventCursor(raw)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "invalid cursor", "detail": err.Error()})
+			return
+		}
+		query.Cursor = &cur
+	}
+
 	// Parse offset and limit
 	if o := c.Query("offset"); o != "" {
 		if parsed, err := strconv.Atoi(o); err == nil {
@@ -1443,7 +1485,21 @@ func (s *Service) handleListEvents(c *gin.Context) {
 		return
 	}
 
-	c.Header("X-Total-Count", strconv.Itoa(total))
+	// The next cursor, when there is a next page to point at. A full page is
+	// the signal: a short page means the caller has reached the end, and
+	// handing back a cursor there would invite one more round trip for nothing.
+	if len(events) == query.Limit && len(events) > 0 {
+		last := events[len(events)-1]
+		c.Header("X-Next-Cursor", EventCursor{Timestamp: last.Timestamp, ID: last.ID}.Encode())
+	}
+
+	// The offset path keeps its published header verbatim. On the cursor path
+	// no count was computed, so the header is omitted rather than sent as a
+	// zero -- an audit list that reports "0 total" while returning rows is a
+	// worse answer than no header at all.
+	if query.Cursor == nil {
+		c.Header("X-Total-Count", strconv.Itoa(total))
+	}
 	c.JSON(200, events)
 }
 

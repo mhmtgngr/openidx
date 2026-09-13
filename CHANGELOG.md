@@ -7,6 +7,470 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The audit event list pages by cursor, not by `OFFSET`.** `ORDER BY
+  timestamp DESC OFFSET 50000 LIMIT 50` asks Postgres to produce fifty thousand
+  rows and throw them away before returning fifty, so the deepest pages — an
+  auditor walking a year, an export paging to the end — are the slowest. A
+  cursor costs the same at page 1 and page 100,000. `?cursor=` takes an opaque,
+  version-prefixed position and `X-Next-Cursor` hands back the next one; a
+  malformed cursor is a **400**, never a silent fall back to the first page,
+  which would give the caller a page they have already read and call it the
+  next one. Migration v190 adds `(org_id, timestamp DESC, id DESC)`, because
+  neither existing index could answer the query: `idx_audit_events_timestamp`
+  is single-column and install-wide, so scanning it walks every tenant's events
+  and discards the ones that are not yours, and `(org_id, event_type)` leads
+  with the wrong second column.
+
+  Two findings came out of it. **`ORDER BY timestamp DESC` alone is not a total
+  order** — the column defaults to `NOW()` and a burst writes several rows in
+  the same microsecond, so tied rows may come back in any order and not the
+  same order twice; under `OFFSET` paging that let a row appear on two
+  consecutive pages or on neither, which on an audit log is the worst available
+  wrong answer. The `id` tie-break is a correctness fix the cursor happened to
+  need anyway. And **the `COUNT(*)` is the other half of the cost, which keyset
+  does not touch**: it reads every matching row whatever the page number, so a
+  cursor that fixed only the `OFFSET` would still blow the deep-page budget. It
+  is not run at all on the cursor path, and `X-Total-Count` is then omitted
+  rather than sent as a zero. The offset path keeps its published behaviour
+  exactly.
+
+  Measured against a real PostgreSQL: cursor paging visits every row exactly
+  once, in order, across a run of rows sharing one timestamp; no other tenant's
+  row appears; `EXPLAIN` uses v190's index and does not sort. Three mutations
+  turn it red. A fourth — removing the tie-break — does **not**, because
+  Postgres returns tied rows in the chosen index's order and that index carries
+  `id`, so the hazard stays latent; the ordering is therefore pinned as a
+  decision in one place rather than pretended to be covered by behaviour.
+  Task 2.5, audit half; SCIM `/Users` still pages by offset.
+
+
+- **One Postgres login role per availability plane, with a query ceiling the
+  server enforces.** Migration v189 provisions `openidx_issue`
+  (`statement_timeout` 2s), `openidx_admin` (10s) and `openidx_event` (30s).
+  Every service connects as `openidx_app` today with no limit at all, so one
+  expensive ADMIN or EVENT query — an audit search, a governance report, a SCIM
+  bulk page with a bad predicate — is indistinguishable to Postgres from the
+  login path and holds a backend for as long as it likes. Cancelling a Go
+  context does not help: it abandons the call while the backend keeps burning
+  CPU and holding locks, so once a query is *running* the database is the only
+  layer that can stop it. Each role is created `IN ROLE openidx_app`, so it
+  inherits v53's DML grants and, with them, the v37 `FORCE` RLS policies that
+  are granted `TO openidx_app` — a plane role is exactly as tenant-scoped as
+  `openidx_app`, never more. `NOBYPASSRLS` is spelled out on each one because a
+  role that quietly bypassed the belt would not fail; it would return every
+  tenant's rows. `idle_in_transaction_session_timeout` is set alongside (60s /
+  120s / 300s), which the plan did not ask for: without it the statement
+  timeout is bypassed by `BEGIN`, one fast query, and holding the transaction
+  open. Measured against a real PostgreSQL — all three roles see their own
+  tenant and no other, a cross-tenant write is refused, and a 15s query on the
+  ADMIN role is cancelled by the server at ~10s while ISSUE is untouched — and
+  verified by four mutations, of which `BYPASSRLS` is the one that matters: the
+  role then sees both tenants' rows. The roles ship passwordless and **nothing
+  points at them yet**, so until a deployment cuts a service's `DATABASE_URL`
+  over, this changes no behaviour.
+
+  The roles are provisioned by the chart's superuser bootstrap hook, beside
+  `openidx_app`, not by the migration: the migration Job connects as the
+  database *owner*, which the PostgreSQL subchart makes a plain `NOCREATEROLE`
+  login, so `CREATE ROLE`, `GRANT` and `ALTER ROLE … SET` are all refused there.
+  `TestMigrationsRunAsLeastPrivilegedOwner` said so, with
+  `permission denied to create role`, and it was right. Every privileged
+  statement in v189 is therefore guarded by "is it already so?" — once the hook
+  has run, the migration only reads `pg_roles` and `pg_db_role_setting` and
+  changes nothing; on an external database with a privileged DSN it does the
+  work itself; with neither it fails loudly, which is the contract v53 already
+  documents. A pre-existing plane role carrying `BYPASSRLS` raises rather than
+  being quietly repaired: that is not a drifted setting, it is a tenant
+  boundary that is not there. Task 2.4.
+
+### Fixed
+
+- **"A replica outage transparently falls back to the primary" was true only at
+  startup.** Three places said it — the `Reader()` doc, the read-replica health
+  checker, and `values-prod.yaml` — and all three were describing
+  `NewPostgres`: if the replica pool fails to open, `readPool` stays nil and
+  `Reader()` returns the primary forever after. Once the pool was open,
+  `Reader()` handed it back unconditionally. A replica that died later — a
+  failover, a reboot, a partition, an RDS maintenance window — failed every
+  read that had been offloaded to it, and kept failing until someone restarted
+  the process, with readiness green throughout because the replica checker is
+  non-critical by design. The read pool now retries on the primary when the
+  replica does not answer, and opens a breaker after three consecutive
+  infrastructure failures so a dead replica costs one failed dial per 30s
+  rather than one per request. A `PgError` is deliberately *not* treated as the
+  replica being down: the server answered, the statement is at fault, and that
+  includes `25006` (a write on a read-only replica) — which is what keeps
+  "NEVER use `Reader()` for writes" enforceable instead of silently re-aiming
+  writes at the primary. Measured against a replica pool pointed at a dead
+  port: `QueryRow`, `Query` and `Begin` all keep answering, still tenant-scoped,
+  and the breaker opens. `openidx_db_replica_fallback_total` and
+  `openidx_db_replica_breaker_open` with two alerts; `make ha-drill` gained a
+  section. Task 2.3.
+
+- **The `ScopedPool` suite had never run in CI.** The `rls-isolation` job ran
+  `go test -run 'RLS'`, and `TestScopedPool_*` does not contain those three
+  letters — so the tests proving ~1,950 unedited call sites carry the tenant
+  scope (task 2.1b) only ever ran on a developer's machine. The regex now names
+  them, and because `-run` matching nothing exits 0, the step asserts each of
+  four tests actually reported `PASS` rather than trusting the regex.
+
+- **The read path was outside the tenant belt, and nothing could have told
+  you.** Task 2.1b moved the tenant scope into the type of `PostgresDB.Pool`
+  and left `Reader()` returning the bare pgx pool. With no read replica
+  configured `Reader()` falls back to the primary, so nothing broke, nothing
+  failed to compile, and no test changed colour — while about a dozen read-path
+  queries (user by id, by username, by email, sessions, groups, oauth clients)
+  would have carried no `app.org_id` in `RLS_MODE=local`. Under `FORCE` RLS
+  that is not an error: it is **zero rows**, so a login would simply have said
+  the user does not exist. `Reader()` now returns a `*ScopedPool` like `Pool`;
+  exactly one production call site (`WithReadTx`) failed to compile and the
+  rest became scoped unedited. Measured against a real PostgreSQL as a
+  non-superuser role, and the assertion verified by mutating the call back to
+  `Reader().Raw()`, which fails with `no rows in result set`.
+
+### Added
+
+- **`orgscope` now lints the tenant belt's exit, not just its predicate.**
+  `ScopedPool.Raw()` is the deliberate way to reach the database with no tenant
+  scope — correct for install-wide tables, migrations and pool statistics — and
+  it is exactly as easy to type as `Pool` at every one of ~1,950 call sites,
+  with no compile-time difference. `tools/orgscope/rawpool.go` reports three
+  things: a tenant table reached through `Raw()`; a database call through
+  `Raw()` whose SQL the tool cannot read (this repo assigns most queries to a
+  variable first, so it **fails closed**, `Begin()` included); and an unscoped
+  pool handed to a function that is not on `rawHandoffAllowed`, a register that
+  demands a reason per entry like `installWideTables`. Crucially an `org_id` in
+  the SQL does **not** clear these findings, and their wording says so — the
+  policy compares it to `current_setting('app.org_id')`, so the row is
+  invisible however the `WHERE` clause is written. The escape is the same
+  `//orgscope:ignore <reason>` the rest of the tool uses. The CI gate now
+  covers `./internal ./cmd`, since the legitimate handoffs live in `cmd/`.
+  Sixteen tests, plus a mutation against the real tree. Task 2.1b.
+
+### Added
+
+- **A transaction pooler in the chart, with the unsafe combination made
+  unrenderable.** `pgcat` ×2 behind one Service, off by default. The connection
+  budget becomes `replicaCount × poolSize` (2 × 40), a constant — without it the
+  fleet is `services × replicas × DB_MAX_CONNS`, which autoscaling multiplies.
+  Enabling it repoints the eight request-serving Deployments at the pooler and
+  deliberately leaves the migration Job, the bootstrap hook and the backup
+  CronJob on the direct DSN: a migration's advisory lock is session-scoped and
+  `pg_dump` needs one session to hold its snapshot, so neither survives
+  transaction pooling. The chart **refuses to render** `pgcat.enabled=true`
+  while `config.rlsMode` is not `local`, with no override, because a pooler in
+  front of session-scoped tenant state hands one tenant's scope to the next
+  client — measured in
+  `docs/evidence/2026-09-13-rls-transaction-pooling.md`, not theorised. It also
+  refuses a zero `preparedStatementsCacheSize`, which is pgcat's own default and
+  means every pgx query fails with SQLSTATE 42P05. pgcat's Prometheus exporter
+  is scraped by its own ServiceMonitor; `OpenIDXPoolerClientsWaiting` replaces
+  `OpenIDXDBPoolSaturation` as the alert that sees the wall, and
+  `OpenIDXPoolerNoRedundancy` covers the new single point of failure in front of
+  the database. Five CI assertions cover all of it, each verified by breaking
+  the thing it guards. Auditing the generated config against pgcat v1.2.0's own
+  source caught three things every render-time check passed: the pinned tag
+  `1.1.1` does not exist (the registry's only released tag is `v1.2.0`),
+  `prepared_statements` is not a `[general]` key and pgcat ignores unknown keys
+  in silence, and the image declares `CMD ["pgcat"]` with no `ENTRYPOINT`, so
+  `args` alone would have replaced the binary with the path to its config file.
+  The canary gate is unchanged: nothing turns this on until `RLS_MODE=local` has
+  run for two weeks. Task 2.2.
+
+### Added
+
+- **An anycast edge as code, provider chosen by one variable.** DDoS at
+  L3/L4 and volumetric L7 is bought, not built (design ADR-3), and the
+  provider is an open decision. `deployments/terraform/edge` is a root whose
+  `edge_provider` selects one of three modules behind one interface:
+  `edge-cloudflare` (proxied DNS, zone TLS floor, Managed Ruleset,
+  Authenticated Origin Pulls, rate-limit and cache rulesets),
+  `edge-aws` (CloudFront with HTTP/3, WAFv2 in CloudFront scope with the
+  AWS managed groups, per-source rate-based rules and size constraints,
+  optional Shield Advanced, a secret origin header) and `edge-azure` (Front
+  Door Premium, Microsoft Default Rule Set 2.1 + Bot Manager, rate-limit and
+  size custom rules, cache rule set, `X-Azure-FDID` origin verification).
+  All three render the same `modules/edge-common/rules.json` — the design's
+  §5.3 table as data — and export `edge_cidrs` (for `OIDX_EDGE_TRUSTED_CIDRS`
+  and the origin firewall) and `origin_verification` (what the origin must
+  demand so an IP allow-list is not the only cloak). A Go test keeps the rule
+  file and the design table naming the same paths and the size limits equal
+  to the services' own caps; CI validates the root and the standalone
+  modules. Task 1.1.
+
+### Added
+
+- **The tenant scope moved into the type, so ~1,950 call sites got it without
+  being edited.** Task 2.1a made a transaction-local scope possible; applying
+  it everywhere was planned as eight weeks of mechanical edits across 1,967
+  `db.Pool.Query` / `QueryRow` / `Exec` call sites — in which every missed line
+  would be a query running with no tenant scope at all, returning zero rows
+  under FORCE RLS rather than failing a test. `database.ScopedPool` is now the
+  type of `PostgresDB.Pool`, with the same method set as `*pgxpool.Pool`, so
+  1,933 call sites kept compiling and reading exactly as they were and now
+  route through the scoped path. "Did we remember this line?" became "does it
+  compile?". The compiler found the 11 places that pass the pool as a value;
+  each was judged individually — `Raw()` for install-wide tables, migrations
+  and pool statistics, a narrow interface for the ones that read tenant
+  tables. One of those was a trap worth naming: `audit.CrossOrgAuditor` writes
+  with a bypass context, and handed a raw pool it would carry no marker in
+  local mode, so the fail-closed `WITH CHECK` would reject the mandatory
+  cross-org audit row. Tests prove an unedited `db.Pool` call shape is scoped
+  and that `Raw()` deliberately is not. Task 2.1b, in place of the migration.
+
+- **The tenant scope can travel with the transaction, which is what a
+  connection pooler needs.** The scope is stamped onto the pooled *connection*
+  at checkout, and that is a hard ceiling on scale: session state belongs to a
+  connection, so the fleet's Postgres connection count is services × replicas ×
+  pool size, and autoscaling multiplies it. The standard answer, a transaction
+  pooler, has been forbidden here for a good reason — transaction pooling does
+  not carry session state, so `app.org_id` set at checkout would follow a
+  backend handed to another tenant's client, which is a cross-tenant leak.
+  `RLS_MODE=local` sets the scope *inside* each transaction with
+  `set_config(..., true)`, which Postgres resets at COMMIT, so a recycled
+  backend carries nothing. `database.WithTx` plus `Query`, `QueryRow` and
+  `Exec` wrappers provide it; in `session` mode, still the default, they pass
+  straight through and nothing changes for any existing deployment.
+
+  Measured against a real Postgres as a non-superuser role, on a pool
+  restricted to one connection so every tenant reuses the same backend: two
+  tenants alternating twenty-five times each see only their own rows; two
+  hundred concurrent readers produce zero cross-tenant reads; after a scoped
+  transaction commits an unscoped query sees zero rows rather than the previous
+  tenant's; a cross-tenant write is refused by `WITH CHECK`; the bypass marker
+  does not outlive its transaction; and error paths leak no connections. The
+  suite refuses to run as a superuser, because Postgres exempts superusers from
+  every policy and the assertions would otherwise pass with the belt cut — the
+  new `rls-isolation` CI job asserts that refusal as a negative control before
+  running the real thing. Both mutations of the scope statement, making it
+  session-scoped and omitting it, turn the suite red. pgcat still waits on two
+  weeks of canary and the `orgscope` rule (task 2.1b). Task 2.1a.
+
+- **The origin refuses anyone who did not come through our edge.** Edge
+  decision K1 is Azure Front Door Premium (the stack already runs on AKS with
+  Flexible Server and Azure Cache), so origin cloaking takes two layers rather
+  than Cloudflare's single mTLS one. The network layer is an NSG on the AKS
+  subnet admitting only the `AzureFrontDoor.Backend` service tag on 80/443 and
+  denying `Internet` explicitly — a service tag rather than a copied CIDR list,
+  because Azure keeps the tag current and a copy rots. That alone is half a
+  control: the tag admits *every* tenant's Front Door, so the application layer
+  demands `X-Azure-FDID` equal to our profile's GUID and answers 403 without
+  it, at the ingress (`edge.originVerify.*`, rendered as a configuration
+  snippet, with `allow-snippet-annotations` enabled on the controller because
+  it has defaulted off since ingress-nginx 1.9 and an ignored annotation is an
+  open origin) and at APISIX (`EDGE_ORIGIN_VERIFY_HEADER`/`VALUE`, a global
+  `request-validation` rule). Both refuse to configure half-way: a header with
+  no value renders nothing rather than accepting any value. Certificate
+  Transparency publishes the hostnames, so secrecy was never the control.
+  Task 1.2.
+
+- **A DDoS game-day: six attack scenarios and the runbook to answer them.**
+  A design that says "the edge absorbs this" is not evidence.
+  `test/load/ddos/` holds six k6 scenarios — JWKS/discovery flood, token
+  flood with invalid clients, credential spray across many source addresses,
+  slow-request and oversized-header, oversized SCIM and default bodies, and
+  expensive audit search — each sharing the two thresholds the whole day is
+  built on: VERIFY latency must not move (p99 < 30 ms) and legitimate ISSUE
+  success must hold (> 99%). `scripts/ddos-drill.sh --check` syntax-checks
+  every scenario and asserts the wiring without a cluster or k6 (in CI and
+  `make ddos-drill`); the live run refuses a production or loopback target
+  before it needs k6, runs against a staging cell and writes a summary to
+  `docs/evidence/`. `docs/runbooks/ddos-under-attack.md` is the full version
+  of the design's §5.7: which signals say attack rather than launch, how to
+  turn the edge to under-attack mode, cutting the source as narrowly as the
+  attack allows, taking capacity from ADMIN for ISSUE without touching
+  VERIFY, and standing down in reverse. The live measurement is M1's
+  game-day. Task 1.5.
+
+- **A bot gate at the login door, keyed on the account rather than the
+  address.** A credential spray spread across ten thousand sources makes
+  three attempts from each: no per-IP bucket ever fills, and the database
+  lockout sees only accounts that exist and then locks them — which is what
+  the attacker who wanted the victim locked out came for. `internal/botgate`
+  counts failed password checks per typed account name (hashed,
+  case-folded, existing or not, so enumeration learns nothing) in the
+  session Redis, and after `LOGIN_FAIL_CHALLENGE_AFTER` (5) failures in
+  `LOGIN_FAIL_WINDOW_SECONDS` (900) the next attempt from anywhere answers
+  `403 challenge_required` until it carries a solved challenge or the window
+  passes. A correct password clears the counter, so a legitimate user never
+  meets the gate. An edge bot score passed down in `X-Edge-Bot-Score` below
+  30 is a challenge before the first failure. Cloudflare Turnstile is the
+  first `ChallengeVerifier` (`TURNSTILE_SECRET`); a solved token admits the
+  attempt and resets the count, a rejected or unreachable verifier never
+  admits. `BOT_GATE` is tri-state like the other gates: off by default,
+  observe writes `would_challenge` decisions to the audit trail so the
+  threshold is chosen from data, enforce refuses; the startup gate census
+  names it. A counter outage fails toward the password check, never toward
+  a lockout. The login page's Turnstile widget is the remaining half. Task
+  1.4.
+
+### Changed
+
+- **The edge actually caches discovery and JWKS, and never caches the entry
+  document.** The compose TLS proxy's `/.well-known/jwks.json` and
+  `openid-configuration` locations had carried `proxy_cache_valid` for years
+  with no cache zone defined anywhere — and `proxy_cache_valid` without
+  `proxy_cache` is a comment, so every discovery and JWKS request reached
+  the oauth-service and a JWKS flood was the cheapest way to make the edge
+  hammer the ISSUE plane. An `openidx_edge` zone now exists and both
+  locations use it with `proxy_cache_lock` (one origin fetch per miss) and
+  `proxy_cache_use_stale` (a verifier never sees a JWKS outage). All three
+  nginx configurations that serve the console mark hashed assets immutable
+  for a year and `index.html` `no-cache`, repeating the security headers in
+  that location because nginx's `add_header` replaces rather than merges.
+  Tests pin the zone, its use, and the entry-document policy. Task 1.3.
+
+- **A Redis blip is no longer a login outage of its own length.** The
+  auth-path rate limiter fails closed when its Redis is unreachable, and
+  that stays the default: brute-force protection must not silently vanish
+  with a cache. But "unreachable" was binary — the first failed `INCR`
+  turned every login into a 503, so a ten-second restart, a failover or a
+  rolling upgrade of the rate-limit instance became exactly that long an
+  outage, and the defence had a failure mode nobody had to attack. For a
+  bounded window after the first failure (`RATE_LIMIT_LOCAL_FALLBACK_MAX`,
+  60 s) each replica now enforces the auth tier from a process-local counter
+  with a per-replica share of the quota (`RATE_LIMIT_REPLICA_HINT`, which
+  the Helm chart sets from the deployment's replica count), then fails
+  closed as before. The local map is capped: a flood of distinct sources
+  during the window fails closed for new keys rather than allocate, so an
+  outage cannot double as memory exhaustion. A successful Redis call resets
+  the window. `openidx_rate_limit_local_fallback_seconds` climbs while on
+  fallback and `OpenIDXRateLimitOnLocalFallback` pages at 10 s, before the
+  window is spent. Zero keeps the strict first-failure-is-503 contract the
+  existing tests pin. Task 0.7.
+
+- **CORS says one thing everywhere.** The oauth-service wrote
+  `Access-Control-Allow-Origin: *` on every response by hand while the
+  production gate refused a wildcard `CORS_ALLOWED_ORIGINS` — the gate held
+  for seven services and the eighth ignored it, and the threat model claimed
+  the gate. The policy is now explicit in `middleware.OAuthCORS`: the
+  OAuth/OIDC *protocol* endpoints (token, introspect, revoke, userinfo,
+  device flow, dynamic registration, discovery, JWKS) answer `*` by design,
+  because a public client on a relying party's origin must reach them and
+  `*` can never carry cookies; the session-carrying login, MFA, consent and
+  step-up pages follow the configured origin list like every other service
+  and refuse an unlisted origin instead of reflecting it.
+  `OAUTH_PROTOCOL_CORS_WILDCARD=false` closes the exception for a deployment
+  where every relying party is known. At the edge, the tenant origin list
+  that was copied into eleven compose routes and seven production services
+  becomes one global `cors` rule each (the plugin answers preflight itself,
+  so the catch-all OPTIONS routes are gone), with route-level `*` only on the
+  protocol routes. Tests pin the list to exactly one copy and the wildcard to
+  the protocol routes; the threat model's TB1 row now says what the code
+  does. Task 0.6.
+
+- **Every request-serving deployment autoscales, and scales the right way
+  round.** The HPA and PDB templates listed seven services; `access-service`
+  and `gateway-service` were not among them, so `values-prod.yaml`'s
+  `autoscaling: { enabled: true }` for the two proxies rendered nothing and
+  they ran at a fixed replica count under load with no disruption budget.
+  Both are now covered (11 PDBs render where 9 did). Every HPA carries a
+  `behavior` block shared from `autoscaling.behavior`: scale-up has no
+  stabilisation window and may double or add four pods per minute, whichever
+  is more; scale-down waits five minutes and sheds at most a quarter per
+  minute, because the quiet after a wave is often the gap before the next
+  one and a flapping HPA is a cold start under fire. The default CPU target
+  drops from 80% to 60%: identity traffic saturates connections and database
+  waits before CPU, and by the time CPU reads 80% p99 is already gone. KEDA
+  replaces the CPU signal in plan task 3.6. Task 0.5.
+
+- **Operational endpoints no longer leave the cluster.** The production
+  route loader published `/api/v1/<service>/health` and `/oauth/health` for
+  every service with no plugins, and nothing at any edge stood in front of a
+  root `/health`, `/ready` or `/metrics`. `/health/ready` pings Postgres,
+  Redis and Elasticsearch on every call and answers with each dependency's
+  status and latency; `/metrics` is the whole Prometheus surface. Public,
+  they were a reconnaissance feed and a free way to make the edge hammer
+  the data tier under a flood. All three APISIX configurations (compose
+  file, production loader, edge seed script) now carry one route at
+  priority 100 that answers 404 at the edge via `fault-injection` for
+  `/health`, `/health/*`, `/ready`, `/metrics` and the loader's old public
+  paths, in every `DARK_MODE`. Probes and the scraper reach the pods
+  directly; an external load balancer checks nginx's static `/health` or
+  L4. The compose route test that required the public health routes now
+  requires their absence. Task 0.4.
+
+- **Every listener refuses to wait for a slow attacker.** A slowloris needs
+  no bandwidth, only a server that keeps a half-sent request alive; Go's
+  `http.Server` does so indefinitely unless told otherwise, and each of the
+  eight services built its own server literal with read, write and idle
+  timeouts and no header timeout — seven mains, seven chances to forget it,
+  all seven forgot. `server.NewHTTP` is now the one way a service constructs
+  its listener: `ReadHeaderTimeout` 5 s, a 16 KiB header cap (Go's default is
+  1 MiB, an allocation the attacker sizes) and 100 HTTP/2 streams per
+  connection, none of which a caller can disable. Body caps are mounted per
+  service (1 MiB on oauth, governance and audit; 5 MiB on admin-api and SCIM
+  provisioning for `/Bulk`; 10 MiB on identity for CSV import), answering
+  413 before any handler runs; the access proxy and gateway are left to the
+  edge's cap because they forward published applications. The compose nginx
+  gains `client_header_timeout`/`client_body_timeout` 10 s, `send_timeout`,
+  `reset_timedout_connection` and a per-source `limit_conn` of 100 with a
+  commented realip block for when a provider sits in front. Every
+  rate-limited APISIX route, in compose and in the edge seed script, now also
+  carries `limit-conn` keyed on the real client address, and the OAuth
+  upstream stops retrying (`retries: 0`, 3/10/10 s timeouts): a retry under
+  load multiplies the attack it is failing under. Tests pin each layer: a
+  trickled header is cut inside the timeout while `ReadTimeout` is still 10 s
+  away, an 8 KiB header gets 431 with no handler run, and the compose and
+  edge configurations are parsed rather than grepped. Task 0.3.
+
+- **The client-IP chain survives an edge in front of it.** Every per-IP
+  control — the auth-path rate limiter, audit actor IPs, known-IP device
+  trust, geo rules — reads gin's `ClientIP()`, which is the client only when
+  the hop that forwarded the request is trusted. APISIX keyed `limit-req` on
+  `remote_addr` and the services trusted loopback alone, so the moment an
+  anycast or CDN provider is placed in front, every TCP peer is the provider
+  and the whole world shares one bucket: one attacker can 429 everyone, and a
+  thousand-source brute force looks like one client. The opposite setting,
+  `OIDX_TRUSTED_PROXIES=*`, lets the caller pick its own bucket.
+
+  Three things change. `OIDX_EDGE_TRUSTED_CIDRS` carries the provider's
+  published ranges and is unioned with `OIDX_TRUSTED_PROXIES` (a `*` inside it
+  is dropped, not honoured); production services now refuse to start on
+  `OIDX_TRUSTED_PROXIES=*` and warn when it is empty. APISIX gains a `real-ip`
+  global rule — in compose trusting the private network the TLS proxy lives
+  on, on the public edge gated on `EDGE_TRUSTED_CIDRS` in
+  `seed-edge-routes.sh` and deliberately absent when that APISIX is the true
+  edge. The Helm chart adds `edge.trustedCidrs` and an `edge.cidrSync`
+  CronJob (`files/edge-cidr-sync.sh`, Cloudflare / CloudFront / static) that
+  rewrites a ConfigMap every service mounts optionally and rolls the
+  deployments only on change; any bad, empty or implausibly short feed leaves
+  the current list untouched and fails the Job (`OpenIDXEdgeCidrSyncFailed`).
+  Tests pin the contract at the seam: behind a trusted edge two clients get
+  two buckets, behind an untrusted one they collapse into one, and an
+  untrusted caller cannot move itself by forging the header. Task 0.2.
+
+- **Redis is three instances, one per loss profile.** OpenIDX kept four kinds
+  of state in one Redis: rate-limit counters, login/MFA/authcode session
+  state, token and session revocation markers, and leader locks. The counters
+  are the one workload an attacker can inflate at will — a flood of source
+  addresses is a flood of keys — and on a shared instance that flood ends one
+  of two ways. Under `noeviction` (the compose default) Redis starts refusing
+  writes and the auth-path limiter, which fails closed by design, turns into an
+  attacker-operated login kill switch. Under `allkeys-lru` (what
+  `docker-compose.prod.yml` ran) the instance stays up by forgetting keys, and
+  a forgotten `oauth:user_tokens_revoked_at:<uid>` marker is a revoked access
+  token that answers again. Either way the defence became the attack.
+
+  `REDIS_RATELIMIT_URL` and `REDIS_REVOCATION_URL` now point the two roles at
+  their own instances; the primary `REDIS_URL` keeps session state and locks.
+  Both are optional and an empty value aliases the primary, so a single-Redis
+  install is unchanged. `database.RedisClient` gained `RateLimit` and
+  `Revocation` fields with nil-safe `RateLimitDB()` / `RevocationDB()`
+  accessors; every service mounts the limiter on the rate-limit role and all
+  sixteen revocation call sites (`revoked_session:*`, the revoke-all marker,
+  the per-token blacklist) go through the revocation role. A census test in
+  `internal/revocation` fails the build if a marker is ever written through
+  the primary client again, and the health checker pings every distinct
+  instance so readiness cannot say "redis up" while markers have nowhere to
+  go. Compose ships `redis-ratelimit` (256 MB, `allkeys-lru`, no persistence)
+  and `redis-revocation` (`noeviction`, AOF); the production overlay's session
+  instance moves from `allkeys-lru` to `noeviction`. Helm: `redis.roles.*` or
+  `externalSecrets.redisRoles` (on in `values-prod.yaml`). Task 0.1 of
+  `docs/plans/2026-09-13-global-scale-cell-architecture-plan.md`.
+
 ## [1.35.0] - 2026-09-10
 
 ### Added

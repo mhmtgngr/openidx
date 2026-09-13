@@ -74,6 +74,7 @@ func TestStartupReportsTheCountEvenWhenFullyEnforcing(t *testing.T) {
 		AccessAssignmentEnforce: true,
 		ABACEnforce:             "enforce",
 		StepUpGate:              "enforce",
+		BotGate:                 "enforce",
 		EnableOPAAuthz:          true,
 		PAMSessionRiskGate:      "enforce",
 		PostureDeviceTrustGate:  "enforce",

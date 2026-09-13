@@ -37,6 +37,52 @@ DRY_RUN=${DRY_RUN:-0}
 _put_real() { curl -fsS -o /dev/null -w "  route %-26s -> %{http_code}\n" "$1" \
         -X PUT -H "X-API-KEY: $KEY" "$ADMIN/apisix/admin/routes/$1" -d "$2"; }
 put() { if [ "$DRY_RUN" = "1" ]; then echo "put $1"; else _put_real "$1" "$2"; fi; }
+_put_global_real() { curl -fsS -o /dev/null -w "  global %-25s -> %{http_code}\n" "$1" \
+        -X PUT -H "X-API-KEY: $KEY" "$ADMIN/apisix/admin/global_rules/$1" -d "$2"; }
+put_global() { if [ "$DRY_RUN" = "1" ]; then echo "global $1"; else _put_global_real "$1" "$2"; fi; }
+
+# --- Client-IP chain (global-scale plan task 0.2) ---
+# When an anycast/CDN edge is placed in front of this APISIX, every TCP peer is
+# the provider and remote_addr stops meaning "the client". Every per-IP control
+# downstream (limit-req keys, the services' auth-path limiter, audit actor_ip,
+# known-IP device trust, geo rules) then sees ONE address for the whole world:
+# one attacker can 429 everyone. EDGE_TRUSTED_CIDRS is the provider's published
+# address list (comma-separated); when set, a global real-ip rule rewrites
+# remote_addr from X-Forwarded-For, trusting only those hops. Left empty when
+# THIS APISIX is the true edge (no hop in front) — then remote_addr is already
+# the client and a real-ip rule would only add a way to forge it.
+# Keep the same list in the backend services' OIDX_TRUSTED_PROXIES /
+# OIDX_EDGE_TRUSTED_CIDRS so the second hop (APISIX -> service) is trusted too.
+EDGE_TRUSTED_CIDRS=${EDGE_TRUSTED_CIDRS:-}
+if [ -n "$EDGE_TRUSTED_CIDRS" ]; then
+  _cidrs_json=$(printf '%s' "$EDGE_TRUSTED_CIDRS" | tr -d ' ' | awk -F, '{for(i=1;i<=NF;i++){if($i!=""){printf "%s\"%s\"", (n++?",":""), $i}}}')
+  put_global edge-real-ip "{\"plugins\":{\"real-ip\":{\"source\":\"http_x_forwarded_for\",\"recursive\":true,\"trusted_addresses\":[${_cidrs_json}]}}}"
+else
+  echo "  (EDGE_TRUSTED_CIDRS empty: no real-ip global rule; correct only if this APISIX is the true edge)" >&2
+fi
+
+# --- Origin cloaking, application half (global-scale plan task 1.2, §5.2) ---
+# The network half (NSG service tag / security group) says "only the edge's
+# ranges may connect". That is not enough on its own: a service tag admits
+# EVERY tenant's Front Door, and a CloudFront range admits every CloudFront
+# distribution. So the edge also proves WHICH edge it is, with a header only
+# our profile sends, and this origin refuses anything without it — before the
+# request reaches a service, at priority above every route.
+#
+#   Azure Front Door : EDGE_ORIGIN_VERIFY_HEADER=X-Azure-FDID
+#                      EDGE_ORIGIN_VERIFY_VALUE=<profile resource GUID>
+#   AWS CloudFront   : X-Edge-Origin-Verify + the module's generated secret
+#   Cloudflare       : leave EMPTY — it proves itself with mTLS (Authenticated
+#                      Origin Pulls), which is stronger than a header and is
+#                      configured on the listener, not here.
+EDGE_ORIGIN_VERIFY_HEADER=${EDGE_ORIGIN_VERIFY_HEADER:-}
+EDGE_ORIGIN_VERIFY_VALUE=${EDGE_ORIGIN_VERIFY_VALUE:-}
+if [ -n "$EDGE_ORIGIN_VERIFY_HEADER" ] && [ -n "$EDGE_ORIGIN_VERIFY_VALUE" ]; then
+  _hdr_lc=$(printf '%s' "$EDGE_ORIGIN_VERIFY_HEADER" | tr 'A-Z' 'a-z')
+  put_global edge-origin-verify "{\"plugins\":{\"request-validation\":{\"header_schema\":{\"type\":\"object\",\"required\":[\"${_hdr_lc}\"],\"properties\":{\"${_hdr_lc}\":{\"type\":\"string\",\"enum\":[\"${EDGE_ORIGIN_VERIFY_VALUE}\"]}}},\"rejected_code\":403,\"rejected_msg\":\"direct origin access is refused\"}}}"
+else
+  echo "  (EDGE_ORIGIN_VERIFY_HEADER/VALUE empty: origin accepts any caller the network lets through — correct only for Cloudflare mTLS or a true edge)" >&2
+fi
 
 # --- TLS (wildcard *.tdv.org) ---
 if [ "$DRY_RUN" != "1" ]; then
@@ -52,21 +98,40 @@ fi
 
 H='"hosts":["openidx.tdv.org"]'
 
+# --- Per-source concurrent-connection ceilings (global-scale plan task 0.3) ---
+# A slow-body or long-poll flood spends OPEN connections, not request rate.
+# limit-conn bounds how many one source may hold at once; keyed on remote_addr,
+# which is the client after the real-ip rule above (or natively when this APISIX
+# is the true edge). ISSUE-facing routes (oauth, identity, enroll, well-known)
+# get more headroom than management routes, which are the first to shed.
+LC_ISSUE='"limit-conn":{"conn":200,"burst":50,"default_conn_delay":0.1,"key_type":"var","key":"remote_addr","rejected_code":429}'
+LC_ADMIN='"limit-conn":{"conn":100,"burst":25,"default_conn_delay":0.1,"key_type":"var","key":"remote_addr","rejected_code":429}'
+LC_DISCOVERY='"limit-conn":{"conn":1000,"burst":200,"default_conn_delay":0.1,"key_type":"var","key":"remote_addr","rejected_code":429}'
+# ISSUE upstream: never retry (a retry multiplies the attack it fails under),
+# give up fast so a stalled backend sheds instead of queueing.
+UP_ISSUE='"retries":0,"timeout":{"connect":3,"send":10,"read":10}'
+
+# --- Operational endpoints: closed at the edge (task 0.4), every DARK_MODE ---
+# /health/ready pings every dependency and reports each one's status and
+# latency; /metrics is the whole Prometheus surface. Probes and the scraper are
+# local to the box; the internet gets 404 before any upstream is consulted.
+put openidx-deny-health "{$H,\"uris\":[\"/health\",\"/health/*\",\"/ready\",\"/metrics\",\"/oauth/health\"],\"priority\":100,\"plugins\":{\"fault-injection\":{\"abort\":{\"http_status\":404,\"body\":\"{\\\"error\\\":\\\"not found\\\"}\"}}},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8005\":1}}}"
+
 # ===========================================================================
 # TIER 0 — always public (the bootstrap gate; darking it bricks enrollment).
 # ===========================================================================
 # The enroll door: the ONLY /api/v1/access/* path public in dark mode. Higher
 # priority than the (off-mode) /api/v1/access/* catch-all so it always wins.
-put openidx-api-enroll       "{$H,\"uri\":\"/api/v1/access/enroll\",\"priority\":45,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8007\":1}}}"
+put openidx-api-enroll       "{$H,\"uri\":\"/api/v1/access/enroll\",\"priority\":45,\"plugins\":{$LC_ISSUE},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8007\":1}}}"
 # OAuth login/token/JWKS surface — required to obtain a token / for BrowZer login.
-put openidx-oauth            "{$H,\"uri\":\"/oauth/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
-put openidx-wellknown        "{$H,\"uri\":\"/.well-known/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
+put openidx-oauth            "{$H,\"uri\":\"/oauth/*\",\"priority\":30,\"plugins\":{$LC_ISSUE},\"upstream\":{\"type\":\"roundrobin\",$UP_ISSUE,\"nodes\":{\"127.0.0.1:8006\":1}}}"
+put openidx-wellknown        "{$H,\"uri\":\"/.well-known/*\",\"priority\":30,\"plugins\":{$LC_DISCOVERY},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
 
 # ===========================================================================
 # TIER 1 — self-service + SPA (public in off/tier2, dark in tier1).
 # ===========================================================================
 if [ "$DARK_MODE" = "off" ] || [ "$DARK_MODE" = "tier2" ]; then
-  put openidx-api-identity     "{$H,\"uri\":\"/api/v1/identity/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8001\":1}}}"
+  put openidx-api-identity     "{$H,\"uri\":\"/api/v1/identity/*\",\"priority\":30,\"plugins\":{$LC_ISSUE},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8001\":1}}}"
   # enable_websocket: this /* catch-all fronts nginx :8443, which serves the
   # Guacamole PAM console at /guacamole/*. Guacamole's session tunnel is a
   # WebSocket; without this APISIX drops the Upgrade and the browser authenticates
@@ -78,17 +143,17 @@ fi
 # TIER 2 — management/data planes (public only in off; dark in tier2 + tier1).
 # ===========================================================================
 if [ "$DARK_MODE" = "off" ]; then
-  put openidx-api-governance   "{$H,\"uri\":\"/api/v1/governance/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8002\":1}}}"
-  put openidx-api-provisioning "{$H,\"uri\":\"/api/v1/provisioning/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8003\":1}}}"
-  put openidx-api-audit        "{$H,\"uri\":\"/api/v1/audit/*\",\"priority\":30,\"enable_websocket\":true,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8004\":1}}}"
-  put openidx-api-access       "{$H,\"uri\":\"/api/v1/access/*\",\"priority\":30,\"enable_websocket\":true,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8007\":1}}}"
+  put openidx-api-governance   "{$H,\"uri\":\"/api/v1/governance/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8002\":1}}}"
+  put openidx-api-provisioning "{$H,\"uri\":\"/api/v1/provisioning/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8003\":1}}}"
+  put openidx-api-audit        "{$H,\"uri\":\"/api/v1/audit/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"enable_websocket\":true,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8004\":1}}}"
+  put openidx-api-access       "{$H,\"uri\":\"/api/v1/access/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"enable_websocket\":true,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8007\":1}}}"
   # /api/v1/oauth/* (OAuth client management) is owned by the oauth-service :8006,
   # NOT admin-api — it must out-prioritize the /api/* admin catch-all below.
-  put openidx-api-oauth        "{$H,\"uri\":\"/api/v1/oauth/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
+  put openidx-api-oauth        "{$H,\"uri\":\"/api/v1/oauth/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
   # /api/v1/saml/* (SAML SP management) is also oauth-service :8006.
-  put openidx-api-saml         "{$H,\"uri\":\"/api/v1/saml/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
-  put openidx-api-admin        "{$H,\"uri\":\"/api/*\",\"priority\":20,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8005\":1}}}"
-  put openidx-scim             "{$H,\"uri\":\"/scim/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8003\":1}}}"
+  put openidx-api-saml         "{$H,\"uri\":\"/api/v1/saml/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
+  put openidx-api-admin        "{$H,\"uri\":\"/api/*\",\"priority\":20,\"plugins\":{$LC_ADMIN},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8005\":1}}}"
+  put openidx-scim             "{$H,\"uri\":\"/scim/*\",\"priority\":30,\"plugins\":{$LC_ADMIN},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8003\":1}}}"
 fi
 
 # --- infra hosts ---

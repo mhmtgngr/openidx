@@ -79,15 +79,61 @@ services:
     networks:
       - openidx-network
 
+  # Redis is three instances, one per loss profile (design §4.4.2, plan task 0.1).
+  #
+  #   redis             — SESSION role: login/MFA/authcode state, email queue,
+  #                       leader locks, caches. noeviction: a full instance must
+  #                       refuse writes, never silently drop a login in progress.
+  #   redis-ratelimit   — RATE-LIMIT role: sliding-window counters. The one
+  #                       instance an attacker can fill at will (a flood of
+  #                       source addresses is a flood of keys), so it is small
+  #                       and allkeys-lru: under pressure it forgets counters,
+  #                       nothing else.
+  #   redis-revocation  — REVOCATION role: revoked_session:*, the per-user
+  #                       revoke-all marker, the per-token blacklist. noeviction
+  #                       + AOF: an evicted marker un-revokes a token.
+  #
+  # Services receive REDIS_URL (session), REDIS_RATELIMIT_URL and
+  # REDIS_REVOCATION_URL; an empty role URL aliases the session instance, so a
+  # single-Redis deployment still works — it just carries the shared-instance
+  # risk this split removes.
   redis:
     image: redis:7-alpine
     container_name: openidx-redis
     restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh} --maxmemory-policy noeviction
     volumes:
       - redis_data:/data
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - openidx-network
+
+  redis-ratelimit:
+    image: redis:7-alpine
+    container_name: openidx-redis-ratelimit
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh} --maxmemory 256mb --maxmemory-policy allkeys-lru --save ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - openidx-network
+
+  redis-revocation:
+    image: redis:7-alpine
+    container_name: openidx-redis-revocation
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh} --maxmemory-policy noeviction --appendonly yes
+    volumes:
+      - redis_revocation_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -237,6 +283,9 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
@@ -254,6 +303,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
         condition: service_healthy
       mailpit:
         condition: service_started
@@ -285,6 +338,9 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
@@ -299,6 +355,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
         condition: service_healthy
       seed:
         condition: service_completed_successfully
@@ -328,6 +388,9 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
@@ -341,6 +404,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
         condition: service_healthy
       seed:
         condition: service_completed_successfully
@@ -416,6 +483,9 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
@@ -433,6 +503,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
         condition: service_healthy
       mailpit:
         condition: service_started
@@ -463,6 +537,9 @@ services:
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
@@ -476,6 +553,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
         condition: service_healthy
       seed:
         condition: service_completed_successfully
@@ -509,6 +590,9 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
       - TRACING_ENABLED=${TRACING_ENABLED:-false}
@@ -528,6 +612,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
         condition: service_healthy
       seed:
         condition: service_completed_successfully
@@ -1199,6 +1287,9 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - RLS_MODE=${RLS_MODE:-session}
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - GOVERNANCE_URL=http://governance-service:8002
@@ -1239,6 +1330,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
         condition: service_healthy
       oauth-service:
         condition: service_healthy
@@ -1468,6 +1563,7 @@ volumes:
   ntfy_cache:
   postgres_data:
   redis_data:
+  redis_revocation_data:
   elasticsearch_data:
   etcd_data:
   ziti_controller_data:

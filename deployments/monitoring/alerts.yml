@@ -11,6 +11,16 @@ groups:
           summary: "OpenIDX service {{ $labels.instance }} is down"
           description: "{{ $labels.instance }} has failed scrapes for >2m."
 
+      - alert: OpenIDXRateLimitOnLocalFallback
+        # The auth-path limiter's Redis is not answering; requests are being
+        # limited from a per-replica local counter and will fail closed once
+        # RATE_LIMIT_LOCAL_FALLBACK_MAX (60s) is spent. Page before that.
+        expr: max by (instance) (openidx_rate_limit_local_fallback_seconds) > 10
+        labels: { severity: critical }
+        annotations:
+          summary: "Rate limiter on local fallback on {{ $labels.instance }}"
+          description: "Rate-limit Redis unreachable for {{ $value }}s; logins fail closed at RATE_LIMIT_LOCAL_FALLBACK_MAX."
+
       - alert: OpenIDXHighErrorRate
         # >5% of requests are 5xx over 5m.
         expr: |
@@ -45,7 +55,7 @@ groups:
         labels: { severity: warning }
         annotations:
           summary: "DB pool >80% saturated on {{ $labels.service }}"
-          description: "{{ $labels.service }} is holding >80% of its pgx pool — raise DB_MAX_CONNS or add pgbouncer."
+          description: "{{ $labels.service }} is holding >80% of its pgx pool — raise DB_MAX_CONNS, or put the transaction pooler in front (pgcat.enabled with RLS_MODE=local; anything less than local mode leaks tenant scope across clients — docs/evidence/2026-09-13-rls-transaction-pooling.md). Once the pooler is in front, OpenIDXPoolerClientsWaiting is the alert that sees the wall."
 
       - alert: OpenIDXGoroutineLeak
         expr: openidx_process_goroutines > 5000

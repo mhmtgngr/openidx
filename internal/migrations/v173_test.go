@@ -34,7 +34,7 @@ func TestV173TenantScopedNames(t *testing.T) {
 			t.Fatalf("reset schema (%s): %v", stmt, err)
 		}
 	}
-	m := migrations.NewMigrator(pool, zap.NewNop())
+	m := migrations.NewMigrator(pool.Raw(), zap.NewNop())
 
 	if err := m.MigrateTo(ctx, 172); err != nil {
 		t.Fatalf("migrate to 172: %v", err)

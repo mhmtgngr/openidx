@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test test-db guards lint clean dev dev-infra docker helm docs smoke-test ha-drill k8s-chaos dr-game-day dark-drill dark-drill-live build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
+.PHONY: all build test test-db guards lint clean dev dev-infra docker helm docs smoke-test ha-drill k8s-chaos ddos-drill dr-game-day dark-drill dark-drill-live build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -155,6 +155,9 @@ ha-drill:
 		'BuildPoolConfigConnectTimeoutDefault|BuildPoolConfigStatementTimeout|ReaderFallsBackToPrimary|PingReadNoReplicaIsNil'
 	@bash scripts/ha-drill.sh "Tier 1: read-replica health checker (non-critical)" \
 		./internal/health/ 'ReadReplicaCheckerNonCritical'
+	@bash scripts/ha-drill.sh "Tier 1: a replica that dies AFTER startup still serves reads" \
+		./internal/common/database/ \
+		'ReaderFallback_deadReplicaStillServesReads|ReaderFallback_ahealthyReplicaServesItsOwnReads|IsReplicaInfraError|ReplicaBreaker_opensOnlyAfterRepeatedFailures|ReplicaBreaker_cooldownProbesRatherThanAssumes'
 	@bash scripts/ha-drill.sh "Tier 2: issue-path brownout + Redis breaker" \
 		./internal/oauth/ \
 		'IsDependencyUnavailable|WriteServerOrUnavailable|RevocationBreakerFastFailsOnRedisOutage'
@@ -196,6 +199,13 @@ dr-game-day:
 # and reports the requests actually lost.
 k8s-chaos:
 	@bash scripts/k8s-chaos-drill.sh --static
+
+# DDoS game-day (global-scale plan task 1.5). --check validates the six k6
+# scenarios and the drill wiring without a cluster or k6; the live run needs
+# k6 and a STAGING url:
+#   scripts/ddos-drill.sh --url https://staging.openidx.example --verify-token "$TOKEN"
+ddos-drill:
+	@bash scripts/ddos-drill.sh --check
 
 dark-drill:
 	@bash deployments/apisix-edge/seed-edge-routes.test.sh

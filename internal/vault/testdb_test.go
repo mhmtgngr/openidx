@@ -44,7 +44,7 @@ func vaultTestDB(t *testing.T) *database.PostgresDB {
 				t.Fatalf("reset schema (%s): %v", stmt, err)
 			}
 		}
-		if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+		if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 			db.Close()
 			t.Fatalf("migrate: %v", err)
 		}
@@ -84,7 +84,7 @@ func vaultTestDB(t *testing.T) *database.PostgresDB {
 		container.Terminate(ctx)
 		t.Skipf("connect: %v", err)
 	}
-	if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 		db.Close()
 		container.Terminate(ctx)
 		t.Fatalf("migrate: %v", err)

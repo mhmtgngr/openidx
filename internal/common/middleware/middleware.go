@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"math/big"
 	"net/http"
 	"os"
@@ -18,7 +19,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
@@ -719,7 +719,15 @@ type PermissionEntry struct {
 
 // PermissionResolver loads the user's effective permissions from their roles via Redis cache.
 // Must run after Auth/SoftAuth so that "roles" and "user_id" are set in the context.
-func PermissionResolver(db *pgxpool.Pool, redisClient *redis.Client) gin.HandlerFunc {
+// permissionQuerier is the one method this needs, as an interface so a
+// scope-applying pool (database.ScopedPool) can be passed: the permission
+// lookup reads tenant-scoped tables, and in RLS_MODE=local a raw pool would
+// carry no tenant scope and resolve every caller to zero permissions.
+type permissionQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+func PermissionResolver(db permissionQuerier, redisClient *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rolesRaw, exists := c.Get("roles")
 		if !exists {
@@ -860,7 +868,7 @@ func PermissionResolver(db *pgxpool.Pool, redisClient *redis.Client) gin.Handler
 // on the query above — and is marked differently for that reason. A control
 // that displays without enforcing is a lie; one that displays and says it does
 // not enforce is a fact an admin can plan around.
-func resolveDelegations(ctx context.Context, db *pgxpool.Pool, userID, orgID string) []PermissionEntry {
+func resolveDelegations(ctx context.Context, db permissionQuerier, userID, orgID string) []PermissionEntry {
 	rows, err := db.Query(ctx, `
 		SELECT permissions, scope_type, scope_id::text
 		FROM admin_delegations
