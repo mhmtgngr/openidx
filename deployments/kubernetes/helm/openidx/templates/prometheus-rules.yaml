@@ -31,6 +31,19 @@ spec:
 
     - name: openidx.edge
       rules:
+        # The auth-path limiter is riding its process-local fallback because the
+        # rate-limit Redis is not answering (task 0.7). Logins still work and
+        # are still limited, but at up to hint× the intended fleet rate — and
+        # once RATE_LIMIT_LOCAL_FALLBACK_MAX (60s) is spent they fail closed.
+        # Page before that happens.
+        - alert: OpenIDXRateLimitOnLocalFallback
+          expr: max by (service) (openidx_rate_limit_local_fallback_seconds) > 10
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Rate limiter on local fallback for {{ "{{ $labels.service }}" }}"
+            description: "The rate-limit Redis has not answered for {{ "{{ $value }}" }}s; auth requests are being limited per replica and will fail closed at RATE_LIMIT_LOCAL_FALLBACK_MAX."
         # The edge-cidr-sync Job is fail-safe: on any bad feed it keeps the
         # current list and exits non-zero. That is only safe if someone
         # notices — a list that stays stale long enough turns a new provider

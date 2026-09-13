@@ -45,6 +45,11 @@ spec:
               containerPort: 8004
               protocol: TCP
           env:
+            # Per-replica share of the auth rate limit while the rate-limit
+            # Redis is unavailable (task 0.7): replicas cannot see each other's
+            # local counters, so the fleet divides the quota by this hint.
+            - name: RATE_LIMIT_REPLICA_HINT
+              value: {{ dig "autoscaling" "minReplicas" .Values.auditService.replicaCount .Values.auditService | quote }}
             - name: APP_ENV
               value: {{ .Values.global.environment | default "production" | quote }}
             - name: LOG_LEVEL

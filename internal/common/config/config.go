@@ -130,6 +130,12 @@ type Config struct {
 	RateLimitAuthRequests int  `mapstructure:"rate_limit_auth_requests"`
 	RateLimitAuthWindow   int  `mapstructure:"rate_limit_auth_window"`
 	RateLimitPerUser      bool `mapstructure:"rate_limit_per_user"`
+	// RateLimitLocalFallbackMax (seconds) bounds the auth tier's process-local
+	// fallback while the rate-limit Redis is unavailable; 0 = fail closed on
+	// the first failure. RateLimitReplicaHint divides the auth limit into a
+	// per-replica share during that window. See middleware.RateLimitConfig.
+	RateLimitLocalFallbackMax int `mapstructure:"rate_limit_local_fallback_max"`
+	RateLimitReplicaHint      int `mapstructure:"rate_limit_replica_hint"`
 
 	// SMTP configuration (for email notifications)
 	SMTPHost     string `mapstructure:"smtp_host"`
@@ -971,6 +977,8 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("rate_limit_auth_requests", 20)
 	v.SetDefault("rate_limit_auth_window", 60)
 	v.SetDefault("rate_limit_per_user", false)
+	v.SetDefault("rate_limit_local_fallback_max", 60)
+	v.SetDefault("rate_limit_replica_hint", 3)
 
 	// Public base URL of the end-user web app. The localhost default keeps
 	// local development working; PUBLIC_BASE_URL must be set in any real
@@ -1376,6 +1384,8 @@ func bindEnvVars(v *viper.Viper) {
 		"rate_limit_auth_requests":          "RATE_LIMIT_AUTH_REQUESTS",
 		"rate_limit_auth_window":            "RATE_LIMIT_AUTH_WINDOW",
 		"rate_limit_per_user":               "RATE_LIMIT_PER_USER",
+		"rate_limit_local_fallback_max":     "RATE_LIMIT_LOCAL_FALLBACK_MAX",
+		"rate_limit_replica_hint":           "RATE_LIMIT_REPLICA_HINT",
 		"cors_allowed_origins":              "CORS_ALLOWED_ORIGINS",
 		"oauth_protocol_cors_wildcard":      "OAUTH_PROTOCOL_CORS_WILDCARD",
 		"audit_stream_allowed_origins":      "AUDIT_STREAM_ALLOWED_ORIGINS",

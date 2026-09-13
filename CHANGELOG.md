@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A Redis blip is no longer a login outage of its own length.** The
+  auth-path rate limiter fails closed when its Redis is unreachable, and
+  that stays the default: brute-force protection must not silently vanish
+  with a cache. But "unreachable" was binary — the first failed `INCR`
+  turned every login into a 503, so a ten-second restart, a failover or a
+  rolling upgrade of the rate-limit instance became exactly that long an
+  outage, and the defence had a failure mode nobody had to attack. For a
+  bounded window after the first failure (`RATE_LIMIT_LOCAL_FALLBACK_MAX`,
+  60 s) each replica now enforces the auth tier from a process-local counter
+  with a per-replica share of the quota (`RATE_LIMIT_REPLICA_HINT`, which
+  the Helm chart sets from the deployment's replica count), then fails
+  closed as before. The local map is capped: a flood of distinct sources
+  during the window fails closed for new keys rather than allocate, so an
+  outage cannot double as memory exhaustion. A successful Redis call resets
+  the window. `openidx_rate_limit_local_fallback_seconds` climbs while on
+  fallback and `OpenIDXRateLimitOnLocalFallback` pages at 10 s, before the
+  window is spent. Zero keeps the strict first-failure-is-503 contract the
+  existing tests pin. Task 0.7.
+
 - **CORS says one thing everywhere.** The oauth-service wrote
   `Access-Control-Allow-Origin: *` on every response by hand while the
   production gate refused a wildcard `CORS_ALLOWED_ORIGINS` — the gate held

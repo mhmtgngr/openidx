@@ -34,6 +34,19 @@ type RateLimitConfig struct {
 	// fail open to preserve availability. Set true only if you explicitly
 	// prefer login availability over rate-limit enforcement during outages.
 	AuthFailOpen bool
+
+	// LocalFallbackMax bounds how long, after the FIRST failed Redis call, the
+	// auth tier is enforced from a process-local counter before failing closed
+	// (see ratelimit_fallback.go). Zero keeps the strict behaviour: the first
+	// failure is a 503. Services set it from RATE_LIMIT_LOCAL_FALLBACK_MAX
+	// (default 60s), long enough to ride out a Redis restart or failover and
+	// short enough that a real outage still fails closed within a minute.
+	LocalFallbackMax time.Duration
+	// ReplicaCountHint divides the auth limit into a per-replica share during
+	// fallback, since replicas cannot see each other's local counters. Set it
+	// to the deployment's typical replica count; a hint that is too LOW admits
+	// more than intended, too HIGH refuses legitimate logins earlier.
+	ReplicaCountHint int
 }
 
 // authPaths are paths that get the stricter auth rate limit tier (and, by
@@ -92,6 +105,31 @@ func isPollPath(path string) bool {
 // DistributedRateLimit implements Redis-backed distributed rate limiting using a
 // sliding window counter. If Redis is unavailable, it fails open (allows the request).
 func DistributedRateLimit(redisClient *redis.Client, cfg RateLimitConfig, logger *zap.Logger) gin.HandlerFunc {
+	fallback := newLocalFallback(0)
+
+	// authUnavailable is the auth-path decision when Redis cannot answer.
+	// Strict (LocalFallbackMax == 0): 503. Otherwise the bounded local window.
+	authUnavailable := func(c *gin.Context, key string, windowEpoch int64, limit int, window time.Duration) {
+		if cfg.LocalFallbackMax <= 0 {
+			rateLimitFailClosed(c, logger, key)
+			return
+		}
+		outcome, remaining := fallback.decide(key, windowEpoch, perReplicaQuota(limit, cfg.ReplicaCountHint), cfg.LocalFallbackMax)
+		switch outcome {
+		case fallbackAllowed:
+			c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
+			c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+			c.Next()
+		case fallbackLimited:
+			retryAfter := int64(window.Seconds()) - (time.Now().Unix() % int64(window.Seconds()))
+			c.Header("Retry-After", fmt.Sprintf("%d", retryAfter))
+			rlHitsTotal.WithLabelValues("local").Inc()
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
+		default: // expired window or too many distinct keys: back to fail-closed
+			rateLimitFailClosed(c, logger, key)
+		}
+	}
+
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 
@@ -148,7 +186,7 @@ func DistributedRateLimit(redisClient *redis.Client, cfg RateLimitConfig, logger
 		// silently lost; fail open elsewhere to preserve availability.
 		if redisClient == nil {
 			if isAuth && !cfg.AuthFailOpen {
-				rateLimitFailClosed(c, logger, key)
+				authUnavailable(c, key, windowEpoch, limit, window)
 				return
 			}
 			rlFailOpenTotal.WithLabelValues(scope).Inc()
@@ -162,7 +200,7 @@ func DistributedRateLimit(redisClient *redis.Client, cfg RateLimitConfig, logger
 		count, err := redisClient.Incr(ctx, key).Result()
 		if err != nil {
 			if isAuth && !cfg.AuthFailOpen {
-				rateLimitFailClosed(c, logger, key)
+				authUnavailable(c, key, windowEpoch, limit, window)
 				return
 			}
 			// Fail open: allow request, log warning
@@ -173,6 +211,9 @@ func DistributedRateLimit(redisClient *redis.Client, cfg RateLimitConfig, logger
 			c.Next()
 			return
 		}
+
+		// Redis answered: any local-fallback window is over.
+		fallback.recordSuccess()
 
 		// Set expiry on first increment
 		if count == 1 {

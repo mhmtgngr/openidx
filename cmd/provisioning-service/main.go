@@ -147,6 +147,10 @@ func main() {
 			AuthRequests: cfg.RateLimitAuthRequests,
 			AuthWindow:   time.Duration(cfg.RateLimitAuthWindow) * time.Second,
 			PerUser:      cfg.RateLimitPerUser,
+			// Ride out a Redis restart/failover on a bounded local counter
+			// before failing closed (task 0.7).
+			LocalFallbackMax: time.Duration(cfg.RateLimitLocalFallbackMax) * time.Second,
+			ReplicaCountHint: cfg.RateLimitReplicaHint,
 		}, log))
 	}
 	router.Use(metrics.Middleware("provisioning-service"))
