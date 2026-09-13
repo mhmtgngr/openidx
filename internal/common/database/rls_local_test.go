@@ -81,7 +81,7 @@ func seedTenantTable(t *testing.T, pool *pgxpool.Pool, orgA, orgB string) *Postg
 
 	// Seed with the policy bypassed: the seeder is not a tenant.
 	bypass := orgctx.WithBypassRLS(ctx)
-	db := &PostgresDB{Pool: pool}
+	db := &PostgresDB{Pool: NewScopedPool(pool)}
 	require.NoError(t, db.WithTx(bypass, func(tx pgx.Tx) error {
 		for _, s := range []struct{ id, org, secret string }{
 			{"a1", orgA, "tenant-a-secret"},
@@ -311,4 +311,74 @@ func TestParseRLSMode(t *testing.T) {
 	assert.Equal(t, RLSModeSession, ParseRLSMode("locall"))
 	assert.Equal(t, RLSModeLocal, ParseRLSMode(" Local "))
 	assert.Equal(t, RLSModeLocal, ParseRLSMode("LOCAL"))
+}
+
+// The point of ScopedPool: a call site that was never edited — db.Pool.Query,
+// exactly as ~1,950 of them are written across this repo — must carry the
+// tenant scope in local mode. If this fails, the wrapper is decoration and the
+// migration really is 1,950 hand edits.
+func TestScopedPool_UneditedCallSitesAreScoped(t *testing.T) {
+	pool := openTestPool(t)
+	withMode(t, RLSModeLocal)
+	db := seedTenantTable(t, pool, orgA, orgB)
+	tbl := probeTable(t)
+
+	ctxA := orgctx.With(context.Background(), orgctx.Org{ID: orgA})
+	ctxB := orgctx.With(context.Background(), orgctx.Org{ID: orgB})
+
+	// db.Pool.QueryRow — the single commonest shape in the codebase.
+	var got string
+	require.NoError(t, db.Pool.QueryRow(ctxA, "SELECT secret FROM "+tbl).Scan(&got))
+	assert.Equal(t, "tenant-a-secret", got)
+	require.NoError(t, db.Pool.QueryRow(ctxB, "SELECT secret FROM "+tbl).Scan(&got))
+	assert.Equal(t, "tenant-b-secret", got)
+
+	// db.Pool.Query
+	rows, err := db.Pool.Query(ctxA, "SELECT secret FROM "+tbl)
+	require.NoError(t, err)
+	var n int
+	for rows.Next() {
+		n++
+	}
+	rows.Close()
+	assert.Equal(t, 1, n, "an unedited db.Pool.Query must see one tenant's rows, not both")
+
+	// db.Pool.Exec — a cross-tenant write is still refused.
+	_, err = db.Pool.Exec(ctxA, "INSERT INTO "+tbl+" (id, org_id, secret) VALUES ('p1',$1,'x')", orgB)
+	require.Error(t, err)
+
+	// db.Pool.Begin — the ~25 call sites that run their own transaction.
+	tx, err := db.Pool.Begin(ctxB)
+	require.NoError(t, err)
+	require.NoError(t, tx.QueryRow(ctxB, "SELECT secret FROM "+tbl).Scan(&got))
+	assert.Equal(t, "tenant-b-secret", got)
+	require.NoError(t, tx.Commit(ctxB))
+
+	// And Raw() is the documented way out: no scope, so fail-closed.
+	var raw int
+	require.NoError(t, db.Pool.Raw().QueryRow(context.Background(), "SELECT count(*) FROM "+tbl).Scan(&raw))
+	assert.Equal(t, 0, raw, "Raw() must NOT carry a scope; that is what makes it greppable and deliberate")
+}
+
+// SendBatch prepends the scope rather than wrapping a transaction; the caller
+// must still read its own queries in the order it queued them.
+func TestScopedPool_BatchIsScopedAndResultsLineUp(t *testing.T) {
+	pool := openTestPool(t)
+	withMode(t, RLSModeLocal)
+	db := seedTenantTable(t, pool, orgA, orgB)
+	tbl := probeTable(t)
+
+	ctxA := orgctx.With(context.Background(), orgctx.Org{ID: orgA})
+	b := &pgx.Batch{}
+	b.Queue("SELECT secret FROM " + tbl)
+	b.Queue("SELECT count(*) FROM " + tbl)
+
+	br := db.Pool.SendBatch(ctxA, b)
+	var secret string
+	require.NoError(t, br.QueryRow().Scan(&secret), "first result must be the caller's first query, not the scope statement")
+	assert.Equal(t, "tenant-a-secret", secret)
+	var count int
+	require.NoError(t, br.QueryRow().Scan(&count))
+	assert.Equal(t, 1, count)
+	require.NoError(t, br.Close())
 }

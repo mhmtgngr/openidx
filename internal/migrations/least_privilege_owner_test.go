@@ -136,7 +136,7 @@ END $$;`); err != nil {
 		t.Fatalf("pre-create openidx_app: %v", err)
 	}
 
-	if err := migrations.NewMigrator(owner.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+	if err := migrations.NewMigrator(owner.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 		t.Fatalf("migrations must apply as a non-superuser owner: %v", err)
 	}
 

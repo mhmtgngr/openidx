@@ -16,7 +16,6 @@ import (
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -56,11 +55,11 @@ func registerBrandingValidators() {
 // SettingsHandler handles settings-related requests
 type SettingsHandler struct {
 	logger *zap.Logger
-	db     *pgxpool.Pool
+	db     ScopedDB
 }
 
 // NewSettingsHandler creates a new settings handler
-func NewSettingsHandler(logger *zap.Logger, db *pgxpool.Pool) *SettingsHandler {
+func NewSettingsHandler(logger *zap.Logger, db ScopedDB) *SettingsHandler {
 	registerBrandingValidators()
 	return &SettingsHandler{
 		logger: logger.With(zap.String("handler", "settings")),

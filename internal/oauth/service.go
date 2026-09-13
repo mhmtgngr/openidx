@@ -322,7 +322,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 	// system_settings key (loaded above) is imported under its original kid
 	// on first boot so outstanding tokens keep verifying; after that the
 	// settings row is vestigial and no longer written.
-	keyStore := signingkeys.NewStore(db.Pool, cfg.EncryptionKey, logger)
+	keyStore := signingkeys.NewStore(db.Pool.Raw(), cfg.EncryptionKey, logger)
 	activeKey, err := keyStore.EnsureActive(ctx, privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("ensure active signing key: %w", err)

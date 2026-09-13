@@ -29,7 +29,7 @@ func setupMigratedDB(t *testing.T) (*database.PostgresDB, func()) {
 	if db == nil {
 		return nil, func() {}
 	}
-	if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(context.Background(), -1); err != nil {
+	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(context.Background(), -1); err != nil {
 		cleanup()
 		t.Fatalf("migrate to latest: %v", err)
 	}

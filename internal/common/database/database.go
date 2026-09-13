@@ -31,7 +31,12 @@ import (
 // replica is configured, Reader() returns the primary pool, so call sites are
 // always correct by construction and simply lose the offload benefit.
 type PostgresDB struct {
-	Pool     *pgxpool.Pool
+	// Pool applies the request's tenant scope to every query (see
+	// scopedpool.go). It keeps the method set of *pgxpool.Pool, so the ~1,950
+	// existing call sites read and compile unchanged while gaining the scope
+	// that RLS_MODE=local needs. Raw() reaches the unscoped pool for
+	// install-wide tables and pool statistics.
+	Pool     *ScopedPool
 	readPool *pgxpool.Pool
 }
 
@@ -44,7 +49,7 @@ func (db *PostgresDB) Reader() *pgxpool.Pool {
 	if db.readPool != nil {
 		return db.readPool
 	}
-	return db.Pool
+	return db.Pool.Raw()
 }
 
 // HasReadReplica reports whether a distinct read-replica pool is configured.
@@ -126,7 +131,7 @@ func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, e
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	db := &PostgresDB{Pool: pool}
+	db := &PostgresDB{Pool: NewScopedPool(pool)}
 
 	// Optional read-replica pool. A replica is a pure optimization + warm standby;
 	// its unavailability must never fail service startup, so we degrade to

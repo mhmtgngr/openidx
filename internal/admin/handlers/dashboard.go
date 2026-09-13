@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -15,11 +14,11 @@ import (
 // DashboardHandler handles dashboard-related requests
 type DashboardHandler struct {
 	logger *zap.Logger
-	db     *pgxpool.Pool
+	db     ScopedDB
 }
 
 // NewDashboardHandler creates a new dashboard handler
-func NewDashboardHandler(logger *zap.Logger, db *pgxpool.Pool) *DashboardHandler {
+func NewDashboardHandler(logger *zap.Logger, db ScopedDB) *DashboardHandler {
 	return &DashboardHandler{
 		logger: logger.With(zap.String("handler", "dashboard")),
 		db:     db,

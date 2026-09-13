@@ -120,7 +120,7 @@ func TestMigrationChainRollsBackAndForwardAgain(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	m := NewMigrator(db.Pool, zap.NewNop())
+	m := NewMigrator(db.Pool.Raw(), zap.NewNop())
 	if err := m.MigrateTo(ctx, -1); err != nil {
 		t.Fatalf("apply the chain: %v", err)
 	}

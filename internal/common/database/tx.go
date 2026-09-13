@@ -130,7 +130,7 @@ func applyScopeLocal(ctx context.Context, tx pgx.Tx) error {
 // fn must not commit or roll back: WithTx owns the lifecycle and rolls back on
 // any error or panic.
 func (db *PostgresDB) WithTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return withTxOn(ctx, db.Pool, fn)
+	return withTxOn(ctx, db.Pool.Raw(), fn)
 }
 
 // WithReadTx is WithTx against the read-replica pool (Reader()). Read-only and

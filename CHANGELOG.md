@@ -30,6 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The tenant scope moved into the type, so ~1,950 call sites got it without
+  being edited.** Task 2.1a made a transaction-local scope possible; applying
+  it everywhere was planned as eight weeks of mechanical edits across 1,967
+  `db.Pool.Query` / `QueryRow` / `Exec` call sites — in which every missed line
+  would be a query running with no tenant scope at all, returning zero rows
+  under FORCE RLS rather than failing a test. `database.ScopedPool` is now the
+  type of `PostgresDB.Pool`, with the same method set as `*pgxpool.Pool`, so
+  1,933 call sites kept compiling and reading exactly as they were and now
+  route through the scoped path. "Did we remember this line?" became "does it
+  compile?". The compiler found the 11 places that pass the pool as a value;
+  each was judged individually — `Raw()` for install-wide tables, migrations
+  and pool statistics, a narrow interface for the ones that read tenant
+  tables. One of those was a trap worth naming: `audit.CrossOrgAuditor` writes
+  with a bypass context, and handed a raw pool it would carry no marker in
+  local mode, so the fail-closed `WITH CHECK` would reject the mandatory
+  cross-org audit row. Tests prove an unedited `db.Pool` call shape is scoped
+  and that `Raw()` deliberately is not. Task 2.1b, in place of the migration.
+
 - **The tenant scope can travel with the transaction, which is what a
   connection pooler needs.** The scope is stamped onto the pooled *connection*
   at checkout, and that is a hard ceiling on scale: session state belongs to a

@@ -13,7 +13,9 @@ func TestReaderFallsBackToPrimary(t *testing.T) {
 	if db.HasReadReplica() {
 		t.Fatal("HasReadReplica() = true with no replica configured")
 	}
-	if db.Reader() != db.Pool {
+	// Reader() hands back the RAW primary pool (task 2.1b: Pool is now the
+	// scope-applying wrapper, Reader() is the unscoped read path).
+	if db.Reader() != db.Pool.Raw() {
 		t.Fatal("Reader() should return the primary pool when no replica is configured")
 	}
 }

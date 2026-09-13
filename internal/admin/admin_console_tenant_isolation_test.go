@@ -44,7 +44,7 @@ func TestAdminConsoleSettings_TenantIsolation(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 		t.Fatalf("migrate to latest: %v", err)
 	}
 
@@ -283,7 +283,7 @@ func TestContinuousAuth_ReadsRealSessions(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 		t.Fatalf("migrate to latest: %v", err)
 	}
 

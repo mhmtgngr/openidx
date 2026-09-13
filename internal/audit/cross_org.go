@@ -1,11 +1,12 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -20,7 +21,16 @@ import (
 // It is intentionally best-effort and synchronous (the resolver calls it
 // inline): a failed insert is logged rather than blocking the request, but the
 // access still proceeds only after the attempt.
-func CrossOrgAuditor(pool *pgxpool.Pool, logger *zap.Logger) func(c *gin.Context, target orgctx.Org) {
+// crossOrgExecer is the one method this needs. It is an interface rather than
+// *pgxpool.Pool so a scope-applying pool (database.ScopedPool) can be passed:
+// the bypass marker below travels as a transaction-local GUC in RLS_MODE=local,
+// and a raw pool would carry no marker at all -- the fail-closed WITH CHECK
+// would then reject this insert and drop the mandatory cross-org audit row.
+type crossOrgExecer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func CrossOrgAuditor(pool crossOrgExecer, logger *zap.Logger) func(c *gin.Context, target orgctx.Org) {
 	return func(c *gin.Context, target orgctx.Org) {
 		if pool == nil {
 			return

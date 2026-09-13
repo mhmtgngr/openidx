@@ -108,7 +108,7 @@ func main() {
 	// Run auto-migrations if enabled
 	if cfg.AutoMigrate {
 		log.Info("Running auto-migrations")
-		migrations.MustAutoMigrate(context.Background(), db.Pool, log)
+		migrations.MustAutoMigrate(context.Background(), db.Pool.Raw(), log)
 	}
 
 	// The seed migration ships admin@openidx.local with a published default
@@ -122,7 +122,7 @@ func main() {
 
 	// Initialize Redis connection
 	// Export DB pool saturation gauges (openidx_db_connections{state=...}).
-	metrics.NewTracedPool(db.Pool, "identity-service").StartPoolStatsCollector(context.Background())
+	metrics.NewTracedPool(db.Pool.Raw(), "identity-service").StartPoolStatsCollector(context.Background())
 
 	redis, err := database.NewRedisFromConfig(database.RedisConfig{
 		URL:                cfg.RedisURL,

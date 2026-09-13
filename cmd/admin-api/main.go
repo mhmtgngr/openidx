@@ -141,7 +141,7 @@ func main() {
 	defer db.Close()
 
 	// Export DB pool saturation gauges (openidx_db_connections{state=...}).
-	metrics.NewTracedPool(db.Pool, "admin-api").StartPoolStatsCollector(context.Background())
+	metrics.NewTracedPool(db.Pool.Raw(), "admin-api").StartPoolStatsCollector(context.Background())
 
 	redis, err := database.NewRedisFromConfig(database.RedisConfig{
 		URL:                cfg.RedisURL,

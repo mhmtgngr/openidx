@@ -79,7 +79,7 @@ func setupTest(t *testing.T) *testContext {
 		t.Logf("Warning: no test database available, skipping DB-dependent tests: %v", err)
 		db = nil
 	} else {
-		db = &database.PostgresDB{Pool: pool}
+		db = &database.PostgresDB{Pool: database.NewScopedPool(pool)}
 		// Setup tables - if this fails, set db to nil
 		if err := setupTestDB(ctx, t, db); err != nil {
 			t.Logf("Warning: failed to setup test database schema: %v", err)

@@ -51,7 +51,7 @@ func pamRevealTestDB(t *testing.T) *database.PostgresDB {
 			t.SkipNow()
 		}
 		t.Cleanup(cleanup)
-		if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+		if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 			t.Fatalf("migrate: %v", err)
 		}
 		return db
@@ -67,7 +67,7 @@ func pamRevealTestDB(t *testing.T) *database.PostgresDB {
 			t.Fatalf("reset schema (%s): %v", stmt, err)
 		}
 	}
-	if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 		db.Close()
 		t.Fatalf("migrate: %v", err)
 	}

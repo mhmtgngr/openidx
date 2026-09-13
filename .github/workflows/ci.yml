@@ -682,8 +682,8 @@ jobs:
           # elevated, revoked or must be re-proved. Small enough to share a
           # runner, load-bearing enough that they must not share one with
           # something unrelated.
-          - package: internal/abac+appaccess+jitgrant+revocation+stepup
-            paths: ./internal/abac/... ./internal/appaccess/... ./internal/jitgrant/... ./internal/revocation/... ./internal/stepup/...
+          - package: internal/abac+appaccess+botgate+jitgrant+revocation+stepup
+            paths: ./internal/abac/... ./internal/appaccess/... ./internal/botgate/... ./internal/jitgrant/... ./internal/revocation/... ./internal/stepup/...
           - package: internal/vault+credentials+signingkeys
             paths: ./internal/vault/... ./internal/credentials/... ./internal/signingkeys/...
           - package: internal/ai+api+backup+intelligence+scimclient+selfheal+sms

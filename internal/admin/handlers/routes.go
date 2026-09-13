@@ -3,7 +3,6 @@ package handlers
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
@@ -46,7 +45,7 @@ func SettingsRoutes(router *gin.RouterGroup, handler *SettingsHandler, adminMW g
 
 // RegisterAllRoutes registers all admin console routes. adminMW guards the
 // mutating settings endpoints; pass admin.RequireAdmin() from the caller.
-func RegisterAllRoutes(router *gin.RouterGroup, db *pgxpool.Pool, logger *zap.Logger, adminMW gin.HandlerFunc) {
+func RegisterAllRoutes(router *gin.RouterGroup, db ScopedDB, logger *zap.Logger, adminMW gin.HandlerFunc) {
 	dashboardHandler := NewDashboardHandler(logger, db)
 	settingsHandler := NewSettingsHandler(logger, db)
 

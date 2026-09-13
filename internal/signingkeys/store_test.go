@@ -73,11 +73,11 @@ func TestSigningKeyStore_Lifecycle(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 		t.Fatalf("migrate to latest: %v", err)
 	}
 
-	store := NewStore(db.Pool, testEncryptionKey, zap.NewNop())
+	store := NewStore(db.Pool.Raw(), testEncryptionKey, zap.NewNop())
 
 	// EnsureActive with a legacy key imports it under the legacy kid, so
 	// pre-upgrade tokens keep resolving against the same JWKS entry.
@@ -171,11 +171,11 @@ func TestSigningKeyStore_GeneratesWithoutLegacy(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	if err := migrations.NewMigrator(db.Pool, zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 		t.Fatalf("migrate to latest: %v", err)
 	}
 
-	store := NewStore(db.Pool, testEncryptionKey, zap.NewNop())
+	store := NewStore(db.Pool.Raw(), testEncryptionKey, zap.NewNop())
 	active, err := store.EnsureActive(ctx, nil)
 	if err != nil {
 		t.Fatalf("EnsureActive(nil): %v", err)
