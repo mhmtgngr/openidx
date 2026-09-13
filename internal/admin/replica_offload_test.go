@@ -53,6 +53,48 @@ var offloadedToReplica = map[string]string{
 var stayOnPrimary = map[string]string{
 	"dsar_processor.go": "a worker, not a page: it polls data_subject_requests for work it is about to act on. A lagging replica would hand it a request another replica already took, or hide one that is waiting -- the textbook read-after-write, and the reason Reader() exists to be opted into rather than assumed",
 	"tilequery.go":      "a generic helper that runs whatever SQL its caller hands it. Offloading it would offload every caller at once, including ones nobody has read, which is exactly the decision this census exists to prevent being made by accident",
+
+	// AND THE REST OF THE PACKAGE, for one measured reason.
+	//
+	// Every remaining file here writes as well as reads, and every one of them
+	// is a CRUD surface. That matters because of what the console does after a
+	// write: it is a TanStack Query application, and it invalidates the list it
+	// has just changed. Counted: 384 invalidateQueries calls across 81 files,
+	// out of 90 files that mutate at all. So "list" is not a lag-tolerant read
+	// on these screens -- it is a read-after-write, issued milliseconds after
+	// the POST returns. An administrator who creates a routing rule and does
+	// not see it in the refreshed list does not wait; they create it again.
+	//
+	// That is the boundary of task 2.3 at FILE granularity, and batches 1 and 2
+	// took everything on the other side of it. What remains is finer than a
+	// file: the stats, score and trend handlers sitting inside these CRUD files
+	// (ispm GetPostureScore and GetPostureTrends, mfa_management
+	// MFAEnrollmentStats, ai_recommendations RecommendationStats, attestation
+	// campaign progress) are lag-tolerant and cannot move while the guard works
+	// per file. Moving them needs the census at function granularity, which is
+	// the next piece of work rather than something to improvise here.
+	"admin_audit.go":             "the admin audit log and settings history. Append-only, but the console opens it straight after the action that wrote the entry -- a reader who cannot see what they just did reports it as a lost audit record",
+	"ai_agents.go":               "agent CRUD plus credential rotation: the rotate handler reads the agent it is about to re-key, and the console refetches the list after every create, suspend and activate",
+	"ai_recommendations.go":      "recommendation CRUD: accept, dismiss and apply each write and then the list refetches, so a lagging read shows a recommendation the operator has already actioned",
+	"attestation.go":             "attestation campaigns: launch reads the campaign it is about to send, and a decision written on an item must be visible on the next read or the reviewer decides it twice",
+	"audit_archival.go":          "archival jobs read the policy and the archive rows they are about to act on; a stale read archives the wrong window or repeats one",
+	"bulk_import_export.go":      "an import reads back what it just wrote to report per-row results; a lagging replica would report rows as failed that in fact landed",
+	"bulk_operations.go":         "the most write-heavy file here: every read sits inside an operation that has just written, checking what to do next",
+	"continuous_auth.go":         "continuous-auth policy and session risk: these reads gate a step-up, and a stale policy is a weaker policy than the one an administrator just saved",
+	"deprovisioning.go":          "lifecycle policies and their executions: execute reads the policy it is about to run, and the execution list refetches the moment a run starts",
+	"developer.go":               "developer settings CRUD, read back immediately after being written",
+	"email_templates.go":         "template CRUD with a preview: preview renders the template the administrator has this second saved, so a stale read previews the previous version",
+	"error_catalog.go":           "error-catalogue entries, read back immediately after being written",
+	"federation.go":              "social providers and federation rules: a provider saved and not visible on the refetch reads as a failed save, and the operator saves it twice",
+	"ibdr.go":                    "backup and restore records: a restore reads the record it is about to act on, which must be the one just written",
+	"ispm.go":                    "posture findings and rules: dismiss and remediate write, then the list refetches. The score and trend reads in this file ARE lag-tolerant and are part of the finer opportunity noted above",
+	"mfa_management.go":          "MFA policy CRUD. The policy decides whether a factor is required, so it belongs with the security-critical reads this package already keeps on the primary (see settings_repository.go); the enrollment-stats read here is lag-tolerant and part of the same follow-up",
+	"notification_management.go": "routing rules and broadcasts: send reads the broadcast it is about to deliver and counts its recipients, and delete reads the status it gates on. Sending a superseded body, or sending twice, is not a stale tile",
+	"privacy.go":                 "DSAR and consent records: a consent read that lags is a consent decision applied after it was withdrawn",
+	"service.go":                 "the package's main surface, 49 reads across every admin resource, nearly all of them CRUD read-after-write. It moves query by query when its turn comes, not as a file",
+	"sessions.go":                "session listing and termination: the list is refetched right after a terminate, and a session shown as live after it was revoked is the one answer this screen must never give",
+	"settings_repository.go":     "already pinned by TestSettingsRepositoryGetUsesPrimary: system_settings carries password policy, RequireMFA and lockout, so a read must observe the latest write immediately -- a lagging replica would serve a weaker security policy",
+	"tenant_branding.go":         "branding, tenant settings and custom domains, each read back by the console immediately after being saved",
 }
 
 // writeCalls are the pool methods that change data. None may appear in an
@@ -150,21 +192,21 @@ func sortedOffloaded() []string {
 	return out
 }
 
-// The census that makes the next batch mechanical: a file with reads and no
-// writes is a candidate, and every candidate must be in exactly one of the two
-// maps. Anything that is in neither is an undecided file, and an undecided file
-// is how the next person ends up guessing.
+// The census, and what makes this task finishable: EVERY file in the package
+// that reads must be in exactly one of the two maps. Not only the read-only
+// ones -- a file that also writes still needs a decision. It is nearly always
+// the same decision, and writing it down is what stops the next person
+// re-deriving it.
 //
-// Files that DO write are out of scope here: they cannot be offloaded wholesale
-// anyway, and they move query by query when their turn comes.
-func TestEveryReadOnlyFileIsDecided(t *testing.T) {
+// A file in neither map is an undecided file, and an undecided file is how the
+// next person ends up guessing.
+func TestEveryFileWithReadsIsDecided(t *testing.T) {
 	readCall := regexp.MustCompile(`\.(Reader\(\)|Pool)\.(Query|QueryRow)\(`)
-	writeCall := regexp.MustCompile(`\.Pool\.(Exec|Begin|CopyFrom|SendBatch)\(`)
 
 	var undecided, both []string
 	for _, name := range adminSourceFiles(t) {
 		src := readAdminFile(t, name)
-		if !readCall.MatchString(src) || writeCall.MatchString(src) {
+		if !readCall.MatchString(src) {
 			continue
 		}
 		_, offloaded := offloadedToReplica[name]
@@ -180,9 +222,9 @@ func TestEveryReadOnlyFileIsDecided(t *testing.T) {
 		t.Errorf("%d file(s) are in BOTH maps: %s", len(both), strings.Join(both, ", "))
 	}
 	if len(undecided) > 0 {
-		t.Errorf("%d read-only file(s) are in neither map:\n  %s\n"+
-			"Each is a candidate for the replica. Add it to offloadedToReplica with the reason its queries "+
-			"tolerate lag, or to stayOnPrimary with the reason they do not.",
+		t.Errorf("%d file(s) with reads are in neither map:\n  %s\n"+
+			"Every read in this package is a decision. Add the file to offloadedToReplica with the reason its "+
+			"queries tolerate lag, or to stayOnPrimary with the reason they do not.",
 			len(undecided), strings.Join(undecided, "\n  "))
 	}
 }

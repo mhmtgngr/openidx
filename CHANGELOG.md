@@ -62,7 +62,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rotation and access-request tallies. Summaries of the past, none of which
   decides anything.
 
-  The census now records the **deliberate non-offloads** too, which is what
+  The census is now complete, and its boundary was measured rather than
+  guessed. Every one of the 22 remaining files both reads and writes, and every
+  one is a CRUD surface — which matters because of what the console does after
+  a write: it is a TanStack Query application and it invalidates the list it
+  just changed. Counted: **384 `invalidateQueries` calls across 81 files**, out
+  of 90 that mutate at all. So "list" is not a lag-tolerant read on those
+  screens; it is a read-after-write issued milliseconds after the POST returns,
+  and an administrator who cannot see the rule they just created creates it
+  again. File-level offloading therefore ends here — the two batches took
+  everything on the other side of that line — and every file carries its
+  recorded decision. What remains is finer than a file: the stats, score and
+  trend handlers inside those CRUD files are lag-tolerant and need the census at
+  function granularity to move.
+
+  The census records the **deliberate non-offloads** too, which is what
   saves the next batch from re-deriving them. A file with reads and no writes
   looks offloadable by the same test the batches pass, and not all of them are:
   `dsar_processor.go` is a worker polling for work it is about to act on — a
