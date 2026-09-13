@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The SCIM list endpoints page in a total order, and stop dropping users.**
+  SCIM cannot become a cursor the way the audit event list did: RFC 7644
+  §3.4.2.4 pages by `startIndex` and requires `totalResults`, so the client
+  picks the offset and the count has to be computed. What could be fixed was
+  the ordering, and it needed fixing for correctness before it needed an index.
+  `ORDER BY created_at` alone is not a total order, and here the ties are
+  **guaranteed** rather than unlucky: `created_at` defaults to `NOW()`, which
+  in Postgres is the *transaction* timestamp, so every row one transaction
+  writes carries the identical value — measured at 200 rows sharing one
+  `created_at`. Tied rows with no second key can land on two pages or on
+  neither, which on a provisioning API is an account created twice downstream
+  or one that never arrives. The lists now order by `(created_at, id)` from one
+  place, and migration **v191** indexes `(org_id, created_at, id)` on `users`
+  and `groups` so that ordering is a seek rather than a sort.
+
+  Writing that test found a live defect. `first_name`, `last_name` and `email`
+  are nullable and the list scanned them into plain strings, so `rows.Scan`
+  failed for every user without a name — and the loop answered with
+  `continue`. The response carried `totalResults = N` with **none** of the N
+  users in it, HTTP 200, nothing logged; a SCIM client reads a short page as
+  the whole directory. Fixed with `COALESCE` and by returning the scan error
+  instead of swallowing it, in both the user and group lists. The two halves of
+  that fix overlap — with `COALESCE` in place no scan fails, so restoring the
+  `continue` leaves every behaviour test green — so the loop's error handling
+  is pinned in the source as well.
+
+  The audit report listings (`report_exports`, `compliance_reports`) carried
+  the same ordering defect and got the same tie-break. They did **not** get a
+  cursor, deliberately: these are per-tenant lists of tens of rows, and the
+  deep-page cost this task targets has nobody to pay it there.
+
+  What this still does not fix, because the protocol does not allow it: a row
+  inserted ahead of the client's position between two pages shifts every later
+  `OFFSET` and the row at the boundary is never returned — measured as one user
+  in two hundred silently missing after a single concurrent insert. That is a
+  property of index-based paging; a cursor removes it, and SCIM has nowhere to
+  put one.
+
 - **The admin console's analytics read from the replica, not the primary.** 26
   queries across `analytics_enhanced.go`, `risk_analytics.go`,
   `predictive_analytics.go` and `dashboard.go` now go through

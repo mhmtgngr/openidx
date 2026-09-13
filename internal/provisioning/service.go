@@ -840,8 +840,14 @@ func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filt
 	// a variable before being passed to Query, so orgscope does not flag
 	// it — the org_id filter here is still required for correctness.
 	// $1 = offset, $2 = limit, $3 = org.ID, the filter value (if any) = $4.
+	// COALESCE because these columns are nullable and the scan targets are not.
+	// Without it rows.Scan fails on every user who has no name or no address,
+	// and the loop below used to answer that by skipping the row -- so the
+	// response carried totalResults = N and none of the N users, with nothing
+	// logged. A SCIM client reads that as "these accounts do not exist".
 	query := `
-		SELECT id, username, email, first_name, last_name, enabled, created_at, updated_at
+		SELECT id, username, COALESCE(email, ''), COALESCE(first_name, ''),
+		       COALESCE(last_name, ''), enabled, created_at, updated_at
 		FROM users
 		WHERE org_id = $3`
 	listArgs := []interface{}{startIndex - 1, count, org.ID}
@@ -849,9 +855,9 @@ func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filt
 		query += pred.clause(4)
 		listArgs = append(listArgs, pred.value)
 	}
-	query += `
-		ORDER BY created_at
-		OFFSET $1 LIMIT $2`
+	// One place for the ordering, and it carries id: created_at alone is not a
+	// total order and the ties are guaranteed, not rare. See scim_ordering.go.
+	query += "\n\t\t" + scimUserOrdering + "\n\t\tOFFSET $1 LIMIT $2"
 
 	rows, err := s.db.Pool.Query(ctx, query, listArgs...)
 	if err != nil {
@@ -865,8 +871,12 @@ func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filt
 		var enabled bool
 		var createdAt, updatedAt time.Time
 
+		// Not `continue`: a row this endpoint cannot read is not a row that
+		// does not exist. Skipping it hands the caller a short page and calls
+		// it complete, which on a provisioning API is an account that never
+		// reaches a downstream application.
 		if err := rows.Scan(&id, &username, &email, &firstName, &lastName, &enabled, &createdAt, &updatedAt); err != nil {
-			continue
+			return nil, fmt.Errorf("scan SCIM user: %w", err)
 		}
 
 		user := SCIMUser{
@@ -1562,15 +1572,16 @@ func (s *Service) ListSCIMGroups(ctx context.Context, startIndex, count int, fil
 	}
 
 	// $1 = offset, $2 = limit, $3 = org.ID, the filter value (if any) = $4.
+	// COALESCE for the same reason as the user list: description is nullable.
 	query := `
-		SELECT id, name, description, created_at, updated_at
+		SELECT id, name, COALESCE(description, ''), created_at, updated_at
 		FROM groups WHERE org_id = $3`
 	listArgs := []interface{}{startIndex - 1, count, org.ID}
 	if pred != nil {
 		query += pred.clause(4)
 		listArgs = append(listArgs, pred.value)
 	}
-	query += ` ORDER BY created_at OFFSET $1 LIMIT $2`
+	query += " " + scimGroupOrdering + " OFFSET $1 LIMIT $2"
 
 	rows, err := s.db.Pool.Query(ctx, query, listArgs...)
 	if err != nil {
@@ -1583,7 +1594,7 @@ func (s *Service) ListSCIMGroups(ctx context.Context, startIndex, count int, fil
 		var id, name, description string
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(&id, &name, &description, &createdAt, &updatedAt); err != nil {
-			continue
+			return nil, fmt.Errorf("scan SCIM group: %w", err)
 		}
 		groups = append(groups, SCIMGroup{
 			Schemas:     []string{"urn:ietf:params:scim:schemas:core:2.0:Group"},
