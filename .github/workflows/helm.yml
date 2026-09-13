@@ -177,6 +177,12 @@ jobs:
             echo "::error::keda is disabled by default but a ScaledObject rendered"; exit 1
           fi
 
+          # And a values tree with no `keda` key at all must read as off rather
+          # than failing the WHOLE chart with a nil-pointer that names no cause.
+          if ! render --set keda=null >/dev/null 2>&1; then
+            echo "::error::removing the keda values key breaks the render; absent must mean off"; exit 1
+          fi
+
           # Both halves must be enabled together, or neither.
           if render --set keda.enabled=true --set keda.prometheusAddress=http://p:9090 \
                     --set oauthService.autoscaling.enabled=true >/dev/null 2>&1; then

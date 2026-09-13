@@ -33,7 +33,13 @@ as both exist -- and the oscillation looks like flapping under load, i.e. like
 the thing autoscaling was turned on to prevent. The chart refuses to render that
 rather than letting it be discovered in production.
 */}}
-{{- if .Values.keda.enabled }}
+{{- /* Bound to a dict first, rather than reaching through .Values.keda.enabled:
+       a values tree with no `keda` key makes the direct path a nil-pointer
+       panic that names no cause and fails the WHOLE chart, where "absent"
+       plainly means "off". (`dig` is not usable here -- .Values is a
+       chartutil.Values, not the map[string]interface{} it wants.) */}}
+{{- $keda := default dict .Values.keda }}
+{{- if $keda.enabled }}
 
 {{- /* Interlock 1: not alongside the chart's own HPA, for any service. */}}
 {{- $hpaOn := list }}
@@ -58,11 +64,11 @@ rather than letting it be discovered in production.
 {{- /* Interlock 2: a trigger with nowhere to read from is a ScaledObject that
        silently never scales. KEDA reports the failure on the ScaledObject's
        status, which nobody is watching at 3am. */}}
-{{- if not .Values.keda.prometheusAddress }}
+{{- if not $keda.prometheusAddress }}
 {{- fail "keda.enabled=true but keda.prometheusAddress is empty. Every trigger here is a Prometheus query; without an address KEDA cannot evaluate one and the ScaledObject sits at minReplicas reporting an error on a status nobody reads." }}
 {{- end }}
 
-{{- range $name, $cfg := .Values.keda.services }}
+{{- range $name, $cfg := (default dict $keda.services) }}
 {{- if $cfg.enabled }}
 {{- if not $cfg.triggers }}
 {{- fail (printf "keda.services.%s is enabled with no triggers. A ScaledObject with no trigger does not scale; it pins the Deployment at minReplicas, which is a quieter way to be down." $name) }}
@@ -81,8 +87,8 @@ spec:
     name: {{ include "openidx.fullname" $ }}-{{ $name }}
   minReplicaCount: {{ $cfg.minReplicas | default 2 }}
   maxReplicaCount: {{ $cfg.maxReplicas | default 30 }}
-  pollingInterval: {{ $cfg.pollingInterval | default $.Values.keda.pollingInterval }}
-  cooldownPeriod: {{ $cfg.cooldownPeriod | default $.Values.keda.cooldownPeriod }}
+  pollingInterval: {{ $cfg.pollingInterval | default $keda.pollingInterval | default 15 }}
+  cooldownPeriod: {{ $cfg.cooldownPeriod | default $keda.cooldownPeriod | default 300 }}
   advanced:
     horizontalPodAutoscalerConfig:
       behavior:
@@ -112,7 +118,7 @@ spec:
     {{- range $t := $cfg.triggers }}
     - type: prometheus
       metadata:
-        serverAddress: {{ $.Values.keda.prometheusAddress | quote }}
+        serverAddress: {{ $keda.prometheusAddress | quote }}
         metricName: {{ $t.name | quote }}
         query: {{ $t.query | quote }}
         threshold: {{ $t.threshold | quote }}
