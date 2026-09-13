@@ -17,14 +17,14 @@
 |---|---|---|
 | Başlangıç | **Pazartesi 2026-09-21** (Hafta 1) | Tüm tarihler kayar, sıralar kaymaz |
 | Sprint | 2 hafta, S1 = H1–H2 | — |
-| Ekip | 4 kişi tam zamanlı: Kenar/Ağ (KA), Platform/Veri (PV), Servis (SV), SRE/Güvenlik (SG) | 3 kişi → Faz 1 ve Faz 2 paralel gidemez, +6 hafta |
+| Ekip | **1 kişi** (2026-09-13 kararı). Aşağıdaki KA/PV/SV/SG etiketleri artık kişi değil **şapka**: hangi fazda hangi rolün düşünce biçimiyle çalışıldığını söyler | 4 kişiye çıkılırsa §1'deki paralel takvim geçerli olur, 21 haftaya iner |
 | Ortamlar | `staging` hücresi (küçük profil) H1'de var; `canary-1` Faz 2'de kurulur | staging yoksa Faz 0 kabul ölçütleri ölçülemez → **başlamayın** |
 | Kenar sağlayıcı kararı | En geç **H3** (bkz. K1) | Geç karar Faz 1'i doğrudan öteler |
 | Kod dondurma | Yok; özellik işi devam eder, ancak Faz 2.1 (RLS refactor) sırasında yeni SQL yolu açan PR'lar `orgscope` `local` modunu da geçmek zorundadır | — |
 
 ---
 
-## 1. Tek bakışta takvim
+## 1. Tek bakışta takvim (dört kişilik referans)
 
 ```mermaid
 gantt
@@ -67,6 +67,38 @@ Kritik yol: **Faz 0 → Faz 2 → Faz 3 → Faz 4** (2 + 7 + 7 + 5 ≈ 21 hafta)
 yolda değildir ama **M1'i tek başına üretir**; en erken kamu değeri oradadır.
 
 ---
+
+## 1b. Tek kişilik takvim (yürürlükteki takvim)
+
+Dört kişilik Gantt yukarıda **referans** olarak kalır; kritik yolu ve paralelliği
+gösterir. Yürürlükteki takvim aşağıdaki seri sıradır: tek kişi paralel faz yürütmez,
+her fazın çıkış kapısı ölçülmeden sonrakine geçmez. Fazlar aynı, süreler bir kişinin
+tek başına yapacağı işe göre, kilometre taşları aynı anlamda.
+
+| Faz | Hafta | Süre | Kilometre taşı | Neden bu sıra |
+|---|---|---|---|---|
+| Faz 0 Sızdırmazlık | H1–H3 | 3 hafta | **M0** H3 sonu | Her şeyin önkoşulu; küçük kod, ölçüm günü dahil |
+| Faz 1 Kenar | H4–H9 | 6 hafta | **M1** H9 sonu | Tek başına kamu değeri üretir; K1 kararı H4'te **kendin** verirsin |
+| Faz 2 Veri | H10–H17 | 8 hafta | **M2** H17 sonu | En riskli iş; bölünmez, kısaltılmaz |
+| Faz 3 Olay + Düzlem | H18–H26 | 9 hafta | **M3** H26 sonu | Faz 2'ye bağlı |
+| Faz 4 Hücre | H27–H36 | 10 hafta | **M4** H36 sonu | Hepsine bağlı |
+| Faz 5 Sürekli | M1'den itibaren | — | — | Aylık kaos, çeyreklik oyun günü tek kişiyle **yarım gün** formatında |
+
+Toplam **36 hafta** (≈ 8,5 ay), 2026-09-21 başlangıçla M4 ≈ **2027-05-28**.
+
+Tek kişi için üç kural daha:
+
+1. **Aynı anda tek görev.** Faz kartlarındaki "paralel" ifadeleri yok sayılır; sıra
+   görev numarasıdır (0.1 → 0.2 → …). Bir görev bitmeden diğerine geçilmez; yarım
+   kalan iş bir sonraki oturumda en pahalı şeydir.
+2. **Her görev bir commit, her faz bir PR.** Commit mesajı görevin kabul ölçütünü ve
+   ölçülen sayıyı taşır; PR açıklaması faz kapısını. Böylece kanıt `docs/evidence/`
+   yanında Git tarihinde de durur.
+3. **Ölçüm günü kısaltılmaz.** Tek kişide "ölçmeden geçme" cazibesi en yüksektir;
+   Faz 0 için ölçüm günü bu yüzden ayrı bir haftaya (H3) alındı.
+
+Karar noktaları (§2) tek kişide de geçerlidir; fark şu: karar yine yazılır (ADR eki),
+ama toplantı yerine **bir günlük düşünme süresi** ile. Sessiz karar yine yasaktır.
 
 ## 2. Karar noktaları
 
@@ -245,7 +277,7 @@ Takvime bağlı değil, ritme bağlı:
 
 ---
 
-## 4. Sprint özeti (kim, ne zaman, ne)
+## 4. Sprint özeti (dört kişilik referans; tek kişi için §1b sırası geçerlidir)
 
 | Sprint | Haftalar | KA (Kenar/Ağ) | PV (Platform/Veri) | SV (Servis) | SG (SRE/Güvenlik) |
 |---|---|---|---|---|---|
