@@ -370,7 +370,7 @@ jobs:
       # The sequence-gap test is the one worth naming twice: it drives two
       # concurrent transactions by hand to show that a relay paging by id loses
       # the row that committed late, which is why the relay claims by state.
-      - name: The outbox commits with what it describes, and the relay cannot page by id
+      - name: The outbox commits with what it describes, and the relay loses nothing
         env:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
@@ -385,7 +385,12 @@ jobs:
                       TestOneTenantCannotReadAnothersEvents \
                       TestOneTenantCannotPublishTheSameEventIdTwice \
                       TestTheOutboxTableKeepsTheDecisionsItWasShapedAround \
-                      TestASequenceIdIsNotACommitOrderAndACursorRelayLosesTheGap; do
+                      TestASequenceIdIsNotACommitOrderAndACursorRelayLosesTheGap \
+                      TestAnOutageLosesNothingAndDeliversEveryEventExactlyOnce \
+                      TestACrashAfterTheSinkAcceptsRedeliversAndAnIdempotentConsumerAbsorbsIt \
+                      TestFourConcurrentRelaysDeliverEveryEventExactlyOnce \
+                      TestAPoisonEventStopsBeingRetriedAndKeepsItsError \
+                      TestTheRelayDrainsEveryTenant; do
             # The trailing space matters: without it a test renamed to
             # "<name>X" still matches as a prefix and the guard reads green.
             grep -q -- "--- PASS: $want " <<<"$out" \

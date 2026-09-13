@@ -109,6 +109,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it exactly-once would need the broker and this database to commit together,
   which they cannot.
 
+- **The relay that drains it, with no leader.** `events.Relay` claims a batch,
+  publishes it to a `Sink`, and marks what the sink accepted — all in one
+  transaction, so there is no claim column, no "processing" state and no
+  sweeper for rows a dead relay left behind: dying rolls the transaction back
+  and the row is simply unlocked.
+
+  **No leader election, a deliberate departure from the plan.** `FOR UPDATE SKIP
+  LOCKED` already *is* the coordination — a row another relay holds is invisible
+  to this one. A leader would add a lease, and a lease adds a failure mode this
+  design does not have: between a leader dying and its lease expiring, nobody
+  relays. What it would buy is global ordering, which this outbox explicitly
+  does not promise. Measured: **four relays draining concurrently delivered 60
+  events exactly 60 times**, no row claimed twice.
+
+  The sink accepts *and then* the transaction commits, so a crash between those
+  two redelivers. That ordering is chosen: a consumer can recognise a duplicate
+  by `event_id` and cannot recover an event that was never sent. Measured end to
+  end — the sink refused every attempt across five full drains and the backlog
+  stayed intact at 25 rows with nothing delivered; when it came back, all 25
+  arrived, each exactly once. A forced crash after acceptance redelivered all
+  three of its events, and the same three ids arrived twice.
+
+  A poison event stops at `MaxAttempts` rather than consuming the relay forever,
+  and **stays in the table** with its last error: something to investigate, not
+  something to delete.
+
 ### Removed
 
 - **The in-process event bus, which nothing imported.** `internal/common/events`
