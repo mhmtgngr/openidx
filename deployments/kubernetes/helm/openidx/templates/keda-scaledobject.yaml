@@ -1,0 +1,122 @@
+{{- /*
+KEDA ScaledObjects (global-scale plan task 3.6, ADR-12).
+
+WHY, WHEN THERE IS ALREADY AN HPA. The HPA from task 0.5 scales on CPU and
+memory, and both are LAGGING indicators of the thing that actually hurts. A
+plane under load queues first and burns CPU second: requests wait for a slot,
+for a connection, for a lock, and the pod's CPU can sit at 40% while every
+caller sees seconds of latency. By the time CPU crosses the target the queue
+has already been deep for a minute, and the replicas that arrive then are a
+minute late to a problem that started without them.
+
+So these scale on what the process actually reports about its own pressure:
+
+  ISSUE   admission queue wait p95 -- how long a request waits for a slot
+          before the gate serves it. This is the number the bound in
+          admission.go produces, and it rises the moment the plane is behind.
+  VERIFY  requests per second per pod -- verification is CPU-shaped and
+          stateless, so rps/pod is a direct proxy for load per replica and
+          moves before utilisation does.
+  EVENT   outbox delivery lag p95 -- how far behind the relay is. The plan
+          named NATS consumer lag; there is no NATS yet (task 3.2), and the
+          EVENT plane's queue TODAY is the outbox, so this is the same
+          question asked of the queue that exists. When NATS lands this gains
+          a trigger rather than changing meaning.
+
+TWO AUTOSCALERS ON ONE DEPLOYMENT IS NOT A CONFIGURATION, IT IS A BUG. KEDA
+does not scale pods itself: it CREATES an HPA for each ScaledObject. So a
+service with both this and the chart's own HPA gets two HorizontalPodAutoscalers
+with the same scaleTargetRef, each computing a desired replica count from its
+own metrics and each writing it. They do not negotiate. The Deployment follows
+whichever wrote last, which means it oscillates between two answers for as long
+as both exist -- and the oscillation looks like flapping under load, i.e. like
+the thing autoscaling was turned on to prevent. The chart refuses to render that
+rather than letting it be discovered in production.
+*/}}
+{{- if .Values.keda.enabled }}
+
+{{- /* Interlock 1: not alongside the chart's own HPA, for any service. */}}
+{{- $hpaOn := list }}
+{{- range $name, $svc := (dict
+      "identity-service" .Values.identityService
+      "governance-service" .Values.governanceService
+      "provisioning-service" .Values.provisioningService
+      "audit-service" .Values.auditService
+      "admin-api" .Values.adminApi
+      "oauth-service" .Values.oauthService
+      "gateway-service" .Values.gatewayService
+      "access-service" .Values.accessService
+      "admin-console" .Values.adminConsole) }}
+{{- if and $svc.enabled (dig "autoscaling" "enabled" false $svc) }}
+{{- $hpaOn = append $hpaOn $name }}
+{{- end }}
+{{- end }}
+{{- if $hpaOn }}
+{{- fail (printf "keda.enabled=true while these services still have autoscaling.enabled=true: %s. KEDA creates its own HorizontalPodAutoscaler per ScaledObject, so each of those Deployments would be governed by TWO HPAs writing a replica count from different metrics -- the Deployment follows whichever wrote last and oscillates for as long as both exist. Turn off <service>.autoscaling.enabled for the services KEDA scales." (join ", " $hpaOn)) }}
+{{- end }}
+
+{{- /* Interlock 2: a trigger with nowhere to read from is a ScaledObject that
+       silently never scales. KEDA reports the failure on the ScaledObject's
+       status, which nobody is watching at 3am. */}}
+{{- if not .Values.keda.prometheusAddress }}
+{{- fail "keda.enabled=true but keda.prometheusAddress is empty. Every trigger here is a Prometheus query; without an address KEDA cannot evaluate one and the ScaledObject sits at minReplicas reporting an error on a status nobody reads." }}
+{{- end }}
+
+{{- range $name, $cfg := .Values.keda.services }}
+{{- if $cfg.enabled }}
+{{- if not $cfg.triggers }}
+{{- fail (printf "keda.services.%s is enabled with no triggers. A ScaledObject with no trigger does not scale; it pins the Deployment at minReplicas, which is a quieter way to be down." $name) }}
+{{- end }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "openidx.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "openidx.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+    openidx.io/plane: {{ $cfg.plane | default "admin" | quote }}
+spec:
+  scaleTargetRef:
+    name: {{ include "openidx.fullname" $ }}-{{ $name }}
+  minReplicaCount: {{ $cfg.minReplicas | default 2 }}
+  maxReplicaCount: {{ $cfg.maxReplicas | default 30 }}
+  pollingInterval: {{ $cfg.pollingInterval | default $.Values.keda.pollingInterval }}
+  cooldownPeriod: {{ $cfg.cooldownPeriod | default $.Values.keda.cooldownPeriod }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        {{- /* The same asymmetry the chart's own HPA uses, and for the same
+               reason: an attack or a launch arrives in seconds, and the quiet
+               after it can be a lull between waves. Without the down-side
+               window the autoscaler flaps between waves, and every flap is a
+               cold start under fire. */}}
+        scaleUp:
+          stabilizationWindowSeconds: {{ $.Values.autoscaling.behavior.scaleUp.stabilizationWindowSeconds }}
+          selectPolicy: Max
+          policies:
+            - type: Percent
+              value: {{ $.Values.autoscaling.behavior.scaleUp.percent }}
+              periodSeconds: {{ $.Values.autoscaling.behavior.scaleUp.periodSeconds }}
+            - type: Pods
+              value: {{ $.Values.autoscaling.behavior.scaleUp.pods }}
+              periodSeconds: {{ $.Values.autoscaling.behavior.scaleUp.periodSeconds }}
+        scaleDown:
+          stabilizationWindowSeconds: {{ $.Values.autoscaling.behavior.scaleDown.stabilizationWindowSeconds }}
+          selectPolicy: Min
+          policies:
+            - type: Percent
+              value: {{ $.Values.autoscaling.behavior.scaleDown.percent }}
+              periodSeconds: {{ $.Values.autoscaling.behavior.scaleDown.periodSeconds }}
+  triggers:
+    {{- range $t := $cfg.triggers }}
+    - type: prometheus
+      metadata:
+        serverAddress: {{ $.Values.keda.prometheusAddress | quote }}
+        metricName: {{ $t.name | quote }}
+        query: {{ $t.query | quote }}
+        threshold: {{ $t.threshold | quote }}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

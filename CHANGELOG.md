@@ -149,6 +149,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forty-day-old delivered rows go. Zero `KeepFor` is off: deleting delivery
   receipts is not something to start doing because a struct was zero-valued.
 
+- **KEDA scales on pressure, not on CPU — and the chart refuses two
+  autoscalers on one Deployment.** `templates/keda-scaledobject.yaml`, off by
+  default. CPU and memory are *lagging*: a plane under load queues first and
+  burns CPU second, so utilisation crosses its target a minute after the queue
+  got deep, and the replicas it summons are a minute late to a problem that
+  started without them.
+
+  Each plane scales on the signal named for it — ISSUE on the admission gate's
+  own queue-wait p95, VERIFY on requests per second per pod, EVENT on outbox
+  delivery lag p95. (The plan named NATS consumer lag; there is no NATS yet,
+  and the EVENT plane's queue *today* is the outbox, so this asks the same
+  question of the queue that exists. When NATS lands it gains a trigger rather
+  than changing meaning.)
+
+  **The interlock is the part worth stating.** KEDA does not scale pods itself:
+  it *creates* an HPA per ScaledObject. A service carrying both KEDA and the
+  chart's own HPA gets two HorizontalPodAutoscalers on one `scaleTargetRef`,
+  each computing a replica count from different metrics and each writing it.
+  They do not negotiate; the Deployment follows whichever wrote last and
+  oscillates for as long as both exist — which looks like flapping under load,
+  i.e. like the thing autoscaling was turned on to prevent. The chart refuses to
+  render it. A second interlock refuses an empty `prometheusAddress`: a trigger
+  with nowhere to read pins the Deployment at `minReplicas` and reports the
+  error on a status nobody is watching.
+
+  CI asserts no ScaledObject carries a `cpu` or `memory` query, because that
+  would put the lagging indicator back and nothing would look wrong.
+
 ### Removed
 
 - **The in-process event bus, which nothing imported.** `internal/common/events`

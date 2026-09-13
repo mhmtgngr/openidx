@@ -151,6 +151,89 @@ jobs:
       #   - a pooler the MIGRATION is routed through breaks the install, because
       #     an advisory lock is session-scoped.
       # Each is asserted below rather than left to a comment.
+      # KEDA (task 3.6) scales on what a plane reports about its own pressure
+      # rather than on CPU, which is a LAGGING indicator: a plane queues first
+      # and burns CPU second, so utilisation crosses its target a minute after
+      # the queue got deep.
+      #
+      # The hazard this asserts is not subtle once stated and invisible until
+      # it happens: KEDA does not scale pods itself, it CREATES an HPA per
+      # ScaledObject. A service with both KEDA and the chart's own HPA gets two
+      # HorizontalPodAutoscalers on one Deployment, each computing a replica
+      # count from different metrics and each writing it. The Deployment follows
+      # whichever wrote last, and oscillates for as long as both exist.
+      - name: Autoscaling has exactly one authority per Deployment
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+          }
+
+          # Off by default: the chart must not require a KEDA operator to install.
+          if render | grep -q "kind: ScaledObject"; then
+            echo "::error::keda is disabled by default but a ScaledObject rendered"; exit 1
+          fi
+
+          # Both halves must be enabled together, or neither.
+          if render --set keda.enabled=true --set keda.prometheusAddress=http://p:9090 \
+                    --set oauthService.autoscaling.enabled=true >/dev/null 2>&1; then
+            echo "::error::KEDA rendered alongside the chart's own HPA — two autoscalers on one Deployment"; exit 1
+          fi
+          if render --set keda.enabled=true >/dev/null 2>&1; then
+            echo "::error::KEDA rendered with no prometheusAddress — every trigger would fail to evaluate"; exit 1
+          fi
+
+          cat > /tmp/keda-on.yaml <<'YAML'
+          keda:
+            enabled: true
+            prometheusAddress: http://prometheus.monitoring:9090
+            services:
+              oauth-service: { enabled: true }
+              access-service: { enabled: true }
+              audit-service: { enabled: true }
+          YAML
+          render -f /tmp/keda-on.yaml > /tmp/render-keda.yaml
+
+          python3 - <<'PY'
+          import yaml
+          docs = [d for d in yaml.safe_load_all(open('/tmp/render-keda.yaml')) if d]
+          scaled = {d['metadata']['name']: d for d in docs if d.get('kind') == 'ScaledObject'}
+          assert len(scaled) == 3, f"expected three ScaledObjects, got {sorted(scaled)}"
+
+          # Each plane scales on the signal named for it, and the signal is one
+          # the product actually emits.
+          want = {
+            'openidx-oauth-service': ('issue',  'openidx_admission_queue_wait_seconds_bucket'),
+            'openidx-access-service': ('verify', 'openidx_http_requests_total'),
+            'openidx-audit-service': ('event',  'openidx_outbox_relay_lag_seconds_bucket'),
+          }
+          for name, (plane, metric) in want.items():
+            so = scaled[name]
+            assert so['metadata']['labels']['openidx.io/plane'] == plane, f"{name} is not labelled {plane}"
+            queries = ' '.join(t['metadata']['query'] for t in so['spec']['triggers'])
+            assert metric in queries, f"{name} does not scale on {metric}: {queries}"
+
+          # The whole point is to scale on something that moves BEFORE
+          # utilisation. A cpu or memory trigger here puts the lagging
+          # indicator back and nothing would look wrong.
+          for name, so in scaled.items():
+            for t in so['spec']['triggers']:
+              assert t['type'] == 'prometheus', f"{name} has a non-prometheus trigger: {t['type']}"
+              q = t['metadata']['query']
+              assert 'cpu' not in q and 'memory' not in q, f"{name} scales on a lagging indicator: {q}"
+
+          # And no service KEDA scales may also carry the chart's HPA. The
+          # interlock above refuses to render that; this proves the render it
+          # DID produce has one authority per Deployment.
+          hpa_targets = {d['spec']['scaleTargetRef']['name']
+                         for d in docs if d.get('kind') == 'HorizontalPodAutoscaler'}
+          assert not (hpa_targets & set(scaled)), f"both autoscalers target: {hpa_targets & set(scaled)}"
+          print(f"ok: {len(scaled)} ScaledObjects, one autoscaling authority per Deployment")
+          PY
+
       - name: The transaction pooler is safe by construction
         run: |
           set -euo pipefail

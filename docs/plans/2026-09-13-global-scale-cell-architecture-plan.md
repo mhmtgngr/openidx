@@ -321,8 +321,15 @@ kod bitmiş olması M0 değildir.
 
 ### 3.6 KEDA
 
-- [ ] Prometheus tetikleyicileri: ISSUE kuyruk bekleme p95, VERIFY rps/pod, EVENT NATS lag.
-- **Kabul:** Faz 0.5 HPA testi tekrar; ölçekleme CPU'dan **önce** tetiklenir.
+- [x] Prometheus tetikleyicileri: ISSUE kuyruk bekleme p95, VERIFY rps/pod, EVENT outbox teslim gecikmesi p95. **(2026-09-13)** — `templates/keda-scaledobject.yaml`, `keda.*` değerleri; varsayılan **kapalı**.
+  - **Neden zaten bir HPA varken.** 0.5'teki HPA CPU ve belleğe bakıyor; ikisi de **gecikmeli** göstergeler. Yük altındaki bir düzlem **önce kuyruğa girer**, CPU'yu sonra yakar: istekler slot, bağlantı, kilit bekler ve pod'un CPU'su %40'ta dururken her çağıran saniyelerce gecikme görür. CPU hedefi geçtiğinde kuyruk çoktan bir dakikadır derin, ve o an gelen replikalar onlarsız başlamış bir soruna bir dakika geç kalmış olur.
+  - **ISSUE → `openidx_admission_queue_wait_seconds` p95.** Bu, 3.5'teki kabul kapısının ürettiği sayının ta kendisi ve düzlem geri kaldığı **anda** yükseliyor. (`ADMISSION_MAX_INFLIGHT` ayarlı olmalı; yoksa histogramın gözlemi olmaz ve tetikleyici sonsuza kadar sıfır okur — bu tetikleyicinin yazılı ön koşulu.)
+  - **VERIFY → pod başına rps.** Doğrulama CPU biçimli ve durumsuz; rps/pod replika başına yükün doğrudan vekili ve kullanımdan önce hareket ediyor.
+  - **EVENT → `openidx_outbox_relay_lag_seconds` p95.** Plan NATS tüketici gecikmesi diyordu; **NATS henüz yok (3.2)** ve EVENT düzleminin bugünkü kuyruğu outbox. Aynı soruyu var olan kuyruğa soruyoruz; NATS gelince bu bir tetikleyici **kazanır**, anlamı değişmez.
+  - **Bir Deployment'ta iki otomatik ölçekleyici bir yapılandırma değil, bir hata.** KEDA pod'ları kendisi ölçeklemiyor: her ScaledObject için **kendi HPA'sını yaratıyor**. Yani hem bunu hem chart'ın kendi HPA'sını taşıyan bir servis, aynı `scaleTargetRef`'e bakan iki HorizontalPodAutoscaler alır; her biri kendi metriğinden bir replika sayısı hesaplar ve yazar. Pazarlık etmezler. Deployment **en son yazanı** izler ve ikisi var olduğu sürece salınır — bu salınım yük altında flapping gibi görünür, yani otomatik ölçeklemenin önlemek için açıldığı şey gibi. Chart bunu **render etmeyi reddediyor**; üretimde keşfedilecek bir şey değil.
+  - **İkinci kilit:** `keda.prometheusAddress` boşken render başarısız. Okuyacak yeri olmayan bir tetikleyici, ScaledObject'i `minReplicas`'ta bırakır ve hatayı kimsenin bakmadığı bir `status` alanına yazar.
+  - **Kanıt:** dört mutasyon kırmızı — ISSUE'yu CPU'ya bağlamak, iki-ölçekleyici kilidini kaldırmak, KEDA'yı varsayılan açık yapmak, adres kilidini kaldırmak.
+- **Kabul:** Faz 0.5 HPA testi tekrar; ölçekleme CPU'dan **önce** tetiklenir. *(Render tarafı karşılandı ve CI'da: her düzlem kendi adına yazılmış sinyalle ölçekleniyor, hiçbir ScaledObject bir cpu/memory sorgusu taşımıyor — taşısaydı gecikmeli gösterge geri gelirdi ve hiçbir şey yanlış görünmezdi — ve KEDA'nın ölçeklediği hiçbir Deployment ayrıca chart'ın HPA'sını taşımıyor. **Ölçülmedi:** "CPU'dan önce tetiklendi" cümlesi bir chart render'ından çıkarılamaz; 0.5'in kendi kabulü gibi **oyun günü M1'de** ölçülüp `docs/evidence/`'e yazılacak.)*
 
 ---
 
