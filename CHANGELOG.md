@@ -30,6 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A DDoS game-day: six attack scenarios and the runbook to answer them.**
+  A design that says "the edge absorbs this" is not evidence.
+  `test/load/ddos/` holds six k6 scenarios — JWKS/discovery flood, token
+  flood with invalid clients, credential spray across many source addresses,
+  slow-request and oversized-header, oversized SCIM and default bodies, and
+  expensive audit search — each sharing the two thresholds the whole day is
+  built on: VERIFY latency must not move (p99 < 30 ms) and legitimate ISSUE
+  success must hold (> 99%). `scripts/ddos-drill.sh --check` syntax-checks
+  every scenario and asserts the wiring without a cluster or k6 (in CI and
+  `make ddos-drill`); the live run refuses a production or loopback target
+  before it needs k6, runs against a staging cell and writes a summary to
+  `docs/evidence/`. `docs/runbooks/ddos-under-attack.md` is the full version
+  of the design's §5.7: which signals say attack rather than launch, how to
+  turn the edge to under-attack mode, cutting the source as narrowly as the
+  attack allows, taking capacity from ADMIN for ISSUE without touching
+  VERIFY, and standing down in reverse. The live measurement is M1's
+  game-day. Task 1.5.
+
 - **A bot gate at the login door, keyed on the account rather than the
   address.** A credential spray spread across ten thousand sources makes
   three attempts from each: no per-IP bucket ever fills, and the database

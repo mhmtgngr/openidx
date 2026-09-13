@@ -71,6 +71,8 @@ jobs:
         run: bash scripts/check-shell-prose.test.sh
       - name: Scan shell scripts
         run: bash scripts/check-shell-prose.sh
+      - name: DDoS game-day scenarios validate (global-scale plan task 1.5)
+        run: bash scripts/ddos-drill.test.sh
       - name: Verify the docs-drift guard can go red
         # Same mutation discipline: it must flag a citation that does not
         # resolve AND stay green on globs, brace sets, elisions and Go symbols
