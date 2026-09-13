@@ -57,6 +57,12 @@ elasticsearch:
 # Point the services at managed endpoints (Elasticsearch via config; Postgres
 # and Redis via the DATABASE_URL/REDIS_URL external secret above).
 config:
+  # Task 0.2 (global-scale plan): the ingress controller's pod CIDR, so the
+  # services believe the ingress's X-Forwarded-For. Without it every request
+  # resolves to the ingress pod and the whole world shares one rate-limit
+  # bucket. `kubectl get pod -n ingress-nginx -o wide` shows the range to
+  # cover; the edge PROVIDER's ranges go in edge.* below, not here.
+  trustedProxies: "10.0.0.0/8"   # <-- your cluster's pod network CIDR
   elasticsearchUrl: "https://opensearch.prod.internal:9200"
   oauthIssuer: "https://auth.openidx.example.com"
   oauthJwksUrl: "https://auth.openidx.example.com/.well-known/jwks.json"
@@ -216,3 +222,13 @@ zitiFabric:
       size: 10Gi
   router:
     replicas: 2
+
+# ----- Edge provider CIDRs kept in sync (task 0.2) -----
+# Production sits behind an anycast edge (decision K1 in the roadmap picks the
+# provider). The provider's published ranges are the only hops whose
+# X-Forwarded-For the services may believe; they change on the provider's
+# schedule, so a CronJob keeps them current and rolls the services on change.
+edge:
+  cidrSync:
+    enabled: true
+    provider: cloudflare   # <-- match K1: cloudflare | aws-cloudfront | static

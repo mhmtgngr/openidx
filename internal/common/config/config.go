@@ -62,6 +62,18 @@ type Config struct {
 	RedisRateLimitURL  string `mapstructure:"redis_ratelimit_url"`
 	RedisRevocationURL string `mapstructure:"redis_revocation_url"`
 
+	// TrustedProxies mirrors OIDX_TRUSTED_PROXIES: the hops whose
+	// X-Forwarded-For the services believe (internal/common/middleware
+	// ConfigureTrustedProxies reads the same variable). It is surfaced on
+	// Config so the production gate can refuse "*", which restores gin's
+	// trust-everything default and lets any caller name its own client IP —
+	// and with it choose which per-IP rate-limit bucket it lands in.
+	TrustedProxies string `mapstructure:"trusted_proxies"`
+	// EdgeTrustedCIDRs mirrors OIDX_EDGE_TRUSTED_CIDRS: the edge provider's
+	// published ranges, unioned with TrustedProxies by the middleware. Kept on
+	// Config so the "nothing trusted" warning knows the list may arrive here.
+	EdgeTrustedCIDRs string `mapstructure:"edge_trusted_cidrs"`
+
 	// OPA configuration
 	OPAURL         string `mapstructure:"opa_url"`
 	EnableOPAAuthz bool   `mapstructure:"enable_opa_authz"`
@@ -1143,6 +1155,8 @@ func bindEnvVars(v *viper.Viper) {
 		"database_url":                                    "DATABASE_URL",
 		"redis_url":                                       "REDIS_URL",
 		"redis_ratelimit_url":                             "REDIS_RATELIMIT_URL",
+		"trusted_proxies":                                 "OIDX_TRUSTED_PROXIES",
+		"edge_trusted_cidrs":                              "OIDX_EDGE_TRUSTED_CIDRS",
 		"redis_revocation_url":                            "REDIS_REVOCATION_URL",
 		"elasticsearch_url":                               "ELASTICSEARCH_URL",
 		"opa_url":                                         "OPA_URL",
@@ -1532,6 +1546,17 @@ func (c *Config) ProductionWarnings() []string {
 	if !c.RedisTLSEnabled {
 		warnings = append(warnings, "redis_tls_enabled is false; enable TLS for Redis in production")
 	}
+
+	// Empty is the secure default (loopback only) and, in every topology this
+	// repo ships, also the useless one: the edge is a different container or
+	// pod, so every request resolves to its address and per-IP rate limits,
+	// audit IPs, known-IP device trust and geo rules all see one client. Behind
+	// a CDN or anycast edge the effect is worse — the whole world shares a
+	// bucket and one attacker can 429 everyone. The services already warn
+	// once per untrusted hop; this names the setting up front.
+	if strings.TrimSpace(c.TrustedProxies) == "" && strings.TrimSpace(c.EdgeTrustedCIDRs) == "" {
+		warnings = append(warnings, "OIDX_TRUSTED_PROXIES is empty; every request resolves to the edge's address (one shared per-IP rate-limit bucket). Set it to the edge/ingress CIDRs, or use OIDX_EDGE_TRUSTED_CIDRS for a provider list kept in sync")
+	}
 	if !c.TLS.Enabled {
 		warnings = append(warnings, "tls.enabled is false; enable inter-service TLS for production")
 	}
@@ -1595,6 +1620,16 @@ func (c *Config) ValidateProduction() error {
 	if c.AuditChainSecret == "" || strings.Contains(strings.ToLower(c.AuditChainSecret), "change") {
 		criticalIssues = append(criticalIssues,
 			"audit_chain_secret must be set to a secure random value; without it the audit hash chain does not run and the trail carries no tamper evidence")
+	}
+
+	// Critical: "*" trusts every hop's X-Forwarded-For, so the caller picks
+	// its own client IP. Behind an edge that means one attacker can spread a
+	// flood across as many per-IP rate-limit buckets as it likes, or drop a
+	// victim's address into the auth-path bucket and lock them out; audit
+	// records, known-IP device trust and geo rules all read the same lie.
+	if strings.TrimSpace(c.TrustedProxies) == "*" {
+		criticalIssues = append(criticalIssues,
+			"OIDX_TRUSTED_PROXIES must not be \"*\" in production: list the edge's CIDRs (and the pod/compose network the edge forwards from) so the client IP comes from a hop you run, not from the caller")
 	}
 
 	// Critical: Wildcard CORS in production allows any origin

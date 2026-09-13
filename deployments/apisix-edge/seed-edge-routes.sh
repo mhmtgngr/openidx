@@ -37,6 +37,29 @@ DRY_RUN=${DRY_RUN:-0}
 _put_real() { curl -fsS -o /dev/null -w "  route %-26s -> %{http_code}\n" "$1" \
         -X PUT -H "X-API-KEY: $KEY" "$ADMIN/apisix/admin/routes/$1" -d "$2"; }
 put() { if [ "$DRY_RUN" = "1" ]; then echo "put $1"; else _put_real "$1" "$2"; fi; }
+_put_global_real() { curl -fsS -o /dev/null -w "  global %-25s -> %{http_code}\n" "$1" \
+        -X PUT -H "X-API-KEY: $KEY" "$ADMIN/apisix/admin/global_rules/$1" -d "$2"; }
+put_global() { if [ "$DRY_RUN" = "1" ]; then echo "global $1"; else _put_global_real "$1" "$2"; fi; }
+
+# --- Client-IP chain (global-scale plan task 0.2) ---
+# When an anycast/CDN edge is placed in front of this APISIX, every TCP peer is
+# the provider and remote_addr stops meaning "the client". Every per-IP control
+# downstream (limit-req keys, the services' auth-path limiter, audit actor_ip,
+# known-IP device trust, geo rules) then sees ONE address for the whole world:
+# one attacker can 429 everyone. EDGE_TRUSTED_CIDRS is the provider's published
+# address list (comma-separated); when set, a global real-ip rule rewrites
+# remote_addr from X-Forwarded-For, trusting only those hops. Left empty when
+# THIS APISIX is the true edge (no hop in front) — then remote_addr is already
+# the client and a real-ip rule would only add a way to forge it.
+# Keep the same list in the backend services' OIDX_TRUSTED_PROXIES /
+# OIDX_EDGE_TRUSTED_CIDRS so the second hop (APISIX -> service) is trusted too.
+EDGE_TRUSTED_CIDRS=${EDGE_TRUSTED_CIDRS:-}
+if [ -n "$EDGE_TRUSTED_CIDRS" ]; then
+  _cidrs_json=$(printf '%s' "$EDGE_TRUSTED_CIDRS" | tr -d ' ' | awk -F, '{for(i=1;i<=NF;i++){if($i!=""){printf "%s\"%s\"", (n++?",":""), $i}}}')
+  put_global edge-real-ip "{\"plugins\":{\"real-ip\":{\"source\":\"http_x_forwarded_for\",\"recursive\":true,\"trusted_addresses\":[${_cidrs_json}]}}}"
+else
+  echo "  (EDGE_TRUSTED_CIDRS empty: no real-ip global rule; correct only if this APISIX is the true edge)" >&2
+fi
 
 # --- TLS (wildcard *.tdv.org) ---
 if [ "$DRY_RUN" != "1" ]; then

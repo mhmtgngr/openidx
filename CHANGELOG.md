@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The client-IP chain survives an edge in front of it.** Every per-IP
+  control — the auth-path rate limiter, audit actor IPs, known-IP device
+  trust, geo rules — reads gin's `ClientIP()`, which is the client only when
+  the hop that forwarded the request is trusted. APISIX keyed `limit-req` on
+  `remote_addr` and the services trusted loopback alone, so the moment an
+  anycast or CDN provider is placed in front, every TCP peer is the provider
+  and the whole world shares one bucket: one attacker can 429 everyone, and a
+  thousand-source brute force looks like one client. The opposite setting,
+  `OIDX_TRUSTED_PROXIES=*`, lets the caller pick its own bucket.
+
+  Three things change. `OIDX_EDGE_TRUSTED_CIDRS` carries the provider's
+  published ranges and is unioned with `OIDX_TRUSTED_PROXIES` (a `*` inside it
+  is dropped, not honoured); production services now refuse to start on
+  `OIDX_TRUSTED_PROXIES=*` and warn when it is empty. APISIX gains a `real-ip`
+  global rule — in compose trusting the private network the TLS proxy lives
+  on, on the public edge gated on `EDGE_TRUSTED_CIDRS` in
+  `seed-edge-routes.sh` and deliberately absent when that APISIX is the true
+  edge. The Helm chart adds `edge.trustedCidrs` and an `edge.cidrSync`
+  CronJob (`files/edge-cidr-sync.sh`, Cloudflare / CloudFront / static) that
+  rewrites a ConfigMap every service mounts optionally and rolls the
+  deployments only on change; any bad, empty or implausibly short feed leaves
+  the current list untouched and fails the Job (`OpenIDXEdgeCidrSyncFailed`).
+  Tests pin the contract at the seam: behind a trusted edge two clients get
+  two buckets, behind an untrusted one they collapse into one, and an
+  untrusted caller cannot move itself by forging the header. Task 0.2.
+
 - **Redis is three instances, one per loss profile.** OpenIDX kept four kinds
   of state in one Redis: rate-limit counters, login/MFA/authcode session
   state, token and session revocation markers, and leader locks. The counters

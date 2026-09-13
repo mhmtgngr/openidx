@@ -64,8 +64,17 @@ import (
 // once per hop, with the address to add to OIDX_TRUSTED_PROXIES, and counted in
 // openidx_forwarded_for_from_untrusted_hop_total so it shows up on a dashboard
 // and not only in a log nobody reads.
+// A second variable, OIDX_EDGE_TRUSTED_CIDRS, carries the same shape and is
+// UNIONED with OIDX_TRUSTED_PROXIES. It exists so an edge provider's published
+// address list — which changes on the provider's schedule, not on a release —
+// can be kept in a separately managed ConfigMap (see the edge-cidr-sync CronJob
+// in the Helm chart) while the operator's own hops stay in OIDX_TRUSTED_PROXIES.
+// "*" is honoured only from OIDX_TRUSTED_PROXIES; a synced list cannot widen
+// trust to everyone by accident.
 func ConfigureTrustedProxies(router *gin.Engine, logger *zap.Logger) {
 	proxies := defaultTrustedProxies()
+
+	edge := splitCIDRList(os.Getenv("OIDX_EDGE_TRUSTED_CIDRS"))
 
 	if env := strings.TrimSpace(os.Getenv("OIDX_TRUSTED_PROXIES")); env != "" {
 		if env == "*" {
@@ -80,15 +89,16 @@ func ConfigureTrustedProxies(router *gin.Engine, logger *zap.Logger) {
 			// keep gin's default behavior by returning here.
 			return
 		}
-		var parsed []string
-		for _, p := range strings.Split(env, ",") {
-			if p = strings.TrimSpace(p); p != "" {
-				parsed = append(parsed, p)
-			}
-		}
-		if len(parsed) > 0 {
+		if parsed := splitCIDRList(env); len(parsed) > 0 {
 			proxies = parsed
 		}
+	}
+	if len(edge) > 0 {
+		// The edge list ADDS to whatever the operator trusts. When only the edge
+		// list is set the loopback default is kept alongside it, since a service
+		// that is also reached over loopback (the single-box layout) must keep
+		// believing that hop.
+		proxies = append(proxies, edge...)
 	}
 
 	if err := router.SetTrustedProxies(proxies); err != nil {
@@ -105,6 +115,19 @@ func ConfigureTrustedProxies(router *gin.Engine, logger *zap.Logger) {
 			zap.Strings("trusted_proxies", proxies))
 	}
 	router.Use(ReportDiscardedForwardedFor(proxies, logger))
+}
+
+// splitCIDRList parses a comma-separated list of CIDRs/IPs, dropping blanks. A
+// literal "*" is NOT a list entry and is dropped here; only
+// ConfigureTrustedProxies' explicit OIDX_TRUSTED_PROXIES branch honours it.
+func splitCIDRList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" && p != "*" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // defaultTrustedProxies returns the loopback ranges the edge proxy connects from.
@@ -175,7 +198,8 @@ func ReportDiscardedForwardedFor(trusted []string, logger *zap.Logger) gin.Handl
 				zap.Strings("trusted_proxies", trusted),
 				zap.String("effect", "client IP resolves to the hop, so per-IP rate limits, audit IPs, "+
 					"known-IP device trust and geo rules all see one address"),
-				zap.String("fix", "add the hop to OIDX_TRUSTED_PROXIES, or ignore this if the caller "+
+				zap.String("fix", "add the hop to OIDX_TRUSTED_PROXIES (or, for an edge provider's "+
+					"published ranges, OIDX_EDGE_TRUSTED_CIDRS), or ignore this if the caller "+
 					"is a client sending the header itself"))
 		}
 

@@ -52,3 +52,21 @@ data:
   # pin a connection indefinitely (in-code default: off when unset).
   DB_STATEMENT_TIMEOUT: {{ .Values.database.statementTimeout | quote }}
   {{- end }}
+{{- if and (not .Values.edge.cidrSync.enabled) .Values.edge.trustedCidrs }}
+---
+# Edge provider address ranges the services trust as forwarding hops, in
+# addition to config.trustedProxies (global-scale plan task 0.2). Static form:
+# the list is whatever the chart was installed with. When edge.cidrSync.enabled
+# is true this object is NOT rendered — the CronJob owns it and keeps it at the
+# provider's current ranges, so Helm never overwrites a fresher list.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openidx.fullname" . }}-edge-cidrs
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge
+data:
+  OIDX_EDGE_TRUSTED_CIDRS: {{ join "," .Values.edge.trustedCidrs | quote }}
+  PROVIDER: "static"
+{{- end }}

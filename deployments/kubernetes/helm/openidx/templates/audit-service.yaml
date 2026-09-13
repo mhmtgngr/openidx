@@ -79,6 +79,14 @@ spec:
                 name: {{ include "openidx.fullname" . }}-secrets
             - configMapRef:
                 name: {{ include "openidx.fullname" . }}-config
+            # Edge provider CIDRs, unioned into the trusted-proxy list by the
+            # services (OIDX_EDGE_TRUSTED_CIDRS). Rendered statically from
+            # edge.trustedCidrs, or owned by the edge-cidr-sync CronJob when
+            # edge.cidrSync.enabled — optional so a first boot before the first
+            # sync still starts.
+            - configMapRef:
+                name: {{ include "openidx.fullname" . }}-edge-cidrs
+                optional: true
           livenessProbe:
             httpGet:
               path: /health/live

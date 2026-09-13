@@ -265,4 +265,21 @@ global_rules:
   - id: 1
     plugins:
       request-id: {}
+      # Client-IP chain (global-scale plan task 0.2). In this stack APISIX is
+      # not the TLS edge: tls-proxy (nginx) terminates TLS and forwards with
+      # X-Forwarded-For, so without this plugin every limit-req key below is
+      # tls-proxy's container address and all clients share one bucket. The
+      # plugin rewrites remote_addr from X-Forwarded-For, walking right-to-left
+      # past trusted hops. trusted_addresses is the private space the compose
+      # network lives in — the only hops that can reach APISIX here. On a
+      # public edge (deployments/apisix-edge) the list is the edge provider's
+      # published CIDRs instead, never a private range and never 0.0.0.0/0.
+      real-ip:
+        source: http_x_forwarded_for
+        recursive: true
+        trusted_addresses:
+          - 127.0.0.0/8
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
 #END

@@ -103,4 +103,19 @@ else
 fi
 echo "OK ziti control plane (management API internal-only)"
 
+# --- client-IP chain: the real-ip global rule follows EDGE_TRUSTED_CIDRS ---
+#
+# With nothing in front of this APISIX, remote_addr is already the client and a
+# real-ip rule would only add a way to forge it — so none is seeded. With an
+# edge provider in front, every peer is the provider and the rule is what keeps
+# per-IP limits per-IP; its trusted list must be exactly the provider's CIDRs.
+noedge=$(DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+echo "$noedge" | grep -qx "global edge-real-ip" && fail "real-ip: MUST NOT be seeded without EDGE_TRUSTED_CIDRS"
+withedge=$(EDGE_TRUSTED_CIDRS="173.245.48.0/20, 2400:cb00::/32" DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+echo "$withedge" | grep -qx "global edge-real-ip" || fail "real-ip: MUST be seeded when EDGE_TRUSTED_CIDRS is set"
+grep -q '"recursive\\":true' seed-edge-routes.sh || fail "real-ip: must walk X-Forwarded-For recursively past trusted hops"
+grep -q 'trusted_addresses' seed-edge-routes.sh || fail "real-ip: must carry a trusted_addresses list"
+grep -q '0.0.0.0/0' seed-edge-routes.sh && fail "real-ip: trusting 0.0.0.0/0 lets any caller forge its address" || true
+echo "OK real-ip (global rule gated on EDGE_TRUSTED_CIDRS)"
+
 echo "ALL PASS"

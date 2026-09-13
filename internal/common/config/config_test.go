@@ -535,10 +535,34 @@ func TestProductionWarnings(t *testing.T) {
 			DatabaseSSLMode:     "verify-full",
 			RedisTLSEnabled:     true,
 			TLS:                 TLSConfig{Enabled: true},
+			// A secure production config names the hops it believes: without
+			// this every request resolves to the edge's address.
+			TrustedProxies: "10.42.0.0/16",
 		}
 
 		warnings := cfg.ProductionWarnings()
 		assert.Nil(t, warnings)
+	})
+
+	t.Run("Warns when no forwarding hop is trusted", func(t *testing.T) {
+		cfg := &Config{
+			Environment:         "production",
+			EncryptionKey:       "another-secure-key-32-bytes-long!!",
+			AccessSessionSecret: "secure-session-key-32-bytes-long!",
+			CORSAllowedOrigins:  "https://example.com",
+			CSRFEnabled:         true,
+			DatabaseSSLMode:     "verify-full",
+			RedisTLSEnabled:     true,
+			TLS:                 TLSConfig{Enabled: true},
+		}
+		warnings := cfg.ProductionWarnings()
+		assert.Len(t, warnings, 1)
+		assert.Contains(t, warnings[0], "OIDX_TRUSTED_PROXIES is empty")
+
+		// The provider list alone is enough to silence it: the middleware
+		// unions it into the trusted set.
+		cfg.EdgeTrustedCIDRs = "173.245.48.0/20"
+		assert.Nil(t, cfg.ProductionWarnings())
 	})
 }
 
@@ -596,6 +620,32 @@ func TestValidateProduction(t *testing.T) {
 		err := cfg.ValidateProduction()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "access_session_secret")
+	})
+
+	t.Run("Fails with wildcard trusted proxies", func(t *testing.T) {
+		cfg := &Config{
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
+			AuditStreamAllowedOrigins: "https://example.com",
+			TrustedProxies:            "*",
+		}
+
+		err := cfg.ValidateProduction()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "OIDX_TRUSTED_PROXIES must not be")
+
+		// A concrete CIDR list is the fix, and passes this check.
+		cfg.TrustedProxies = "10.42.0.0/16, 173.245.48.0/20"
+		err = cfg.ValidateProduction()
+		if err != nil {
+			assert.NotContains(t, err.Error(), "OIDX_TRUSTED_PROXIES")
+		}
 	})
 
 	t.Run("Fails with wildcard CORS", func(t *testing.T) {

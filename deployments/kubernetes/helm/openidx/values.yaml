@@ -768,6 +768,41 @@ monitoring:
       secretKey: routing-key
       sendResolved: true
 
+# ----- Edge provider (global-scale plan task 0.2) -----
+# The client-IP chain behind an anycast/CDN edge. Every per-IP control in the
+# services (the auth-path rate limiter, audit actor IPs, known-IP device trust,
+# geo rules) reads gin's ClientIP, which is only the client when the hop that
+# forwarded the request is trusted. Behind a provider, that hop is one of the
+# provider's published ranges — and those change on the provider's schedule.
+edge:
+  # Static list of provider CIDRs, unioned into the services' trusted-proxy
+  # set via OIDX_EDGE_TRUSTED_CIDRS. Ignored when cidrSync.enabled (the job
+  # owns the list then). config.trustedProxies still carries YOUR hops (the
+  # ingress controller's pod CIDR); this carries the provider's.
+  trustedCidrs: []
+  # Keep the list at the provider's current ranges with a CronJob
+  # (files/edge-cidr-sync.sh). On a changed list it rolls the service
+  # deployments, since env from a ConfigMap is read at pod start. Any fetch,
+  # parse or sanity failure leaves the current list untouched and fails the
+  # Job (alert OpenIDXEdgeCidrSyncFailed). Trigger the first run by hand:
+  #   kubectl create job --from=cronjob/<release>-edge-cidr-sync edge-cidr-sync-now
+  cidrSync:
+    enabled: false
+    # cloudflare | aws-cloudfront | static (static uses trustedCidrs above)
+    provider: cloudflare
+    schedule: "17 */6 * * *"
+    image:
+      repository: alpine/k8s
+      tag: "1.31.1"
+      pullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 20m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+
 # Ingress
 ingress:
   enabled: true

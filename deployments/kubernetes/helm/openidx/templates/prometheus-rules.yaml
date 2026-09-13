@@ -29,6 +29,22 @@ spec:
             summary: "Service {{ "{{ $labels.job }}" }} is restarting frequently"
             description: "{{ "{{ $labels.job }}" }} has restarted {{ "{{ $value }}" }} times in the last 15 minutes."
 
+    - name: openidx.edge
+      rules:
+        # The edge-cidr-sync Job is fail-safe: on any bad feed it keeps the
+        # current list and exits non-zero. That is only safe if someone
+        # notices — a list that stays stale long enough turns a new provider
+        # PoP into an untrusted hop and collapses its clients into one
+        # rate-limit bucket. kube-state-metrics exposes the Job outcome.
+        - alert: OpenIDXEdgeCidrSyncFailed
+          expr: max by (namespace) (kube_job_status_failed{job_name=~".*edge-cidr-sync.*"}) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Edge CIDR sync is failing in {{ "{{ $labels.namespace }}" }}"
+            description: "The edge provider address list has not been refreshed; services keep trusting the last good list. Check the Job logs: a feed change, network egress, or RBAC."
+
     - name: openidx.latency_errors
       rules:
         - alert: HighRequestLatency
