@@ -13,6 +13,13 @@ type Finding struct {
 	Table  string // the scoped table referenced
 	Reason string // human-readable why
 	SQL    string // the offending SQL string (truncated when printed)
+
+	// Kind distinguishes the rules. Empty is the original missing-predicate
+	// rule, whose message ("used without org_id") names its own fix. The
+	// Raw() rules (rawpool.go) must NOT borrow that wording: adding org_id to
+	// a query that carries no scope changes nothing, because the policy
+	// compares it to current_setting('app.org_id').
+	Kind string
 }
 
 func (f Finding) String() string {
@@ -24,6 +31,15 @@ func (f Finding) String() string {
 	preview = strings.ReplaceAll(preview, "\t", " ")
 	for strings.Contains(preview, "  ") {
 		preview = strings.ReplaceAll(preview, "  ", " ")
+	}
+	switch f.Kind {
+	case rawKindQuery:
+		return fmt.Sprintf("%s: scoped table %q reached through Raw() (%s): %s",
+			f.Pos.String(), f.Table, f.Reason, preview)
+	case rawKindHandoff:
+		return fmt.Sprintf("%s: unscoped pool handed off (%s)", f.Pos.String(), f.Reason)
+	case rawKindOpaque:
+		return fmt.Sprintf("%s: unreadable query through Raw() (%s)", f.Pos.String(), f.Reason)
 	}
 	return fmt.Sprintf("%s: scoped table %q used without org_id (%s): %s",
 		f.Pos.String(), f.Table, f.Reason, preview)

@@ -37,7 +37,7 @@ type PostgresDB struct {
 	// that RLS_MODE=local needs. Raw() reaches the unscoped pool for
 	// install-wide tables and pool statistics.
 	Pool     *ScopedPool
-	readPool *pgxpool.Pool
+	readPool *ScopedPool
 }
 
 // Reader returns the pool to use for read-mostly, replication-lag-tolerant
@@ -45,11 +45,20 @@ type PostgresDB struct {
 // (DATABASE_READ_URL), otherwise the primary pool. NEVER use Reader() for writes
 // or for a read that must see a just-committed write from the same request — use
 // Pool for those.
-func (db *PostgresDB) Reader() *pgxpool.Pool {
+//
+// It is scoped, like Pool. It was NOT, for one commit: task 2.1b moved the
+// tenant scope into Pool's type and left Reader() handing out the bare pgx
+// pool, which meant roughly a dozen read-path queries — user by id, by
+// username, by email, sessions, groups, oauth clients — would have run with no
+// app.org_id in RLS_MODE=local. Under FORCE RLS that is not an error: it is
+// zero rows, so a login would simply say the user does not exist. A replica
+// read is still a tenant read; Raw() stays the one way to ask for an unscoped
+// one, by name.
+func (db *PostgresDB) Reader() *ScopedPool {
 	if db.readPool != nil {
 		return db.readPool
 	}
-	return db.Pool.Raw()
+	return db.Pool
 }
 
 // HasReadReplica reports whether a distinct read-replica pool is configured.
@@ -141,7 +150,7 @@ func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, e
 			readURL = applyPostgresTLS(readURL, tlsCfg[0])
 		}
 		if rp, rerr := openReadPool(readURL); rerr == nil {
-			db.readPool = rp
+			db.readPool = NewScopedPool(rp)
 		}
 		// On error: leave db.readPool nil. The audit checker (registered
 		// separately) surfaces replica health; startup continues on the primary.

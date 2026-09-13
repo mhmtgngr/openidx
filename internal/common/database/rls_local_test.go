@@ -313,6 +313,50 @@ func TestParseRLSMode(t *testing.T) {
 	assert.Equal(t, RLSModeLocal, ParseRLSMode("LOCAL"))
 }
 
+// The read path is a tenant path too.
+//
+// Task 2.1b scoped db.Pool and left Reader() returning the bare pgx pool. With
+// no replica configured Reader() falls back to the primary, so nothing broke
+// and nothing failed to compile — and about a dozen queries (user by id, by
+// username, by email, sessions, groups, oauth clients) would have carried no
+// app.org_id in local mode. Under FORCE RLS that is zero rows, which reads as
+// "no such user", not as an error. This is the assertion that would have
+// caught it: swap the call below for Reader().Raw() and it fails with
+// "no rows in result set".
+func TestScopedPool_ReaderIsScopedToo(t *testing.T) {
+	pool := openTestPool(t)
+	withMode(t, RLSModeLocal)
+	db := seedTenantTable(t, pool, orgA, orgB)
+	tbl := probeTable(t)
+
+	ctxA := orgctx.With(context.Background(), orgctx.Org{ID: orgA})
+	ctxB := orgctx.With(context.Background(), orgctx.Org{ID: orgB})
+
+	// The shape the read-path repositories are written in, verbatim:
+	// r.db.Reader().QueryRow(ctx, query, id, org.ID).
+	var got string
+	require.NoError(t, db.Reader().QueryRow(ctxA, "SELECT secret FROM "+tbl).Scan(&got))
+	assert.Equal(t, "tenant-a-secret", got, "a replica read must see its own tenant, not zero rows")
+	require.NoError(t, db.Reader().QueryRow(ctxB, "SELECT secret FROM "+tbl).Scan(&got))
+	assert.Equal(t, "tenant-b-secret", got)
+
+	rows, err := db.Reader().Query(ctxA, "SELECT secret FROM "+tbl)
+	require.NoError(t, err)
+	var n int
+	for rows.Next() {
+		n++
+	}
+	rows.Close()
+	require.NoError(t, rows.Err())
+	assert.Equal(t, 1, n, "Reader() must see one tenant's rows, not both and not none")
+
+	// WithReadTx runs against Reader().Raw() and stamps the scope itself.
+	require.NoError(t, db.WithReadTx(ctxB, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctxB, "SELECT secret FROM "+tbl).Scan(&got)
+	}))
+	assert.Equal(t, "tenant-b-secret", got)
+}
+
 // The point of ScopedPool: a call site that was never edited — db.Pool.Query,
 // exactly as ~1,950 of them are written across this repo — must carry the
 // tenant scope in local mode. If this fails, the wrapper is decoration and the

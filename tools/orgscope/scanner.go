@@ -109,21 +109,41 @@ func scanFile(path string) ([]Finding, error) {
 		if !ok {
 			return true
 		}
+
+		// The Raw() handoff rule (rawpool.go). It is about the ARGUMENT, not
+		// about any SQL, so it runs on every call rather than only on calls
+		// carrying a SQL literal. The //orgscope:ignore directive suppresses
+		// it the same way it suppresses a missing predicate.
+		callLine := fset.Position(call.Pos()).Line
+		if !ignoredLines[callLine] && !ignoredLines[callLine-1] {
+			findings = append(findings, rawHandoffFinding(call, fset)...)
+		}
+
+		// A database call made THROUGH Raw() (rawpool.go). Its SQL is
+		// unscoped whatever the SQL says, so it takes the Raw() rule rather
+		// than the missing-predicate one -- and when the SQL is not a literal
+		// this tool can read, it fails closed.
+		if rawFindings := rawQueryCallFindings(call, fset); len(rawFindings) > 0 {
+			if !ignoredLines[callLine] && !ignoredLines[callLine-1] {
+				for _, rf := range rawFindings {
+					if ignoredLines[rf.Pos.Line] || ignoredLines[rf.Pos.Line-1] {
+						continue
+					}
+					findings = append(findings, rf)
+				}
+			}
+			// Whatever its SQL says, it is not a missing-predicate finding.
+			return true
+		}
+
 		for _, arg := range call.Args {
 			lit, ok := arg.(*ast.BasicLit)
 			if !ok || lit.Kind != token.STRING {
 				continue
 			}
-			sql, err := strconv.Unquote(lit.Value)
-			if err != nil {
-				// Raw-string backticks fail strconv.Unquote in some Go
-				// versions; fall back to manual trim.
-				v := lit.Value
-				if strings.HasPrefix(v, "`") && strings.HasSuffix(v, "`") && len(v) >= 2 {
-					sql = v[1 : len(v)-1]
-				} else {
-					continue
-				}
+			sql, ok := literalString(lit)
+			if !ok {
+				continue
 			}
 			if !startsWithSQLKeyword(sql) {
 				continue
@@ -141,4 +161,18 @@ func scanFile(path string) ([]Finding, error) {
 		return true
 	})
 	return findings, nil
+}
+
+// literalString unquotes a Go string literal, interpreted or raw. Raw-string
+// backticks fail strconv.Unquote on some Go versions, so those are trimmed by
+// hand. Reports false for anything it cannot read.
+func literalString(lit *ast.BasicLit) (string, bool) {
+	if s, err := strconv.Unquote(lit.Value); err == nil {
+		return s, true
+	}
+	v := lit.Value
+	if len(v) >= 2 && strings.HasPrefix(v, "`") && strings.HasSuffix(v, "`") {
+		return v[1 : len(v)-1], true
+	}
+	return "", false
 }

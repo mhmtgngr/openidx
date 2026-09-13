@@ -1215,10 +1215,16 @@ jobs:
           version: v2.13.2
 
   # orgscope is the v2.0-multi-tenancy static helper: it walks
-  # internal/ looking for SQL statements that target a scoped table
-  # without an org_id mention. As of v1.7.0 every service is org-scope
-  # aware (0 findings), so this is a HARD GATE: the job runs the tool
-  # with -fail and the build goes red on any reintroduced unscoped query.
+  # internal/ and cmd/ looking for SQL statements that target a scoped table
+  # without an org_id mention, and for the tenant belt's deliberate exit --
+  # ScopedPool.Raw() -- being taken on a tenant path (tools/orgscope/rawpool.go).
+  # As of v1.7.0 every service is org-scope aware (0 findings), so this is a
+  # HARD GATE: the job runs the tool with -fail and the build goes red on any
+  # reintroduced unscoped query.
+  #
+  # cmd/ is in scope because that is where the legitimate Raw() handoffs live
+  # (migrations, pool statistics, the install-wide signing-key store); a new one
+  # there is exactly as invisible as one in internal/.
   orgscope:
     name: Org-scope lint
     runs-on: ubuntu-latest
@@ -1238,7 +1244,7 @@ jobs:
       - name: Run orgscope (hard gate)
         run: |
           set +e
-          go run ./tools/orgscope -fail ./internal > orgscope.out 2> orgscope.err
+          go run ./tools/orgscope -fail ./internal ./cmd > orgscope.out 2> orgscope.err
           rc=$?
           set -e
           count=$(tail -n1 orgscope.err 2>/dev/null | grep -oE '^orgscope: [0-9]+' | awk '{print $2}' || echo "?")
@@ -1254,7 +1260,7 @@ jobs:
             echo "$(tail -n1 census.err)"
             echo
             if [ "$rc" -ne 0 ]; then
-              echo "❌ **Gate failed** — either a table is not classified (see tools/orgscope/scoped.go) or a query touching a tenant-scoped table does not filter/populate org_id (or carry an //orgscope:ignore <reason>)."
+              echo "❌ **Gate failed** — a table is not classified (see tools/orgscope/scoped.go), or a query touching a tenant-scoped table does not filter/populate org_id, or a tenant path went through ScopedPool.Raw() (see tools/orgscope/rawpool.go). Each has an //orgscope:ignore <reason> escape; a Raw() handoff can also be added to rawHandoffAllowed with its reason."
             else
               echo "✅ Every table is classified and no unscoped tenant query was found."
             fi

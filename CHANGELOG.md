@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The read path was outside the tenant belt, and nothing could have told
+  you.** Task 2.1b moved the tenant scope into the type of `PostgresDB.Pool`
+  and left `Reader()` returning the bare pgx pool. With no read replica
+  configured `Reader()` falls back to the primary, so nothing broke, nothing
+  failed to compile, and no test changed colour — while about a dozen read-path
+  queries (user by id, by username, by email, sessions, groups, oauth clients)
+  would have carried no `app.org_id` in `RLS_MODE=local`. Under `FORCE` RLS
+  that is not an error: it is **zero rows**, so a login would simply have said
+  the user does not exist. `Reader()` now returns a `*ScopedPool` like `Pool`;
+  exactly one production call site (`WithReadTx`) failed to compile and the
+  rest became scoped unedited. Measured against a real PostgreSQL as a
+  non-superuser role, and the assertion verified by mutating the call back to
+  `Reader().Raw()`, which fails with `no rows in result set`.
+
+### Added
+
+- **`orgscope` now lints the tenant belt's exit, not just its predicate.**
+  `ScopedPool.Raw()` is the deliberate way to reach the database with no tenant
+  scope — correct for install-wide tables, migrations and pool statistics — and
+  it is exactly as easy to type as `Pool` at every one of ~1,950 call sites,
+  with no compile-time difference. `tools/orgscope/rawpool.go` reports three
+  things: a tenant table reached through `Raw()`; a database call through
+  `Raw()` whose SQL the tool cannot read (this repo assigns most queries to a
+  variable first, so it **fails closed**, `Begin()` included); and an unscoped
+  pool handed to a function that is not on `rawHandoffAllowed`, a register that
+  demands a reason per entry like `installWideTables`. Crucially an `org_id` in
+  the SQL does **not** clear these findings, and their wording says so — the
+  policy compares it to `current_setting('app.org_id')`, so the row is
+  invisible however the `WHERE` clause is written. The escape is the same
+  `//orgscope:ignore <reason>` the rest of the tool uses. The CI gate now
+  covers `./internal ./cmd`, since the legitimate handoffs live in `cmd/`.
+  Sixteen tests, plus a mutation against the real tree. Task 2.1b.
+
 ### Added
 
 - **A transaction pooler in the chart, with the unsafe combination made

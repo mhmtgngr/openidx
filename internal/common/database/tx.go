@@ -137,7 +137,7 @@ func (db *PostgresDB) WithTx(ctx context.Context, fn func(pgx.Tx) error) error {
 // lag-tolerant queries only; a write here fails on a replica, and a read that
 // must see its own prior write must use WithTx.
 func (db *PostgresDB) WithReadTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return withTxOn(ctx, db.Reader(), fn)
+	return withTxOn(ctx, db.Reader().Raw(), fn)
 }
 
 func withTxOn(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) (err error) {
