@@ -3561,9 +3561,21 @@ func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []
 }
 
 // RegisterRoutes registers identity service routes
+// RegisterRoutes mounts every identity-service route. Equivalent to
+// RegisterRoutesForProfile with ProfileAll.
 func RegisterRoutes(router *gin.Engine, svc *Service) {
+	RegisterRoutesForProfile(router, svc, ProfileAll)
+}
+
+// RegisterRoutesForProfile mounts the routes this process's plane serves and
+// silently drops the rest (global-scale plan task 3.4). It returns the routes
+// it declined, so the caller can say so in its startup log.
+//
+// The two groups below are *planeGroup, not *gin.RouterGroup: the filtering
+// lives in the type, which is why the registration lines are unchanged.
+func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile) []string {
 	// Public routes (no auth required)
-	public := router.Group("/api/v1/identity")
+	public := newPlaneGroup(router.Group("/api/v1/identity"), profile)
 	{
 		public.POST("/users/forgot-password", svc.handleForgotPassword)
 		public.POST("/users/reset-password", svc.handleResetPassword)
@@ -3580,7 +3592,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		public.POST("/mfa/push/enroll/complete", svc.handleCompletePushEnrollment)
 	}
 
-	identity := router.Group("/api/v1/identity")
+	identity := newPlaneGroup(router.Group("/api/v1/identity"), profile)
 	identity.Use(svc.openIDXAuthMiddleware())
 	identity.Use(middleware.PermissionResolver(svc.db.Pool, svc.redis.Client))
 	// Authorization: self-service paths are open to any authenticated user;
@@ -3845,6 +3857,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.GET("/lifecycle/executions", svc.handleListLifecycleExecutions)
 		identity.GET("/lifecycle/executions/:id", svc.handleGetLifecycleExecution)
 	}
+
+	return skippedRoutes(public, identity)
 }
 
 // HTTP Handlers

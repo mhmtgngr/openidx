@@ -74,6 +74,14 @@ func main() {
 		log.Fatal("Production security validation failed", zap.Error(err))
 	}
 
+	// Which availability plane this process serves. A typo is fatal: the flag
+	// exists to REMOVE routes, and a process that silently served all of them
+	// would hand back the isolation the deployment was split to get.
+	serviceProfile, err := identity.ParseProfile(cfg.ServiceProfile)
+	if err != nil {
+		log.Fatal("Invalid SERVICE_PROFILE", zap.Error(err))
+	}
+
 	// Dark-platform: refuse to start on a public bind when a DARK_MODE tier is on
 	// (a "dark" service must be reachable only over the OpenZiti overlay).
 	if err := cfg.ValidateDarkModeBind(); err != nil {
@@ -325,17 +333,29 @@ func main() {
 		BaseURL: cfg.NtfyBaseURL, Token: cfg.NtfyToken, TopicSecret: cfg.NtfyTopicSecret,
 	})
 
-	// Register routes
-	identity.RegisterRoutes(router, identityService)
+	// Register routes for this process's plane. SERVICE_PROFILE=auth serves the
+	// ISSUE plane (the login surface and the caller's own authentication
+	// factors); SERVICE_PROFILE=admin serves the ADMIN plane, which is the
+	// first plane shed under load. Unset is "all" -- every route, exactly as
+	// before the split (global-scale plan task 3.4).
+	skipped := identity.RegisterRoutesForProfile(router, identityService, serviceProfile)
+	log.Info("Identity routes registered",
+		zap.String("service_profile", string(serviceProfile)),
+		zap.Int("routes_skipped", len(skipped)),
+	)
 
-	// Portal and notification routes need auth middleware to identify the caller
-	portalGroup := router.Group("/api/v1/identity")
-	portalGroup.Use(middleware.SoftAuth(cfg.OAuthJWKSURL))
-	portal.RegisterRoutes(portalGroup, portalService)
+	// The portal and notification groups are console surfaces: they answer a
+	// signed-in user, not a login in progress, so they belong to ADMIN.
+	if serviceProfile.ServesAdmin() {
+		// Portal and notification routes need auth middleware to identify the caller
+		portalGroup := router.Group("/api/v1/identity")
+		portalGroup.Use(middleware.SoftAuth(cfg.OAuthJWKSURL))
+		portal.RegisterRoutes(portalGroup, portalService)
 
-	notifGroup := router.Group("/api/v1/identity")
-	notifGroup.Use(middleware.SoftAuth(cfg.OAuthJWKSURL))
-	notifications.RegisterRoutes(notifGroup, notifService)
+		notifGroup := router.Group("/api/v1/identity")
+		notifGroup.Use(middleware.SoftAuth(cfg.OAuthJWKSURL))
+		notifications.RegisterRoutes(notifGroup, notifService)
+	}
 
 	// Initialize health service with database and Redis checks
 	healthService := newhealth.NewHealthService(log)
