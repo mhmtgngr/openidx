@@ -146,4 +146,22 @@ echo "$line" | grep -q 'http_status\\":404' || fail "deny-health: must answer 40
 for u in /health /health/\* /ready /metrics; do echo "$line" | grep -qF "$u" || fail "deny-health: must cover $u"; done
 echo "OK deny-health (operational endpoints 404 at the edge in every mode)"
 
+# --- origin cloaking, application half (task 1.2) ---
+#
+# A network allow-list admits every tenant of the same edge provider (an Azure
+# service tag covers all of Front Door, a CloudFront range covers every
+# distribution). The origin must therefore also demand a header only OUR edge
+# profile sends, refuse without it, and do so above every route.
+noverify=$(DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+echo "$noverify" | grep -qx "global edge-origin-verify" && fail "origin-verify: MUST NOT be seeded without EDGE_ORIGIN_VERIFY_HEADER/VALUE"
+withverify=$(EDGE_ORIGIN_VERIFY_HEADER=X-Azure-FDID EDGE_ORIGIN_VERIFY_VALUE=abc-123 DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+echo "$withverify" | grep -qx "global edge-origin-verify" || fail "origin-verify: MUST be seeded when header+value are set"
+# Half-configured is not configured: a header with no value must seed nothing,
+# or the origin would accept any value for it.
+half=$(EDGE_ORIGIN_VERIFY_HEADER=X-Azure-FDID DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+echo "$half" | grep -qx "global edge-origin-verify" && fail "origin-verify: a header without a value must seed nothing"
+grep -q 'rejected_code\\":403' seed-edge-routes.sh || fail "origin-verify: must refuse with 403"
+grep -q 'request-validation' seed-edge-routes.sh || fail "origin-verify: must validate the header at the edge"
+echo "OK origin-verify (header gate seeded only when fully configured)"
+
 echo "ALL PASS"

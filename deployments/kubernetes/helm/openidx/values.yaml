@@ -814,6 +814,21 @@ edge:
   # parse or sanity failure leaves the current list untouched and fails the
   # Job (alert OpenIDXEdgeCidrSyncFailed). Trigger the first run by hand:
   #   kubectl create job --from=cronjob/<release>-edge-cidr-sync edge-cidr-sync-now
+  # Origin cloaking, application half (task 1.2). The edge proves WHICH edge it
+  # is with a header only our profile sends; the ingress refuses anything
+  # without it. Network-layer allow-lists are not enough on their own: an Azure
+  # service tag covers every tenant's Front Door, a CloudFront range every
+  # distribution.
+  #   Azure Front Door : header "X-Azure-FDID", value = the profile's resource
+  #                      GUID (terraform output origin_verification).
+  #   AWS CloudFront   : header "X-Edge-Origin-Verify", value = the module's
+  #                      generated secret (keep it in the secret store).
+  #   Cloudflare       : leave EMPTY — mTLS (Authenticated Origin Pulls) proves
+  #                      it on the listener, which is stronger than a header.
+  # Empty header disables the check entirely (local clusters, no edge).
+  originVerify:
+    header: ""
+    value: ""
   cidrSync:
     enabled: false
     # cloudflare | aws-cloudfront | static (static uses trustedCidrs above)

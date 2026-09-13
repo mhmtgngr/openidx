@@ -97,6 +97,36 @@ jobs:
           done
           echo "every service honours replicaCount 0"
 
+      # Origin cloaking (global-scale plan task 1.2): the ingress must refuse a
+      # caller that does not carry the edge profile's own header. A network
+      # allow-list is not enough on its own -- an Azure service tag admits
+      # every tenant's Front Door -- so this is what makes the origin OURS.
+      # Three properties, each a way it has silently failed elsewhere:
+      # unset renders no annotation (a local cluster still works), set renders
+      # the refusal, and half-set fails the render instead of accepting any
+      # value for the header.
+      - name: The ingress enforces origin cloaking when configured
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+          }
+          if render | grep -q 'configuration-snippet'; then
+            echo "origin-verify annotation rendered with no edge.originVerify.header set"; exit 1
+          fi
+          got=$(render --set edge.originVerify.header=X-Azure-FDID \
+                       --set edge.originVerify.value=a-profile-guid)
+          echo "$got" | grep -q 'if ($http_x_azure_fdid != "a-profile-guid")' \
+            || { echo "origin-verify check did not render"; exit 1; }
+          echo "$got" | grep -q 'return 403;' || { echo "origin-verify does not refuse"; exit 1; }
+          if render --set edge.originVerify.header=X-Azure-FDID >/dev/null 2>&1; then
+            echo "a header with no value rendered anyway; the origin would accept any value"; exit 1
+          fi
+          echo "ingress enforces origin cloaking, and refuses to render half-configured"
+
       # The runtime role openidx_app has to exist before migration v53 looks
       # for it, and the migration Job's own role cannot create it. That is
       # ordering, and ordering here is one annotation: a bootstrap hook at a

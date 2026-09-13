@@ -61,6 +61,29 @@ else
   echo "  (EDGE_TRUSTED_CIDRS empty: no real-ip global rule; correct only if this APISIX is the true edge)" >&2
 fi
 
+# --- Origin cloaking, application half (global-scale plan task 1.2, §5.2) ---
+# The network half (NSG service tag / security group) says "only the edge's
+# ranges may connect". That is not enough on its own: a service tag admits
+# EVERY tenant's Front Door, and a CloudFront range admits every CloudFront
+# distribution. So the edge also proves WHICH edge it is, with a header only
+# our profile sends, and this origin refuses anything without it — before the
+# request reaches a service, at priority above every route.
+#
+#   Azure Front Door : EDGE_ORIGIN_VERIFY_HEADER=X-Azure-FDID
+#                      EDGE_ORIGIN_VERIFY_VALUE=<profile resource GUID>
+#   AWS CloudFront   : X-Edge-Origin-Verify + the module's generated secret
+#   Cloudflare       : leave EMPTY — it proves itself with mTLS (Authenticated
+#                      Origin Pulls), which is stronger than a header and is
+#                      configured on the listener, not here.
+EDGE_ORIGIN_VERIFY_HEADER=${EDGE_ORIGIN_VERIFY_HEADER:-}
+EDGE_ORIGIN_VERIFY_VALUE=${EDGE_ORIGIN_VERIFY_VALUE:-}
+if [ -n "$EDGE_ORIGIN_VERIFY_HEADER" ] && [ -n "$EDGE_ORIGIN_VERIFY_VALUE" ]; then
+  _hdr_lc=$(printf '%s' "$EDGE_ORIGIN_VERIFY_HEADER" | tr 'A-Z' 'a-z')
+  put_global edge-origin-verify "{\"plugins\":{\"request-validation\":{\"header_schema\":{\"type\":\"object\",\"required\":[\"${_hdr_lc}\"],\"properties\":{\"${_hdr_lc}\":{\"type\":\"string\",\"enum\":[\"${EDGE_ORIGIN_VERIFY_VALUE}\"]}}},\"rejected_code\":403,\"rejected_msg\":\"direct origin access is refused\"}}}"
+else
+  echo "  (EDGE_ORIGIN_VERIFY_HEADER/VALUE empty: origin accepts any caller the network lets through — correct only for Cloudflare mTLS or a true edge)" >&2
+fi
+
 # --- TLS (wildcard *.tdv.org) ---
 if [ "$DRY_RUN" != "1" ]; then
 python3 - "$ADMIN" "$KEY" "$CERT" "$KEYF" <<'PY'

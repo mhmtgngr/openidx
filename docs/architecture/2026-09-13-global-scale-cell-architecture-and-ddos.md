@@ -547,7 +547,7 @@ yayımı, kenar sağlayıcı kural setinin de Git'te ve imzalı olması.
 |---|---|---|---|
 | ADR-1 | Hücre tabanlı bölgesel mimari | Tek küresel küme + küresel PG | Blast radius, residency, RLS'i koruma |
 | ADR-2 | Servis sınırı = kullanılabilirlik sınıfı | Tablo/alan başına servis | Saldırıda bağlı bozulma; RLS tek DB'de kalır |
-| ADR-3 | Kenar/DDoS satın alınır, IaC ile soyutlanır | Kendi anycast/scrubbing | Altyapı yatırımı, yazılımla taklit edilemez (`openidx-trafik-mimarisi.md` K3) |
+| ADR-3 | Kenar/DDoS satın alınır, IaC ile soyutlanır. **Seçilen sağlayıcı (2026-09-13): Azure Front Door Premium** — yığın zaten Azure'da; WAF + Bot Manager aynı abonelikte; origin `X-Azure-FDID` + `AzureFrontDoor.Backend` servis etiketiyle gizlenir | Kendi anycast/scrubbing; Cloudflare/CloudFront modülleri korunur (taşınabilirlik) | Altyapı yatırımı, yazılımla taklit edilemez (`openidx-trafik-mimarisi.md` K3) |
 | ADR-4 | RLS `SET LOCAL` + pgcat transaction modu | Oturum GUC + büyük `max_connections` | Bağlantı = ölçek tavanı; HPA ile çarpan patlar |
 | ADR-5 | Rol başına üç Redis | Tek Redis, `maxmemory` ayarı | Savunmanın saldırıya dönüşmesini keser |
 | ADR-6 | Outbox → NATS JetStream | Kafka; doğrudan HTTP webhook | İşletme maliyeti; at-least-once; hücre içi |

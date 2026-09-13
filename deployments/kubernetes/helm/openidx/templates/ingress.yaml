@@ -5,9 +5,24 @@ metadata:
   name: {{ include "openidx.fullname" . }}-api
   labels:
     {{- include "openidx.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- if or .Values.ingress.annotations .Values.edge.originVerify.header }}
   annotations:
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.edge.originVerify.header }}
+    # Origin cloaking, application half (global-scale plan task 1.2, §5.2).
+    # The network layer (NSG service tag on Azure, security group on AWS) says
+    # "only the edge provider's ranges may connect" — but a service tag admits
+    # EVERY tenant's Front Door and a CloudFront range every distribution. This
+    # demands the header only OUR edge profile sends, and refuses without it,
+    # before any service sees the request. Requires the controller to run with
+    # allow-snippet-annotations=true (set in ingress-nginx-values.yaml).
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      if ($http_{{ .Values.edge.originVerify.header | lower | replace "-" "_" }} != "{{ required "edge.originVerify.value is required when edge.originVerify.header is set" .Values.edge.originVerify.value }}") {
+        return 403;
+      }
+    {{- end }}
   {{- end }}
 spec:
   {{- if .Values.ingress.className }}

@@ -18,7 +18,7 @@
 | Başlangıç | **Pazartesi 2026-09-21** (Hafta 1) | Tüm tarihler kayar, sıralar kaymaz |
 | Sprint | 2 hafta, S1 = H1–H2 | — |
 | Ekip | **1 kişi** (2026-09-13 kararı). Aşağıdaki KA/PV/SV/SG etiketleri artık kişi değil **şapka**: hangi fazda hangi rolün düşünce biçimiyle çalışıldığını söyler | 4 kişiye çıkılırsa §1'deki paralel takvim geçerli olur, 21 haftaya iner |
-| Ortamlar | `staging` hücresi (küçük profil) H1'de var; `canary-1` Faz 2'de kurulur | staging yoksa Faz 0 kabul ölçütleri ölçülemez → **başlamayın** |
+| Ortamlar | `staging` hücresi (küçük profil) H1'de var; `canary-1` Faz 2'de kurulur. **2026-09-13 kararı: staging/canary için YEREL bir Kubernetes (k3s/kind) yeterli** — ölçülen şey uygulama davranışı, bulut SKU'su değil; yalnız çok-bölge ve Front Door ölçümleri gerçek Azure ister | staging yoksa Faz 0 kabul ölçütleri ölçülemez → **başlamayın** |
 | Kenar sağlayıcı kararı | En geç **H3** (bkz. K1) | Geç karar Faz 1'i doğrudan öteler |
 | Kod dondurma | Yok; özellik işi devam eder, ancak Faz 2.1 (RLS refactor) sırasında yeni SQL yolu açan PR'lar `orgscope` `local` modunu da geçmek zorundadır | — |
 
@@ -106,7 +106,7 @@ Bunlar plan PR'larının sessizce alamayacağı kararlardır. Her biri bir ADR e
 
 | # | Karar | Son tarih | Sahip | Girdi | Verilmezse |
 |---|---|---|---|---|---|
-| **K1** | Kenar sağlayıcısı: Cloudflare / AWS (CloudFront+Shield+WAF) / Azure Front Door | **H3** | KA + ürün | Maliyet, mevcut bulut (AWS eu-west-1 + Azure AKS ikisi de IaC'de), residency, bot yönetimi kalitesi | Faz 1.2–1.5 başlayamaz; M1 hafta hafta kayar |
+| **K1** | Kenar sağlayıcısı | ~~H3~~ **VERİLDİ 2026-09-13: Azure Front Door Premium** | — | Yığın zaten Azure'a (AKS + Flexible Server + Azure Cache) kurulu; Front Door Premium WAF + Bot Manager aynı abonelikte, origin gizleme `X-Azure-FDID` + `AzureFrontDoor.Backend` servis etiketiyle ağ katmanında kapanıyor | — |
 | **K2** | İlk kamu pazarı ve bölge (M1 hücresi nerede?) | H3 | Ürün | Kullanıcı coğrafyası, residency | Origin hostname ve sertifika planı belirsiz |
 | **K3** | mTLS: Linkerd mi, uygulama-seviyesi TLS mi (ADR-8) | H8 | SG + SV | Faz 2 sırasında staging'de Linkerd denemesi | Faz 3.4 NetworkPolicy tasarımı iki kez yazılır |
 | **K4** | Olay omurgası: NATS JetStream onayı (ADR-6) veya yönetilen alternatif | H8 | SV + PV | Faz 3.1 öncesi 1 haftalık PoC: outbox → NATS → ES, 50k olay/sn | Faz 3.1 arayüzü yazılır ama taşıyıcı yok |

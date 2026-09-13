@@ -233,6 +233,15 @@ zitiFabric:
 # X-Forwarded-For the services may believe; they change on the provider's
 # schedule, so a CronJob keeps them current and rolls the services on change.
 edge:
+  # K1 decided 2026-09-13: Azure Front Door Premium. Front Door's ranges are a
+  # service tag rather than a published CIDR list, so the sync job runs in
+  # static mode over the tag's current prefixes (see files/edge-cidr-sync.sh);
+  # the NSG on the AKS subnet is what actually enforces the network half.
   cidrSync:
     enabled: true
-    provider: cloudflare   # <-- match K1: cloudflare | aws-cloudfront | static
+    provider: static
+  # The application half: only OUR Front Door profile, not every tenant's.
+  # Fill in the profile GUID from `terraform output -raw origin_verification`.
+  originVerify:
+    header: "X-Azure-FDID"
+    value: "REPLACE-WITH-FRONT-DOOR-PROFILE-GUID"

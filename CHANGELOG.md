@@ -30,6 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The origin refuses anyone who did not come through our edge.** Edge
+  decision K1 is Azure Front Door Premium (the stack already runs on AKS with
+  Flexible Server and Azure Cache), so origin cloaking takes two layers rather
+  than Cloudflare's single mTLS one. The network layer is an NSG on the AKS
+  subnet admitting only the `AzureFrontDoor.Backend` service tag on 80/443 and
+  denying `Internet` explicitly — a service tag rather than a copied CIDR list,
+  because Azure keeps the tag current and a copy rots. That alone is half a
+  control: the tag admits *every* tenant's Front Door, so the application layer
+  demands `X-Azure-FDID` equal to our profile's GUID and answers 403 without
+  it, at the ingress (`edge.originVerify.*`, rendered as a configuration
+  snippet, with `allow-snippet-annotations` enabled on the controller because
+  it has defaulted off since ingress-nginx 1.9 and an ignored annotation is an
+  open origin) and at APISIX (`EDGE_ORIGIN_VERIFY_HEADER`/`VALUE`, a global
+  `request-validation` rule). Both refuse to configure half-way: a header with
+  no value renders nothing rather than accepting any value. Certificate
+  Transparency publishes the hostnames, so secrecy was never the control.
+  Task 1.2.
+
 - **A DDoS game-day: six attack scenarios and the runbook to answer them.**
   A design that says "the edge absorbs this" is not evidence.
   `test/load/ddos/` holds six k6 scenarios — JWKS/discovery flood, token
