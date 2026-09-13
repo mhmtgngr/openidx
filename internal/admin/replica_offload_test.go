@@ -66,13 +66,25 @@ var stayOnPrimary = map[string]string{
 	// not see it in the refreshed list does not wait; they create it again.
 	//
 	// That is the boundary of task 2.3 at FILE granularity, and batches 1 and 2
-	// took everything on the other side of it. What remains is finer than a
-	// file: the stats, score and trend handlers sitting inside these CRUD files
-	// (ispm GetPostureScore and GetPostureTrends, mfa_management
-	// MFAEnrollmentStats, ai_recommendations RecommendationStats, attestation
-	// campaign progress) are lag-tolerant and cannot move while the guard works
-	// per file. Moving them needs the census at function granularity, which is
-	// the next piece of work rather than something to improvise here.
+	// took everything on the other side of it.
+	//
+	// A FUNCTION-LEVEL CENSUS WAS THE OBVIOUS NEXT STEP, AND MEASURING IT
+	// KILLED IT. These files hold 132 functions that read and never write,
+	// carrying 194 queries -- which looks like the remaining opportunity until
+	// you read the names: handleListAIAgents, handleGetAttestationCampaign,
+	// handleListRecommendations. Those are precisely the read-after-write
+	// reads. The write is not in the same function; it is in handleCreateX, and
+	// the relationship is the console's create-then-refetch, which spans two
+	// handlers. So "this function does not write" licenses exactly the moves
+	// that must not be made.
+	//
+	// The criterion is semantic, not structural: it is about what the SCREEN
+	// does, and no shape of the Go source can decide it. What is genuinely left
+	// -- handlers over historical aggregates nobody has just written, like
+	// ispm GetPostureTrends or mfa_management MFAEnrollmentStats -- has to be
+	// decided one screen at a time, against the console, by someone who can say
+	// whether that tile is refetched after a mutation. More machinery would not
+	// help; it would only make the wrong answer easy to reach.
 	"admin_audit.go":             "the admin audit log and settings history. Append-only, but the console opens it straight after the action that wrote the entry -- a reader who cannot see what they just did reports it as a lost audit record",
 	"ai_agents.go":               "agent CRUD plus credential rotation: the rotate handler reads the agent it is about to re-key, and the console refetches the list after every create, suspend and activate",
 	"ai_recommendations.go":      "recommendation CRUD: accept, dismiss and apply each write and then the list refetches, so a lagging read shows a recommendation the operator has already actioned",
