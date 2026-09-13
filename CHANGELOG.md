@@ -32,7 +32,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verified by four mutations, of which `BYPASSRLS` is the one that matters: the
   role then sees both tenants' rows. The roles ship passwordless and **nothing
   points at them yet**, so until a deployment cuts a service's `DATABASE_URL`
-  over, this changes no behaviour. Task 2.4.
+  over, this changes no behaviour.
+
+  The roles are provisioned by the chart's superuser bootstrap hook, beside
+  `openidx_app`, not by the migration: the migration Job connects as the
+  database *owner*, which the PostgreSQL subchart makes a plain `NOCREATEROLE`
+  login, so `CREATE ROLE`, `GRANT` and `ALTER ROLE … SET` are all refused there.
+  `TestMigrationsRunAsLeastPrivilegedOwner` said so, with
+  `permission denied to create role`, and it was right. Every privileged
+  statement in v189 is therefore guarded by "is it already so?" — once the hook
+  has run, the migration only reads `pg_roles` and `pg_db_role_setting` and
+  changes nothing; on an external database with a privileged DSN it does the
+  work itself; with neither it fails loudly, which is the contract v53 already
+  documents. A pre-existing plane role carrying `BYPASSRLS` raises rather than
+  being quietly repaired: that is not a drifted setting, it is a tenant
+  boundary that is not there. Task 2.4.
 
 ### Fixed
 

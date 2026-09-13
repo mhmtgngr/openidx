@@ -128,6 +128,14 @@ func TestMigrationsRunAsLeastPrivilegedOwner(t *testing.T) {
 
 	// What the chart's db-bootstrap hook Job does, and what an operator on an
 	// external database has to do by hand.
+	//
+	// The plane roles (v189) are here for the same reason openidx_app is:
+	// CREATE ROLE, GRANT and ALTER ROLE ... SET all need a privilege this owner
+	// does not have. v189 guards every one of them with "is it already so?", so
+	// with the hook's work done its copy only reads catalogue tables. Take the
+	// block below away and MigrateTo fails at 189 with 42501 -- which is how
+	// this test found that the migration could not run in the deployment it was
+	// written for.
 	if _, err := admin.Pool.Exec(ctx, `DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_app') THEN
     CREATE ROLE openidx_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
@@ -135,6 +143,29 @@ func TestMigrationsRunAsLeastPrivilegedOwner(t *testing.T) {
 END $$;`); err != nil {
 		t.Fatalf("pre-create openidx_app: %v", err)
 	}
+	if _, err := admin.Pool.Exec(ctx, `DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+      ('openidx_issue', '2s',  '60s'),
+      ('openidx_admin', '10s', '120s'),
+      ('openidx_event', '30s', '300s')
+    ) AS t(rolename, stmt_timeout, idle_timeout)
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r.rolename) THEN
+      EXECUTE format('CREATE ROLE %I LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE INHERIT IN ROLE openidx_app', r.rolename);
+    END IF;
+    EXECUTE format('ALTER ROLE %I SET statement_timeout = %L', r.rolename, r.stmt_timeout);
+    EXECUTE format('ALTER ROLE %I SET idle_in_transaction_session_timeout = %L', r.rolename, r.idle_timeout);
+  END LOOP;
+END $$;`); err != nil {
+		t.Fatalf("pre-create the plane roles: %v", err)
+	}
+	defer func() {
+		for _, role := range []string{"openidx_issue", "openidx_admin", "openidx_event"} {
+			_, _ = admin.Pool.Exec(context.Background(), "DROP ROLE IF EXISTS "+role)
+		}
+	}()
 
 	if err := migrations.NewMigrator(owner.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 		t.Fatalf("migrations must apply as a non-superuser owner: %v", err)

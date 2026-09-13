@@ -44,6 +44,18 @@ package migrations
 // five) so they only ever catch work that is genuinely stuck, never a
 // transaction that is merely doing something.
 //
+// WHERE THE ROLES ARE ACTUALLY CREATED. Not here, on a Helm install. The
+// migration Job connects as the database OWNER, which the PostgreSQL subchart
+// makes a plain NOCREATEROLE login -- so CREATE ROLE, GRANT and
+// ALTER ROLE ... SET are all refused there, and
+// TestMigrationsRunAsLeastPrivilegedOwner is the test that says so. Roles are
+// provisioned by the superuser bootstrap hook that already creates openidx_app
+// (templates/db-bootstrap-job.yaml), and every statement below is guarded by
+// "is it already so?", so once the hook has run this migration reads state and
+// changes nothing. On an external database with a privileged migration DSN it
+// does the work itself; on an unprivileged one with no pre-creation it fails
+// loudly, which is the same contract v53 documents.
+//
 // PASSWORDLESS, like v53, and NOTHING USES THEM YET. The roles exist; a
 // deployment opts in by pointing a service's DATABASE_URL at one. Until it
 // does, this migration changes no behaviour whatsoever.
@@ -51,7 +63,6 @@ var planeRolesUp = `-- Migration 189: per-plane login roles with bounded query t
 DO
 $$
 DECLARE
-  -- role, statement_timeout, idle_in_transaction_session_timeout
   r record;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_app') THEN
@@ -65,24 +76,50 @@ BEGIN
       ('openidx_event', '30s', '300s')
     ) AS t(rolename, stmt_timeout, idle_timeout)
   LOOP
+    -- EVERY privileged action below is guarded by "is it already so?", because
+    -- the migration Job runs as a NOCREATEROLE owner (see the note above) and
+    -- CREATE ROLE, GRANT and ALTER ROLE ... SET are all refused there. With the
+    -- bootstrap hook having done the work, this whole block reads state and
+    -- changes nothing -- which is what lets it ship as a migration at all.
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r.rolename) THEN
       -- IN ROLE openidx_app: inherits its grants and, with them, the v37 RLS
       -- policies. NOINHERIT would silently detach both.
       EXECUTE format(
         'CREATE ROLE %I LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE INHERIT IN ROLE openidx_app',
         r.rolename);
-    ELSE
-      -- Idempotent: an existing role is brought to the same attributes rather
-      -- than left in whatever state a previous hand-edit put it in.
-      EXECUTE format('ALTER ROLE %I LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE INHERIT', r.rolename);
+    ELSIF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r.rolename AND (rolbypassrls OR rolsuper)) THEN
+      -- Refuse rather than quietly repair. A pre-existing plane role that can
+      -- bypass RLS is not a drifted setting, it is a tenant boundary that is
+      -- not there, and it should stop the deploy where someone will see it.
+      RAISE EXCEPTION 'role % exists with BYPASSRLS or SUPERUSER; it would read every tenant''s rows. Fix it before migrating.', r.rolename;
+    END IF;
+
+    IF NOT pg_has_role(r.rolename, 'openidx_app', 'MEMBER') THEN
       EXECUTE format('GRANT openidx_app TO %I', r.rolename);
     END IF;
 
     -- Cluster-wide for the role rather than IN DATABASE: these roles connect to
     -- one database, and the unqualified form needs no database name (which CI
-    -- and test databases do not share).
-    EXECUTE format('ALTER ROLE %I SET statement_timeout = %L', r.rolename, r.stmt_timeout);
-    EXECUTE format('ALTER ROLE %I SET idle_in_transaction_session_timeout = %L', r.rolename, r.idle_timeout);
+    -- and test databases do not share). setdatabase = 0 is that cluster-wide row.
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_db_role_setting s
+        JOIN pg_roles ro ON ro.oid = s.setrole
+      WHERE ro.rolname = r.rolename
+        AND s.setdatabase = 0
+        AND s.setconfig @> ARRAY['statement_timeout=' || r.stmt_timeout]
+    ) THEN
+      EXECUTE format('ALTER ROLE %I SET statement_timeout = %L', r.rolename, r.stmt_timeout);
+    END IF;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_db_role_setting s
+        JOIN pg_roles ro ON ro.oid = s.setrole
+      WHERE ro.rolname = r.rolename
+        AND s.setdatabase = 0
+        AND s.setconfig @> ARRAY['idle_in_transaction_session_timeout=' || r.idle_timeout]
+    ) THEN
+      EXECUTE format('ALTER ROLE %I SET idle_in_transaction_session_timeout = %L', r.rolename, r.idle_timeout);
+    END IF;
   END LOOP;
 END
 $$;
