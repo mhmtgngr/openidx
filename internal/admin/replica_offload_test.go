@@ -42,6 +42,17 @@ var offloadedToReplica = map[string]string{
 	"risk_analytics.go":       "risk scores and baselines computed from login_history; the profile is a report on past behaviour, not a decision gate -- the live decision is internal/risk on the primary",
 	"predictive_analytics.go": "forecasts from daily and weekly buckets of audit_events and user_sessions; the input is days of history and the output is a trend",
 	"dashboard.go":            "the overview tiles: counts of users, sessions and enrolled factors, plus the latest audit rows. Tiles, not gates -- nothing here authorises anything",
+	"ai_intelligence.go":      "the intelligence panel: per-user risk averages from login_history, alert counts from security_alerts, and who has a factor enrolled. Every figure is a summary of the past shown on a screen; none of it decides anything",
+	"pam_overview.go":         "the PAM overview counts: secrets by type, rotations due, active checkouts, pending access requests. A tile that says 12 instead of 13 for a second costs nothing -- the checkout itself is authorised elsewhere, on the primary",
+}
+
+// stayOnPrimary is the other half of the census, and the half that saves the
+// next batch from re-deriving it. These files have reads and NO writes, so they
+// look offloadable by the same test the batches above pass -- and they are not.
+// The reason is recorded here so nobody has to work it out twice.
+var stayOnPrimary = map[string]string{
+	"dsar_processor.go": "a worker, not a page: it polls data_subject_requests for work it is about to act on. A lagging replica would hand it a request another replica already took, or hide one that is waiting -- the textbook read-after-write, and the reason Reader() exists to be opted into rather than assumed",
+	"tilequery.go":      "a generic helper that runs whatever SQL its caller hands it. Offloading it would offload every caller at once, including ones nobody has read, which is exactly the decision this census exists to prevent being made by accident",
 }
 
 // writeCalls are the pool methods that change data. None may appear in an
@@ -137,4 +148,53 @@ func sortedOffloaded() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// The census that makes the next batch mechanical: a file with reads and no
+// writes is a candidate, and every candidate must be in exactly one of the two
+// maps. Anything that is in neither is an undecided file, and an undecided file
+// is how the next person ends up guessing.
+//
+// Files that DO write are out of scope here: they cannot be offloaded wholesale
+// anyway, and they move query by query when their turn comes.
+func TestEveryReadOnlyFileIsDecided(t *testing.T) {
+	readCall := regexp.MustCompile(`\.(Reader\(\)|Pool)\.(Query|QueryRow)\(`)
+	writeCall := regexp.MustCompile(`\.Pool\.(Exec|Begin|CopyFrom|SendBatch)\(`)
+
+	var undecided, both []string
+	for _, name := range adminSourceFiles(t) {
+		src := readAdminFile(t, name)
+		if !readCall.MatchString(src) || writeCall.MatchString(src) {
+			continue
+		}
+		_, offloaded := offloadedToReplica[name]
+		_, primary := stayOnPrimary[name]
+		switch {
+		case offloaded && primary:
+			both = append(both, name)
+		case !offloaded && !primary:
+			undecided = append(undecided, name)
+		}
+	}
+	if len(both) > 0 {
+		t.Errorf("%d file(s) are in BOTH maps: %s", len(both), strings.Join(both, ", "))
+	}
+	if len(undecided) > 0 {
+		t.Errorf("%d read-only file(s) are in neither map:\n  %s\n"+
+			"Each is a candidate for the replica. Add it to offloadedToReplica with the reason its queries "+
+			"tolerate lag, or to stayOnPrimary with the reason they do not.",
+			len(undecided), strings.Join(undecided, "\n  "))
+	}
+}
+
+// And the files that must stay put have to actually stay put.
+func TestStayOnPrimaryFilesDoNotUseTheReplica(t *testing.T) {
+	for name, reason := range stayOnPrimary {
+		if len(strings.TrimSpace(reason)) < 30 {
+			t.Errorf("%s: the reason for staying on the primary is missing or too thin (%q)", name, reason)
+		}
+		if strings.Contains(readAdminFile(t, name), ".Reader()") {
+			t.Errorf("%s is declared read-after-write critical but reads from the replica: %s", name, reason)
+		}
+	}
 }

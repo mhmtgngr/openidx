@@ -57,6 +57,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Behaviour is unchanged by default: with no replica configured `Reader()`
   returns the primary pool, so every call lands exactly where it did.
 
+  A second batch follows the same way: `ai_intelligence.go` and
+  `pam_overview.go`, 15 more queries — risk averages, alert counts, secret and
+  rotation and access-request tallies. Summaries of the past, none of which
+  decides anything.
+
+  The census now records the **deliberate non-offloads** too, which is what
+  saves the next batch from re-deriving them. A file with reads and no writes
+  looks offloadable by the same test the batches pass, and not all of them are:
+  `dsar_processor.go` is a worker polling for work it is about to act on — a
+  lagging replica would hand it a request another replica already took, or hide
+  one that is waiting — and `tilequery.go` runs whatever SQL its caller hands
+  it, so offloading it would offload every caller at once. A file with reads and
+  no writes must now be in exactly one of the two lists; one in neither is an
+  undecided file, and an undecided file is how the next person ends up guessing.
+
   The guard runs in both directions, because only one of them is obvious. A
   declared file must use **only** the replica and must not write — a write
   through `Reader()` is refused by the server with SQLSTATE 25006, which is an
