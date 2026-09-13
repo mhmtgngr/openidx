@@ -593,15 +593,22 @@ func main() {
 		if redis != nil {
 			syncLeader = redis.Client
 		}
-		// The original 30-second settle before the first pass is kept: the
-		// external source is not reachable the instant this process starts.
+		sync := func(ctx context.Context) {
+			if err := auditService.SyncExternalAuditEvents(ctx); err != nil {
+				log.Warn("External audit sync failed", zap.Error(err))
+			}
+		}
+		// The original 30-second settle and the initial pass after it are both
+		// kept: the external source is not reachable the instant this process
+		// starts, and RunPeriodic's first tick is one full interval away -- so
+		// without this the first sync would slip from 30 seconds to five and a
+		// half minutes. The initial pass takes the tick lock too, or a rolling
+		// restart would fire one sync per replica.
 		time.Sleep(30 * time.Second)
-		leader.RunPeriodic(bgCtx, syncLeader, log, "access:external-audit-sync", 5*time.Minute,
-			func(ctx context.Context) {
-				if err := auditService.SyncExternalAuditEvents(ctx); err != nil {
-					log.Warn("External audit sync failed", zap.Error(err))
-				}
-			})
+		if leader.IsLeaderForTick(bgCtx, syncLeader, "access:external-audit-sync", 5*time.Minute) {
+			sync(bgCtx)
+		}
+		leader.RunPeriodic(bgCtx, syncLeader, log, "access:external-audit-sync", 5*time.Minute, sync)
 	}()
 	log.Info("Background audit sync scheduled (every 5 minutes)")
 
