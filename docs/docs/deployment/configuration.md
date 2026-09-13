@@ -153,6 +153,23 @@ with `POST /api/v1/admin/oauth/signing-keys/rotate`.
 | `RATE_LIMIT_AUTH_REQUESTS` | int | `20` | Requests allowed per window on authentication routes, which fail **closed** when Redis is unreachable. |
 | `RATE_LIMIT_AUTH_WINDOW` | int | `60` | Window in seconds for authentication routes. |
 | `RATE_LIMIT_PER_USER` | bool | `false` | Key the limiter on the authenticated user rather than the client IP. |
+| `RATE_LIMIT_LOCAL_FALLBACK_MAX` | int | `60` | Seconds the authentication tier may be enforced from a process-local counter while Redis is unreachable, before it fails closed again. `0` fails closed on the first failed call. |
+| `RATE_LIMIT_REPLICA_HINT` | int | `3` | Replica count the local fallback divides the authentication quota by, since replicas cannot see each other's counters. Too low admits more than intended; too high refuses legitimate logins early. |
+
+### Load shedding
+
+Two bounds that are not rate limits. The limiter above counts arrivals; these
+bound what the process is **carrying**, and what one tenant's work **costs**.
+Both are off by default, and mounting them changes nothing until they are sized.
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `ADMISSION_MAX_INFLIGHT` | int | `0` (off) | How many requests this process may carry at once. Above it, requests queue briefly and are then refused with `503` and a `Retry-After`. Size it against the connection pool behind the service — a guessed number is a self-inflicted outage. |
+| `ADMISSION_QUEUE_TIMEOUT` | duration | `250ms` | How long a request waits for a slot before it is refused. Keep it well under the caller's own timeout. An unparseable value is refused at startup. |
+| `ADMISSION_RETRY_AFTER` | duration | `1s` | The `Retry-After` sent with that `503`. |
+| `RATELIMIT_COST_MODE` | enum | `off` | `off`, `observe` or `enforce`. Ranks routes by what they cost the platform and, over budget, sheds the expensive classes while cheap ones keep flowing. `observe` reports what it *would* refuse (`openidx_ratelimit_cost_rejected_total`) without refusing anything — run it before `enforce`. A value that is not one of the three is refused at startup. |
+| `RATELIMIT_COST_BUDGET` | int | `0` (off) | Cost units one tenant may spend per window. Cost classes are 1 (discovery, JWKS — never shed and never charged), 2 (introspection, userinfo), 5 (token issuance, every login and second-factor step) and 10 (analytics, reports, exports, bulk). Zero disables the budget however the mode is set. |
+| `RATELIMIT_COST_WINDOW` | int | `60` | The budget's accounting window, in seconds. |
 
 ### Enforcement gates
 

@@ -58,6 +58,26 @@ type Config struct {
 	// identity.ParseProfile.
 	ServiceProfile string `mapstructure:"service_profile"`
 
+	// Admission control (global-scale plan task 3.5, ADR-10). A bound on how
+	// many requests this process carries AT ONCE, which is not a rate limit: a
+	// rate limiter bounds arrivals and cannot see what the process is already
+	// holding, so it reads 200/s as fine whether each request takes 5ms or,
+	// against a degraded database, two seconds.
+	//
+	// OFF by default (0). A limit guessed rather than measured against the pool
+	// behind the service is a self-inflicted outage, so an operator opts in
+	// with a number they have sized. See internal/common/middleware/admission.go.
+	AdmissionMaxInflight int `mapstructure:"admission_max_inflight"`
+	// How long a request may wait for a slot before it is refused with 503.
+	// Keep it well UNDER the caller's own timeout: a refusal at 5s when the
+	// client gave up at 3s cost the server everything and bought the client
+	// nothing. Go duration; empty uses the middleware's 250ms.
+	AdmissionQueueTimeout string `mapstructure:"admission_queue_timeout"`
+	// The Retry-After sent with that 503. A promise about when there might be
+	// room, so it must not be optimistic: a client that retries immediately
+	// turns one refusal into the retry storm the gate exists to prevent.
+	AdmissionRetryAfter string `mapstructure:"admission_retry_after"`
+
 	// Database connections
 	DatabaseURL      string `mapstructure:"database_url"`
 	RedisURL         string `mapstructure:"redis_url"`
@@ -152,6 +172,24 @@ type Config struct {
 	// per-replica share during that window. See middleware.RateLimitConfig.
 	RateLimitLocalFallbackMax int `mapstructure:"rate_limit_local_fallback_max"`
 	RateLimitReplicaHint      int `mapstructure:"rate_limit_replica_hint"`
+
+	// Per-tenant request-COST budget (global-scale plan task 3.5). The limiter
+	// above counts requests, and a request is not a unit of anything: measured
+	// against this codebase's Argon2id parameters, a password verification is
+	// 37ms and 19.9MB while a JWKS response is 6us and 540 bytes. The budget
+	// ranks routes into classes and, when a tenant has spent it, sheds the
+	// expensive classes while the cheap ones keep flowing.
+	//
+	// off (default) does not account at all. observe accounts and reports what
+	// it WOULD refuse, which is how a budget gets sized. enforce refuses. An
+	// unrecognised value is refused at startup, not read as off -- see
+	// middleware.ParseCostMode.
+	RateLimitCostMode string `mapstructure:"ratelimit_cost_mode"`
+	// Cost units one tenant may spend per window. Zero disables the budget
+	// however the mode is set: a budget nobody has sized is a guess.
+	RateLimitCostBudget int `mapstructure:"ratelimit_cost_budget"`
+	// The accounting window, in seconds.
+	RateLimitCostWindow int `mapstructure:"ratelimit_cost_window"`
 
 	// SMTP configuration (for email notifications)
 	SMTPHost     string `mapstructure:"smtp_host"`
@@ -998,6 +1036,10 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("rls_mode", "session")
 	// Empty = "all": every route, i.e. today's behaviour.
 	v.SetDefault("service_profile", "")
+	// Admission control is off until an operator sizes it (task 3.5).
+	v.SetDefault("admission_max_inflight", 0)
+	v.SetDefault("admission_queue_timeout", "")
+	v.SetDefault("admission_retry_after", "")
 	v.SetDefault("redis_url", "redis://:redis_secret@localhost:6379")
 	// Role URLs default to empty = alias the primary (see RedisRateLimitURL).
 	v.SetDefault("redis_ratelimit_url", "")
@@ -1019,6 +1061,11 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("rate_limit_per_user", false)
 	v.SetDefault("rate_limit_local_fallback_max", 60)
 	v.SetDefault("rate_limit_replica_hint", 3)
+	// The tenant cost budget is off, and unsized, until an operator has run it
+	// in observe mode and read openidx_ratelimit_cost_rejected_total.
+	v.SetDefault("ratelimit_cost_mode", "off")
+	v.SetDefault("ratelimit_cost_budget", 0)
+	v.SetDefault("ratelimit_cost_window", 60)
 
 	// Public base URL of the end-user web app. The localhost default keeps
 	// local development working; PUBLIC_BASE_URL must be set in any real
@@ -1213,6 +1260,9 @@ func bindEnvVars(v *viper.Viper) {
 		"database_url":                                    "DATABASE_URL",
 		"rls_mode":                                        "RLS_MODE",
 		"service_profile":                                 "SERVICE_PROFILE",
+		"admission_max_inflight":                          "ADMISSION_MAX_INFLIGHT",
+		"admission_queue_timeout":                         "ADMISSION_QUEUE_TIMEOUT",
+		"admission_retry_after":                           "ADMISSION_RETRY_AFTER",
 		"redis_url":                                       "REDIS_URL",
 		"redis_ratelimit_url":                             "REDIS_RATELIMIT_URL",
 		"trusted_proxies":                                 "OIDX_TRUSTED_PROXIES",
@@ -1434,6 +1484,9 @@ func bindEnvVars(v *viper.Viper) {
 		"rate_limit_per_user":               "RATE_LIMIT_PER_USER",
 		"rate_limit_local_fallback_max":     "RATE_LIMIT_LOCAL_FALLBACK_MAX",
 		"rate_limit_replica_hint":           "RATE_LIMIT_REPLICA_HINT",
+		"ratelimit_cost_mode":               "RATELIMIT_COST_MODE",
+		"ratelimit_cost_budget":             "RATELIMIT_COST_BUDGET",
+		"ratelimit_cost_window":             "RATELIMIT_COST_WINDOW",
 		"cors_allowed_origins":              "CORS_ALLOWED_ORIGINS",
 		"oauth_protocol_cors_wildcard":      "OAUTH_PROTOCOL_CORS_WILDCARD",
 		"audit_stream_allowed_origins":      "AUDIT_STREAM_ALLOWED_ORIGINS",

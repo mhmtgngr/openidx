@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Admission control: a bound on concurrency, which is not a rate limit.**
+  `middleware.Admission` caps how many requests a process carries *at once* and
+  refuses the rest with 503 and an honest `Retry-After`. The rate limiter
+  already here bounds arrivals and cannot see what the process is already
+  holding — 200 requests a second is fine at 5ms each and fatal at two seconds
+  against a degraded database, and a per-minute counter cannot tell those
+  apart.
+
+  The failure it prevents is not "slow". Without a bound an overloaded service
+  accepts everything: goroutines pile up, latency passes every client's
+  timeout, the clients retry, and the process dies with a queue full of work
+  nobody is waiting for. A bounded queue with a fast refusal turns that into
+  degraded-but-alive. There is a queue at all because a 20ms burst is not
+  overload; the queue's *timeout* is what stops it absorbing an outage.
+
+  Off by default (`MaxInflight <= 0` is a pass-through): a limit guessed rather
+  than measured against the pool behind the service is a self-inflicted outage.
+  `/health`, `/ready` and `/metrics` are never gated — a gate that hides its own
+  overload is worse than no gate. A client that hangs up while queued releases
+  its place immediately, and `queue_wait_seconds` is observed for refused
+  requests as well as admitted ones, because a queue measured only when it
+  succeeds hides the overload it exists to report.
+
+- **A per-tenant request-COST budget, which sheds by class rather than cutting
+  a tenant off.** `middleware.TenantCostLimit` ranks routes into four classes
+  and, once a tenant has spent its budget for the window, refuses the expensive
+  ones while the cheap ones keep flowing.
+
+  The limiter next door counts requests, and a request is not a unit of
+  anything. Measured against this codebase's Argon2id parameters: a password
+  verification is **37.3 ms and 19.9 MB**, a JWKS response **6 µs and 540
+  bytes**. Six thousand times the CPU and thirty-seven thousand times the
+  memory, on an axis a per-IP counter treats as one tick each — and the memory
+  is the dangerous half, since a hundred concurrent logins hold two gigabytes
+  of Argon2 scratch while the request rate still looks unremarkable.
+
+  Those numbers are **not** the weights. A ratio-true table would spend the
+  whole budget on one class and make this a login limiter with extra
+  arithmetic, which the auth tier already is. The weights are ordinal — 1, 2,
+  5, 10 — and the measurement decides the *order*, not the integers. What the
+  budget buys is a shedding priority: a tenant flooding `/oauth/token` gets
+  429s on `/oauth/token` while its relying parties still fetch JWKS and still
+  verify the tokens they hold. Cutting the tenant off instead would turn one
+  team's load test into an authentication outage for every application they
+  run.
+
+  Cost-1 routes are never shed **and never charged**: a Redis round trip on the
+  JWKS path would cost more than serving it, and if a console's polling could
+  spend the budget then a tenant's own dashboard could shed that tenant's
+  logins. `RATELIMIT_COST_MODE=off` (default) accounts nothing; `observe`
+  reports what enforcement *would* refuse, which is how a budget gets sized;
+  `enforce` refuses. An unrecognised mode is refused at startup rather than
+  read as `off`. It fails **open** on a Redis outage — this is a capacity
+  control, not a security control, and refusing every expensive request
+  fleet-wide during a blip is the outage it exists to prevent.
+
+- **Both shedders are mounted by every HTTP service, under a derived guard.**
+  The cost budget mounts *after* the tenant resolver, which is not a style
+  choice: before it, every request falls into the unattributed bucket and one
+  tenant's flood would shed every other tenant's work. `gateway-service` is
+  exempt with the reason written down — it derives `X-Org-Slug` from the Host
+  for the backends to resolve and never resolves a tenant itself, so there is
+  no org id to key a budget by. The guard is derived from `cmd/` rather than
+  listed, for the reason the rate-limit guard is: the gateway once carried a
+  rate-limit configuration nothing read, for a full release.
+
 ### Changed
 
 - **The SCIM list endpoints page in a total order, and stop dropping users.**
