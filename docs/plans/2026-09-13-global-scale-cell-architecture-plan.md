@@ -238,8 +238,18 @@ kod bitmiş olması M0 değildir.
 
 ### 3.1 Outbox platform ilkeli (B4, ADR-6)
 
-**Dosyalar:** `internal/common/events/outbox.go`, migrasyon **v189** (`outbox` tablosu, `org_id`, RLS), `cmd/event-relay/`
-- [ ] `OutboxBus.Publish(ctx, ev)` aktif `pgx.Tx`'i context'ten alır; yoksa hata (yayın işlem dışında yapılamaz).
+**Dosyalar:** `internal/common/events/outbox.go`, migrasyon **v192** (`outbox` tablosu, `org_id`, RLS), `cmd/event-relay/`
+
+> Migrasyon numarası **v189 → v192**: v189 bu arada düzlem rollerine gitti (2.4), v190 audit keyset indeksi, v191 SCIM sıralama indeksi.
+
+- [x] `OutboxBus.Publish(ctx, ev)` aktif `pgx.Tx`'i context'ten alır; yoksa hata (yayın işlem dışında yapılamaz). **(2026-09-13)**
+  - **Tek garanti atomiklik.** Satırı yaz sonra yayınla: aradaki çökme olayı kaybeder ve veritabanında onu borçlu olduğumuzu söyleyen hiçbir şey kalmaz. Yayınla sonra yaz: platform olmamış bir şeyi duyurmuş olur. İkisi de yeniden denemeyle kapanmaz, çünkü yeniden denemesi gereken süreç ölen süreçtir. Olayı **aynı işleme** yazmak pencereyi tamamen kaldırıyor: ya iki taahhüt birden ya hiçbiri.
+  - **İşlem context'te taşınıyor** (`PostgresDB.WithTxCtx`), elle aşağı geçirilmiyor. Elle geçirmeyi zahmetli bulan ilk çağrı yeri olayı işlem dışına yazar — ve bu kod okurken aynı görünür. Kapanışın yakaladığı **dış** context ile yayın yapmak da aynı sebeple gürültülü biçimde hata veriyor; yanlışın gitmesi gereken yön bu.
+  - **id bir imleç değil ve bu ölçüldü.** `bigserial` numarayı INSERT anında verir, işlem COMMIT anında görünür olur; bunlar farklı anlardır ve sırası ters olabilir. İki eşzamanlı işlem elle sürüldü: **düşük id ikinci taahhüt etti**, `id > lastSeen` ile sayfalayan bir röle o satırı **kalıcı olarak kaybetti**, durum tabanlı talep (`published_at IS NULL ... FOR UPDATE SKIP LOCKED` — v95'ten beri SCIM kuyruğunun kullandığı şekil) ikisini de teslim etti.
+  - **v192 bu ölçümün etrafında şekillendi:** geri kalan iş indeksi **kısmi** (`WHERE published_at IS NULL`), yani tablonun değil birikmiş işin boyunda kalıyor; `org_id` doğuştan `NOT NULL` + gerçek foreign key ve FORCE RLS kemeri tabloyla **birlikte** geliyor (sonraki bir migrasyona bırakılan kemer, aradaki her satırı denetlenmiş değil güvenilmiş yapar); `UNIQUE (org_id, event_id)` tüketicinin yeniden teslimi tanımasını sağlıyor — kiracı bazında, çünkü kiracılar arası çakışma bir rastlantıdır ve bir kiracının yazmasını başkasının yüzünden düşürmemeli.
+  - **Teslim en-az-bir-kez ve bunu söylüyor.** Röle satırı, broker kabul ettikten *sonra* işaretliyor; iki olgu arasındaki çökme yeniden teslim eder. Tam-bir-kez, broker ile bu veritabanının birlikte taahhüt etmesini gerektirirdi; edemezler.
+  - **Kanıt:** altı mutasyon kırmızı — işlemsiz yayını sessizce başarılı saymak, kiracı şartını kaldırmak, `WithTxCtx`'in dış context'i vermesi, tablonun `FORCE` olmaması, geri-kalan-iş indeksinin kısmi olmaması, `event_id`'nin kiracı yerine küresel tekil olması.
+- [x] **Süreç içi bus silindi.** `internal/common/events` bir `Bus` arayüzü, `MemoryBus`, abonelikler ve paket düzeyinde global `Publish`/`Subscribe` taşıyordu — 346 satır artı 315 satır test — ve ağaçta **kendi dosyası dışında tek bir yayıncı ya da abone yoktu**. Outbox'ın yanında bırakmak, kullanılmamış bırakmaktan kötüydü: "olay bus'ı" arayan biri hangisi daha kolay okunuyorsa onu seçerdi ve aradaki fark, birinin süreç ölünce her şeyi kaybetmesi. Olay zarfı ve olay-tipi sözlüğü kaldı; bir outbox satırı onlardan yapılıyor.
 - [ ] Relay worker: lider seçimli, 100'lük batch, NATS JetStream'e `events.<cell>.<org>.<type>`; başarıda `published_at`.
 - [ ] Mevcut SSF ve SCIM outbound outbox'ları bu ilkele göç eder (iki ayrı tablo kalkar).
 - **Kabul:** Relay 10 dk kapalı → olay kaybı 0, kuyruğa alınan sayı = üretilen sayı; idempotent tüketici çift teslimi yutar (test `outbox_relay_test.go`).

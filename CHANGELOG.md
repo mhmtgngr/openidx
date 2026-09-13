@@ -75,6 +75,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   listed, for the reason the rate-limit guard is: the gateway once carried a
   rate-limit configuration nothing read, for a full release.
 
+- **The platform outbox: events commit with the state change they describe.**
+  `events.OutboxBus.Publish` writes the event into the transaction the context
+  carries and **refuses** when there is none. An event that describes a state
+  change has to be atomic with it — write the row then publish and a crash
+  between the two loses the event with nothing to replay from; publish then
+  write and the platform has announced something that did not happen. Neither
+  window closes by retrying, because the failure is that the process which
+  would retry is the one that died.
+
+  The transaction travels on the context (`PostgresDB.WithTxCtx`) rather than
+  being threaded by hand through every layer, because the first call site that
+  finds the threading inconvenient writes the event outside the transaction —
+  which looks identical and is not. Publishing on the *outer* context (the one
+  the closure captured) fails loudly for the same reason.
+
+  **The id is not a cursor, and this is measured.** A `bigserial` hands out its
+  number at INSERT time while transactions commit in whatever order they
+  finish, so a later id can become visible before an earlier one. Two
+  concurrent transactions, driven by hand: the lower id committed second, a
+  relay paging by `id > lastSeen` **lost that row permanently**, and the
+  state-based claim (`published_at IS NULL … FOR UPDATE SKIP LOCKED`, the shape
+  the SCIM queue has used since v95) delivered both. Migration **v192** is
+  shaped around that: the backlog index is partial, so it stays the size of the
+  backlog rather than of the table; `org_id` is `NOT NULL` with a foreign key
+  and the FORCE RLS belt lands *with* the table rather than in a later
+  migration; `UNIQUE (org_id, event_id)` lets a consumer recognise a
+  redelivery, per tenant, because a collision across tenants is a coincidence
+  and must not fail one tenant's write on another's.
+
+  Delivery is at-least-once and says so: the relay marks a row published after
+  the broker accepts it, and a crash between those two facts redelivers. Making
+  it exactly-once would need the broker and this database to commit together,
+  which they cannot.
+
+### Removed
+
+- **The in-process event bus, which nothing imported.** `internal/common/events`
+  carried a `Bus` interface, a `MemoryBus`, subscriptions and a package-level
+  global with `Publish`/`Subscribe` helpers — 346 lines, plus 315 of tests —
+  and **not one publisher or subscriber anywhere in the tree** outside its own
+  file. Leaving it next to the outbox would have been worse than leaving it
+  unused: a developer looking for "the event bus" would find an in-memory one
+  and reach for whichever read more conveniently, and the difference between
+  them is that one loses everything when the process dies. "This session was
+  revoked" must not be delivered on a best-effort basis to whoever happened to
+  be subscribed in this replica. The event envelope and the event-type
+  vocabulary are kept — they are what an outbox row is made of.
+
 ### Changed
 
 - **The SCIM list endpoints page in a total order, and stop dropping users.**

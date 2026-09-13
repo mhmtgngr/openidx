@@ -360,6 +360,38 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # The platform outbox (task 3.1, migration v192). Every claim it makes is
+      # about transactions and row-level security -- atomicity, visibility
+      # before commit, a policy that hides another tenant's rows -- and a fake
+      # satisfies all three by construction. It runs as openidx_app for the
+      # same reason the suite above does: a superuser is exempt from every
+      # policy, so the isolation assertions would pass with the belt cut.
+      #
+      # The sequence-gap test is the one worth naming twice: it drives two
+      # concurrent transactions by hand to show that a relay paging by id loses
+      # the row that committed late, which is why the relay claims by state.
+      - name: The outbox commits with what it describes, and the relay cannot page by id
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/common/events/ -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestAnOutboxEventRollsBackWithTheWriteItDescribes \
+                      TestAnOutboxEventCommitsWithTheWriteItDescribes \
+                      TestPublishingOutsideATransactionIsRefused \
+                      TestPublishingOnTheOuterContextIsRefused \
+                      TestPublishingWithoutATenantIsRefused \
+                      TestOneTenantCannotReadAnothersEvents \
+                      TestOneTenantCannotPublishTheSameEventIdTwice \
+                      TestTheOutboxTableKeepsTheDecisionsItWasShapedAround \
+                      TestASequenceIdIsNotACommitOrderAndACursorRelayLosesTheGap; do
+            # The trailing space matters: without it a test renamed to
+            # "<name>X" still matches as a prefix and the guard reads green.
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # The per-plane login roles (task 2.4, migration v189). These need a
       # SUPERUSER connection, because CREATE ROLE is exactly what the
       # application's own role cannot do -- which is the point of v53 and the
