@@ -28,6 +28,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the services' own caps; CI validates the root and the standalone
   modules. Task 1.1.
 
+### Added
+
+- **A bot gate at the login door, keyed on the account rather than the
+  address.** A credential spray spread across ten thousand sources makes
+  three attempts from each: no per-IP bucket ever fills, and the database
+  lockout sees only accounts that exist and then locks them — which is what
+  the attacker who wanted the victim locked out came for. `internal/botgate`
+  counts failed password checks per typed account name (hashed,
+  case-folded, existing or not, so enumeration learns nothing) in the
+  session Redis, and after `LOGIN_FAIL_CHALLENGE_AFTER` (5) failures in
+  `LOGIN_FAIL_WINDOW_SECONDS` (900) the next attempt from anywhere answers
+  `403 challenge_required` until it carries a solved challenge or the window
+  passes. A correct password clears the counter, so a legitimate user never
+  meets the gate. An edge bot score passed down in `X-Edge-Bot-Score` below
+  30 is a challenge before the first failure. Cloudflare Turnstile is the
+  first `ChallengeVerifier` (`TURNSTILE_SECRET`); a solved token admits the
+  attempt and resets the count, a rejected or unreachable verifier never
+  admits. `BOT_GATE` is tri-state like the other gates: off by default,
+  observe writes `would_challenge` decisions to the audit trail so the
+  threshold is chosen from data, enforce refuses; the startup gate census
+  names it. A counter outage fails toward the password check, never toward
+  a lockout. The login page's Turnstile widget is the remaining half. Task
+  1.4.
+
 ### Changed
 
 - **The edge actually caches discovery and JWKS, and never caches the entry

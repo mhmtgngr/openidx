@@ -32,6 +32,7 @@ import (
 
 	"github.com/openidx/openidx/internal/abac"
 	"github.com/openidx/openidx/internal/appaccess"
+	"github.com/openidx/openidx/internal/botgate"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
@@ -211,8 +212,11 @@ type Service struct {
 	ssfReceiverConfig SSFReceiverConfig
 	identityService   *identity.Service
 	riskService       *risk.Service
-	webhookService    WebhookPublisher
-	authorizeHandler  *AuthorizeHandler
+	// botGate decides, before the password is checked, whether this login
+	// attempt must first prove a human (global-scale plan task 1.4).
+	botGate          *botgate.Gate
+	webhookService   WebhookPublisher
+	authorizeHandler *AuthorizeHandler
 	// redisBreaker fast-fails Redis-backed revocation checks when Redis is
 	// unhealthy, so a Redis brownout doesn't make every token op pay the full
 	// 3s read timeout (a latency cliff on the verify/introspect hot path). It is
@@ -243,6 +247,16 @@ func (s *Service) SetWebhookService(ws WebhookPublisher) {
 // AuthorizeHandler returns the authorization handler
 func (s *Service) AuthorizeHandler() *AuthorizeHandler {
 	return s.authorizeHandler
+}
+
+// sessionRedisOf unwraps the session-role client for packages that take a
+// go-redis UniversalClient. Nil-safe: tests build the service without Redis.
+// Declared at file scope because NewService's parameter shadows the package.
+func sessionRedisOf(rc *database.RedisClient) redis.UniversalClient {
+	if rc == nil || rc.Client == nil {
+		return nil
+	}
+	return rc.Client
 }
 
 // NewService creates a new OAuth service
@@ -346,6 +360,19 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		dcrAllowOpenRegistration: cfg.DCRAllowOpenRegistration,
 		ssfReceiverConfig:        SSFReceiverConfig{Issuer: cfg.SSFReceiverIssuer, JWKSURL: cfg.SSFReceiverJWKSURL},
 		identityService:          idSvc,
+	}
+
+	// Bot gate on the session-role Redis: the failure counter must never be
+	// evicted by a rate-limit key flood (task 0.1). Nil Redis (tests) leaves the
+	// gate in off-like fail-open behaviour.
+	{
+		svc.botGate = botgate.New(sessionRedisOf(redis), botgate.Config{
+			Mode:           botgate.ParseMode(cfg.BotGate),
+			ChallengeAfter: cfg.LoginFailChallengeAfter,
+			Window:         time.Duration(cfg.LoginFailWindowSeconds) * time.Second,
+			ScoreHeader:    cfg.EdgeBotScoreHeader,
+			ChallengeBelow: cfg.EdgeBotScoreChallengeBelow,
+		}, botgate.NewTurnstileVerifier(cfg.TurnstileSecret))
 	}
 
 	// Initialize authorize handler
@@ -1898,6 +1925,10 @@ func (s *Service) handleLogin(c *gin.Context) {
 		Username     string `json:"username"`
 		Password     string `json:"password"`
 		LoginSession string `json:"login_session"`
+		// ChallengeToken is what the login page sends after solving the
+		// edge's challenge (Cloudflare Turnstile) in answer to a
+		// challenge_required response.
+		ChallengeToken string `json:"challenge_token"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1909,6 +1940,46 @@ func (s *Service) handleLogin(c *gin.Context) {
 	if req.LoginSession == "" {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "login_session is required"})
 		return
+	}
+
+	// Bot gate (global-scale plan task 1.4): decided before the password is
+	// checked, keyed on the typed account name across every source address, so
+	// a spray that never fills a per-IP bucket still meets a challenge. Observe
+	// records the verdict and permits; enforce refuses with challenge_required
+	// so the login page can render the edge's challenge and resubmit with
+	// challenge_token.
+	var botOrgID string
+	if org, oerr := orgctx.From(c.Request.Context()); oerr == nil {
+		botOrgID = org.ID
+	}
+	if s.botGate != nil && s.botGate.Mode() != botgate.ModeOff {
+		dec := s.botGate.Check(c.Request.Context(), botOrgID, req.Username,
+			c.GetHeader(s.botGate.ScoreHeader()), req.ChallengeToken, c.ClientIP())
+		if dec.Challenge || dec.Reason != botgate.ReasonNone {
+			enforced := s.botGate.Mode() == botgate.ModeEnforce
+			meta := s.botGate.AuditMetadata(dec, enforced)
+			meta["username"] = req.Username
+			status := "success"
+			if dec.Challenge && enforced {
+				status = "denied"
+			}
+			go func(ip string) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				s.logAuditEvent(ctx, "authentication", "security", "bot_gate", status,
+					"", ip, "", "user", meta)
+			}(c.ClientIP())
+			if dec.Challenge && enforced {
+				c.Header("Cache-Control", "no-store")
+				c.JSON(403, gin.H{
+					"error":             "challenge_required",
+					"error_description": "Too many failed attempts for this account. Complete the verification challenge and try again.",
+					"challenge":         "edge",
+					"reason":            string(dec.Reason),
+				})
+				return
+			}
+		}
 	}
 
 	// Get OAuth parameters from Redis
@@ -1952,6 +2023,12 @@ func (s *Service) handleLogin(c *gin.Context) {
 			})
 		}
 
+		// Count the failure against the typed name for the bot gate (no-op
+		// when the gate is off).
+		if s.botGate != nil {
+			s.botGate.RecordFailure(orgctx.Detached(c.Request.Context()), botOrgID, req.Username)
+		}
+
 		// Return appropriate error message
 		errorMsg := "Invalid username or password"
 		if err.Error() == "account is locked" {
@@ -1961,6 +2038,11 @@ func (s *Service) handleLogin(c *gin.Context) {
 		}
 		c.JSON(401, gin.H{"error": "invalid_credentials", "error_description": errorMsg})
 		return
+	}
+
+	// A correct password clears the bot gate's counter for this name.
+	if s.botGate != nil {
+		s.botGate.RecordSuccess(orgctx.Detached(c.Request.Context()), botOrgID, req.Username)
 	}
 
 	// Log successful login audit event in background with timeout

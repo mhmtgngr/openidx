@@ -27,6 +27,11 @@ data:
   # once per hop and export openidx_forwarded_for_from_untrusted_hop_total until
   # it matches. Never "*".
   OIDX_TRUSTED_PROXIES: {{ .Values.config.trustedProxies | default "" | quote }}
+  # Bot gate at the login door (global-scale plan task 1.4): off | observe |
+  # enforce. Start in observe and read the bot_gate audit rows before enforce.
+  BOT_GATE: {{ .Values.config.botGate | default "off" | quote }}
+  LOGIN_FAIL_CHALLENGE_AFTER: {{ .Values.config.loginFailChallengeAfter | default 5 | quote }}
+  LOGIN_FAIL_WINDOW_SECONDS: {{ .Values.config.loginFailWindowSeconds | default 900 | quote }}
   # The externally reachable name of the access proxy. It is the host of every
   # temporary vendor-access link, so an unset value (in-code default:
   # "localhost") issues links that point at the RECIPIENT'S machine. Services

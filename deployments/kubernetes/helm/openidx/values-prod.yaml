@@ -63,6 +63,10 @@ config:
   # bucket. `kubectl get pod -n ingress-nginx -o wide` shows the range to
   # cover; the edge PROVIDER's ranges go in edge.* below, not here.
   trustedProxies: "10.0.0.0/8"   # <-- your cluster's pod network CIDR
+  # Task 1.4: observe first. Two weeks of bot_gate audit rows say who WOULD
+  # have been challenged; flip to enforce when the false-positive count is one
+  # you can defend. Never straight to enforce on a live tenant base.
+  botGate: "observe"
   elasticsearchUrl: "https://opensearch.prod.internal:9200"
   oauthIssuer: "https://auth.openidx.example.com"
   oauthJwksUrl: "https://auth.openidx.example.com/.well-known/jwks.json"

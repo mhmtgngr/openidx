@@ -380,6 +380,21 @@ type Config struct {
 	// step-up asks a person to touch a key, and there is nobody to ask.
 	StepUpGate string `mapstructure:"stepup_gate"`
 
+	// BotGate is the tri-state BOT_GATE (off|observe|enforce) for the login
+	// door: after LoginFailChallengeAfter failed password checks against one
+	// typed account name in LoginFailWindowSeconds — from ANY address — the
+	// next attempt must solve a challenge. A low edge bot score in
+	// EdgeBotScoreHeader (below EdgeBotScoreChallengeBelow) is a challenge
+	// before the first failure. TurnstileSecret enables Cloudflare Turnstile
+	// as the challenge verifier; empty means a challenged account waits out
+	// the window. See internal/botgate and global-scale plan task 1.4.
+	BotGate                    string `mapstructure:"bot_gate"`
+	LoginFailChallengeAfter    int    `mapstructure:"login_fail_challenge_after"`
+	LoginFailWindowSeconds     int    `mapstructure:"login_fail_window_seconds"`
+	EdgeBotScoreHeader         string `mapstructure:"edge_bot_score_header"`
+	EdgeBotScoreChallengeBelow int    `mapstructure:"edge_bot_score_challenge_below"`
+	TurnstileSecret            string `mapstructure:"turnstile_secret"`
+
 	// StepUpMaxAge is how old a session's last verified second factor may be
 	// before StepUpGate acts. The console's Security tab wins when an operator
 	// has set security.reauth_interval; this is the deployment default when
@@ -947,6 +962,12 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("pam_require_ztna", "off")
 	v.SetDefault("abac_enforce", "off")
 	v.SetDefault("stepup_gate", "off")
+	v.SetDefault("bot_gate", "off")
+	v.SetDefault("login_fail_challenge_after", 5)
+	v.SetDefault("login_fail_window_seconds", 900)
+	v.SetDefault("edge_bot_score_header", "X-Edge-Bot-Score")
+	v.SetDefault("edge_bot_score_challenge_below", 30)
+	v.SetDefault("turnstile_secret", "")
 	v.SetDefault("stepup_max_age", "15m")
 	v.SetDefault("pam_session_risk_threshold", 80)
 	v.SetDefault("pam_ssh_require_host_key", false)
@@ -1198,6 +1219,12 @@ func bindEnvVars(v *viper.Viper) {
 		"pam_ssh_require_host_key":                        "PAM_SSH_REQUIRE_HOST_KEY",
 		"abac_enforce":                                    "ABAC_ENFORCE",
 		"stepup_gate":                                     "STEPUP_GATE",
+		"bot_gate":                                        "BOT_GATE",
+		"login_fail_challenge_after":                      "LOGIN_FAIL_CHALLENGE_AFTER",
+		"login_fail_window_seconds":                       "LOGIN_FAIL_WINDOW_SECONDS",
+		"edge_bot_score_header":                           "EDGE_BOT_SCORE_HEADER",
+		"edge_bot_score_challenge_below":                  "EDGE_BOT_SCORE_CHALLENGE_BELOW",
+		"turnstile_secret":                                "TURNSTILE_SECRET",
 		"stepup_max_age":                                  "STEPUP_MAX_AGE",
 		"pam_session_risk_threshold":                      "PAM_SESSION_RISK_THRESHOLD",
 		"dev_admin_bypass":                                "DEV_ADMIN_BYPASS",
@@ -1881,6 +1908,9 @@ func (c *Config) ReportModeGates() []string {
 	}
 	if !strings.EqualFold(strings.TrimSpace(c.StepUpGate), "enforce") {
 		open = append(open, "STEPUP_GATE="+valueOrOff(c.StepUpGate)+" — a PAM launch or an admin write never asks for a fresh second factor")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.BotGate), "enforce") {
+		open = append(open, "BOT_GATE="+valueOrOff(c.BotGate)+" — a credential spray spread across many addresses is never asked to prove a human")
 	}
 	if !c.EnableOPAAuthz {
 		open = append(open, "ENABLE_OPA_AUTHZ=false — OPA is not in the request path")
