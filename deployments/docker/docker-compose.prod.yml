@@ -100,9 +100,13 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Session role. This used to run allkeys-lru, which in a single-instance
+  # layout meant a rate-limit key flood could evict login state AND revocation
+  # markers. Counters now live on redis-ratelimit (the only LRU instance);
+  # session state refuses writes when full rather than losing them.
   redis:
     restart: always
-    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - see .env.production} --maxmemory 512mb --maxmemory-policy allkeys-lru --save 900 1 --save 300 10
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - see .env.production} --maxmemory 512mb --maxmemory-policy noeviction --save 900 1 --save 300 10
     volumes:
       - redis_data:/data
     deploy:
@@ -110,6 +114,26 @@ services:
         limits:
           cpus: '1.0'
           memory: 1G
+
+  redis-ratelimit:
+    restart: always
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - see .env.production} --maxmemory 256mb --maxmemory-policy allkeys-lru --save ""
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 384M
+
+  redis-revocation:
+    restart: always
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - see .env.production} --maxmemory 256mb --maxmemory-policy noeviction --appendonly yes --appendfsync everysec
+    volumes:
+      - redis_revocation_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 384M
         reservations:
           cpus: '0.25'
           memory: 256M
@@ -200,6 +224,8 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis-revocation:6379
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://openidx.tdv.org
       - OAUTH_JWKS_URL=https://openidx.tdv.org/.well-known/jwks.json
@@ -243,6 +269,8 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis-revocation:6379
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://openidx.tdv.org
       - OAUTH_JWKS_URL=https://openidx.tdv.org/.well-known/jwks.json
@@ -279,6 +307,8 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis-revocation:6379
       - OAUTH_ISSUER=https://openidx.tdv.org
       - OAUTH_JWKS_URL=https://openidx.tdv.org/.well-known/jwks.json
       - LOG_LEVEL=${LOG_LEVEL:-info}
@@ -349,6 +379,8 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis-revocation:6379
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://openidx.tdv.org
       - OAUTH_JWKS_URL=https://openidx.tdv.org/.well-known/jwks.json
@@ -391,6 +423,8 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis-revocation:6379
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - OPENIDX_ENABLE_RATE_LIMIT=true
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT:-jaeger:4317}
@@ -426,6 +460,8 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis-revocation:6379
       - OAUTH_ISSUER=https://openidx.tdv.org
       - OAUTH_JWKS_URL=https://openidx.tdv.org/.well-known/jwks.json
       - GOVERNANCE_URL=http://governance-service:8002

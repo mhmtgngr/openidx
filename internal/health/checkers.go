@@ -152,7 +152,10 @@ func (r *RedisChecker) IsCritical() bool {
 func (r *RedisChecker) Check(ctx context.Context) ComponentStatus {
 	start := time.Now()
 
-	_, err := r.redis.Client.Ping(ctx).Result()
+	// Ping every distinct instance (primary + dedicated rate-limit/revocation
+	// roles): readiness must not report "redis up" while revocation markers
+	// have nowhere to go.
+	err := r.redis.PingContext(ctx)
 	latency := time.Since(start)
 
 	if err != nil {

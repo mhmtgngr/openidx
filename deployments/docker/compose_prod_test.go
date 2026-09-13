@@ -131,14 +131,56 @@ func TestComposeRedisConfiguration(t *testing.T) {
 		t.Error("Redis should have maxmemory configured")
 	}
 
-	// Validate eviction policy
-	if !strings.Contains(redisSection, "--maxmemory-policy allkeys-lru") {
-		t.Error("Redis should use allkeys-lru eviction policy")
+	// The session instance must REFUSE writes when full, never forget them.
+	// It used to run allkeys-lru, and on the single-instance layout that meant
+	// a rate-limit key flood could evict login state and revocation markers.
+	// Counters now live on redis-ratelimit (the only LRU instance, below).
+	if !strings.Contains(redisSection, "--maxmemory-policy noeviction") {
+		t.Error("session Redis should use the noeviction policy (LRU belongs to redis-ratelimit only)")
+	}
+	if strings.Contains(redisSection, "allkeys-lru") {
+		t.Error("session Redis must not run allkeys-lru: an evicted login_session/revocation key is silent data loss")
 	}
 
 	// Validate persistence
 	if !strings.Contains(redisSection, "--save") {
 		t.Error("Redis should have save snapshots configured")
+	}
+
+	// Rate-limit role: small, disposable, LRU, no persistence.
+	rlIndex := strings.Index(contentStr, "redis-ratelimit:")
+	if rlIndex == -1 {
+		t.Fatal("redis-ratelimit service not found")
+	}
+	rlSection := contentStr[rlIndex : rlIndex+400]
+	if !strings.Contains(rlSection, "--maxmemory-policy allkeys-lru") {
+		t.Error("redis-ratelimit should evict with allkeys-lru: counters are the one disposable workload")
+	}
+	if !strings.Contains(rlSection, "--maxmemory ") {
+		t.Error("redis-ratelimit must be bounded with --maxmemory; it is the instance an attacker can fill")
+	}
+
+	// Revocation role: never evict, always persist.
+	rvIndex := strings.Index(contentStr, "redis-revocation:")
+	if rvIndex == -1 {
+		t.Fatal("redis-revocation service not found")
+	}
+	rvSection := contentStr[rvIndex : rvIndex+500]
+	if !strings.Contains(rvSection, "--maxmemory-policy noeviction") {
+		t.Error("redis-revocation must use noeviction: an evicted marker un-revokes a token")
+	}
+	if !strings.Contains(rvSection, "--appendonly yes") {
+		t.Error("redis-revocation must persist with AOF so a restart does not un-revoke tokens")
+	}
+
+	// Every service that talks to Redis must be told about both roles; a
+	// service left on REDIS_URL alone silently keeps the shared-instance risk.
+	urlCount := strings.Count(contentStr, "- REDIS_URL=")
+	if rl := strings.Count(contentStr, "- REDIS_RATELIMIT_URL="); rl != urlCount {
+		t.Errorf("REDIS_RATELIMIT_URL set on %d services but REDIS_URL on %d; every Redis consumer must carry the role URL", rl, urlCount)
+	}
+	if rv := strings.Count(contentStr, "- REDIS_REVOCATION_URL="); rv != urlCount {
+		t.Errorf("REDIS_REVOCATION_URL set on %d services but REDIS_URL on %d; every Redis consumer must carry the role URL", rv, urlCount)
 	}
 }
 

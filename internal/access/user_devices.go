@@ -494,7 +494,7 @@ func (s *Service) revokeDeviceTokens(ctx context.Context, orgID, agentID string,
 	// better than a session that still refreshes.
 	if s.redis != nil && s.redis.Client != nil {
 		for _, id := range ids {
-			if err := s.redis.Client.Set(ctx, "revoked_session:"+id, "1", killSwitchRedisMarkerTTL).Err(); err != nil {
+			if err := s.redis.RevocationDB().Set(ctx, "revoked_session:"+id, "1", killSwitchRedisMarkerTTL).Err(); err != nil {
 				warn("revocation_marker", err)
 				break
 			}

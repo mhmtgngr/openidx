@@ -46,7 +46,7 @@ func (s *Service) publishSessionRevocations(ctx context.Context, sessionIDs []st
 	}
 	var warnings []string
 	for _, id := range sessionIDs {
-		if err := s.redis.Client.Set(ctx, "revoked_session:"+id, "1", revokedSessionMarkerTTL).Err(); err != nil {
+		if err := s.redis.RevocationDB().Set(ctx, "revoked_session:"+id, "1", revokedSessionMarkerTTL).Err(); err != nil {
 			s.logger.Warn("failed to publish revoked-session marker",
 				zap.String("session_id", logsafe.Clean(id)), zap.Error(err))
 			warnings = append(warnings, "revocation marker not published for session "+id+": its refresh tokens remain usable until they expire")

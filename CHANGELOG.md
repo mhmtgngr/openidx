@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Redis is three instances, one per loss profile.** OpenIDX kept four kinds
+  of state in one Redis: rate-limit counters, login/MFA/authcode session
+  state, token and session revocation markers, and leader locks. The counters
+  are the one workload an attacker can inflate at will — a flood of source
+  addresses is a flood of keys — and on a shared instance that flood ends one
+  of two ways. Under `noeviction` (the compose default) Redis starts refusing
+  writes and the auth-path limiter, which fails closed by design, turns into an
+  attacker-operated login kill switch. Under `allkeys-lru` (what
+  `docker-compose.prod.yml` ran) the instance stays up by forgetting keys, and
+  a forgotten `oauth:user_tokens_revoked_at:<uid>` marker is a revoked access
+  token that answers again. Either way the defence became the attack.
+
+  `REDIS_RATELIMIT_URL` and `REDIS_REVOCATION_URL` now point the two roles at
+  their own instances; the primary `REDIS_URL` keeps session state and locks.
+  Both are optional and an empty value aliases the primary, so a single-Redis
+  install is unchanged. `database.RedisClient` gained `RateLimit` and
+  `Revocation` fields with nil-safe `RateLimitDB()` / `RevocationDB()`
+  accessors; every service mounts the limiter on the rate-limit role and all
+  sixteen revocation call sites (`revoked_session:*`, the revoke-all marker,
+  the per-token blacklist) go through the revocation role. A census test in
+  `internal/revocation` fails the build if a marker is ever written through
+  the primary client again, and the health checker pings every distinct
+  instance so readiness cannot say "redis up" while markers have nowhere to
+  go. Compose ships `redis-ratelimit` (256 MB, `allkeys-lru`, no persistence)
+  and `redis-revocation` (`noeviction`, AOF); the production overlay's session
+  instance moves from `allkeys-lru` to `noeviction`. Helm: `redis.roles.*` or
+  `externalSecrets.redisRoles` (on in `values-prod.yaml`). Task 0.1 of
+  `docs/plans/2026-09-13-global-scale-cell-architecture-plan.md`.
+
 ## [1.35.0] - 2026-09-10
 
 ### Added

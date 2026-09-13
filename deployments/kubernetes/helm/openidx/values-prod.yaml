@@ -36,6 +36,15 @@ externalSecrets:
   # Left false so the ExternalSecret does not reference a missing key on a fresh
   # cutover. Turn on as a follow-on step (see docs/tier3b-cutover-runbook.md §1b).
   readReplica: false
+  # Task 0.1 (global-scale plan): dedicated Redis per loss profile. Production
+  # runs three managed cache endpoints —
+  #   <remoteKeyPrefix>/redis-url             session state, noeviction
+  #   <remoteKeyPrefix>/redis-ratelimit-url   counters, small, allkeys-lru
+  #   <remoteKeyPrefix>/redis-revocation-url  markers, noeviction, persistent
+  # — so a rate-limit key flood can neither OOM the login path nor evict a
+  # revocation marker. Store all three before flipping this on; a missing key
+  # fails the ExternalSecret sync.
+  redisRoles: true
 
 # ----- Managed datastores: disable the in-cluster subcharts -----
 postgresql:

@@ -278,9 +278,27 @@ func (db *PostgresDB) Ping() error {
 	return db.Pool.Ping(ctx)
 }
 
-// RedisClient wraps the Redis client
+// RedisClient wraps the Redis client and its role-specific siblings.
+//
+// Client is the primary (session) instance: login/MFA/authcode state, email
+// queue, leader locks, caches. RateLimit and Revocation are the two roles whose
+// loss profile differs enough to deserve their own instance (see
+// RedisConfig.RateLimitURL / RevocationURL). When a role URL is not configured
+// the role field ALIASES Client — same *redis.Client, no second connection — so
+// every call site can address the role it means and a single-Redis install
+// behaves exactly as before.
+//
+// Call sites must address the role, never Client, for:
+//   - rate-limit counters            → RateLimit
+//   - revoked_session:* markers, the per-user revoke-all marker and the
+//     per-token blacklist            → Revocation
+//
+// internal/revocation carries a static census test that fails the build when a
+// revocation marker is written through Client.
 type RedisClient struct {
-	Client *redis.Client
+	Client     *redis.Client
+	RateLimit  *redis.Client
+	Revocation *redis.Client
 }
 
 // RedisConfig holds configuration for creating a Redis client with optional
@@ -304,6 +322,14 @@ type RedisConfig struct {
 	TLSCert       string // Client cert path (mTLS)
 	TLSKey        string // Client key path (mTLS)
 	TLSSkipVerify bool   // Skip TLS verification (dev only)
+
+	// Optional role instances. Plain Redis URLs; the TLS settings above apply
+	// to them too. Empty = alias the primary. Sentinel addressing for a role
+	// instance is deliberately not supported here: a role instance is a small,
+	// single-purpose Redis and the managed-cache endpoints used in production
+	// already hide failover behind one hostname.
+	RateLimitURL  string
+	RevocationURL string
 }
 
 // buildRedisTLSConfig constructs a *tls.Config from the RedisConfig TLS fields
@@ -377,11 +403,121 @@ func NewRedisFromConfig(cfg RedisConfig) (*RedisClient, error) {
 		if _, err := client.Ping(ctx).Result(); err != nil {
 			return nil, fmt.Errorf("failed to connect to Redis via Sentinel: %w", err)
 		}
-		return &RedisClient{Client: client}, nil
+		return attachRedisRoles(&RedisClient{Client: client}, cfg, tlsCfg)
 	}
 
 	// Non-sentinel: parse URL and apply TLS
-	return newRedisWithTLS(cfg.URL, tlsCfg)
+	primary, err := newRedisWithTLS(cfg.URL, tlsCfg)
+	if err != nil {
+		return nil, err
+	}
+	return attachRedisRoles(primary, cfg, tlsCfg)
+}
+
+// attachRedisRoles fills RateLimit and Revocation on a freshly built primary:
+// a dedicated client when the role URL is set, the primary itself otherwise.
+// A role instance that cannot be reached is a startup error, not a silent
+// fallback to the primary — falling back would quietly recreate the shared
+// instance the operator configured their way out of.
+func attachRedisRoles(primary *RedisClient, cfg RedisConfig, tlsCfg *tls.Config) (*RedisClient, error) {
+	primary.RateLimit = primary.Client
+	primary.Revocation = primary.Client
+	if cfg.RateLimitURL != "" {
+		rl, err := newRedisWithTLS(cfg.RateLimitURL, tlsCfg)
+		if err != nil {
+			primary.Client.Close()
+			return nil, fmt.Errorf("redis rate-limit role: %w", err)
+		}
+		primary.RateLimit = rl.Client
+	}
+	if cfg.RevocationURL != "" {
+		rv, err := newRedisWithTLS(cfg.RevocationURL, tlsCfg)
+		if err != nil {
+			primary.Client.Close()
+			if primary.RateLimit != primary.Client {
+				primary.RateLimit.Close()
+			}
+			return nil, fmt.Errorf("redis revocation role: %w", err)
+		}
+		primary.Revocation = rv.Client
+	}
+	return primary, nil
+}
+
+// NewRedisClientWithRoles builds a RedisClient from already-constructed
+// clients. Nil role clients alias the primary. It exists for tests and for
+// callers that own the client lifecycle; production code goes through
+// NewRedisFromConfig.
+func NewRedisClientWithRoles(primary, rateLimit, revocation *redis.Client) *RedisClient {
+	rc := &RedisClient{Client: primary, RateLimit: primary, Revocation: primary}
+	if rateLimit != nil {
+		rc.RateLimit = rateLimit
+	}
+	if revocation != nil {
+		rc.Revocation = revocation
+	}
+	return rc
+}
+
+// distinctClients returns each underlying client once, aliases collapsed.
+func (r *RedisClient) distinctClients() []*redis.Client {
+	seen := map[*redis.Client]bool{}
+	var out []*redis.Client
+	for _, c := range []*redis.Client{r.Client, r.RateLimit, r.Revocation} {
+		if c != nil && !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// RateLimitDB returns the client rate-limit counters must use. Nil-safe for
+// hand-built RedisClient literals (tests): a missing role aliases the primary.
+func (r *RedisClient) RateLimitDB() *redis.Client {
+	if r == nil {
+		return nil
+	}
+	if r.RateLimit != nil {
+		return r.RateLimit
+	}
+	return r.Client
+}
+
+// RevocationDB returns the client revocation markers must use (revoked_session:*,
+// the per-user revoke-all marker, the per-token blacklist). Nil-safe like
+// RateLimitDB. Every revocation call site goes through this accessor; the
+// census test in internal/revocation rejects a marker written through Client.
+func (r *RedisClient) RevocationDB() *redis.Client {
+	if r == nil {
+		return nil
+	}
+	if r.Revocation != nil {
+		return r.Revocation
+	}
+	return r.Client
+}
+
+// PingContext verifies every distinct Redis instance is alive within ctx.
+func (r *RedisClient) PingContext(ctx context.Context) error {
+	for _, c := range r.distinctClients() {
+		if _, err := c.Ping(ctx).Result(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// HasDedicatedRateLimit reports whether rate-limit counters live on their own
+// instance rather than sharing the primary.
+func (r *RedisClient) HasDedicatedRateLimit() bool {
+	return r.RateLimit != nil && r.RateLimit != r.Client
+}
+
+// HasDedicatedRevocation reports whether revocation markers live on their own
+// instance rather than sharing the primary.
+func (r *RedisClient) HasDedicatedRevocation() bool {
+	return r.Revocation != nil && r.Revocation != r.Client
 }
 
 // NewRedis creates a new Redis client (backward-compatible, no TLS)
@@ -418,20 +554,32 @@ func newRedisWithTLS(connString string, tlsCfg *tls.Config) (*RedisClient, error
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
-	return &RedisClient{Client: client}, nil
+	return &RedisClient{Client: client, RateLimit: client, Revocation: client}, nil
 }
 
-// Close closes the Redis connection
+// Close closes every distinct underlying connection once.
 func (r *RedisClient) Close() error {
-	return r.Client.Close()
+	var first error
+	for _, c := range r.distinctClients() {
+		if err := c.Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
-// Ping verifies the Redis connection is alive
+// Ping verifies every distinct Redis instance is alive. A dead role instance
+// is reported: readiness must not say "redis up" while revocation markers
+// have nowhere to go.
 func (r *RedisClient) Ping() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := r.Client.Ping(ctx).Result()
-	return err
+	for _, c := range r.distinctClients() {
+		if _, err := c.Ping(ctx).Result(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ElasticsearchClient wraps the Elasticsearch v8 client

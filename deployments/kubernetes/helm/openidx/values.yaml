@@ -30,6 +30,11 @@ externalSecrets:
   # so services open a read-replica pool (PostgresDB.Reader()). Off by default;
   # a replica outage transparently falls back to the primary.
   readReplica: false
+  # When true, also pull <remoteKeyPrefix>/redis-ratelimit-url and
+  # /redis-revocation-url so rate-limit counters and revocation markers run on
+  # their own instances (see redis.roles below and design §4.4.2). Off by
+  # default; a missing role aliases REDIS_URL.
+  redisRoles: false
 
 global:
   # Image namespace for OpenIDX's OWN images. Matches the GHCR pipeline in
@@ -650,6 +655,15 @@ redis:
     masterName: "mymaster"
     # When sentinel.enabled=true, deploy Redis in Sentinel mode for HA failover.
     # Sentinel addresses are auto-discovered from the Helm chart's headless service.
+  # Role instances (design §4.4.2, plan task 0.1). The in-cluster subchart above
+  # is the SESSION role. Point these at separate instances to move rate-limit
+  # counters (the flood-able role; run it allkeys-lru) and revocation markers
+  # (must never be evicted; run it noeviction + persistence) off the session
+  # instance. Empty = alias REDIS_URL. In externalSecrets mode use
+  # externalSecrets.redisRoles instead and store the URLs in the secret store.
+  roles:
+    rateLimitUrl: ""
+    revocationUrl: ""
 
 # Elasticsearch
 elasticsearch:

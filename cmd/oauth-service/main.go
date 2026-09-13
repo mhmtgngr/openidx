@@ -124,6 +124,8 @@ func main() {
 		TLSCert:            cfg.RedisTLSCert,
 		TLSKey:             cfg.RedisTLSKey,
 		TLSSkipVerify:      cfg.RedisTLSSkipVerify,
+		RateLimitURL:       cfg.RedisRateLimitURL,
+		RevocationURL:      cfg.RedisRevocationURL,
 	})
 	if err != nil {
 		log.Fatal("Failed to connect to Redis", zap.Error(err))
@@ -146,7 +148,7 @@ func main() {
 	router.Use(middleware.SecurityHeadersForEnv(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
 	if cfg.EnableRateLimit {
-		router.Use(middleware.DistributedRateLimit(redis.Client, middleware.RateLimitConfig{
+		router.Use(middleware.DistributedRateLimit(redis.RateLimitDB(), middleware.RateLimitConfig{
 			Requests:     cfg.RateLimitRequests,
 			Window:       time.Duration(cfg.RateLimitWindow) * time.Second,
 			AuthRequests: cfg.RateLimitAuthRequests,

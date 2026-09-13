@@ -87,6 +87,8 @@ func main() {
 		TLSCert:            cfg.RedisTLSCert,
 		TLSKey:             cfg.RedisTLSKey,
 		TLSSkipVerify:      cfg.RedisTLSSkipVerify,
+		RateLimitURL:       cfg.RedisRateLimitURL,
+		RevocationURL:      cfg.RedisRevocationURL,
 	})
 	if err != nil {
 		log.Fatal("Failed to connect to Redis", zap.Error(err))
@@ -139,7 +141,7 @@ func main() {
 	// auth paths when Redis is unavailable, which is the property that matters
 	// on the host taking the traffic.
 	if cfg.EnableRateLimit {
-		router.Use(commonmiddleware.DistributedRateLimit(redisClient.Client, commonmiddleware.RateLimitConfig{
+		router.Use(commonmiddleware.DistributedRateLimit(redisClient.RateLimitDB(), commonmiddleware.RateLimitConfig{
 			Requests:     cfg.RateLimitRequests,
 			Window:       time.Duration(cfg.RateLimitWindow) * time.Second,
 			AuthRequests: cfg.RateLimitAuthRequests,

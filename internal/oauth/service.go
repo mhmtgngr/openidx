@@ -766,7 +766,7 @@ func (s *Service) handleRefreshTokenReuse(ctx context.Context, token *RefreshTok
 
 	// The session behind the chain is as compromised as the tokens.
 	if token.SessionID != "" && s.redis != nil {
-		if err := s.redis.Client.Set(ctx,
+		if err := s.redis.RevocationDB().Set(ctx,
 			"revoked_session:"+token.SessionID, "refresh_reuse", 24*time.Hour).Err(); err != nil {
 			s.logger.Error("refresh reuse: failed to revoke session",
 				zap.String("session_id", token.SessionID), zap.Error(err))
@@ -931,7 +931,7 @@ func (s *Service) MarkAccessTokenRevoked(ctx context.Context, token string, expi
 		// Token has already expired — nothing to blacklist; treat as success.
 		return nil
 	}
-	return s.redis.Client.Set(ctx, accessTokenBlacklistKey(token), "1", ttl).Err()
+	return s.redis.RevocationDB().Set(ctx, accessTokenBlacklistKey(token), "1", ttl).Err()
 }
 
 // MarkUserTokensRevoked records a per-user "revoke everything issued so far"
@@ -944,7 +944,7 @@ func (s *Service) MarkUserTokensRevoked(ctx context.Context, userID string) erro
 	}
 	// 7 days is comfortably longer than the configured access-token lifetime
 	// (3600s by default) and bounds memory at one short string per user.
-	return s.redis.Client.Set(ctx, userTokensRevokedAtKey(userID),
+	return s.redis.RevocationDB().Set(ctx, userTokensRevokedAtKey(userID),
 		revocation.MarkerValue(time.Now()), revocation.MarkerTTL).Err()
 }
 
@@ -965,7 +965,7 @@ func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID
 	var revoked bool
 	err := s.revocationBreakerExec(func() error {
 		// Per-token blacklist (set by /oauth/revoke and /oauth/logout).
-		if n, err := s.redis.Client.Exists(ctx, accessTokenBlacklistKey(token)).Result(); err != nil {
+		if n, err := s.redis.RevocationDB().Exists(ctx, accessTokenBlacklistKey(token)).Result(); err != nil {
 			return err
 		} else if n > 0 {
 			revoked = true
@@ -974,7 +974,7 @@ func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID
 
 		// Per-user "revoke everything before now" marker (set by /oauth/logout-all).
 		if userID != "" && issuedAt > 0 {
-			v, err := s.redis.Client.Get(ctx, userTokensRevokedAtKey(userID)).Result()
+			v, err := s.redis.RevocationDB().Get(ctx, userTokensRevokedAtKey(userID)).Result()
 			if err != nil && !errors.Is(err, redis.Nil) {
 				return err
 			}
@@ -3543,7 +3543,7 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 	// Check if the linked session has been revoked
 	if token.SessionID != "" {
 		// Check Redis for revoked session
-		revoked, _ := s.redis.Client.Exists(c.Request.Context(), "revoked_session:"+token.SessionID).Result()
+		revoked, _ := s.redis.RevocationDB().Exists(c.Request.Context(), "revoked_session:"+token.SessionID).Result()
 		if revoked > 0 {
 			c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "session_revoked"})
 			return

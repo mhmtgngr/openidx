@@ -47,6 +47,21 @@ type Config struct {
 	RedisURL         string `mapstructure:"redis_url"`
 	ElasticsearchURL string `mapstructure:"elasticsearch_url"`
 
+	// Redis roles. OpenIDX keeps four kinds of state in Redis with four
+	// different loss profiles: rate-limit counters (cheap, high-churn, may be
+	// evicted), login/MFA/authcode session state (must not be evicted, TTL'd),
+	// token/session revocation markers (must NEVER be evicted: an evicted
+	// marker un-revokes a token), and leader locks. One instance serving all
+	// four means a counter flood — the very traffic the limiter exists to
+	// absorb — can push Redis to maxmemory and either OOM the login path
+	// (noeviction) or evict a revocation marker (allkeys-lru). Either way the
+	// defence becomes the attack. These URLs split the roles onto separate
+	// instances. Each is OPTIONAL: an empty value aliases that role to
+	// REDIS_URL, so a single-Redis install keeps working unchanged. See
+	// docs/architecture/2026-09-13-global-scale-cell-architecture-and-ddos.md §4.4.2.
+	RedisRateLimitURL  string `mapstructure:"redis_ratelimit_url"`
+	RedisRevocationURL string `mapstructure:"redis_revocation_url"`
+
 	// OPA configuration
 	OPAURL         string `mapstructure:"opa_url"`
 	EnableOPAAuthz bool   `mapstructure:"enable_opa_authz"`
@@ -917,6 +932,9 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
 	v.SetDefault("redis_url", "redis://:redis_secret@localhost:6379")
+	// Role URLs default to empty = alias the primary (see RedisRateLimitURL).
+	v.SetDefault("redis_ratelimit_url", "")
+	v.SetDefault("redis_revocation_url", "")
 	v.SetDefault("elasticsearch_url", "http://localhost:9200")
 
 	// OPA defaults
@@ -1124,6 +1142,8 @@ func bindEnvVars(v *viper.Viper) {
 	envMappings := map[string]string{
 		"database_url":                                    "DATABASE_URL",
 		"redis_url":                                       "REDIS_URL",
+		"redis_ratelimit_url":                             "REDIS_RATELIMIT_URL",
+		"redis_revocation_url":                            "REDIS_REVOCATION_URL",
 		"elasticsearch_url":                               "ELASTICSEARCH_URL",
 		"opa_url":                                         "OPA_URL",
 		"environment":                                     "APP_ENV",

@@ -130,7 +130,7 @@ func (s *Service) revokeSessionWithRedis(ctx context.Context, sessionID string) 
 	}
 
 	// Add to Redis revocation set (TTL = 25 hours to cover absolute timeout + buffer)
-	s.redis.Client.Set(ctx, "revoked_session:"+sessionID, "1", 25*time.Hour)
+	s.redis.RevocationDB().Set(ctx, "revoked_session:"+sessionID, "1", 25*time.Hour)
 
 	s.logger.Info("Session revoked", zap.String("session_id", sessionID))
 	return nil
