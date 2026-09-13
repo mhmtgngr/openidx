@@ -109,6 +109,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it exactly-once would need the broker and this database to commit together,
   which they cannot.
 
+  **Nothing publishes to it yet, and no process runs the relay.** The primitive,
+  the relay and the retention sweep are measured against a real PostgreSQL, but
+  a mechanism being shipped is not the same as its being exercised. The
+  producers are task 3.3 and the relay binary needs a sink, which is task 3.2 —
+  the sequencing is deliberate, and it is written down rather than left for a
+  reader to notice that this table is one step from the defect the deleted bus
+  had.
+
 - **The relay that drains it, with no leader.** `events.Relay` claims a batch,
   publishes it to a `Sink`, and marks what the sink accepted — all in one
   transaction, so there is no claim column, no "processing" state and no
