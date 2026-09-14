@@ -44,11 +44,11 @@ import (
 // nothing rather than applying twice. The database is doing the coordinating,
 // which is why no leader or claim is needed here.
 
-func openLifecyclePool(t *testing.T) *pgxpool.Pool {
+func openSweepPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_POSTGRES_DSN")
 	if dsn == "" {
-		t.Skip("TEST_POSTGRES_DSN not set; skipping the lifecycle sweep idempotence test")
+		t.Skip("TEST_POSTGRES_DSN not set; skipping the background sweep idempotence tests")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	require.NoError(t, err)
@@ -161,7 +161,7 @@ func lifecycleState(t *testing.T, pool *pgxpool.Pool) map[string]string {
 }
 
 func TestTheLifecycleSweepIsIdempotentAcrossReplicas(t *testing.T) {
-	pool := openLifecyclePool(t)
+	pool := openSweepPool(t)
 	svc, _ := seedLifecycle(t, pool)
 	ctx := orgctx.WithBypassRLS(context.Background())
 
@@ -195,7 +195,7 @@ func TestTheLifecycleSweepIsIdempotentAcrossReplicas(t *testing.T) {
 // The enabled user must survive every pass. An idempotent sweep that converges
 // on the wrong state converges just as reliably.
 func TestTheLifecycleSweepNeverTouchesAnEnabledUser(t *testing.T) {
-	pool := openLifecyclePool(t)
+	pool := openSweepPool(t)
 	svc, disabled := seedLifecycle(t, pool)
 	ctx := orgctx.WithBypassRLS(context.Background())
 
@@ -223,7 +223,7 @@ func TestTheLifecycleSweepNeverTouchesAnEnabledUser(t *testing.T) {
 // right state, and reach a SETTLED one -- nothing left half-applied by the race
 // for a later tick to finish or repeat.
 func TestEightConcurrentLifecycleSweepsConvergeTheSameWay(t *testing.T) {
-	pool := openLifecyclePool(t)
+	pool := openSweepPool(t)
 	svc, _ := seedLifecycle(t, pool)
 	ctx := orgctx.WithBypassRLS(context.Background())
 

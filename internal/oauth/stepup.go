@@ -312,7 +312,7 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 	}
 
 	// Generate a short-lived step-up JWT (5 minutes)
-	stepUpToken, err := generateStepUpToken(s.privateKey, userID, reason, s.issuer)
+	stepUpToken, err := generateStepUpToken(s.activePrivateKey(), userID, reason, s.issuer)
 	if err != nil {
 		s.logger.Error("Failed to generate step-up token",
 			zap.String("user_id", userID),

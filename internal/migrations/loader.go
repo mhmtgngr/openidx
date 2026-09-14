@@ -1371,5 +1371,12 @@ func allMigrations() []*Migration {
 			UpSQL:       outboxUp,
 			DownSQL:     outboxDown,
 		},
+		{
+			Version:     193,
+			Name:        "guac_grant_sweep_progress_marker",
+			Description: "Add pam_entry_sessions.guac_revoked_at plus a partial index, so the stale Guacamole grant sweep can record that it has done its work. THE SWEEP HAD NO STOPPING CONDITION: it selects PAM sessions that have ended (or have been active over twelve hours), revokes the per-connection READ each left behind on a standing Guacamole account, and writes nothing -- so the same rows match again on the next tick and on every tick after it, and a session that ended in March is still being revoked in June, every five minutes. Re-revoking an absent grant is a tolerated 404, which is why it was never loud: the sweep looked like it worked because it never failed. Two costs, and they compound. The obvious one is N replicas times two hundred rows times twelve ticks an hour of broker calls that do nothing. The one that matters is a SECURITY cost: the query carries LIMIT 200 with no ordering and no progress marker, so once more than two hundred rows match -- which grows as an install ages and never shrinks -- the sweep revisits an arbitrary two hundred and the rest may never be reached, and the grants that most need revoking (sessions whose browser was closed, which nothing else cleans up) are exactly the ones that can sit behind that limit indefinitely. guac_revoked_at is set when the broker CONFIRMS the revoke and the predicate excludes rows that carry one, so the backlog drains and the LIMIT becomes a batch size rather than a ceiling. The index is partial on the same predicate, for the reason the outbox's backlog index is: the swept rows are the overwhelming majority within a week and the sweep never wants them again, so an index the size of the backlog answers the hot query at constant cost while the table grows. Existing rows get NULL, which reads as 'not yet revoked' -- the safe direction: the first sweeps re-revoke the historical backlog once each and then stop, which is the behaviour that was missing. Additive and idempotent. Down drops both and the sweep reverts to correct-but-never-finished rather than breaking.",
+			UpSQL:       guacRevokedMarkerUp,
+			DownSQL:     guacRevokedMarkerDown,
+		},
 	}
 }

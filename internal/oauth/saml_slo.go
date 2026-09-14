@@ -477,11 +477,12 @@ func (s *Service) createLogoutRequest(session SAMLSession, sp *SAMLServiceProvid
 // Bindings 3.4.4.1, returning the base64 signature for the Signature
 // parameter.
 func (s *Service) signRedirectBinding(signedQuery string) (string, error) {
-	if s.privateKey == nil {
+	priv := s.activePrivateKey()
+	if priv == nil {
 		return "", fmt.Errorf("no signing key available")
 	}
 	digest := sha256.Sum256([]byte(signedQuery))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, s.privateKey, crypto.SHA256, digest[:])
+	sig, err := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, digest[:])
 	if err != nil {
 		return "", err
 	}

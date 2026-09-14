@@ -9,6 +9,176 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The agent grace-period enforcer decided: `idempotent`, and it is the first
+  entry that also *emits*.** The census question was whether a pass pushes
+  anything, and it does — every agent it suspends gets an `agent.suspended` row
+  in the unified audit stream. That is exactly the shape the Guacamole external
+  audit sync got wrong: one row per replica for a single recorded event, which on
+  a compliance product is a wrong answer rather than waste.
+
+  It is right here because **the claim and the work are the same statement**:
+  `UPDATE … WHERE compliance_status = 'grace_period' … RETURNING`. A second
+  replica blocks on the row lock, re-evaluates against the committed row, gets
+  nothing back, and so never reaches the audit insert. Eight concurrent enforcers
+  suspend two agents and announce each once; the agent still inside its grace
+  period is untouched. Two mutations red: making the predicate non-self-clearing,
+  and inverting the grace window so a device inside its grace period is
+  suspended.
+
+  **Each replica in that test gets its own connection pool, and that is not
+  tidiness.** The sweep holds the `RETURNING` cursor on one connection while
+  writing audit rows on another, so a replica needs two at once — eight
+  goroutines sharing one pool is one process pretending to be eight, and it
+  deadlocks on pool exhaustion the moment more than one gets rows back. Found the
+  hard way: the first mutation run **hung instead of failing**. Backlog five to
+  four.
+
+- **The remote-support janitor decided: `idempotent`, measured.** It sets
+  `status='expired'` on rows `WHERE status IN ('pending','active')` — the write
+  makes the predicate false, so a second replica matches nothing. Eight
+  concurrent janitors expire the two orphans once, leave the session with recent
+  activity alone, and land settled.
+
+  The test digests the **values** rather than counting rows, and here that is not
+  a technicality: the failure mode is a sweep that re-applies itself and rewrites
+  `ended_at` with a fresh `NOW()` on every tick, and on a product that records
+  support sessions for compliance, an `ended_at` that drifts forward is a wrong
+  answer to "when did this session end", not a wasted write. Two mutations red:
+  dropping the self-clearing predicate, and inverting the idle window so live
+  sessions are aged out from under their operator.
+
+  The file's *other* ticker is not a sweep — `runPeer`'s is a per-websocket
+  keepalive for one connected peer, per-process by definition, and gating it
+  would mean a leader holding another pod's websocket open. Backlog six to five.
+
+### Fixed
+
+- **The stale Guacamole grant sweep never stopped, and its `LIMIT` was a ceiling
+  rather than a batch size.** `sweepStaleGuacGrants` revokes the per-connection
+  READ an ended PAM session left behind on a standing Guacamole account — the
+  safety net for the browser-closed sessions nothing else cleans up. It wrote
+  nothing, so the rows it had just handled matched its predicate again five
+  minutes later, and again after that: a session that ended in March was still
+  being revoked in June. Re-revoking an absent grant is a tolerated 404, which is
+  why this was silent — **the sweep never failed, so it looked like it was
+  working**.
+
+  The wasted broker calls are not the part that matters. The query carries
+  `LIMIT 200` with no progress marker, so once more than two hundred rows match —
+  which grows as an install ages and never shrinks — the sweep revisits an
+  arbitrary two hundred and the rest may never be reached. The grants that most
+  need revoking are exactly the ones that can sit behind that limit
+  indefinitely.
+
+  **Migration v193** adds `pam_entry_sessions.guac_revoked_at` and a partial
+  index on the sweep's own predicate, and the marker is written **only when the
+  broker confirms** the revoke: a refused revoke leaves the row unmarked so the
+  next tick retries, which is the same posture the lifecycle sweep takes with
+  session termination and for the same reason — a grant recorded as revoked while
+  the access survives is the silent hole this sweep exists to close.
+
+  Measured against a real PostgreSQL and an HTTP broker: the first pass revokes
+  the ended session and the twelve-hour-stale one and leaves the live one alone;
+  **the second pass calls the broker zero times**. Three mutations red — dropping
+  the marker from the predicate (which is the old sweep, and it revokes twice),
+  recording a refused revoke as done, and collapsing the staleness window so live
+  sessions are cut mid-use. The census entry for `guacamole_users.go` moves from
+  undecided to `idempotent`, naming both of the ticker's sweeps; the backlog is
+  down from seven to six.
+
+- **The Ziti fabric health monitor wrote every fabric fact once per replica.**
+  The 30-second tick is two kinds of work in one function, and the census
+  question about it had both answers. The health check and the
+  re-authentication are per-process and must run in **every** replica: each pod
+  holds its own SDK session, and a pod that skipped its own re-auth because
+  another pod was the leader would stay disconnected. The seven metrics it then
+  wrote are the opposite — routers online, routers total, services, identities
+  and policies count are properties of the **fabric**, not of the pod.
+
+  So eight replicas wrote the same fact eight times, and the cost was not only
+  storage: the fabric overview reads the most recent 50 rows of `ziti_metrics`,
+  so that window fell from roughly three and a half minutes of history to
+  twenty-six seconds of the same instant, eight times over. The metric half is
+  now gated per tick with `leader.IsLeaderForTick`; the health check and re-auth
+  are untouched.
+
+  Measured both directions: eight replicas racing one bucket against a real
+  Redis and a real database write **seven** rows (with the gate consulted but
+  ignored they write **fifty-six**), and an install with no Redis still records
+  its metrics, because one replica has no peer to coordinate with. The census
+  entry moves from undecided to `leader`; the backlog is down from eight to
+  seven.
+
+- **The signing-key refresh raced every SAML signature.** `refreshSigner` swaps
+  an immutable snapshot through an atomic pointer — the right shape — and then
+  *also* assigned the plain fields `s.privateKey` and `s.publicKey` "for any
+  direct readers". Those readers are the SAML paths: `signRedirectBinding`,
+  `signAssertionEnveloped`, `samlSigningCertBase64` and the step-up token
+  issuer all dereference `s.privateKey` **on request goroutines**, with no lock
+  and no atomic. And it is not only the refresh ticker that writes:
+  `verificationKeyfunc` refreshes inline when a token carries an unknown kid, so
+  one request signing a SAML redirect could race another request verifying a
+  token.
+
+  `go test -race` reported it on the first attempt, against two objects: the
+  pointer field, and the `rsa.PrivateKey` struct it pointed at. The refresh now
+  writes nothing but the atomic pointer, and every reader goes through
+  `activePrivateKey()` / `activePublicKey()`, which read the snapshot and fall
+  back to the construction-time key (unit tests build a `Service` with no
+  database behind it). The legacy fields are written once, in `NewService`, and
+  never again.
+
+  **The two halves of the fix are not interchangeable, and that was measured
+  rather than assumed.** A race needs both the write and the unsynchronised
+  read. The `-race` test covers the read half — put a field read back into a
+  signing path and it goes red — while restoring only the write leaves it
+  green, because nothing reads the field concurrently any more. So the write
+  half has its own derived guard, which reads the package's own sources and
+  fails on any assignment to those fields outside construction.
+
+  Found while auditing `signer.go` for the sweeps census, where the entry is
+  (correctly) `per-process`: gating the refresh behind a leader would leave
+  eleven of twelve oauth-service replicas serving a stale JWKS.
+
+### Added
+
+- **The posture expiry sweep, decided — and the idempotence guard narrowed from
+  the file to the function.** `internal/access/posture.go` starts a 15-minute
+  ticker whose whole body is `DELETE FROM device_posture_results WHERE
+  expires_at < NOW()`. Repetition is close to free there, so the half worth
+  measuring was the other one: **the sweep decides nothing.**
+
+  That mattered because the table it empties feeds the access proxy's posture
+  enforcement, and a sweep that deletes a device's posture data could plausibly
+  be the thing that moves that device from allowed to denied — a transition, on
+  a Zero Trust enforcement path, running once per replica. It is not.
+  `EvaluateIdentityPosture` fails a check whose result has **expired** and fails
+  a check with **no result at all** in exactly the same way, so removing an
+  already-expired row cannot change any decision. The new test asserts the
+  decision itself, per check, across the sweep rather than the row count: a row
+  count would pass for a sweep that also deleted live results, and that sweep
+  would be a silent denial of service against every device whose posture was
+  still valid. Three mutations turn it red — deleting the live rows instead of
+  the expired ones, dropping the `WHERE` entirely, and deleting nothing at all.
+
+  **The census guard was wrong about scope, and this entry is what exposed it.**
+  It scanned the whole *file* for the two shapes that break idempotence, which
+  worked for a 145-line file holding nothing but its sweep and fired a false
+  positive on the second entry tried: `posture.go` is 1054 lines with five
+  unrelated `INSERT`s on the request path. What the answer is about is the
+  sweep, so an `idempotent` entry now names its function and the guard reads
+  that function's body — and an entry that names no function, or names one that
+  is not in the file, fails. The undecided backlog is down from ten to nine.
+
+- **`sms_config_watcher.go` decided: per-process, and gating it would be the
+  defect.** The tick reads one `system_settings` row and writes nothing — it
+  swaps *this process's* SMS provider and OTP settings, and its `lastUpdatedAt`
+  high-water mark is a local in the watcher's own goroutine. A leader-gated
+  version would leave every non-leader pod sending codes through the provider an
+  administrator had just replaced, for as long as that pod stayed up. Backlog
+  nine to eight.
+
+
 - **The sweeps census gains a fifth answer — "idempotent" — and the first entry
   measured rather than argued.** `internal/access/lifecycle_sweep.go` runs in
   every replica and its own comment said that was fine: "every statement only

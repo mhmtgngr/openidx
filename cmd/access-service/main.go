@@ -491,7 +491,15 @@ func main() {
 			// read proxy_routes/ziti_services install-wide, with no request org.
 			zitiCtx, zitiCancel := context.WithCancel(orgctx.WithBypassRLS(context.Background()))
 			zitiProvider.Swap(zm, zitiCancel)
-			zm.StartHealthMonitor(zitiCtx)
+			// The health cycle's metric half is install-wide (routers online,
+			// service and identity counts are fabric facts, not pod facts), so
+			// it runs on one replica per tick; the health check and re-auth
+			// stay per-process. nil here means one replica, which is correct.
+			var healthLeader *goredis.Client
+			if redis != nil {
+				healthLeader = redis.Client
+			}
+			zm.StartHealthMonitor(zitiCtx, healthLeader)
 			zm.StartCertificateMonitor(zitiCtx)
 			zm.StartUserSyncPoller(zitiCtx)
 			zm.StartPostureResultExpiryChecker(zitiCtx)

@@ -102,11 +102,14 @@ func (k *samlKeyStore) GetKeyPair() (*rsa.PrivateKey, []byte, error) {
 // element in place with a compliant enveloped RSA-SHA256 signature, and returns
 // the re-serialized document.
 func (s *Service) signAssertionEnveloped(responseXML []byte) (string, error) {
-	if s.privateKey == nil {
+	priv := s.activePrivateKey()
+	if priv == nil {
 		return "", fmt.Errorf("no SAML signing key configured")
 	}
 
-	certDER, err := samlCertificate(s.issuer, s.privateKey)
+	// Read once: the certificate and the signing key must be the same key even
+	// if a rotation lands between the two lines.
+	certDER, err := samlCertificate(s.issuer, priv)
 	if err != nil {
 		return "", err
 	}
@@ -123,7 +126,7 @@ func (s *Service) signAssertionEnveloped(responseXML []byte) (string, error) {
 
 	ctx := &dsig.SigningContext{
 		Hash:          crypto.SHA256,
-		KeyStore:      &samlKeyStore{priv: s.privateKey, certDER: certDER},
+		KeyStore:      &samlKeyStore{priv: priv, certDER: certDER},
 		IdAttribute:   "ID",
 		Prefix:        "ds",
 		Canonicalizer: dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(""),
@@ -178,7 +181,7 @@ func findAssertionElement(el *etree.Element) *etree.Element {
 // samlSigningCertBase64 returns the base64 DER of the IdP's real X.509 signing
 // certificate, for publication in IdP metadata (<ds:X509Certificate>).
 func (s *Service) samlSigningCertBase64() (string, error) {
-	certDER, err := samlCertificate(s.issuer, s.privateKey)
+	certDER, err := samlCertificate(s.issuer, s.activePrivateKey())
 	if err != nil {
 		return "", err
 	}
