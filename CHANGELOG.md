@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The stale Guacamole grant sweep never stopped, and its `LIMIT` was a ceiling
+  rather than a batch size.** `sweepStaleGuacGrants` revokes the per-connection
+  READ an ended PAM session left behind on a standing Guacamole account — the
+  safety net for the browser-closed sessions nothing else cleans up. It wrote
+  nothing, so the rows it had just handled matched its predicate again five
+  minutes later, and again after that: a session that ended in March was still
+  being revoked in June. Re-revoking an absent grant is a tolerated 404, which is
+  why this was silent — **the sweep never failed, so it looked like it was
+  working**.
+
+  The wasted broker calls are not the part that matters. The query carries
+  `LIMIT 200` with no progress marker, so once more than two hundred rows match —
+  which grows as an install ages and never shrinks — the sweep revisits an
+  arbitrary two hundred and the rest may never be reached. The grants that most
+  need revoking are exactly the ones that can sit behind that limit
+  indefinitely.
+
+  **Migration v193** adds `pam_entry_sessions.guac_revoked_at` and a partial
+  index on the sweep's own predicate, and the marker is written **only when the
+  broker confirms** the revoke: a refused revoke leaves the row unmarked so the
+  next tick retries, which is the same posture the lifecycle sweep takes with
+  session termination and for the same reason — a grant recorded as revoked while
+  the access survives is the silent hole this sweep exists to close.
+
+  Measured against a real PostgreSQL and an HTTP broker: the first pass revokes
+  the ended session and the twelve-hour-stale one and leaves the live one alone;
+  **the second pass calls the broker zero times**. Three mutations red — dropping
+  the marker from the predicate (which is the old sweep, and it revokes twice),
+  recording a refused revoke as done, and collapsing the staleness window so live
+  sessions are cut mid-use. The census entry for `guacamole_users.go` moves from
+  undecided to `idempotent`, naming both of the ticker's sweeps; the backlog is
+  down from seven to six.
+
 - **The Ziti fabric health monitor wrote every fabric fact once per replica.**
   The 30-second tick is two kinds of work in one function, and the census
   question about it had both answers. The health check and the

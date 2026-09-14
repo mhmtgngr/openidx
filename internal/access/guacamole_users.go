@@ -238,30 +238,60 @@ func (s *Service) resolveActiveSessionOwner(ctx context.Context, gc *GuacamoleCl
 // already-absent grant is a tolerated 404 no-op, and only ended/stale rows are
 // swept, so an active browser session is never cut mid-use. Runs under a
 // bypass-RLS background context.
+//
+// IT RECORDS WHAT IT REVOKED, and that is not bookkeeping. Until v193 it wrote
+// nothing, so the rows it had just handled matched its predicate again on the
+// next tick and on every tick after that: a session that ended in March was
+// still being revoked in June, twelve times an hour, per replica. The tolerated
+// 404 is why nobody noticed — the sweep looked like it was working because it
+// never failed. The real cost was the LIMIT: two hundred rows, no ordering, no
+// progress, so once more than two hundred matched (which grows as an install
+// ages and never shrinks) it revisited an arbitrary two hundred and the rest
+// might never be reached. The grants that most need revoking are exactly the
+// ones that can sit behind that limit indefinitely.
+//
+// The marker is written only when the broker CONFIRMS the revoke. A failed
+// revoke, a broker that is not configured, or one without per-user identities
+// leaves the row unmarked so the next tick tries again — which is the same
+// posture the lifecycle sweep takes with Guacamole session termination.
 func (s *Service) sweepStaleGuacGrants(ctx context.Context) {
 	//orgscope:ignore pam_entry_sessions,pam_entries cross-org maintenance sweep runs under a bypass-RLS background context
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT DISTINCT pes.guac_username, pes.guac_connection_id, COALESCE(e.reach_mode,'')
+		SELECT pes.id, pes.guac_username, pes.guac_connection_id, COALESCE(e.reach_mode,'')
 		  FROM pam_entry_sessions pes JOIN pam_entries e ON e.id = pes.entry_id
 		 WHERE pes.guac_username IS NOT NULL AND pes.guac_connection_id IS NOT NULL
+		   AND pes.guac_revoked_at IS NULL
 		   AND (pes.status <> 'active' OR pes.started_at < NOW() - INTERVAL '12 hours')
+		 ORDER BY pes.started_at
 		 LIMIT 200`)
 	if err != nil {
 		s.logger.Warn("sweepStaleGuacGrants: query failed", zap.Error(err))
 		return
 	}
-	type g struct{ user, conn, reach string }
+	type g struct{ id, user, conn, reach string }
 	var targets []g
 	for rows.Next() {
 		var t g
-		if rows.Scan(&t.user, &t.conn, &t.reach) == nil {
+		if rows.Scan(&t.id, &t.user, &t.conn, &t.reach) == nil {
 			targets = append(targets, t)
 		}
 	}
 	rows.Close()
 	for _, t := range targets {
-		if b := s.brokerFor(t.reach); b != nil && b.perUserIdentities {
-			_ = b.revokeConnectionRead(ctx, t.user, t.conn)
+		b := s.brokerFor(t.reach)
+		if b == nil || !b.perUserIdentities {
+			continue
+		}
+		if err := b.revokeConnectionRead(ctx, t.user, t.conn); err != nil {
+			s.logger.Warn("sweepStaleGuacGrants: revoke failed (will retry next tick)",
+				zap.String("session", t.id), zap.Error(err))
+			continue
+		}
+		if _, err := s.db.Pool.Exec(ctx,
+			//orgscope:ignore keyed by primary key resolved from the annotated install-wide sweep above
+			`UPDATE pam_entry_sessions SET guac_revoked_at = NOW()
+			  WHERE id = $1 AND guac_revoked_at IS NULL`, t.id); err != nil {
+			s.logger.Warn("sweepStaleGuacGrants: marking the revoke failed", zap.String("session", t.id), zap.Error(err))
 		}
 	}
 }

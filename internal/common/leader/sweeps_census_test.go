@@ -74,7 +74,8 @@ const (
 type sweep struct {
 	how    string
 	reason string
-	// fn names the sweep's own function, and an `idempotent` entry must set
+	// fn names the sweep's own function (or functions, comma-separated, when
+	// one ticker drives more than one), and an `idempotent` entry must set
 	// it. The first version of this guard scanned the whole FILE for the two
 	// shapes that break idempotence, which worked for a 145-line file holding
 	// nothing but its sweep and fired a false positive on the second entry
@@ -104,6 +105,19 @@ var tickerCensus = map[string]sweep{
 		"a device between allowed and denied. The sweep reclaims storage; it is not the thing that ages a device to " +
 		"failing, and there is no revocation or notification for a second replica to fire twice.",
 		fn: "cleanExpiredPostureResults"},
+
+	"internal/access/guacamole_users.go": {how: coordIdempotent, reason: "MEASURED (guac_grant_sweep_testdb_test.go). One ticker, two sweeps, and BOTH now clear their own " +
+		"work. The deprovision sweep deletes the broker account and then the mapping row, and a second replica's " +
+		"delete of an account already gone is the tolerated 404, so the row goes either way and the pair " +
+		"converges. The stale-grant sweep did NOT clear its work: it revoked the READ an ended session left " +
+		"behind and wrote nothing, so the same rows matched on every tick forever -- invisible because " +
+		"re-revoking an absent grant is also a tolerated 404, i.e. the sweep looked like it worked because it " +
+		"never failed. The cost that mattered was not the wasted calls but the LIMIT 200 with no progress: past " +
+		"two hundred matching rows it revisited an arbitrary two hundred and the rest might never be reached, " +
+		"and the grants most needing revocation are exactly the ones that sit behind it. v193 adds " +
+		"guac_revoked_at, written only when the broker CONFIRMS, so the backlog drains and the second pass " +
+		"calls the broker zero times",
+		fn: "sweepStaleGuacGrants,sweepDeprovisionGuacUsers"},
 
 	// -- Once per process on purpose. Gating any of these would be the defect.
 	"internal/common/leader/leader.go":     {how: coordPerProcess, reason: "this IS the gate: RunPeriodic's own ticker drives the per-tick leader election"},
@@ -135,7 +149,6 @@ var tickerCensus = map[string]sweep{
 	// -- Not yet audited. Each needs the same question answered: at eight
 	// replicas, does this do its work eight times, and does that matter?
 	"internal/access/agent_api.go":                {how: coordUndecided, reason: "agent-facing ticker: does a pass push anything to an agent, or only read? a push repeated per replica reaches the device that many times"},
-	"internal/access/guacamole_users.go":          {how: coordUndecided, reason: "reconciles users into Guacamole: is the upsert keyed so two replicas converge, or can both create the same account?"},
 	"internal/access/remote_support_api.go":       {how: coordUndecided, reason: "25s ticker: is it per live support session (per-process, fine) or an install-wide sweep?"},
 	"internal/access/remote_support_retention.go": {how: coordUndecided, reason: "seals and deletes recordings: deletion is idempotent, but sealing is a chain-shaped write and two sealers may not both extend it"},
 	"internal/access/ziti_hardening.go":           {how: coordUndecided, reason: "hourly hardening pass against the Ziti controller: N replicas is N times the controller API calls even if each pass converges"},
@@ -232,17 +245,20 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 					"the answer is about the sweep, not the file", f)
 				continue
 			}
-			body, ok := functionBody(src, s.fn)
-			if !ok {
-				t.Errorf("%s names %s(), which is not in the file", f, s.fn)
-				continue
-			}
-			if strings.Contains(body, "INSERT INTO") {
-				t.Errorf("%s: %s() is recorded as idempotent but INSERTs; an insert per pass is a row per replica", f, s.fn)
-			}
-			if strings.Contains(body, "+ 1") || strings.Contains(body, "+1 ") {
-				t.Errorf("%s: %s() is recorded as idempotent but looks like it increments; "+
-					"a read-modify-write is the shape that billed a customer once per replica", f, s.fn)
+			for _, fn := range strings.Split(s.fn, ",") {
+				fn = strings.TrimSpace(fn)
+				body, ok := functionBody(src, fn)
+				if !ok {
+					t.Errorf("%s names %s(), which is not in the file", f, fn)
+					continue
+				}
+				if strings.Contains(body, "INSERT INTO") {
+					t.Errorf("%s: %s() is recorded as idempotent but INSERTs; an insert per pass is a row per replica", f, fn)
+				}
+				if strings.Contains(body, "+ 1") || strings.Contains(body, "+1 ") {
+					t.Errorf("%s: %s() is recorded as idempotent but looks like it increments; "+
+						"a read-modify-write is the shape that billed a customer once per replica", f, fn)
+				}
 			}
 		case coordAdvisory:
 			if !strings.Contains(src, "pg_advisory") {
@@ -261,7 +277,7 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 // register becoming the place drift hides. This pins its size: shrinking it is
 // free, growing it takes an edit here and a sentence about why.
 func TestTheUndecidedBacklogDoesNotGrow(t *testing.T) {
-	const known = 7
+	const known = 6
 	n := 0
 	for _, s := range tickerCensus {
 		if s.how == coordUndecided {

@@ -423,6 +423,23 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # A sweep with no stopping condition looks exactly like one that works:
+      # the stale Guacamole grant sweep re-revoked the same ended sessions on
+      # every tick forever, silently, because re-revoking an absent grant is a
+      # tolerated 404. The measurement is that the second pass stops.
+      - name: The stale Guacamole grant sweep stops when it is done
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/access/ -run 'StaleGuacGrantSweep|RefusedRevoke' -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestTheStaleGuacGrantSweepStopsWhenItIsDone \
+                      TestARefusedRevokeIsNotRecordedAsDone; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # The fabric health tick writes seven ziti_metrics rows, and those are
       # FABRIC facts, not pod facts. Ungated, eight replicas wrote fifty-six.
       - name: One replica records the fabric metrics per tick
