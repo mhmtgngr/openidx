@@ -419,7 +419,8 @@ jobs:
                       TestEightConcurrentLifecycleSweepsConvergeTheSameWay \
                       TestThePostureExpirySweepChangesNoAccessDecision \
                       TestEightConcurrentPostureExpirySweepsConvergeTheSameWay \
-                      TestEightConcurrentRemoteSupportJanitorsConvergeTheSameWay; do
+                      TestEightConcurrentRemoteSupportJanitorsConvergeTheSameWay \
+                      TestEightConcurrentGracePeriodEnforcersSuspendAndAnnounceOnce; do
             grep -q -- "--- PASS: $want " <<<"$out" \
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done

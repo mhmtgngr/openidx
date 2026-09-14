@@ -130,6 +130,17 @@ var tickerCensus = map[string]sweep{
 		"definition, and gating it would mean a leader holding another pod's websocket open",
 		fn: "expireOrphanSessions"},
 
+	"internal/access/agent_api.go": {how: coordIdempotent, reason: "MEASURED (grace_period_enforcer_testdb_test.go). The census question was whether a pass PUSHES " +
+		"anything, and it does: every agent it suspends gets an agent.suspended row in the unified audit " +
+		"stream, which is precisely the shape the Guacamole audit sync got wrong (one row per replica for one " +
+		"recorded event). It is right here because the claim and the work are the SAME statement -- UPDATE ... " +
+		"WHERE compliance_status = 'grace_period' ... RETURNING -- so a second replica blocks on the row lock, " +
+		"re-evaluates against the committed row, gets nothing back and never reaches the insert. Eight " +
+		"concurrent enforcers suspend two agents and announce each once. NOTE the guard reads this function " +
+		"and not its callees, so the audit INSERT is invisible to it; what makes the insert safe is the " +
+		"RETURNING above it, and that is what the measurement is of",
+		fn: "enforceExpiredGracePeriods"},
+
 	// -- Once per process on purpose. Gating any of these would be the defect.
 	"internal/common/leader/leader.go":     {how: coordPerProcess, reason: "this IS the gate: RunPeriodic's own ticker drives the per-tick leader election"},
 	"internal/common/shutdown/graceful.go": {how: coordPerProcess, reason: "watches THIS process's health while it drains; a leader draining on another pod's behalf is meaningless"},
@@ -159,7 +170,6 @@ var tickerCensus = map[string]sweep{
 
 	// -- Not yet audited. Each needs the same question answered: at eight
 	// replicas, does this do its work eight times, and does that matter?
-	"internal/access/agent_api.go":                {how: coordUndecided, reason: "agent-facing ticker: does a pass push anything to an agent, or only read? a push repeated per replica reaches the device that many times"},
 	"internal/access/remote_support_retention.go": {how: coordUndecided, reason: "seals and deletes recordings: deletion is idempotent, but sealing is a chain-shaped write and two sealers may not both extend it"},
 	"internal/access/ziti_hardening.go":           {how: coordUndecided, reason: "hourly hardening pass against the Ziti controller: N replicas is N times the controller API calls even if each pass converges"},
 	"internal/access/ziti_reconciler.go": {how: coordUndecided, reason: "READ, NOT MEASURED. runLocked holds a process-local mutex, which reads like coordination and coordinates " +
@@ -287,7 +297,7 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 // register becoming the place drift hides. This pins its size: shrinking it is
 // free, growing it takes an edit here and a sentence about why.
 func TestTheUndecidedBacklogDoesNotGrow(t *testing.T) {
-	const known = 5
+	const known = 4
 	n := 0
 	for _, s := range tickerCensus {
 		if s.how == coordUndecided {

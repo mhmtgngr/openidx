@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The agent grace-period enforcer decided: `idempotent`, and it is the first
+  entry that also *emits*.** The census question was whether a pass pushes
+  anything, and it does — every agent it suspends gets an `agent.suspended` row
+  in the unified audit stream. That is exactly the shape the Guacamole external
+  audit sync got wrong: one row per replica for a single recorded event, which on
+  a compliance product is a wrong answer rather than waste.
+
+  It is right here because **the claim and the work are the same statement**:
+  `UPDATE … WHERE compliance_status = 'grace_period' … RETURNING`. A second
+  replica blocks on the row lock, re-evaluates against the committed row, gets
+  nothing back, and so never reaches the audit insert. Eight concurrent enforcers
+  suspend two agents and announce each once; the agent still inside its grace
+  period is untouched. Two mutations red: making the predicate non-self-clearing,
+  and inverting the grace window so a device inside its grace period is
+  suspended.
+
+  **Each replica in that test gets its own connection pool, and that is not
+  tidiness.** The sweep holds the `RETURNING` cursor on one connection while
+  writing audit rows on another, so a replica needs two at once — eight
+  goroutines sharing one pool is one process pretending to be eight, and it
+  deadlocks on pool exhaustion the moment more than one gets rows back. Found the
+  hard way: the first mutation run **hung instead of failing**. Backlog five to
+  four.
+
 - **The remote-support janitor decided: `idempotent`, measured.** It sets
   `status='expired'` on rows `WHERE status IN ('pending','active')` — the write
   makes the predicate false, so a second replica matches nothing. Eight
