@@ -469,7 +469,11 @@ jobs:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
-          out=$(go test ./internal/oauth/ -run 'Signer|LegacySigningFields' -race -count=1 -v 2>&1)
+          # -timeout chosen rather than inherited (scripts/check-race-timeout.sh):
+          # these two tests are seconds of work even under -race, so five
+          # minutes is generous for a slow runner and still fails a genuine
+          # hang long before Go's ten-minute default would.
+          out=$(go test ./internal/oauth/ -run 'Signer|LegacySigningFields' -race -timeout 5m -count=1 -v 2>&1)
           echo "$out"
           for want in TestRefreshingTheSignerDoesNotRaceWithSAMLSigning \
                       TestTheLegacySigningFieldsAreWrittenOnlyAtConstruction; do
