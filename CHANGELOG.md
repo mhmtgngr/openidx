@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The remote-support janitor decided: `idempotent`, measured.** It sets
+  `status='expired'` on rows `WHERE status IN ('pending','active')` — the write
+  makes the predicate false, so a second replica matches nothing. Eight
+  concurrent janitors expire the two orphans once, leave the session with recent
+  activity alone, and land settled.
+
+  The test digests the **values** rather than counting rows, and here that is not
+  a technicality: the failure mode is a sweep that re-applies itself and rewrites
+  `ended_at` with a fresh `NOW()` on every tick, and on a product that records
+  support sessions for compliance, an `ended_at` that drifts forward is a wrong
+  answer to "when did this session end", not a wasted write. Two mutations red:
+  dropping the self-clearing predicate, and inverting the idle window so live
+  sessions are aged out from under their operator.
+
+  The file's *other* ticker is not a sweep — `runPeer`'s is a per-websocket
+  keepalive for one connected peer, per-process by definition, and gating it
+  would mean a leader holding another pod's websocket open. Backlog six to five.
+
 ### Fixed
 
 - **The stale Guacamole grant sweep never stopped, and its `LIMIT` was a ceiling

@@ -119,6 +119,17 @@ var tickerCensus = map[string]sweep{
 		"calls the broker zero times",
 		fn: "sweepStaleGuacGrants,sweepDeprovisionGuacUsers"},
 
+	"internal/access/remote_support_api.go": {how: coordIdempotent, reason: "MEASURED (remote_support_janitor_testdb_test.go). The janitor sets status='expired' on rows WHERE " +
+		"status IN ('pending','active'), which is the shape the answer rests on: the write makes the predicate " +
+		"false, so a second replica matches nothing. Eight concurrent janitors expire the two orphans once, " +
+		"leave the session with recent activity alone, and land settled -- and the test digests the VALUES " +
+		"rather than counting rows, because the failure mode here is a sweep re-applying itself and rewriting " +
+		"ended_at with a fresh NOW() on every tick, which on a product that records support sessions for " +
+		"compliance is a wrong answer to 'when did this end', not a wasted write. The file's OTHER ticker is " +
+		"not a sweep: runPeer's is a per-websocket keepalive for one connected peer, per-process by " +
+		"definition, and gating it would mean a leader holding another pod's websocket open",
+		fn: "expireOrphanSessions"},
+
 	// -- Once per process on purpose. Gating any of these would be the defect.
 	"internal/common/leader/leader.go":     {how: coordPerProcess, reason: "this IS the gate: RunPeriodic's own ticker drives the per-tick leader election"},
 	"internal/common/shutdown/graceful.go": {how: coordPerProcess, reason: "watches THIS process's health while it drains; a leader draining on another pod's behalf is meaningless"},
@@ -149,7 +160,6 @@ var tickerCensus = map[string]sweep{
 	// -- Not yet audited. Each needs the same question answered: at eight
 	// replicas, does this do its work eight times, and does that matter?
 	"internal/access/agent_api.go":                {how: coordUndecided, reason: "agent-facing ticker: does a pass push anything to an agent, or only read? a push repeated per replica reaches the device that many times"},
-	"internal/access/remote_support_api.go":       {how: coordUndecided, reason: "25s ticker: is it per live support session (per-process, fine) or an install-wide sweep?"},
 	"internal/access/remote_support_retention.go": {how: coordUndecided, reason: "seals and deletes recordings: deletion is idempotent, but sealing is a chain-shaped write and two sealers may not both extend it"},
 	"internal/access/ziti_hardening.go":           {how: coordUndecided, reason: "hourly hardening pass against the Ziti controller: N replicas is N times the controller API calls even if each pass converges"},
 	"internal/access/ziti_reconciler.go": {how: coordUndecided, reason: "READ, NOT MEASURED. runLocked holds a process-local mutex, which reads like coordination and coordinates " +
@@ -277,7 +287,7 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 // register becoming the place drift hides. This pins its size: shrinking it is
 // free, growing it takes an edit here and a sentence about why.
 func TestTheUndecidedBacklogDoesNotGrow(t *testing.T) {
-	const known = 6
+	const known = 5
 	n := 0
 	for _, s := range tickerCensus {
 		if s.how == coordUndecided {
