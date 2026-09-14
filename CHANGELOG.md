@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The sweeps census gains a fifth answer — "idempotent" — and the first entry
+  measured rather than argued.** `internal/access/lifecycle_sweep.go` runs in
+  every replica and its own comment said that was fine: "every statement only
+  touches still-active rows, so repeat ticks (or replicas racing) are
+  harmless." That is a claim about SQL under concurrency, which is exactly the
+  kind this programme keeps finding true of one process and false of several.
+
+  It holds, and now there is a measurement: **eight concurrent sweeps land on
+  the same state as one, and land settled** — a further pass after them changes
+  nothing. The reason is worth naming: the sweep's writes are `UPDATE … WHERE
+  <still active>`, and under READ COMMITTED a second updater blocks on the row
+  lock and then re-evaluates its predicate against the committed row, so it
+  matches nothing. **The database does the coordinating**, which is why no
+  leader and no claim is needed here.
+
+  Four mutations turn it red: pushing the grant expiry into the future instead
+  of to now, dropping the still-active predicate from the checkout revocation,
+  revoking enabled users too, and dropping the id filter from the elevation
+  marking.
+
+  **The first draft of the test missed the second of those.** It counted rows —
+  "how many checkouts carry a `returned_at`" — so a sweep rewriting that
+  timestamp with a fresh `NOW()` on every pass moved no count. The predicate is
+  precisely what makes the statement idempotent, so the test now digests the
+  *values* it would rewrite rather than counting the rows that have one.
+
+  The `idempotent` answer rests on its reason rather than on a mechanism, so
+  the guard checks the two shapes that were actually wrong in this tree: an
+  `INSERT` per pass (which wrote a duplicate audit row per replica) and a
+  read-modify-write increment (which billed a customer once per replica).
+  Neither proves idempotence; both catch its most common absence. The undecided
+  backlog is down from eleven to ten.
+
+
 - **Admission control: a bound on concurrency, which is not a rate limit.**
   `middleware.Admission` caps how many requests a process carries *at once* and
   refuses the rest with 503 and an honest `Retry-After`. The rate limiter
