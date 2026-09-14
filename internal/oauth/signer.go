@@ -30,7 +30,7 @@ func (s *Service) signingKey() (string, *rsa.PrivateKey) {
 	if snap := s.signer.Load(); snap != nil {
 		return snap.kid, snap.priv
 	}
-	return signingkeys.LegacyKid, s.privateKey
+	return signingkeys.LegacyKid, s.activePrivateKey()
 }
 
 // verificationKeyfunc is the jwt.Keyfunc for tokens this service issued. It
@@ -41,7 +41,7 @@ func (s *Service) signingKey() (string, *rsa.PrivateKey) {
 func (s *Service) verificationKeyfunc(token *jwt.Token) (interface{}, error) {
 	snap := s.signer.Load()
 	if snap == nil {
-		return s.publicKey, nil
+		return s.activePublicKey(), nil
 	}
 	kid, _ := token.Header["kid"].(string)
 	if kid == "" {
@@ -89,10 +89,37 @@ func (s *Service) refreshSigner(ctx context.Context) error {
 		})
 	}
 	s.signer.Store(snap)
-	// Keep the legacy fields tracking the active key for any direct readers.
-	s.privateKey = snap.priv
-	s.publicKey = &snap.priv.PublicKey
 	return nil
+}
+
+// activePrivateKey is the key the service signs with RIGHT NOW: the snapshot's
+// if there is one, the construction-time key otherwise (unit tests build a
+// Service directly, with no database behind it).
+//
+// It exists because refreshSigner used to ALSO assign s.privateKey and
+// s.publicKey "for any direct readers", and those readers are the SAML paths --
+// which run on request goroutines. That made an unsynchronised pointer write
+// race every SAML signature, and not only from the refresh ticker:
+// verificationKeyfunc refreshes inline when a token carries an unknown kid, so
+// one request could race another. `go test -race` reported it against
+// signRedirectBinding on the first attempt
+// (internal/oauth/signer_race_testdb_test.go).
+//
+// The snapshot was always the right mechanism; the fix is that the legacy
+// fields are now written once, at construction, and never again.
+func (s *Service) activePrivateKey() *rsa.PrivateKey {
+	if snap := s.signer.Load(); snap != nil {
+		return snap.priv
+	}
+	return s.privateKey
+}
+
+// activePublicKey is the verification half of activePrivateKey.
+func (s *Service) activePublicKey() *rsa.PublicKey {
+	if priv := s.activePrivateKey(); priv != nil {
+		return &priv.PublicKey
+	}
+	return s.publicKey
 }
 
 // signerRefreshLoop re-reads the key set periodically so a rotation

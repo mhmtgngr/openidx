@@ -111,8 +111,17 @@ var tickerCensus = map[string]sweep{
 	"internal/metrics/prometheus.go":       {how: coordPerProcess, reason: "each replica reports its own metrics; gating would leave every non-leader pod reporting nothing"},
 	"internal/metrics/db.go":               {how: coordPerProcess, reason: "samples THIS process's pool gauges; the numbers are per-pod by definition"},
 	"internal/audit/stream.go":             {how: coordPerProcess, reason: "websocket keepalive for one client connection, not a sweep"},
-	"internal/oauth/signer.go":             {how: coordPerProcess, reason: "refreshes this process's signing-key cache; every pod needs current keys, not just the leader"},
-	"cmd/openidx/commands/status.go":       {how: coordPerProcess, reason: "the CLI's --watch refresh loop, one per invocation of a command a human is running"},
+	"internal/oauth/signer.go": {how: coordPerProcess, reason: "refreshes this process's signing-key cache, and gating it would be the defect: eleven of twelve " +
+		"oauth-service replicas would serve a stale JWKS. READ TWICE, because the tick is not only a read -- it also " +
+		"calls signingkeys.PruneExpired, a DELETE of retired keys past their grace, which is a predicate delete and " +
+		"so costs nothing extra per replica. The audit found something else in the same function: the refresh ALSO " +
+		"assigned s.privateKey / s.publicKey, which the SAML signing paths read on request goroutines -- an " +
+		"unsynchronised write racing every SAML signature. Fixed (signer_race_testdb_test.go, measured with -race)"},
+	"internal/identity/sms_config_watcher.go": {how: coordPerProcess, reason: "reads one system_settings row and writes NOTHING: the tick swaps this process's own SMS " +
+		"provider and OTP settings, and its lastUpdatedAt high-water mark is a local variable in the watcher's own " +
+		"goroutine. Gating it would be the defect -- a non-leader pod would keep sending codes through the provider " +
+		"an administrator just replaced, for as long as it stays up"},
+	"cmd/openidx/commands/status.go": {how: coordPerProcess, reason: "the CLI's --watch refresh loop, one per invocation of a command a human is running"},
 
 	// -- Not yet audited. Each needs the same question answered: at eight
 	// replicas, does this do its work eight times, and does that matter?
@@ -132,8 +141,7 @@ var tickerCensus = map[string]sweep{
 		"something should converge it immediately, and only the periodic sweep needs one owner. NOT done here " +
 		"because there is no Ziti controller to measure against, and a claim about this subsystem that is read " +
 		"rather than measured is the kind this register exists to keep out of the 'decided' column."},
-	"internal/access/ziti_user_sync.go":       {how: coordUndecided, reason: "syncs users into Ziti: same question as the reconciler, plus whether enrolment tokens are minted per pass"},
-	"internal/identity/sms_config_watcher.go": {how: coordUndecided, reason: "probably per-process (it refreshes this pod's provider cache) -- confirm it writes nothing shared, then record it as such"},
+	"internal/access/ziti_user_sync.go": {how: coordUndecided, reason: "syncs users into Ziti: same question as the reconciler, plus whether enrolment tokens are minted per pass"},
 }
 
 // TestEveryTickerIsAccountedFor is derived rather than listed: it finds the
@@ -245,7 +253,7 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 // register becoming the place drift hides. This pins its size: shrinking it is
 // free, growing it takes an edit here and a sentence about why.
 func TestTheUndecidedBacklogDoesNotGrow(t *testing.T) {
-	const known = 9
+	const known = 8
 	n := 0
 	for _, s := range tickerCensus {
 		if s.how == coordUndecided {

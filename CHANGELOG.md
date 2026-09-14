@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The signing-key refresh raced every SAML signature.** `refreshSigner` swaps
+  an immutable snapshot through an atomic pointer — the right shape — and then
+  *also* assigned the plain fields `s.privateKey` and `s.publicKey` "for any
+  direct readers". Those readers are the SAML paths: `signRedirectBinding`,
+  `signAssertionEnveloped`, `samlSigningCertBase64` and the step-up token
+  issuer all dereference `s.privateKey` **on request goroutines**, with no lock
+  and no atomic. And it is not only the refresh ticker that writes:
+  `verificationKeyfunc` refreshes inline when a token carries an unknown kid, so
+  one request signing a SAML redirect could race another request verifying a
+  token.
+
+  `go test -race` reported it on the first attempt, against two objects: the
+  pointer field, and the `rsa.PrivateKey` struct it pointed at. The refresh now
+  writes nothing but the atomic pointer, and every reader goes through
+  `activePrivateKey()` / `activePublicKey()`, which read the snapshot and fall
+  back to the construction-time key (unit tests build a `Service` with no
+  database behind it). The legacy fields are written once, in `NewService`, and
+  never again.
+
+  **The two halves of the fix are not interchangeable, and that was measured
+  rather than assumed.** A race needs both the write and the unsynchronised
+  read. The `-race` test covers the read half — put a field read back into a
+  signing path and it goes red — while restoring only the write leaves it
+  green, because nothing reads the field concurrently any more. So the write
+  half has its own derived guard, which reads the package's own sources and
+  fails on any assignment to those fields outside construction.
+
+  Found while auditing `signer.go` for the sweeps census, where the entry is
+  (correctly) `per-process`: gating the refresh behind a leader would leave
+  eleven of twelve oauth-service replicas serving a stale JWKS.
+
 ### Added
 
 - **The posture expiry sweep, decided — and the idempotence guard narrowed from
@@ -36,6 +69,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sweep, so an `idempotent` entry now names its function and the guard reads
   that function's body — and an entry that names no function, or names one that
   is not in the file, fails. The undecided backlog is down from ten to nine.
+
+- **`sms_config_watcher.go` decided: per-process, and gating it would be the
+  defect.** The tick reads one `system_settings` row and writes nothing — it
+  swaps *this process's* SMS provider and OTP settings, and its `lastUpdatedAt`
+  high-water mark is a local in the watcher's own goroutine. A leader-gated
+  version would leave every non-leader pod sending codes through the provider an
+  administrator had just replaced, for as long as that pod stayed up. Backlog
+  nine to eight.
 
 
 - **The sweeps census gains a fifth answer — "idempotent" — and the first entry

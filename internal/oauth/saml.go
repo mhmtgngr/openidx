@@ -517,10 +517,10 @@ func (s *Service) extractSAMLUserFromToken(reqCtx context.Context, tokenStr stri
 		// Support both RSA and Ed25519 signing methods
 		switch t.Method.(type) {
 		case *jwt.SigningMethodRSA:
-			if s.publicKey == nil {
+			if s.activePublicKey() == nil {
 				return nil, fmt.Errorf("RSA public key not configured")
 			}
-			return s.publicKey, nil
+			return s.activePublicKey(), nil
 		case *jwt.SigningMethodEd25519:
 			// Ed25519 not yet supported - use RSA only
 			return nil, fmt.Errorf("Ed25519 not supported, use RS256")

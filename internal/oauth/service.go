@@ -1727,8 +1727,9 @@ func (s *Service) handleJWKS(c *gin.Context) {
 
 	// No snapshot (unit tests construct Service directly): single-key JWKS
 	// from the legacy fields (base64url without padding per RFC 7517).
-	n := base64.RawURLEncoding.EncodeToString(s.publicKey.N.Bytes())
-	e := base64.RawURLEncoding.EncodeToString([]byte{byte(s.publicKey.E >> 16), byte(s.publicKey.E >> 8), byte(s.publicKey.E)})
+	pub := s.activePublicKey()
+	n := base64.RawURLEncoding.EncodeToString(pub.N.Bytes())
+	e := base64.RawURLEncoding.EncodeToString([]byte{byte(pub.E >> 16), byte(pub.E >> 8), byte(pub.E)})
 
 	jwks := JWKS{
 		Keys: []JWK{
