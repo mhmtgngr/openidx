@@ -549,6 +549,25 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # Task 2.3's unmeasured assumption. A read through Reader() is not a bare
+      # SELECT: in RLS_MODE=local it is BEGIN + set_config + SELECT, and a
+      # replica answers 25006 to anything it counts as a write. If that shape
+      # were refused, it would not be one handler that broke but all six
+      # offloaded files at once, on the day values-prod.yaml sets
+      # readReplica: true. A read-only session is the same refusal from the
+      # same server, so the assumption is measured rather than assumed.
+      - name: The offloaded admin reads survive a read-only replica
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/admin/ -run 'ReadOnlyReplica' -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestTheOffloadedHandlersAnswerOverAReadOnlyReplica; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
   ui-safety-guards:
     name: UI safety guards
     runs-on: ubuntu-latest

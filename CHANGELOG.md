@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The admin plane's last two lag-tolerant reads moved to the replica, decided
+  by evidence rather than by judgement.** Global-scale task 2.3 stopped at file
+  granularity with a note saying the remainder — handlers over historical
+  aggregates, like ISPM posture trends and MFA enrolment stats — could only be
+  settled "one screen at a time, by someone who can say whether that tile is
+  refetched after a mutation", and that more machinery would not help.
+
+  Half of that was wrong. More machinery over the *Go* source would not help:
+  "this function does not write" licenses exactly the moves that must not be
+  made, because the write lives in `handleCreateX` and the relationship is the
+  console's create-then-refetch across two handlers. But the console is in this
+  repository, and in a TanStack Query application a tile is refetched after a
+  mutation **iff some mutation invalidates its query key**. That is not a
+  heuristic about source shape; it is the console's own definition of
+  read-after-write, and it is greppable.
+
+  Both keys — `ispm-trends` and `mfa-enrollment-stats` — appear exactly once in
+  `web/admin-console`, at their own `useQuery`, and in no `invalidateQueries`
+  call. The ISPM scan writes today's snapshot row and invalidates
+  `['ispm-score']` and `['ispm-findings']` and not the chart, so the chart is
+  not refetched after a scan at all; the MFA screen writes policies, never
+  enrolments, and all three of its mutations invalidate `['mfa-policies']`.
+
+  The new `offloadedHandlers` tier pins the whole chain — console query key →
+  the URL its `queryFn` fetches → the route registration in `service.go` → the
+  handler → the replica — so a console change that starts invalidating one of
+  these keys turns the Go test red, in CI, in the same repository as the change.
+  Inside a file that stays on the primary the guard **counts** rather than
+  forbids: a second query quietly switched to `Reader()` raises the file's count
+  above the declared bodies' and fails, even though the file is already allowed.
+  An `invalidateQueries()` with no arguments (which refetches everything) now
+  has to be declared too; the one that exists is the tenant switcher, and a
+  context change is not a read-after-write.
+
+- **Task 2.3's unmeasured assumption, measured.** A read through `Reader()` is
+  not a bare `SELECT`: in `RLS_MODE=local` it is `BEGIN` +
+  `select set_config('app.org_id', …, true)` + `SELECT`, and a replica answers
+  SQLSTATE 25006 to anything it counts as a write. Nothing in the tree had asked
+  a real server whether that shape survives. If the answer were no it would not
+  be one handler that broke but all six already-offloaded files at once, on the
+  day `values-prod.yaml` sets `readReplica: true`.
+
+  Measured against a session with `default_transaction_read_only=on` — the same
+  refusal, from the same server: both handlers answer, stay tenant-scoped, and
+  the pool they read from really does reject a write with 25006. Eleven
+  mutations red, including the two that keep the measurement honest (a replica
+  pool that is not read-only, and no replica pool at all — which would leave
+  `Reader()` handing back the primary while the test claimed to be reading a
+  replica).
+
 ### Fixed
 
 - **The certificate expiry monitor reported a failed rotation every hour, for a

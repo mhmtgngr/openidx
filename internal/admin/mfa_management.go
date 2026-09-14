@@ -85,8 +85,11 @@ func (s *Service) handleMFAEnrollmentStats(c *gin.Context) {
 		return
 	}
 
+	// The replica, not the primary: nothing on this screen writes an enrolment,
+	// so the tile is never read straight after a write. See offloadedHandlers in
+	// replica_offload_test.go, which pins that fact against the console.
 	var stats MFAEnrollmentStats
-	err = s.db.Pool.QueryRow(c.Request.Context(),
+	err = s.db.Reader().QueryRow(c.Request.Context(),
 		`SELECT
 			COUNT(*) AS total_users,
 			COUNT(*) FILTER (WHERE totp_enabled OR sms_enabled OR email_otp_enabled OR push_enabled OR webauthn_enabled) AS any_mfa,

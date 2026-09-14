@@ -614,7 +614,11 @@ func (s *Service) handleGetPostureTrends(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
-	rows, err := s.db.Pool.Query(ctx, `
+	// The replica, not the primary: this is the one read in this file that is
+	// not a read-after-write. See offloadedHandlers in replica_offload_test.go
+	// for the evidence -- and for the guard that reverses this the moment the
+	// console starts refetching the chart after a scan.
+	rows, err := s.db.Reader().Query(ctx, `
 		SELECT overall_score, category_scores, total_findings, critical_findings, high_findings,
 			medium_findings, low_findings, snapshot_date
 		FROM ispm_scores WHERE org_id = $1 ORDER BY snapshot_date DESC LIMIT 90`, org.ID)
