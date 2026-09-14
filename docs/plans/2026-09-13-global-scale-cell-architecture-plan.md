@@ -274,6 +274,59 @@ kod bitmiş olması M0 değildir.
 - [ ] Helm `templates/nats.yaml` ×3, stream retention 7 gün, kiracı bazlı konu izinleri.
 - **Kabul:** Bir NATS pod kaybı → yayın sürer; `make k8s-chaos` canlı moda eklenir.
 
+#### Keşif ölçümleri (2026-09-14) — kod yazılmadan önce
+
+Bu kalem "ölçecek broker yok" diye park edilmişti. **Bu yanlıştı ve ölçerek düzeltildi:**
+`nats-server` bir Go modülü, ve modül proxy'sinden inip *bu kapta çalışıyor*
+(`go install github.com/nats-io/nats-server/v2@v2.14.6`, 23 MB'lık tek binary, bağımlılık yok).
+Yani 3.2'nin hem yapılandırma hem de yayın yarısı, hiçbir küme olmadan, gerçek sunucuya karşı
+ölçülebilir. Aşağıdakiler bu binary'ye ve gerçek registry'ye karşı **ölçüldü**, belgeden okunmadı.
+
+- **Röle sözleşmesi ölçüldü, ve ihlali sessiz.** `internal/common/events/relay.go` `Sink`
+  arayüzü şunu yazıyor: *"Publish must be synchronous: returning nil means the broker has
+  ACCEPTED the event. A sink that returns before then turns this relay's at-least-once into
+  at-most-once, silently."* NATS istemcisinde üç yayın API'si var ve ikisi bu sözleşmeyi
+  sessizce bozuyor. 200 mesaj yayımlanıp **çağrı döndüğü anda** stream'in kaç mesaj tuttuğu
+  sayıldı:
+
+  | API | Gönderilen | Çağrı döndüğünde stream'de | 750 ms sonra | Süre |
+  |---|---|---|---|---|
+  | `nc.Publish` (core, ateşle-unut) | 200 | **33** | 200 | 0,1 ms |
+  | `js.PublishAsync` (ACK sonra gelir) | 200 | **60** | 200 | 0,6 ms |
+  | `js.Publish` (PubAck'i bekler) | 200 | **200** | 200 | 32,5 ms |
+
+  Röle `Publish` nil dönünce outbox satırını **siliyor**. İlk iki satır, satırların %83'ünün ve
+  %70'inin broker onu kabul etmeden silineceği anlamına geliyor — kayıp, kimse bir şey
+  görmeden. Doğru API `js.Publish` ve maliyeti gerçek: mesaj başına 163 µs'ye karşı 0,5 µs.
+  Bu, garantinin fiyatı; kimse ne takas ettiğini bilmeden "optimize etmesin" diye buraya yazıldı.
+  Sink yazıldığında muhafız da yazılacak: dosya `nc.Publish` ya da `PublishAsync` çağıramaz.
+
+- **pgcat tuzağı burada YOK: `nats-server` bilinmeyen anahtarı reddediyor.** 2.2'de pgcat'in
+  `[general]` altındaki bilinmeyen bir anahtarı **sessizce yok sayması** gerçek bir kusurdu.
+  Aynı soru üç düzeyde soruldu ve üçünde de sunucu **başlamayı reddetti**, satır ve sütun vererek:
+  - üst düzey bilinmeyen alan → `unknown field "this_key_does_not_exist"`
+  - `permissions` içinde yanlış yazılmış anahtar → `Unknown field "publsh" parsing permissions`
+  - `publish` içinde `allow` yerine `alow` → `only 'allow' or 'deny' are permitted`
+
+  Bu, kiracı bazlı konu izinleri için **güvenlik açısından belirleyici**: yanlış yazılmış bir
+  izin anahtarı sessizce "kısıtlama yok"a dönüşmüyor. Yani bu sınıf için ek makine
+  yazmaya gerek yok — ve bir sonraki kişi bunu yeniden araştırmasın diye burada yazılı.
+
+- **İmaj denetimi (registry'den, `library/nats`).** Güncel `2.14.6` (ayrıca bakımdaki `2.12.15`
+  hattı); `2.14.6-alpine3.22` mevcut. Config blob'undan okunanlar:
+  - `Entrypoint = ["docker-entrypoint.sh"]`, `Cmd = ["nats-server", "--config", "/etc/nats/nats-server.conf"]`
+    — yani **pgcat'in tersi**: orada `ENTRYPOINT` yoktu ve yalnız `args` vermek binary'yi config
+    dosyasıyla değiştiriyordu. Burada yalnız `args` vermek doğru; entrypoint yerinde kalır.
+  - Varsayılan config yolu **`/etc/nats/nats-server.conf`** — ConfigMap ya oraya bağlanmalı ya
+    da `args` başka bir yol vermeli.
+  - `User = None`, yani **root**. Chart'ın `runAsNonRoot` duruşuyla çakışıp çakışmadığı
+    şablon yazılırken ilk bakılacak şey.
+  - Açık portlar: 4222 (istemci), 6222 (küme), 8222 (izleme).
+
+- **Ölçülemeyen ve öyle kalacak olan:** "Bir NATS pod kaybı → yayın sürer" kabul kriteri
+  gerçek bir küme istiyor. Tek süreçlik bir sunucu üç replikalı bir quorum'u taklit etmez;
+  `ziti_reconciler.go`'ya verilen dürüstlüğün aynısı, o satır ölçülene kadar işaretlenmeyecek.
+
 ### 3.3 Tüketiciler
 
 - [ ] Audit indexer (PG sıcak + ES); `internal/audit/service.go` çift yazımı kalkar, `StartESReconciler` emekli.
