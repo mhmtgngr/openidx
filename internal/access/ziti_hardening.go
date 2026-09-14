@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -175,6 +176,11 @@ func (zm *ZitiManager) GetCertificateExpiryAlerts(ctx context.Context, threshold
 // RotateCertificate handles certificate rotation based on certificate type.
 // For identity certificates, it triggers Ziti re-enrollment. For CA certificates,
 // rotation must be done manually (logged as warning).
+// errRotationNotClaimed says this replica did not win the rotation: the
+// certificate was not in 'active' status when it tried to claim it, because
+// another replica is already rotating it (or it has already been rotated).
+var errRotationNotClaimed = errors.New("certificate rotation not claimed")
+
 func (zm *ZitiManager) RotateCertificate(ctx context.Context, certID string) error {
 	// Mark the old certificate as rotating
 	tag, err := zm.db.Pool.Exec(ctx,
@@ -185,7 +191,20 @@ func (zm *ZitiManager) RotateCertificate(ctx context.Context, certID string) err
 		return fmt.Errorf("failed to mark certificate as rotating: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("certificate %s not found or not in active status", certID)
+		// The UPDATE is the claim, and it always has been -- what was missing
+		// is that LOSING it is not a failure. The expiry monitor runs in every
+		// replica on the same hourly tick and every replica lists the same
+		// expiring certificates, so for one rotation the other replicas all
+		// land here. They then reported "Auto-rotation failed for certificate"
+		// at Error, about a certificate that was being rotated correctly by
+		// somebody else. A certificate rotation is a security-relevant
+		// operation and an operator who sees it fail every hour, for a
+		// rotation that in fact succeeded, learns to skip the line.
+		//
+		// The row is also legitimately not-active when it has already been
+		// rotated or revoked, which is the same answer to the caller: there is
+		// nothing for this replica to do.
+		return fmt.Errorf("%w: certificate %s is not active (another replica may hold the rotation)", errRotationNotClaimed, certID)
 	}
 
 	// Fetch the old certificate details
@@ -460,7 +479,14 @@ func (zm *ZitiManager) checkCertificateExpiry(ctx context.Context) {
 					zap.String("cert_id", cert.ID),
 					zap.String("name", cert.Name))
 
-				if err := zm.RotateCertificate(ctx, cert.ID); err != nil {
+				switch err := zm.RotateCertificate(ctx, cert.ID); {
+				case errors.Is(err, errRotationNotClaimed):
+					// Another replica is rotating this certificate, or it has
+					// already been rotated. Not this replica's work, and not a
+					// failure.
+					zm.logger.Debug("Certificate rotation is held by another replica",
+						zap.String("cert_id", cert.ID), zap.String("name", cert.Name))
+				case err != nil:
 					zm.logger.Error("Auto-rotation failed for certificate",
 						zap.String("cert_id", cert.ID),
 						zap.String("name", cert.Name),

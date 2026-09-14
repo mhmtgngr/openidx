@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The certificate expiry monitor reported a failed rotation every hour, for a
+  rotation that had succeeded.** The hourly monitor runs in every replica and
+  every replica lists the same expiring certificates. `RotateCertificate` has
+  always **claimed** — `UPDATE ziti_certificates SET status='rotating' WHERE
+  id=$1 AND status='active'` — so exactly one replica rotates and the rest stand
+  down; that part was right. What was wrong is what the rest then *said*:
+  `Auto-rotation failed for certificate`, at Error, about a certificate another
+  replica was rotating correctly.
+
+  A certificate rotation is a security-relevant operation, and an operator who
+  watches it fail every hour for a rotation that in fact succeeded learns to skip
+  the line — the same defect the user-sync poller had, one alarm at a time.
+  Losing the claim is now its own error (`errRotationNotClaimed`) and the monitor
+  logs it as what it is. Two mutations red: dropping the claim's predicate, and
+  making the stand-down indistinguishable from a failure again.
+
 - **The Ziti user-sync poller reported a failure for every user it synced
   successfully.** `runAutoSync` selects up to ten users with no Ziti identity and
   every replica selects the same ten, so at the 30-second tick two replicas both

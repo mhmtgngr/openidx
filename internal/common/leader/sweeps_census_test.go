@@ -169,6 +169,17 @@ var tickerCensus = map[string]sweep{
 		"controller delete, so a second replica's pass matches nothing",
 		fn: "persistZitiIdentity,runDeprovisionSweep"},
 
+	"internal/access/ziti_hardening.go": {how: coordIdempotent, reason: "MEASURED (ziti_cert_rotation_testdb_test.go). The hourly expiry monitor runs in every replica and " +
+		"every replica lists the same expiring certificates, but the rotation has always CLAIMED: " +
+		"`UPDATE ziti_certificates SET status='rotating' WHERE id=$1 AND status='active'` means exactly one " +
+		"replica rotates and the rest stand down. What was wrong was what the rest then SAID -- " +
+		"'Auto-rotation failed for certificate', at Error, about a certificate another replica was rotating " +
+		"correctly. A certificate rotation is security-relevant, and an operator who watches it fail every hour " +
+		"for a rotation that succeeded learns to skip the line: the same defect the user-sync poller had. " +
+		"Losing the claim is now its own error and the monitor logs it as what it is. The remaining per-replica " +
+		"cost is the listing itself, once an hour",
+		fn: "RotateCertificate"},
+
 	// -- Once per process on purpose. Gating any of these would be the defect.
 	"internal/common/leader/leader.go":     {how: coordPerProcess, reason: "this IS the gate: RunPeriodic's own ticker drives the per-tick leader election"},
 	"internal/common/shutdown/graceful.go": {how: coordPerProcess, reason: "watches THIS process's health while it drains; a leader draining on another pod's behalf is meaningless"},
@@ -198,7 +209,6 @@ var tickerCensus = map[string]sweep{
 
 	// -- Not yet audited. Each needs the same question answered: at eight
 	// replicas, does this do its work eight times, and does that matter?
-	"internal/access/ziti_hardening.go": {how: coordUndecided, reason: "hourly hardening pass against the Ziti controller: N replicas is N times the controller API calls even if each pass converges"},
 	"internal/access/ziti_reconciler.go": {how: coordUndecided, reason: "READ, NOT MEASURED. runLocked holds a process-local mutex, which reads like coordination and coordinates " +
 		"nothing across replicas. ensureService is check-then-act (GetServiceByName, then create), so two replicas " +
 		"converging a NEW route can both see 'missing' and both create it; if the controller enforces unique " +
@@ -338,7 +348,7 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 // register becoming the place drift hides. This pins its size: shrinking it is
 // free, growing it takes an edit here and a sentence about why.
 func TestTheUndecidedBacklogDoesNotGrow(t *testing.T) {
-	const known = 2
+	const known = 1
 	n := 0
 	for _, s := range tickerCensus {
 		if s.how == coordUndecided {
