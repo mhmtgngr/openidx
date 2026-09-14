@@ -400,20 +400,25 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
-      # The lifecycle sweep is the first entry the census records as safe by
-      # IDEMPOTENCE rather than by a leader or a claim, and that answer rests
-      # entirely on its reason -- so it is the one that has to be measured.
-      # Eight concurrent sweeps must land where one does, and land SETTLED.
-      - name: Concurrent lifecycle sweeps converge the same way
+      # Every census entry recorded as safe by IDEMPOTENCE rather than by a
+      # leader or a claim rests entirely on its reason, so each one is measured
+      # here: eight concurrent sweeps must land where one does, and land
+      # SETTLED. The posture half also asserts the ACCESS DECISION across the
+      # sweep, because deleting a device's posture data on an enforcement path
+      # would be a transition if the evaluator did not already fail an expired
+      # result the same way it fails a missing one.
+      - name: Concurrent sweeps recorded as idempotent converge the same way
         env:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
-          out=$(go test ./internal/access/ -run 'TheLifecycleSweep|EightConcurrent' -count=1 -v 2>&1)
+          out=$(go test ./internal/access/ -run 'TheLifecycleSweep|ThePostureExpirySweep|EightConcurrent' -count=1 -v 2>&1)
           echo "$out"
           for want in TestTheLifecycleSweepIsIdempotentAcrossReplicas \
                       TestTheLifecycleSweepNeverTouchesAnEnabledUser \
-                      TestEightConcurrentLifecycleSweepsConvergeTheSameWay; do
+                      TestEightConcurrentLifecycleSweepsConvergeTheSameWay \
+                      TestThePostureExpirySweepChangesNoAccessDecision \
+                      TestEightConcurrentPostureExpirySweepsConvergeTheSameWay; do
             grep -q -- "--- PASS: $want " <<<"$out" \
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done

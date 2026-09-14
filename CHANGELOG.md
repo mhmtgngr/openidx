@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The posture expiry sweep, decided — and the idempotence guard narrowed from
+  the file to the function.** `internal/access/posture.go` starts a 15-minute
+  ticker whose whole body is `DELETE FROM device_posture_results WHERE
+  expires_at < NOW()`. Repetition is close to free there, so the half worth
+  measuring was the other one: **the sweep decides nothing.**
+
+  That mattered because the table it empties feeds the access proxy's posture
+  enforcement, and a sweep that deletes a device's posture data could plausibly
+  be the thing that moves that device from allowed to denied — a transition, on
+  a Zero Trust enforcement path, running once per replica. It is not.
+  `EvaluateIdentityPosture` fails a check whose result has **expired** and fails
+  a check with **no result at all** in exactly the same way, so removing an
+  already-expired row cannot change any decision. The new test asserts the
+  decision itself, per check, across the sweep rather than the row count: a row
+  count would pass for a sweep that also deleted live results, and that sweep
+  would be a silent denial of service against every device whose posture was
+  still valid. Three mutations turn it red — deleting the live rows instead of
+  the expired ones, dropping the `WHERE` entirely, and deleting nothing at all.
+
+  **The census guard was wrong about scope, and this entry is what exposed it.**
+  It scanned the whole *file* for the two shapes that break idempotence, which
+  worked for a 145-line file holding nothing but its sweep and fired a false
+  positive on the second entry tried: `posture.go` is 1054 lines with five
+  unrelated `INSERT`s on the request path. What the answer is about is the
+  sweep, so an `idempotent` entry now names its function and the guard reads
+  that function's body — and an entry that names no function, or names one that
+  is not in the file, fails. The undecided backlog is down from ten to nine.
+
+
 - **The sweeps census gains a fifth answer — "idempotent" — and the first entry
   measured rather than argued.** `internal/access/lifecycle_sweep.go` runs in
   every replica and its own comment said that was fine: "every statement only
