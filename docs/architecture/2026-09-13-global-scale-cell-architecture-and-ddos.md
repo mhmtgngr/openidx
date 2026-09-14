@@ -148,8 +148,12 @@ kullanıcılar birbirini sınırlar, saldırgan bir tuşla herkesi 429'a düşü
 
 ### B4 — Olay omurgası yok; servisler arası iletişim "aynı tabloya yaz" ile oluyor
 
-`internal/common/events/bus.go` **süreç içi** bir bus'tır; başka süreçteki hiçbir servis
-duymaz. Audit çift yazımı en-iyi-çaba (`internal/audit/service.go:325`) ve bir uzlaştırıcı
+`internal/common/events` **süreç içi** bir bus taşıyordu; başka süreçteki hiçbir servis
+duymazdı. *(3.1'de silindi: 346 satırlık `bus.go` ve testlerini ağaçta **hiçbir şey import
+etmiyordu** — ne bir yayıncı ne bir abone. Yerine `internal/common/events/outbox.go` geldi:
+olayı, anlattığı durum değişikliğinin işlemine yazan tek yayın yolu. İkisini yan yana
+bırakmak, kullanılmamış olmasından kötüydü — "olay bus'ı" arayan biri hangisi daha kolay
+okunuyorsa onu seçerdi ve aradaki fark, birinin süreç ölünce her şeyi kaybetmesi.)* Audit çift yazımı en-iyi-çaba (`internal/audit/service.go:325`) ve bir uzlaştırıcı
 ile telafi ediliyor (`:351`). Webhook'lar satır içi ateşleniyor. Küresel ölçekte audit yazma
 hacmi PG birincilini kilitler; kiracı silme, iptal, kill-switch gibi çapraz-servis olaylar
 kaybolabilir. Çözüm: outbox'ı platform ilkelini yap, NATS JetStream ile taşı (§4.4.4).

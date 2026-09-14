@@ -75,6 +75,208 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   listed, for the reason the rate-limit guard is: the gateway once carried a
   rate-limit configuration nothing read, for a full release.
 
+- **The platform outbox: events commit with the state change they describe.**
+  `events.OutboxBus.Publish` writes the event into the transaction the context
+  carries and **refuses** when there is none. An event that describes a state
+  change has to be atomic with it — write the row then publish and a crash
+  between the two loses the event with nothing to replay from; publish then
+  write and the platform has announced something that did not happen. Neither
+  window closes by retrying, because the failure is that the process which
+  would retry is the one that died.
+
+  The transaction travels on the context (`PostgresDB.WithTxCtx`) rather than
+  being threaded by hand through every layer, because the first call site that
+  finds the threading inconvenient writes the event outside the transaction —
+  which looks identical and is not. Publishing on the *outer* context (the one
+  the closure captured) fails loudly for the same reason.
+
+  **The id is not a cursor, and this is measured.** A `bigserial` hands out its
+  number at INSERT time while transactions commit in whatever order they
+  finish, so a later id can become visible before an earlier one. Two
+  concurrent transactions, driven by hand: the lower id committed second, a
+  relay paging by `id > lastSeen` **lost that row permanently**, and the
+  state-based claim (`published_at IS NULL … FOR UPDATE SKIP LOCKED`, the shape
+  the SCIM queue has used since v95) delivered both. Migration **v192** is
+  shaped around that: the backlog index is partial, so it stays the size of the
+  backlog rather than of the table; `org_id` is `NOT NULL` with a foreign key
+  and the FORCE RLS belt lands *with* the table rather than in a later
+  migration; `UNIQUE (org_id, event_id)` lets a consumer recognise a
+  redelivery, per tenant, because a collision across tenants is a coincidence
+  and must not fail one tenant's write on another's.
+
+  Delivery is at-least-once and says so: the relay marks a row published after
+  the broker accepts it, and a crash between those two facts redelivers. Making
+  it exactly-once would need the broker and this database to commit together,
+  which they cannot.
+
+  **Nothing publishes to it yet, and no process runs the relay.** The primitive,
+  the relay and the retention sweep are measured against a real PostgreSQL, but
+  a mechanism being shipped is not the same as its being exercised. The
+  producers are task 3.3 and the relay binary needs a sink, which is task 3.2 —
+  the sequencing is deliberate, and it is written down rather than left for a
+  reader to notice that this table is one step from the defect the deleted bus
+  had.
+
+- **The relay that drains it, with no leader.** `events.Relay` claims a batch,
+  publishes it to a `Sink`, and marks what the sink accepted — all in one
+  transaction, so there is no claim column, no "processing" state and no
+  sweeper for rows a dead relay left behind: dying rolls the transaction back
+  and the row is simply unlocked.
+
+  **No leader election, a deliberate departure from the plan.** `FOR UPDATE SKIP
+  LOCKED` already *is* the coordination — a row another relay holds is invisible
+  to this one. A leader would add a lease, and a lease adds a failure mode this
+  design does not have: between a leader dying and its lease expiring, nobody
+  relays. What it would buy is global ordering, which this outbox explicitly
+  does not promise. Measured: **four relays draining concurrently delivered 60
+  events exactly 60 times**, no row claimed twice.
+
+  The sink accepts *and then* the transaction commits, so a crash between those
+  two redelivers. That ordering is chosen: a consumer can recognise a duplicate
+  by `event_id` and cannot recover an event that was never sent. Measured end to
+  end — the sink refused every attempt across five full drains and the backlog
+  stayed intact at 25 rows with nothing delivered; when it came back, all 25
+  arrived, each exactly once. A forced crash after acceptance redelivered all
+  three of its events, and the same three ids arrived twice.
+
+  A poison event stops at `MaxAttempts` rather than consuming the relay forever,
+  and **stays in the table** with its last error: something to investigate, not
+  something to delete.
+
+- **Retention: delivered rows age out, the backlog never does.** A delivered
+  outbox row is a receipt — after an incident the first question is "was this
+  published, and when" — but the table sits on the write path of every service,
+  so keeping them for ever makes every vacuum slower for a benefit that expired
+  weeks ago. `SweepPublished` deletes in **bounded batches**: one `DELETE` of a
+  month's events takes a long lock on the table every service writes to, which
+  is a self-inflicted outage on the write path.
+
+  `published_at IS NOT NULL` is in the predicate, so an undelivered event can
+  never be aged out — measured with the case a careless predicate gets wrong: a
+  **ninety-day-old event the sink refused** survives every pass while the
+  forty-day-old delivered rows go. Zero `KeepFor` is off: deleting delivery
+  receipts is not something to start doing because a struct was zero-valued.
+
+- **KEDA scales on pressure, not on CPU — and the chart refuses two
+  autoscalers on one Deployment.** `templates/keda-scaledobject.yaml`, off by
+  default. CPU and memory are *lagging*: a plane under load queues first and
+  burns CPU second, so utilisation crosses its target a minute after the queue
+  got deep, and the replicas it summons are a minute late to a problem that
+  started without them.
+
+  Each plane scales on the signal named for it — ISSUE on the admission gate's
+  own queue-wait p95, VERIFY on requests per second per pod, EVENT on outbox
+  delivery lag p95. (The plan named NATS consumer lag; there is no NATS yet,
+  and the EVENT plane's queue *today* is the outbox, so this asks the same
+  question of the queue that exists. When NATS lands it gains a trigger rather
+  than changing meaning.)
+
+  **The interlock is the part worth stating.** KEDA does not scale pods itself:
+  it *creates* an HPA per ScaledObject. A service carrying both KEDA and the
+  chart's own HPA gets two HorizontalPodAutoscalers on one `scaleTargetRef`,
+  each computing a replica count from different metrics and each writing it.
+  They do not negotiate; the Deployment follows whichever wrote last and
+  oscillates for as long as both exist — which looks like flapping under load,
+  i.e. like the thing autoscaling was turned on to prevent. The chart refuses to
+  render it. A second interlock refuses an empty `prometheusAddress`: a trigger
+  with nowhere to read pins the Deployment at `minReplicas` and reports the
+  error on a status nobody is watching.
+
+  CI asserts no ScaledObject carries a `cpu` or `memory` query, because that
+  would put the lagging indicator back and nothing would look wrong.
+
+### Fixed
+
+- **Three background sweeps ran once per replica, and two of them had external
+  consequences.** A sweep started in a service's `main` runs in every pod of
+  that Deployment. `access-service` ships at two replicas and autoscales to
+  eight in production; `audit-service` at three, to ten. Twelve sweeps in this
+  tree already run through `leader.RunPeriodic`. These three did not, and
+  nothing about them was special:
+
+  - **The EDR ingestion poller** called the customer's CrowdStrike / Intune /
+    Jamf tenant **once per replica** — it selects sources whose `last_sync_at`
+    is older than their interval, and `last_sync_at` is only written when the
+    sync *finishes*, so every replica sees the same source as due in the same
+    minute. A source configured to poll every five minutes polled two to eight
+    times in that window, on the customer's own rate limit, and each sync writes
+    posture results the Ziti enforcement path reads to revoke access.
+  - **The Guacamole external audit sync** inserts each remote session with a
+    **fresh UUID primary key**, so its `ON CONFLICT DO NOTHING` can never fire
+    for a logically duplicate event: two replicas polling the same window wrote
+    two audit rows for one recorded session. On a compliance product that is not
+    waste, it is a wrong answer — an auditor counting privileged remote sessions
+    gets the replica count times the truth. It also advances a single shared
+    cursor no replica holds a lock on.
+  - **The Elasticsearch reconciler** indexed the same 500 documents once per
+    replica and stamped `indexed_at` once per replica. ES writes are idempotent
+    by document id so nothing was corrupted; what it cost was N× the write load
+    on the highest-volume path the product has, at exactly the moment ES is
+    already behind — which is the only time the reconciler has anything to do.
+
+- **The usage counter a customer is billed from was inflated by the replica
+  count.** The metering rollup reads a singleton cursor row, fetches the events
+  after it, does `count = count + 1` for each — an **increment**, not an
+  idempotent write — and advances the cursor. The cursor was read with no lock,
+  so all three `audit-service` replicas read the same cursor, fetched the same
+  batch, incremented every counter and advanced the cursor to the same place.
+  The comment above the rollup said "the cursor guarantees each event is rolled
+  up at most once", which is true of one process and false of three.
+
+  Fixed with a `FOR UPDATE SKIP LOCKED` on the cursor row, held for the whole
+  batch in one transaction — **not** with leader gating, which is what the rest
+  of this tree uses for sweeps: leader election runs on Redis and falls back to
+  "every replica runs" when there is no client, which is fine for work that
+  merely repeats and not for a counter that must not double-count during a Redis
+  outage. The lock lives in the same database as the number it protects.
+  Measured: four concurrent aggregators over 40 events bill 40, and with the
+  lock removed they bill more.
+
+  A **missing** cursor row is now an error log rather than silence — rolling
+  nothing up for ever loses exactly as much revenue as double-billing gets
+  wrong, and it looks like a healthy idle worker.
+
+- **The SIEM forwarder shipped the same audit feed once per replica.** Same
+  shape as the metering cursor: unlocked read, batch, deliver, advance. The data
+  downstream is not wrong — a SIEM dedupes on event id, which is why the
+  existing code already tolerates a failed cursor advance — but SIEM products
+  **bill by ingest volume**, so a customer paid the replica count times for one
+  audit feed and every correlation rule saw each event three times. Fixed the
+  same way: the cursor row held with `FOR UPDATE SKIP LOCKED` for the whole
+  batch, because "the customer's SIEM bill triples whenever Redis is down" is
+  not a degradation anyone would sign off on. A missing cursor row is now an
+  error rather than a silently stopped feed.
+
+- **The audit chain sealer was already safe, and is now recorded as such.** It
+  takes `pg_advisory_xact_lock` per org — the right primitive when the work is
+  not a set of claimable *rows* but a sequence only one writer may extend. The
+  census gained `advisory-lock` as a fourth valid answer rather than forcing it
+  into a shape it does not have.
+
+  All three sweeps above now run through `leader.RunPeriodic`. A **derived census**
+  (`internal/common/leader/sweeps_census_test.go`) finds every `time.NewTicker`
+  in `internal/` and `cmd/` and fails on one no entry names, so the fourth
+  cannot be added silently: the author must say which answer applies — leader,
+  a `FOR UPDATE SKIP LOCKED` claim, or genuinely per-process. A `claim` entry
+  that contains no `SKIP LOCKED`, and an entry for a file that no longer has a
+  ticker, both fail. Fourteen tickers remain **explicitly undecided**, counted
+  and named rather than silently passed — the same shape as orgscope's
+  `needsScoping` register, and for the same reason.
+
+### Removed
+
+- **The in-process event bus, which nothing imported.** `internal/common/events`
+  carried a `Bus` interface, a `MemoryBus`, subscriptions and a package-level
+  global with `Publish`/`Subscribe` helpers — 346 lines, plus 315 of tests —
+  and **not one publisher or subscriber anywhere in the tree** outside its own
+  file. Leaving it next to the outbox would have been worse than leaving it
+  unused: a developer looking for "the event bus" would find an in-memory one
+  and reach for whichever read more conveniently, and the difference between
+  them is that one loses everything when the process dies. "This session was
+  revoked" must not be delivered on a best-effort basis to whoever happened to
+  be subscribed in this replica. The event envelope and the event-type
+  vocabulary are kept — they are what an outbox row is made of.
+
 ### Changed
 
 - **The SCIM list endpoints page in a total order, and stop dropping users.**

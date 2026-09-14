@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	goredis "github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -572,29 +574,41 @@ func main() {
 		log.Info("OpenZiti integration disabled (set ZITI_ENABLED=true to enable)")
 	}
 
-	// Start background audit event sync (every 5 minutes)
+	// Start background audit event sync (every 5 minutes).
+	//
+	// LEADER-GATED, and it was not. This ran on a bare ticker in every replica
+	// and the ingest inserts each remote session with a FRESH uuid as the
+	// primary key, so the ON CONFLICT DO NOTHING on that key can never fire for
+	// a logically duplicate event: two replicas polling the same window wrote
+	// two audit rows for one recorded session. On a compliance product that is
+	// not waste, it is a wrong answer -- an auditor counting privileged remote
+	// sessions gets the replica count times the truth. The source is also an
+	// external API polled on the customer's quota, and the sync advances a
+	// single shared cursor (external_audit_sync_state.last_sync_at) that no
+	// replica holds a lock on.
+	//
+	// access-service ships at two replicas and autoscales to eight.
 	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-
-		// Initial sync after 30 seconds
-		time.Sleep(30 * time.Second)
-		if err := auditService.SyncExternalAuditEvents(bgCtx); err != nil {
-			log.Warn("Initial external audit sync failed", zap.Error(err))
-		} else {
-			log.Info("Initial external audit sync completed")
+		var syncLeader *goredis.Client
+		if redis != nil {
+			syncLeader = redis.Client
 		}
-
-		for {
-			select {
-			case <-bgCtx.Done():
-				return
-			case <-ticker.C:
-				if err := auditService.SyncExternalAuditEvents(bgCtx); err != nil {
-					log.Warn("External audit sync failed", zap.Error(err))
-				}
+		sync := func(ctx context.Context) {
+			if err := auditService.SyncExternalAuditEvents(ctx); err != nil {
+				log.Warn("External audit sync failed", zap.Error(err))
 			}
 		}
+		// The original 30-second settle and the initial pass after it are both
+		// kept: the external source is not reachable the instant this process
+		// starts, and RunPeriodic's first tick is one full interval away -- so
+		// without this the first sync would slip from 30 seconds to five and a
+		// half minutes. The initial pass takes the tick lock too, or a rolling
+		// restart would fire one sync per replica.
+		time.Sleep(30 * time.Second)
+		if leader.IsLeaderForTick(bgCtx, syncLeader, "access:external-audit-sync", 5*time.Minute) {
+			sync(bgCtx)
+		}
+		leader.RunPeriodic(bgCtx, syncLeader, log, "access:external-audit-sync", 5*time.Minute, sync)
 	}()
 	log.Info("Background audit sync scheduled (every 5 minutes)")
 

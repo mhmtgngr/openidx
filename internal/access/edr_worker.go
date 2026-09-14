@@ -4,8 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/leader"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // EDR ingestion worker: periodically polls every enabled EDR/MDM source that is
@@ -15,23 +18,32 @@ import (
 
 // StartEDRIngestionWorker launches the background poller. Bypasses RLS so it can
 // drain sources across orgs.
+//
+// LEADER-GATED, and it was not. This swept on a bare ticker in every replica,
+// which multiplied the poll interval an operator configured by the replica
+// count: access-service ships at two replicas and autoscales to eight in
+// production, so a source set to poll every five minutes called the customer's
+// CrowdStrike, Intune or Jamf tenant two to eight times in that window. The
+// sweep claims nothing -- it selects sources whose last_sync_at is older than
+// their interval and syncs them, and last_sync_at is only written when the sync
+// FINISHES, so every replica sees the same source as due in the same minute.
+//
+// The cost is not only wasted calls. These are third-party APIs with their own
+// rate limits, spent on the customer's quota, and each sync writes posture
+// results that the Ziti enforcement path reads to revoke access.
+//
+// Twelve other periodic sweeps in this tree already run through
+// leader.RunPeriodic; this one, the ES reconciler and the Guacamole audit sync
+// were the three that did not. Nothing about them was special.
 func (s *Service) StartEDRIngestionWorker(ctx context.Context) {
-	go s.runEDRIngestion(orgctx.WithBypassRLS(ctx))
-	s.logger.Info("EDR ingestion worker starting")
-}
-
-func (s *Service) runEDRIngestion(ctx context.Context) {
-	// Check for due sources every minute; each source runs on its own interval.
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.runDueEDRSources(ctx)
-		}
+	ctx = orgctx.WithBypassRLS(ctx)
+	var rdb *redis.Client
+	if s.redis != nil {
+		rdb = s.redis.Client
 	}
+	s.logger.Info("EDR ingestion worker starting")
+	// Check for due sources every minute; each source runs on its own interval.
+	leader.RunPeriodic(ctx, rdb, s.logger, "access:edr-ingestion", 1*time.Minute, s.runDueEDRSources)
 }
 
 // runDueEDRSources syncs every enabled source whose last_sync_at is older than

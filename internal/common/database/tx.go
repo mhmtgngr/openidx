@@ -275,3 +275,53 @@ func (r *txRows) Close() {
 type errRow struct{ err error }
 
 func (e errRow) Scan(...any) error { return e.err }
+
+// THE ACTIVE TRANSACTION, CARRIED ON THE CONTEXT (global-scale plan task 3.1).
+//
+// The transactional outbox has exactly one guarantee, and it is atomicity: the
+// event and the state change it describes are one write, so there is no instant
+// at which the row exists and the event does not, or the reverse. That is the
+// whole reason an outbox is worth its table -- a service that writes the row
+// and then publishes has a window in which a crash loses the event, and a
+// service that publishes first has one in which it announces something that
+// never happened.
+//
+// A publisher can only honour that if it can reach the transaction that is
+// already open. Passing the pgx.Tx down by hand would work and would also mean
+// threading it through every layer between the handler and the thing that has
+// something to announce -- and the first call site that finds that inconvenient
+// writes the event outside the transaction, which looks identical and is not.
+// So the transaction travels on the context, and the publisher REFUSES when it
+// is not there: an event that cannot be atomic is an error, never a best
+// effort.
+//
+// This is a carrier, not a second way to run queries. Nothing reads it to
+// execute ordinary statements; query paths keep taking the tx as a parameter,
+// where the compiler can see it.
+
+type txKey struct{}
+
+// WithTxContext returns ctx carrying tx. Exported for tests and for callers
+// that own a transaction they opened themselves; WithTxCtx does it for you.
+func WithTxContext(ctx context.Context, tx pgx.Tx) context.Context {
+	return context.WithValue(ctx, txKey{}, tx)
+}
+
+// TxFrom returns the transaction ctx carries, if any.
+func TxFrom(ctx context.Context) (pgx.Tx, bool) {
+	tx, ok := ctx.Value(txKey{}).(pgx.Tx)
+	return tx, ok && tx != nil
+}
+
+// WithTxCtx is WithTx with the transaction also on the context it hands to fn,
+// so anything fn calls can publish into the same transaction without having the
+// tx threaded to it.
+//
+// fn must use the ctx it is given, not the one it closed over: the outer
+// context does not carry the transaction, and a publish on it fails rather than
+// silently landing outside. That is the intended direction of the mistake.
+func (db *PostgresDB) WithTxCtx(ctx context.Context, fn func(context.Context, pgx.Tx) error) error {
+	return withTxOn(ctx, db.Pool.Raw(), func(tx pgx.Tx) error {
+		return fn(WithTxContext(ctx, tx), tx)
+	})
+}

@@ -360,6 +360,65 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # The platform outbox (task 3.1, migration v192). Every claim it makes is
+      # about transactions and row-level security -- atomicity, visibility
+      # before commit, a policy that hides another tenant's rows -- and a fake
+      # satisfies all three by construction. It runs as openidx_app for the
+      # same reason the suite above does: a superuser is exempt from every
+      # policy, so the isolation assertions would pass with the belt cut.
+      #
+      # The sequence-gap test is the one worth naming twice: it drives two
+      # concurrent transactions by hand to show that a relay paging by id loses
+      # the row that committed late, which is why the relay claims by state.
+      - name: The outbox commits with what it describes, and the relay loses nothing
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/common/events/ -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestAnOutboxEventRollsBackWithTheWriteItDescribes \
+                      TestAnOutboxEventCommitsWithTheWriteItDescribes \
+                      TestPublishingOutsideATransactionIsRefused \
+                      TestPublishingOnTheOuterContextIsRefused \
+                      TestPublishingWithoutATenantIsRefused \
+                      TestOneTenantCannotReadAnothersEvents \
+                      TestOneTenantCannotPublishTheSameEventIdTwice \
+                      TestTheOutboxTableKeepsTheDecisionsItWasShapedAround \
+                      TestASequenceIdIsNotACommitOrderAndACursorRelayLosesTheGap \
+                      TestAnOutageLosesNothingAndDeliversEveryEventExactlyOnce \
+                      TestACrashAfterTheSinkAcceptsRedeliversAndAnIdempotentConsumerAbsorbsIt \
+                      TestFourConcurrentRelaysDeliverEveryEventExactlyOnce \
+                      TestAPoisonEventStopsBeingRetriedAndKeepsItsError \
+                      TestTheRelayDrainsEveryTenant \
+                      TestTheSweepNeverTouchesTheBacklog \
+                      TestTheSweepIsOffUntilItIsConfigured \
+                      TestTheSweepDeletesInBoundedBatches; do
+            # The trailing space matters: without it a test renamed to
+            # "<name>X" still matches as a prefix and the guard reads green.
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
+      # Usage metering (task 3.4 census). The rollup is an INCREMENT and the
+      # cursor was read with no lock, so three audit-service replicas billed a
+      # customer three times for the same overlay traffic. Two processes
+      # incrementing the same row from the same cursor is not a race a mock can
+      # have, so this runs against the real database.
+      - name: Concurrent replicas do not double-bill
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/audit/ -run 'DoubleBill|SinglePass|MissingCursor' -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestConcurrentRepicasDoNotDoubleBill \
+                      TestASinglePassCountsEveryEventOnce \
+                      TestAMissingCursorRowIsNotSilence; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # The per-plane login roles (task 2.4, migration v189). These need a
       # SUPERUSER connection, because CREATE ROLE is exactly what the
       # application's own role cannot do -- which is the point of v53 and the

@@ -892,6 +892,75 @@ autoscaling:
       percent: 25       # shed at most a quarter per period
       periodSeconds: 60
 
+# ----- KEDA (global-scale plan task 3.6) -----
+# Event-driven autoscaling on what a plane actually reports about its own
+# pressure, rather than on CPU and memory -- both of which are LAGGING: a plane
+# under load queues first and burns CPU second, so utilisation crosses its
+# target a minute after the queue got deep, and the replicas it summons are a
+# minute late to a problem that started without them.
+#
+# DISABLED by default, and the chart REFUSES TO RENDER if it is enabled while
+# any service still has autoscaling.enabled: KEDA creates its OWN HPA per
+# ScaledObject, so such a Deployment would be governed by two HPAs writing a
+# replica count from different metrics, and it follows whichever wrote last.
+#
+# Requires the KEDA operator in the cluster (helm install kedacore/keda) and a
+# Prometheus that scrapes the services' /metrics.
+keda:
+  enabled: false
+  # Where the triggers read from. Rendering fails if this is empty while keda
+  # is enabled: a trigger with nowhere to read sits at minReplicas reporting an
+  # error on a status nobody is watching.
+  prometheusAddress: ""
+  pollingInterval: 15   # seconds between trigger evaluations
+  cooldownPeriod: 300   # seconds after the last trigger before scaling to min
+
+  services:
+    # ISSUE: how long a request waits for an admission slot. This is the number
+    # the bound in internal/common/middleware/admission.go produces, and it
+    # rises the moment the plane is behind -- well before CPU does. Needs
+    # ADMISSION_MAX_INFLIGHT set, or the histogram has no observations and the
+    # trigger reads zero for ever.
+    oauth-service:
+      enabled: false
+      plane: issue
+      minReplicas: 3
+      maxReplicas: 30
+      triggers:
+        - name: issue_admission_queue_wait_p95
+          query: >-
+            histogram_quantile(0.95, sum(rate(openidx_admission_queue_wait_seconds_bucket{plane="issue"}[2m])) by (le))
+          threshold: "0.25"   # seconds; a quarter second of queueing is already visible to a caller
+
+    # VERIFY: verification is CPU-shaped and stateless, so requests per second
+    # per pod is a direct proxy for load per replica and moves before
+    # utilisation does.
+    access-service:
+      enabled: false
+      plane: verify
+      minReplicas: 3
+      maxReplicas: 30
+      triggers:
+        - name: verify_rps_per_pod
+          query: >-
+            sum(rate(openidx_http_requests_total{service="access-service"}[2m]))
+          threshold: "200"    # rps PER POD: KEDA divides the query result by the replica count
+
+    # EVENT: how far behind the relay is. The plan named NATS consumer lag;
+    # there is no NATS yet (task 3.2) and the EVENT plane's queue today IS the
+    # outbox, so this asks the same question of the queue that exists. When
+    # NATS lands this gains a trigger rather than changing meaning.
+    audit-service:
+      enabled: false
+      plane: event
+      minReplicas: 2
+      maxReplicas: 20
+      triggers:
+        - name: event_outbox_lag_p95
+          query: >-
+            histogram_quantile(0.95, sum(rate(openidx_outbox_relay_lag_seconds_bucket[5m])) by (le))
+          threshold: "30"     # seconds from write to delivery
+
 # ----- Transaction pooler (global-scale plan task 2.2) -----
 # pgcat decouples the fleet's client connections from Postgres backends. Without
 # it the backend count is services x replicas x DB_MAX_CONNS and autoscaling

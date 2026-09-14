@@ -2,10 +2,13 @@ package audit
 
 import (
 	"context"
+	"errors"
 	"time"
 
-	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // Usage metering (Wave A4): the MSP billing substrate. A background aggregator
@@ -61,12 +64,58 @@ func (w *meteringWorker) run(ctx context.Context) {
 // aggregateBatch reads the next window of fabric events past the cursor, rolls
 // them into daily counters, advances the cursor, and returns the number of rows
 // processed.
+//
+// ONE TRANSACTION, HOLDING THE CURSOR ROW, because this counter is money.
+//
+// The rollup is an INCREMENT (count = count + 1), not an idempotent write, and
+// the cursor was read with no lock. audit-service runs three replicas in
+// production and autoscales to ten, so all of them read the same cursor, fetched
+// the same batch, incremented every counter, and advanced the cursor to the same
+// place: the daily usage a customer is billed from was inflated by the replica
+// count. The comment below the fetch used to say "the cursor guarantees each
+// event is rolled up at most once", which is true of one process and false of
+// three.
+//
+// The lock is taken on the cursor row rather than through leader.RunPeriodic,
+// which is what the rest of this tree uses for periodic sweeps. Leader election
+// here runs on Redis, and IsLeaderForTick with no Redis client lets EVERY
+// replica run -- acceptable for a sweep that merely repeats work, and not
+// acceptable for a counter that must not double-count during a Redis outage.
+// The row lock lives in the same database as the number it protects.
+//
+// SKIP LOCKED rather than waiting: a replica that cannot have the cursor should
+// skip this tick, not queue behind a five-hundred-row batch and then run a
+// second one immediately.
 func (w *meteringWorker) aggregateBatch(ctx context.Context) (int, error) {
+	var processed int
+	err := w.svc.db.WithTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		processed, err = w.aggregateLockedBatch(ctx, tx)
+		return err
+	})
+	return processed, err
+}
+
+func (w *meteringWorker) aggregateLockedBatch(ctx context.Context, tx pgx.Tx) (int, error) {
 	var lastTS time.Time
 	var lastID *string
-	if err := w.svc.db.Pool.QueryRow(ctx,
-		`SELECT last_ts, last_id FROM usage_metering_cursor WHERE id = 1`).
-		Scan(&lastTS, &lastID); err != nil {
+	//orgscope:ignore install-wide billing cursor (runs under bypass_rls) claimed with FOR UPDATE SKIP LOCKED; there is one cursor row for the install
+	err := tx.QueryRow(ctx,
+		`SELECT last_ts, last_id FROM usage_metering_cursor WHERE id = 1 FOR UPDATE SKIP LOCKED`).
+		Scan(&lastTS, &lastID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Either another replica holds the cursor -- the normal case, and this
+		// tick is theirs -- or the row is missing, which is an operational
+		// problem that must not look like "nothing to do for ever".
+		var exists bool
+		//orgscope:ignore install-wide billing cursor presence check (runs under bypass_rls)
+		if cerr := tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM usage_metering_cursor WHERE id = 1)`).Scan(&exists); cerr == nil && !exists {
+			w.logger.Error("usage metering cursor row is missing; no fabric usage is being rolled up")
+		}
+		return 0, nil
+	}
+	if err != nil {
 		return 0, err
 	}
 	lastIDArg := zeroUUID
@@ -84,7 +133,7 @@ func (w *meteringWorker) aggregateBatch(ctx context.Context) (int, error) {
 	// bucket nobody owns. The ingest derives org_id from the route, so those
 	// now land on the tenant that ran them.
 	//orgscope:ignore install-wide billing rollup running under WithBypassRLS; it must read every org's fabric events to attribute each one, and org_id is selected per row below
-	rows, err := w.svc.db.Pool.Query(ctx, `
+	rows, err := tx.Query(ctx, `
         SELECT e.id, e.created_at, e.event_type, COALESCE(e.user_id::text,''),
                e.org_id::text, COALESCE(e.details->>'service',''),
                COALESCE(e.details->>'service_name','')
@@ -125,8 +174,9 @@ func (w *meteringWorker) aggregateBatch(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
-	// Upsert each event into its daily counter. Small batches keep this simple;
-	// the cursor guarantees each event is rolled up at most once.
+	// Upsert each event into its daily counter. The cursor rolls each event up
+	// at most once -- which holds because this transaction holds the cursor
+	// row, and did not hold before it did.
 	for _, r := range batch {
 		metric := metricOverlayLogin
 		service := ""
@@ -143,7 +193,7 @@ func (w *meteringWorker) aggregateBatch(ctx context.Context) (int, error) {
 			userID = zeroUUID
 		}
 		day := r.ts.UTC().Format("2006-01-02")
-		if _, err := w.svc.db.Pool.Exec(ctx, `
+		if _, err := tx.Exec(ctx, `
             INSERT INTO usage_metering_daily (org_id, user_id, service, metric, day, count)
             VALUES ($1::uuid, $2::uuid, $3, $4, $5::date, 1)
             ON CONFLICT (org_id, user_id, service, metric, day)
@@ -155,7 +205,8 @@ func (w *meteringWorker) aggregateBatch(ctx context.Context) (int, error) {
 
 	// Advance the cursor to the last event processed.
 	last := batch[len(batch)-1]
-	if _, err := w.svc.db.Pool.Exec(ctx,
+	if _, err := tx.Exec(ctx,
+		//orgscope:ignore install-wide billing cursor advance (runs under bypass_rls) on the row this transaction holds
 		`UPDATE usage_metering_cursor SET last_ts = $1, last_id = $2::uuid, updated_at = NOW() WHERE id = 1`,
 		last.ts, last.id); err != nil {
 		return 0, err

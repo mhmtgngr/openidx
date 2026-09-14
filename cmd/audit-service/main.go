@@ -251,7 +251,11 @@ func main() {
 			log.Warn("Failed to initialize ES index, search may not work", zap.Error(err))
 		}
 		// Backfill any audit event the fire-and-forget ES write missed.
-		auditService.StartESReconciler(context.Background())
+		var reconcilerLeader *goredis.Client
+		if redis != nil {
+			reconcilerLeader = redis.Client
+		}
+		auditService.StartESReconciler(context.Background(), reconcilerLeader)
 	}
 
 	// The audit hash chain: seal each org's events into a tamper-evident
