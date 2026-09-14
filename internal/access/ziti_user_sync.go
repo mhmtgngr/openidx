@@ -171,8 +171,12 @@ func (zm *ZitiManager) SyncUserToZiti(ctx context.Context, userID string) (*Sync
 		// a duplicate of a name the database keys on. Reporting this as a sync
 		// FAILURE is what the poller used to do, once per replica per tick,
 		// for a user that had in fact been synced.
+		// logsafe: both values reached this process from outside -- the user id
+		// travels in from the request that created the user, and the Ziti id
+		// comes back from the controller -- and CodeQL flagged exactly this
+		// line on the pull request that introduced it.
 		zm.logger.Debug("Ziti identity for this user was created by another replica",
-			zap.String("user_id", userID), zap.String("ziti_id", zitiID))
+			logsafe.String("user_id", userID), logsafe.String("ziti_id", zitiID))
 		return &SyncResult{UserID: userID, ZitiID: zitiID, Created: false, Attributes: attrs}, nil
 	}
 
