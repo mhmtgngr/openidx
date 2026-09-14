@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Ziti user-sync poller reported a failure for every user it synced
+  successfully.** `runAutoSync` selects up to ten users with no Ziti identity and
+  every replica selects the same ten, so at the 30-second tick two replicas both
+  ask the controller for an identity and both try to persist it. Nothing
+  corrupts — two unique constraints sit on the same name, one in each system: the
+  controller rejects a duplicate identity name (the loser adopts the winner's,
+  which the create path already handles) and `ziti_identities.name` is UNIQUE
+  with `name` = the user id.
+
+  What did not converge was the **report**. The losing insert raised a unique
+  violation and the poller logged `Auto-sync failed for user` — once per losing
+  replica, per tick, for a user that had just been synced. An operator watching
+  for sync failures saw one every thirty seconds that meant nothing, which is the
+  kind of alarm that teaches people to ignore the channel. The insert is now the
+  claim (`ON CONFLICT (name) DO NOTHING`): the caller that writes the row reports
+  the creation, and the one that loses says so quietly.
+
+  The controller half is **read from its contract, not measured** — there is no
+  Ziti controller in reach, the same honesty the census applies to
+  `ziti_reconciler.go`. The database half is measured against a real PostgreSQL,
+  and the test also pins that the surviving row carries an enrolment token: a row
+  written by the loser would hold the adopted identity's empty JWT, and that user
+  could never enrol a device.
+
+### Fixed
+
 - **Two replicas sealing one recording destroyed it, and the row still read
   "sealed".** `sealOneGuacRecording` rewrites a guacd session recording in place
   as ciphertext, and the sweep's candidate query selected on
@@ -48,6 +74,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the 16-second stall.
 
 ### Added
+
+- **The census guard learns what makes an `INSERT` idempotent.** Its rule was
+  "an insert per pass is a row per replica", which is the shape that was actually
+  wrong in this tree — but an `INSERT … ON CONFLICT (<column>) DO NOTHING` is a
+  **claim**: the second replica's row is refused by a key rather than written.
+  The guard now accepts that and only that.
+
+  **The conflict target has to be named, and the Guacamole defect is why.** That
+  sync also said `ON CONFLICT DO NOTHING` — and could never fire it, because the
+  row it inserted carried a freshly generated uuid primary key, so no two
+  attempts ever collided. A targetless `ON CONFLICT` is a statement about
+  whatever unique index happens to exist; a named one is a statement about the
+  key the claim rests on. Two mutations red: unnaming the target, and resolving
+  the conflict by overwriting instead of standing down.
 
 - **The sweeps census decides `remote_support_retention.go`, and its guard learns
   to follow a sweep into a sibling file.** One ticker drives five sweeps; the

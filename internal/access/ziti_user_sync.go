@@ -158,14 +158,22 @@ func (zm *ZitiManager) SyncUserToZiti(ctx context.Context, userID string) (*Sync
 		}
 	}
 
-	// Persist to DB
+	// Persist to DB. The insert is a CLAIM, and losing it is not a failure --
+	// see persistZitiIdentity.
 	attrsJSON, _ := json.Marshal(attrs)
-	_, err = zm.db.Pool.Exec(ctx,
-		`INSERT INTO ziti_identities (ziti_id, name, identity_type, user_id, enrollment_jwt, attributes, group_attrs_synced_at, org_id)
-		 VALUES ($1, $2, 'User', $3, $4, $5, NOW(), $6)`,
-		zitiID, userID, userID, enrollmentJWT, attrsJSON, userOrgID)
+	created, err := zm.persistZitiIdentity(ctx, zitiID, userID, enrollmentJWT, attrsJSON, userOrgID)
 	if err != nil {
 		return nil, fmt.Errorf("persist ziti identity for user %s: %w", userID, err)
+	}
+	if !created {
+		// Another replica synced this user between our lookup and our insert.
+		// Its row carries the identity and the enrolment token; ours would be
+		// a duplicate of a name the database keys on. Reporting this as a sync
+		// FAILURE is what the poller used to do, once per replica per tick,
+		// for a user that had in fact been synced.
+		zm.logger.Debug("Ziti identity for this user was created by another replica",
+			zap.String("user_id", userID), zap.String("ziti_id", zitiID))
+		return &SyncResult{UserID: userID, ZitiID: zitiID, Created: false, Attributes: attrs}, nil
 	}
 
 	// When BrowZer is enabled, wire the fresh identity for external-JWT (OIDC)
@@ -185,6 +193,45 @@ func (zm *ZitiManager) SyncUserToZiti(ctx context.Context, userID string) (*Sync
 		Created:    true,
 		Attributes: attrs,
 	}, nil
+}
+
+// persistZitiIdentity writes the identity row and reports whether THIS caller
+// created it.
+//
+// THE POLLER IS CHECK-THEN-ACT ACROSS TWO SYSTEMS, and nothing claimed the
+// user. runAutoSync selects up to ten users that have no ziti_identities row,
+// and every replica selects the same ten: at the 30-second tick, two replicas
+// both find the user unsynced, both ask the controller to create an identity,
+// and both try to persist it.
+//
+// What keeps that from corrupting anything is two unique constraints on the
+// same name, one in each system: the Ziti controller rejects a duplicate
+// identity name (the loser then adopts the winner's identity, which the create
+// path already handles), and ziti_identities.name is UNIQUE with name = the
+// user id. So the outcome converges on one identity and one row however many
+// replicas run -- READ from the schema and the controller's contract, not
+// measured against a controller, because there is none in reach; the DATABASE
+// half is measured (ziti_user_sync_claim_testdb_test.go).
+//
+// What did not converge was the REPORT. The insert raised a unique violation
+// and the poller logged "Auto-sync failed for user" -- once per losing replica,
+// per tick, for a user that had just been synced successfully. An operator
+// watching for sync failures saw one every thirty seconds and it meant nothing,
+// which is the kind of alarm that teaches people to ignore the channel.
+//
+// ON CONFLICT DO NOTHING makes the insert the claim: the caller that writes the
+// row is the one that reports a creation, and the one that loses says so
+// quietly instead of raising a failure that did not happen.
+func (zm *ZitiManager) persistZitiIdentity(ctx context.Context, zitiID, userID, enrollmentJWT string, attrsJSON []byte, userOrgID string) (bool, error) {
+	tag, err := zm.db.Pool.Exec(ctx,
+		`INSERT INTO ziti_identities (ziti_id, name, identity_type, user_id, enrollment_jwt, attributes, group_attrs_synced_at, org_id)
+		 VALUES ($1, $2, 'User', $3, $4, $5, NOW(), $6)
+		 ON CONFLICT (name) DO NOTHING`,
+		zitiID, userID, userID, enrollmentJWT, attrsJSON, userOrgID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // recordSyncState writes the ziti_user_sync row -- the single row behind the

@@ -155,6 +155,20 @@ var tickerCensus = map[string]sweep{
 		"filters on its own purged_at",
 		fn: "sealGuacRecordings,sweepExpiredRecordings,sweepExpiredGuacRecordings"},
 
+	"internal/access/ziti_user_sync.go": {how: coordIdempotent, reason: "PART MEASURED (ziti_user_sync_claim_testdb_test.go), PART READ, and the entry says which. The poller " +
+		"is check-then-act across TWO systems: it selects ten users with no identity -- every replica selects " +
+		"the same ten -- then asks the controller to create one and persists it. Nothing corrupts because two " +
+		"unique constraints sit on the same name, one in each system: the controller rejects a duplicate " +
+		"identity name (the loser adopts the winner's, which the create path already handles) and " +
+		"ziti_identities.name is UNIQUE with name = the user id. The controller half is READ from its contract, " +
+		"not measured -- there is no controller in reach, the same honesty ziti_reconciler.go gets. The DATABASE " +
+		"half is measured, and it is where the visible defect was: the losing insert raised a unique violation " +
+		"and the poller reported 'Auto-sync failed for user' once per replica per tick for a user that HAD been " +
+		"synced, which is the kind of alarm that teaches people to ignore the channel. The insert is now the " +
+		"claim (ON CONFLICT DO NOTHING). The deprovision half deletes by primary key after a 404-tolerant " +
+		"controller delete, so a second replica's pass matches nothing",
+		fn: "persistZitiIdentity,runDeprovisionSweep"},
+
 	// -- Once per process on purpose. Gating any of these would be the defect.
 	"internal/common/leader/leader.go":     {how: coordPerProcess, reason: "this IS the gate: RunPeriodic's own ticker drives the per-tick leader election"},
 	"internal/common/shutdown/graceful.go": {how: coordPerProcess, reason: "watches THIS process's health while it drains; a leader draining on another pod's behalf is meaningless"},
@@ -195,7 +209,6 @@ var tickerCensus = map[string]sweep{
 		"something should converge it immediately, and only the periodic sweep needs one owner. NOT done here " +
 		"because there is no Ziti controller to measure against, and a claim about this subsystem that is read " +
 		"rather than measured is the kind this register exists to keep out of the 'decided' column."},
-	"internal/access/ziti_user_sync.go": {how: coordUndecided, reason: "syncs users into Ziti: same question as the reconciler, plus whether enrolment tokens are minted per pass"},
 }
 
 // TestEveryTickerIsAccountedFor is derived rather than listed: it finds the
@@ -285,8 +298,23 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 					t.Errorf("%s names %s(), which is in neither the file nor its package", f, fn)
 					continue
 				}
-				if strings.Contains(body, "INSERT INTO") {
-					t.Errorf("%s: %s() is recorded as idempotent but INSERTs; an insert per pass is a row per replica", f, fn)
+				// An INSERT is the shape that was actually wrong here (the
+				// Guacamole audit sync wrote a row per replica), unless it
+				// CLAIMS: `ON CONFLICT (<target>) DO NOTHING` makes the insert
+				// idempotent, because the second replica's row is refused by a
+				// key rather than written.
+				//
+				// THE CONFLICT TARGET HAS TO BE NAMED, and the Guacamole defect
+				// is why. That sync also said ON CONFLICT DO NOTHING -- and
+				// could never fire it, because the row it inserted carried a
+				// freshly generated uuid primary key, so no two attempts ever
+				// conflicted. A targetless ON CONFLICT is a statement about
+				// whatever unique index happens to exist; a named one is a
+				// statement about the key the claim rests on.
+				if strings.Contains(body, "INSERT INTO") && !insertClaims(body) {
+					t.Errorf("%s: %s() is recorded as idempotent but INSERTs without claiming; an insert per pass "+
+						"is a row per replica. An `ON CONFLICT (<column>) DO NOTHING` naming the key it rests on "+
+						"is a claim; a bare insert, or one whose conflict target is unnamed, is not", f, fn)
 				}
 				if strings.Contains(body, "+ 1") || strings.Contains(body, "+1 ") {
 					t.Errorf("%s: %s() is recorded as idempotent but looks like it increments; "+
@@ -310,7 +338,7 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 // register becoming the place drift hides. This pins its size: shrinking it is
 // free, growing it takes an edit here and a sentence about why.
 func TestTheUndecidedBacklogDoesNotGrow(t *testing.T) {
-	const known = 3
+	const known = 2
 	n := 0
 	for _, s := range tickerCensus {
 		if s.how == coordUndecided {
@@ -366,6 +394,31 @@ func repoRoot(t *testing.T) string {
 	}
 	t.Fatal("could not find the repository root (no go.mod above the test's directory)")
 	return ""
+}
+
+// insertClaims reports whether every INSERT in body carries a NAMED
+// ON CONFLICT ... DO NOTHING, which is what turns an insert into a claim.
+//
+// Deliberately crude, and deliberately strict about the target: see the comment
+// at the call site for the Guacamole sync, which satisfied a naive "does it say
+// ON CONFLICT" check while inserting a fresh uuid primary key that could never
+// collide.
+func insertClaims(body string) bool {
+	for _, chunk := range strings.Split(body, "INSERT INTO")[1:] {
+		idx := strings.Index(chunk, "ON CONFLICT")
+		if idx < 0 {
+			return false
+		}
+		rest := strings.TrimSpace(chunk[idx+len("ON CONFLICT"):])
+		// A named target: `(column)` or `ON CONSTRAINT name`.
+		if !strings.HasPrefix(rest, "(") && !strings.HasPrefix(rest, "ON CONSTRAINT") {
+			return false
+		}
+		if !strings.Contains(chunk[idx:], "DO NOTHING") {
+			return false
+		}
+	}
+	return true
 }
 
 // sweepFunctionBody finds fn for a census entry: in the entry's own file first,
