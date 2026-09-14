@@ -45,6 +45,16 @@ import (
 //	coordAdvisory   takes a Postgres advisory lock over the unit of work, which
 //	                is the right answer when the work is not a set of claimable
 //	                ROWS but a sequence only one writer may extend.
+//	coordIdempotent needs no coordination: every write is a DELETE or an
+//	                `UPDATE ... WHERE <still to do>`, so a second replica's
+//	                statement matches nothing. Under READ COMMITTED the second
+//	                updater blocks on the row lock and then re-evaluates its
+//	                predicate against the committed row -- the database does the
+//	                coordinating. This is the answer that rests most on its
+//	                reason, so it is the one that must be MEASURED: see
+//	                internal/access/lifecycle_sweep_testdb_test.go, where eight
+//	                concurrent sweeps are shown to land on the same settled
+//	                state as one.
 //	coordPerProcess legitimately once per process: it reports this pod's own
 //	                metrics, refreshes this pod's own cache, or serves one
 //	                connection. Gating these would be the bug.
@@ -56,6 +66,7 @@ const (
 	coordLeader     = "leader"
 	coordClaim      = "claim"
 	coordAdvisory   = "advisory-lock"
+	coordIdempotent = "idempotent"
 	coordPerProcess = "per-process"
 	coordUndecided  = "undecided"
 )
@@ -82,6 +93,12 @@ var tickerCensus = map[string]sweep{
 	"internal/audit/usage_metering.go": {coordClaim,
 		"holds the singleton billing cursor row with FOR UPDATE SKIP LOCKED for the whole batch; the rollup is an increment, so a second replica must not read the same cursor"},
 
+	// -- Safe to repeat, so safe at any replica count.
+	"internal/access/lifecycle_sweep.go": {coordIdempotent,
+		"MEASURED (lifecycle_sweep_testdb_test.go): every write is a DELETE or an UPDATE filtered on still-active " +
+			"rows, it emits no notification and inserts nothing, and eight concurrent sweeps land on the same settled " +
+			"state as one -- a further pass after them changes nothing"},
+
 	// -- Once per process on purpose. Gating any of these would be the defect.
 	"internal/common/leader/leader.go": {coordPerProcess,
 		"this IS the gate: RunPeriodic's own ticker drives the per-tick leader election"},
@@ -104,8 +121,6 @@ var tickerCensus = map[string]sweep{
 		"agent-facing ticker: does a pass push anything to an agent, or only read? a push repeated per replica reaches the device that many times"},
 	"internal/access/guacamole_users.go": {coordUndecided,
 		"reconciles users into Guacamole: is the upsert keyed so two replicas converge, or can both create the same account?"},
-	"internal/access/lifecycle_sweep.go": {coordUndecided,
-		"lifecycle transitions: are they idempotent state changes, or do they emit a notification or audit row per pass?"},
 	"internal/access/posture.go": {coordUndecided,
 		"ages posture to failing: an idempotent UPDATE is safe at N, but a revocation or notification triggered by the transition is not"},
 	"internal/access/remote_support_api.go": {coordUndecided,
@@ -172,7 +187,7 @@ func TestEveryTickerIsAccountedFor(t *testing.T) {
 
 func TestEveryCensusEntryHasAValidAnswerAndAReason(t *testing.T) {
 	valid := map[string]bool{coordLeader: true, coordClaim: true, coordAdvisory: true,
-		coordPerProcess: true, coordUndecided: true}
+		coordIdempotent: true, coordPerProcess: true, coordUndecided: true}
 	for f, s := range tickerCensus {
 		if !valid[s.how] {
 			t.Errorf("%s: %q is not one of leader/claim/per-process/undecided", f, s.how)
@@ -198,6 +213,20 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 			if !strings.Contains(src, "SKIP LOCKED") {
 				t.Errorf("%s is recorded as claim-based but contains no FOR UPDATE SKIP LOCKED", f)
 			}
+		case coordIdempotent:
+			// No proof is available from the source, so this checks the two
+			// shapes that were actually WRONG in this tree: an INSERT per
+			// pass (the Guacamole audit sync wrote a duplicate row per
+			// replica) and a read-modify-write increment (the metering
+			// rollup billed a customer once per replica). Neither is proof
+			// of idempotence; both catch its most common absence.
+			if strings.Contains(src, "INSERT INTO") {
+				t.Errorf("%s is recorded as idempotent but INSERTs; an insert per pass is a row per replica", f)
+			}
+			if strings.Contains(src, "+ 1") || strings.Contains(src, "+1 ") {
+				t.Errorf("%s is recorded as idempotent but looks like it increments; "+
+					"a read-modify-write is the shape that billed a customer once per replica", f)
+			}
 		case coordAdvisory:
 			if !strings.Contains(src, "pg_advisory") {
 				t.Errorf("%s is recorded as advisory-locked but takes no pg_advisory lock", f)
@@ -215,7 +244,7 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 // register becoming the place drift hides. This pins its size: shrinking it is
 // free, growing it takes an edit here and a sentence about why.
 func TestTheUndecidedBacklogDoesNotGrow(t *testing.T) {
-	const known = 11
+	const known = 10
 	n := 0
 	for _, s := range tickerCensus {
 		if s.how == coordUndecided {
