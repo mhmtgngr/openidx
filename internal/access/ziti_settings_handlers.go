@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	goredis "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -211,7 +212,13 @@ func (s *Service) handleZitiConnect(c *gin.Context) {
 
 	// Fresh monitor context; cancel rides with the slot so Swap can stop it.
 	mctx, cancel := context.WithCancel(context.Background())
-	zm.StartHealthMonitor(mctx)
+	// Same leader client the boot path passes: the metric half of the health
+	// cycle is install-wide and belongs on one replica per tick.
+	var healthLeader *goredis.Client
+	if s.redis != nil {
+		healthLeader = s.redis.Client
+	}
+	zm.StartHealthMonitor(mctx, healthLeader)
 	zm.StartCertificateMonitor(mctx)
 	zm.StartUserSyncPoller(mctx)
 	zm.StartPostureResultExpiryChecker(mctx)

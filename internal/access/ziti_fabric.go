@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/openziti/sdk-golang/ziti"
+	goredis "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -268,15 +270,33 @@ func (zm *ZitiManager) HealthCheck(ctx context.Context) (*FabricHealthStatus, er
 	return status, nil
 }
 
-// StartHealthMonitor launches a background goroutine that periodically checks fabric health,
-// re-authenticates if the controller becomes unreachable, and records metrics
-func (zm *ZitiManager) StartHealthMonitor(ctx context.Context) {
+// healthMonitorInterval is both the tick and the leader-election bucket for the
+// metric half of the cycle; they must be the same number or the bucket stops
+// lining up with the tick.
+const healthMonitorInterval = 30 * time.Second
+
+// StartHealthMonitor launches a background goroutine that periodically checks
+// fabric health, re-authenticates if the controller becomes unreachable, and
+// records metrics.
+//
+// THE TICK IS TWO DIFFERENT KINDS OF WORK, and rdb is what separates them. The
+// health check and the re-authentication are per-process and must run in EVERY
+// replica: each pod holds its own SDK session to the controller, and a pod that
+// skipped its own re-auth because another pod was the leader would stay
+// disconnected. The metrics are the opposite -- routers online, services count,
+// identities count are properties of the FABRIC, not of this pod -- so writing
+// them once per replica writes the same fact N times.
+//
+// rdb may be nil (single instance, dev, or an install without Redis), in which
+// case the metrics are recorded on every tick, which is correct for one
+// replica.
+func (zm *ZitiManager) StartHealthMonitor(ctx context.Context, rdb *goredis.Client) {
 	ctx = orgctx.WithBypassRLS(ctx)
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(healthMonitorInterval)
 		defer ticker.Stop()
 
-		zm.logger.Info("Ziti health monitor started", zap.Duration("interval", 30*time.Second))
+		zm.logger.Info("Ziti health monitor started", zap.Duration("interval", healthMonitorInterval))
 
 		for {
 			select {
@@ -284,13 +304,13 @@ func (zm *ZitiManager) StartHealthMonitor(ctx context.Context) {
 				zm.logger.Info("Ziti health monitor stopped")
 				return
 			case <-ticker.C:
-				zm.runHealthCycle(ctx)
+				zm.runHealthCycle(ctx, rdb)
 			}
 		}
 	}()
 }
 
-func (zm *ZitiManager) runHealthCycle(ctx context.Context) {
+func (zm *ZitiManager) runHealthCycle(ctx context.Context, rdb *goredis.Client) {
 	status, err := zm.HealthCheck(ctx)
 	if err != nil {
 		zm.logger.Error("Health check failed", zap.Error(err))
@@ -303,21 +323,49 @@ func (zm *ZitiManager) runHealthCycle(ctx context.Context) {
 		zap.Int("routers_online", status.RoutersOnline),
 		zap.Int("routers_total", status.RoutersTotal))
 
-	// If controller is unreachable, attempt reconnect
+	// Per-process, deliberately: this pod's own SDK session is what reconnects
+	// here, so every replica has to do it for itself.
+	reachable, labels := 1.0, map[string]string(nil)
 	if !status.ControllerReachable {
 		zm.logger.Warn("Ziti controller unreachable, attempting re-authentication...")
 		if err := zm.authenticate(); err != nil {
 			zm.logger.Error("Re-authentication failed", zap.Error(err))
-			_ = zm.RecordMetric(ctx, "health.controller_reachable", "health_monitor", 0, nil)
+			reachable = 0
 		} else {
 			zm.logger.Info("Re-authentication successful")
-			_ = zm.RecordMetric(ctx, "health.controller_reachable", "health_monitor", 1, map[string]string{"event": "reconnected"})
+			labels = map[string]string{"event": "reconnected"}
 		}
-	} else {
-		_ = zm.RecordMetric(ctx, "health.controller_reachable", "health_monitor", 1, nil)
 	}
 
-	// Record fabric metrics
+	zm.recordFabricMetrics(ctx, rdb, status, reachable, labels)
+}
+
+// recordFabricMetrics writes the cycle's numbers to ziti_metrics, on one replica
+// per tick.
+//
+// Every value here describes the FABRIC -- how many routers are online, how many
+// services and identities exist -- so a row per replica is the same fact
+// repeated, not more information. The cost is not only storage: the fabric
+// overview reads the most recent 50 rows, so at eight replicas that window
+// shrinks from roughly three and a half minutes of history to twenty-six
+// seconds of the same instant, eight times over. This is the shape the sweeps
+// census names outright, and the Guacamole audit sync was the same defect with
+// a compliance consequence instead of a dashboard one.
+//
+// The re-auth result rides along because it is measured per pod but describes
+// the same controller; the leader's answer is the one recorded, and a pod that
+// failed to reconnect will keep saying so on the next tick it wins.
+//
+// IsLeaderForTick fails CLOSED on a Redis error, so a Redis outage stops these
+// rows rather than letting every replica write them. That is the right
+// direction for observability data: the gap is visible, the duplication would
+// not be.
+func (zm *ZitiManager) recordFabricMetrics(ctx context.Context, rdb *goredis.Client, status *FabricHealthStatus, reachable float64, labels map[string]string) {
+	if !leader.IsLeaderForTick(ctx, rdb, "ziti-fabric-metrics", healthMonitorInterval) {
+		return
+	}
+
+	_ = zm.RecordMetric(ctx, "health.controller_reachable", "health_monitor", reachable, labels)
 	_ = zm.RecordMetric(ctx, "health.routers_online", "health_monitor", float64(status.RoutersOnline), nil)
 	_ = zm.RecordMetric(ctx, "health.routers_total", "health_monitor", float64(status.RoutersTotal), nil)
 	_ = zm.RecordMetric(ctx, "health.services_count", "health_monitor", float64(status.ServicesCount), nil)

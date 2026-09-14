@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Ziti fabric health monitor wrote every fabric fact once per replica.**
+  The 30-second tick is two kinds of work in one function, and the census
+  question about it had both answers. The health check and the
+  re-authentication are per-process and must run in **every** replica: each pod
+  holds its own SDK session, and a pod that skipped its own re-auth because
+  another pod was the leader would stay disconnected. The seven metrics it then
+  wrote are the opposite — routers online, routers total, services, identities
+  and policies count are properties of the **fabric**, not of the pod.
+
+  So eight replicas wrote the same fact eight times, and the cost was not only
+  storage: the fabric overview reads the most recent 50 rows of `ziti_metrics`,
+  so that window fell from roughly three and a half minutes of history to
+  twenty-six seconds of the same instant, eight times over. The metric half is
+  now gated per tick with `leader.IsLeaderForTick`; the health check and re-auth
+  are untouched.
+
+  Measured both directions: eight replicas racing one bucket against a real
+  Redis and a real database write **seven** rows (with the gate consulted but
+  ignored they write **fifty-six**), and an install with no Redis still records
+  its metrics, because one replica has no peer to coordinate with. The census
+  entry moves from undecided to `leader`; the backlog is down from eight to
+  seven.
+
 - **The signing-key refresh raced every SAML signature.** `refreshSigner` swaps
   an immutable snapshot through an atomic pointer — the right shape — and then
   *also* assigned the plain fields `s.privateKey` and `s.publicKey` "for any

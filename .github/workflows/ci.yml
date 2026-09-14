@@ -423,6 +423,21 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # The fabric health tick writes seven ziti_metrics rows, and those are
+      # FABRIC facts, not pod facts. Ungated, eight replicas wrote fifty-six.
+      - name: One replica records the fabric metrics per tick
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/access/ -run 'RecordsTheFabric|StillRecordsFabric' -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestOnlyOneReplicaRecordsTheFabricMetricsPerTick \
+                      TestWithoutRedisTheSingleReplicaStillRecordsFabricMetrics; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # The signing-key refresh is per-process ON PURPOSE -- every replica needs
       # current keys -- and auditing it for that census entry turned up an
       # unsynchronised write: it also assigned s.privateKey / s.publicKey, which

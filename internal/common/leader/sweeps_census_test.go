@@ -123,13 +123,21 @@ var tickerCensus = map[string]sweep{
 		"an administrator just replaced, for as long as it stays up"},
 	"cmd/openidx/commands/status.go": {how: coordPerProcess, reason: "the CLI's --watch refresh loop, one per invocation of a command a human is running"},
 
+	"internal/access/ziti_fabric.go": {how: coordLeader, reason: "MEASURED (ziti_fabric_metrics_testdb_test.go). The tick is two kinds of work and the census " +
+		"question had both answers: the health check and the re-authentication are per-process and must run in " +
+		"every replica (each pod holds its own SDK session, and a pod that skipped its own re-auth because " +
+		"another was leader would stay disconnected), while the metrics it wrote are FABRIC facts -- routers " +
+		"online, services and identities count -- so a row per replica was one fact written N times. Seven rows " +
+		"a tick: at eight replicas the fabric overview's 50-row window fell from ~3.5 minutes of history to 26 " +
+		"seconds of the same instant. The metric half is now gated per tick; eight racing replicas write seven " +
+		"rows, and with the gate ignored they write fifty-six"},
+
 	// -- Not yet audited. Each needs the same question answered: at eight
 	// replicas, does this do its work eight times, and does that matter?
 	"internal/access/agent_api.go":                {how: coordUndecided, reason: "agent-facing ticker: does a pass push anything to an agent, or only read? a push repeated per replica reaches the device that many times"},
 	"internal/access/guacamole_users.go":          {how: coordUndecided, reason: "reconciles users into Guacamole: is the upsert keyed so two replicas converge, or can both create the same account?"},
 	"internal/access/remote_support_api.go":       {how: coordUndecided, reason: "25s ticker: is it per live support session (per-process, fine) or an install-wide sweep?"},
 	"internal/access/remote_support_retention.go": {how: coordUndecided, reason: "seals and deletes recordings: deletion is idempotent, but sealing is a chain-shaped write and two sealers may not both extend it"},
-	"internal/access/ziti_fabric.go":              {how: coordUndecided, reason: "polls fabric health: if it only reads and reports, per-process is right; if it writes a shared health row, it is not"},
 	"internal/access/ziti_hardening.go":           {how: coordUndecided, reason: "hourly hardening pass against the Ziti controller: N replicas is N times the controller API calls even if each pass converges"},
 	"internal/access/ziti_reconciler.go": {how: coordUndecided, reason: "READ, NOT MEASURED. runLocked holds a process-local mutex, which reads like coordination and coordinates " +
 		"nothing across replicas. ensureService is check-then-act (GetServiceByName, then create), so two replicas " +
@@ -253,7 +261,7 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 // register becoming the place drift hides. This pins its size: shrinking it is
 // free, growing it takes an edit here and a sentence about why.
 func TestTheUndecidedBacklogDoesNotGrow(t *testing.T) {
-	const known = 8
+	const known = 7
 	n := 0
 	for _, s := range tickerCensus {
 		if s.how == coordUndecided {
