@@ -269,6 +269,22 @@ func (r *decryptingReader) nextFrame() error {
 	if ctLen < frameTagLen {
 		return errors.New("recording frame ciphertext too short for GCM tag")
 	}
+	// THE LENGTH IS FOUR BYTES READ FROM THE FILE, AND IT WAS TRUSTED. ctLen is
+	// a uint32, so a file whose header happens to say four gigabytes made the
+	// allocation below ask for four gigabytes -- before a single byte had been
+	// authenticated, and before anything had established the file was a sealed
+	// recording at all. Measured while probing PLAINTEXT recordings: reading
+	// three small files took 12.7 seconds, which is Go zeroing what this line
+	// asked for.
+	//
+	// The write side has always been bounded -- maxRecordingChunkBytes, whose
+	// own comment says "so a runaway caller can't OOM us here either" -- and
+	// only the read side was not. A frame this product wrote cannot exceed that
+	// bound plus the GCM tag, so anything larger is not a frame: it is a
+	// plaintext recording, a corrupt file, or a crafted one.
+	if int64(ctLen) > maxRecordingChunkBytes+frameTagLen {
+		return fmt.Errorf("recording frame ciphertext length %d exceeds the maximum a sealed frame can carry", ctLen)
+	}
 	frame := make([]byte, frameNonceLen+ctLen)
 	if _, err := io.ReadFull(r.src, frame); err != nil {
 		// Truncated tail — likely a crash mid-write. Treat as EOF so the

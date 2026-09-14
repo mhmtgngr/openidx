@@ -141,6 +141,45 @@ var tickerCensus = map[string]sweep{
 		"RETURNING above it, and that is what the measurement is of",
 		fn: "enforceExpiredGracePeriods"},
 
+	"internal/access/remote_support_retention.go": {how: coordIdempotent, reason: "MEASURED (guac_recording_double_seal_test.go, guac_seal_claim_testdb_test.go). Five sweeps on one " +
+		"ticker; the census question guessed the sealer was a chain-shaped write, and it is worse than that. " +
+		"sealOneGuacRecording REWRITES THE RECORDING IN PLACE and the candidate query claimed nothing, so two " +
+		"replicas on one tick both sealed the same file and the second encrypted the first's ciphertext -- " +
+		"recording_sha256 then held the digest of ciphertext, one decrypt pass returned ciphertext, and on a " +
+		"product that records privileged sessions the evidence was gone with the row still reading 'sealed'. " +
+		"The sweep's own comment had already named the same corruption for a crash between the rename and the " +
+		"metadata write. Fixed by REFUSING ciphertext -- the probe decrypts the first frame, so AES-GCM " +
+		"authenticates the answer rather than guessing from how the bytes look -- which makes the seal " +
+		"idempotent by construction for every replica count and closes the crash path too. The announcement " +
+		"half is a claim (recordGuacSeal). The purge sweeps were already self-clearing: each candidate query " +
+		"filters on its own purged_at",
+		fn: "sealGuacRecordings,sweepExpiredRecordings,sweepExpiredGuacRecordings"},
+
+	"internal/access/ziti_user_sync.go": {how: coordIdempotent, reason: "PART MEASURED (ziti_user_sync_claim_testdb_test.go), PART READ, and the entry says which. The poller " +
+		"is check-then-act across TWO systems: it selects ten users with no identity -- every replica selects " +
+		"the same ten -- then asks the controller to create one and persists it. Nothing corrupts because two " +
+		"unique constraints sit on the same name, one in each system: the controller rejects a duplicate " +
+		"identity name (the loser adopts the winner's, which the create path already handles) and " +
+		"ziti_identities.name is UNIQUE with name = the user id. The controller half is READ from its contract, " +
+		"not measured -- there is no controller in reach, the same honesty ziti_reconciler.go gets. The DATABASE " +
+		"half is measured, and it is where the visible defect was: the losing insert raised a unique violation " +
+		"and the poller reported 'Auto-sync failed for user' once per replica per tick for a user that HAD been " +
+		"synced, which is the kind of alarm that teaches people to ignore the channel. The insert is now the " +
+		"claim (ON CONFLICT DO NOTHING). The deprovision half deletes by primary key after a 404-tolerant " +
+		"controller delete, so a second replica's pass matches nothing",
+		fn: "persistZitiIdentity,runDeprovisionSweep"},
+
+	"internal/access/ziti_hardening.go": {how: coordIdempotent, reason: "MEASURED (ziti_cert_rotation_testdb_test.go). The hourly expiry monitor runs in every replica and " +
+		"every replica lists the same expiring certificates, but the rotation has always CLAIMED: " +
+		"`UPDATE ziti_certificates SET status='rotating' WHERE id=$1 AND status='active'` means exactly one " +
+		"replica rotates and the rest stand down. What was wrong was what the rest then SAID -- " +
+		"'Auto-rotation failed for certificate', at Error, about a certificate another replica was rotating " +
+		"correctly. A certificate rotation is security-relevant, and an operator who watches it fail every hour " +
+		"for a rotation that succeeded learns to skip the line: the same defect the user-sync poller had. " +
+		"Losing the claim is now its own error and the monitor logs it as what it is. The remaining per-replica " +
+		"cost is the listing itself, once an hour",
+		fn: "RotateCertificate"},
+
 	// -- Once per process on purpose. Gating any of these would be the defect.
 	"internal/common/leader/leader.go":     {how: coordPerProcess, reason: "this IS the gate: RunPeriodic's own ticker drives the per-tick leader election"},
 	"internal/common/shutdown/graceful.go": {how: coordPerProcess, reason: "watches THIS process's health while it drains; a leader draining on another pod's behalf is meaningless"},
@@ -170,8 +209,6 @@ var tickerCensus = map[string]sweep{
 
 	// -- Not yet audited. Each needs the same question answered: at eight
 	// replicas, does this do its work eight times, and does that matter?
-	"internal/access/remote_support_retention.go": {how: coordUndecided, reason: "seals and deletes recordings: deletion is idempotent, but sealing is a chain-shaped write and two sealers may not both extend it"},
-	"internal/access/ziti_hardening.go":           {how: coordUndecided, reason: "hourly hardening pass against the Ziti controller: N replicas is N times the controller API calls even if each pass converges"},
 	"internal/access/ziti_reconciler.go": {how: coordUndecided, reason: "READ, NOT MEASURED. runLocked holds a process-local mutex, which reads like coordination and coordinates " +
 		"nothing across replicas. ensureService is check-then-act (GetServiceByName, then create), so two replicas " +
 		"converging a NEW route can both see 'missing' and both create it; if the controller enforces unique " +
@@ -182,7 +219,6 @@ var tickerCensus = map[string]sweep{
 		"something should converge it immediately, and only the periodic sweep needs one owner. NOT done here " +
 		"because there is no Ziti controller to measure against, and a claim about this subsystem that is read " +
 		"rather than measured is the kind this register exists to keep out of the 'decided' column."},
-	"internal/access/ziti_user_sync.go": {how: coordUndecided, reason: "syncs users into Ziti: same question as the reconciler, plus whether enrolment tokens are minted per pass"},
 }
 
 // TestEveryTickerIsAccountedFor is derived rather than listed: it finds the
@@ -267,13 +303,28 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 			}
 			for _, fn := range strings.Split(s.fn, ",") {
 				fn = strings.TrimSpace(fn)
-				body, ok := functionBody(src, fn)
+				body, ok := sweepFunctionBody(t, root, f, src, fn)
 				if !ok {
-					t.Errorf("%s names %s(), which is not in the file", f, fn)
+					t.Errorf("%s names %s(), which is in neither the file nor its package", f, fn)
 					continue
 				}
-				if strings.Contains(body, "INSERT INTO") {
-					t.Errorf("%s: %s() is recorded as idempotent but INSERTs; an insert per pass is a row per replica", f, fn)
+				// An INSERT is the shape that was actually wrong here (the
+				// Guacamole audit sync wrote a row per replica), unless it
+				// CLAIMS: `ON CONFLICT (<target>) DO NOTHING` makes the insert
+				// idempotent, because the second replica's row is refused by a
+				// key rather than written.
+				//
+				// THE CONFLICT TARGET HAS TO BE NAMED, and the Guacamole defect
+				// is why. That sync also said ON CONFLICT DO NOTHING -- and
+				// could never fire it, because the row it inserted carried a
+				// freshly generated uuid primary key, so no two attempts ever
+				// conflicted. A targetless ON CONFLICT is a statement about
+				// whatever unique index happens to exist; a named one is a
+				// statement about the key the claim rests on.
+				if strings.Contains(body, "INSERT INTO") && !insertClaims(body) {
+					t.Errorf("%s: %s() is recorded as idempotent but INSERTs without claiming; an insert per pass "+
+						"is a row per replica. An `ON CONFLICT (<column>) DO NOTHING` naming the key it rests on "+
+						"is a claim; a bare insert, or one whose conflict target is unnamed, is not", f, fn)
 				}
 				if strings.Contains(body, "+ 1") || strings.Contains(body, "+1 ") {
 					t.Errorf("%s: %s() is recorded as idempotent but looks like it increments; "+
@@ -297,7 +348,7 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 // register becoming the place drift hides. This pins its size: shrinking it is
 // free, growing it takes an edit here and a sentence about why.
 func TestTheUndecidedBacklogDoesNotGrow(t *testing.T) {
-	const known = 4
+	const known = 1
 	n := 0
 	for _, s := range tickerCensus {
 		if s.how == coordUndecided {
@@ -353,6 +404,72 @@ func repoRoot(t *testing.T) string {
 	}
 	t.Fatal("could not find the repository root (no go.mod above the test's directory)")
 	return ""
+}
+
+// insertClaims reports whether every INSERT in body carries a NAMED
+// ON CONFLICT ... DO NOTHING, which is what turns an insert into a claim.
+//
+// Deliberately crude, and deliberately strict about the target: see the comment
+// at the call site for the Guacamole sync, which satisfied a naive "does it say
+// ON CONFLICT" check while inserting a fresh uuid primary key that could never
+// collide.
+func insertClaims(body string) bool {
+	for _, chunk := range strings.Split(body, "INSERT INTO")[1:] {
+		idx := strings.Index(chunk, "ON CONFLICT")
+		if idx < 0 {
+			return false
+		}
+		rest := strings.TrimSpace(chunk[idx+len("ON CONFLICT"):])
+		// A named target: `(column)` or `ON CONSTRAINT name`.
+		if !strings.HasPrefix(rest, "(") && !strings.HasPrefix(rest, "ON CONSTRAINT") {
+			return false
+		}
+		if !strings.Contains(chunk[idx:], "DO NOTHING") {
+			return false
+		}
+	}
+	return true
+}
+
+// sweepFunctionBody finds fn for a census entry: in the entry's own file first,
+// then anywhere in that file's package.
+//
+// THE PACKAGE FALLBACK IS NOT A LOOSENING, and the entry that forced it says
+// why. remote_support_retention.go starts one ticker that drives five sweeps,
+// and the one worth reading -- the recording sealer -- lives in a sibling file
+// because it is a large subsystem of its own. The census keys on the file that
+// starts the TICKER, which is the right key (that is where a new ticker
+// appears), so a ticker whose work is split across a package would otherwise be
+// undescribable: either the entry names a function the guard cannot find, or it
+// names only the half that happens to share the file.
+//
+// The guard keeps what makes it a guard: the function must exist, and its body
+// is what gets read. It just stops assuming a sweep and its ticker share a
+// file.
+func sweepFunctionBody(t *testing.T, root, entryFile, src, fn string) (string, bool) {
+	t.Helper()
+	if body, ok := functionBody(src, fn); ok {
+		return body, true
+	}
+	dir := filepath.Join(root, filepath.Dir(entryFile))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		sibling, rerr := os.ReadFile(filepath.Join(dir, name))
+		if rerr != nil {
+			continue
+		}
+		if body, ok := functionBody(string(sibling), fn); ok {
+			return body, true
+		}
+	}
+	return "", false
 }
 
 // functionBody returns the source of fn, from its declaration to the next

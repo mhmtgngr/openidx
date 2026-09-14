@@ -34,6 +34,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -41,6 +42,26 @@ import (
 
 	"go.uber.org/zap"
 )
+
+// errAlreadySealed says the file on disk is already ciphertext under this
+// keyring, so sealing it again would encrypt the ciphertext.
+//
+// THE FAILURE IT PREVENTS IS UNRECOVERABLE, WHICH IS WHY THIS IS A REFUSAL AND
+// NOT A WARNING. sealOneGuacRecording rewrites the recording in place, and the
+// candidate query selects on recording_sealed_at IS NULL with no claim. Two
+// replicas running the same tick both see the same unsealed row, both stat the
+// same file, and both seal it -- the second reading the first's ciphertext as
+// though it were plaintext. What lands on disk is doubly encrypted, and
+// recording_sha256 then holds the digest of the ciphertext the second sealer
+// saw rather than of the recording. One decrypt pass yields ciphertext, and
+// nothing on the row says so: on a product that records privileged sessions for
+// compliance, the evidence is destroyed silently.
+//
+// The same shape reaches here without any concurrency at all, and the sweep's
+// own comment already named it: a crash after the rename but before the
+// metadata write leaves ciphertext on disk with the row still unsealed, so the
+// next tick re-seals it. That path is closed by the same refusal.
+var errAlreadySealed = errors.New("guac recording is already sealed")
 
 // guacSealChunkBytes is the plaintext frame size the sealer cuts the recording
 // into before encrypting each frame. 1 MiB keeps per-frame memory bounded while
@@ -105,18 +126,24 @@ func (h *RemoteSupportHandler) sealGuacRecordings(ctx context.Context) {
 			continue // recording not on disk (yet) — leave unsealed for a later tick
 		}
 		sum, keyID, sealErr := h.sealOneGuacRecording(j.path)
+		if errors.Is(sealErr, errAlreadySealed) {
+			// Ciphertext with no seal metadata: either another replica sealed
+			// it between this tick's SELECT and now (harmless -- its own write
+			// carries the digest), or a previous tick died between the rename
+			// and the metadata write. Encrypting it again is the one thing
+			// that would make the recording unrecoverable, so the sweep leaves
+			// it alone and says so.
+			h.logger.Warn("sealGuacRecordings: recording is already ciphertext but the row carries no seal metadata; refusing to encrypt it twice",
+				zap.String("session_id", j.id))
+			continue
+		}
 		if sealErr != nil {
 			h.logger.Warn("sealGuacRecordings: seal failed",
 				zap.String("session_id", j.id), zap.Error(sealErr))
 			continue
 		}
-		//orgscope:ignore background sweep; row identified by PK, org already fixed at insert
-		if _, execErr := h.db.Pool.Exec(ctx, `
-			UPDATE guacamole_sessions
-			   SET recording_sealed_at = NOW(),
-			       recording_sha256    = $1,
-			       recording_key_id    = $2
-			 WHERE id = $3`, sum, int(keyID), j.id); execErr != nil {
+		claimed, execErr := h.recordGuacSeal(ctx, j.id, j.orgID, sum, keyID)
+		if execErr != nil {
 			// The bytes are already encrypted on disk; if we can't persist the
 			// metadata we log loudly. The row stays unsealed so a later tick
 			// retries — but the file is now ciphertext, so retry re-reads it as
@@ -127,7 +154,9 @@ func (h *RemoteSupportHandler) sealGuacRecordings(ctx context.Context) {
 				zap.String("session_id", j.id), zap.Error(execErr))
 			continue
 		}
-		h.auditGuacSeal(ctx, j.id, j.orgID, sum, keyID)
+		if !claimed {
+			continue
+		}
 		sealed++
 	}
 	if sealed > 0 {
@@ -144,6 +173,13 @@ func (h *RemoteSupportHandler) sealGuacRecordings(ctx context.Context) {
 // leaves the original plaintext intact (and the row still unsealed), so the
 // next tick retries cleanly — never a half-encrypted, unplayable file.
 func (h *RemoteSupportHandler) sealOneGuacRecording(path string) (string, byte, error) {
+	// Refuse ciphertext BEFORE opening the file for sealing. This is a proof
+	// rather than a guess: the probe decrypts the first frame, and AES-GCM
+	// authenticates it, so a plaintext recording cannot be mistaken for a
+	// sealed one.
+	if h.alreadySealed(path) {
+		return "", 0, errAlreadySealed
+	}
 	activeID := h.guacRecordingRing.ActiveID()
 	master, err := h.guacRecordingRing.masterFor(activeID)
 	if err != nil {
@@ -221,6 +257,30 @@ func guacRecordingSessionKey(path string) string {
 	return filepath.Base(filepath.Dir(path)) + "/" + filepath.Base(path)
 }
 
+// alreadySealed reports whether path already holds sealed frames, by decrypting
+// its first frame through the very reader playback uses. A successful read is
+// an AES-GCM authentication: the key id, the nonce and the tag all have to be
+// right, so the answer is not a heuristic about how the bytes look.
+//
+// False is the safe direction and every uncertain case returns it: an
+// unreadable file, an empty one, a frame that does not authenticate. The caller
+// then seals, which is what it would have done anyway.
+func (h *RemoteSupportHandler) alreadySealed(path string) bool {
+	if h.guacRecordingRing == nil || !h.guacRecordingRing.Enabled() {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	r := newDecryptingReader(f, h.guacRecordingRing, guacRecordingSessionKey(path))
+	var probe [1]byte
+	n, err := r.Read(probe[:])
+	return n > 0 && err == nil
+}
+
 // guacRecordingPathSafe rejects empty paths, the recordings root itself, and
 // any path that escapes the configured root — mirroring the purge sweep's
 // guard so the sealer never reads or overwrites a file outside the root.
@@ -257,6 +317,48 @@ func (h *RemoteSupportHandler) guacRecordingPathSafe(path string) bool {
 // auditGuacSeal writes the hash-chained audit event recording the seal event.
 // The integrity hash (of the original plaintext) is captured so a later auditor
 // can prove a decrypted recording matches what guacd originally wrote.
+// recordGuacSeal stamps the seal metadata and announces it, and the stamp is
+// also the CLAIM: `AND recording_sealed_at IS NULL` means the replica that
+// records a seal is the one that announces it.
+//
+// It returns whether this caller claimed the session. False is not an error --
+// another replica got there first, its write carries the digest and its audit
+// event is the record.
+//
+// WHY THIS IS ITS OWN FUNCTION, AND THE TEST THAT MADE IT ONE. The claim lives
+// on a path the sweep can no longer reach with two replicas and one recording:
+// the sealer now refuses ciphertext, so the second replica returns before it
+// ever gets here. A two-replica test therefore passes with the claim REMOVED --
+// measured, not assumed; the mutation stayed green and the reason was that the
+// refusal short-circuits first, not that the claim was doing anything.
+//
+// The claim still has a window of its own, which is why it stays: if the second
+// replica reads the file BEFORE the first replica's rename, it seals the same
+// plaintext, and both reach this line. The bytes are fine (the second rename
+// wins, and both sealed the same plaintext, so both digests agree) but the
+// announcement would be made twice. On a product where an auditor asks "when
+// was this recording sealed, and under which key", two answers is a wrong one.
+//
+// So the unit is named and tested directly, rather than left as a line inside a
+// sweep whose earlier guard hides it.
+func (h *RemoteSupportHandler) recordGuacSeal(ctx context.Context, sessionID, orgID, sum string, keyID byte) (bool, error) {
+	//orgscope:ignore background sweep; row identified by PK, org already fixed at insert
+	tag, err := h.db.Pool.Exec(ctx, `
+		UPDATE guacamole_sessions
+		   SET recording_sealed_at = NOW(),
+		       recording_sha256    = $1,
+		       recording_key_id    = $2
+		 WHERE id = $3 AND recording_sealed_at IS NULL`, sum, int(keyID), sessionID)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 0 {
+		return false, nil
+	}
+	h.auditGuacSeal(ctx, sessionID, orgID, sum, keyID)
+	return true, nil
+}
+
 func (h *RemoteSupportHandler) auditGuacSeal(ctx context.Context, sessionID, orgID, sha256hex string, keyID byte) {
 	details := fmt.Sprintf(`{"session_id":%q,"sha256":%q,"key_id":%d}`, sessionID, sha256hex, int(keyID))
 	var org any

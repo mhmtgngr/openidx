@@ -7,6 +7,174 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The admin plane's last two lag-tolerant reads moved to the replica, decided
+  by evidence rather than by judgement.** Global-scale task 2.3 stopped at file
+  granularity with a note saying the remainder — handlers over historical
+  aggregates, like ISPM posture trends and MFA enrolment stats — could only be
+  settled "one screen at a time, by someone who can say whether that tile is
+  refetched after a mutation", and that more machinery would not help.
+
+  Half of that was wrong. More machinery over the *Go* source would not help:
+  "this function does not write" licenses exactly the moves that must not be
+  made, because the write lives in `handleCreateX` and the relationship is the
+  console's create-then-refetch across two handlers. But the console is in this
+  repository, and in a TanStack Query application a tile is refetched after a
+  mutation **iff some mutation invalidates its query key**. That is not a
+  heuristic about source shape; it is the console's own definition of
+  read-after-write, and it is greppable.
+
+  Both keys — `ispm-trends` and `mfa-enrollment-stats` — appear exactly once in
+  `web/admin-console`, at their own `useQuery`, and in no `invalidateQueries`
+  call. The ISPM scan writes today's snapshot row and invalidates
+  `['ispm-score']` and `['ispm-findings']` and not the chart, so the chart is
+  not refetched after a scan at all; the MFA screen writes policies, never
+  enrolments, and all three of its mutations invalidate `['mfa-policies']`.
+
+  The new `offloadedHandlers` tier pins the whole chain — console query key →
+  the URL its `queryFn` fetches → the route registration in `service.go` → the
+  handler → the replica — so a console change that starts invalidating one of
+  these keys turns the Go test red, in CI, in the same repository as the change.
+  Inside a file that stays on the primary the guard **counts** rather than
+  forbids: a second query quietly switched to `Reader()` raises the file's count
+  above the declared bodies' and fails, even though the file is already allowed.
+  An `invalidateQueries()` with no arguments (which refetches everything) now
+  has to be declared too; the one that exists is the tenant switcher, and a
+  context change is not a read-after-write.
+
+- **Task 2.3's unmeasured assumption, measured.** A read through `Reader()` is
+  not a bare `SELECT`: in `RLS_MODE=local` it is `BEGIN` +
+  `select set_config('app.org_id', …, true)` + `SELECT`, and a replica answers
+  SQLSTATE 25006 to anything it counts as a write. Nothing in the tree had asked
+  a real server whether that shape survives. If the answer were no it would not
+  be one handler that broke but all six already-offloaded files at once, on the
+  day `values-prod.yaml` sets `readReplica: true`.
+
+  Measured against a session with `default_transaction_read_only=on` — the same
+  refusal, from the same server: both handlers answer, stay tenant-scoped, and
+  the pool they read from really does reject a write with 25006. Eleven
+  mutations red, including the two that keep the measurement honest (a replica
+  pool that is not read-only, and no replica pool at all — which would leave
+  `Reader()` handing back the primary while the test claimed to be reading a
+  replica).
+
+### Fixed
+
+- **The certificate expiry monitor reported a failed rotation every hour, for a
+  rotation that had succeeded.** The hourly monitor runs in every replica and
+  every replica lists the same expiring certificates. `RotateCertificate` has
+  always **claimed** — `UPDATE ziti_certificates SET status='rotating' WHERE
+  id=$1 AND status='active'` — so exactly one replica rotates and the rest stand
+  down; that part was right. What was wrong is what the rest then *said*:
+  `Auto-rotation failed for certificate`, at Error, about a certificate another
+  replica was rotating correctly.
+
+  A certificate rotation is a security-relevant operation, and an operator who
+  watches it fail every hour for a rotation that in fact succeeded learns to skip
+  the line — the same defect the user-sync poller had, one alarm at a time.
+  Losing the claim is now its own error (`errRotationNotClaimed`) and the monitor
+  logs it as what it is. Two mutations red: dropping the claim's predicate, and
+  making the stand-down indistinguishable from a failure again.
+
+- **The Ziti user-sync poller reported a failure for every user it synced
+  successfully.** `runAutoSync` selects up to ten users with no Ziti identity and
+  every replica selects the same ten, so at the 30-second tick two replicas both
+  ask the controller for an identity and both try to persist it. Nothing
+  corrupts — two unique constraints sit on the same name, one in each system: the
+  controller rejects a duplicate identity name (the loser adopts the winner's,
+  which the create path already handles) and `ziti_identities.name` is UNIQUE
+  with `name` = the user id.
+
+  What did not converge was the **report**. The losing insert raised a unique
+  violation and the poller logged `Auto-sync failed for user` — once per losing
+  replica, per tick, for a user that had just been synced. An operator watching
+  for sync failures saw one every thirty seconds that meant nothing, which is the
+  kind of alarm that teaches people to ignore the channel. The insert is now the
+  claim (`ON CONFLICT (name) DO NOTHING`): the caller that writes the row reports
+  the creation, and the one that loses says so quietly.
+
+  The controller half is **read from its contract, not measured** — there is no
+  Ziti controller in reach, the same honesty the census applies to
+  `ziti_reconciler.go`. The database half is measured against a real PostgreSQL,
+  and the test also pins that the surviving row carries an enrolment token: a row
+  written by the loser would hold the adopted identity's empty JWT, and that user
+  could never enrol a device.
+
+### Fixed
+
+- **Two replicas sealing one recording destroyed it, and the row still read
+  "sealed".** `sealOneGuacRecording` rewrites a guacd session recording in place
+  as ciphertext, and the sweep's candidate query selected on
+  `recording_sealed_at IS NULL` with no claim. Two replicas on the same tick both
+  saw the same unsealed row, both stat'd the same file, and both sealed it — the
+  second reading the first's ciphertext as though it were plaintext. What landed
+  on disk was **doubly encrypted**, `recording_sha256` held the digest of the
+  ciphertext the second sealer saw, and one decrypt pass returned ciphertext
+  rather than the session. On a product that records privileged sessions for
+  compliance, that is evidence destroyed silently: the row looks sealed, the file
+  looks sealed, and playback is gone.
+
+  The sweep's own comment had already named the same corruption on a different
+  path — a crash between the rename and the metadata write leaves ciphertext with
+  the row still unsealed, so the next tick re-seals it — and accepted it as
+  something to reconcile by hand.
+
+  **The sealer now refuses ciphertext, and the refusal is a proof rather than a
+  guess**: the probe decrypts the first frame, so AES-GCM authenticates the
+  answer. That makes the seal idempotent by construction at any replica count and
+  closes the crash path with the same line. The announcement half is a claim
+  (`recordGuacSeal`): the replica that records a seal is the one that announces
+  it, because an auditor asking "when was this recording sealed, and under which
+  key" must not get two answers.
+
+- **A recording frame's length was four bytes from the file, and the reader
+  believed them.** `nextFrame` read a `uint32` length and allocated it before
+  authenticating anything — so a file whose header happened to say four gigabytes
+  made the playback path allocate four gigabytes. The write side has always been
+  bounded (`maxRecordingChunkBytes`, whose own comment says "so a runaway caller
+  can't OOM us here either"); only the read side was not.
+
+  **This was found by measurement, not review**: the new probe reads *plaintext*
+  recordings, and a test that reads three small files took **12.7 seconds** —
+  which is Go zeroing the allocations that line asked for. With the bound it is
+  under a tenth of a second, and the mutation that disables the bound reproduces
+  the 16-second stall.
+
+### Added
+
+- **The census guard learns what makes an `INSERT` idempotent.** Its rule was
+  "an insert per pass is a row per replica", which is the shape that was actually
+  wrong in this tree — but an `INSERT … ON CONFLICT (<column>) DO NOTHING` is a
+  **claim**: the second replica's row is refused by a key rather than written.
+  The guard now accepts that and only that.
+
+  **The conflict target has to be named, and the Guacamole defect is why.** That
+  sync also said `ON CONFLICT DO NOTHING` — and could never fire it, because the
+  row it inserted carried a freshly generated uuid primary key, so no two
+  attempts ever collided. A targetless `ON CONFLICT` is a statement about
+  whatever unique index happens to exist; a named one is a statement about the
+  key the claim rests on. Two mutations red: unnaming the target, and resolving
+  the conflict by overwriting instead of standing down.
+
+- **The sweeps census decides `remote_support_retention.go`, and its guard learns
+  to follow a sweep into a sibling file.** One ticker drives five sweeps; the
+  purges were already self-clearing (each candidate query filters on its own
+  `purged_at`) and the sealer is the one that needed the work above. The census
+  question had guessed "sealing is a chain-shaped write"; it was worse than that,
+  and now it is idempotent by construction.
+
+  The entry also forced a fix in the register itself. The census keys on the file
+  that starts the **ticker**, which is the right key — that is where a new ticker
+  appears — but the sealer lives in a sibling file because it is a subsystem of
+  its own. An entry could therefore either name a function the guard could not
+  find or name only the half that happened to share the file. The guard now looks
+  in the entry's file first and then in its package, keeping what makes it a
+  guard (the function must exist, and its body is what gets read) while dropping
+  the assumption that a ticker and its sweeps share a file. The undecided backlog
+  is down from four to three.
+
+
 ### Added
 
 - **The agent grace-period enforcer decided: `idempotent`, and it is the first
