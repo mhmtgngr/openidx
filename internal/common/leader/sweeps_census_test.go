@@ -141,6 +141,20 @@ var tickerCensus = map[string]sweep{
 		"RETURNING above it, and that is what the measurement is of",
 		fn: "enforceExpiredGracePeriods"},
 
+	"internal/access/remote_support_retention.go": {how: coordIdempotent, reason: "MEASURED (guac_recording_double_seal_test.go, guac_seal_claim_testdb_test.go). Five sweeps on one " +
+		"ticker; the census question guessed the sealer was a chain-shaped write, and it is worse than that. " +
+		"sealOneGuacRecording REWRITES THE RECORDING IN PLACE and the candidate query claimed nothing, so two " +
+		"replicas on one tick both sealed the same file and the second encrypted the first's ciphertext -- " +
+		"recording_sha256 then held the digest of ciphertext, one decrypt pass returned ciphertext, and on a " +
+		"product that records privileged sessions the evidence was gone with the row still reading 'sealed'. " +
+		"The sweep's own comment had already named the same corruption for a crash between the rename and the " +
+		"metadata write. Fixed by REFUSING ciphertext -- the probe decrypts the first frame, so AES-GCM " +
+		"authenticates the answer rather than guessing from how the bytes look -- which makes the seal " +
+		"idempotent by construction for every replica count and closes the crash path too. The announcement " +
+		"half is a claim (recordGuacSeal). The purge sweeps were already self-clearing: each candidate query " +
+		"filters on its own purged_at",
+		fn: "sealGuacRecordings,sweepExpiredRecordings,sweepExpiredGuacRecordings"},
+
 	// -- Once per process on purpose. Gating any of these would be the defect.
 	"internal/common/leader/leader.go":     {how: coordPerProcess, reason: "this IS the gate: RunPeriodic's own ticker drives the per-tick leader election"},
 	"internal/common/shutdown/graceful.go": {how: coordPerProcess, reason: "watches THIS process's health while it drains; a leader draining on another pod's behalf is meaningless"},
@@ -170,8 +184,7 @@ var tickerCensus = map[string]sweep{
 
 	// -- Not yet audited. Each needs the same question answered: at eight
 	// replicas, does this do its work eight times, and does that matter?
-	"internal/access/remote_support_retention.go": {how: coordUndecided, reason: "seals and deletes recordings: deletion is idempotent, but sealing is a chain-shaped write and two sealers may not both extend it"},
-	"internal/access/ziti_hardening.go":           {how: coordUndecided, reason: "hourly hardening pass against the Ziti controller: N replicas is N times the controller API calls even if each pass converges"},
+	"internal/access/ziti_hardening.go": {how: coordUndecided, reason: "hourly hardening pass against the Ziti controller: N replicas is N times the controller API calls even if each pass converges"},
 	"internal/access/ziti_reconciler.go": {how: coordUndecided, reason: "READ, NOT MEASURED. runLocked holds a process-local mutex, which reads like coordination and coordinates " +
 		"nothing across replicas. ensureService is check-then-act (GetServiceByName, then create), so two replicas " +
 		"converging a NEW route can both see 'missing' and both create it; if the controller enforces unique " +
@@ -267,9 +280,9 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 			}
 			for _, fn := range strings.Split(s.fn, ",") {
 				fn = strings.TrimSpace(fn)
-				body, ok := functionBody(src, fn)
+				body, ok := sweepFunctionBody(t, root, f, src, fn)
 				if !ok {
-					t.Errorf("%s names %s(), which is not in the file", f, fn)
+					t.Errorf("%s names %s(), which is in neither the file nor its package", f, fn)
 					continue
 				}
 				if strings.Contains(body, "INSERT INTO") {
@@ -297,7 +310,7 @@ func TestClaimAndLeaderEntriesAreBackedByTheSource(t *testing.T) {
 // register becoming the place drift hides. This pins its size: shrinking it is
 // free, growing it takes an edit here and a sentence about why.
 func TestTheUndecidedBacklogDoesNotGrow(t *testing.T) {
-	const known = 4
+	const known = 3
 	n := 0
 	for _, s := range tickerCensus {
 		if s.how == coordUndecided {
@@ -353,6 +366,47 @@ func repoRoot(t *testing.T) string {
 	}
 	t.Fatal("could not find the repository root (no go.mod above the test's directory)")
 	return ""
+}
+
+// sweepFunctionBody finds fn for a census entry: in the entry's own file first,
+// then anywhere in that file's package.
+//
+// THE PACKAGE FALLBACK IS NOT A LOOSENING, and the entry that forced it says
+// why. remote_support_retention.go starts one ticker that drives five sweeps,
+// and the one worth reading -- the recording sealer -- lives in a sibling file
+// because it is a large subsystem of its own. The census keys on the file that
+// starts the TICKER, which is the right key (that is where a new ticker
+// appears), so a ticker whose work is split across a package would otherwise be
+// undescribable: either the entry names a function the guard cannot find, or it
+// names only the half that happens to share the file.
+//
+// The guard keeps what makes it a guard: the function must exist, and its body
+// is what gets read. It just stops assuming a sweep and its ticker share a
+// file.
+func sweepFunctionBody(t *testing.T, root, entryFile, src, fn string) (string, bool) {
+	t.Helper()
+	if body, ok := functionBody(src, fn); ok {
+		return body, true
+	}
+	dir := filepath.Join(root, filepath.Dir(entryFile))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		sibling, rerr := os.ReadFile(filepath.Join(dir, name))
+		if rerr != nil {
+			continue
+		}
+		if body, ok := functionBody(string(sibling), fn); ok {
+			return body, true
+		}
+	}
+	return "", false
 }
 
 // functionBody returns the source of fn, from its declaration to the next

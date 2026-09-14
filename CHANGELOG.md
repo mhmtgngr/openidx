@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two replicas sealing one recording destroyed it, and the row still read
+  "sealed".** `sealOneGuacRecording` rewrites a guacd session recording in place
+  as ciphertext, and the sweep's candidate query selected on
+  `recording_sealed_at IS NULL` with no claim. Two replicas on the same tick both
+  saw the same unsealed row, both stat'd the same file, and both sealed it — the
+  second reading the first's ciphertext as though it were plaintext. What landed
+  on disk was **doubly encrypted**, `recording_sha256` held the digest of the
+  ciphertext the second sealer saw, and one decrypt pass returned ciphertext
+  rather than the session. On a product that records privileged sessions for
+  compliance, that is evidence destroyed silently: the row looks sealed, the file
+  looks sealed, and playback is gone.
+
+  The sweep's own comment had already named the same corruption on a different
+  path — a crash between the rename and the metadata write leaves ciphertext with
+  the row still unsealed, so the next tick re-seals it — and accepted it as
+  something to reconcile by hand.
+
+  **The sealer now refuses ciphertext, and the refusal is a proof rather than a
+  guess**: the probe decrypts the first frame, so AES-GCM authenticates the
+  answer. That makes the seal idempotent by construction at any replica count and
+  closes the crash path with the same line. The announcement half is a claim
+  (`recordGuacSeal`): the replica that records a seal is the one that announces
+  it, because an auditor asking "when was this recording sealed, and under which
+  key" must not get two answers.
+
+- **A recording frame's length was four bytes from the file, and the reader
+  believed them.** `nextFrame` read a `uint32` length and allocated it before
+  authenticating anything — so a file whose header happened to say four gigabytes
+  made the playback path allocate four gigabytes. The write side has always been
+  bounded (`maxRecordingChunkBytes`, whose own comment says "so a runaway caller
+  can't OOM us here either"); only the read side was not.
+
+  **This was found by measurement, not review**: the new probe reads *plaintext*
+  recordings, and a test that reads three small files took **12.7 seconds** —
+  which is Go zeroing the allocations that line asked for. With the bound it is
+  under a tenth of a second, and the mutation that disables the bound reproduces
+  the 16-second stall.
+
+### Added
+
+- **The sweeps census decides `remote_support_retention.go`, and its guard learns
+  to follow a sweep into a sibling file.** One ticker drives five sweeps; the
+  purges were already self-clearing (each candidate query filters on its own
+  `purged_at`) and the sealer is the one that needed the work above. The census
+  question had guessed "sealing is a chain-shaped write"; it was worse than that,
+  and now it is idempotent by construction.
+
+  The entry also forced a fix in the register itself. The census keys on the file
+  that starts the **ticker**, which is the right key — that is where a new ticker
+  appears — but the sealer lives in a sibling file because it is a subsystem of
+  its own. An entry could therefore either name a function the guard could not
+  find or name only the half that happened to share the file. The guard now looks
+  in the entry's file first and then in its package, keeping what makes it a
+  guard (the function must exist, and its body is what gets read) while dropping
+  the assumption that a ticker and its sweeps share a file. The undecided backlog
+  is down from four to three.
+
+
 ### Added
 
 - **The agent grace-period enforcer decided: `idempotent`, and it is the first
