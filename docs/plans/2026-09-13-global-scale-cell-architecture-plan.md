@@ -327,6 +327,22 @@ Yani 3.2'nin hem yapılandırma hem de yayın yarısı, hiçbir küme olmadan, g
   gerçek bir küme istiyor. Tek süreçlik bir sunucu üç replikalı bir quorum'u taklit etmez;
   `ziti_reconciler.go`'ya verilen dürüstlüğün aynısı, o satır ölçülene kadar işaretlenmeyecek.
 
+- **Şablonun karşılaşacağı üç kısıt, şablon yazılmadan önce ölçüldü.** Chart'ın güvenlik
+  duruşu `values.yaml`'da tek yerde: `podSecurityContext` = `fsGroup: 1000` + `runAsNonRoot`,
+  kapsayıcı `securityContext` = `runAsUser: 1000`, `readOnlyRootFilesystem: true`, bütün
+  yetenekler düşürülmüş. Her iş yükü şablonu ikisini de uyguluyor — pgcat dahil. İmaj ise
+  root koşuyor (yukarıdaki `User = None`), yani:
+  1. `runAsUser: 1000` uygulanacak ve sorun değil — `nats-server` root istemiyor.
+  2. `readOnlyRootFilesystem: true` ile JetStream'in `store_dir`'i **bağlanmış bir birim
+     olmak zorunda**; imajın kök dosya sistemindeki bir yol olamaz. `fsGroup: 1000` da
+     PVC'yi grup-yazılabilir yapan parça, yani ikisi birlikte çalışıyor.
+     Sessizce bellek moduna düşme **yok**: kullanılamayan bir store ile sunucu
+     `[FTL] Can't start JetStream` verip **1 ile çıkıyor** (ölçüldü).
+  3. İmajın varsayılan config yolu `/etc/nats/nats-server.conf` ve dosya yoksa sunucu
+     `no such file or directory` ile **başlamıyor** (ölçüldü) — yani ConfigMap oraya
+     bağlanmazsa hata sessiz değil, pod CrashLoopBackOff'a düşer. Bağlama noktaları kök
+     dosya sisteminden ayrı olduğu için `readOnlyRootFilesystem` buna engel değil.
+
 ### 3.3 Tüketiciler
 
 - [ ] Audit indexer (PG sıcak + ES); `internal/audit/service.go` çift yazımı kalkar, `StartESReconciler` emekli.
