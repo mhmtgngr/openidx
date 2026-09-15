@@ -522,8 +522,14 @@ func (s *Service) executeLifecyclePolicy(orgID, execID string, p LifecyclePolicy
 		switch action {
 		case "disable":
 			_, err = s.db.Pool.Exec(ctx, "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", u.ID, orgID)
+			if err == nil {
+				s.revokeAfterSever(ctx, u.ID, "lifecycle policy disable")
+			}
 		case "delete":
 			_, err = s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", u.ID, orgID)
+			if err == nil {
+				s.revokeAfterSever(ctx, u.ID, "lifecycle policy delete")
+			}
 		case "force_password_reset":
 			_, err = s.db.Pool.Exec(ctx, "UPDATE users SET password_must_change = true, updated_at = NOW() WHERE id = $1 AND org_id = $2", u.ID, orgID)
 		default:

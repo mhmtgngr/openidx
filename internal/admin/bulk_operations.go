@@ -187,9 +187,15 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 		case "disable_users":
 			tag, err := s.db.Pool.Exec(ctx, "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", uid, orgID)
 			errMsg = bulkActionResult(tag, err)
+			if errMsg == "" {
+				s.revokeAfterSever(ctx, uid, "bulk disable_users")
+			}
 		case "delete_users":
 			tag, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", uid, orgID)
 			errMsg = bulkActionResult(tag, err)
+			if errMsg == "" {
+				s.revokeAfterSever(ctx, uid, "bulk delete_users")
+			}
 		case "assign_role":
 			roleID := paramMap["role_id"]
 			if roleID == "" {

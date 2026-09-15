@@ -94,6 +94,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Most paths that sever a user's access never revoked their tokens.** The
+  `internal/revocation` package doc records half of this defect and *names* the
+  other half: "a path that severs a user's access and never writes the marker at
+  all — and the sever paths were exactly that." `deprovisionUser` and the kill
+  switch were fixed. Nobody counted the rest.
+
+  Seventeen functions disable or delete a user row. Two wrote the marker.
+  Everything else stops only the *next* login: `/oauth/userinfo` and
+  `/oauth/introspect` read the per-user marker and the per-token blacklist and
+  nothing else, so the access token already in that browser keeps answering
+  until it expires on its own.
+
+  Three are fixed here, and all three are compromise paths:
+
+  - **The CAEP receiver.** A federated partner sends `session-revoked`,
+    `account-disabled` or `credential-change`; the code revoked sessions and
+    refresh tokens and disabled the account, and left the access token alone.
+    That signal is the entire reason CAEP exists.
+  - **Risk auto-remediation.** `RemediateAccountLock` locks an account on
+    impossible travel, brute force or a blocked IP — the moment the product
+    decides the account is compromised.
+  - **Leaver offboarding.** The transaction disables the account, revokes the
+    API keys, strips roles and groups and deletes the session rows. The marker
+    is written after the commit, because it lives in Redis and cannot join the
+    transaction, and writing it before would cut a user whose offboarding then
+    rolled back.
+
+  The remaining eleven are recorded in a register that only shrinks, not fixed
+  in one sweep, and the reason is the finding. `user_repository.Delete` *looks*
+  like a defect from the census and is not — its caller deprovisions first,
+  deliberately, so a concurrent refresh cannot slip through against a
+  still-present user. A mass patch would have added a second write there and
+  nothing would have failed.
+
+  And **`internal/directory` has no revocation client at all**: an HRIS or Azure
+  AD sync deciding somebody has left cannot cut that person's tokens from where
+  it stands. That is not a missing line — it is the concrete argument for the
+  event bus: one `user.severed` event, one consumer that turns it into a
+  revocation, instead of every path reaching for a client it may not have.
+
+  Ten of the remaining eleven were fixed in the same pass, once each had had
+  its caller read: bulk disable and delete, the lifecycle policy, ISPM
+  remediation, DSAR erasure and restriction, stale-account cleanup, the
+  `disable_user` and `revoke_sessions` lifecycle actions, and the IBDR breach
+  quarantine. Stale-account cleanup severs *by predicate* rather than by id, so
+  it now uses `RETURNING id` — without the ids there is nothing to revoke.
+
+  The quarantine service was given the revoke *function* rather than its own
+  Redis client, because a second client is how this product ended up with
+  several hand-rolled copies of one marker write. The field is nil-safe on
+  purpose — containment must still run — which is exactly why nothing would
+  notice it silently becoming nil. The census cannot see through a function
+  field either (measured: removing the injection everywhere leaves it green),
+  so the wiring is guarded next to the constructions, where the question is
+  answerable, and the register records that limit as `revokes-indirectly`
+  rather than claiming the path is covered.
+
+  Five mutations red.
+
 - **A revoked access token came back to life once its revocation record
   expired.** A revocation has to outlive what it revokes, and this package has
   two revocation mechanisms that answered that differently.

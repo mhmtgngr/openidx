@@ -6257,6 +6257,27 @@ func (s *Service) handleOffboardUser(c *gin.Context) {
 		return
 	}
 
+	// AND THE TOKENS THE LEAVER IS STILL HOLDING. The transaction above
+	// disables the account, revokes the API keys, strips the roles and groups
+	// and deletes the session rows -- and none of that is read by
+	// /oauth/userinfo or /oauth/introspect, which consult the per-user
+	// revocation marker and the per-token blacklist and nothing else.
+	//
+	// So offboarding a leaver left the access token in their browser answering
+	// for the rest of its life. Same defect internal/revocation's doc records
+	// for deprovisionUser and the kill switch, which were fixed; this path has
+	// the identical shape and was not.
+	//
+	// After the commit, not inside it: the marker is in Redis and cannot join
+	// the transaction, and writing it before the commit would cut a user whose
+	// offboarding then rolled back. Best-effort for the same reason the other
+	// sever paths are -- the account is already disabled -- and loud, because
+	// "the tokens were not actually cut" is what an operator needs to know.
+	if err := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); err != nil {
+		s.logger.Error("user offboarded, but their outstanding access tokens were not revoked",
+			logsafe.String("user_id", userID), zap.Error(err))
+	}
+
 	// Publish webhook
 	if s.webhookService != nil {
 		s.webhookService.Publish(publishCtx(c.Request.Context()), webhooks.EventUserDeleted, map[string]interface{}{
@@ -6690,13 +6711,35 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 		_, err := s.db.Pool.Exec(ctx,
 			"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2",
 			userID, org.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		// The row stops the NEXT login. /oauth/userinfo and /oauth/introspect
+		// read the per-user revocation marker and the per-token blacklist and
+		// nothing else, so a leaver's access token keeps answering until it
+		// expires. Best-effort and loud, like every other sever path: the
+		// account is already disabled, so a Redis hiccup must not fail the
+		// lifecycle action, but "the tokens were not cut" has to be in the log.
+		if rerr := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); rerr != nil {
+			s.logger.Error("lifecycle disabled the account, but its outstanding access tokens were not revoked",
+				logsafe.String("user_id", userID), zap.Error(rerr))
+		}
+		return nil
 
 	case "revoke_sessions":
-		_, err := s.db.Pool.Exec(ctx,
+		if _, err := s.db.Pool.Exec(ctx,
 			"DELETE FROM sessions WHERE user_id = $1 AND org_id = $2",
-			userID, org.ID)
-		return err
+			userID, org.ID); err != nil {
+			return err
+		}
+		// "revoke_sessions" as an action means what an operator reads it to
+		// mean. Deleting the session rows ends the refresh path; the access
+		// token in the browser is a separate credential and survives it.
+		if rerr := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); rerr != nil {
+			s.logger.Error("lifecycle revoked the sessions, but the outstanding access tokens were not revoked",
+				logsafe.String("user_id", userID), zap.Error(rerr))
+		}
+		return nil
 
 	default:
 		return fmt.Errorf("unsupported action type: %s", actionType)

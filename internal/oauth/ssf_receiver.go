@@ -17,6 +17,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/revocation"
 	"go.uber.org/zap"
 )
 
@@ -289,6 +290,32 @@ func (s *Service) applyCAEPEvent(ctx context.Context, eventType, subject string,
 				return "error", "disable account: no row was updated"
 			}
 		}
+
+		// AND THE ACCESS TOKENS ALREADY IN SOMEBODY'S BROWSER. The two calls
+		// above cut the refresh path: revokeAllUserSessions writes the
+		// per-session markers the proxy honours, and revokeAllUserRefreshTokens
+		// kills the refresh grant. Neither is read by /oauth/userinfo or
+		// /oauth/introspect, which consult the per-user marker and the
+		// per-token blacklist and nothing else.
+		//
+		// So a federated partner sending session-revoked, account-disabled or
+		// credential-change -- the CAEP events that exist to say "this account
+		// is compromised, act now" -- got the refresh cut and left the access
+		// token answering for the rest of its life. That is the same defect
+		// internal/revocation's doc records for deprovisionUser and the kill
+		// switch; those two were fixed and this receiver has the identical
+		// shape.
+		//
+		// Best-effort, like the sever paths it matches: the sessions are
+		// already revoked and the account already disabled, so a Redis hiccup
+		// must not turn an applied event into a re-delivery. The error is
+		// recorded because "the tokens were not actually cut" is something an
+		// operator needs.
+		if err := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); err != nil {
+			s.logger.Error("CAEP event: failed to revoke outstanding access tokens",
+				zap.String("user_id", userID), zap.String("event_type", eventType), zap.Error(err))
+		}
+
 		return "applied", fmt.Sprintf("revoked sessions for user %s", userID)
 	default:
 		return "ignored", "unsupported event type"
