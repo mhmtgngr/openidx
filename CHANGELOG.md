@@ -94,6 +94,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A time-bound role elevation outlived its own expiry.** `user_roles.expires_at`
+  is this product's temporary elevation — somebody is made an admin until 15:00.
+  At 15:00 the sweep deleted the row, logged a count, and stopped.
+
+  The enforcement point never reads that row. `PermissionResolver` takes the
+  caller's role list from the JWT `roles` claim, so the access token minted at
+  14:00 kept saying "admin" and kept being believed until it expired on its own.
+  The grant had a deadline; the credential carrying it did not.
+
+  **Clearing the permission cache cannot fix this**, and the fix does not try.
+  That cache is keyed on (org, *role set*), so the entry the stale token
+  resolves to is the same entry every genuine holder of that role resolves to —
+  it is correct for them and must not be deleted. What has to change is the
+  token, and the per-user revocation marker is the one thing the enforcement
+  point consults for that.
+
+  The sweep also had nothing to revoke *with*: it cut by predicate
+  (`WHERE expires_at < NOW()`) and reported `RowsAffected`, and a number cannot
+  be revoked. It now uses `RETURNING user_id` — the same correction the stale
+  account cleanup needed for the same reason. The marker goes to the
+  **revocation** Redis, not the general one, and one user holding several
+  assignments that expire on the same tick is revoked once.
+
+  Measured against a real PostgreSQL and a real Redis, with the general and
+  revocation roles bound to **two different Redis databases** so a marker
+  written to the wrong one is visible rather than silently accepted. The marker
+  is read back from the key the enforcement point reads.
+
+  **Four mutations red:** dropping the revoke (the old behaviour), writing to
+  the general Redis, dropping the `expires_at < NOW()` predicate so the sweep
+  takes live elevations too, and dropping `RETURNING` to go back to a count. A
+  fifth did not compile and was redone rather than counted.
+
+  A deployment with no Redis still sweeps: refusing to run would leave the
+  elevation in place, which is worse than removing it and saying in the log that
+  the token was not cut.
+
+  **This is one of ten paths that reduce a user's effective roles**, and the
+  other nine are not fixed here. Each needs its caller read before it is decided
+  — two of them already revoke because they also disable the account, and a
+  blanket patch would add a second marker write there and nothing would go red.
+
 - **Sixteen CI steps went silent at the only moment they mattered.** Each one
   exists to name which test ran and passed, and each was written as
   `out=$(go test ... 2>&1)` followed by `echo "$out"` under `set -euo pipefail`.
