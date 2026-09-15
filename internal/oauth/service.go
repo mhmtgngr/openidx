@@ -79,6 +79,55 @@ type OAuthClient struct {
 	RefreshTokenMaxLifetime int `json:"refresh_token_max_lifetime,omitempty"`
 }
 
+// defaultAccessTokenLifetimeSeconds is what a client gets when it asks for
+// nothing, and what an unusable value falls back to.
+const defaultAccessTokenLifetimeSeconds = 3600
+
+// maxAccessTokenLifetimeSeconds is the longest access token this product will
+// mint, and it is not a policy preference -- it is the length of the thing that
+// can revoke one.
+//
+// A REVOCATION HAS TO OUTLIVE WHAT IT REVOKES. There are two revocation
+// mechanisms here and they used to answer that differently. The per-token
+// blacklist gets it right: MarkAccessTokenRevoked sets its Redis TTL to
+// time.Until(expiresAt), so the entry dies exactly when the token does. The
+// per-user marker -- written by /oauth/logout-all, by an access review, by a
+// leaver's deprovisioning and by the kill switch -- uses the constant
+// revocation.MarkerTTL, justified in its own comment as "comfortably longer
+// than any access token this product mints (an hour by default)".
+//
+// An hour is the DEFAULT, not the limit. access_token_lifetime is a per-client
+// integer column set through client registration and nothing capped it, so a
+// client configured with thirty days minted thirty-day tokens while the marker
+// revoking them expired after seven. IsAccessTokenRevoked reads a missing
+// marker as "not revoked" -- correctly, because it cannot tell never-revoked
+// from expired -- so on the eighth day the revoked token was accepted again.
+// Revocation that un-revokes itself is worse than none, because an operator
+// watched it succeed.
+//
+// Tying the cap to MarkerTTL is what makes the marker's comment true instead of
+// hopeful, and TestTheMarkerOutlivesTheLongestTokenTheProductWillMint fails if
+// the two ever separate.
+const maxAccessTokenLifetimeSeconds = int(revocation.MarkerTTL / time.Second)
+
+// EffectiveAccessTokenLifetime is the lifetime every minting path must use.
+//
+// It clamps rather than refuses, because the column already exists on installs
+// that set it: refusing at mint time would break a working client at the worst
+// possible moment, while clamping shortens a token that was never revocable for
+// its full span anyway. Registration refuses the value outright, so a new
+// client is told plainly rather than discovering it later.
+func (c *OAuthClient) EffectiveAccessTokenLifetime() int {
+	l := c.AccessTokenLifetime
+	if l <= 0 {
+		l = defaultAccessTokenLifetimeSeconds
+	}
+	if l > maxAccessTokenLifetimeSeconds {
+		return maxAccessTokenLifetimeSeconds
+	}
+	return l
+}
+
 // AuthorizationCode represents an OAuth authorization code
 type AuthorizationCode struct {
 	Code                string    `json:"code"`
@@ -3474,18 +3523,18 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	}
 
 	// Generate tokens (with session ID linkage)
-	accessToken, _ := s.GenerateJWT(c.Request.Context(), authCode.UserID, clientID, authCode.Scope, client.AccessTokenLifetime, sessionID)
+	accessToken, _ := s.GenerateJWT(c.Request.Context(), authCode.UserID, clientID, authCode.Scope, client.EffectiveAccessTokenLifetime(), sessionID)
 
 	response := TokenResponse{
 		AccessToken: accessToken,
 		TokenType:   "Bearer",
-		ExpiresIn:   client.AccessTokenLifetime,
+		ExpiresIn:   client.EffectiveAccessTokenLifetime(),
 		Scope:       authCode.Scope,
 	}
 
 	// Generate ID token if openid scope is requested
 	if strings.Contains(authCode.Scope, "openid") {
-		idToken, _ := s.GenerateIDToken(c.Request.Context(), authCode.UserID, clientID, authCode.Nonce, client.AccessTokenLifetime, sessionID)
+		idToken, _ := s.GenerateIDToken(c.Request.Context(), authCode.UserID, clientID, authCode.Nonce, client.EffectiveAccessTokenLifetime(), sessionID)
 		response.IDToken = idToken
 	}
 
@@ -3644,12 +3693,12 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 	}
 
 	// Generate new access token (with session ID linkage)
-	accessToken, _ := s.GenerateJWT(c.Request.Context(), token.UserID, clientID, token.Scope, client.AccessTokenLifetime, token.SessionID)
+	accessToken, _ := s.GenerateJWT(c.Request.Context(), token.UserID, clientID, token.Scope, client.EffectiveAccessTokenLifetime(), token.SessionID)
 
 	response := TokenResponse{
 		AccessToken: accessToken,
 		TokenType:   "Bearer",
-		ExpiresIn:   client.AccessTokenLifetime,
+		ExpiresIn:   client.EffectiveAccessTokenLifetime(),
 		Scope:       token.Scope,
 	}
 
@@ -3747,12 +3796,12 @@ func (s *Service) handleClientCredentialsGrant(c *gin.Context) {
 	}
 
 	// Generate access token (no user context)
-	accessToken, _ := s.GenerateJWT(c.Request.Context(), "", clientID, scope, client.AccessTokenLifetime)
+	accessToken, _ := s.GenerateJWT(c.Request.Context(), "", clientID, scope, client.EffectiveAccessTokenLifetime())
 
 	c.JSON(200, TokenResponse{
 		AccessToken: accessToken,
 		TokenType:   "Bearer",
-		ExpiresIn:   client.AccessTokenLifetime,
+		ExpiresIn:   client.EffectiveAccessTokenLifetime(),
 		Scope:       scope,
 	})
 }

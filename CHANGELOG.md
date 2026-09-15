@@ -74,6 +74,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A revoked access token came back to life once its revocation record
+  expired.** A revocation has to outlive what it revokes, and this package has
+  two revocation mechanisms that answered that differently.
+
+  The per-token blacklist gets it right: `MarkAccessTokenRevoked` derives its
+  Redis TTL from the token's own expiry, so the entry dies exactly when the
+  token does. The per-user marker — written by `/oauth/logout-all`, by an access
+  review, by a leaver's deprovisioning and by the **kill switch** — uses the
+  constant `revocation.MarkerTTL`, seven days, justified in its own comment as
+  "comfortably longer than any access token this product mints (an hour by
+  default)".
+
+  An hour is the default, not the limit. `access_token_lifetime` is a per-client
+  `INTEGER` column set through client registration and nothing capped it, so a
+  client configured with thirty days minted thirty-day tokens while the marker
+  revoking them expired after seven. `IsAccessTokenRevoked` reads a missing
+  marker as "not revoked" — correctly, since it cannot tell never-revoked from
+  expired — so on the eighth day the revoked token was accepted again. A
+  revocation that un-revokes itself is worse than none, because an operator
+  watched it succeed.
+
+  The invariant is one sentence: no path mints an access token that outlives the
+  marker able to revoke it. `maxAccessTokenLifetimeSeconds` is now *derived*
+  from `revocation.MarkerTTL` rather than chosen,
+  `OAuthClient.EffectiveAccessTokenLifetime()` clamps at mint, and client
+  registration refuses anything longer outright.
+
+  Clamping and refusing are not the same thing and both are needed. Clamping
+  covers rows on installs that already set the column — refusing at mint would
+  break a working client at the worst possible moment. Refusing is how whoever
+  configures a *new* client finds out, instead of asking for thirty days, being
+  handed seven, and believing the first number.
+
+  Seven minting paths read the raw column. A census guards them, because a clamp
+  only helps at the call sites that use it and a new grant type added next year
+  is one field access away from minting a token nothing can revoke — and it
+  would look exactly like the code beside it.
+
+  Six mutations red.
+
 - **A revoked permission could stay in effect, depending on what the role was
   called.** `PermissionResolver` caches a role set's effective permissions in
   Redis and `RequirePermission` decides from that cache;

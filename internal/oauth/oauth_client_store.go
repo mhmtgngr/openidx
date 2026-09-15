@@ -26,6 +26,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/revocation"
 )
 
 // ErrOAuthClientNotFound is the sentinel for an OAuth client miss within the tenant.
@@ -174,17 +175,45 @@ func (r *PostgresOAuthClientStore) List(ctx context.Context, offset, limit int) 
 	return clients, total, rows.Err()
 }
 
+// ErrAccessTokenLifetimeTooLong refuses a client that would mint an access
+// token nothing could revoke for its whole life.
+//
+// The per-user revocation marker -- what /oauth/logout-all, an access review, a
+// leaver's deprovisioning and the kill switch all write -- lives for
+// revocation.MarkerTTL. A token minted for longer than that outlives the record
+// that revokes it, and IsAccessTokenRevoked reads a missing marker as "not
+// revoked" because it cannot tell never-revoked from expired. The token starts
+// working again.
+//
+// Refused at registration rather than clamped, so whoever configures it is told
+// the number and the reason. Minting clamps as well, for the rows that already
+// carry a longer value: see OAuthClient.EffectiveAccessTokenLifetime.
+var ErrAccessTokenLifetimeTooLong = fmt.Errorf(
+	"access_token_lifetime may not exceed %d seconds (%s): the per-user revocation marker lives that long, "+
+		"and a token that outlives its marker is accepted again once the marker expires",
+	maxAccessTokenLifetimeSeconds, revocation.MarkerTTL)
+
+func validateAccessTokenLifetime(client *OAuthClient) error {
+	if client.AccessTokenLifetime > maxAccessTokenLifetimeSeconds {
+		return ErrAccessTokenLifetimeTooLong
+	}
+	return nil
+}
+
 // Create implements OAuthClientStore. WRITE — primary.
 func (r *PostgresOAuthClientStore) Create(ctx context.Context, client *OAuthClient) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
 	}
+	if err := validateAccessTokenLifetime(client); err != nil {
+		return err
+	}
 	now := time.Now()
 	client.CreatedAt = now
 	client.UpdatedAt = now
 	if client.AccessTokenLifetime == 0 {
-		client.AccessTokenLifetime = 3600
+		client.AccessTokenLifetime = defaultAccessTokenLifetimeSeconds
 	}
 	if client.RefreshTokenLifetime == 0 {
 		client.RefreshTokenLifetime = 86400
@@ -219,6 +248,9 @@ func (r *PostgresOAuthClientStore) Create(ctx context.Context, client *OAuthClie
 
 // Update implements OAuthClientStore. WRITE — primary.
 func (r *PostgresOAuthClientStore) Update(ctx context.Context, clientID string, client *OAuthClient) error {
+	if err := validateAccessTokenLifetime(client); err != nil {
+		return err
+	}
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
