@@ -74,6 +74,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The webhook retry sweep multiplied the backlog instead of draining it, and
+  the delivery backoff was written down and then defeated one line later.** The
+  queue is a Redis list and the record is PostgreSQL, and nothing wrote down
+  which deliveries were already on the queue.
+
+  `Publish` inserts a delivery as `pending` and nudges Redis; `processRetryBatch`
+  scans for pending rows and pushes them back, so a nudge lost to a Redis blip
+  still gets delivered. That backstop is right. What it could not tell apart was
+  a delivery nobody has queued and one the consumer simply has not reached yet —
+  a row stays `pending` for its whole life in the queue *and* for the whole HTTP
+  call. So every thirty seconds the entire undrained backlog was enqueued again.
+  Measured: four entries for one event after three ticks, and eighty entries for
+  twenty deliveries when four sweeps ran at once, which is what a Redis outage
+  does to the leader gate that was the only thing holding it to one.
+
+  That is not at-least-once delivery. At-least-once is a delivery that may
+  repeat; this was a feedback loop whose output grew with how far behind the
+  consumer already was, so it grew fastest exactly when the consumer was already
+  struggling.
+
+  `scheduleRetry` stored a one, five and thirty minute `next_retry_at` and then
+  pushed the delivery id straight back onto the queue, where a consumer blocked
+  on `BRPop` took it within milliseconds — nothing on the consumer side read
+  `next_retry_at` at all. The effect was not a hammered endpoint (the attempt cap
+  is three) but something worse: all three attempts were spent in under a second
+  and the delivery was marked `failed`, so a retry policy meant to ride out a
+  thirty-six minute outage rode out nothing, and a customer endpoint that
+  restarted in ten seconds had already lost the event.
+
+  And the idempotency guard — return early when the row already says
+  `delivered` — is a read, not a claim. It absorbs a duplicate consumed *after*
+  the first finished, which is why the amplification did not show up as
+  duplicate POSTs in a single-consumer drain. It cannot absorb one consumed at
+  the same time: measured, four consumers, four POSTs to the customer for one
+  event.
+
+  Migration v194 adds `webhook_deliveries.queued_at` to carry the claim. The
+  sweep takes each row as it selects it, the consumer claims rather than reads,
+  `scheduleRetry` releases the claim instead of re-nudging, and `Publish` records
+  what it queued. A second column rather than reusing `next_retry_at`, and the
+  first version of the fix proved why by breaking: `next_retry_at` is *when a
+  delivery becomes due*, `queued_at` is *whether someone already has it*. Folding
+  them together made the sweep's own claim look, to the consumer, like a delivery
+  that was not due — so the customer's endpoint was called zero times.
+
+  No new status value, so nothing can strand: whatever happens to the process
+  holding a delivery, the row is claimable again after the claim window. The cost
+  is that recovering a lost nudge now waits out that window rather than the old
+  thirty-second grace — the sweep cannot tell a lost nudge from a slow consumer,
+  and guessing the other way is what multiplied the queue.
+
+  Measured against a real PostgreSQL, a real Redis and a real HTTP endpoint that
+  counts what it was sent. Six mutations red.
+
 - **The audit search index accepted events PostgreSQL had refused, including
   over another tenant's.** `audit.LogEvent` writes the event to `audit_events`
   and then dual-writes it to Elasticsearch — and it started that second write

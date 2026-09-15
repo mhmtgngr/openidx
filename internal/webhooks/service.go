@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -273,8 +274,12 @@ func (s *Service) Publish(ctx context.Context, eventType string, payload interfa
 		// Tag the delivery with its subscription's org. Omitting org_id fell back
 		// to the default-org column DEFAULT, which fails the RLS WITH CHECK for
 		// any non-default tenant, so the delivery could never be created.
-		insertQuery := `INSERT INTO webhook_deliveries (id, subscription_id, event_type, payload, attempt, status, created_at, org_id)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		// queued_at is stamped here because the nudge below is about to put this
+		// delivery on the queue. Without it the sweep cannot tell a delivery
+		// nobody has queued from one the consumer has not reached yet, and
+		// enqueues the whole undrained backlog again every thirty seconds.
+		insertQuery := `INSERT INTO webhook_deliveries (id, subscription_id, event_type, payload, attempt, status, created_at, org_id, queued_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`
 
 		_, err := s.db.Pool.Exec(ctx, insertQuery,
 			deliveryID, subID, eventType, string(payloadJSON), 0, "pending", time.Now().UTC(), subOrgID,
@@ -351,31 +356,75 @@ func (s *Service) ProcessDeliveries(ctx context.Context) {
 	}
 }
 
-// deliverWebhook sends a single webhook delivery
+// deliveryClaimFor is how long taking a delivery keeps it out of everyone
+// else's reach. It bounds two things at once: how long a duplicate nudge is
+// ignored, and how long a delivery is stranded if the process holding it dies
+// mid-send. A minute is comfortably longer than the 10s HTTP timeout and short
+// enough that a crashed consumer costs one sweep interval, not an outage.
+const deliveryClaimFor = time.Minute
+
+// deliverWebhook sends a single webhook delivery.
+//
+// IT CLAIMS THE ROW RATHER THAN READING IT, and the difference is the whole
+// point. The previous version SELECTed the delivery, returned early if it
+// already said `delivered`, and then sent. That absorbs a duplicate consumed
+// AFTER the first one finished; it cannot absorb one consumed at the same
+// time, because the check is a read and the send happens between it and the
+// UPDATE -- measured, four consumers, four POSTs to the customer for one
+// event.
+//
+// It also never looked at next_retry_at. scheduleRetry wrote a one, five and
+// thirty minute backoff and then pushed the id straight back onto the queue,
+// where a consumer blocked on BRPop picked it up within milliseconds. So all
+// three attempts were spent in under a second and the delivery was marked
+// `failed`: a retry policy meant to ride out a thirty-six minute outage rode
+// out nothing, and a customer endpoint that restarted in ten seconds had
+// already lost the event.
+//
+// One statement answers both. The UPDATE matches only a delivery that is
+// pending, unclaimed AND due, and pushes queued_at into the future as it takes
+// it -- so a second consumer re-evaluates the predicate against the committed
+// row under READ COMMITTED, finds it held, and matches nothing.
+//
+// queued_at rather than next_retry_at, and the first version of this fix
+// proved why by breaking: the two answer different questions. next_retry_at is
+// WHEN A DELIVERY BECOMES DUE; queued_at is WHETHER SOMEONE ALREADY HAS IT.
+// Folding the claim into next_retry_at made the sweep's own claim look, to the
+// consumer, like a delivery that was not due yet -- the sweep enqueued it and
+// the consumer refused it, and the end-to-end test measured zero calls to the
+// customer's endpoint. The sweep has to be able to hand a row to a consumer it
+// has just claimed.
+//
+// No new status value, so nothing can strand: whatever happens to the holder,
+// the row is claimable again after deliveryClaimFor and the sweep brings it
+// back.
 func (s *Service) deliverWebhook(ctx context.Context, deliveryID string) error {
-	query := `SELECT d.id, d.subscription_id, d.event_type, d.payload, d.attempt, d.status,
-			sub.url, sub.secret
-		FROM webhook_deliveries d
-		JOIN webhook_subscriptions sub ON d.subscription_id = sub.id
-		WHERE d.id = $1`
+	claim := `UPDATE webhook_deliveries d
+			SET queued_at = NOW() + make_interval(secs => $2)
+			FROM webhook_subscriptions sub
+		WHERE d.id = $1
+		  AND sub.id = d.subscription_id
+		  AND d.status = 'pending'
+		  AND (d.queued_at IS NULL OR d.queued_at <= NOW())
+		  AND (d.next_retry_at IS NULL OR d.next_retry_at <= NOW())
+		RETURNING d.subscription_id, d.event_type, d.payload, d.attempt, sub.url, sub.secret`
 
 	var (
-		id, subscriptionID, eventType, payload, status string
-		attempt                                        int
-		subURL, subSecret                              string
+		subscriptionID, eventType, payload string
+		attempt                            int
+		subURL, subSecret                  string
 	)
 
-	err := s.db.Pool.QueryRow(ctx, query, deliveryID).Scan(
-		&id, &subscriptionID, &eventType, &payload, &attempt, &status,
-		&subURL, &subSecret,
+	err := s.db.Pool.QueryRow(ctx, claim, deliveryID, deliveryClaimFor.Seconds()).Scan(
+		&subscriptionID, &eventType, &payload, &attempt, &subURL, &subSecret,
 	)
-	if err != nil {
-		return fmt.Errorf("failed to query delivery: %w", err)
-	}
-	// Idempotency: a duplicate nudge (e.g. the DB backstop re-queuing a row that
-	// was actually in-flight) must not re-send an already-completed delivery.
-	if status == "delivered" {
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Not ours to send: already delivered or failed, not yet due, or another
+		// consumer holds it. All three are ordinary, so none of them is an error.
 		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to claim delivery: %w", err)
 	}
 	if subSecret, err = s.cipher.Decrypt(subSecret); err != nil {
 		return fmt.Errorf("failed to decrypt webhook secret: %w", err)
@@ -470,8 +519,15 @@ func (s *Service) scheduleRetry(ctx context.Context, deliveryID string, attempt 
 
 	nextRetryAt := time.Now().UTC().Add(retryDelay)
 
+	// queued_at = NULL RELEASES THE CLAIM. The attempt is over, so whatever
+	// deliverWebhook reserved is no longer held -- and without this the retry
+	// would have to wait out the claim window on top of its own backoff, so a
+	// one-minute retry would not be enqueued for two. next_retry_at decides
+	// when it is due; queued_at decides whether anyone has it; the attempt
+	// ending answers the second question, not the first.
 	updateQuery := `UPDATE webhook_deliveries
-		SET status = 'pending', response_status = $2, response_body = $3, attempt = $4, next_retry_at = $5
+		SET status = 'pending', response_status = $2, response_body = $3, attempt = $4,
+		    next_retry_at = $5, queued_at = NULL
 		WHERE id = $1`
 
 	_, err := s.db.Pool.Exec(ctx, updateQuery, deliveryID, responseStatus, responseBody, nextAttempt, nextRetryAt)
@@ -483,13 +539,12 @@ func (s *Service) scheduleRetry(ctx context.Context, deliveryID string, attempt 
 		return
 	}
 
-	// Push back to Redis for retry processing
-	if err := s.redis.Client.LPush(ctx, "webhook:deliveries", deliveryID).Err(); err != nil {
-		s.logger.Error("failed to push retry delivery to Redis",
-			zap.String("delivery_id", deliveryID),
-			zap.Error(err),
-		)
-	}
+	// AND THAT IS ALL. The delivery is not pushed back onto the queue here --
+	// that push is what defeated the backoff: the consumer is blocked on BRPop
+	// and took the id back within milliseconds, so the one, five and thirty
+	// minute schedule above was written down and ignored. next_retry_at is the
+	// schedule, and processRetryBatch is the thing that reads it; it ticks every
+	// thirty seconds, which is the resolution the backoff needs.
 
 	s.logger.Info("webhook delivery retry scheduled",
 		zap.String("delivery_id", deliveryID),
@@ -586,12 +641,42 @@ func (s *Service) ProcessRetries(ctx context.Context) {
 // be delivered. Recover those too, after a 30s grace so we don't race the normal
 // nudge path. This makes the DB the reliable backstop — at-least-once delivery.
 func (s *Service) processRetryBatch(ctx context.Context) {
-	query := `SELECT id FROM webhook_deliveries
+	// CLAIMING, NOT SCANNING. A row stays `pending` for its whole life in the
+	// queue and for the whole HTTP call, so the previous SELECT matched
+	// deliveries that were already queued and enqueued them again -- every
+	// thirty seconds, for as long as the consumer was behind. Measured: four
+	// entries for one event after three ticks, and eighty for twenty
+	// deliveries when four sweeps ran at once, which is what a Redis outage
+	// does to the leader gate.
+	//
+	// That is not at-least-once. At-least-once is a delivery that may repeat;
+	// this was a feedback loop whose output grew with how far behind the
+	// consumer already was.
+	//
+	// The UPDATE stamps queued_at as it selects, so the next tick does not see
+	// the row again until the claim window has passed. It is also what makes
+	// the leader gate an optimisation rather than the correctness argument:
+	// concurrent sweeps contend on the row lock and only one of them matches.
+	//
+	// The three branches say three different things.
+	//
+	//   - queued_at in the past by more than the claim window: somebody took
+	//     this and did not finish. Take it back.
+	//   - queued_at NULL with a next_retry_at: scheduleRetry RELEASED the claim
+	//     when the attempt ended, and the row is due. It gets no grace, because
+	//     the grace exists to avoid racing a nudge and there is no nudge left
+	//     to race.
+	//   - queued_at NULL with no next_retry_at: never queued, or queued before
+	//     v194 added the column. The original thirty-second grace covers it.
+	query := `UPDATE webhook_deliveries
+			SET queued_at = NOW()
 		WHERE status = 'pending'
-		  AND ( (next_retry_at IS NOT NULL AND next_retry_at <= NOW())
-		     OR (next_retry_at IS NULL AND created_at < NOW() - INTERVAL '30 seconds') )`
+		  AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+		  AND ( (queued_at IS NOT NULL AND queued_at < NOW() - make_interval(secs => $1))
+		     OR (queued_at IS NULL AND (next_retry_at IS NOT NULL OR created_at < NOW() - INTERVAL '30 seconds')) )
+		RETURNING id`
 
-	rows, err := s.db.Pool.Query(ctx, query)
+	rows, err := s.db.Pool.Query(ctx, query, deliveryClaimFor.Seconds())
 	if err != nil {
 		s.logger.Error("failed to query retryable deliveries", zap.Error(err))
 		return

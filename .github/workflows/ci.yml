@@ -303,6 +303,19 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # The webhook delivery queue IS a Redis list, and the questions this job
+      # asks about it -- how many entries the sweep leaves behind, what two
+      # consumers do to one delivery at once -- are about what the list holds.
+      # A fake answers them by construction.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
@@ -545,6 +558,41 @@ jobs:
                       TestV189IdleTransactionsAreClosedOut \
                       TestV189PlaneRolesReachEveryTableAfterTheFullChain \
                       TestV189PlaneRoleBudgetsSurviveTheApplicationPool; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
+      # THE WEBHOOK QUEUE IS REDIS AND THE RECORD IS POSTGRESQL, and the sweep
+      # that bridges them used to re-read rather than claim: a delivery stays
+      # `pending` for its whole life in the queue AND for the whole HTTP call,
+      # so every thirty seconds the entire undrained backlog was enqueued again.
+      # That is not at-least-once -- it is a feedback loop whose output grows
+      # with how far behind the consumer already is.
+      #
+      # Real Postgres, real Redis, and a real HTTP endpoint that counts what it
+      # was sent, because every one of these questions is about what two
+      # processes do to one row at the same time. The SUPERUSER DSN is here for
+      # the same reason as the step below: the suite builds its tables in a
+      # schema of its own rather than clobbering the shared ones.
+      - name: A webhook delivery is claimed, not re-read, and its backoff is honoured
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+          TEST_REDIS_ADDR: 127.0.0.1:6379
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/webhooks/ \
+            -run 'RetrySweepDoesNot|BackloggedDelivery|NudgeWasLost|FailedIsQueuedAgain|TwoSweepsAtOnce|BackoffInsteadOfSpending|TakenByTwoConsumers|SweepLeavesADelivery|ConsumerRefusesADelivery' \
+            -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestTheRetrySweepDoesNotReEnqueueADeliveryItAlreadyQueued \
+                      TestABackloggedDeliveryFiresOnceNotOncePerSweepTick \
+                      TestADeliveryWhoseNudgeWasLostIsStillRecovered \
+                      TestADeliveryThatFailedIsQueuedAgainOnceItsRetryIsDue \
+                      TestTwoSweepsAtOnceEnqueueEachDeliveryOnce \
+                      TestAFailedDeliveryWaitsForItsBackoffInsteadOfSpendingEveryAttemptAtOnce \
+                      TestTheSameDeliveryTakenByTwoConsumersAtOnceIsSentOnce \
+                      TestTheSweepLeavesADeliveryAloneUntilItsRetryIsDue \
+                      TestAConsumerRefusesADeliveryWhoseBackoffHasNotElapsed; do
             grep -q -- "--- PASS: $want " <<<"$out" \
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
