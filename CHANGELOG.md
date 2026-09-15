@@ -94,6 +94,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Sixteen CI steps went silent at the only moment they mattered.** Each one
+  exists to name which test ran and passed, and each was written as
+  `out=$(go test ... 2>&1)` followed by `echo "$out"` under `set -euo pipefail`.
+  When the test *failed*, the shell left the step at the assignment and never
+  reached the echo — so the job reported `Process completed with exit code 1`
+  and not one line of test output.
+
+  A control that reports nothing when the thing it watches breaks is the same
+  defect this series is about, this time in the harness rather than the product:
+  the steps were added to make a skipped or renamed test impossible to miss, and
+  they hid the failure they were built to surface.
+
+  Found the hard way. The `rls-isolation` job went red on this branch's head in
+  a step covering `internal/access` — a package this PR does not touch — and the
+  reason was unrecoverable from the log, because there was no reason in the log.
+  Every capture now ends `|| { echo "$out"; exit 1; }`.
+
+  Verified rather than assumed: the old shape prints nothing and exits 1, the
+  new one prints the detail and still exits 1. Every `run:` block in the file
+  was re-parsed with `bash -n` after the change, and
+  `check-workflows-parse.sh`, `check-race-timeout.sh` and
+  `check-docs-drift.sh` all pass.
+
+  **What this does not claim.** It does not fix the `internal/access` failure —
+  all seven of that step's tests pass locally against a fresh database built the
+  way CI builds one (`openidx_app`-owned, freshly created), so there is nothing
+  yet to fix. It makes the next occurrence say what it is.
+
 - **A revoke with no Redis crashed the request that was severing the account.**
   Every caller of `revocation.RevokeUserTokens` reaches it through
   `RedisClient.RevocationDB()`, whose contract is that it is nil-safe and
