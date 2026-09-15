@@ -34,6 +34,7 @@ package revocation
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -101,10 +102,45 @@ func ParseMarker(v string) (int64, error) {
 // rather than swallowing it, because "the tokens were not actually cut" is
 // something an operator needs in the record.
 func RevokeUserTokens(ctx context.Context, client redis.UniversalClient, userID string) error {
-	if client == nil {
+	if noClient(client) {
 		return fmt.Errorf("no redis client: cannot revoke tokens for user %s", userID)
 	}
 	return client.Set(ctx, UserTokensRevokedAtKey(userID), MarkerValue(time.Now()), MarkerTTL).Err()
+}
+
+// noClient reports whether client is unusable -- nil, or a NIL POINTER WEARING
+// AN INTERFACE.
+//
+// The second case is the one that matters here, and it is not hypothetical: it
+// took down a test job. Every caller reaches this through
+// `s.redis.RevocationDB()`, whose documented contract is that it is nil-safe
+// and returns nil when there is no client. Its return type is the concrete
+// *redis.Client, and assigning a nil *redis.Client to this redis.UniversalClient
+// parameter produces an interface value that is NOT nil -- it carries the type
+// and a nil pointer -- so `client == nil` is false and the very next line calls
+// a method on a nil receiver and segfaults.
+//
+// A panic is the worst available outcome for a best-effort sever: this function
+// exists so that a Redis that is missing or unreachable degrades into a logged
+// error beside an account that is already disabled. Taking the process down
+// instead turns "the tokens were not cut" into "the request that severed the
+// account never finished", which is a strictly worse failure than the one this
+// package was written to fix.
+//
+// Kind is checked before IsNil because IsNil itself panics on a kind that
+// cannot be nil, and a client need not be a pointer -- a value type satisfying
+// the interface is usable and must not be reported as absent.
+func noClient(client redis.UniversalClient) bool {
+	if client == nil {
+		return true
+	}
+	v := reflect.ValueOf(client)
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 // IsRevoked reports whether a token issued at issuedAt (seconds since the
@@ -140,7 +176,7 @@ func IsRevoked(issuedAt, cutoff int64) bool {
 // why names the path, so the line says which control left a live credential.
 func Revoker(client redis.UniversalClient, logger *zap.Logger) func(ctx context.Context, userID, why string) {
 	return func(ctx context.Context, userID, why string) {
-		if client == nil || userID == "" {
+		if noClient(client) || userID == "" {
 			return
 		}
 		if err := RevokeUserTokens(ctx, client, userID); err != nil && logger != nil {

@@ -94,6 +94,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A revoke with no Redis crashed the request that was severing the account.**
+  Every caller of `revocation.RevokeUserTokens` reaches it through
+  `RedisClient.RevocationDB()`, whose contract is that it is nil-safe and
+  returns a nil `*redis.Client` when the service has no Redis. That nil then
+  crosses into a `redis.UniversalClient` parameter — and a nil pointer inside an
+  interface is not a nil interface, so the `client == nil` guard let it through
+  and the next line called `Set` on a nil receiver.
+
+  A panic is the worst available outcome for a best-effort sever. The function
+  exists so that a missing or unreachable Redis degrades into a logged error
+  beside an account that is *already* disabled; taking the process down instead
+  turns "the tokens were not cut" into "the sever never finished", leaving the
+  account in whatever half-disabled state the panic interrupted.
+
+  Guarded once, at the choke point both `RevokeUserTokens` and `Revoker` share,
+  because every sever path in the product passes through them and the accessor
+  they all use is the thing producing the typed nil. The guard checks `Kind`
+  before `IsNil` — `IsNil` panics on a kind that cannot be nil, and a value type
+  satisfying the interface is usable and must not be reported as absent.
+
+  Found by CI, in a suite that has no opinion about Redis at all: the identity
+  lifecycle tenant-isolation tests build a `Service` with a database and a
+  logger and nothing else, so the `disable_user` branch of
+  `executeLifecycleAction` reached the new revoke with no client and
+  segfaulted. Mutation: restoring `client == nil` reproduces the CI panic in
+  both that suite and the new unit tests.
+
+- **A cache-key assertion still spelled out `perms:v2:`.** The permission cache
+  key moved to `perms:v3:` with escaped role names in this same series, and the
+  delegation cache-poisoning test built the key it read back by hand — so it
+  asked Redis for a key nothing writes any more and failed on the cache read
+  rather than on anything it was written to check. It now builds the key with
+  `PermissionCacheKey`, the one constructor the enforcement point uses, so the
+  two cannot drift again.
+
 - **Most paths that sever a user's access never revoked their tokens.** The
   `internal/revocation` package doc records half of this defect and *names* the
   other half: "a path that severs a user's access and never writes the marker at

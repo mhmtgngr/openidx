@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -162,7 +161,13 @@ func TestPermissionResolver_DelegationsAreNotCachedAcrossUsers(t *testing.T) {
 	sorted := make([]string, len(roles))
 	copy(sorted, roles)
 	sort.Strings(sorted)
-	key := "perms:v2:" + orgA + ":" + strings.Join(sorted, ",")
+	// Built by the one constructor the production path uses, NOT spelled out
+	// here. This line used to carry a literal "perms:v2:" prefix, and when the
+	// key format moved to v3 (role names are escaped now, because a role name
+	// holding a glob metacharacter is not a Redis pattern) the test kept asking
+	// Redis for a key nothing writes any more -- so it failed on the cache read
+	// rather than on anything it was written to check.
+	key := PermissionCacheKey(orgA, sorted)
 	_ = rdb.Del(context.Background(), key).Err()
 	t.Cleanup(func() { _ = rdb.Del(context.Background(), key).Err() })
 
