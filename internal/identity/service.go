@@ -2997,10 +2997,34 @@ func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
 		return err
 	}
 
-	// First remove all user-role assignments
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM user_roles WHERE role_id = $1 AND org_id = $2", roleID, org.ID)
+	// First remove all user-role assignments.
+	//
+	// RETURNING user_id, for the reason the expired-role sweep and the stale
+	// account cleanup both needed it: this cuts BY PREDICATE, so without the
+	// identities there is nobody to revoke. Deleting a role takes it away from
+	// everybody who held it, and every one of those people is still carrying a
+	// token that names it.
+	lostHolders, err := s.db.Pool.Query(ctx,
+		"DELETE FROM user_roles WHERE role_id = $1 AND org_id = $2 RETURNING user_id::text", roleID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to remove role assignments: %w", err)
+	}
+	var holders []string
+	for lostHolders.Next() {
+		var userID string
+		if scanErr := lostHolders.Scan(&userID); scanErr != nil {
+			// Already deleted; an id we cannot read is an id we cannot revoke,
+			// which is the thing to say rather than a reason to abandon the rest.
+			s.logger.Error("a role assignment was removed but its user could not be read; that token will not be cut",
+				zap.Error(scanErr))
+			continue
+		}
+		holders = append(holders, userID)
+	}
+	lostHolders.Close()
+	if lerr := lostHolders.Err(); lerr != nil {
+		s.logger.Error("the list of users who lost this role is incomplete; some tokens will not be cut",
+			zap.Error(lerr), zap.Int("revocable", len(holders)))
 	}
 
 	// Remove composite role relationships
@@ -3021,6 +3045,13 @@ func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
 
 	// Deleting a role silently revokes it from every user who held it, so the
 	// event is a mass revocation as much as a definition change.
+	//
+	// That sentence was here before the revocation was: the code knew this was
+	// a mass revocation and still left every holder's token naming the role.
+	// Cut them now, after the role row is actually gone, so a delete that
+	// failed cuts nobody.
+	s.revokeAfterRoleLoss(ctx, "identity.DeleteRole", holders...)
+
 	s.logAuditEvent(ctx, "identity", "role_management", "role.deleted", "success",
 		actorIDFromContext(ctx), roleID, "role", nil)
 	return nil
@@ -3490,6 +3521,11 @@ func (s *Service) RemoveUserRole(ctx context.Context, userID, roleID string) err
 		actorIDFromContext(ctx), userID, "user", map[string]interface{}{
 			"role_id": roleID,
 		})
+
+	// The row is gone; the token that names this role is not. Cut it, or the
+	// administrator who just revoked the role watches the API say "success"
+	// while the person keeps using it until their access token expires.
+	s.revokeAfterRoleLoss(ctx, "identity.RemoveUserRole", userID)
 	return nil
 }
 
@@ -3557,6 +3593,17 @@ func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []
 			"previous_role_ids": previous,
 			"role_ids":          roleIDs,
 		})
+
+	// A wholesale replacement is both a grant and a revocation, and only the
+	// revocation half needs the token cut -- see revokeAfterRoleLoss. Adding a
+	// role to somebody's set must not end their session.
+	//
+	// After the commit, not inside it: the marker lives in Redis and cannot
+	// join the transaction, and writing it before the commit would cut a user
+	// whose role change then rolled back.
+	if lost := lostRoles(previous, roleIDs); len(lost) > 0 {
+		s.revokeAfterRoleLoss(ctx, "identity.UpdateUserRoles", userID)
+	}
 	return nil
 }
 

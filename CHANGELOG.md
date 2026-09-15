@@ -94,6 +94,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Three admin-plane paths take a role away, and none of them cut the token.**
+  `RemoveUserRole`, `UpdateUserRoles` and `DeleteRole` are each reached from an
+  HTTP handler an administrator drives directly. None disables the account, so
+  none was covered by the sever work, which revokes only where the account is
+  being cut off entirely.
+
+  The enforcement point reads the caller's roles from the JWT `roles` claim, so
+  deleting the row changes nothing for a session already holding a token. The
+  administrator sees 200 and an audit line recording success.
+
+  **`DeleteRole` is the one whose own comment already said so.** Above the audit
+  event sat *"Deleting a role silently revokes it from every user who held it,
+  so the event is a mass revocation as much as a definition change"* — the code
+  knew, and still left every holder's token naming the role. It also cut **by
+  predicate** (`DELETE FROM user_roles WHERE role_id = $1`), so it had no
+  identities to revoke: `RETURNING user_id` now, the third place in this series
+  that needed the same correction.
+
+  **A grant is not a revocation, and the fix does not treat them alike.**
+  `UpdateUserRoles` replaces a whole set, which is both at once. Revoking on
+  every role write would end a live session each time somebody was *granted* an
+  extra role, for no security gain — a token that does not yet carry a new role
+  permits nothing it should not. So only the difference (`lostRoles`) triggers a
+  cut. Adding a role, and replacing a set with itself, leave the session alone.
+
+  Measured against a real PostgreSQL and a real Redis, with general and
+  revocation bound to two different databases, reading the marker back from the
+  key the enforcement point reads.
+
+  **Five mutations red:** dropping the revoke from `RemoveUserRole`, dropping it
+  from `DeleteRole`, revoking unconditionally in `UpdateUserRoles` (which cuts
+  grants), making `lostRoles` return everything rather than the difference, and
+  removing `RETURNING` so `DeleteRole` has nobody to revoke. One of the five did
+  not compile on the first attempt and was redone rather than counted.
+
+  **Six of the ten role-reducing paths remain**, and are listed in the plan.
+
 - **A time-bound role elevation outlived its own expiry.** `user_roles.expires_at`
   is this product's temporary elevation — somebody is made an admin until 15:00.
   At 15:00 the sweep deleted the row, logged a count, and stopped.
