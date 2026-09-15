@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cmd/event-relay`: the process that makes the outbox live.** Tasks 3.1a and
+  3.1b built the outbox table, the publisher and the relay; 3.2 built the sink.
+  None of it ran anywhere, and the plan said so rather than letting it pass as
+  finished — a table nothing writes to differs from a package nothing imports
+  only by intention. This binary composes them: Postgres, NATS, the sink, the
+  drain, and a leader-gated retention sweep (a sweep is not a claim, so every
+  replica would otherwise delete its own batch of the same rows). The drain
+  itself elects no leader, and that is not an omission: `FOR UPDATE SKIP LOCKED`
+  is the coordination.
+
+  **It refuses to start without a broker.** A relay with no sink looks healthy
+  from outside: it claims rows, cannot deliver them, rolls back, claims them
+  again. Nothing is lost — the outbox is built for that — but nothing is
+  delivered either, and the only place the failure shows is the table, which is
+  the last place anyone looks. Measured: `NATS_URL` empty exits 1 and says why,
+  and CI runs that every time.
+
+  `TestSomeBinaryRunsTheOutboxRelay` is the guard against this package becoming
+  what it replaced. Its own doc records why the in-memory bus was deleted —
+  nothing in the tree imported it — and the outbox spent two tasks in exactly
+  that position. The guard looks for a binary calling **both** `NewRelay` and
+  `NewNATSSink`: a relay wired to a stub satisfies "the relay runs" and delivers
+  nothing, which is the failure it is really about.
+
+### Fixed
+
+- **The event sink refused this platform's own event types.** Every piece of the
+  outbox had been measured alone; that the pieces *fit* had not. The first
+  end-to-end test — a business transaction at one end, a real broker at the
+  other — claimed three events and delivered **zero**: the sink's subject check
+  rejected any value containing a dot, and this platform's event vocabulary is
+  dotted (`user.created`, `session.revoked` in `event.go`). The rule looked
+  principled and rejected what the rest of the package publishes. Every unit
+  test passed, because the unit test encoded the same wrong rule the code did.
+
+  The two halves of a subject are now checked differently, because they do
+  different jobs. The **tenant** occupies one token — a dot there moves the
+  event into another tenant's position, and a UUID is one token already. The
+  **event type** may be a dotted hierarchy, which is what a consumer subscribes
+  into with `<prefix>.<org>.user.>`. Both still refuse wildcards, whitespace,
+  control characters and empty tokens.
+
+  The lesson outlives the rule: a unit test that shares an assumption with the
+  code it checks is green for the same reason the code is wrong. Only the
+  composition could catch this one.
+
+
 - **The outbox's sink, and the one publish call that satisfies its contract.**
   `NATSSink` implements `Sink` over JetStream. `Sink.Publish` promises the
   broker has accepted the event when it returns nil, and the relay deletes the

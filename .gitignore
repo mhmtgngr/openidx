@@ -20,6 +20,10 @@ bin/
 /identity-service
 /oauth-service
 /provisioning-service
+# `go build ./cmd/event-relay` drops it here like the rest. This list is
+# hand-maintained and it drifted: the relay's binary was committed, 42.8 MB of
+# it, because a new cmd/ does not add itself. tools/repohygiene is the guard.
+/event-relay
 
 # Compiled tool binaries (root level). `go build ./tools/<name>` drops the
 # binary in the working directory, not next to its package.

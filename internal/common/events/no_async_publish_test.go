@@ -93,35 +93,57 @@ func receiverName(x ast.Expr) string {
 	}
 }
 
-// The subject is assembled from values that arrive from outside, and `.`, `*`
-// and `>` are structure rather than text in a NATS subject. An event type of
-// "user.>" published under a tenant's prefix is a subject a narrowly permitted
-// subscriber was never meant to receive, so the check is on the way in.
+// The subject is assembled from values that arrive from outside, and `*` and
+// `>` are structure rather than text in a NATS subject.
+//
+// THE TWO HALVES ARE NOT THE SAME CHECK, and the first version of this test had
+// that wrong: it asserted that a dot anywhere was refused, which looked
+// principled and rejected this platform's own vocabulary -- event.go ships
+// "user.created" and "session.revoked", and a dotted type is the hierarchy a
+// consumer subscribes into. The end-to-end test against a real broker is what
+// found it: three events claimed, zero delivered, because the sink refused the
+// type the rest of the package publishes. So the tenant token stays one token
+// and the type may be a path.
 func TestASubjectTokenCannotCarryStructure(t *testing.T) {
 	s := &NATSSink{prefix: "openidx"}
 
-	t.Run("an ordinary event goes where it says", func(t *testing.T) {
-		got, err := s.subject(Delivery{OrgID: "org-1", EventType: "user_created", EventID: "e1"})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if want := "openidx.org-1.user_created"; got != want {
-			t.Errorf("subject = %q, want %q", got, want)
-		}
-	})
+	for _, ok := range []struct {
+		name string
+		d    Delivery
+		want string
+	}{
+		{"a flat type", Delivery{OrgID: "org-1", EventType: "user_created", EventID: "e1"}, "openidx.org-1.user_created"},
+		{"a dotted type is a hierarchy, not an injection",
+			Delivery{OrgID: "org-1", EventType: "user.created", EventID: "e2"}, "openidx.org-1.user.created"},
+		{"and it may be deeper",
+			Delivery{OrgID: "org-1", EventType: "session.token.revoked", EventID: "e3"}, "openidx.org-1.session.token.revoked"},
+	} {
+		t.Run(ok.name, func(t *testing.T) {
+			got, err := s.subject(ok.d)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != ok.want {
+				t.Errorf("subject = %q, want %q", got, ok.want)
+			}
+		})
+	}
 
 	for _, tc := range []struct {
 		name  string
 		d     Delivery
 		about string
 	}{
-		{"wildcard in the event type", Delivery{OrgID: "org-1", EventType: "user.>", EventID: "e"}, "publishes under a subject tree instead of a leaf"},
+		{"wildcard in the event type", Delivery{OrgID: "org-1", EventType: "user.>", EventID: "e"}, "publishes across a subtree instead of a leaf"},
 		{"single-token wildcard", Delivery{OrgID: "org-1", EventType: "user.*", EventID: "e"}, "same, one level"},
-		{"separator in the org id", Delivery{OrgID: "org-1.admin", EventType: "user_created", EventID: "e"}, "moves the event into another tenant's position"},
-		{"wildcard as the org id", Delivery{OrgID: ">", EventType: "user_created", EventID: "e"}, "the whole tree"},
-		{"empty org id", Delivery{OrgID: "", EventType: "user_created", EventID: "e"}, "collapses a token and shifts every one after it"},
+		{"separator in the org id", Delivery{OrgID: "org-1.admin", EventType: "user.created", EventID: "e"}, "moves the event into another tenant's position"},
+		{"wildcard as the org id", Delivery{OrgID: ">", EventType: "user.created", EventID: "e"}, "the whole tree"},
+		{"empty org id", Delivery{OrgID: "", EventType: "user.created", EventID: "e"}, "collapses a token and shifts every one after it"},
 		{"empty event type", Delivery{OrgID: "org-1", EventType: "", EventID: "e"}, "same"},
-		{"whitespace", Delivery{OrgID: "org 1", EventType: "user_created", EventID: "e"}, "a subject is a wire token"},
+		{"an empty token inside the type", Delivery{OrgID: "org-1", EventType: "user..created", EventID: "e"}, "shifts every token after it"},
+		{"a leading dot on the type", Delivery{OrgID: "org-1", EventType: ".created", EventID: "e"}, "same, at the front"},
+		{"a trailing dot on the type", Delivery{OrgID: "org-1", EventType: "user.", EventID: "e"}, "same, at the back"},
+		{"whitespace", Delivery{OrgID: "org 1", EventType: "user.created", EventID: "e"}, "a subject is a wire token"},
 		{"newline", Delivery{OrgID: "org-1", EventType: "user\ncreated", EventID: "e"}, "and the server is not the only thing that reads it"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

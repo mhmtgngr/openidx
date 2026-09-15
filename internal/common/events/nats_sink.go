@@ -38,11 +38,30 @@ import (
 // crash-redelivery never reaches a consumer at all. The window has to outlast a
 // relay restart to be worth anything, hence two minutes rather than the default.
 //
-// THE SUBJECT IS BUILT, NOT INTERPOLATED. `.` separates subject tokens and `*`
-// and `>` are wildcards, so an event type carrying any of them would publish
-// somewhere other than where it claims -- widening what a subscriber with a
-// narrow permission receives. Both components are checked against that, and a
-// bad one is an error rather than a subject nobody meant.
+// THE SUBJECT IS BUILT, NOT INTERPOLATED, AND THE TWO HALVES ARE CHECKED
+// DIFFERENTLY -- which is the correction an end-to-end test forced.
+//
+// The first version refused a dot anywhere, on the reasoning that a dot starts
+// a new subject token. True, and wrong as a rule: this platform's event types
+// ARE dotted (event.go ships user.created and session.revoked), and a hierarchy
+// is what a subject is for. A consumer wanting every user event subscribes to
+// <prefix>.<org>.user.> precisely because the type has structure. Refusing that
+// rejected the vocabulary the rest of the package publishes.
+//
+// So the tenant token and the type suffix have different rules, because they
+// are doing different jobs:
+//
+//   - The ORG ID occupies one token, and that position is what a per-tenant
+//     subscription matches on. A dot there moves the event into another
+//     tenant's position, so it stays a single token -- which a UUID already is.
+//   - The EVENT TYPE is a hierarchy and may carry dots between non-empty
+//     tokens. What it must not carry is `*` or `>`: those are wildcards, and a
+//     type of "user.>" publishes across a subtree a narrowly permitted
+//     subscriber was never meant to receive. Nor an empty token, which shifts
+//     every token after it one position left.
+//
+// Both refuse whitespace and control characters: a subject is a wire token, and
+// the server is not the only thing that reads it.
 
 const (
 	// natsDuplicateWindow bounds how far back the broker looks for a repeated
@@ -166,24 +185,45 @@ func (s *NATSSink) subject(d Delivery) (string, error) {
 	if err := validSubjectToken(d.OrgID); err != nil {
 		return "", fmt.Errorf("event %s org id: %w", d.EventID, err)
 	}
-	if err := validSubjectToken(d.EventType); err != nil {
+	if err := validSubjectSuffix(d.EventType); err != nil {
 		return "", fmt.Errorf("event %s type: %w", d.EventID, err)
 	}
 	return s.prefix + "." + d.OrgID + "." + d.EventType, nil
 }
 
-// validSubjectToken rejects anything that would change a subject's SHAPE rather
-// than its value. A dot starts a new token, `*` matches one token and `>`
-// matches the rest -- so an event type of "user.>" published under a per-tenant
-// prefix is a subject a narrowly permitted subscriber was never meant to see.
-// Whitespace and control characters go too: a subject is a wire token, and a
-// server that accepts one is not the only thing that reads it.
+// validSubjectToken checks a value that must occupy exactly ONE subject token:
+// the platform prefix, and the tenant. See the header for why a dot is fatal
+// here and merely structural in the type.
 func validSubjectToken(s string) error {
 	if s == "" {
 		return fmt.Errorf("must not be empty")
 	}
-	if strings.ContainsAny(s, ".*> \t\r\n") {
-		return fmt.Errorf("must not contain a subject separator or wildcard (got %q)", s)
+	if strings.Contains(s, ".") {
+		return fmt.Errorf("must occupy one subject token, so it must not contain a separator (got %q)", s)
+	}
+	return validSubjectChars(s)
+}
+
+// validSubjectSuffix checks a value that may span SEVERAL tokens: the event
+// type, whose dots are the hierarchy a consumer subscribes into.
+func validSubjectSuffix(s string) error {
+	if s == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	if strings.HasPrefix(s, ".") || strings.HasSuffix(s, ".") || strings.Contains(s, "..") {
+		return fmt.Errorf("must not contain an empty token, which shifts every token after it (got %q)", s)
+	}
+	return validSubjectChars(s)
+}
+
+// validSubjectChars is what both halves share: no wildcard, no whitespace, no
+// control character.
+func validSubjectChars(s string) error {
+	if strings.ContainsAny(s, "*>") {
+		return fmt.Errorf("must not contain a wildcard (got %q)", s)
+	}
+	if strings.ContainsAny(s, " \t\r\n") {
+		return fmt.Errorf("must not contain whitespace (got %q)", s)
 	}
 	for _, r := range s {
 		if r < 0x20 || r == 0x7f {

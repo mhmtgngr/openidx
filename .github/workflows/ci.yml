@@ -558,6 +558,7 @@ jobs:
       - name: The event sink does not return before the broker has the event
         env:
           TEST_NATS_URL: nats://127.0.0.1:14222
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
           # One static binary from the module proxy. No container runtime, and
@@ -571,8 +572,13 @@ jobs:
             sleep 1
           done
 
+          # Both halves: the sink on its own, and the whole path from a business
+          # transaction to the stream. The second is what caught the sink
+          # refusing this platform's own dotted event types -- three events
+          # claimed, zero delivered -- which every unit test passed, because the
+          # unit test encoded the same wrong rule the code did.
           out=$(go test ./internal/common/events/ \
-            -run 'PublishReturns|Redelivered|LandsOnItsOwn|StreamKeeps|Wildcard|TheNATSSinkPublishesSynchronously|SubjectToken' \
+            -run 'PublishReturns|Redelivered|LandsOnItsOwn|StreamKeeps|Wildcard|TheNATSSinkPublishesSynchronously|SubjectToken|ReachesTheBroker|BrokerOutage|SomeBinaryRuns' \
             -count=1 -v 2>&1)
           echo "$out"
           for want in TestPublishReturnsOnlyAfterTheBrokerHasTheEvent \
@@ -581,10 +587,24 @@ jobs:
                       TestTheStreamKeepsWhatTheSinkClaimsItKeeps \
                       TestAnEventWhoseTypeCarriesAWildcardIsNeverPublished \
                       TestTheNATSSinkPublishesSynchronously \
-                      TestASubjectTokenCannotCarryStructure; do
+                      TestASubjectTokenCannotCarryStructure \
+                      TestAnEventWrittenInATransactionReachesTheBroker \
+                      TestABrokerOutageLeavesTheBacklogIntactAndDeliversItAfterwards \
+                      TestSomeBinaryRunsTheOutboxRelay; do
             grep -q -- "--- PASS: $want " <<<"$out" \
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
+
+          # And the relay refuses to start with no broker rather than draining
+          # into nothing. A relay with no sink claims rows, fails every publish
+          # and rolls back forever; the only place that is visible is the outbox
+          # table, which is the last place anyone looks.
+          if NATS_URL= go run ./cmd/event-relay >/tmp/relay-no-broker.log 2>&1; then
+            echo "::error::cmd/event-relay started with NATS_URL empty"; exit 1
+          fi
+          grep -q "NATS_URL is empty" /tmp/relay-no-broker.log \
+            || { echo "::error::the relay exited without saying why"; cat /tmp/relay-no-broker.log; exit 1; }
+          echo "the relay refuses to run without a broker"
 
       # Task 2.3's unmeasured assumption. A read through Reader() is not a bare
       # SELECT: in RLS_MODE=local it is BEGIN + set_config + SELECT, and a
