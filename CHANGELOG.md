@@ -74,6 +74,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The audit search index accepted events PostgreSQL had refused, including
+  over another tenant's.** `audit.LogEvent` writes the event to `audit_events`
+  and then dual-writes it to Elasticsearch — and it started that second write
+  without looking at whether the first one succeeded.
+
+  The audit trail has two stores and only one of them is the record.
+  `audit_events` in PostgreSQL is the tamper-evident one: v181 gave it
+  `chain_seq`, `prev_hash` and `event_hash`, and the sealer chains every row
+  into a per-org sequence. Elasticsearch holds a copy for search, and the
+  console reads *that* one. The lag between them has to run one way:
+  PostgreSQL may be ahead of the index — the index write is fire-and-forget and
+  the reconciler backfills — but the index may never be ahead of PostgreSQL. A
+  document the record never accepted has no sequence number, no hash and no
+  seal, and chain verification walks only the rows that exist, so it would keep
+  reporting the chain intact while the console showed an event the chain says
+  nothing about.
+
+  The sharp edge is that `id` is also the Elasticsearch *document* id, and it
+  arrives in the body of `POST /api/v1/audit/events`, which is deliberately
+  unauthenticated (service-to-service, isolated by network rather than by a
+  JWT). The `PRIMARY KEY` on `audit_events.id` is the only thing in the system
+  making that document id unique. So a caller supplying another tenant's event
+  id had the INSERT refused and the indexed document **overwritten** — measured:
+  org A's refused event replaced org B's document while org B's row sat
+  untouched in PostgreSQL, with nothing in the record saying so.
+
+  No adversary is required for the same defect. `LogEvent`'s own comment records
+  an era when every audit event access-service emitted was refused because the
+  id was empty and the column is a `uuid`; seen from this side, that era shipped
+  all of them to the index and none to the chain. The same shape today is a
+  statement timeout — which the per-plane roles set, and which arrives under
+  load.
+
+  The fix is one early return, and the reverse direction is unchanged because it
+  is the designed state. Measured against a real PostgreSQL and a real HTTP
+  Elasticsearch (the product's own client, over the wire), since the question is
+  about the ordering of two round trips. Five mutations red.
+
 - **A 7.08 MB compiled binary was tracked in the repository, and its ignore line
   had been doing nothing for as long as it existed.** `.gitignore` carries a
   hand-written list of the binaries `go build ./cmd/<x>` drops into the working

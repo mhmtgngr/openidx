@@ -549,6 +549,38 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # THE AUDIT TRAIL HAS TWO STORES AND ONLY ONE OF THEM IS THE RECORD.
+      # audit_events in PostgreSQL is tamper-evident -- v181 gave it chain_seq,
+      # prev_hash and event_hash, and the sealer chains every row. Elasticsearch
+      # holds a copy for search, and the console reads THAT one. The lag between
+      # them has to be one-way: PostgreSQL may be ahead of the index, the index
+      # may never be ahead of PostgreSQL, because a document the record never
+      # accepted has no hash and no seal and chain verification walks only the
+      # rows that exist.
+      #
+      # This is a question about the ordering of two round trips, so it is asked
+      # of a real PostgreSQL and a real HTTP Elasticsearch (the product's own
+      # client, over the wire) rather than of a mock. The SUPERUSER DSN is here
+      # because the suite builds its audit_events in a schema of its own -- the
+      # application role cannot create one, and clobbering the shared table would
+      # take the rest of this job down with it.
+      - name: The search index never holds an audit event PostgreSQL refused
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/audit/ \
+            -run 'ElasticsearchNeverHolds|ARefusedInsertIndexesNothing|AnAcceptedEventStillReaches|AnEventPostgresAcceptedReaches' \
+            -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestElasticsearchNeverHoldsAnEventPostgresRefused \
+                      TestARefusedInsertIndexesNothing \
+                      TestAnAcceptedEventStillReachesElasticsearchAndIsStamped \
+                      TestAnEventPostgresAcceptedReachesTheIndexEvenWhenTheFirstWriteFails; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # The sink's contract is the one thing in the outbox that no mock can
       # answer: Sink.Publish promises the broker has ACCEPTED the event when it
       # returns nil, and the relay DELETES the outbox row on that nil. Two of
