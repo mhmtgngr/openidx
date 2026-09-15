@@ -72,6 +72,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NewNATSSink`: a relay wired to a stub satisfies "the relay runs" and delivers
   nothing, which is the failure it is really about.
 
+### Added
+
+- **A census that every binary holding an Elasticsearch client also runs the
+  audit reconciler.** `LogEvent` indexes fire-and-forget and its comment says
+  the reconciler backfills whatever the index dropped, "guaranteeing ES search
+  completeness". That is a claim about the whole deployment, not about the
+  function: `StartESReconciler` runs in one binary, the ES client is built in
+  one binary, and they happen to be the same one.
+
+  Nothing made them the same one. A second service given an ES client would
+  index fire-and-forget with no reconciler behind it, and every write
+  Elasticsearch dropped there would be lost silently — `indexed_at` NULL
+  forever, the row in PostgreSQL, and the console's audit search simply never
+  showing it.
+
+  The test finds the binaries itself rather than trusting a list, and checks
+  both directions: a client with no reconciler, and a reconciler with no client
+  (which returns immediately when `es` is nil, so it reads as coverage while
+  being a no-op). Three mutations red.
+
 ### Fixed
 
 - **A revoked access token came back to life once its revocation record
