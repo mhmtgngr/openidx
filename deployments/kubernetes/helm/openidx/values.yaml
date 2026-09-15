@@ -1040,6 +1040,39 @@ pgcat:
       cpu: "1"
       memory: 512Mi
 
+# ----- Event relay (global-scale plan tasks 3.1b and 3.2) -----
+#
+# The worker that drains the outbox table into the broker. Off by default,
+# because without a broker it has nowhere to drain -- the chart refuses to
+# render it in that state rather than shipping a pod that dies at boot.
+eventRelay:
+  enabled: false
+  # More than one is safe and is the point: the drain claims rows with
+  # `FOR UPDATE SKIP LOCKED`, so a row one relay holds is invisible to the
+  # others. There is no leader and no lease, and the replicas are capacity
+  # rather than a quorum -- one of them alone still drains the whole table.
+  replicaCount: 2
+  image:
+    repository: event-relay
+    tag: latest
+    pullPolicy: IfNotPresent
+  # Empty means "the broker this chart ships", which requires nats.enabled.
+  # Point it at an external NATS to run the relay against a broker the chart
+  # does not own; the render fails if neither is set.
+  natsUrl: ""
+  # Zero leaves delivered rows in the outbox. They are receipts: after an
+  # incident the first question is whether an event was published and when, and
+  # a default that deletes the answer serves nobody. Set it in hours once
+  # somebody has decided how long that answer is worth keeping.
+  outboxKeepForHours: 0
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
 # ----- NATS JetStream (global-scale plan task 3.2) -----
 #
 # The outbox relay's sink. internal/common/events/relay.go drains the outbox

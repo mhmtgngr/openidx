@@ -9,6 +9,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The event relay is deployable.** A Dockerfile, an image in the build matrix,
+  a Helm Deployment with its Service and PodDisruptionBudget, and an
+  `eventRelay` values block — off by default. Port 8009 carries `/health` and
+  `/metrics` only: the relay serves no requests, so there is no Ingress and the
+  Service exists to give Prometheus a target.
+
+  More than one replica is safe and is the point. The drain claims rows with
+  `FOR UPDATE SKIP LOCKED`, so a row one relay holds is invisible to the others
+  — no leader, no lease, and the replicas are capacity rather than a quorum.
+  Hence `minAvailable: 1`: one relay drains the whole table, and the budget only
+  keeps the backlog from going unattended.
+
+  **The chart refuses to render a relay with no broker.** The binary refuses to
+  start without `NATS_URL`, deliberately — a relay that starts and fails every
+  publish looks healthy while the backlog grows where nobody looks — and that
+  refusal is also a CrashLoopBackOff. The chart answers the same question one
+  layer earlier, where it costs nothing. An external broker
+  (`eventRelay.natsUrl`) is an equally valid answer: the interlock is about
+  *having* one, not about the chart owning it.
+
+  Its wiring is derived from the broker rather than repeated beside it:
+  `NATS_URL` from the **client** Service (not the headless one, which is how
+  peers find each other), the password from the broker's own Secret, the subject
+  prefix from `nats.subjectPrefix`. A wrong host, a wrong password or a prefix
+  outside the relay's permissions is refused by the server on *every event*, and
+  a values file is where that divergence would be invisible.
+
+  Four mutations red: turning the interlock into a silent default, pointing
+  `NATS_URL` at the headless Service, hardcoding the prefix, and removing the
+  default-off gate.
+
+  Two shell traps were measured while writing the CI step, not reasoned about.
+  `render | grep -q` reports a **successful** match as a failed step: `grep -q`
+  closes the pipe on its first match, helm dies of SIGPIPE, and `pipefail` turns
+  that into a non-zero exit. And a failed render with an unmatched grep is the
+  same answer to a pipeline as a clean render with nothing to find. Both are now
+  rendered to a file first.
+
+
+- **`cmd/event-relay`: the process that makes the outbox live.** Tasks 3.1a and
+  3.1b built the outbox table, the publisher and the relay; 3.2 built the sink.
+  None of it ran anywhere, and the plan said so rather than letting it pass as
+  finished — a table nothing writes to differs from a package nothing imports
+  only by intention. This binary composes them: Postgres, NATS, the sink, the
+  drain, and a leader-gated retention sweep (a sweep is not a claim, so every
+  replica would otherwise delete its own batch of the same rows). The drain
+  itself elects no leader, and that is not an omission: `FOR UPDATE SKIP LOCKED`
+  is the coordination.
+
+  **It refuses to start without a broker.** A relay with no sink looks healthy
+  from outside: it claims rows, cannot deliver them, rolls back, claims them
+  again. Nothing is lost — the outbox is built for that — but nothing is
+  delivered either, and the only place the failure shows is the table, which is
+  the last place anyone looks. Measured: `NATS_URL` empty exits 1 and says why,
+  and CI runs that every time.
+
+  `TestSomeBinaryRunsTheOutboxRelay` is the guard against this package becoming
+  what it replaced. Its own doc records why the in-memory bus was deleted —
+  nothing in the tree imported it — and the outbox spent two tasks in exactly
+  that position. The guard looks for a binary calling **both** `NewRelay` and
+  `NewNATSSink`: a relay wired to a stub satisfies "the relay runs" and delivers
+  nothing, which is the failure it is really about.
+
+### Fixed
+
+- **A 7.08 MB compiled binary was tracked in the repository, and its ignore line
+  had been doing nothing for as long as it existed.** `.gitignore` carries a
+  hand-written list of the binaries `go build ./cmd/<x>` drops into the working
+  directory, and `/orgscope` was on it — but an ignore line does not untrack a
+  file committed before it, so the build sat in the tree while the entry looked
+  like it was working.
+
+  Found by nearly repeating it: `cmd/event-relay` was new, the list was not
+  updated, and a 42.8 MB binary went in with the commit that added the source.
+  Checking the list against the tree then showed it had been drifting for a
+  while — six of the sixteen commands and five of the tools were missing too.
+
+  `tools/repohygiene` is the comparison, in two halves, because the list is
+  necessary and not sufficient. One test asserts every `package main` under
+  `cmd/` and `tools/` has a `/<name>` line. The other asks **git** what is
+  tracked rather than guessing from what is on disk — a developer's own build at
+  the root is the system working, and the only question that matters is whether
+  a thing is committed. Both go red when reverted: re-tracking the binary, and
+  removing a single line from the list.
+
+
+- **The event sink refused this platform's own event types.** Every piece of the
+  outbox had been measured alone; that the pieces *fit* had not. The first
+  end-to-end test — a business transaction at one end, a real broker at the
+  other — claimed three events and delivered **zero**: the sink's subject check
+  rejected any value containing a dot, and this platform's event vocabulary is
+  dotted (`user.created`, `session.revoked` in `event.go`). The rule looked
+  principled and rejected what the rest of the package publishes. Every unit
+  test passed, because the unit test encoded the same wrong rule the code did.
+
+  The two halves of a subject are now checked differently, because they do
+  different jobs. The **tenant** occupies one token — a dot there moves the
+  event into another tenant's position, and a UUID is one token already. The
+  **event type** may be a dotted hierarchy, which is what a consumer subscribes
+  into with `<prefix>.<org>.user.>`. Both still refuse wildcards, whitespace,
+  control characters and empty tokens.
+
+  The lesson outlives the rule: a unit test that shares an assumption with the
+  code it checks is green for the same reason the code is wrong. Only the
+  composition could catch this one.
+
+
 - **The outbox's sink, and the one publish call that satisfies its contract.**
   `NATSSink` implements `Sink` over JetStream. `Sink.Publish` promises the
   broker has accepted the event when it returns nil, and the relay deletes the

@@ -210,4 +210,34 @@ var knownDead = map[string]string{
 	// while traffic kept flowing. Every response describing a pool now carries
 	// in_effect and the reason, and deleting a pool routes still name is refused
 	// rather than quietly reverting them.
+
+	// ---- the platform outbox ------------------------------------------------
+	//
+	// A FOURTH VERDICT, and the first entry to carry it: NOT YET WIRED, ON
+	// PURPOSE, WITH THE WIRING NAMED. It is not any of the three above -- there
+	// is no second implementation, nothing is claimed as shipped, and this is
+	// not an abstraction nobody adopted. It is one half of a mechanism whose
+	// other half is finished and running.
+	//
+	// THE TOOL IS RIGHT AND THE FINDING IS NEW BECAUSE THE PLATFORM IMPROVED.
+	// Until cmd/event-relay existed, no binary imported internal/common/events
+	// at all, so nothing in it was a candidate. The relay made the package
+	// reachable, which made its types visible to this census for the first
+	// time -- and the first thing the census says is exactly what the outbox's
+	// own plan entry says: the table, the publisher, the relay and the sink are
+	// all measured and running, and NOTHING IN THE PRODUCT WRITES TO IT YET.
+	//
+	// Event is the producer-side type: OutboxBus.Publish takes one, and
+	// NewEvent is how a caller makes one. So "nothing constructs an Event" and
+	// "no producer writes to the outbox" are the same sentence, and this entry
+	// is that sentence in a place that fails the build when it stops being
+	// true in either direction.
+	//
+	// THE CONDITION FOR REMOVAL IS NAMED, which is what keeps this from being a
+	// suppression: the first producer in task 3.3 -- session revocation, tenant
+	// deletion, or the kill switch -- calls NewEvent inside the transaction that
+	// caused the change, this finding stops reproducing, and the run then fails
+	// on the STALE entry until the line is deleted. The register shrinks by
+	// being made wrong, which is the only way a backlog entry should leave.
+	"internal/common/events.Event": "the outbox's producer-side type: OutboxBus.Publish takes an Event and NewEvent builds one, and no production code writes to the outbox yet. The relay, the sink and the retention sweep all run; this is the half task 3.3 supplies. Removed when the first producer calls NewEvent inside the transaction that caused the change -- at which point this entry goes stale and fails the run until it is deleted.",
 }

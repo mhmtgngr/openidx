@@ -359,6 +359,88 @@ jobs:
           "$(go env GOPATH)/bin/nats-server" -t -c /tmp/rendered-nats.conf
           echo "the broker config the chart renders is one the server accepts"
 
+      # The outbox relay (global-scale plan 3.1b). The property worth a CI step
+      # is not that it renders: it is that the chart will not ship it WITHOUT a
+      # broker. The binary refuses to start with no NATS_URL, deliberately --
+      # a relay that starts and fails every publish looks healthy while the
+      # backlog grows where nobody looks -- and rendering it anyway would move
+      # that refusal into a CrashLoopBackOff instead of answering it at install.
+      - name: The relay is deployed with a broker or not at all
+        run: |
+          set -euo pipefail
+          base=(--set secrets.postgresPassword=render-only
+                --set secrets.redisPassword=render-only
+                --set secrets.encryptionKey=render-only-not-a-credential32b)
+          broker=(--set nats.enabled=true --set nats.relayPassword=render-only
+                  --set nats.consumerPassword=render-only)
+          render() { helm template openidx "$CHART" "${base[@]}" "$@"; }
+
+          # 1. Off by default. To a file, because `if render | grep` reads a
+          #    failed render and an absent match as the same answer.
+          render > /tmp/render-relay-default.yaml
+          if grep -qi 'component: event-relay' /tmp/render-relay-default.yaml; then
+            echo "::error::the relay rendered with eventRelay.enabled unset"; exit 1
+          fi
+
+          # 2. Enabled with nowhere to drain is refused, not rendered. No broker
+          #    flags at all here -- that is the whole condition.
+          if render --set eventRelay.enabled=true >/dev/null 2>&1; then
+            echo "::error::the relay rendered with no broker configured"; exit 1
+          fi
+
+          # 3. With the chart's own broker, the wiring comes FROM the broker
+          #    rather than being repeated next to it: a relay pointed at the
+          #    wrong host, holding the wrong password, or publishing under a
+          #    prefix its permissions do not cover is refused by the server on
+          #    every event, and a values file is where that would be invisible.
+          render "${broker[@]}" --set eventRelay.enabled=true > /tmp/render-relay.yaml
+          python3 - /tmp/render-relay.yaml <<'PYEOF'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          def by(kind, component):
+              return next(d for d in docs if d["kind"] == kind
+                          and d["metadata"]["labels"].get("app.kubernetes.io/component") == component)
+
+          c = by("Deployment", "event-relay")["spec"]["template"]["spec"]["containers"][0]
+          env = {e["name"]: e for e in c["env"]}
+
+          # The CLIENT Service, not the headless one. The headless Service is
+          # how the peers find each other; pointing a client at it would hand
+          # the relay one peer's address instead of the load-balanced set.
+          client = next(d for d in docs
+                        if d["kind"] == "Service"
+                        and d["metadata"]["labels"].get("app.kubernetes.io/component") == "nats"
+                        and d["spec"].get("clusterIP") != "None")
+          svc = client["metadata"]["name"]
+          assert env["NATS_URL"]["value"] == f"nats://{svc}:4222", (env["NATS_URL"], svc)
+
+          secret = by("Secret", "nats")["metadata"]["name"]
+          ref = env["NATS_PASSWORD"]["valueFrom"]["secretKeyRef"]
+          assert ref == {"name": secret, "key": "NATS_RELAY_PASSWORD"}, ref
+
+          conf = by("ConfigMap", "nats")["data"]["nats-server.conf"]
+          prefix = env["EVENT_SUBJECT_PREFIX"]["value"]
+          assert f'publish: {{ allow: ["{prefix}.>"' in conf, (prefix, conf[:200])
+
+          # A worker, not a service: nothing routes to it.
+          assert c["ports"][0]["containerPort"] == 8009
+          PYEOF
+
+          # 4. And an external broker is a supported answer to the same
+          #    question, so the interlock is about HAVING one rather than about
+          #    the chart owning it.
+          #    To a file again, and not `render ... | grep -q`: grep -q closes
+          #    the pipe on its first match, helm dies of SIGPIPE, and pipefail
+          #    turns a SUCCESSFUL match into a failed step. Measured here, not
+          #    reasoned about -- that pipeline reported the external URL missing
+          #    while the render contained it.
+          render --set eventRelay.enabled=true \
+                 --set eventRelay.natsUrl=nats://broker.example:4222 > /tmp/render-relay-external.yaml
+          grep -q 'nats://broker.example:4222' /tmp/render-relay-external.yaml \
+            || { echo "::error::an external broker URL did not reach the relay"; exit 1; }
+
+          echo "the relay ships with a broker, or does not ship"
+
       - name: The transaction pooler is safe by construction
         run: |
           set -euo pipefail
