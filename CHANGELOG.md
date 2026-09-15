@@ -165,7 +165,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answerable, and the register records that limit as `revokes-indirectly`
   rather than claiming the path is covered.
 
-  Five mutations red.
+  Five mutations red on the census, and the fixes are measured rather than only
+  counted. The census is an AST guard: it proves a call *exists*, not that it
+  fires for the right user on the path an operator takes. So stale-account
+  cleanup — the one whose statement changed from `Exec` to
+  `Query ... RETURNING id`, without which there were no ids to revoke at all —
+  and the shared helper thirteen call sites now depend on are both driven
+  against a real PostgreSQL and a real Redis, reading the marker back out by the
+  key the enforcement point reads.
+
+  Those tests wire **two different Redis databases** to the general and
+  revocation roles, deliberately. With one client for both, "the marker went to
+  the wrong role" would be invisible — and a marker written where nothing reads
+  it is precisely the defect `internal/revocation` was created to fix. Measured:
+  swapping `RevocationDB()` for the general client turns both tests red.
 
 - **A revoked access token came back to life once its revocation record
   expired.** A revocation has to outlive what it revokes, and this package has
