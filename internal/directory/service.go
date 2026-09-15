@@ -39,6 +39,25 @@ func NewService(db *database.PostgresDB, logger *zap.Logger) *Service {
 	}
 }
 
+// SetRevoker wires the callback that cuts a user's outstanding access tokens
+// after a sync has disabled or deleted their account.
+//
+// Separate from SetRedis, and deliberately: that one takes the general client
+// for the scheduler's leader gate, and the marker this writes has to go to the
+// REVOCATION Redis -- the roles are split three ways and the enforcement point
+// reads only that one. Writing it to the wrong client is exactly the defect
+// internal/revocation's package doc records, where a revocation was written to
+// a key nothing read. revocation.Revoker builds the callback, so the choice of
+// client is made once, by the caller that owns it.
+//
+// Optional. Without it a sync still disables the accounts the directory says
+// have gone, because a sync that refuses to run is worse than one that leaves
+// a token live -- and the census in internal/revocation is what keeps that
+// from becoming the normal case.
+func (s *Service) SetRevoker(revoke func(ctx context.Context, userID, why string)) {
+	s.engine.revoke = revoke
+}
+
 // SetRedis wires a Redis client so the scheduler's tick is leader-gated across
 // replicas. Optional — with no client set, the scheduler runs on every instance
 // (correct for a single-instance deployment). Call before Start.

@@ -233,6 +233,9 @@ func (e *SyncEngine) deprovisionHR(ctx context.Context, orgID, userID, username,
 			result.Errors = append(result.Errors, fmt.Sprintf("failed to delete user %s: %v", username, err))
 			return
 		}
+		// The row is gone; the access token in that browser is a separate
+		// credential and outlives it.
+		e.revokeTokens(ctx, userID, "HRIS deprovision (delete)")
 		result.UsersDisabled++
 		return
 	}
@@ -243,6 +246,10 @@ func (e *SyncEngine) deprovisionHR(ctx context.Context, orgID, userID, username,
 		result.Errors = append(result.Errors, fmt.Sprintf("failed to disable user %s: %v", username, err))
 		return
 	}
+	// The HR system has said this person has left. Marking them terminated
+	// stops the next login; without this their access token keeps answering
+	// for the rest of its life.
+	e.revokeTokens(ctx, userID, "HRIS deprovision (terminate)")
 	result.UsersDisabled++
 }
 

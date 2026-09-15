@@ -303,6 +303,19 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # The webhook delivery queue IS a Redis list, and the questions this job
+      # asks about it -- how many entries the sweep leaves behind, what two
+      # consumers do to one delivery at once -- are about what the list holds.
+      # A fake answers them by construction.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
@@ -341,6 +354,16 @@ jobs:
       #
       # -run matching nothing exits 0, so a regex that stops matching is a
       # silent false green; the step below fails when a name disappears.
+      #
+      # `|| { echo "$out"; exit 1; }` ON EVERY CAPTURE BELOW, and it is not
+      # decoration. These steps exist to say WHICH named test ran and passed,
+      # and sixteen of them were written as `out=$(go test ...)` followed by
+      # `echo "$out"` under `set -e` -- so when the test FAILED, the shell left
+      # the step at the assignment and never reached the echo. The job reported
+      # `Process completed with exit code 1` and not one line of test output:
+      # the control that exists to name the failure was silent at the only
+      # moment it was needed. Found the hard way, on a red rls-isolation run
+      # whose reason could not be recovered from the log at all.
       - name: Tenant isolation, scoped pool and replica fallback
         env:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
@@ -348,7 +371,7 @@ jobs:
           set -euo pipefail
           out=$(go test ./internal/common/database/ \
             -run 'RLS|ScopedPool|ReaderFallback|ReplicaBreaker|IsReplicaInfraError' \
-            -count=1 -v 2>&1)
+            -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestRLSLocal_ConcurrentTenantsNeverCross \
                       TestScopedPool_UneditedCallSitesAreScoped \
@@ -375,7 +398,7 @@ jobs:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
-          out=$(go test ./internal/common/events/ -count=1 -v 2>&1)
+          out=$(go test ./internal/common/events/ -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestAnOutboxEventRollsBackWithTheWriteItDescribes \
                       TestAnOutboxEventCommitsWithTheWriteItDescribes \
@@ -412,7 +435,7 @@ jobs:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
-          out=$(go test ./internal/access/ -run 'TheLifecycleSweep|ThePostureExpirySweep|EightConcurrent' -count=1 -v 2>&1)
+          out=$(go test ./internal/access/ -run 'TheLifecycleSweep|ThePostureExpirySweep|EightConcurrent' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestTheLifecycleSweepIsIdempotentAcrossReplicas \
                       TestTheLifecycleSweepNeverTouchesAnEnabledUser \
@@ -434,7 +457,7 @@ jobs:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
-          out=$(go test ./internal/access/ -run 'Sealed|SealOnce|ClaimingReplica|OversizedFrame|OneReplicaCreatesAUsers|ClaimsACertificateRotation' -count=1 -v 2>&1)
+          out=$(go test ./internal/access/ -run 'Sealed|SealOnce|ClaimingReplica|OversizedFrame|OneReplicaCreatesAUsers|ClaimsACertificateRotation' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestSealingAnAlreadySealedRecordingIsRefused \
                       TestAPlaintextRecordingIsNeverMistakenForSealed \
@@ -456,7 +479,7 @@ jobs:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
-          out=$(go test ./internal/access/ -run 'StaleGuacGrantSweep|RefusedRevoke' -count=1 -v 2>&1)
+          out=$(go test ./internal/access/ -run 'StaleGuacGrantSweep|RefusedRevoke' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestTheStaleGuacGrantSweepStopsWhenItIsDone \
                       TestARefusedRevokeIsNotRecordedAsDone; do
@@ -471,7 +494,7 @@ jobs:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
-          out=$(go test ./internal/access/ -run 'RecordsTheFabric|StillRecordsFabric' -count=1 -v 2>&1)
+          out=$(go test ./internal/access/ -run 'RecordsTheFabric|StillRecordsFabric' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestOnlyOneReplicaRecordsTheFabricMetricsPerTick \
                       TestWithoutRedisTheSingleReplicaStillRecordsFabricMetrics; do
@@ -495,7 +518,7 @@ jobs:
           # these two tests are seconds of work even under -race, so five
           # minutes is generous for a slow runner and still fails a genuine
           # hang long before Go's ten-minute default would.
-          out=$(go test ./internal/oauth/ -run 'Signer|LegacySigningFields' -race -timeout 5m -count=1 -v 2>&1)
+          out=$(go test ./internal/oauth/ -run 'Signer|LegacySigningFields' -race -timeout 5m -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestRefreshingTheSignerDoesNotRaceWithSAMLSigning \
                       TestTheLegacySigningFieldsAreWrittenOnlyAtConstruction; do
@@ -513,7 +536,7 @@ jobs:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
-          out=$(go test ./internal/audit/ -run 'DoubleBill|SinglePass|MissingCursor' -count=1 -v 2>&1)
+          out=$(go test ./internal/audit/ -run 'DoubleBill|SinglePass|MissingCursor' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestConcurrentRepicasDoNotDoubleBill \
                       TestASinglePassCountsEveryEventOnce \
@@ -538,13 +561,161 @@ jobs:
           TEST_POSTGRES_SUPERUSER_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
-          out=$(go test ./internal/migrations/ -run 'V189' -count=1 -v 2>&1)
+          out=$(go test ./internal/migrations/ -run 'V189' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestV189PlaneRolesInheritTheTenantBelt \
                       TestV189AdminQueryIsCancelledAndIssueIsNot \
                       TestV189IdleTransactionsAreClosedOut \
                       TestV189PlaneRolesReachEveryTableAfterTheFullChain \
                       TestV189PlaneRoleBudgetsSurviveTheApplicationPool; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
+      # A deprovision is not done when the row is disabled. The wiring guard
+      # above checks that a binary running directory syncs supplies the revoke
+      # callback; this drives a real deprovision against a real PostgreSQL and
+      # fails if the engine does not call it -- the half no static guard in
+      # that package can answer, because the call goes through a struct field.
+      - name: A sever revokes, and the marker lands where the enforcement point reads
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+          TEST_REDIS_ADDR: 127.0.0.1:6379
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/directory/ ./internal/admin/ \
+            -run 'TestDeprovisioning|TestStaleAccountCleanupRevokes|TestRevokeAfterSeverWrites' \
+            -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          for want in TestDeprovisioningAUserAlsoRevokesTheirTokens \
+                      TestDeprovisioningStillWorksWithNoRevoker \
+                      TestStaleAccountCleanupRevokesEveryAccountItDisables \
+                      TestRevokeAfterSeverWritesTheKeyTheEnforcementPointReads; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
+      # A REVOKED PERMISSION HAS TO STOP BEING HONOURED, and the thing between
+      # the revoke and the enforcement point is a Redis cache whose invalidation
+      # used to interpolate a role name -- arbitrary text from a request body --
+      # into a Redis MATCH pattern. A role named `ops[x]` made a glob character
+      # class, so the SCAN meant to clear that role's entry matched nothing and
+      # the revoke reported success without taking effect.
+      #
+      # Redis is the thing whose matching rules are in question, so the question
+      # is asked of a real one, through the real middleware.
+      - name: A revoked permission stops being granted, whatever the role is called
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+          TEST_REDIS_ADDR: 127.0.0.1:6379
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/identity/ ./internal/common/middleware/ \
+            -run 'RevokingAPermissionStops|RoleWhoseNameContainsAGlob|InvalidatingOneTenants|RoleNameThatIsASubstring|RevokingFromOneRoleClears|RoleNamedLikeARoleSet|NamesThatCollide|TheOrgPattern' \
+            -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          for want in TestRevokingAPermissionStopsItBeingHonouredOnTheNextRequest \
+                      TestARoleWhoseNameContainsAGlobCharacterIsStillInvalidated \
+                      TestInvalidatingOneTenantsRoleLeavesAnotherTenantsCacheAlone \
+                      TestARoleNameThatIsASubstringOfAnotherDoesNotInvalidateIt \
+                      TestRevokingFromOneRoleClearsTheEntryForEveryRoleSetThatContainsIt \
+                      TestARoleNamedLikeARoleSetDoesNotShareItsCacheEntry \
+                      TestARoleNamedLikeARoleSetIsADifferentKey \
+                      TestNamesThatCollideOnlyAfterEscapingStayDistinct \
+                      TestTheOrgPatternDoesNotReachAnotherOrg \
+                      TestTheOrgPatternNeutralisesGlobSyntax; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
+      # THE WEBHOOK QUEUE IS REDIS AND THE RECORD IS POSTGRESQL, and the sweep
+      # that bridges them used to re-read rather than claim: a delivery stays
+      # `pending` for its whole life in the queue AND for the whole HTTP call,
+      # so every thirty seconds the entire undrained backlog was enqueued again.
+      # That is not at-least-once -- it is a feedback loop whose output grows
+      # with how far behind the consumer already is.
+      #
+      # Real Postgres, real Redis, and a real HTTP endpoint that counts what it
+      # was sent, because every one of these questions is about what two
+      # processes do to one row at the same time. The SUPERUSER DSN is here for
+      # the same reason as the step below: the suite builds its tables in a
+      # schema of its own rather than clobbering the shared ones.
+      - name: A webhook delivery is claimed, not re-read, and its backoff is honoured
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+          TEST_REDIS_ADDR: 127.0.0.1:6379
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/webhooks/ \
+            -run 'RetrySweepDoesNot|BackloggedDelivery|NudgeWasLost|FailedIsQueuedAgain|TwoSweepsAtOnce|BackoffInsteadOfSpending|TakenByTwoConsumers|SweepLeavesADelivery|ConsumerRefusesADelivery' \
+            -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          for want in TestTheRetrySweepDoesNotReEnqueueADeliveryItAlreadyQueued \
+                      TestABackloggedDeliveryFiresOnceNotOncePerSweepTick \
+                      TestADeliveryWhoseNudgeWasLostIsStillRecovered \
+                      TestADeliveryThatFailedIsQueuedAgainOnceItsRetryIsDue \
+                      TestTwoSweepsAtOnceEnqueueEachDeliveryOnce \
+                      TestAFailedDeliveryWaitsForItsBackoffInsteadOfSpendingEveryAttemptAtOnce \
+                      TestTheSameDeliveryTakenByTwoConsumersAtOnceIsSentOnce \
+                      TestTheSweepLeavesADeliveryAloneUntilItsRetryIsDue \
+                      TestAConsumerRefusesADeliveryWhoseBackoffHasNotElapsed; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
+      # SEVERING A USER'S ACCESS AND REVOKING THEIR TOKENS ARE TWO THINGS, and
+      # for most of this product's sever paths only the first one happened.
+      # Disabling or deleting the row stops the next login; /oauth/userinfo and
+      # /oauth/introspect read the per-user revocation marker and the per-token
+      # blacklist and nothing else, so the token already in that browser keeps
+      # answering. The census finds the severing functions itself and fails on
+      # any that is neither satisfied nor on a register that only shrinks.
+      #
+      # No database needed: it is an AST walk over the tree.
+      - name: Every path that severs a user's access revokes their tokens
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/revocation/ ./internal/audit/ ./internal/admin/ ./internal/directory/ \
+            -run 'EverySeverPathRevokes|EverySeverRegisterEntry|EveryBinaryWithAnElasticsearchClient|EveryQuarantineServiceIsWired|EveryBinaryThatRunsDirectorySyncs' \
+            -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          for want in TestEverySeverPathRevokesOrIsOnTheRegister \
+                      TestEverySeverRegisterEntryHasAVerdictAndAReason \
+                      TestEveryQuarantineServiceIsWiredToRevoke \
+                      TestEveryBinaryThatRunsDirectorySyncsWiresTheRevoker \
+                      TestEveryBinaryWithAnElasticsearchClientRunsTheReconciler; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
+      # THE AUDIT TRAIL HAS TWO STORES AND ONLY ONE OF THEM IS THE RECORD.
+      # audit_events in PostgreSQL is tamper-evident -- v181 gave it chain_seq,
+      # prev_hash and event_hash, and the sealer chains every row. Elasticsearch
+      # holds a copy for search, and the console reads THAT one. The lag between
+      # them has to be one-way: PostgreSQL may be ahead of the index, the index
+      # may never be ahead of PostgreSQL, because a document the record never
+      # accepted has no hash and no seal and chain verification walks only the
+      # rows that exist.
+      #
+      # This is a question about the ordering of two round trips, so it is asked
+      # of a real PostgreSQL and a real HTTP Elasticsearch (the product's own
+      # client, over the wire) rather than of a mock. The SUPERUSER DSN is here
+      # because the suite builds its audit_events in a schema of its own -- the
+      # application role cannot create one, and clobbering the shared table would
+      # take the rest of this job down with it.
+      - name: The search index never holds an audit event PostgreSQL refused
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/audit/ \
+            -run 'ElasticsearchNeverHolds|ARefusedInsertIndexesNothing|AnAcceptedEventStillReaches|AnEventPostgresAcceptedReaches' \
+            -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          for want in TestElasticsearchNeverHoldsAnEventPostgresRefused \
+                      TestARefusedInsertIndexesNothing \
+                      TestAnAcceptedEventStillReachesElasticsearchAndIsStamped \
+                      TestAnEventPostgresAcceptedReachesTheIndexEvenWhenTheFirstWriteFails; do
             grep -q -- "--- PASS: $want " <<<"$out" \
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
@@ -579,7 +750,7 @@ jobs:
           # unit test encoded the same wrong rule the code did.
           out=$(go test ./internal/common/events/ \
             -run 'PublishReturns|Redelivered|LandsOnItsOwn|StreamKeeps|Wildcard|TheNATSSinkPublishesSynchronously|SubjectToken|ReachesTheBroker|BrokerOutage|SomeBinaryRuns' \
-            -count=1 -v 2>&1)
+            -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestPublishReturnsOnlyAfterTheBrokerHasTheEvent \
                       TestARedeliveredEventIsNotDuplicatedInTheStream \
@@ -618,7 +789,7 @@ jobs:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
-          out=$(go test ./internal/admin/ -run 'ReadOnlyReplica' -count=1 -v 2>&1)
+          out=$(go test ./internal/admin/ -run 'ReadOnlyReplica' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestTheOffloadedHandlersAnswerOverAReadOnlyReplica; do
             grep -q -- "--- PASS: $want " <<<"$out" \

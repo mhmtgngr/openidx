@@ -546,6 +546,7 @@ func (s *Service) remediateFinding(ctx context.Context, orgID, checkType, entity
 		if tag.RowsAffected() == 0 {
 			return remediationOutcome{Action: "already_disabled", Message: "the account was already disabled", Resolved: true}
 		}
+		s.revokeAfterSever(ctx, entityID, "ISPM remediation")
 		return remediationOutcome{Action: "account_disabled", Message: "the account has been disabled", Resolved: true}
 
 	case "shared_accounts":

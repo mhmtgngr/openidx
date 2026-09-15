@@ -912,6 +912,14 @@ func (s *Service) executeDSARDelete(ctx context.Context, dsar *DataSubjectReques
 		return nil, fmt.Errorf("anonymize user row: %w", err)
 	}
 
+	// An erasure that leaves a live credential has not erased anything an
+	// attacker with that token cares about. The row above is anonymised and
+	// disabled, which stops the next login; the access token already issued
+	// reads the per-user revocation marker and the per-token blacklist and
+	// nothing else, so without this it keeps answering /oauth/userinfo for the
+	// subject who just asked to be forgotten.
+	s.revokeAfterSever(ctx, dsar.UserID, "DSAR erasure")
+
 	// Wipe everything that holds PII *about* the subject. Each statement is
 	// idempotent and `DELETE FROM … WHERE user_id = $1 AND org_id = $2`.
 	//
@@ -998,6 +1006,10 @@ func (s *Service) executeDSARRestrict(ctx context.Context, dsar *DataSubjectRequ
 	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND org_id = $2`, dsar.UserID, orgID); err != nil {
 		s.logger.Warn("DSAR restrict: failed to drop sessions", zap.Error(err))
 	}
+	// Dropping the session rows ends the refresh path. A restriction request
+	// that leaves the subject's access token answering has not restricted the
+	// processing it was asked to restrict.
+	s.revokeAfterSever(ctx, dsar.UserID, "DSAR restrict")
 	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1 AND org_id = $2`, dsar.UserID, orgID); err != nil {
 		s.logger.Warn("DSAR restrict: failed to drop refresh tokens", zap.Error(err))
 	}

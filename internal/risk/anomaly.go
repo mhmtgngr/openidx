@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/revocation"
 	"go.uber.org/zap"
 )
 
@@ -522,6 +523,24 @@ func (s *Service) RemediateAccountLock(ctx context.Context, userID string) error
 		`UPDATE users SET enabled = false WHERE id = $1 AND org_id = $2`, userID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to lock account: %w", err)
+	}
+
+	// AND THE TOKENS THE ACCOUNT ALREADY HOLDS. Disabling the row stops the
+	// next login; it does nothing to an access token already in a browser,
+	// because /oauth/userinfo and /oauth/introspect consult the per-user
+	// revocation marker and the per-token blacklist and nothing else.
+	//
+	// This is the auto-remediation for a detected anomaly -- impossible
+	// travel, brute force, a blocked IP -- so the account it locks is one the
+	// product has just decided is compromised. Leaving its outstanding tokens
+	// answering for the rest of their life is the whole failure.
+	//
+	// Best-effort, matching the other sever paths: the account is already
+	// locked, so a Redis hiccup must not fail the remediation. The error is
+	// recorded rather than swallowed.
+	if err := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); err != nil {
+		s.logger.Error("account locked, but its outstanding access tokens were not revoked",
+			zap.String("user_id", userID), zap.Error(err))
 	}
 
 	s.logger.Info("Account locked via auto-remediation", zap.String("user_id", userID))

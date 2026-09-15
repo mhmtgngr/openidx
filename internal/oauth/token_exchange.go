@@ -164,7 +164,7 @@ func (s *Service) validateExchangeToken(token string) (jwt.MapClaims, error) {
 // claim for delegation per RFC 8693 §4.1.
 func (s *Service) issueExchangedToken(c *gin.Context, subject, audience, scope string, subjectClaims, actorClaims jwt.MapClaims, client *OAuthClient) (string, int, error) {
 	now := time.Now()
-	expiresIn := client.AccessTokenLifetime
+	expiresIn := client.EffectiveAccessTokenLifetime()
 	if expiresIn <= 0 {
 		expiresIn = 3600
 	}

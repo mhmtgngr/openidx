@@ -17,6 +17,23 @@ import (
 type SyncEngine struct {
 	db     *database.PostgresDB
 	logger *zap.Logger
+
+	// revoke cuts the access tokens an account is already holding, once this
+	// engine has disabled or deleted it because the upstream directory says
+	// the person has gone.
+	//
+	// A CALLBACK, NOT A CLIENT. This engine holds a database handle and a
+	// logger; handing it a Redis client of its own is how this product ended
+	// up with several hand-rolled copies of one marker write, and it would let
+	// a caller pass the WRONG Redis -- the roles are split three ways and the
+	// enforcement point reads the revocation one. revocation.Revoker builds
+	// this, so the choice is made once.
+	//
+	// Nil in a bare construction: a sync still runs without it, because a
+	// directory sync that refuses to start is worse than one that leaves a
+	// token live. The census in internal/revocation is what keeps nil from
+	// becoming the normal case.
+	revoke func(ctx context.Context, userID, why string)
 }
 
 // NewSyncEngine creates a new sync engine
@@ -441,12 +458,16 @@ func (e *SyncEngine) syncUsers(ctx context.Context, connector *LDAPConnector, di
 					if _, err := e.db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1 AND org_id = $2`, user.ID, orgID); err != nil {
 						result.Errors = append(result.Errors, fmt.Sprintf("failed to delete user %s: %v", user.Username, err))
 					} else {
+						// The row is gone; the access token in that browser is
+						// a separate credential and outlives it.
+						e.revokeTokens(ctx, user.ID, "LDAP sync deprovision (delete)")
 						result.UsersDisabled++
 					}
 				} else {
 					if _, err := e.db.Pool.Exec(ctx, `UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2`, user.ID, orgID); err != nil {
 						result.Errors = append(result.Errors, fmt.Sprintf("failed to disable user %s: %v", user.Username, err))
 					} else {
+						e.revokeTokens(ctx, user.ID, "LDAP sync deprovision (disable)")
 						result.UsersDisabled++
 					}
 				}
@@ -733,12 +754,16 @@ func (e *SyncEngine) syncAzureADUsers(ctx context.Context, connector *AzureADCon
 					if _, err := e.db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1 AND org_id = $2`, user.ID, orgID); err != nil {
 						result.Errors = append(result.Errors, fmt.Sprintf("failed to delete user %s: %v", user.Username, err))
 					} else {
+						// The row is gone; the access token in that browser is
+						// a separate credential and outlives it.
+						e.revokeTokens(ctx, user.ID, "Azure AD sync deprovision (delete)")
 						result.UsersDisabled++
 					}
 				} else {
 					if _, err := e.db.Pool.Exec(ctx, `UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2`, user.ID, orgID); err != nil {
 						result.Errors = append(result.Errors, fmt.Sprintf("failed to disable user %s: %v", user.Username, err))
 					} else {
+						e.revokeTokens(ctx, user.ID, "Azure AD sync deprovision (disable)")
 						result.UsersDisabled++
 					}
 				}
@@ -924,4 +949,14 @@ func (e *SyncEngine) syncAzureADMemberships(ctx context.Context, connector *Azur
 			len(failed), failed)
 	}
 	return nil
+}
+
+// revokeTokens cuts the access tokens an account is still holding, when this
+// engine has been given a way to. Nil-safe: see the field's comment for why a
+// sync without one still runs.
+func (e *SyncEngine) revokeTokens(ctx context.Context, userID, why string) {
+	if e.revoke == nil {
+		return
+	}
+	e.revoke(ctx, userID, why)
 }

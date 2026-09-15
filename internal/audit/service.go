@@ -329,10 +329,41 @@ func (s *Service) LogEvent(ctx context.Context, event *ServiceAuditEvent) error 
 		event.ActorID, event.ActorType, event.ActorIP, event.TargetID, event.TargetType,
 		event.ResourceID, data, event.SessionID, event.RequestID, orgID)
 
-	// Dual-write to Elasticsearch (best-effort, non-blocking). On success, stamp
-	// indexed_at so the reconciler (StartESReconciler) doesn't backfill it; on
-	// failure the row stays indexed_at IS NULL and the reconciler catches it —
-	// guaranteeing ES search completeness without blocking the write path.
+	// POSTGRESQL FIRST, AND ONLY THEN THE INDEX. audit_events in PostgreSQL is
+	// the tamper-evident store -- v181 gave it chain_seq, prev_hash and
+	// event_hash, and the sealer chains every row into a per-org sequence.
+	// Elasticsearch holds a copy for search, and the console reads THAT one.
+	//
+	// The lag between them is one-way by construction: PostgreSQL may be ahead
+	// of the index (the write below is fire-and-forget and the reconciler
+	// backfills), but the index may never be ahead of PostgreSQL. A document
+	// the record never accepted has no sequence number, no hash and no seal,
+	// and chain verification walks only the rows that exist -- so it would
+	// keep reporting the chain intact while the console showed an event the
+	// chain says nothing about.
+	//
+	// UNTIL THIS RETURN EXISTED THE INDEX WRITE RAN REGARDLESS OF err. Two
+	// ways that mattered, both measured in es_ordering_testdb_test.go:
+	//
+	//   - The id is the Elasticsearch DOCUMENT id and it arrives in the
+	//     request body of POST /api/v1/audit/events, which is deliberately
+	//     unauthenticated (service-to-service, isolated by network). The
+	//     PRIMARY KEY on audit_events.id is the only thing in the system
+	//     making that document id unique, so a caller supplying another
+	//     tenant's event id got the INSERT refused and the index OVERWRITTEN.
+	//   - No adversary needed: the comment above records an era when every
+	//     audit event access-service emitted was refused because the id was
+	//     empty. Seen from this side, that era shipped all of them to the
+	//     index and none to the chain. A statement timeout -- which 2.4 set
+	//     per plane, and which arrives under load -- is the same shape today.
+	if err != nil {
+		return err
+	}
+
+	// Best-effort, non-blocking. On success, stamp indexed_at so the reconciler
+	// (StartESReconciler) doesn't backfill it; on failure the row stays
+	// indexed_at IS NULL and the reconciler catches it — guaranteeing ES search
+	// completeness without blocking the write path.
 	if s.es != nil {
 		esData := data // capture for goroutine
 		eventID := event.ID
@@ -352,7 +383,9 @@ func (s *Service) LogEvent(ctx context.Context, event *ServiceAuditEvent) error 
 		}()
 	}
 
-	return err
+	// err is nil past the return above; naming that rather than returning a
+	// variable whose only possible value is nil.
+	return nil
 }
 
 // StartESReconciler backfills audit_events rows that never reached Elasticsearch

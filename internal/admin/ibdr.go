@@ -154,6 +154,17 @@ type ibdrService struct {
 	db     *database.PostgresDB
 	logger *zap.Logger
 	config *IBDRConfig
+
+	// revoke cuts the access tokens an account is already holding, once this
+	// service has disabled it. It is a function rather than a Redis client
+	// because ibdrService is built from the admin Service, which owns the
+	// client and the log line -- and because the alternative, giving this
+	// struct its own client, is how the product ended up with several
+	// hand-rolled copies of the same marker write.
+	//
+	// Nil in a bare construction, so containment still runs; the census in
+	// internal/revocation is what keeps that from becoming the default.
+	revoke func(ctx context.Context, userID, why string)
 }
 
 // DetectBreachAttempt analyzes an authentication attempt for breach indicators
@@ -602,6 +613,14 @@ func (s *ibdrService) executeFullQuarantine(ctx context.Context, incident *Breac
 				zap.String("user_id", logsafe.Clean(userID)))
 			continue
 		}
+		// A containment that leaves the compromised account's access token
+		// answering has not contained it. Disabling the row stops the next
+		// login; /oauth/userinfo and /oauth/introspect read the per-user
+		// revocation marker and the per-token blacklist and nothing else, and
+		// revokeUserSessions below ends the refresh path rather than this one.
+		if s.revoke != nil {
+			s.revoke(ctx, userID, "IBDR full quarantine")
+		}
 		actions = append(actions, fmt.Sprintf("disabled_user_%s", userID))
 	}
 
@@ -771,7 +790,7 @@ func (s *Service) handleIBDRDetectBreach(c *gin.Context) {
 		AutoQuarantineThreshold: 0.7,
 		AutoContainment:         true,
 	}
-	service := &ibdrService{db: s.db, logger: s.logger, config: config}
+	service := &ibdrService{db: s.db, logger: s.logger, config: config, revoke: s.revokeAfterSever}
 
 	incident, err := service.DetectBreachAttempt(ctx, req.UserID, req.IPAddress, req.UserAgent, req.SessionID)
 	if err != nil {
@@ -849,7 +868,7 @@ func (s *Service) handleIBDRAlerts(c *gin.Context) {
 
 	includeAcked := c.DefaultQuery("include_acknowledged", "false") == "true"
 
-	service := &ibdrService{db: s.db, logger: s.logger, config: &IBDRConfig{}}
+	service := &ibdrService{db: s.db, logger: s.logger, config: &IBDRConfig{}, revoke: s.revokeAfterSever}
 	alerts, err := service.GetBreachAlerts(ctx, includeAcked)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get alerts"})
@@ -866,7 +885,7 @@ func (s *Service) handleIBDRTriggerResponse(c *gin.Context) {
 	ctx := c.Request.Context()
 	incidentID := c.Param("id")
 
-	service := &ibdrService{db: s.db, logger: s.logger, config: &IBDRConfig{}}
+	service := &ibdrService{db: s.db, logger: s.logger, config: &IBDRConfig{}, revoke: s.revokeAfterSever}
 	err := service.TriggerIncidentResponse(ctx, incidentID, c.GetString("user_id"), false)
 	if err != nil {
 		s.logger.Error("failed to trigger incident response", zap.Error(err))

@@ -72,7 +72,434 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NewNATSSink`: a relay wired to a stub satisfies "the relay runs" and delivers
   nothing, which is the failure it is really about.
 
+### Added
+
+- **A census that every binary holding an Elasticsearch client also runs the
+  audit reconciler.** `LogEvent` indexes fire-and-forget and its comment says
+  the reconciler backfills whatever the index dropped, "guaranteeing ES search
+  completeness". That is a claim about the whole deployment, not about the
+  function: `StartESReconciler` runs in one binary, the ES client is built in
+  one binary, and they happen to be the same one.
+
+  Nothing made them the same one. A second service given an ES client would
+  index fire-and-forget with no reconciler behind it, and every write
+  Elasticsearch dropped there would be lost silently — `indexed_at` NULL
+  forever, the row in PostgreSQL, and the console's audit search simply never
+  showing it.
+
+  The test finds the binaries itself rather than trusting a list, and checks
+  both directions: a client with no reconciler, and a reconciler with no client
+  (which returns immediately when `es` is nil, so it reads as coverage while
+  being a no-op). Three mutations red.
+
 ### Fixed
+
+- **Three admin-plane paths take a role away, and none of them cut the token.**
+  `RemoveUserRole`, `UpdateUserRoles` and `DeleteRole` are each reached from an
+  HTTP handler an administrator drives directly. None disables the account, so
+  none was covered by the sever work, which revokes only where the account is
+  being cut off entirely.
+
+  The enforcement point reads the caller's roles from the JWT `roles` claim, so
+  deleting the row changes nothing for a session already holding a token. The
+  administrator sees 200 and an audit line recording success.
+
+  **`DeleteRole` is the one whose own comment already said so.** Above the audit
+  event sat *"Deleting a role silently revokes it from every user who held it,
+  so the event is a mass revocation as much as a definition change"* — the code
+  knew, and still left every holder's token naming the role. It also cut **by
+  predicate** (`DELETE FROM user_roles WHERE role_id = $1`), so it had no
+  identities to revoke: `RETURNING user_id` now, the third place in this series
+  that needed the same correction.
+
+  **A grant is not a revocation, and the fix does not treat them alike.**
+  `UpdateUserRoles` replaces a whole set, which is both at once. Revoking on
+  every role write would end a live session each time somebody was *granted* an
+  extra role, for no security gain — a token that does not yet carry a new role
+  permits nothing it should not. So only the difference (`lostRoles`) triggers a
+  cut. Adding a role, and replacing a set with itself, leave the session alone.
+
+  Measured against a real PostgreSQL and a real Redis, with general and
+  revocation bound to two different databases, reading the marker back from the
+  key the enforcement point reads.
+
+  **Five mutations red:** dropping the revoke from `RemoveUserRole`, dropping it
+  from `DeleteRole`, revoking unconditionally in `UpdateUserRoles` (which cuts
+  grants), making `lostRoles` return everything rather than the difference, and
+  removing `RETURNING` so `DeleteRole` has nobody to revoke. One of the five did
+  not compile on the first attempt and was redone rather than counted.
+
+  **Six of the ten role-reducing paths remain**, and are listed in the plan.
+
+- **A time-bound role elevation outlived its own expiry.** `user_roles.expires_at`
+  is this product's temporary elevation — somebody is made an admin until 15:00.
+  At 15:00 the sweep deleted the row, logged a count, and stopped.
+
+  The enforcement point never reads that row. `PermissionResolver` takes the
+  caller's role list from the JWT `roles` claim, so the access token minted at
+  14:00 kept saying "admin" and kept being believed until it expired on its own.
+  The grant had a deadline; the credential carrying it did not.
+
+  **Clearing the permission cache cannot fix this**, and the fix does not try.
+  That cache is keyed on (org, *role set*), so the entry the stale token
+  resolves to is the same entry every genuine holder of that role resolves to —
+  it is correct for them and must not be deleted. What has to change is the
+  token, and the per-user revocation marker is the one thing the enforcement
+  point consults for that.
+
+  The sweep also had nothing to revoke *with*: it cut by predicate
+  (`WHERE expires_at < NOW()`) and reported `RowsAffected`, and a number cannot
+  be revoked. It now uses `RETURNING user_id` — the same correction the stale
+  account cleanup needed for the same reason. The marker goes to the
+  **revocation** Redis, not the general one, and one user holding several
+  assignments that expire on the same tick is revoked once.
+
+  Measured against a real PostgreSQL and a real Redis, with the general and
+  revocation roles bound to **two different Redis databases** so a marker
+  written to the wrong one is visible rather than silently accepted. The marker
+  is read back from the key the enforcement point reads.
+
+  **Four mutations red:** dropping the revoke (the old behaviour), writing to
+  the general Redis, dropping the `expires_at < NOW()` predicate so the sweep
+  takes live elevations too, and dropping `RETURNING` to go back to a count. A
+  fifth did not compile and was redone rather than counted.
+
+  A deployment with no Redis still sweeps: refusing to run would leave the
+  elevation in place, which is worse than removing it and saying in the log that
+  the token was not cut.
+
+  **This is one of ten paths that reduce a user's effective roles**, and the
+  other nine are not fixed here. Each needs its caller read before it is decided
+  — two of them already revoke because they also disable the account, and a
+  blanket patch would add a second marker write there and nothing would go red.
+
+- **Sixteen CI steps went silent at the only moment they mattered.** Each one
+  exists to name which test ran and passed, and each was written as
+  `out=$(go test ... 2>&1)` followed by `echo "$out"` under `set -euo pipefail`.
+  When the test *failed*, the shell left the step at the assignment and never
+  reached the echo — so the job reported `Process completed with exit code 1`
+  and not one line of test output.
+
+  A control that reports nothing when the thing it watches breaks is the same
+  defect this series is about, this time in the harness rather than the product:
+  the steps were added to make a skipped or renamed test impossible to miss, and
+  they hid the failure they were built to surface.
+
+  Found the hard way. The `rls-isolation` job went red on this branch's head in
+  a step covering `internal/access` — a package this PR does not touch — and the
+  reason was unrecoverable from the log, because there was no reason in the log.
+  Every capture now ends `|| { echo "$out"; exit 1; }`.
+
+  Verified rather than assumed: the old shape prints nothing and exits 1, the
+  new one prints the detail and still exits 1. Every `run:` block in the file
+  was re-parsed with `bash -n` after the change, and
+  `check-workflows-parse.sh`, `check-race-timeout.sh` and
+  `check-docs-drift.sh` all pass.
+
+  **What this does not claim.** It does not fix the `internal/access` failure —
+  all seven of that step's tests pass locally against a fresh database built the
+  way CI builds one (`openidx_app`-owned, freshly created), so there is nothing
+  yet to fix. It makes the next occurrence say what it is.
+
+- **A revoke with no Redis crashed the request that was severing the account.**
+  Every caller of `revocation.RevokeUserTokens` reaches it through
+  `RedisClient.RevocationDB()`, whose contract is that it is nil-safe and
+  returns a nil `*redis.Client` when the service has no Redis. That nil then
+  crosses into a `redis.UniversalClient` parameter — and a nil pointer inside an
+  interface is not a nil interface, so the `client == nil` guard let it through
+  and the next line called `Set` on a nil receiver.
+
+  A panic is the worst available outcome for a best-effort sever. The function
+  exists so that a missing or unreachable Redis degrades into a logged error
+  beside an account that is *already* disabled; taking the process down instead
+  turns "the tokens were not cut" into "the sever never finished", leaving the
+  account in whatever half-disabled state the panic interrupted.
+
+  Guarded once, at the choke point both `RevokeUserTokens` and `Revoker` share,
+  because every sever path in the product passes through them and the accessor
+  they all use is the thing producing the typed nil. The guard checks `Kind`
+  before `IsNil` — `IsNil` panics on a kind that cannot be nil, and a value type
+  satisfying the interface is usable and must not be reported as absent.
+
+  Found by CI, in a suite that has no opinion about Redis at all: the identity
+  lifecycle tenant-isolation tests build a `Service` with a database and a
+  logger and nothing else, so the `disable_user` branch of
+  `executeLifecycleAction` reached the new revoke with no client and
+  segfaulted. Mutation: restoring `client == nil` reproduces the CI panic in
+  both that suite and the new unit tests.
+
+- **A cache-key assertion still spelled out `perms:v2:`.** The permission cache
+  key moved to `perms:v3:` with escaped role names in this same series, and the
+  delegation cache-poisoning test built the key it read back by hand — so it
+  asked Redis for a key nothing writes any more and failed on the cache read
+  rather than on anything it was written to check. It now builds the key with
+  `PermissionCacheKey`, the one constructor the enforcement point uses, so the
+  two cannot drift again.
+
+- **Most paths that sever a user's access never revoked their tokens.** The
+  `internal/revocation` package doc records half of this defect and *names* the
+  other half: "a path that severs a user's access and never writes the marker at
+  all — and the sever paths were exactly that." `deprovisionUser` and the kill
+  switch were fixed. Nobody counted the rest.
+
+  Seventeen functions disable or delete a user row. Two wrote the marker.
+  Everything else stops only the *next* login: `/oauth/userinfo` and
+  `/oauth/introspect` read the per-user marker and the per-token blacklist and
+  nothing else, so the access token already in that browser keeps answering
+  until it expires on its own.
+
+  Three are fixed here, and all three are compromise paths:
+
+  - **The CAEP receiver.** A federated partner sends `session-revoked`,
+    `account-disabled` or `credential-change`; the code revoked sessions and
+    refresh tokens and disabled the account, and left the access token alone.
+    That signal is the entire reason CAEP exists.
+  - **Risk auto-remediation.** `RemediateAccountLock` locks an account on
+    impossible travel, brute force or a blocked IP — the moment the product
+    decides the account is compromised.
+  - **Leaver offboarding.** The transaction disables the account, revokes the
+    API keys, strips roles and groups and deletes the session rows. The marker
+    is written after the commit, because it lives in Redis and cannot join the
+    transaction, and writing it before would cut a user whose offboarding then
+    rolled back.
+
+  The remaining eleven are recorded in a register that only shrinks, not fixed
+  in one sweep, and the reason is the finding. `user_repository.Delete` *looks*
+  like a defect from the census and is not — its caller deprovisions first,
+  deliberately, so a concurrent refresh cannot slip through against a
+  still-present user. A mass patch would have added a second write there and
+  nothing would have failed.
+
+  The directory syncs were the last three, and the first reading of them was
+  **wrong**: "`internal/directory` has no revocation client at all" was read off
+  the `SyncEngine` struct — a database handle and a logger — and turned into a
+  claim about the package, and from there into "only the event bus can fix
+  this". Checking the call sites instead took two minutes and showed the
+  opposite: `Service` already takes a `*redis.Client` through `SetRedis`, and
+  both binaries that *start* the scheduler already pass one.
+
+  So the plumbing was done rather than deferred to an architecture that does not
+  exist yet. `SyncEngine` takes a revoke callback, `Service.SetRevoker` forwards
+  it, and the two binaries wire `revocation.Revoker(redis.RevocationDB(), log)`.
+  A separate method from `SetRedis` deliberately: that one takes the general
+  client for the scheduler's leader gate, and this marker has to reach the
+  *revocation* Redis — writing it to the wrong one is the defect this package
+  was created to fix.
+
+  The shape of the mistake is worth keeping: a two-field struct is evidence
+  about that struct, not about what its callers can reach, and "this needs the
+  bus" is the most expensive conclusion available from not looking.
+
+  Ten of the remaining eleven were fixed in the same pass, once each had had
+  its caller read: bulk disable and delete, the lifecycle policy, ISPM
+  remediation, DSAR erasure and restriction, stale-account cleanup, the
+  `disable_user` and `revoke_sessions` lifecycle actions, and the IBDR breach
+  quarantine. Stale-account cleanup severs *by predicate* rather than by id, so
+  it now uses `RETURNING id` — without the ids there is nothing to revoke.
+
+  The quarantine service was given the revoke *function* rather than its own
+  Redis client, because a second client is how this product ended up with
+  several hand-rolled copies of one marker write. The field is nil-safe on
+  purpose — containment must still run — which is exactly why nothing would
+  notice it silently becoming nil. The census cannot see through a function
+  field either (measured: removing the injection everywhere leaves it green),
+  so the wiring is guarded next to the constructions, where the question is
+  answerable, and the register records that limit as `revokes-indirectly`
+  rather than claiming the path is covered.
+
+  Five mutations red on the census, and the fixes are measured rather than only
+  counted. The census is an AST guard: it proves a call *exists*, not that it
+  fires for the right user on the path an operator takes. So stale-account
+  cleanup — the one whose statement changed from `Exec` to
+  `Query ... RETURNING id`, without which there were no ids to revoke at all —
+  and the shared helper thirteen call sites now depend on are both driven
+  against a real PostgreSQL and a real Redis, reading the marker back out by the
+  key the enforcement point reads.
+
+  Those tests wire **two different Redis databases** to the general and
+  revocation roles, deliberately. With one client for both, "the marker went to
+  the wrong role" would be invisible — and a marker written where nothing reads
+  it is precisely the defect `internal/revocation` was created to fix. Measured:
+  swapping `RevocationDB()` for the general client turns both tests red.
+
+- **A revoked access token came back to life once its revocation record
+  expired.** A revocation has to outlive what it revokes, and this package has
+  two revocation mechanisms that answered that differently.
+
+  The per-token blacklist gets it right: `MarkAccessTokenRevoked` derives its
+  Redis TTL from the token's own expiry, so the entry dies exactly when the
+  token does. The per-user marker — written by `/oauth/logout-all`, by an access
+  review, by a leaver's deprovisioning and by the **kill switch** — uses the
+  constant `revocation.MarkerTTL`, seven days, justified in its own comment as
+  "comfortably longer than any access token this product mints (an hour by
+  default)".
+
+  An hour is the default, not the limit. `access_token_lifetime` is a per-client
+  `INTEGER` column set through client registration and nothing capped it, so a
+  client configured with thirty days minted thirty-day tokens while the marker
+  revoking them expired after seven. `IsAccessTokenRevoked` reads a missing
+  marker as "not revoked" — correctly, since it cannot tell never-revoked from
+  expired — so on the eighth day the revoked token was accepted again. A
+  revocation that un-revokes itself is worse than none, because an operator
+  watched it succeed.
+
+  The invariant is one sentence: no path mints an access token that outlives the
+  marker able to revoke it. `maxAccessTokenLifetimeSeconds` is now *derived*
+  from `revocation.MarkerTTL` rather than chosen,
+  `OAuthClient.EffectiveAccessTokenLifetime()` clamps at mint, and client
+  registration refuses anything longer outright.
+
+  Clamping and refusing are not the same thing and both are needed. Clamping
+  covers rows on installs that already set the column — refusing at mint would
+  break a working client at the worst possible moment. Refusing is how whoever
+  configures a *new* client finds out, instead of asking for thirty days, being
+  handed seven, and believing the first number.
+
+  Seven minting paths read the raw column. A census guards them, because a clamp
+  only helps at the call sites that use it and a new grant type added next year
+  is one field access away from minting a token nothing can revoke — and it
+  would look exactly like the code beside it.
+
+  Six mutations red.
+
+- **A revoked permission could stay in effect, depending on what the role was
+  called.** `PermissionResolver` caches a role set's effective permissions in
+  Redis and `RequirePermission` decides from that cache;
+  `invalidatePermissionCache` clears the entry when a role's permissions change.
+  It did so with a `SCAN` over `perms:*<roleName>*` — interpolating the role
+  name into a Redis MATCH pattern. **A role name is not a pattern.**
+
+  Role names arrive in the request body of `POST /api/v1/identity/roles` and
+  nothing validates them: the struct carries no binding tags. So a role named
+  `ops[x]` made a glob character class — `perms:*ops[x]*` looks for `ops`
+  followed by the single character `x`, while the key to delete contains a
+  literal `[`. The `SCAN` matched **nothing**. The revoke committed, the API
+  answered 200, and the enforcement point kept granting the permission until the
+  entry expired on its own five minutes later. In a product whose subject is
+  access control, a revoke that reports success and does not take effect is the
+  defect; the cache is only where it lives. Measured against a real Redis for
+  `ops[x]`, `team[a-z` and `back\slash`.
+
+  Two more followed from the same line. `perms:*ops*` also deleted `devops`, a
+  different role. And the pattern carried no tenant term, so it deleted every
+  *other* organization's entry for a role of that name — role names are
+  per-tenant, the same `admin` exists everywhere, so one tenant editing a role
+  made every administrator on the install re-query at once.
+
+  A fourth came from the key itself: v2 joined the sorted role names with `,`,
+  so the role set `{reader, writer}` and a single role literally named
+  `reader,writer` produced the same key. Two different permission sets, one
+  entry, whichever filled it first.
+
+  The key is now built and parsed in one place
+  (`internal/common/middleware/permcachekey.go`), which is the point: the two
+  halves were written separately and drifted — one joined, the other guessed.
+  The names stay *in* the key, because invalidation has to find entries by role
+  and a hash would hide that, but each is escaped so the separator means one
+  thing and a name cannot carry structure. Invalidation scans only its own
+  organization's entries and decides membership by string equality over the
+  decoded names.
+
+  The `v3:` segment retires the old keys. During a rolling deploy old pods read
+  and write v2 while new ones use v3; each is correct in itself, but a revoke
+  through a new pod does not clear a v2 entry an old pod is still serving — a
+  five-minute window, stated rather than hidden. A partial scan is no longer
+  silent either: `iter.Err()` is checked and logged, because a scan that stopped
+  early leaves exactly the stale grants this function exists to prevent.
+
+  Six mutations red.
+
+- **The webhook retry sweep multiplied the backlog instead of draining it, and
+  the delivery backoff was written down and then defeated one line later.** The
+  queue is a Redis list and the record is PostgreSQL, and nothing wrote down
+  which deliveries were already on the queue.
+
+  `Publish` inserts a delivery as `pending` and nudges Redis; `processRetryBatch`
+  scans for pending rows and pushes them back, so a nudge lost to a Redis blip
+  still gets delivered. That backstop is right. What it could not tell apart was
+  a delivery nobody has queued and one the consumer simply has not reached yet —
+  a row stays `pending` for its whole life in the queue *and* for the whole HTTP
+  call. So every thirty seconds the entire undrained backlog was enqueued again.
+  Measured: four entries for one event after three ticks, and eighty entries for
+  twenty deliveries when four sweeps ran at once, which is what a Redis outage
+  does to the leader gate that was the only thing holding it to one.
+
+  That is not at-least-once delivery. At-least-once is a delivery that may
+  repeat; this was a feedback loop whose output grew with how far behind the
+  consumer already was, so it grew fastest exactly when the consumer was already
+  struggling.
+
+  `scheduleRetry` stored a one, five and thirty minute `next_retry_at` and then
+  pushed the delivery id straight back onto the queue, where a consumer blocked
+  on `BRPop` took it within milliseconds — nothing on the consumer side read
+  `next_retry_at` at all. The effect was not a hammered endpoint (the attempt cap
+  is three) but something worse: all three attempts were spent in under a second
+  and the delivery was marked `failed`, so a retry policy meant to ride out a
+  thirty-six minute outage rode out nothing, and a customer endpoint that
+  restarted in ten seconds had already lost the event.
+
+  And the idempotency guard — return early when the row already says
+  `delivered` — is a read, not a claim. It absorbs a duplicate consumed *after*
+  the first finished, which is why the amplification did not show up as
+  duplicate POSTs in a single-consumer drain. It cannot absorb one consumed at
+  the same time: measured, four consumers, four POSTs to the customer for one
+  event.
+
+  Migration v194 adds `webhook_deliveries.queued_at` to carry the claim. The
+  sweep takes each row as it selects it, the consumer claims rather than reads,
+  `scheduleRetry` releases the claim instead of re-nudging, and `Publish` records
+  what it queued. A second column rather than reusing `next_retry_at`, and the
+  first version of the fix proved why by breaking: `next_retry_at` is *when a
+  delivery becomes due*, `queued_at` is *whether someone already has it*. Folding
+  them together made the sweep's own claim look, to the consumer, like a delivery
+  that was not due — so the customer's endpoint was called zero times.
+
+  No new status value, so nothing can strand: whatever happens to the process
+  holding a delivery, the row is claimable again after the claim window. The cost
+  is that recovering a lost nudge now waits out that window rather than the old
+  thirty-second grace — the sweep cannot tell a lost nudge from a slow consumer,
+  and guessing the other way is what multiplied the queue.
+
+  Measured against a real PostgreSQL, a real Redis and a real HTTP endpoint that
+  counts what it was sent. Six mutations red.
+
+- **The audit search index accepted events PostgreSQL had refused, including
+  over another tenant's.** `audit.LogEvent` writes the event to `audit_events`
+  and then dual-writes it to Elasticsearch — and it started that second write
+  without looking at whether the first one succeeded.
+
+  The audit trail has two stores and only one of them is the record.
+  `audit_events` in PostgreSQL is the tamper-evident one: v181 gave it
+  `chain_seq`, `prev_hash` and `event_hash`, and the sealer chains every row
+  into a per-org sequence. Elasticsearch holds a copy for search, and the
+  console reads *that* one. The lag between them has to run one way:
+  PostgreSQL may be ahead of the index — the index write is fire-and-forget and
+  the reconciler backfills — but the index may never be ahead of PostgreSQL. A
+  document the record never accepted has no sequence number, no hash and no
+  seal, and chain verification walks only the rows that exist, so it would keep
+  reporting the chain intact while the console showed an event the chain says
+  nothing about.
+
+  The sharp edge is that `id` is also the Elasticsearch *document* id, and it
+  arrives in the body of `POST /api/v1/audit/events`, which is deliberately
+  unauthenticated (service-to-service, isolated by network rather than by a
+  JWT). The `PRIMARY KEY` on `audit_events.id` is the only thing in the system
+  making that document id unique. So a caller supplying another tenant's event
+  id had the INSERT refused and the indexed document **overwritten** — measured:
+  org A's refused event replaced org B's document while org B's row sat
+  untouched in PostgreSQL, with nothing in the record saying so.
+
+  No adversary is required for the same defect. `LogEvent`'s own comment records
+  an era when every audit event access-service emitted was refused because the
+  id was empty and the column is a `uuid`; seen from this side, that era shipped
+  all of them to the index and none to the chain. The same shape today is a
+  statement timeout — which the per-plane roles set, and which arrives under
+  load.
+
+  The fix is one early return, and the reverse direction is unchanged because it
+  is the designed state. Measured against a real PostgreSQL and a real HTTP
+  Elasticsearch (the product's own client, over the wire), since the question is
+  about the ordering of two round trips. Five mutations red.
 
 - **A 7.08 MB compiled binary was tracked in the repository, and its ignore line
   had been doing nothing for as long as it existed.** `.gitignore` carries a

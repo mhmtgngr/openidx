@@ -329,6 +329,39 @@ from the tree exactly the way every other hand-written list on this branch
 has.** Applying the sanitiser to one more site raises one more alert, and the
 maintainer's dismissal instructions go stale the moment that happens.
 
+### Update — the list is closed, and a fourth batch is why
+
+A fourth instance arrived on PR #902: `internal/identity/service.go`, the line
+that reports a failed permission-cache invalidation scan. Same shape for the
+fourth time — a `logsafe.String` field the query cannot see through — and the
+line was, again, *added* by a commit that was improving something else. That
+one had been swallowing a partial scan silently, and a partial scan leaves
+stale permission grants in place, so saying it out loud is the fix and the
+alert is the cost of saying it.
+
+**So the numbers stop here.** Adding a fourth batch would be doing the thing
+the paragraph above names, one paragraph after naming it. The verdict does not
+need a list of ids, because the question it answers is about a SHAPE, and the
+shape is already checked in the tree rather than enumerated here:
+
+- `internal/common/logsafe/no_tainted_field_test.go` fails when a value the
+  handler read out of the request reaches a `zap.String` without going through
+  `logsafe`. That is the class this rule is really about, and its own comment
+  records that the earlier sweep "fixed what CodeQL had reported rather than
+  the class, which is the mistake this guard exists to stop repeating".
+- `internal/common/logsafe/no_interpolated_message_test.go` fails on the shape
+  that WOULD be a real defect — a tainted value interpolated into the log
+  message, which the console encoder writes verbatim.
+- `internal/common/logsafe/logsafe_test.go`'s `TestCleanIsNotReplaceAllOfCRLF`
+  fails if somebody makes this scanner quiet by weakening `Clean` into the
+  CR/LF `ReplaceAll` that CodeQL recognises.
+
+Triage rule, final form: a `go/log-injection` alert on a **field** that reaches
+`logsafe` is closed by this entry, whatever its id. One on a **message**, or on
+a field that does not, is a defect and those three tests are what decide which
+it is. Dismiss it in the UI as "used in tests"/"won't fix" with a link here; do
+not add its number above.
+
 So the instruction below is written as a rule first and a list second. The
 numbers are a convenience for the current UI session, not the criterion:
 

@@ -2997,10 +2997,34 @@ func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
 		return err
 	}
 
-	// First remove all user-role assignments
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM user_roles WHERE role_id = $1 AND org_id = $2", roleID, org.ID)
+	// First remove all user-role assignments.
+	//
+	// RETURNING user_id, for the reason the expired-role sweep and the stale
+	// account cleanup both needed it: this cuts BY PREDICATE, so without the
+	// identities there is nobody to revoke. Deleting a role takes it away from
+	// everybody who held it, and every one of those people is still carrying a
+	// token that names it.
+	lostHolders, err := s.db.Pool.Query(ctx,
+		"DELETE FROM user_roles WHERE role_id = $1 AND org_id = $2 RETURNING user_id::text", roleID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to remove role assignments: %w", err)
+	}
+	var holders []string
+	for lostHolders.Next() {
+		var userID string
+		if scanErr := lostHolders.Scan(&userID); scanErr != nil {
+			// Already deleted; an id we cannot read is an id we cannot revoke,
+			// which is the thing to say rather than a reason to abandon the rest.
+			s.logger.Error("a role assignment was removed but its user could not be read; that token will not be cut",
+				zap.Error(scanErr))
+			continue
+		}
+		holders = append(holders, userID)
+	}
+	lostHolders.Close()
+	if lerr := lostHolders.Err(); lerr != nil {
+		s.logger.Error("the list of users who lost this role is incomplete; some tokens will not be cut",
+			zap.Error(lerr), zap.Int("revocable", len(holders)))
 	}
 
 	// Remove composite role relationships
@@ -3021,6 +3045,13 @@ func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
 
 	// Deleting a role silently revokes it from every user who held it, so the
 	// event is a mass revocation as much as a definition change.
+	//
+	// That sentence was here before the revocation was: the code knew this was
+	// a mass revocation and still left every holder's token naming the role.
+	// Cut them now, after the role row is actually gone, so a delete that
+	// failed cuts nobody.
+	s.revokeAfterRoleLoss(ctx, "identity.DeleteRole", holders...)
+
 	s.logAuditEvent(ctx, "identity", "role_management", "role.deleted", "success",
 		actorIDFromContext(ctx), roleID, "role", nil)
 	return nil
@@ -3490,6 +3521,11 @@ func (s *Service) RemoveUserRole(ctx context.Context, userID, roleID string) err
 		actorIDFromContext(ctx), userID, "user", map[string]interface{}{
 			"role_id": roleID,
 		})
+
+	// The row is gone; the token that names this role is not. Cut it, or the
+	// administrator who just revoked the role watches the API say "success"
+	// while the person keeps using it until their access token expires.
+	s.revokeAfterRoleLoss(ctx, "identity.RemoveUserRole", userID)
 	return nil
 }
 
@@ -3557,6 +3593,17 @@ func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []
 			"previous_role_ids": previous,
 			"role_ids":          roleIDs,
 		})
+
+	// A wholesale replacement is both a grant and a revocation, and only the
+	// revocation half needs the token cut -- see revokeAfterRoleLoss. Adding a
+	// role to somebody's set must not end their session.
+	//
+	// After the commit, not inside it: the marker lives in Redis and cannot
+	// join the transaction, and writing it before the commit would cut a user
+	// whose role change then rolled back.
+	if lost := lostRoles(previous, roleIDs); len(lost) > 0 {
+		s.revokeAfterRoleLoss(ctx, "identity.UpdateUserRoles", userID)
+	}
 	return nil
 }
 
@@ -5742,7 +5789,29 @@ func (s *Service) SetRolePermissions(ctx context.Context, roleID string, permiss
 	return nil
 }
 
-// invalidatePermissionCache clears Redis-cached permissions for a role
+// invalidatePermissionCache clears the cached permission sets that a change to
+// this role has just made wrong.
+//
+// A ROLE NAME IS NOT A PATTERN, and this function used to treat it as one. It
+// scanned `perms:*<roleName>*`, and role names arrive in a request body that
+// nothing validates, so the name was interpolated straight into Redis MATCH
+// syntax. Measured, against a real Redis:
+//
+//   - `ops[x]` opens a character class. `perms:*ops[x]*` looks for "ops"
+//     followed by the single character `x`, so the key holding that role's
+//     permissions -- which contains a literal `[` -- matched NOTHING. The
+//     revoke committed, the API answered 200, and the enforcement point kept
+//     granting the permission until the entry expired by itself. In an access
+//     control product that is the defect; the cache is only where it lives.
+//   - `ops` also matched `devops`, a different role, and the pattern carried no
+//     tenant term, so it matched every OTHER organization's entry for a role of
+//     that name. The same "admin" exists in every tenant, so one tenant editing
+//     a role emptied the cache for every administrator on the install.
+//
+// Now: scan this organization's entries only, and decide membership by
+// comparing decoded role names. PermissionCacheKeyNamesRole is the same code
+// that built the key, so the two halves cannot drift apart again -- which is
+// how they got here.
 func (s *Service) invalidatePermissionCache(ctx context.Context, roleID string) {
 	if s.redis == nil || s.redis.Client == nil {
 		return
@@ -5756,9 +5825,20 @@ func (s *Service) invalidatePermissionCache(ctx context.Context, roleID string) 
 	if roleName == "" {
 		return
 	}
-	iter := s.redis.Client.Scan(ctx, 0, "perms:*"+roleName+"*", 100).Iterator()
+	iter := s.redis.Client.Scan(ctx, 0, middleware.PermissionCacheOrgPattern(org.ID), 100).Iterator()
 	for iter.Next(ctx) {
-		s.redis.Client.Del(ctx, iter.Val())
+		key := iter.Val()
+		if !middleware.PermissionCacheKeyNamesRole(key, org.ID, roleName) {
+			continue
+		}
+		s.redis.Client.Del(ctx, key)
+	}
+	if err := iter.Err(); err != nil {
+		// A partial scan leaves stale grants in place, which is the failure
+		// this function exists to prevent -- so it is said out loud rather
+		// than swallowed by a range loop that simply ended early.
+		s.logger.Error("permission cache invalidation scan failed; stale grants may persist until the entries expire",
+			logsafe.String("role_id", roleID), zap.Error(err))
 	}
 }
 
@@ -6224,6 +6304,27 @@ func (s *Service) handleOffboardUser(c *gin.Context) {
 		return
 	}
 
+	// AND THE TOKENS THE LEAVER IS STILL HOLDING. The transaction above
+	// disables the account, revokes the API keys, strips the roles and groups
+	// and deletes the session rows -- and none of that is read by
+	// /oauth/userinfo or /oauth/introspect, which consult the per-user
+	// revocation marker and the per-token blacklist and nothing else.
+	//
+	// So offboarding a leaver left the access token in their browser answering
+	// for the rest of its life. Same defect internal/revocation's doc records
+	// for deprovisionUser and the kill switch, which were fixed; this path has
+	// the identical shape and was not.
+	//
+	// After the commit, not inside it: the marker is in Redis and cannot join
+	// the transaction, and writing it before the commit would cut a user whose
+	// offboarding then rolled back. Best-effort for the same reason the other
+	// sever paths are -- the account is already disabled -- and loud, because
+	// "the tokens were not actually cut" is what an operator needs to know.
+	if err := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); err != nil {
+		s.logger.Error("user offboarded, but their outstanding access tokens were not revoked",
+			logsafe.String("user_id", userID), zap.Error(err))
+	}
+
 	// Publish webhook
 	if s.webhookService != nil {
 		s.webhookService.Publish(publishCtx(c.Request.Context()), webhooks.EventUserDeleted, map[string]interface{}{
@@ -6657,13 +6758,35 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 		_, err := s.db.Pool.Exec(ctx,
 			"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2",
 			userID, org.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		// The row stops the NEXT login. /oauth/userinfo and /oauth/introspect
+		// read the per-user revocation marker and the per-token blacklist and
+		// nothing else, so a leaver's access token keeps answering until it
+		// expires. Best-effort and loud, like every other sever path: the
+		// account is already disabled, so a Redis hiccup must not fail the
+		// lifecycle action, but "the tokens were not cut" has to be in the log.
+		if rerr := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); rerr != nil {
+			s.logger.Error("lifecycle disabled the account, but its outstanding access tokens were not revoked",
+				logsafe.String("user_id", userID), zap.Error(rerr))
+		}
+		return nil
 
 	case "revoke_sessions":
-		_, err := s.db.Pool.Exec(ctx,
+		if _, err := s.db.Pool.Exec(ctx,
 			"DELETE FROM sessions WHERE user_id = $1 AND org_id = $2",
-			userID, org.ID)
-		return err
+			userID, org.ID); err != nil {
+			return err
+		}
+		// "revoke_sessions" as an action means what an operator reads it to
+		// mean. Deleting the session rows ends the refresh path; the access
+		// token in the browser is a separate credential and survives it.
+		if rerr := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); rerr != nil {
+			s.logger.Error("lifecycle revoked the sessions, but the outstanding access tokens were not revoked",
+				logsafe.String("user_id", userID), zap.Error(rerr))
+		}
+		return nil
 
 	default:
 		return fmt.Errorf("unsupported action type: %s", actionType)

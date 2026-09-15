@@ -33,6 +33,7 @@ import (
 	"github.com/openidx/openidx/internal/organization"
 	"github.com/openidx/openidx/internal/portal"
 	"github.com/openidx/openidx/internal/profiling"
+	"github.com/openidx/openidx/internal/revocation"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/server"
 	"github.com/openidx/openidx/internal/sms"
@@ -275,6 +276,12 @@ func main() {
 	dirService := directory.NewService(db, log)
 	if redis != nil {
 		dirService.SetRedis(redis.Client) // leader-gate the sync tick across replicas
+		// And cut the tokens of anyone a sync deprovisions. The sync engine
+		// holds a database handle and a logger; the marker belongs in the
+		// REVOCATION Redis, which is why the callback is built here, where the
+		// three roles are already distinguished, rather than by handing the
+		// engine a client and hoping it picks the right one.
+		dirService.SetRevoker(revocation.Revoker(redis.RevocationDB(), log))
 	}
 	if err := dirService.Start(context.Background()); err != nil {
 		log.Error("Directory service failed to start", zap.Error(err))

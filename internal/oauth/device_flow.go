@@ -391,7 +391,7 @@ func (s *Service) handleDeviceCodeGrant(c *gin.Context) {
 		return
 	}
 
-	accessToken, err := s.GenerateJWT(ctx, claimedUser, clientID, rec.Scope, client.AccessTokenLifetime, "")
+	accessToken, err := s.GenerateJWT(ctx, claimedUser, clientID, rec.Scope, client.EffectiveAccessTokenLifetime(), "")
 	if err != nil {
 		s.logger.Error("failed to mint device grant access token", zap.Error(err))
 		c.JSON(500, gin.H{"error": "server_error"})
@@ -401,11 +401,11 @@ func (s *Service) handleDeviceCodeGrant(c *gin.Context) {
 	resp := TokenResponse{
 		AccessToken: accessToken,
 		TokenType:   "Bearer",
-		ExpiresIn:   client.AccessTokenLifetime,
+		ExpiresIn:   client.EffectiveAccessTokenLifetime(),
 		Scope:       rec.Scope,
 	}
 	if strings.Contains(rec.Scope, "openid") {
-		if idToken, ierr := s.GenerateIDToken(ctx, claimedUser, clientID, "", client.AccessTokenLifetime, ""); ierr == nil {
+		if idToken, ierr := s.GenerateIDToken(ctx, claimedUser, clientID, "", client.EffectiveAccessTokenLifetime(), ""); ierr == nil {
 			resp.IDToken = idToken
 		}
 	}

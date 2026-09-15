@@ -34,10 +34,12 @@ package revocation
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 // MarkerTTL bounds how long a marker lives. Seven days is comfortably longer
@@ -100,10 +102,45 @@ func ParseMarker(v string) (int64, error) {
 // rather than swallowing it, because "the tokens were not actually cut" is
 // something an operator needs in the record.
 func RevokeUserTokens(ctx context.Context, client redis.UniversalClient, userID string) error {
-	if client == nil {
+	if noClient(client) {
 		return fmt.Errorf("no redis client: cannot revoke tokens for user %s", userID)
 	}
 	return client.Set(ctx, UserTokensRevokedAtKey(userID), MarkerValue(time.Now()), MarkerTTL).Err()
+}
+
+// noClient reports whether client is unusable -- nil, or a NIL POINTER WEARING
+// AN INTERFACE.
+//
+// The second case is the one that matters here, and it is not hypothetical: it
+// took down a test job. Every caller reaches this through
+// `s.redis.RevocationDB()`, whose documented contract is that it is nil-safe
+// and returns nil when there is no client. Its return type is the concrete
+// *redis.Client, and assigning a nil *redis.Client to this redis.UniversalClient
+// parameter produces an interface value that is NOT nil -- it carries the type
+// and a nil pointer -- so `client == nil` is false and the very next line calls
+// a method on a nil receiver and segfaults.
+//
+// A panic is the worst available outcome for a best-effort sever: this function
+// exists so that a Redis that is missing or unreachable degrades into a logged
+// error beside an account that is already disabled. Taking the process down
+// instead turns "the tokens were not cut" into "the request that severed the
+// account never finished", which is a strictly worse failure than the one this
+// package was written to fix.
+//
+// Kind is checked before IsNil because IsNil itself panics on a kind that
+// cannot be nil, and a client need not be a pointer -- a value type satisfying
+// the interface is usable and must not be reported as absent.
+func noClient(client redis.UniversalClient) bool {
+	if client == nil {
+		return true
+	}
+	v := reflect.ValueOf(client)
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 // IsRevoked reports whether a token issued at issuedAt (seconds since the
@@ -115,4 +152,36 @@ func RevokeUserTokens(ctx context.Context, client redis.UniversalClient, userID 
 // issued at the moment somebody said "revoke everything" keeps working.
 func IsRevoked(issuedAt, cutoff int64) bool {
 	return issuedAt > 0 && cutoff > 0 && issuedAt <= cutoff
+}
+
+// Revoker returns the "cut this user's outstanding tokens" callback a service
+// hands to a component that severs access but does not own a Redis client.
+//
+// WHY A CALLBACK RATHER THAN A CLIENT. internal/directory's sync engine
+// disables accounts an HR feed or a directory says have gone, and it holds a
+// database handle and a logger and nothing else. Giving it its own Redis client
+// is how this product ended up with five hand-rolled copies of one sanitiser
+// and, per this package's own doc, two spellings of this very marker -- one of
+// which nothing read. One function, passed down, cannot drift from the other
+// callers.
+//
+// It also forces the caller to pick the RIGHT Redis. The roles were split into
+// three, and the enforcement point reads the revocation one: handing over a
+// general client would write the marker where /oauth/userinfo never looks,
+// which is exactly the defect this package was created to fix.
+//
+// Best-effort and loud, the contract every sever path in this product shares:
+// the account is already disabled when this runs, so a Redis hiccup must not
+// fail the sever, and "the tokens were not actually cut" belongs in the record.
+// why names the path, so the line says which control left a live credential.
+func Revoker(client redis.UniversalClient, logger *zap.Logger) func(ctx context.Context, userID, why string) {
+	return func(ctx context.Context, userID, why string) {
+		if noClient(client) || userID == "" {
+			return
+		}
+		if err := RevokeUserTokens(ctx, client, userID); err != nil && logger != nil {
+			logger.Error("account severed, but its outstanding access tokens were not revoked",
+				zap.String("path", why), zap.String("user_id", userID), zap.Error(err))
+		}
+	}
 }

@@ -309,18 +309,40 @@ func (s *Service) applyRecommendation(ctx context.Context, orgID string, r Recom
 		// set is recomputed here with the same predicate. That also means an
 		// account that has logged in since the recommendation was raised is
 		// no longer disabled by applying it.
-		tag, err := s.db.Pool.Exec(ctx, `
+		// RETURNING id, because this sever is by PREDICATE rather than by id
+		// and the tokens are revoked per user. Without the ids there is
+		// nothing to revoke: the statement would disable an arbitrary number
+		// of accounts and leave every one of their access tokens answering.
+		rows, err := s.db.Pool.Query(ctx, `
 			UPDATE users SET enabled = false, updated_at = NOW()
 			WHERE org_id = $1 AND enabled = true
-			AND (last_login_at IS NULL OR last_login_at < NOW() - INTERVAL '90 days')`, orgID)
+			AND (last_login_at IS NULL OR last_login_at < NOW() - INTERVAL '90 days')
+			RETURNING id`, orgID)
 		if err != nil {
 			s.logger.Error("apply recommendation: stale account cleanup failed", zap.Error(err))
 			return applyOutcome{Action: "failed", Message: "could not disable the stale accounts"}
 		}
+		var disabled []string
+		for rows.Next() {
+			var id string
+			if scanErr := rows.Scan(&id); scanErr == nil {
+				disabled = append(disabled, id)
+			}
+		}
+		rows.Close()
+		if rerr := rows.Err(); rerr != nil {
+			// The UPDATE has committed by now; a read error here means the id
+			// list is short, so say so rather than under-revoking in silence.
+			s.logger.Error("apply recommendation: stale accounts were disabled but the id list is incomplete; "+
+				"some of their access tokens were not revoked", zap.Error(rerr))
+		}
+		for _, id := range disabled {
+			s.revokeAfterSever(ctx, id, "stale account cleanup")
+		}
 		return applyOutcome{
 			Action:  "accounts_disabled",
-			Message: fmt.Sprintf("%d stale account(s) disabled", tag.RowsAffected()),
-			Count:   int(tag.RowsAffected()),
+			Message: fmt.Sprintf("%d stale account(s) disabled", len(disabled)),
+			Count:   len(disabled),
 			Applied: true,
 		}
 
