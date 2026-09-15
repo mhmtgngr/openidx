@@ -46,11 +46,6 @@ const (
 	// way to resolve. Recorded rather than papered over, because the honest
 	// statement is "the guard cannot see this one", not "this one is fine".
 	revokesIndirectly = "revokes-indirectly"
-	// noClient: the path CANNOT revoke from where it stands. Its service holds
-	// no client for the Redis the enforcement point reads, so "call
-	// RevokeUserTokens here" is not an available fix. This is the finding, not
-	// the backlog: see the note on the register.
-	noClient = "no-revocation-client"
 	// unaudited: counted and named, never silent. Same role as the sweeps
 	// census's "undecided" and orgscope's needsScoping register.
 	unaudited = "unaudited"
@@ -68,29 +63,37 @@ var severRegister = map[string]struct{ verdict, reason string }{
 			"indirection is deliberate: ibdrService is built from the admin Service, and giving it its own " +
 			"Redis client is how this product ended up with several hand-rolled copies of one marker write."},
 
-	// ---- THE FINDING, not the backlog --------------------------------------
+	// ---- internal/directory ------------------------------------------------
 	//
-	// internal/directory HAS NO REVOCATION CLIENT. Its sever paths run in a
-	// service that cannot reach the Redis the enforcement point reads, so an
-	// HR feed or an Azure AD sync deciding somebody has left cannot cut that
-	// person's tokens from where it stands. That is not a missing line and
-	// cannot be fixed by adding one.
+	// THE FIRST VERSION OF THIS REGISTER CALLED THESE "no revocation client",
+	// AND THAT WAS WRONG. It was read off the SyncEngine struct -- a database
+	// handle and a logger, nothing else -- and turned into a claim about the
+	// package, and from there into a claim that only the event bus could fix
+	// them. Checking the call sites instead of the struct took two minutes and
+	// showed the opposite: Service already takes a *redis.Client through
+	// SetRedis, and both binaries that START the scheduler already pass one.
 	//
-	// It is the concrete, measured argument for task 3.3's consumer work: one
-	// `user.severed` event written in the transaction that severed, one
-	// consumer that turns it into a revocation, and none of these paths
-	// reaching for a client it may not have. Every other entry on this
-	// register was fixable in place and has been fixed; these three are what
-	// is left, and what they need is the bus.
-	"internal/directory/hris_sync.go::deprovisionHR": {noClient,
-		"the HRIS feed disables an account when the HR system says the person has gone, from a service with " +
-			"no revocation client; their access token answers until it expires"},
-	"internal/directory/sync.go::syncAzureADUsers": {noClient,
-		"an Azure AD sync disables an account the directory no longer lists, from a service with no " +
-			"revocation client; their access token answers until it expires"},
-	"internal/directory/sync.go::syncUsers": {noClient,
-		"a directory sync disables an account that has disappeared upstream, from a service with no " +
-			"revocation client; their access token answers until it expires"},
+	// The plumbing was a small change, so it was made rather than deferred to
+	// an architecture that does not exist yet. What makes it worth recording
+	// is the shape of the mistake: a struct with two fields is evidence about
+	// that struct, not about what its callers can reach, and "this needs the
+	// bus" is the most expensive possible conclusion to draw from two minutes
+	// of not looking.
+	//
+	// They stay listed because the census cannot SEE the fix: `e.revoke(...)`
+	// is a call through a struct field and name-based reachability has no
+	// declared name to follow, exactly as for the quarantine above. Two guards
+	// cover what it cannot: directory's revoker_wiring_test.go fails when a
+	// binary that starts the scheduler does not supply the callback, and
+	// deprovision_revokes_testdb_test.go drives a real deprovision against a
+	// real PostgreSQL and fails if the engine does not call it.
+	"internal/directory/hris_sync.go::deprovisionHR": {revokesIndirectly,
+		"calls e.revokeTokens, which calls the injected callback; guarded by revoker_wiring_test.go and " +
+			"measured end to end by deprovision_revokes_testdb_test.go, both in internal/directory"},
+	"internal/directory/sync.go::syncAzureADUsers": {revokesIndirectly,
+		"calls e.revokeTokens on both the disable and the delete branch; same two guards as deprovisionHR"},
+	"internal/directory/sync.go::syncUsers": {revokesIndirectly,
+		"calls e.revokeTokens on both the disable and the delete branch; same two guards as deprovisionHR"},
 }
 
 func TestEverySeverPathRevokesOrIsOnTheRegister(t *testing.T) {
@@ -148,7 +151,7 @@ func TestEverySeverPathRevokesOrIsOnTheRegister(t *testing.T) {
 func TestEverySeverRegisterEntryHasAVerdictAndAReason(t *testing.T) {
 	for key, entry := range severRegister {
 		switch entry.verdict {
-		case revokedByCaller, revokesIndirectly, noClient, unaudited:
+		case revokedByCaller, revokesIndirectly, unaudited:
 		default:
 			t.Errorf("%s: %q is not a verdict this census knows", key, entry.verdict)
 		}

@@ -128,11 +128,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still-present user. A mass patch would have added a second write there and
   nothing would have failed.
 
-  And **`internal/directory` has no revocation client at all**: an HRIS or Azure
-  AD sync deciding somebody has left cannot cut that person's tokens from where
-  it stands. That is not a missing line — it is the concrete argument for the
-  event bus: one `user.severed` event, one consumer that turns it into a
-  revocation, instead of every path reaching for a client it may not have.
+  The directory syncs were the last three, and the first reading of them was
+  **wrong**: "`internal/directory` has no revocation client at all" was read off
+  the `SyncEngine` struct — a database handle and a logger — and turned into a
+  claim about the package, and from there into "only the event bus can fix
+  this". Checking the call sites instead took two minutes and showed the
+  opposite: `Service` already takes a `*redis.Client` through `SetRedis`, and
+  both binaries that *start* the scheduler already pass one.
+
+  So the plumbing was done rather than deferred to an architecture that does not
+  exist yet. `SyncEngine` takes a revoke callback, `Service.SetRevoker` forwards
+  it, and the two binaries wire `revocation.Revoker(redis.RevocationDB(), log)`.
+  A separate method from `SetRedis` deliberately: that one takes the general
+  client for the scheduler's leader gate, and this marker has to reach the
+  *revocation* Redis — writing it to the wrong one is the defect this package
+  was created to fix.
+
+  The shape of the mistake is worth keeping: a two-field struct is evidence
+  about that struct, not about what its callers can reach, and "this needs the
+  bus" is the most expensive conclusion available from not looking.
 
   Ten of the remaining eleven were fixed in the same pass, once each had had
   its caller read: bulk disable and delete, the lifecycle policy, ISPM

@@ -562,6 +562,24 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # A deprovision is not done when the row is disabled. The wiring guard
+      # above checks that a binary running directory syncs supplies the revoke
+      # callback; this drives a real deprovision against a real PostgreSQL and
+      # fails if the engine does not call it -- the half no static guard in
+      # that package can answer, because the call goes through a struct field.
+      - name: A directory deprovision revokes the leaver's tokens
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/directory/ -run 'TestDeprovisioning' -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestDeprovisioningAUserAlsoRevokesTheirTokens \
+                      TestDeprovisioningStillWorksWithNoRevoker; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # A REVOKED PERMISSION HAS TO STOP BEING HONOURED, and the thing between
       # the revoke and the enforcement point is a Redis cache whose invalidation
       # used to interpolate a role name -- arbitrary text from a request body --
@@ -642,13 +660,14 @@ jobs:
       - name: Every path that severs a user's access revokes their tokens
         run: |
           set -euo pipefail
-          out=$(go test ./internal/revocation/ ./internal/audit/ ./internal/admin/ \
-            -run 'EverySeverPathRevokes|EverySeverRegisterEntry|EveryBinaryWithAnElasticsearchClient|EveryQuarantineServiceIsWired' \
+          out=$(go test ./internal/revocation/ ./internal/audit/ ./internal/admin/ ./internal/directory/ \
+            -run 'EverySeverPathRevokes|EverySeverRegisterEntry|EveryBinaryWithAnElasticsearchClient|EveryQuarantineServiceIsWired|EveryBinaryThatRunsDirectorySyncs' \
             -count=1 -v 2>&1)
           echo "$out"
           for want in TestEverySeverPathRevokesOrIsOnTheRegister \
                       TestEverySeverRegisterEntryHasAVerdictAndAReason \
                       TestEveryQuarantineServiceIsWiredToRevoke \
+                      TestEveryBinaryThatRunsDirectorySyncsWiresTheRevoker \
                       TestEveryBinaryWithAnElasticsearchClientRunsTheReconciler; do
             grep -q -- "--- PASS: $want " <<<"$out" \
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }

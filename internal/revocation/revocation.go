@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 // MarkerTTL bounds how long a marker lives. Seven days is comfortably longer
@@ -115,4 +116,36 @@ func RevokeUserTokens(ctx context.Context, client redis.UniversalClient, userID 
 // issued at the moment somebody said "revoke everything" keeps working.
 func IsRevoked(issuedAt, cutoff int64) bool {
 	return issuedAt > 0 && cutoff > 0 && issuedAt <= cutoff
+}
+
+// Revoker returns the "cut this user's outstanding tokens" callback a service
+// hands to a component that severs access but does not own a Redis client.
+//
+// WHY A CALLBACK RATHER THAN A CLIENT. internal/directory's sync engine
+// disables accounts an HR feed or a directory says have gone, and it holds a
+// database handle and a logger and nothing else. Giving it its own Redis client
+// is how this product ended up with five hand-rolled copies of one sanitiser
+// and, per this package's own doc, two spellings of this very marker -- one of
+// which nothing read. One function, passed down, cannot drift from the other
+// callers.
+//
+// It also forces the caller to pick the RIGHT Redis. The roles were split into
+// three, and the enforcement point reads the revocation one: handing over a
+// general client would write the marker where /oauth/userinfo never looks,
+// which is exactly the defect this package was created to fix.
+//
+// Best-effort and loud, the contract every sever path in this product shares:
+// the account is already disabled when this runs, so a Redis hiccup must not
+// fail the sever, and "the tokens were not actually cut" belongs in the record.
+// why names the path, so the line says which control left a live credential.
+func Revoker(client redis.UniversalClient, logger *zap.Logger) func(ctx context.Context, userID, why string) {
+	return func(ctx context.Context, userID, why string) {
+		if client == nil || userID == "" {
+			return
+		}
+		if err := RevokeUserTokens(ctx, client, userID); err != nil && logger != nil {
+			logger.Error("account severed, but its outstanding access tokens were not revoked",
+				zap.String("path", why), zap.String("user_id", userID), zap.Error(err))
+		}
+	}
 }
