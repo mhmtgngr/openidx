@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The outbox's sink, and the one publish call that satisfies its contract.**
+  `NATSSink` implements `Sink` over JetStream. `Sink.Publish` promises the
+  broker has accepted the event when it returns nil, and the relay deletes the
+  outbox row on that nil — so the choice of publish call is the difference
+  between at-least-once and at-most-once. Measured here, in this repository's
+  own code: 200 synchronous publishes, all 200 in the stream at the instant the
+  call returned, **233 µs each**. The mutation that swaps in `PublishAsync`
+  drops it to **11 µs each** — a twentyfold speedup that loses events. A profile
+  will point at that line one day; `no_async_publish_test.go` is what turns red
+  when someone acts on it. AST and not grep, because the file's own comment
+  names both forbidden calls in order to explain them, and a guard that cannot
+  tell a call from a sentence gets worked around by not writing the sentence.
+
+  The message id is a deduplication key rather than a trace field. The relay is
+  at-least-once **by design** — publish, then commit the mark, and a crash
+  between the two redelivers — which makes duplicates ordinary traffic. Stamping
+  the event id means the broker drops that redelivery inside its duplicate
+  window, so the consumer never sees it. The window outlasts a relay restart,
+  which is the only length that buys anything.
+
+  The subject is assembled and checked, not interpolated. `.` separates tokens
+  and `*` and `>` are wildcards, so an event type of `user.>` would publish
+  across a subtree a narrowly permitted subscriber was never meant to receive.
+  Eight shapes are refused, and the refusal happens **before** the publish —
+  measured against a real broker, which holds zero messages afterwards.
+
+  Seven days of retention belongs to the stream and not to the server, so the
+  sink creates the stream itself: one somebody else created with different
+  settings would change what the relay guarantees without changing the relay.
+  Read back and asserted. Five mutations red, and a CI step that starts a real
+  `nats-server` and checks each of seven tests by name — without `TEST_NATS_URL`
+  they all skip, and a skipped suite looks green.
+
+  New dependency: `github.com/nats-io/nats.go` v1.53.1.
+
+
 - **The chart can deploy NATS JetStream, and the broker's own parser is what
   says the config is valid.** Global-scale task 3.2's Helm half:
   `templates/nats.yaml` ships a StatefulSet (not a Deployment — each peer needs
