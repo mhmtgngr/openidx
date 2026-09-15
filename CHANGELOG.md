@@ -35,6 +35,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A 7.08 MB compiled binary was tracked in the repository, and its ignore line
+  had been doing nothing for as long as it existed.** `.gitignore` carries a
+  hand-written list of the binaries `go build ./cmd/<x>` drops into the working
+  directory, and `/orgscope` was on it — but an ignore line does not untrack a
+  file committed before it, so the build sat in the tree while the entry looked
+  like it was working.
+
+  Found by nearly repeating it: `cmd/event-relay` was new, the list was not
+  updated, and a 42.8 MB binary went in with the commit that added the source.
+  Checking the list against the tree then showed it had been drifting for a
+  while — six of the sixteen commands and five of the tools were missing too.
+
+  `tools/repohygiene` is the comparison, in two halves, because the list is
+  necessary and not sufficient. One test asserts every `package main` under
+  `cmd/` and `tools/` has a `/<name>` line. The other asks **git** what is
+  tracked rather than guessing from what is on disk — a developer's own build at
+  the root is the system working, and the only question that matters is whether
+  a thing is committed. Both go red when reverted: re-tracking the binary, and
+  removing a single line from the list.
+
+
 - **The event sink refused this platform's own event types.** Every piece of the
   outbox had been measured alone; that the pieces *fit* had not. The first
   end-to-end test — a business transaction at one end, a real broker at the

@@ -24,11 +24,22 @@ bin/
 # hand-maintained and it drifted: the relay's binary was committed, 42.8 MB of
 # it, because a new cmd/ does not add itself. tools/repohygiene is the guard.
 /event-relay
+/backup
+/demo-app
+/migrate
+/openidx-connect
+/profiler
+/rekey
 
 # Compiled tool binaries (root level). `go build ./tools/<name>` drops the
 # binary in the working directory, not next to its package.
 /contractcheck
 /orgscope
+/darkprobe
+/identityplanes
+/inertswitch
+/lbrender
+/posturevocab
 
 # Playwright output. test-results/ (videos, screenshots, error contexts) and
 # playwright-report/ are generated per run. e2e/.auth/user.json is the SESSION
