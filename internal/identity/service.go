@@ -5742,7 +5742,29 @@ func (s *Service) SetRolePermissions(ctx context.Context, roleID string, permiss
 	return nil
 }
 
-// invalidatePermissionCache clears Redis-cached permissions for a role
+// invalidatePermissionCache clears the cached permission sets that a change to
+// this role has just made wrong.
+//
+// A ROLE NAME IS NOT A PATTERN, and this function used to treat it as one. It
+// scanned `perms:*<roleName>*`, and role names arrive in a request body that
+// nothing validates, so the name was interpolated straight into Redis MATCH
+// syntax. Measured, against a real Redis:
+//
+//   - `ops[x]` opens a character class. `perms:*ops[x]*` looks for "ops"
+//     followed by the single character `x`, so the key holding that role's
+//     permissions -- which contains a literal `[` -- matched NOTHING. The
+//     revoke committed, the API answered 200, and the enforcement point kept
+//     granting the permission until the entry expired by itself. In an access
+//     control product that is the defect; the cache is only where it lives.
+//   - `ops` also matched `devops`, a different role, and the pattern carried no
+//     tenant term, so it matched every OTHER organization's entry for a role of
+//     that name. The same "admin" exists in every tenant, so one tenant editing
+//     a role emptied the cache for every administrator on the install.
+//
+// Now: scan this organization's entries only, and decide membership by
+// comparing decoded role names. PermissionCacheKeyNamesRole is the same code
+// that built the key, so the two halves cannot drift apart again -- which is
+// how they got here.
 func (s *Service) invalidatePermissionCache(ctx context.Context, roleID string) {
 	if s.redis == nil || s.redis.Client == nil {
 		return
@@ -5756,9 +5778,20 @@ func (s *Service) invalidatePermissionCache(ctx context.Context, roleID string) 
 	if roleName == "" {
 		return
 	}
-	iter := s.redis.Client.Scan(ctx, 0, "perms:*"+roleName+"*", 100).Iterator()
+	iter := s.redis.Client.Scan(ctx, 0, middleware.PermissionCacheOrgPattern(org.ID), 100).Iterator()
 	for iter.Next(ctx) {
-		s.redis.Client.Del(ctx, iter.Val())
+		key := iter.Val()
+		if !middleware.PermissionCacheKeyNamesRole(key, org.ID, roleName) {
+			continue
+		}
+		s.redis.Client.Del(ctx, key)
+	}
+	if err := iter.Err(); err != nil {
+		// A partial scan leaves stale grants in place, which is the failure
+		// this function exists to prevent -- so it is said out loud rather
+		// than swallowed by a range loop that simply ended early.
+		s.logger.Error("permission cache invalidation scan failed; stale grants may persist until the entries expire",
+			logsafe.String("role_id", roleID), zap.Error(err))
 	}
 }
 

@@ -762,10 +762,20 @@ func PermissionResolver(db permissionQuerier, redisClient *redis.Client) gin.Han
 		// request now, after the cache, and only role-derived permissions are
 		// stored here.
 		//
-		// The "v2:" segment retires the keys written by the old code: entries
-		// already in Redis carry the mixed-in delegations and would keep
-		// granting them until they expired on their own.
-		cacheKey := "perms:v2:" + orgID + ":" + strings.Join(sortedRoles, ",")
+		// The version segment retires the keys written by older code. "v2:"
+		// retired the entries carrying mixed-in delegations; "v3:" retires the
+		// ones whose role list was joined with a bare comma, where the role set
+		// {a, b} and a single role literally named "a,b" produced the same key.
+		//
+		// THE KEY IS BUILT BY PermissionCacheKey, NOT HERE, because the other
+		// half of this cache -- identity.invalidatePermissionCache, which
+		// deletes an entry when a role's permissions change -- has to recognise
+		// the same key. It used to guess with a Redis glob over the role name,
+		// and a role name arrives in a request body with no validation: a role
+		// called `ops[x]` made a character class, the SCAN matched nothing, and
+		// a revoked permission stayed in effect while the API reported success.
+		// One implementation, so the two cannot disagree again.
+		cacheKey := PermissionCacheKey(orgID, sortedRoles)
 
 		// role_permissions is RLS-FORCE'd and the pool derives app.org_id from the
 		// acquire context's orgctx marker at checkout. This middleware runs before

@@ -562,6 +562,39 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # A REVOKED PERMISSION HAS TO STOP BEING HONOURED, and the thing between
+      # the revoke and the enforcement point is a Redis cache whose invalidation
+      # used to interpolate a role name -- arbitrary text from a request body --
+      # into a Redis MATCH pattern. A role named `ops[x]` made a glob character
+      # class, so the SCAN meant to clear that role's entry matched nothing and
+      # the revoke reported success without taking effect.
+      #
+      # Redis is the thing whose matching rules are in question, so the question
+      # is asked of a real one, through the real middleware.
+      - name: A revoked permission stops being granted, whatever the role is called
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+          TEST_REDIS_ADDR: 127.0.0.1:6379
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/identity/ ./internal/common/middleware/ \
+            -run 'RevokingAPermissionStops|RoleWhoseNameContainsAGlob|InvalidatingOneTenants|RoleNameThatIsASubstring|RevokingFromOneRoleClears|RoleNamedLikeARoleSet|NamesThatCollide|TheOrgPattern' \
+            -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestRevokingAPermissionStopsItBeingHonouredOnTheNextRequest \
+                      TestARoleWhoseNameContainsAGlobCharacterIsStillInvalidated \
+                      TestInvalidatingOneTenantsRoleLeavesAnotherTenantsCacheAlone \
+                      TestARoleNameThatIsASubstringOfAnotherDoesNotInvalidateIt \
+                      TestRevokingFromOneRoleClearsTheEntryForEveryRoleSetThatContainsIt \
+                      TestARoleNamedLikeARoleSetDoesNotShareItsCacheEntry \
+                      TestARoleNamedLikeARoleSetIsADifferentKey \
+                      TestNamesThatCollideOnlyAfterEscapingStayDistinct \
+                      TestTheOrgPatternDoesNotReachAnotherOrg \
+                      TestTheOrgPatternNeutralisesGlobSyntax; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # THE WEBHOOK QUEUE IS REDIS AND THE RECORD IS POSTGRESQL, and the sweep
       # that bridges them used to re-read rather than claim: a delivery stays
       # `pending` for its whole life in the queue AND for the whole HTTP call,

@@ -74,6 +74,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A revoked permission could stay in effect, depending on what the role was
+  called.** `PermissionResolver` caches a role set's effective permissions in
+  Redis and `RequirePermission` decides from that cache;
+  `invalidatePermissionCache` clears the entry when a role's permissions change.
+  It did so with a `SCAN` over `perms:*<roleName>*` — interpolating the role
+  name into a Redis MATCH pattern. **A role name is not a pattern.**
+
+  Role names arrive in the request body of `POST /api/v1/identity/roles` and
+  nothing validates them: the struct carries no binding tags. So a role named
+  `ops[x]` made a glob character class — `perms:*ops[x]*` looks for `ops`
+  followed by the single character `x`, while the key to delete contains a
+  literal `[`. The `SCAN` matched **nothing**. The revoke committed, the API
+  answered 200, and the enforcement point kept granting the permission until the
+  entry expired on its own five minutes later. In a product whose subject is
+  access control, a revoke that reports success and does not take effect is the
+  defect; the cache is only where it lives. Measured against a real Redis for
+  `ops[x]`, `team[a-z` and `back\slash`.
+
+  Two more followed from the same line. `perms:*ops*` also deleted `devops`, a
+  different role. And the pattern carried no tenant term, so it deleted every
+  *other* organization's entry for a role of that name — role names are
+  per-tenant, the same `admin` exists everywhere, so one tenant editing a role
+  made every administrator on the install re-query at once.
+
+  A fourth came from the key itself: v2 joined the sorted role names with `,`,
+  so the role set `{reader, writer}` and a single role literally named
+  `reader,writer` produced the same key. Two different permission sets, one
+  entry, whichever filled it first.
+
+  The key is now built and parsed in one place
+  (`internal/common/middleware/permcachekey.go`), which is the point: the two
+  halves were written separately and drifted — one joined, the other guessed.
+  The names stay *in* the key, because invalidation has to find entries by role
+  and a hash would hide that, but each is escaped so the separator means one
+  thing and a name cannot carry structure. Invalidation scans only its own
+  organization's entries and decides membership by string equality over the
+  decoded names.
+
+  The `v3:` segment retires the old keys. During a rolling deploy old pods read
+  and write v2 while new ones use v3; each is correct in itself, but a revoke
+  through a new pod does not clear a v2 entry an old pod is still serving — a
+  five-minute window, stated rather than hidden. A partial scan is no longer
+  silent either: `iter.Err()` is checked and logged, because a scan that stopped
+  early leaves exactly the stale grants this function exists to prevent.
+
+  Six mutations red.
+
 - **The webhook retry sweep multiplied the backlog instead of draining it, and
   the delivery backoff was written down and then defeated one line later.** The
   queue is a Redis list and the record is PostgreSQL, and nothing wrote down
