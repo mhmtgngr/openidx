@@ -59,6 +59,18 @@ jobs:
       - name: Build chart dependencies
         run: bash scripts/ci-retry.sh 3 5 -- helm dependency build "$CHART"
 
+      # For "The broker is safe by construction" below, which feeds the chart's
+      # own rendered config to the real nats-server rather than trusting that a
+      # valid Kubernetes manifest carries a valid broker config. Built from the
+      # module proxy -- one static binary, no container runtime, and no trust
+      # anchor beyond the one Go already uses.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install nats-server (its config parser is the gate)
+        run: go install github.com/nats-io/nats-server/v2@v2.14.6
+
       - name: Lint
         run: helm lint "$CHART"
 
@@ -239,6 +251,113 @@ jobs:
           assert not (hpa_targets & set(scaled)), f"both autoscalers target: {hpa_targets & set(scaled)}"
           print(f"ok: {len(scaled)} ScaledObjects, one autoscaling authority per Deployment")
           PY
+
+      # NATS JetStream (global-scale plan task 3.2). Six properties, and the
+      # last one is the reason this step exists rather than leaning on
+      # kubeconform: a chart can render a syntactically valid Kubernetes
+      # manifest whose ConfigMap holds a config the SERVER refuses, and the
+      # first person to find out is the kubelet. nats-server has a -t flag that
+      # parses a config and exits, and its parser is strict at every depth
+      # (measured: an unknown top-level field, a misspelled key inside
+      # `permissions`, and `alow` for `allow` are each refused with a line and
+      # column). So the real parser reads what the chart actually rendered.
+      - name: The broker is safe by construction
+        run: |
+          set -euo pipefail
+          base=(--set secrets.postgresPassword=render-only
+                --set secrets.redisPassword=render-only
+                --set secrets.encryptionKey=render-only-not-a-credential32b)
+          on=(--set nats.enabled=true --set nats.relayPassword=render-only
+              --set nats.consumerPassword=render-only)
+          render() { helm template openidx "$CHART" "${base[@]}" "$@"; }
+          refuses() {
+            local why="$1"; shift
+            if render "$@" >/dev/null 2>&1; then
+              echo "::error::the chart rendered with $why"; exit 1
+            fi
+          }
+
+          # 1. Default off. A chart that ships a broker nobody configured is a
+          #    chart that fails to install.
+          #
+          #    Rendered to a FILE first, deliberately. Written as
+          #    `if render | grep -q ...` this check passed for a template with
+          #    the enabled gate removed: the render failed on a missing
+          #    password, grep saw nothing, and "no NATS in the output" and "no
+          #    output" are the same answer to a pipeline. set -e does not help
+          #    inside an `if` condition. So the render has to succeed on its
+          #    own line, where a failure is a failure.
+          render > /tmp/render-nats-default.yaml
+          if grep -qi 'component: nats' /tmp/render-nats-default.yaml; then
+            echo "::error::NATS rendered with nats.enabled unset"; exit 1
+          fi
+
+          # 2. A replica count that cannot hold a majority is refused, not
+          #    rounded. Raft commits on a majority: with 2 peers a majority is
+          #    still 2, so losing one stops writes -- worse than the single
+          #    node, which never promised otherwise.
+          refuses 'nats.replicaCount=2' "${on[@]}" --set nats.replicaCount=2
+          refuses 'nats.replicaCount=4' "${on[@]}" --set nats.replicaCount=4
+          refuses 'nats.replicaCount=0' "${on[@]}" --set nats.replicaCount=0
+          for n in 1 3 5; do
+            render "${on[@]}" --set nats.replicaCount=$n >/dev/null \
+              || { echo "::error::nats.replicaCount=$n was refused"; exit 1; }
+          done
+
+          # 3. Credentials and the store are required rather than defaulted.
+          refuses 'no relayPassword' --set nats.enabled=true --set nats.consumerPassword=x
+          refuses 'no consumerPassword' --set nats.enabled=true --set nats.relayPassword=x
+          refuses 'an empty jetstream.size' "${on[@]}" --set nats.jetstream.size=""
+
+          render "${on[@]}" > /tmp/render-nats.yaml
+          render "${on[@]}" --set nats.replicaCount=5 > /tmp/render-nats-5.yaml
+          python3 - /tmp/render-nats.yaml /tmp/render-nats-5.yaml <<'PYEOF'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          def by(kind):
+              return next(d for d in docs if d["kind"] == kind
+                          and d["metadata"]["labels"].get("app.kubernetes.io/component") == "nats")
+          sts = by("StatefulSet")
+          c = sts["spec"]["template"]["spec"]["containers"][0]
+
+          # 4. Both halves of the command line. The image DOES carry an
+          #    ENTRYPOINT -- the inverse of pgcat -- so args alone would work;
+          #    spelling out command means what the kubelet execs does not depend
+          #    on a shell script this repository has never run.
+          assert c["command"] == ["nats-server"], c.get("command")
+          assert c["args"] == ["--config", "/etc/nats/nats-server.conf"], c["args"]
+
+          # 5. The store is a volume, because the container securityContext sets
+          #    readOnlyRootFilesystem and a store the server cannot write is
+          #    "[FTL] Can't start JetStream" and exit 1 -- not a quiet fallback
+          #    to memory.
+          assert c["securityContext"]["readOnlyRootFilesystem"] is True
+          assert any(m["mountPath"] == "/data" for m in c["volumeMounts"]), c["volumeMounts"]
+          assert sts["spec"]["volumeClaimTemplates"][0]["metadata"]["name"] == "data"
+
+          # The Raft group's disruption budget follows the quorum, not a round
+          # number: 3 peers tolerate 1 down, 5 tolerate 2.
+          replicas = sts["spec"]["replicas"]
+          assert by("PodDisruptionBudget")["spec"]["maxUnavailable"] == (replicas - 1) // 2
+
+          conf = by("ConfigMap")["data"]["nats-server.conf"]
+          assert conf.count("nats://") == replicas, "one route per peer"
+          open("/tmp/rendered-nats.conf", "w").write(conf)
+
+          # Read again at five peers, because at three the quorum budget and a
+          # hardcoded 1 are the same number -- the assertion above would hold
+          # for a template that had stopped computing it.
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[2])) if d]
+          assert by("StatefulSet")["spec"]["replicas"] == 5
+          assert by("PodDisruptionBudget")["spec"]["maxUnavailable"] == 2
+          assert by("ConfigMap")["data"]["nats-server.conf"].count("nats://") == 5
+          PYEOF
+
+          # 6. And the real parser reads it. Strict at every depth, so a
+          #    misspelled permission key cannot quietly become "no restriction".
+          export NATS_SERVER_NAME=ci NATS_RELAY_PASSWORD=render-only NATS_CONSUMER_PASSWORD=render-only
+          "$(go env GOPATH)/bin/nats-server" -t -c /tmp/rendered-nats.conf
+          echo "the broker config the chart renders is one the server accepts"
 
       - name: The transaction pooler is safe by construction
         run: |

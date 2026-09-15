@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The chart can deploy NATS JetStream, and the broker's own parser is what
+  says the config is valid.** Global-scale task 3.2's Helm half:
+  `templates/nats.yaml` ships a StatefulSet (not a Deployment — each peer needs
+  both a stable name for the route list and its *own* store), a headless and a
+  client Service, a ConfigMap, a Secret, a quorum-shaped PodDisruptionBudget and
+  its own ServiceMonitor. Default off, and with it off the render contains no
+  `nats` line at all.
+
+  **The interlocks refuse rather than render**, which is the lesson task 2.2
+  wrote into pgcat.yaml. Seven refusals, each measured: `replicaCount` of 2, 4
+  or 0 (Raft commits on a *majority*, so two peers still need two — losing one
+  pod stops writes, strictly worse than the single node that never promised
+  otherwise), either missing password, an empty `jetstream.size`, an empty
+  subject prefix. 1, 3 and 5 render.
+
+  Three things the earlier measurements decided outright. The store sits in a
+  `volumeClaimTemplate` because the container securityContext sets
+  `readOnlyRootFilesystem` and a store the server cannot use is
+  `[FTL] Can't start JetStream` and exit 1, never a quiet fallback to memory.
+  Both halves of the command line are spelled out even though the image carries
+  an `ENTRYPOINT` (the inverse of pgcat, where `args` alone replaced the
+  binary), so what the kubelet execs does not depend on a shell script this
+  repository has never run. And the disruption budget is computed from the
+  quorum, `(n-1)/2`, rather than being a round number.
+
+  **Two findings came out of building it.** `1Gi`, `1GB` and `1073741824` parse
+  to the same config in nats-server — verified by the checksum `-t` prints — so
+  Kubernetes units pass through unconverted; `1G` does **not**, being decimal
+  and 7% smaller while remaining silently valid. And the server answers a
+  plaintext password with `[WRN] Plaintext passwords detected, use nkeys or
+  bcrypt`: the value lives in a Secret and enters the config as `$VAR`, but the
+  server sees it expanded. Helm has no bcrypt; nkeys will be weighed with task
+  3.3, and until then the warning is **not** suppressed — a silenced warning
+  looks like a decision that was made.
+
+- **Subject permissions, and an explicit statement of what they are not.** Two
+  users: the relay may publish under the platform prefix and to the JetStream
+  API and may subscribe only to its own inbox; the consumer may read the prefix
+  and may not write it. All five cases were measured against a real server
+  started from the config **helm rendered**, not from one written for the test —
+  a NATS permission violation is asynchronous, so each case flushes and reads
+  what the error handler caught.
+
+  What this does not do is isolate one tenant from another. Subjects are
+  `<prefix>.<org_id>.<event>` and an allow-list cannot enumerate organizations
+  created at runtime; tenant isolation on this path is the publisher stamping
+  `org_id` and the consumer scoping its writes, the same belt the database
+  carries. Saying so in the config is cheaper than someone later reading that
+  block as a boundary it is not.
+
+- **CI step "The broker is safe by construction".** Six properties, and the last
+  is why the step exists rather than leaning on kubeconform: a chart can render
+  a syntactically valid Kubernetes manifest whose ConfigMap holds a config the
+  *server* refuses, and the first to find out is the kubelet. `nats-server -t`
+  parses a config and exits, its parser is strict at every depth, and the step
+  feeds it what the chart actually rendered. The binary comes from the module
+  proxy — one static file, no container runtime, no trust anchor beyond the one
+  Go already uses.
+
+  Seven mutations. Six red on the first attempt, including a permission key
+  misspelled as `alow`, which **only the real parser** catches. The seventh
+  stayed green and found a hole in the guard itself: "default off" was written
+  as `if render | grep -q ...`, and with the enabled gate removed the render
+  failed on a missing password, grep saw nothing, and to a pipeline "no NATS in
+  the output" and "no output" are the same answer — `set -e` does not apply
+  inside an `if` condition. The render now goes to a file on its own line, where
+  a failure is a failure, and the mutation is red.
+
+
 ### Changed
 
 - **The admin plane's last two lag-tolerant reads moved to the replica, decided

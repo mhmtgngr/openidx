@@ -1,0 +1,363 @@
+{{- if .Values.nats.enabled }}
+{{- /*
+  NATS JetStream, the outbox relay's sink (global-scale plan task 3.2).
+
+  WHAT THIS FILE IS RESPONSIBLE FOR, AND WHAT IT IS NOT. It configures a
+  SERVER. The stream -- its subjects, its retention, its replica count -- is a
+  JetStream API object that the publisher creates, not a server setting, so
+  "retention 7 days" lives with the sink and not here. What lives here is the
+  ceiling on what this server will ever hold, who may publish and who may
+  subscribe, and where the store survives a reschedule.
+
+  THREE THINGS WERE MEASURED BEFORE THIS TEMPLATE EXISTED, against a real
+  nats-server 2.14.6 and the real registry (plan section 3.2), because each one
+  decides a line below:
+
+    - The image carries ENTRYPOINT ["docker-entrypoint.sh"] and
+      CMD ["nats-server", "--config", "/etc/nats/nats-server.conf"]. That is
+      the INVERSE of pgcat, where no ENTRYPOINT meant `args` alone replaced the
+      binary. Here `args` alone would be correct -- and this template still
+      spells out `command` as well, so what the kubelet execs does not depend
+      on a shell script this repository has never run.
+    - A config file the server cannot read is refused at startup
+      ("no such file or directory"), not defaulted. So a ConfigMap that fails
+      to mount is a CrashLoopBackOff rather than a server running with settings
+      nobody chose.
+    - A JetStream store the server cannot use is "[FTL] Can't start JetStream"
+      and exit 1. There is no silent fallback to memory, which is why store_dir
+      points into the volumeClaimTemplate below and not anywhere on the
+      read-only root filesystem the chart's securityContext imposes.
+
+  THE INTERLOCKS REFUSE TO RENDER rather than shipping something that looks
+  installed and is not, which is the lesson task 2.2 wrote into pgcat.yaml.
+*/}}
+{{- $replicas := int .Values.nats.replicaCount }}
+{{- if or (lt $replicas 1) (and (gt $replicas 1) (eq (mod $replicas 2) 0)) }}
+{{- fail (printf "nats.replicaCount must be 1, or an odd number >= 3 (got %d). JetStream replicates a stream with Raft and commits on a MAJORITY of peers: with 2 replicas a majority is still 2, so losing one pod stops writes -- strictly worse than the single node, which never promised otherwise." $replicas) }}
+{{- end }}
+{{- if not .Values.nats.jetstream.size }}
+{{- fail "nats.jetstream.size is required when nats.enabled. JetStream's store_dir has to be a mounted volume: the chart's container securityContext sets readOnlyRootFilesystem, and a store the server cannot write is '[FTL] Can't start JetStream' and exit 1 rather than a quiet fallback to memory." }}
+{{- end }}
+{{- $fullname := include "openidx.fullname" . }}
+{{- $headless := printf "%s-nats-headless" $fullname }}
+{{- $prefix := required "nats.subjectPrefix is required when nats.enabled" .Values.nats.subjectPrefix }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fullname }}-nats-auth
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+type: Opaque
+stringData:
+  # The server reads these through $VARIABLE expansion in its own config rather
+  # than having them baked into the ConfigMap, so the credentials live in a
+  # Secret and the config stays readable in `kubectl get cm -o yaml`.
+  NATS_RELAY_PASSWORD: "{{ required "nats.relayPassword is required when nats.enabled" .Values.nats.relayPassword }}"
+  NATS_CONSUMER_PASSWORD: "{{ required "nats.consumerPassword is required when nats.enabled" .Values.nats.consumerPassword }}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-nats
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+data:
+  nats-server.conf: |
+    # Mounted at the image's own default config path, so `args` and this file
+    # cannot drift apart.
+    port: {{ .Values.nats.clientPort }}
+    http: {{ .Values.nats.monitorPort }}
+    server_name: $NATS_SERVER_NAME
+
+    jetstream {
+      # Inside the volumeClaimTemplate. See the header: a store_dir the server
+      # cannot write is a fatal start, not a downgrade.
+      store_dir: "/data/jetstream"
+      # Kubernetes' own units, passed through unconverted, because nats-server
+      # reads them identically: 1Gi, 1GB and 1073741824 all parse to the same
+      # config (measured -- `nats-server -t` prints a checksum, and theirs
+      # match). `1G` does NOT: that is decimal, 7% smaller, and silently valid.
+      max_memory_store: {{ .Values.nats.jetstream.maxMemoryStore }}
+      max_file_store: {{ .Values.nats.jetstream.maxFileStore }}
+    }
+{{- if gt $replicas 1 }}
+
+    cluster {
+      name: {{ $fullname }}-nats
+      port: {{ .Values.nats.clusterPort }}
+      # Every peer by its stable StatefulSet identity. A headless Service is
+      # what makes those names resolve; a route list built from the load-balanced
+      # Service would let a peer route to itself through a random sibling.
+      routes = [
+      {{- range $i := until $replicas }}
+        nats://{{ $fullname }}-nats-{{ $i }}.{{ $headless }}:{{ $.Values.nats.clusterPort }}
+      {{- end }}
+      ]
+    }
+{{- end }}
+
+    # WHO MAY DO WHAT. The relay publishes and must not read; the consumer reads
+    # and must not publish under the platform prefix. Both need the JetStream
+    # API (streams and consumers are created through it) and their own inbox for
+    # the replies -- a PubAck comes back on an inbox subject, so a publisher that
+    # cannot subscribe to _INBOX.> cannot learn that its publish was accepted,
+    # which is exactly the acknowledgement the relay's Sink contract depends on.
+    #
+    # Note what this does NOT do: it does not isolate one TENANT from another.
+    # Subjects are {{ $prefix }}.<org_id>.<event> and an allow-list cannot
+    # enumerate organizations that are created at runtime. Tenant isolation on
+    # this path is the publisher stamping org_id and the consumer scoping its
+    # writes -- the same belt the database carries -- and saying so here is
+    # cheaper than someone later reading this block as a boundary it is not.
+    authorization {
+      users = [
+        {
+          user: {{ .Values.nats.auth.relayUser | quote }}
+          password: $NATS_RELAY_PASSWORD
+          permissions: {
+            publish: { allow: ["{{ $prefix }}.>", "$JS.API.>"] }
+            subscribe: { allow: ["_INBOX.>"] }
+          }
+        }
+        {
+          user: {{ .Values.nats.auth.consumerUser | quote }}
+          password: $NATS_CONSUMER_PASSWORD
+          permissions: {
+            publish: { allow: ["$JS.API.>"] }
+            subscribe: { allow: ["{{ $prefix }}.>", "_INBOX.>"] }
+          }
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $headless }}
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  # Headless, and publishing not-ready addresses on purpose: a peer has to be
+  # resolvable BEFORE it is ready, because becoming ready is what the routes
+  # are for.
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: client
+      port: {{ .Values.nats.clientPort }}
+      targetPort: client
+      protocol: TCP
+    - name: cluster
+      port: {{ .Values.nats.clusterPort }}
+      targetPort: cluster
+      protocol: TCP
+    - name: monitor
+      port: {{ .Values.nats.monitorPort }}
+      targetPort: monitor
+      protocol: TCP
+  selector:
+    {{- include "openidx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-nats
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  type: ClusterIP
+  ports:
+    - name: client
+      port: {{ .Values.nats.clientPort }}
+      targetPort: client
+      protocol: TCP
+    - name: monitor
+      port: {{ .Values.nats.monitorPort }}
+      targetPort: monitor
+      protocol: TCP
+  selector:
+    {{- include "openidx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}-nats
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  # A StatefulSet and not a Deployment for two reasons that are the same reason:
+  # each peer needs a stable name for the route list above, and each peer needs
+  # its OWN store. A shared or reshuffled store is a peer that comes back as a
+  # different member of the Raft group.
+  serviceName: {{ $headless }}
+  replicas: {{ $replicas }}
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nats
+  template:
+    metadata:
+      labels:
+        {{- include "openidx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: nats
+        app.kubernetes.io/part-of: openidx
+      annotations:
+        # Roll the cluster when its own configuration changes. Computed from the
+        # values that feed the ConfigMap -- including the rendered ConfigMap here
+        # would recurse, since both live in this file.
+        checksum/config: {{ toYaml .Values.nats | sha256sum }}
+    spec:
+      {{- include "openidx.topologySpread" (dict "ctx" . "component" "nats") | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podAntiAffinity.enabled }}
+      # Spread the peers across nodes. A three-peer Raft group on one node is
+      # one node away from losing its majority, which is the whole thing the
+      # third peer was bought for.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: {{ .Values.podAntiAffinity.weight | default 100 }}
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: nats
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
+      containers:
+        - name: nats
+          image: "{{ .Values.nats.image.repository }}:{{ .Values.nats.image.tag }}"
+          imagePullPolicy: {{ .Values.nats.image.pullPolicy | default "IfNotPresent" }}
+          # Both halves spelled out. The image DOES carry an ENTRYPOINT, so args
+          # alone would work -- but then what runs depends on a shell script
+          # this repository has never executed. This way the kubelet execs the
+          # server directly and the config path is visible in `kubectl get sts`.
+          command: ["nats-server"]
+          args: ["--config", "/etc/nats/nats-server.conf"]
+          env:
+            # The server interpolates these into its own config. server_name has
+            # to differ per peer or the cluster refuses the duplicate.
+            - name: NATS_SERVER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NATS_RELAY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-nats-auth
+                  key: NATS_RELAY_PASSWORD
+            - name: NATS_CONSUMER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-nats-auth
+                  key: NATS_CONSUMER_PASSWORD
+          ports:
+            - name: client
+              containerPort: {{ .Values.nats.clientPort }}
+              protocol: TCP
+            - name: cluster
+              containerPort: {{ .Values.nats.clusterPort }}
+              protocol: TCP
+            - name: monitor
+              containerPort: {{ .Values.nats.monitorPort }}
+              protocol: TCP
+          # /healthz on the monitoring port, not a TCP open: the client port
+          # accepts a connection before JetStream is up, so a tcpSocket probe
+          # would call a peer ready while the thing it is there for is not.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.nats.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nats
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullname }}-nats
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.nats.jetstream.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.nats.jetstream.size }}
+{{- if gt $replicas 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $fullname }}-nats
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  # A majority has to survive a voluntary disruption, so the budget is written
+  # from the quorum and not from a round number: 3 peers tolerate 1 down, 5
+  # tolerate 2. maxUnavailable rather than minAvailable, because it is the
+  # quantity the Raft group actually constrains.
+  maxUnavailable: {{ div (sub $replicas 1) 2 }}
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nats
+{{- end }}
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled }}
+---
+# Its own monitor: the platform ServiceMonitor selects the Go services by
+# component and scrapes their `http` port, and NATS is neither.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $fullname }}-nats
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nats
+  endpoints:
+    # The server's own monitoring endpoints. A Prometheus-format exporter is a
+    # separate sidecar image in NATS; until it is here, this scrapes what the
+    # server itself serves rather than pretending a /metrics path exists.
+    - port: monitor
+      path: /varz
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+{{- end }}
+{{- end }}
