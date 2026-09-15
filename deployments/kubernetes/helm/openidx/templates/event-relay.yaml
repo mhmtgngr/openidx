@@ -1,0 +1,171 @@
+{{- if .Values.eventRelay.enabled }}
+{{- /*
+  The outbox relay (global-scale plan tasks 3.1b and 3.2).
+
+  A WORKER, NOT A SERVICE. It serves no requests: it drains the outbox table
+  into NATS JetStream and marks what the broker accepted. The port below carries
+  /health and /metrics, there is no Ingress, and the Service exists so Prometheus
+  has something to scrape.
+
+  MORE THAN ONE REPLICA IS SAFE AND IS THE POINT. The drain claims rows with
+  `FOR UPDATE SKIP LOCKED`, so a row one relay holds is invisible to the others
+  -- that is the coordination, and it is why there is no leader and no lease.
+  What IS coordinated is the retention sweep, in the binary, because a sweep is
+  not a claim.
+
+  THE INTERLOCK: a relay with no broker is a pod that dies at boot. The binary
+  refuses to start without NATS_URL -- deliberately, because a relay that starts
+  and fails every publish looks healthy while the backlog grows where nobody
+  looks. That refusal is correct and it is also a CrashLoopBackOff, so the chart
+  answers the same question one layer earlier, where it costs nothing.
+*/}}
+{{- $fullname := include "openidx.fullname" . }}
+{{- $natsURL := .Values.eventRelay.natsUrl }}
+{{- if not $natsURL }}
+{{- if .Values.nats.enabled }}
+{{- $natsURL = printf "nats://%s-nats:%v" $fullname .Values.nats.clientPort }}
+{{- else }}
+{{- fail "eventRelay.enabled=true needs a broker: either set nats.enabled=true so the chart ships one, or point eventRelay.natsUrl at an external NATS. The relay refuses to start without NATS_URL -- a relay with no sink claims rows, fails every publish and rolls back forever, and the only place that is visible is the outbox table. Rendering it anyway would just move the refusal into a CrashLoopBackOff." }}
+{{- end }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-event-relay
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: event-relay
+spec:
+  replicas: {{ .Values.eventRelay.replicaCount }}
+  {{- include "openidx.rollingStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: event-relay
+  template:
+    metadata:
+      labels:
+        {{- include "openidx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: event-relay
+    spec:
+      {{- include "openidx.gracefulTermination" . | nindent 6 }}
+      {{- include "openidx.topologySpread" (dict "ctx" . "component" "event-relay") | nindent 6 }}
+      serviceAccountName: {{ include "openidx.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podAntiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: {{ .Values.podAntiAffinity.weight | default 100 }}
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: event-relay
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
+      containers:
+        - name: event-relay
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.eventRelay.image.repository }}:{{ .Values.eventRelay.image.tag }}"
+          imagePullPolicy: {{ .Values.eventRelay.image.pullPolicy }}
+          {{- include "openidx.preStopHook" . | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: 8009
+              protocol: TCP
+          env:
+            - name: APP_ENV
+              value: {{ .Values.global.environment | default "production" | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.global.logLevel | default "info" | quote }}
+            - name: NATS_URL
+              value: {{ $natsURL | quote }}
+            {{- if .Values.nats.enabled }}
+            # The relay publishes, so it connects as the broker's PUBLISHING
+            # user -- the one whose permissions allow the platform prefix and
+            # nothing else. Reading the same Secret the broker reads is what
+            # keeps the two from drifting apart into a permissions error on
+            # every event.
+            - name: NATS_USER
+              value: {{ .Values.nats.auth.relayUser | quote }}
+            - name: NATS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-nats-auth
+                  key: NATS_RELAY_PASSWORD
+            # Written from the broker's own prefix rather than repeated: a relay
+            # publishing under a prefix its permissions do not cover is refused
+            # by the server on every event, and the values file is where that
+            # divergence would be invisible.
+            - name: EVENT_SUBJECT_PREFIX
+              value: {{ .Values.nats.subjectPrefix | quote }}
+            {{- end }}
+            {{- with .Values.eventRelay.outboxKeepForHours }}
+            # Zero (the default) leaves delivered rows alone. A delivered row is
+            # a receipt, and the first question after an incident is whether an
+            # event was published and when.
+            - name: OUTBOX_KEEP_FOR_HOURS
+              value: {{ . | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ $fullname }}-db-url
+            - secretRef:
+                name: {{ $fullname }}-secrets
+            - configMapRef:
+                name: {{ $fullname }}-config
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.eventRelay.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-event-relay
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: event-relay
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8009
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "openidx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: event-relay
+{{- if gt (int .Values.eventRelay.replicaCount) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $fullname }}-event-relay
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: event-relay
+spec:
+  # One relay is enough to drain -- SKIP LOCKED means the others are spare
+  # capacity, not a quorum -- so the budget only keeps the backlog from going
+  # unattended during a voluntary disruption.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: event-relay
+{{- end }}
+{{- end }}

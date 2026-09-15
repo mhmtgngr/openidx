@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The event relay is deployable.** A Dockerfile, an image in the build matrix,
+  a Helm Deployment with its Service and PodDisruptionBudget, and an
+  `eventRelay` values block — off by default. Port 8009 carries `/health` and
+  `/metrics` only: the relay serves no requests, so there is no Ingress and the
+  Service exists to give Prometheus a target.
+
+  More than one replica is safe and is the point. The drain claims rows with
+  `FOR UPDATE SKIP LOCKED`, so a row one relay holds is invisible to the others
+  — no leader, no lease, and the replicas are capacity rather than a quorum.
+  Hence `minAvailable: 1`: one relay drains the whole table, and the budget only
+  keeps the backlog from going unattended.
+
+  **The chart refuses to render a relay with no broker.** The binary refuses to
+  start without `NATS_URL`, deliberately — a relay that starts and fails every
+  publish looks healthy while the backlog grows where nobody looks — and that
+  refusal is also a CrashLoopBackOff. The chart answers the same question one
+  layer earlier, where it costs nothing. An external broker
+  (`eventRelay.natsUrl`) is an equally valid answer: the interlock is about
+  *having* one, not about the chart owning it.
+
+  Its wiring is derived from the broker rather than repeated beside it:
+  `NATS_URL` from the **client** Service (not the headless one, which is how
+  peers find each other), the password from the broker's own Secret, the subject
+  prefix from `nats.subjectPrefix`. A wrong host, a wrong password or a prefix
+  outside the relay's permissions is refused by the server on *every event*, and
+  a values file is where that divergence would be invisible.
+
+  Four mutations red: turning the interlock into a silent default, pointing
+  `NATS_URL` at the headless Service, hardcoding the prefix, and removing the
+  default-off gate.
+
+  Two shell traps were measured while writing the CI step, not reasoned about.
+  `render | grep -q` reports a **successful** match as a failed step: `grep -q`
+  closes the pipe on its first match, helm dies of SIGPIPE, and `pipefail` turns
+  that into a non-zero exit. And a failed render with an unmatched grep is the
+  same answer to a pipeline as a clean render with nothing to find. Both are now
+  rendered to a file first.
+
+
 - **`cmd/event-relay`: the process that makes the outbox live.** Tasks 3.1a and
   3.1b built the outbox table, the publisher and the relay; 3.2 built the sink.
   None of it ran anywhere, and the plan said so rather than letting it pass as

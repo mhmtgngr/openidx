@@ -1015,6 +1015,10 @@ func setDefaults(v *viper.Viper, serviceName string) {
 		"oauth-service":        8006,
 		"access-service":       8007,
 		"gateway-service":      8008,
+		// The relay serves no requests; this port carries /health and /metrics
+		// only. It is in the table anyway so the chart's probe and the binary
+		// agree without either of them hardcoding a number.
+		"event-relay": 8009,
 	}
 	if port, ok := ports[serviceName]; ok {
 		v.SetDefault("port", port)

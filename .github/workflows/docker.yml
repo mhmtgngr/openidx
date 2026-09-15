@@ -52,6 +52,10 @@ jobs:
             dockerfile: deployments/docker/Dockerfile.gateway-service
           - service: access-service
             dockerfile: deployments/docker/Dockerfile.access-service
+          # The outbox relay. No request path: it drains the outbox into NATS,
+          # so its image exists to be scheduled, not to be routed to.
+          - service: event-relay
+            dockerfile: deployments/docker/Dockerfile.event-relay
           # The admin-console image builds the `production` (nginx) stage and
           # needs the repo root as context to copy the nginx config.
           - service: admin-console

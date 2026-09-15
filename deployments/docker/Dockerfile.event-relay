@@ -1,0 +1,58 @@
+# Multi-stage build for the Event Relay (global-scale plan tasks 3.1b / 3.2).
+#
+# It differs from the request-serving images in one way worth stating: the port
+# below carries /health and /metrics and nothing else. The relay has no request
+# path -- it drains the outbox into NATS -- so the healthcheck proves the
+# process is up, and whether it is DELIVERING is answered by the outbox backlog
+# and the relay's own metrics rather than by a 200 on a port nothing routes to.
+
+# ============================================
+# Stage 1: Build
+# ============================================
+FROM golang:1.26-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates gcc musl-dev && \
+    echo 'precedence ::ffff:0:0/96 100' >> /etc/gai.conf
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
+
+COPY . .
+
+ARG VERSION=dev
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build \
+    -a \
+    -ldflags="-w -s -X main.Version=${VERSION}" \
+    -trimpath \
+    -o /app/event-relay \
+    ./cmd/event-relay && \
+    ls -lh /app/event-relay && \
+    strip /app/event-relay 2>/dev/null || true
+
+# ============================================
+# Stage 2: Runtime
+# ============================================
+FROM alpine:3.24
+
+RUN apk add --no-cache ca-certificates tzdata wget && \
+    rm -rf /var/cache/apk/*
+
+RUN addgroup -S openidx && \
+    adduser -S openidx -G openidx
+
+WORKDIR /app
+
+COPY --from=builder /app/event-relay /app/service
+
+USER openidx
+
+EXPOSE 8009
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -q --spider http://localhost:8009/health || exit 1
+
+ENTRYPOINT ["/app/service"]

@@ -100,6 +100,14 @@ render_and_check "nats" "${PLACEHOLDER_SECRETS[@]}" \
   --set nats.enabled=true \
   --set nats.relayPassword=render-only-not-a-credential \
   --set nats.consumerPassword=render-only-not-a-credential
+# And the relay, which is off in every values file for the same reason and
+# carries its own image. It needs a broker to render at all -- the chart refuses
+# otherwise -- so this renders both.
+render_and_check "eventRelay" "${PLACEHOLDER_SECRETS[@]}" \
+  --set nats.enabled=true \
+  --set nats.relayPassword=render-only-not-a-credential \
+  --set nats.consumerPassword=render-only-not-a-credential \
+  --set eventRelay.enabled=true
 
 echo "chart-image offenders: $offenders"
 if [ "$ENFORCE" = 1 ] && [ "$offenders" -gt 0 ]; then exit 1; fi
