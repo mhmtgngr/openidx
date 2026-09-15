@@ -549,6 +549,43 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # The sink's contract is the one thing in the outbox that no mock can
+      # answer: Sink.Publish promises the broker has ACCEPTED the event when it
+      # returns nil, and the relay DELETES the outbox row on that nil. Two of
+      # the NATS client's three publish calls return sooner. So a real broker,
+      # and the question asked of the server: how many of the events the sink
+      # said it published does the stream hold at the instant the call returns?
+      - name: The event sink does not return before the broker has the event
+        env:
+          TEST_NATS_URL: nats://127.0.0.1:14222
+        run: |
+          set -euo pipefail
+          # One static binary from the module proxy. No container runtime, and
+          # no trust anchor beyond the one Go already uses.
+          go install github.com/nats-io/nats-server/v2@v2.14.6
+          "$(go env GOPATH)/bin/nats-server" -p 14222 -js -sd "$RUNNER_TEMP/jetstream" &
+          nats_pid=$!
+          trap 'kill $nats_pid 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            (exec 3<>/dev/tcp/127.0.0.1/14222) 2>/dev/null && break
+            sleep 1
+          done
+
+          out=$(go test ./internal/common/events/ \
+            -run 'PublishReturns|Redelivered|LandsOnItsOwn|StreamKeeps|Wildcard|TheNATSSinkPublishesSynchronously|SubjectToken' \
+            -count=1 -v 2>&1)
+          echo "$out"
+          for want in TestPublishReturnsOnlyAfterTheBrokerHasTheEvent \
+                      TestARedeliveredEventIsNotDuplicatedInTheStream \
+                      TestTheEventLandsOnItsOwnSubjectCarryingItsOwnTenant \
+                      TestTheStreamKeepsWhatTheSinkClaimsItKeeps \
+                      TestAnEventWhoseTypeCarriesAWildcardIsNeverPublished \
+                      TestTheNATSSinkPublishesSynchronously \
+                      TestASubjectTokenCannotCarryStructure; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # Task 2.3's unmeasured assumption. A read through Reader() is not a bare
       # SELECT: in RLS_MODE=local it is BEGIN + set_config + SELECT, and a
       # replica answers 25006 to anything it counts as a write. If that shape

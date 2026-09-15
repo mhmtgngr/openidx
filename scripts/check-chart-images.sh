@@ -91,6 +91,15 @@ render_and_check "pgcat" "${PLACEHOLDER_SECRETS[@]}" \
   --set pgcat.password=render-only-not-a-credential \
   --set pgcat.adminPassword=render-only-not-a-credential \
   --set pgcat.postgresHost=openidx-postgresql
+# Same reason, same shape: the broker is off in every values file above, so its
+# image would never be rendered and never be checked. Its tag was read from the
+# registry when it was chosen (2.14.6-alpine3.22 exists; `latest` and the
+# windows variants are what the repository mostly publishes), and this is what
+# keeps that true after the next bump.
+render_and_check "nats" "${PLACEHOLDER_SECRETS[@]}" \
+  --set nats.enabled=true \
+  --set nats.relayPassword=render-only-not-a-credential \
+  --set nats.consumerPassword=render-only-not-a-credential
 
 echo "chart-image offenders: $offenders"
 if [ "$ENFORCE" = 1 ] && [ "$offenders" -gt 0 ]; then exit 1; fi

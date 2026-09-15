@@ -1040,6 +1040,78 @@ pgcat:
       cpu: "1"
       memory: 512Mi
 
+# ----- NATS JetStream (global-scale plan task 3.2) -----
+#
+# The outbox relay's sink. internal/common/events/relay.go drains the outbox
+# table and deletes a row once Publish returns nil, so the broker has to be
+# durable and the publish has to be synchronous -- see the measurements in
+# docs/plans/2026-09-13-global-scale-cell-architecture-plan.md section 3.2.
+#
+# Default off, like the pooler: a chart that ships a broker nobody configured
+# is a chart that fails to install.
+nats:
+  enabled: false
+  # THREE, AND ODD, and the chart refuses anything else that cannot hold a
+  # majority. JetStream replicates a stream with Raft, and Raft commits on a
+  # MAJORITY of peers. With two replicas a majority is still two, so losing one
+  # pod stops writes -- strictly worse than one replica, which at least never
+  # promised otherwise. 1 is allowed for a single-node dev install and buys no
+  # availability; 3 and 5 are the real choices.
+  replicaCount: 3
+  # The image's own exposed ports, kept rather than renumbered so the defaults
+  # match every piece of NATS documentation an operator will read.
+  clientPort: 4222
+  clusterPort: 6222
+  monitorPort: 8222
+  image:
+    # 2.14.6 is the current release and 2.14.6-alpine3.22 exists -- both read
+    # from the registry, because the tag that does not exist is the one nobody
+    # notices until the kubelet tries to pull it (task 2.2 shipped a pgcat tag
+    # that was never published).
+    repository: nats
+    tag: "2.14.6-alpine3.22"
+    pullPolicy: IfNotPresent
+  jetstream:
+    # store_dir MUST be a mounted volume. The chart's container securityContext
+    # sets readOnlyRootFilesystem, so a store_dir on the image's own filesystem
+    # is unwritable -- and there is no silent fallback to memory: a store the
+    # server cannot use is "[FTL] Can't start JetStream" and exit 1 (measured).
+    # podSecurityContext's fsGroup: 1000 is what makes the claim writable by
+    # the uid the container runs as.
+    size: 10Gi
+    # Empty means the cluster default StorageClass. A JetStream store on an
+    # ephemeral volume is a broker that loses acknowledged events on reschedule.
+    storageClass: ""
+    # Server-wide ceilings, not per-stream retention. Retention is a property of
+    # the STREAM, which the publisher creates through the JetStream API; these
+    # two only bound what this server will ever hold.
+    maxMemoryStore: 1Gi
+    maxFileStore: 10Gi
+  # Two users, because the two sides of the relay want different rights. The
+  # publisher may publish under the platform prefix and nothing else; the
+  # consumer may read it and may not write it. Both need the JetStream API for
+  # stream and consumer management, and their own inboxes for replies.
+  #
+  # relayPassword and consumerPassword are deliberately NOT declared with empty
+  # defaults -- templates/nats.yaml `required`s both, which fails identically on
+  # a missing key and on an empty string, and the file then carries no literal
+  # blank credential for a reader or a scanner to take at face value:
+  #   --set nats.relayPassword=... --set nats.consumerPassword=...
+  auth:
+    relayUser: openidx-relay
+    consumerUser: openidx-consumer
+  # The subject prefix the platform owns. Everything the relay may publish sits
+  # under it, and the permission is written from this one value so the config
+  # and the code cannot drift apart.
+  subjectPrefix: openidx
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
 # ----- Edge provider (global-scale plan task 0.2) -----
 # The client-IP chain behind an anycast/CDN edge. Every per-IP control in the
 # services (the auth-path rate limiter, audit actor IPs, known-IP device trust,
