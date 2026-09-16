@@ -3067,6 +3067,12 @@ func (s *Service) getSessionFromRequest(c *gin.Context) *ProxySession {
 	if time.Now().Unix() > int64(expires) {
 		return nil
 	}
+	// The absolute expiry has to survive the read, not just gate it. This
+	// function used to consume `expires` for the check above and drop it, while
+	// handleSessionInfo reports session.ExpiresAt -- so /access/.auth/session
+	// answered every live session with the zero time, and a consumer reading it
+	// to decide when to re-authenticate was told the session had already ended.
+	expiresAt := time.Unix(int64(expires), 0)
 
 	var roles []string
 	if r, ok := sessionData["roles"].([]interface{}); ok {
@@ -3087,6 +3093,7 @@ func (s *Service) getSessionFromRequest(c *gin.Context) *ProxySession {
 		Name:         fmt.Sprint(sessionData["name"]),
 		Roles:        roles,
 		LastActiveAt: lastActive,
+		ExpiresAt:    expiresAt,
 	}
 }
 

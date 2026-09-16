@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/access/.auth/session` reported an expiry it had never read.**
+  `getSessionFromRequest` consumed the session blob's `expires` field to decide
+  whether the session was still alive and then dropped it, while
+  `handleSessionInfo` reports `session.ExpiresAt` — so every live session
+  answered with the zero time. A consumer honouring that value re-authenticates
+  on every request; one ignoring it never learns the session is about to end.
+  The absolute expiry was always enforced (the check above the drop), so what
+  was wrong was only the answer — which is the same shape as the rest of this
+  work: a report that reads as authoritative while the value it names was never
+  filled in. Measured over the real route against a real Redis; two mutations
+  red, including setting a plausible-but-wrong `time.Now()`.
+
 ### Added
 
 - **The event relay is deployable.** A Dockerfile, an image in the build matrix,
