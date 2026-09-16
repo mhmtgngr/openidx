@@ -79,13 +79,17 @@ func main() {
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, *dbURL)
+	pool, err := openRekeyPool(ctx, *dbURL)
 	if err != nil {
 		fatal("connect: %v", err)
 	}
 	defer pool.Close()
-	// Cross-org maintenance: bypass RLS (best-effort; owner may already bypass).
-	_, _ = pool.Exec(ctx, "SELECT set_config('app.bypass_rls','on',false)")
+
+	if !canSeeEveryTenant(ctx, pool) {
+		fatal("this connection is subject to row-level security and carries no tenant scope: it would read zero " +
+			"rows and report a successful rekey of nothing. Run as a role that owns the tables or one that may " +
+			"set app.bypass_rls.")
+	}
 
 	fmt.Printf("rekey: active KEK id=%d  dry-run=%v\n", active, *dryRun)
 
@@ -376,6 +380,70 @@ func resealJSON(v any, cipher *secretcrypt.Cipher, activePrefix string) (out any
 	default:
 		return v, 0, 0
 	}
+}
+
+// openRekeyPool builds the pool this binary works through, with the
+// cross-tenant bypass on EVERY connection it will ever open.
+//
+// THE BUG THIS REPLACES, AND HOW IT WAS MEASURED. The bypass used to be taken
+// with a single pool.Exec, best-effort, error discarded. set_config(..., false)
+// is SESSION-scoped -- it belongs to one backend -- and a pool is many
+// backends. Probed against a real server: after that one Exec, the connection
+// that served it reported app.bypass_rls = "on" and a second connection from
+// the same pool reported "". Every query that lands on a connection opened
+// later therefore runs with no bypass, and under FORCE ROW LEVEL SECURITY that
+// is not an error: it is ZERO ROWS. A rekey that sees nothing rewrites nothing,
+// prints "0 rekeyed" and exits 0, and the next KEK rotation retires a key that
+// is still decrypting live data.
+//
+// Whether that bites on any given run depended on whether the pool happened to
+// hand back the same connection -- which it usually does for this binary's
+// sequential work, and stops doing the moment a connection ages out, a health
+// check churns one, or anything runs concurrently. A correctness that rests on
+// the pool's mood is the kind this repository writes down rather than relies
+// on.
+//
+// AfterConnect is the fix that cannot be got wrong by a later edit: it runs on
+// every connection the pool opens, including replacements, so there is no
+// window in which a fresh backend serves a query unscoped.
+func openRekeyPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		// An error here is worth failing the connection for: a backend without
+		// the bypass is a backend that would silently read nothing.
+		_, err := conn.Exec(ctx, "SELECT set_config('app.bypass_rls','on',false)")
+		return err
+	}
+	return pgxpool.NewWithConfig(ctx, cfg)
+}
+
+// canSeeEveryTenant reports whether this pool can actually read across tenants
+// -- either because the bypass took on the connection it is asked over, or
+// because the role is exempt from row-level security to begin with (an owner
+// without FORCE, a superuser, or a role with BYPASSRLS).
+//
+// The question is deliberately about what the DATABASE says rather than about
+// whether a statement succeeded: "SET returned no error" and "I can see the
+// rows" are different claims, and only the second is what a rekey depends on.
+// With AfterConnect doing the setting, every connection answers the same way,
+// which is what makes one probe meaningful for the whole run.
+func canSeeEveryTenant(ctx context.Context, pool *pgxpool.Pool) bool {
+	var bypass string
+	if err := pool.QueryRow(ctx,
+		"SELECT COALESCE(current_setting('app.bypass_rls', true), '')").Scan(&bypass); err == nil {
+		if bypass == "on" {
+			return true
+		}
+	}
+	var exempt bool
+	if err := pool.QueryRow(ctx,
+		"SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user").Scan(&exempt); err == nil && exempt {
+		return true
+	}
+	return false
 }
 
 func fatal(format string, a ...any) {

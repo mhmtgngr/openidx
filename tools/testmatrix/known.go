@@ -21,11 +21,11 @@ var elsewhere = map[string]string{
 		`passes -tags=integration and brings up Postgres, Redis and ` +
 		`Elasticsearch first.`,
 
-	"cmd/rekey": `Run by the "Integration Tests" job, which now names ` +
-		`./cmd/rekey/... alongside ./test/integration/.... Its one test file ` +
-		`is behind the "integration" tag while the package itself sits under ` +
-		`the matrix's ./cmd/... entry, so for as long as that entry looked ` +
-		`like coverage the package went through CI compiling zero tests: a ` +
-		`294-line proof that a KEK rotation re-seals every encrypted value ` +
-		`and leaves the plaintext readable, never once executed.`,
+	// cmd/rekey WAS here, with the reason that its only test file sat behind
+	// the "integration" build tag while the package sat under the matrix's
+	// ./cmd/... entry -- so the entry looked like coverage and compiled zero
+	// tests. The package now also carries untagged tests
+	// (bypass_testdb_test.go), so the matrix really does run it and the line
+	// stopped excusing anything. TestTheRegisterCarriesNothingTheMatrixAlreadyRuns
+	// is what said so, on the first run after those tests were added.
 }

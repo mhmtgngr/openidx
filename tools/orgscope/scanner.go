@@ -117,6 +117,10 @@ func scanFile(path string) ([]Finding, error) {
 		callLine := fset.Position(call.Pos()).Line
 		if !ignoredLines[callLine] && !ignoredLines[callLine-1] {
 			findings = append(findings, rawHandoffFinding(call, fset)...)
+			// A connection opened outside this repository's PostgresDB never
+			// becomes a ScopedPool, so the two Raw() questions above are never
+			// asked about it (directconn.go).
+			findings = append(findings, directConnFinding(call, fset)...)
 		}
 
 		// A database call made THROUGH Raw() (rawpool.go). Its SQL is

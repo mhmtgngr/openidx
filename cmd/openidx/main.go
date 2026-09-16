@@ -56,6 +56,7 @@ including building, testing, running migrations, and managing the development en
 		commands.NewBenchCommand(),
 		commands.NewTestWatchCommand(),
 		commands.NewDbCommand(),
+		commands.NewCellCommand(),
 		commands.NewSeedCommand(),
 		commands.NewLogsCommand(),
 		commands.NewLogsFilterCommand(),

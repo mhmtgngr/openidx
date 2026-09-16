@@ -9,6 +9,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The scope lint now sees the connections it could not, and a rekey that could
+  have silently rewritten nothing now refuses to start.**
+
+  `tools/orgscope`'s `Raw()` rules both begin from a `ScopedPool`, because that
+  is the type task 2.1b put the tenant scope into. **A connection opened with
+  `pgx.Connect` or `pgxpool.New` never becomes one** — it is not `Raw()`, it is
+  not `Pool`, it is a different object — so neither question is ever asked about
+  it. The lint was watching the marked door and not the wall beside it. Measured
+  on this tree: six non-test files under `internal/` and `cmd/` open a
+  connection that way. Each is now registered with the reason its work has no
+  tenant to carry, and a new one is a blocking finding until somebody writes
+  that sentence.
+
+  **The register caught its author on its first run.** Three of the entries I
+  wrote from memory rather than from the measurement — `cmd/migrate/main.go`
+  (which reaches the database through `Raw()`, not a direct connection) and two
+  files under `internal/common/database` (which the rule skips by design, since
+  that package *builds* the scope) — and `TestTheDirectConnRegisterDoesNotRot`
+  named all three. An entry for code that does not do what it says reads as a
+  reviewed decision and is not one.
+
+  **And the live defect the census led to.** `cmd/rekey` rewrites every tenant's
+  encrypted columns, so it takes the cross-tenant bypass — with a single
+  `pool.Exec`, best-effort, error discarded. `set_config(..., false)` is
+  SESSION-scoped: it belongs to one backend, and a pool is many. Probed against
+  a real server: after that one `Exec`, the connection that served it reported
+  `app.bypass_rls = "on"` and a second connection from the same pool reported
+  `""`. Any query landing on a later connection runs unbypassed, and under
+  `FORCE ROW LEVEL SECURITY` that is not an error — it is **zero rows**. A rekey
+  that sees nothing rewrites nothing, prints `0 rekeyed`, exits 0, and the next
+  KEK rotation retires a key that is still decrypting live data.
+
+  Whether it bit on a given run depended on whether the pool happened to hand
+  back the same connection, which it usually does for this binary's sequential
+  work and stops doing the moment a connection ages out or anything runs
+  concurrently. The bypass is now set in `AfterConnect`, so every connection the
+  pool opens carries it, and the binary refuses to start at all if it still
+  cannot read across tenants — asking the database what is true rather than
+  whether a statement returned no error, because the owner of these tables may
+  be exempt from RLS without any setting.
+
+  Six mutations red against a green baseline: the bypass taken once on the pool
+  instead of per connection (which reproduces the bug and fails the new test);
+  the see-everything check hardwired to yes; a new unregistered direct
+  connection; a register entry naming a file that no longer opens one; a reason
+  thinned out; and the lint blinded to `pgx.Connect`. A seventh **did not apply
+  at all** — the edit missed and the suite stayed green, which is not a signal
+  and is recorded as one that was redone. Blinding `pgxpool.New` then proved
+  nothing either, for a measured reason: `cmd/rekey` had moved to
+  `NewWithConfig` in this very change, so no file on this tree uses that
+  spelling. The constructor list is a vocabulary, not a census, and now says so.
+
+  The rekey checks have their own CI step with named `--- PASS:` checks — and
+  adding them made a second guard fire: `tools/testmatrix` carried `cmd/rekey`
+  on its register with the reason that the package's only test file sat behind
+  the `integration` build tag, so the matrix's `./cmd/...` entry "looked like
+  coverage and compiled zero tests". Untagged tests in that package make the
+  line excuse nothing, and `TestTheRegisterCarriesNothingTheMatrixAlreadyRuns`
+  said so on the first run. The entry is gone, with why it went.
+
+- **`openidx cell place|show` — the tenant directory's write path, which did not
+  exist** (global-scale plan task 4.1). `internal/common/celldir` has held a
+  `Place` since the directory landed, and the package's own comment calls
+  `Execer` "the write surface, for the placement tool". Measured across
+  `internal/` and `cmd/`: **nothing called it.** The read half was live — the
+  issuer looks up a tenant's home cell to stamp a token with it — so the
+  directory was a table that could only ever answer "not placed", and every
+  token fell back to whichever cell minted it. A capability that is declared and
+  cannot be exercised is the shape this branch keeps finding; this is that shape
+  with the tool missing rather than the claim wrong.
+
+  **A command, not an endpoint.** Placing a tenant is a control-plane act and
+  the control plane is not inside a cell: an admin-api in `eu-1` deciding that a
+  tenant lives in `us-1` is one cell's view of a directory spanning all of them,
+  and every cell would need the same write. A command run against the directory
+  database by whoever is moving the tenant is also the only thing that can run
+  before any cell serves that tenant at all.
+
+  **What the belt costs the tool, measured rather than assumed.** `org_cells` is
+  org-scoped and FORCE-belted, so a connection carrying no tenant scope writes
+  nothing — including this one. The placement runs in a transaction that sets
+  `app.bypass_rls` locally, the same door the outbox relay and the SSF
+  transmitter go through, named at the call site rather than granted to
+  everybody by leaving the table unbelted.
+  `TestWithoutTheControlPlaneBypassTheBeltRefusesTheWrite` drives the same
+  `INSERT` without it and requires the policy to refuse — against a real
+  PostgreSQL, as the role that OWNS the table, which is what makes `FORCE`
+  observable at all.
+
+  Six mutations red against a green baseline: the command dropping the bypass
+  (the write is refused); the empty-cell refusal removed; the upsert no longer
+  moving a placed tenant; a move rewriting `created_at`, which is when the
+  tenant was *first* placed; `show` treating an unplaced org as a failure rather
+  than as the answer it is for every install today; and `FORCE` deleted from
+  v195, which turns the belt's refusal into an acceptance.
+
+  The suite has its own CI step with named `--- PASS:` checks, because a
+  database test in a job that sets no DSN skips silently — a guard that never
+  fires being the shape this branch keeps finding one step before production.
+
+  **Not built, and not claimed:** a cross-tenant `list`. It needs a read surface
+  `celldir` does not have, and adding one is a decision about the control
+  plane's read path rather than part of making the write path exist.
+
 - **A third coordination census, this one finding periodic work by SHAPE rather
   than by name** (`internal/common/leader/periodic_shape_census_test.go`). The
   two that existed are each keyed on a spelling: the sweeps census walks only

@@ -40,6 +40,12 @@ func (f Finding) String() string {
 		return fmt.Sprintf("%s: unscoped pool handed off (%s)", f.Pos.String(), f.Reason)
 	case rawKindOpaque:
 		return fmt.Sprintf("%s: unreadable query through Raw() (%s)", f.Pos.String(), f.Reason)
+	case rawKindDirectConn:
+		// Not "used without org_id" either, and for a reason one step earlier
+		// than the Raw() kinds: there is no query here at all yet, only a
+		// connection that will not carry a scope for whatever is written next.
+		return fmt.Sprintf("%s: unregistered direct database connection via %s (%s)",
+			f.Pos.String(), preview, f.Reason)
 	}
 	return fmt.Sprintf("%s: scoped table %q used without org_id (%s): %s",
 		f.Pos.String(), f.Table, f.Reason, preview)
