@@ -352,6 +352,32 @@ var offloadedHandlers = []offloadedHandler{
 			"invalidate ['mfa-policies'] and none can move this tile. The one admin-plane write that does touch " +
 			"mfa_* tables is the DSAR erasure in privacy.go, on a different screen with different keys",
 	},
+	{
+		file:     "mfa_management.go",
+		fn:       "handleListUserMFAStatus",
+		route:    "/api/v1/mfa/user-status",
+		queryKey: "mfa-user-status",
+		reason: "the per-user enrolment table on the same screen as the tile above, and it stands or falls " +
+			"with the same fact: this screen's only three mutations are policy create, update and delete, and " +
+			"all three invalidate ['mfa-policies']. Nothing in the console invalidates ['mfa-user-status'], so " +
+			"the table is not refetched after any admin action -- an enrolment appears in it when the page is " +
+			"next mounted, whether it is read from the primary or the replica. The key is paginated " +
+			"(['mfa-user-status', page]), and TanStack invalidates by prefix, so the declared prefix is exactly " +
+			"what would have to be invalidated for this to become a read-after-write",
+	},
+	{
+		file:     "notification_management.go",
+		fn:       "handleNotificationStats",
+		route:    "/api/v1/notifications/stats",
+		queryKey: "notification-stats",
+		reason: "the notification overview: totals sent, read and unread, a breakdown by channel, the count of " +
+			"enabled routing rules, and a preview of the last five broadcasts. The screen holds SEVEN mutations " +
+			"-- four on routing rules, three on broadcasts -- and every one of them invalidates " +
+			"['routing-rules'] or ['broadcasts'], never this key. The broadcast preview is the sharp edge and " +
+			"is the reason this is safe rather than despite it: sending a broadcast already does not refresh " +
+			"this tile, so it is stale until the page is remounted, and a second of replication lag is not " +
+			"visible inside a staleness that already lasts that long",
+	},
 }
 
 // adminFuncBody returns the source of one function's body, braces included.
@@ -440,7 +466,12 @@ func TestOffloadedHandlersAreWiredToTheKeyTheyClaim(t *testing.T) {
 				h.file, h.fn, serverPath, h.queryKey)
 		}
 
-		declaration := regexp.MustCompile(`queryKey:\s*\[\s*'` + regexp.QuoteMeta(h.queryKey) + `'\s*\]`)
+		// The declared key may be the whole key or its PREFIX: a paginated tile
+		// spells ['mfa-user-status', page], and TanStack invalidates by prefix,
+		// so invalidating the prefix is exactly what would refetch it. Matching
+		// only the single-element form would have made this tier unable to say
+		// anything about a paginated screen -- which is most of them.
+		declaration := regexp.MustCompile(`queryKey:\s*\[\s*'` + regexp.QuoteMeta(h.queryKey) + `'\s*[,\]]`)
 		var declaredIn []string
 		for path, src := range console {
 			if declaration.MatchString(src) {
@@ -554,10 +585,17 @@ func consoleSources(t *testing.T) map[string]string {
 }
 
 // invalidateQueryArgs returns the argument text of every invalidateQueries call
-// in src, with the outermost parentheses stripped. Brace-balanced rather than
-// line-based, because the calls are written across lines as often as not.
-func invalidateQueryArgs(src string) []string {
-	const marker = "invalidateQueries("
+// in src, with the outermost parentheses stripped.
+func invalidateQueryArgs(src string) []string { return callArgs(src, "invalidateQueries(") }
+
+// useQueryBlocks returns the argument text of every useQuery call in src: one
+// tile's whole declaration, key and fetch together.
+func useQueryBlocks(src string) []string { return callArgs(src, "useQuery(") }
+
+// callArgs returns the argument text of every call to marker in src, with the
+// outermost parentheses stripped. Brace-balanced rather than line-based,
+// because the calls are written across lines as often as not.
+func callArgs(src, marker string) []string {
 	var out []string
 	for i := 0; ; {
 		j := strings.Index(src[i:], marker)
@@ -579,5 +617,124 @@ func invalidateQueryArgs(src string) []string {
 		}
 		out = append(out, src[start:k-1])
 		i = k
+	}
+}
+
+// firstQueryKey returns the first element of the queryKey in one useQuery
+// block, which is the prefix TanStack invalidates by.
+var firstQueryKey = regexp.MustCompile(`queryKey:\s*\[\s*['"]([A-Za-z0-9\-_]+)['"]`)
+
+// THE HOLE THIS CLOSES, AND HOW IT WAS FOUND.
+//
+// The tier above checks that the declared KEY is declared in exactly one place
+// and invalidated by nothing. That is an argument about a TILE. What actually
+// moves to the replica is a HANDLER, and a handler answers a ROUTE -- which
+// more than one tile may fetch, under more than one key. If any of those other
+// keys is invalidated, the handler serves a read-after-write to that screen
+// while the recorded reason talks about the quiet one.
+//
+// Measured on this tree, deriving every useQuery that fetches an
+// internal/admin route: /security-alerts is fetched under TWO keys --
+// ['ops-security-alerts'] on the ops cockpit, which nothing invalidates, and
+// ['security-alerts', ...] on the risk dashboard, which a mutation DOES
+// invalidate. handleListSecurityAlerts could therefore have been declared here
+// with a true sentence about the cockpit and passed every test in this file,
+// while the risk dashboard refetched it after every acknowledge.
+//
+// LATENT, NOT LIVE: neither handler declared today shares its route. It would
+// have gone live on the next batch, because /security-alerts is one of the
+// candidates that the console criterion alone marks safe.
+func TestOffloadedHandlerRoutesAreFetchedOnlyUnderTheDeclaredKey(t *testing.T) {
+	console := consoleSources(t)
+
+	for _, h := range offloadedHandlers {
+		// The route, not a longer path that starts with it: /mfa/user-status
+		// and /mfa/user-status/:id are different handlers.
+		fetches := regexp.MustCompile(regexp.QuoteMeta(h.route) + "[?'\"`&]")
+
+		keys := map[string][]string{}
+		for path, src := range console {
+			for _, block := range useQueryBlocks(src) {
+				if !fetches.MatchString(block) {
+					continue
+				}
+				m := firstQueryKey.FindStringSubmatch(block)
+				if m == nil {
+					t.Errorf("%s fetches %s in a useQuery with no literal queryKey; this tier cannot say "+
+						"whether %s.%s is refetched after a mutation", consoleRelPath(path), h.route, h.file, h.fn)
+					continue
+				}
+				keys[m[1]] = append(keys[m[1]], consoleRelPath(path))
+			}
+		}
+
+		if len(keys) == 0 {
+			t.Errorf("%s.%s: nothing in the console fetches %s, so the evidence recorded for this offload is "+
+				"about a screen that no longer exists", h.file, h.fn, h.route)
+			continue
+		}
+		for key, where := range keys {
+			if key == h.queryKey {
+				continue
+			}
+			t.Errorf("%s.%s answers %s, which %v also fetches under ['%s'] -- a key this tier has said nothing "+
+				"about.\nThe handler is what moved to the replica, so EVERY tile that fetches its route has to "+
+				"be lag-tolerant, not just the declared one. Declare that screen's key too, or move the handler "+
+				"back to db.Pool.", h.file, h.fn, h.route, where, key)
+		}
+	}
+}
+
+// AND THE SECOND WAY A TILE IS REFETCHED, which the tier above does not see.
+//
+// useQuery returns refetch(), and calling it refetches that component's query
+// without invalidating anything. So "no mutation invalidates this key" is
+// necessary and not sufficient: a screen that calls refetch() in a mutation's
+// onSuccess has a read-after-write with no invalidateQueries anywhere.
+//
+// Measured: SEVEN refetch() call sites in the console, six of them wired to a
+// Refresh button's onClick -- an operator asking for fresh data is not a
+// read-after-write; they get what the replica has, which is what they would
+// have got by clicking a second earlier. None of the seven is in a file that
+// declares an offloaded key, so this is LATENT today. It is guarded rather than
+// noted because the next batch is where it would bite: the file is the unit,
+// refetch() is bound to the useQuery instance in that component, and a screen
+// that grows a refetch() is exactly the screen whose tile stops being quiet.
+var handRefetches = map[string]string{
+	// "<console path>": why a refetch() there is not a read-after-write
+}
+
+func TestOffloadedScreensDoNotRefetchByHand(t *testing.T) {
+	console := consoleSources(t)
+
+	declaring := map[string]string{} // console path -> the key it declares
+	for _, h := range offloadedHandlers {
+		decl := regexp.MustCompile(`queryKey:\s*\[\s*'` + regexp.QuoteMeta(h.queryKey) + `'\s*[,\]]`)
+		for path, src := range console {
+			if decl.MatchString(src) {
+				declaring[path] = h.queryKey
+			}
+		}
+	}
+	if len(declaring) == 0 {
+		t.Fatal("no console file declares any offloaded key; this guard would pass over nothing")
+	}
+
+	for path, key := range declaring {
+		if !strings.Contains(console[path], "refetch()") {
+			continue
+		}
+		rel := consoleRelPath(path)
+		if reason, ok := handRefetches[rel]; ok {
+			if len(strings.TrimSpace(reason)) < 60 {
+				t.Errorf("%s: the reason its refetch() is not a read-after-write is too thin (%q)", rel, reason)
+			}
+			continue
+		}
+		t.Errorf("%s declares the offloaded key ['%s'] and calls refetch(), which refetches that tile without "+
+			"invalidating anything -- the one refetch path TestOffloadedHandlerKeysAreNeverInvalidated cannot "+
+			"see. If it hangs off a Refresh button, record it in handRefetches with that reason. If it runs in "+
+			"a mutation's onSuccess, the tile is a read-after-write and the handler must go back to db.Pool.",
+			rel, key)
 	}
 }

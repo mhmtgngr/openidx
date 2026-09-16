@@ -622,26 +622,33 @@ func (s *Service) handleNotificationStats(c *gin.Context) {
 		return
 	}
 
+	// THE REPLICA, NOT THE PRIMARY, for every read in this handler. This is the
+	// one handler in this file that is not a read-after-write: the screen's
+	// seven mutations invalidate ['routing-rules'] and ['broadcasts'] and never
+	// ['notification-stats'], so this tile is not refetched after any of them.
+	// See offloadedHandlers in replica_offload_test.go for the whole chain, and
+	// for the guard that reverses this the moment the console starts refetching
+	// it.
 	// Total counts
 	var totalSent, totalRead, totalUnread int
-	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE org_id = $1", org.ID).Scan(&totalSent)
+	err = s.db.Reader().QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE org_id = $1", org.ID).Scan(&totalSent)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
 	}
-	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE read = true AND org_id = $1", org.ID).Scan(&totalRead)
+	err = s.db.Reader().QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE read = true AND org_id = $1", org.ID).Scan(&totalRead)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
 	}
-	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE read = false AND org_id = $1", org.ID).Scan(&totalUnread)
+	err = s.db.Reader().QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE read = false AND org_id = $1", org.ID).Scan(&totalUnread)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
 	}
 
 	// Channel breakdown
-	channelRows, err := s.db.Pool.Query(ctx,
+	channelRows, err := s.db.Reader().Query(ctx,
 		"SELECT channel, COUNT(*) FROM notifications WHERE org_id = $1 GROUP BY channel", org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
@@ -660,7 +667,7 @@ func (s *Service) handleNotificationStats(c *gin.Context) {
 	}
 
 	// Recent broadcasts (last 5)
-	broadcastRows, err := s.db.Pool.Query(ctx,
+	broadcastRows, err := s.db.Reader().Query(ctx,
 		`SELECT id, title, body, channel, target_type, target_ids, priority, scheduled_at, sent_at, status,
 		        total_recipients, delivered_count, read_count, created_by, created_at, updated_at
 		 FROM broadcast_messages WHERE org_id = $1 ORDER BY created_at DESC LIMIT 5`, org.ID)
@@ -686,7 +693,7 @@ func (s *Service) handleNotificationStats(c *gin.Context) {
 
 	// Routing rules count (enabled only)
 	var routingRulesCount int
-	err = s.db.Pool.QueryRow(ctx,
+	err = s.db.Reader().QueryRow(ctx,
 		"SELECT COUNT(*) FROM notification_routing_rules WHERE enabled = true AND org_id = $1",
 		org.ID).Scan(&routingRulesCount)
 	if err != nil {

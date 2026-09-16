@@ -461,16 +461,24 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 			c.Set("name", name)
 		}
 
-		// Extract roles
-		if rolesRaw, ok := claims["roles"].([]interface{}); ok {
-			var roles []string
-			for _, r := range rolesRaw {
-				if role, ok := r.(string); ok {
-					roles = append(roles, role)
-				}
-			}
-			c.Set("roles", roles)
-		}
+		// Roles, groups AND THE MINTING CELL, through the one binder every other
+		// service goes through.
+		//
+		// This used to extract "roles" by hand, and internal/common/middleware's
+		// subject census carried an entry saying that was deliberate:
+		// identity-service mounts neither OPAAuthz nor RequireRole -- it
+		// authorises with requireAdminUnlessSelfService, which reads the roles
+		// bound right here -- so calling the shared binder would have been a
+		// no-op wearing the shape of a fix.
+		//
+		// That reason was true OF ROLES AND GROUPS and is no longer true of the
+		// whole function. BindSubjectClaims also binds the cell claim, and
+		// cell.Guard reads exactly that key: with the hand-rolled block, a guard
+		// mounted on this group would have found the key unset on every request
+		// and served every misdirected one -- a control reporting success while
+		// the thing it exists to make true is not true. So the binder is called,
+		// the census entry is gone, and the guard has something to read.
+		middleware.BindSubjectClaims(c, claims)
 
 		c.Next()
 	}
@@ -3634,7 +3642,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 //
 // The two groups below are *planeGroup, not *gin.RouterGroup: the filtering
 // lives in the type, which is why the registration lines are unchanged.
-func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile) []string {
+func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile, extraMiddleware ...gin.HandlerFunc) []string {
 	// Public routes (no auth required)
 	public := newPlaneGroup(router.Group("/api/v1/identity"), profile)
 	{
@@ -3655,6 +3663,14 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile)
 
 	identity := newPlaneGroup(router.Group("/api/v1/identity"), profile)
 	identity.Use(svc.openIDXAuthMiddleware())
+	// extraMiddleware runs AFTER authentication and BEFORE anything that costs
+	// a query. cell.Guard is what the caller passes: it reads a claim the
+	// signature covered, so it cannot run earlier, and a request this cell
+	// should not be answering at all has no business first resolving the
+	// caller's permissions out of PostgreSQL and Redis.
+	for _, mw := range extraMiddleware {
+		identity.Use(mw)
+	}
 	identity.Use(middleware.PermissionResolver(svc.db.Pool, svc.redis.Client))
 	// Authorization: self-service paths are open to any authenticated user;
 	// all other (administrative) identity routes require an admin role. Without

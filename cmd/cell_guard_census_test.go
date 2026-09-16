@@ -27,16 +27,24 @@ var mounts = []string{
 	"admin-api",
 	"audit-service",
 	"governance-service",
+	"identity-service",
 	"provisioning-service",
 }
 
-// unmounted are the binaries that do not, with why. These are not oversights:
-// each one needs a change to a route registrar's signature, which is a
-// different edit from adding a middleware to a variadic list, and one of them
-// may not want the guard at all.
+// unmounted are the binaries that do not, with why. This is not an oversight:
+// the one entry left may not want the guard at all.
+//
+// identity-service used to be the second entry, and its reason was wrong in a
+// way worth keeping: it said mounting the guard meant changing
+// RegisterRoutesForProfile's signature, and that the signature was the cost. It
+// was the cheap half. Service already carried cfg and logger, so the signature
+// took a variadic parameter and nothing else; what actually stood in the way was
+// that identity's authentication middleware bound roles by hand and never bound
+// the cell claim, so a guard mounted there would have read an unset key and
+// served every misdirected request. A backlog entry that names the wrong
+// obstacle is a measurement nobody has taken.
 var unmounted = map[string]string{
-	"identity-service": "RegisterRoutesForProfile takes a profile rather than middleware, so mounting the guard means changing that signature. It serves user, role and group CRUD -- tenant data -- so it SHOULD have it, and this entry is a backlog of one.",
-	"oauth-service":    "RegisterRoutes takes named auth parameters (clientMgmtAuth, flowAuth) rather than a variadic list. It is also the least clear case: this service mints tokens rather than serving tenant records, its client-management and SSF surfaces are client-authenticated, and a refresh token presented to the wrong cell is a row that cell does not have -- so it fails on its own terms already. Decide whether the guard belongs here before adding it.",
+	"oauth-service": "RegisterRoutes takes named auth parameters (clientMgmtAuth, flowAuth) rather than a variadic list. It is also the least clear case: this service mints tokens rather than serving tenant records, its client-management and SSF surfaces are client-authenticated, and a refresh token presented to the wrong cell is a row that cell does not have -- so it fails on its own terms already. Decide whether the guard belongs here before adding it.",
 }
 
 func mainFor(t *testing.T, binary string) string {
