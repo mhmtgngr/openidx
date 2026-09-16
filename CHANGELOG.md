@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Redis half moved to `internal/common/redisclient`, and a claim about
+  `cmd/gateway-service` is corrected.** `internal/common/database/database.go`
+  was three packages in one file — Postgres, Redis, Elasticsearch — so every
+  binary wanting a Redis client linked a PostgreSQL driver with it. The Redis
+  half now stands alone, the same way `jwksverify` came out of `middleware`:
+  nothing copied, `database` keeps the old spellings as aliases, **no call site
+  changed**.
+
+  **The correction.** An earlier entry said gateway-service links a driver "for
+  no reason but `database.NewRedisFromConfig` sharing a package with the
+  Postgres half". That was written from reading one import in one `main.go`, and
+  it was wrong: the binary reaches `pgx` through **five** independent routes —
+  `internal/common/middleware`, `internal/metrics`,
+  `internal/common/syssettings`, `internal/appaccess` and `internal/stepup`. The
+  split removed one of five, and the binary still links the driver. Reading an
+  import list is not measuring an import graph — a conclusion drawn one frame
+  too low, which is the mistake this work keeps finding in the product.
+
+  So the split's justification is the honest one: a PG-free binary *can* now
+  hold a Redis client. Nothing needs that today — `verify-service` wants no
+  Redis — and that the gain is latent is written down too. Making gateway-service
+  database-free is a much larger job than one import and is not obviously worth
+  doing: auth, pool metrics, settings, app-access and step-up all read
+  tenant-scoped tables.
+
+### Added
+
+- **`tools/planecensus` derives the plane map instead of asserting it.** A
+  register names the binaries whose value depends on holding no database
+  (`verify-service` today); one of them gaining a driver fails the build. A
+  second register records the binaries that *do* reach it and why, and fails
+  when one of them becomes clean — the explanation would then be wrong and the
+  binary has earned the stronger guarantee. Entries naming a binary that no
+  longer exists fail too. Everything else is deliberately unpoliced: most
+  services are supposed to reach the database, and a gate that complains about
+  them is a gate somebody turns off. Three mutations red.
+
 ### Fixed
 
 - **The SSF transmitter advertised seven event types and sent one.**
@@ -146,8 +185,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This is the same mixed-plane shape in three places, and only one of them is
   fixed here. `internal/metrics` reaches `pgx` for its pool collector, so the
   verify tier serves `/metrics` from `promhttp` directly. `cmd/gateway-service`
-  links a PostgreSQL driver today for no reason but `database.NewRedisFromConfig`
-  sharing a package with the Postgres half — recorded, not yet split.
+  also links a PostgreSQL driver — see the correction below, which measured that
+  claim and found it wrong.
 
 - **The access-token blacklist key and the revocation check moved to
   `internal/revocation`.** That package exists because this product once had two

@@ -18,9 +18,9 @@ import (
 
 	"github.com/openidx/openidx/internal/api"
 	"github.com/openidx/openidx/internal/common/config"
-	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	commonmiddleware "github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/redisclient"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
 	"github.com/openidx/openidx/internal/gateway"
@@ -75,7 +75,7 @@ func main() {
 	}
 
 	// Initialize Redis connection for rate limiting
-	redisClient, err := database.NewRedisFromConfig(database.RedisConfig{
+	redisClient, err := redisclient.NewFromConfig(redisclient.Config{
 		URL:                cfg.RedisURL,
 		SentinelEnabled:    cfg.RedisSentinelEnabled,
 		SentinelMasterName: cfg.RedisSentinelMasterName,

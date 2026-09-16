@@ -1,4 +1,4 @@
-package database
+package redisclient
 
 import (
 	"context"
@@ -22,7 +22,7 @@ func startMini(t *testing.T) *miniredis.Miniredis {
 // exactly today's behaviour for a single-Redis install.
 func TestNewRedisFromConfig_RolesAliasPrimaryWhenUnset(t *testing.T) {
 	m := startMini(t)
-	rc, err := NewRedisFromConfig(RedisConfig{URL: "redis://" + m.Addr()})
+	rc, err := NewFromConfig(Config{URL: "redis://" + m.Addr()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = rc.Close() })
 
@@ -37,7 +37,7 @@ func TestNewRedisFromConfig_RolesAliasPrimaryWhenUnset(t *testing.T) {
 // a write through the role accessor lands only there.
 func TestNewRedisFromConfig_DedicatedRolesAreSeparateInstances(t *testing.T) {
 	primary, rl, rv := startMini(t), startMini(t), startMini(t)
-	rc, err := NewRedisFromConfig(RedisConfig{
+	rc, err := NewFromConfig(Config{
 		URL:           "redis://" + primary.Addr(),
 		RateLimitURL:  "redis://" + rl.Addr(),
 		RevocationURL: "redis://" + rv.Addr(),
@@ -70,7 +70,7 @@ func TestNewRedisFromConfig_DedicatedRolesAreSeparateInstances(t *testing.T) {
 // operator configured their way out of.
 func TestNewRedisFromConfig_UnreachableRoleIsAnError(t *testing.T) {
 	primary := startMini(t)
-	_, err := NewRedisFromConfig(RedisConfig{
+	_, err := NewFromConfig(Config{
 		URL:          "redis://" + primary.Addr(),
 		RateLimitURL: "redis://127.0.0.1:1", // nothing listens here
 	})
@@ -85,15 +85,15 @@ func TestRedisClient_AccessorsAreNilSafe(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: m.Addr()})
 	t.Cleanup(func() { _ = c.Close() })
 
-	rc := &RedisClient{Client: c}
+	rc := &Client{Client: c}
 	assert.Same(t, c, rc.RateLimitDB())
 	assert.Same(t, c, rc.RevocationDB())
 
-	var nilRC *RedisClient
+	var nilRC *Client
 	assert.Nil(t, nilRC.RateLimitDB())
 	assert.Nil(t, nilRC.RevocationDB())
 
-	withRoles := NewRedisClientWithRoles(c, nil, nil)
+	withRoles := NewWithRoles(c, nil, nil)
 	assert.Same(t, c, withRoles.RateLimit)
 	assert.Same(t, c, withRoles.Revocation)
 }
