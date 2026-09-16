@@ -1247,12 +1247,15 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 		"permissions": permStrings,
 	}
 
-	// The cell this token was minted in, when this install is celled. On the
+	// The cell this token belongs to, when this install is celled. On the
 	// ACCESS token only: cell.Guard reads the bearer a request presents, and an
 	// ID token is handed to the client rather than back to the API, so stamping
 	// one would be a claim nothing reads.
-	if s.cellID != "" {
-		claims[cell.Claim] = s.cellID
+	//
+	// The TENANT'S cell, not this process's -- see tokenCell, and the gap that
+	// distinction closes.
+	if tc := s.tokenCell(ctx, org.ID); tc != "" {
+		claims[cell.Claim] = tc
 	}
 
 	// Add session ID claim if provided
@@ -4623,12 +4626,12 @@ func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, cli
 		claims["email_verified"] = true
 	}
 
-	// The cell this token was minted in, on the same terms as GenerateJWT: this
-	// is the SAML flow's own access token and it is presented to the same APIs,
-	// so it has to carry the same stamp. The ID token below deliberately does
-	// not -- see the register in cell_claim_census_test.go.
-	if s.cellID != "" {
-		claims[cell.Claim] = s.cellID
+	// The cell this token belongs to, on the same terms as GenerateJWT: this is
+	// the SAML flow's own access token and it is presented to the same APIs, so
+	// it has to carry the same stamp. The ID token below deliberately does not
+	// -- see the register in cell_claim_census_test.go.
+	if tc := s.tokenCell(ctx, org.ID); tc != "" {
+		claims[cell.Claim] = tc
 	}
 
 	signKid, signKey := s.signingKey()

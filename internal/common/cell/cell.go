@@ -6,8 +6,16 @@
 // happens when that lookup was wrong or stale -- the request arrives at a cell
 // whose database does not hold this tenant, and the honest answer is to say so
 // rather than to serve a confident 404 from a cell that simply does not have
-// the data. RFC 9110's 421 Misdirected Request is exactly that answer, and
-// X-OpenIDX-Cell names who should have served it.
+// the data. RFC 9110's 421 Misdirected Request is exactly that answer.
+//
+// X-OpenIDX-Cell names the cell that ANSWERED, not the one that should have.
+// An earlier version of this sentence said the opposite, and the difference is
+// not wording: this package has no directory and cannot know where the tenant
+// lives -- knowing that is internal/common/celldir's job, and the guard is
+// deliberately free of the database dependency that would take. What the
+// responding cell can say truthfully is "you reached me, and I am not who you
+// wanted", which is enough for a caller to stop retrying here. RFC 9110 defines
+// no "go there instead" header for 421 either.
 //
 // The two halves are easy to conflate and must not be: the directory makes the
 // common case right, and this makes the uncommon case legible. Neither

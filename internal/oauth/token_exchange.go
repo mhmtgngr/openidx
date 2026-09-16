@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/cell"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // Token Exchange (RFC 8693).
@@ -200,13 +201,30 @@ func (s *Service) issueExchangedToken(c *gin.Context, subject, audience, scope s
 		claims["act"] = act
 	}
 
-	// The cell stamp is minted fresh rather than copied from the subject token.
-	// The loop above preserves identity claims because they describe the
-	// subject; `cell` describes the ISSUER, and the issuer of this token is this
-	// process. Copying it would let a token exchanged here claim to have been
-	// minted somewhere else.
+	// The cell stamp is resolved fresh rather than copied from the subject
+	// token. The loop above preserves identity claims because they describe the
+	// SUBJECT; `cell` describes where the subject's tenant LIVES, and a value
+	// copied out of a presented token is a value the presenter chose.
+	//
+	// It matters more here than on the other two mint paths. oauth-service does
+	// not mount cell.Guard (cmd/cell_guard_census_test.go records why), so a
+	// subject token minted in another cell can reach this exchange and be
+	// verified by the shared key. Stamping this process's own cell would then
+	// hand back a token that every guard in THIS cell accepts, for a tenant
+	// whose rows are somewhere else -- the same misdirection as a misrouted
+	// login, one exchange deeper. Resolving the tenant's home cell means the
+	// exchanged token inherits the disagreement instead of laundering it.
+	//
+	// Without an org scope on the request there is nothing to resolve, and the
+	// serving cell is what the code did before this comment existed.
 	if s.cellID != "" {
-		claims[cell.Claim] = s.cellID
+		stamp := s.cellID
+		if org, orgErr := orgctx.From(c.Request.Context()); orgErr == nil {
+			if tc := s.tokenCell(c.Request.Context(), org.ID); tc != "" {
+				stamp = tc
+			}
+		}
+		claims[cell.Claim] = stamp
 	}
 
 	kid, signKey := s.signingKey()
