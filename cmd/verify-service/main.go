@@ -60,11 +60,20 @@ func main() {
 	if err := logger.SetLevel(cfg.LogLevel); err != nil {
 		log.Fatal("Invalid log level", zap.Error(err))
 	}
-	if err := config.ValidateProductionConfig(cfg, log); err != nil {
-		log.Fatal("Production security validation failed", zap.Error(err))
-	}
-	cfg.LogSecurityWarnings(log)
-
+	// THE PLATFORM PRODUCTION VALIDATOR IS DELIBERATELY NOT CALLED HERE, and
+	// this is the plane split showing up a second time. config.ValidateProduction
+	// refuses to start a production process without an access session secret, an
+	// encryption key, a vault key-encryption key and an audit chain secret --
+	// every one of which is material this tier exists in order NOT to hold. It
+	// holds no sessions, encrypts nothing, has no vault and seals no audit
+	// chain. Running it would force an operator to mount the most sensitive
+	// secrets in the install into the one pod whose entire claim is that it
+	// carries nothing, so that it can serve a public document.
+	//
+	// The checks it does need are below, and they run in EVERY environment
+	// rather than only in production, because a verify tier with no issuer is
+	// as useless in staging as it is in production.
+	//
 	// REFUSE TO START WITHOUT AN ISSUER. With no JWKS URL this process would
 	// come up, pass its health check, and answer every key fetch with a 503 --
 	// a tier that is up and serving nothing, which is the failure mode hardest

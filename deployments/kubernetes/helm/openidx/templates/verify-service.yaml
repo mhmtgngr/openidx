@@ -1,0 +1,230 @@
+{{- if .Values.verifyService.enabled }}
+{{- /*
+  The verification tier (global-scale plan task 3.4, ADR-2).
+
+  WHAT MATTERS HERE IS WHAT IS ABSENT. This pod gets no database URL, no
+  platform Secret and no Redis: the binary links no PostgreSQL driver at all
+  (cmd/verify-service/main_test.go fails the build if one appears in its import
+  graph), and the egress policy below says the same thing at the network layer.
+  Two layers asserting one claim, because a claim with one enforcement point is
+  a claim that survives exactly one refactor.
+
+  IT SERVES JWKS AND NOTHING ELSE, and the plan records why. Introspection is
+  protected by client authentication -- RFC 7662 2.1 requires it -- and
+  authenticating the caller means reading oauth_clients; /access/.auth/* is a
+  login flow that runs the OIDC exchange and reads identity_providers. Neither
+  can be served without the database, so neither is here.
+
+  NO PLATFORM SECRET, DELIBERATELY. Every other service mounts -secrets and
+  -db-url through envFrom. This one does not, and the binary is built for that:
+  it skips the platform production validator, which would demand an encryption
+  key, a vault KEK and an audit chain secret from a process that encrypts
+  nothing, has no vault and seals no chain. Mounting them so it could serve a
+  public document would hand the most sensitive material in the install to the
+  one pod whose whole claim is that it carries none of it.
+
+  REPLICAS ARE FREE. Nothing here contends for a connection pool, so this scales
+  with fanout rather than with what the database can take -- which is the point
+  of splitting it off the pod that mints tokens.
+*/}}
+{{- $fullname := include "openidx.fullname" . }}
+{{- $jwksURL := .Values.verifyService.jwksUrl }}
+{{- if not $jwksURL }}
+{{- if .Values.oauthService.enabled }}
+{{- $jwksURL = printf "http://%s-oauth-service:%v/.well-known/jwks.json" $fullname (.Values.oauthService.service.port | default 8006) }}
+{{- else }}
+{{- fail "verifyService.enabled=true needs an issuer: either set oauthService.enabled=true so the chart ships one, or point verifyService.jwksUrl at the JWKS endpoint of the issuer this install uses. The binary refuses to start without OAUTH_JWKS_URL -- a verify tier with no issuer comes up, passes its health check and answers every key fetch with a 503, which is the failure hardest to see from outside. Rendering it anyway would only move that refusal into a CrashLoopBackOff." }}
+{{- end }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-verify-service
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: verify-service
+spec:
+  replicas: {{ .Values.verifyService.replicaCount }}
+  {{- include "openidx.rollingStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: verify-service
+  template:
+    metadata:
+      labels:
+        {{- include "openidx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: verify-service
+    spec:
+      {{- include "openidx.gracefulTermination" . | nindent 6 }}
+      {{- include "openidx.topologySpread" (dict "ctx" . "component" "verify-service") | nindent 6 }}
+      serviceAccountName: {{ include "openidx.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podAntiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: {{ .Values.podAntiAffinity.weight | default 100 }}
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: verify-service
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
+      containers:
+        - name: verify-service
+          image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.verifyService.image.repository }}:{{ .Values.verifyService.image.tag }}"
+          imagePullPolicy: {{ .Values.verifyService.image.pullPolicy }}
+          {{- include "openidx.preStopHook" . | nindent 10 }}
+          ports:
+            - name: http
+              containerPort: 8010
+              protocol: TCP
+          # Spelled out rather than mounted from the shared ConfigMap and
+          # Secret: the list below IS the tier's dependency surface, and a
+          # reviewer should be able to read it without opening another file.
+          env:
+            - name: APP_ENV
+              value: {{ .Values.global.environment | default "production" | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.global.logLevel | default "info" | quote }}
+            # Derived from the issuer's own Service rather than repeated, so a
+            # renamed service or a moved port cannot leave this pointing at
+            # nothing that answers.
+            - name: OAUTH_JWKS_URL
+              value: {{ $jwksURL | quote }}
+            {{- with .Values.verifyService.jwksTtl }}
+            - name: JWKS_TTL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.verifyService.jwksMaxStale }}
+            # How long past the freshness window a key set may still be served
+            # when a refresh fails. This is the availability belt: a token
+            # already issued keeps verifying through an issuer -- and therefore
+            # a database -- outage for this long.
+            - name: JWKS_MAX_STALE
+              value: {{ . | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          # Deliberately shallow, and NOT a JWKS fetch. Whether the issuer is
+          # reachable belongs in jwks_refresh_failures_total and
+          # jwks_stale_seconds; a probe that answered it would take the whole
+          # tier out of rotation during an issuer blip -- precisely the moment
+          # the serve-stale cache is the thing keeping verification alive.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.verifyService.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-verify-service
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: verify-service
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8010
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "openidx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: verify-service
+{{- if gt (int .Values.verifyService.replicaCount) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $fullname }}-verify-service
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: verify-service
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: verify-service
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+###############################################################################
+# The claim, at the network layer.
+#
+# EGRESS, not ingress, is the interesting half here: the tier is defined by
+# where it cannot go. DNS, and the issuer's JWKS endpoint. No database, no
+# Redis, no anything else -- so if a future import ever did drag a driver in
+# past the build guard, the connection would still not open.
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-verify-service-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: verify-service
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: verify-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: apisix
+      ports:
+        - protocol: TCP
+          port: 8010
+    # Prometheus scrapes /metrics on the same port.
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8010
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if .Values.oauthService.enabled }}
+    # The one destination this tier has.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: oauth-service
+      ports:
+        - protocol: TCP
+          port: {{ .Values.oauthService.service.port | default 8006 }}
+    {{- end }}
+{{- end }}
+{{- end }}

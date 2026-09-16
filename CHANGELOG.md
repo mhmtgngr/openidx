@@ -38,6 +38,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it — and it is answered today by the same pod that mints tokens and holds the
   write pool.
 
+  **The chart ships it, off by default**, and with the flag off the render is
+  byte-identical to before. Turned on it gets a Deployment, a Service, a
+  PodDisruptionBudget, and — with `networkPolicy.enabled` — the only policy in
+  the chart that has an Egress section: DNS and the issuer, nothing else. The
+  build guard and the network policy assert the same claim at two layers,
+  because a claim with one enforcement point survives exactly one refactor.
+
+  **It mounts no platform Secret and no database URL.** Every other service
+  takes both through `envFrom`; this one takes three plain environment
+  variables. The binary is built for that — it skips the platform production
+  validator, which in production demands an encryption key, a vault KEK and an
+  audit chain secret from a process that encrypts nothing, has no vault and
+  seals no chain. Mounting them so it could serve a public document would hand
+  the most sensitive material in the install to the one pod whose claim is that
+  it carries none of it.
+
+  Two policies can be individually correct and jointly broken: the tier's egress
+  rule permits the connection to the issuer, and the issuer's own ingress policy
+  did not admit it — a tier that renders perfectly, passes its health check and
+  answers 503 forever. The issuer's policy gained the rule and the CI assertion
+  reads both sides. One chart mutation stayed green and the reason is recorded:
+  hardcoding the JWKS URL was byte-identical to the derived value because the
+  CI render's release name is `openidx`, so the step now renders under a name
+  that cannot collide.
+
   **An unreachable issuer with nothing cached answers 503, not an empty key
   set.** `{"keys":[]}` with a 200 tells a relying party, authoritatively, that
   this issuer signs nothing, and the correct thing to do with that answer is to
