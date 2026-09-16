@@ -63,6 +63,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CI render's release name is `openidx`, so the step now renders under a name
   that cannot collide.
 
+  **The edge sends it the key set, and only the key set.** `/.well-known` was
+  one Prefix rule to the issuer; behind the same flag there is now an Exact
+  rule for `/.well-known/jwks.json`. Kubernetes gives Exact precedence over
+  Prefix whatever order they appear in, so `openid-configuration`, the SSF
+  metadata and the mobile app-association files keep going to the issuer —
+  each is built from the database or from config, and this tier could not
+  answer any of them. `jwks_uri` in the discovery document needs no change: it
+  names the same public URL, and what moved is which pod answers.
+
+  The assertion drives requests through the same Exact-then-longest-Prefix
+  matcher the plane-split step uses, rather than checking that a rule exists —
+  what matters is where a request lands. One mutation there stayed green and
+  the reason was the test: turning `Exact` into `Prefix` changed nothing,
+  because `/.well-known/jwks.json` beats `/.well-known` as a longest prefix
+  too. The two match types diverge only on sub-paths, which nothing was
+  driving, so `/.well-known/jwks.json/anything` is now one of the cases. A
+  mutation that survives is sometimes evidence about the test rather than
+  about the code.
+
   **An unreachable issuer with nothing cached answers 503, not an empty key
   set.** `{"keys":[]}` with a 200 tells a relying party, authoritatively, that
   this issuer signs nothing, and the correct thing to do with that answer is to
