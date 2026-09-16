@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **identity-service refuses a token minted in another cell** — and the reason
+  it could not before was not the one written down. `cell.Guard` now rides
+  behind identity-service's authentication, mounted through a new variadic
+  parameter on `RegisterRoutesForProfile` and passed from `cmd/identity-service`
+  the way the other five services pass it.
+
+  **The registered obstacle was the cheap half.** `cmd/cell_guard_census_test.go`
+  had carried identity-service as a backlog of one, with the reason that mounting
+  the guard meant changing the route registrar's signature. It did, and that took
+  one variadic parameter: `Service` already held `cfg` and `logger`, so nothing
+  had to be threaded through. What actually stood in the way was invisible from
+  that register: `openIDXAuthMiddleware` extracted `roles` by hand and bound
+  nothing else, so `c.Get(cell.Claim)` was unset on every request. A guard
+  mounted on top of that would have answered 200 to every misdirected request
+  while two censuses recorded the service as guarded — a control reporting
+  success while the thing it exists to make true is not true.
+
+  So the middleware now calls `middleware.BindSubjectClaims`, and
+  `internal/common/middleware`'s subject register — which had listed this
+  middleware with the reason that binding the subject here "would be a no-op that
+  looks like a fix" — is empty. That reason was true of roles and groups and
+  stopped being true when `BindSubjectClaims` took on a third key. **An exemption
+  is a claim about a moment, not a property**: what the register said had not
+  changed; what the function did had.
+
+  **The guard runs before anything that costs a query**, ahead of
+  `PermissionResolver`: a request this cell should not be answering has no
+  business first resolving the caller's permissions out of PostgreSQL and Redis.
+
+  Measured end to end in `internal/identity/cell_guard_test.go` with nothing
+  stubbed: a real RSA key signs a real token, a real JWKS endpoint serves the
+  public half, the real middleware verifies it, and `GET /users` — administrative
+  tenant data — answers 421 with `X-OpenIDX-Cell`. A test that handed the guard a
+  claims map would have passed against the defect above; this one cannot, because
+  the only thing that puts the claim in the gin context is the middleware under
+  test. Five mutations red against a green no-op control: dropping the guard from
+  `main.go` (census red), restoring the hand-rolled roles block (the 421 red, and
+  the misdirected request reaches the nil pool), mounting the guard after
+  `PermissionResolver` (the same nil pool, which is how the ordering is measured
+  rather than read), dropping the `X-OpenIDX-Cell` header, and mounting the extra
+  middleware on the public group instead of the authenticated one.
+
+  `oauth-service` remains the one unmounted entry, with its reason unchanged: it
+  mints tokens rather than serving tenant records, and whether the guard belongs
+  there is a decision, not a backlog item.
+
 - **A census joining every binary's background starters to a coordination
   answer** (`cmd/background_work_census_test.go`). Two censuses already existed
   and neither made this join: `internal/common/leader`'s classifies the

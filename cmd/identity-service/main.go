@@ -16,6 +16,7 @@ import (
 	"github.com/openidx/openidx/internal/api"
 	"github.com/openidx/openidx/internal/audit"
 	"github.com/openidx/openidx/internal/auth"
+	"github.com/openidx/openidx/internal/common/cell"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
@@ -420,7 +421,12 @@ func main() {
 	// factors); SERVICE_PROFILE=admin serves the ADMIN plane, which is the
 	// first plane shed under load. Unset is "all" -- every route, exactly as
 	// before the split (global-scale plan task 3.4).
-	skipped := identity.RegisterRoutesForProfile(router, identityService, serviceProfile)
+	//
+	// cell.Guard rides behind that registration's authentication: identity
+	// serves user, role and group CRUD -- tenant records -- so a token minted
+	// in another cell has to be told 421 here rather than served a confident
+	// 404 out of a database that simply does not hold this tenant.
+	skipped := identity.RegisterRoutesForProfile(router, identityService, serviceProfile, cell.Guard(cfg.CellID, log))
 	log.Info("Identity routes registered",
 		zap.String("service_profile", string(serviceProfile)),
 		zap.Int("routes_skipped", len(skipped)),

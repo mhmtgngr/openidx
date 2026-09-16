@@ -30,12 +30,23 @@ import (
 // in the register below WITH A REASON. An entry that stops reproducing fails
 // the run, so the list can only shrink.
 
+// The register is empty, and the entry that used to be here is worth recording
+// because of HOW it stopped being true.
+//
+// identity-service's openIDXAuthMiddleware was listed with the reason that it
+// mounts neither OPAAuthz nor RequireRole -- it authorises with
+// requireAdminUnlessSelfService, which reads the roles that middleware bound by
+// hand -- so calling the shared binder would have been a no-op wearing the
+// shape of a fix. That was true of ROLES AND GROUPS. It stopped being true of
+// the function when BindSubjectClaims took on a third key: the cell that minted
+// the token, which cell.Guard reads and nothing in identity was setting. The
+// register's reason had not changed; what the function did had.
+//
+// So an exemption is a claim about a moment, not a property. This one is now
+// the load-bearing reason identity-service can refuse a misdirected request at
+// all (internal/identity/cell_guard_test.go).
 var subjectRegister = map[string]string{
 	// key: "<path>::<func>"  value: why it does not bind the subject
-	"internal/identity/service.go::openIDXAuthMiddleware": "identity-service does not mount OPAAuthz and does not use " +
-		"RequireRole: it authorises with its own handlers, which read the roles it binds itself a few lines " +
-		"below this point. Listed rather than changed because binding the subject here would be a no-op that " +
-		"looks like a fix.",
 }
 
 func TestEveryAuthMiddlewareBindsTheSubject(t *testing.T) {
