@@ -11,6 +11,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/cell"
 	"github.com/openidx/openidx/internal/common/opa"
 )
 
@@ -123,4 +124,90 @@ func TestNonStringClaimMembersAreKeptAsText(t *testing.T) {
 	roles, ok := c.Get("roles")
 	require.True(t, ok)
 	require.Equal(t, []string{"admin", "7", "true"}, roles)
+}
+
+// THE CELL CLAIM IS MEASURED WHERE IT IS DECIDED ON, NOT WHERE IT IS BOUND.
+//
+// cell.Guard reads c.Get(cell.Claim). Whether that key holds the cell the
+// issuer stamped is this binder's job, and "the binder sets a context key" is
+// again a claim about the binder -- so these run the whole chain a request
+// takes: a verified claims map, the binder, the guard, and the status code the
+// caller actually receives.
+//
+// The guard is given a DIFFERENT serving cell from the token's in the first
+// case, so nothing but a correctly bound claim can produce the 421: dropping
+// the bind leaves the key unset, Misdirected reads that as a token predating
+// the claim, and the request is served 200.
+func guarded(t *testing.T, serving string, claims map[string]interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		BindSubjectClaims(c, claims)
+		c.Next()
+	})
+	r.Use(cell.Guard(serving, zap.NewNop()))
+	r.GET("/api/v1/users", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/users", nil))
+	return w
+}
+
+func TestTheCellTheIssuerStampedReachesTheGuard(t *testing.T) {
+	w := guarded(t, "us-1", map[string]interface{}{
+		"roles": []interface{}{"admin"},
+		"cell":  "eu-1",
+	})
+	require.Equal(t, http.StatusMisdirectedRequest, w.Code,
+		"a token minted in eu-1 reached a process serving us-1 and was served anyway; "+
+			"the cell claim did not survive the binder")
+	require.Equal(t, "us-1", w.Header().Get(cell.Header))
+}
+
+func TestTheGuardIsNotFedACellFromSomewhereElse(t *testing.T) {
+	// A claim that is not a string, and a claim that is the empty string, are
+	// both "this token names no cell" -- not "this token names the cell ''".
+	//
+	// The KEY is asserted, not just the status code. Misdirected() treats an
+	// empty tokenCell as unmarked too, so a binder that bound "" would still
+	// serve 200 and a status-only test would pass with the binder's guard
+	// deleted: two places agreeing is not one place being measured. The status
+	// is checked as well because the key being right is worth nothing if the
+	// request is refused anyway.
+	for _, tc := range []struct {
+		name  string
+		claim interface{}
+	}{
+		{"absent", nil},
+		{"not a string", map[string]interface{}{"eu": 1}},
+		{"empty", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			claims := map[string]interface{}{"roles": []interface{}{"admin"}}
+			if tc.claim != nil {
+				claims["cell"] = tc.claim
+			}
+
+			var bound bool
+			r := gin.New()
+			r.Use(func(c *gin.Context) {
+				BindSubjectClaims(c, claims)
+				c.Next()
+			})
+			r.Use(cell.Guard("us-1", zap.NewNop()))
+			r.GET("/api/v1/users", func(c *gin.Context) {
+				_, bound = c.Get(cell.Claim)
+				c.Status(http.StatusOK)
+			})
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/users", nil))
+
+			require.Equal(t, http.StatusOK, w.Code)
+			require.False(t, bound, "%v is not a cell name; binding it puts a value the "+
+				"guard decides on into the context from a token that named none", tc.claim)
+		})
+	}
 }

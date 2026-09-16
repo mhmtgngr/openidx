@@ -15,6 +15,7 @@ import (
 	"github.com/openidx/openidx/internal/api"
 	"github.com/openidx/openidx/internal/audit"
 	"github.com/openidx/openidx/internal/auth"
+	"github.com/openidx/openidx/internal/common/cell"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/health"
@@ -247,6 +248,9 @@ func main() {
 		opaClient := opa.NewClient(cfg.OPAURL, log)
 		opaMiddleware = append(opaMiddleware, middleware.OPAAuthz(opaClient, log, cfg.IsDevelopment()))
 	}
+	// The cell guard runs after this service's own authentication, so the
+	// cell it reads is one a signature covered.
+	opaMiddleware = append(opaMiddleware, cell.Guard(cfg.CellID, log))
 	provisioning.RegisterRoutes(router, provisioningService, opaMiddleware...)
 
 	// Initialize health service with database and Redis checks
