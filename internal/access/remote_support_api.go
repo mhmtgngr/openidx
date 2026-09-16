@@ -260,9 +260,31 @@ func defaultSTUNServers() json.RawMessage {
 
 // RegisterRemoteSupportAdminRoutes mounts the admin (and admin-WS) surface.
 // MUST go behind middleware.Auth.
-func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGroup) {
+//
+// privileged is the step-up gate applied to starting a session, and it is a
+// parameter rather than something this file reaches for because the gate is a
+// method on Service and this handler does not have one.
+//
+// WHY STARTING A SESSION IS GATED AND THE REST IS NOT. HandleStartSession opens
+// an INTERACTIVE remote-control session on a named device -- the default mode
+// is "interactive", not "view" -- which is the same kind of thing as
+// POST /pam/apps/:id/launch and is gated the same way, at the same enforcement
+// point. It had no gate at all: the group it is mounted on carries
+// promoteWebSocketBearer and authentication and nothing else, the handler
+// checks tenancy and shape but neither role nor freshness, and the device-side
+// consent that looks like a second control is CHOSEN BY THE CALLER -- consent_required
+// is a field in the start request, and it defaults to false. So any
+// authenticated caller in the tenant could take control of any enrolled device
+// in it.
+//
+// It survived because the census that exists to catch exactly this
+// (stepup_route_census_test.go) could not see it three times over: it read only
+// service.go, matched only registrations on the group named `api`, and looked
+// only at paths beginning /pam/. A guard keyed on a spelling cannot see work
+// that uses none of them.
+func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGroup, privileged ...gin.HandlerFunc) {
 	r.GET("/remote-support/sessions", h.HandleListSessions)
-	r.POST("/remote-support/sessions", h.HandleStartSession)
+	r.POST("/remote-support/sessions", append(append([]gin.HandlerFunc{}, privileged...), h.HandleStartSession)...)
 	r.GET("/remote-support/sessions/:id", h.HandleGetSession)
 	r.POST("/remote-support/sessions/:id/end", h.HandleEndSession)
 	// Admin-side WebSocket — the browser viewer connects here.

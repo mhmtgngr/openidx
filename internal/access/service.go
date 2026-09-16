@@ -942,7 +942,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// HTTP + WS endpoints land here behind auth; the agent-side WS is
 		// mounted on the public group below.
 		remoteSupport := NewRemoteSupportHandler(svc.logger, svc.db, agentHandler)
-		remoteSupport.RegisterRemoteSupportAdminRoutes(api)
+		// The step-up gate goes on session start, at the same enforcement point as
+		// the PAM launch: taking interactive control of a device is that same act.
+		remoteSupport.RegisterRemoteSupportAdminRoutes(api, svc.requireFreshMFA("remote_support.start_session"))
 		remoteSupport.StartJanitor(context.Background(), 5*time.Minute, time.Minute)
 		if svc.guacamoleClient != nil {
 			remoteSupport.SetGuacamoleClient(svc.guacamoleClient)
