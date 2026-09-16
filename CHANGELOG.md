@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The login page can now actually present the bot gate's challenge** — and
+  getting there meant fixing two things that made the instruction impossible to
+  follow (global-scale plan task 1.4, the open half).
+
+  **What shipped before.** `internal/botgate` refuses a login with
+  `403 challenge_required` once an account name has collected enough failures
+  from anywhere, and the body said *"Complete the verification challenge and try
+  again."* Nothing in that response named a challenge or carried a site key, and
+  a Turnstile widget cannot be rendered without one — the public key was not in
+  the configuration at all, only the secret. So the page had exactly one move:
+  print the sentence. The person read an instruction, found nothing to do, and
+  retried into the counter that had just refused them. **A control that tells
+  someone to do something it gives them no way to do is the same defect as one
+  that reports success without doing its job; it just fails in the user's
+  direction.**
+
+  **The site key travels with the refusal.** New `TURNSTILE_SITE_KEY`
+  (`config.turnstileSiteKey` in the chart, beside the secret rather than in the
+  secret store — it is served to every browser that is challenged). The gate
+  answers `ChallengeSiteKey()` only when a verifier is configured too, because
+  each half alone is a dead end: a verifier with no site key is what shipped,
+  and a site key with no verifier is worse — the widget renders, the person
+  solves it, and `Check` ignores the token and falls through to the same
+  counter, which is a loop with no exit and reads as a broken login rather than
+  a lockout. The wording follows the key: with one, "complete the challenge";
+  without one, "wait a few minutes", which is what a soft lockout actually is.
+
+  **And the layer under that: the challenge the browser is not allowed to
+  load.** Turnstile is a script from `challenges.cloudflare.com` that draws
+  itself in an iframe from the same origin, so `script-src 'self'` with no
+  `frame-src` blocks both halves — silently, in the browser, long after every
+  test here has passed. Measured across the three nginx configs:
+  `nginx/admin-console.conf`, which the shipped console image uses, sets no CSP
+  and would have worked; `oidx-nginx/nginx.conf` (which serves the SPA itself)
+  and `conf.d/openidx.tdv.org.conf` both set one that blocks it. **Live, not
+  latent, in two of three.** One pinned origin is now allowed in the directives
+  Turnstile needs, in the blocks that serve the login *document* — the
+  static-asset block keeps the narrow policy, and a test holds it there.
+
+  The console half is `TurnstileChallenge` plus the login page's handling:
+  solving the widget resubmits the credentials the person already typed with
+  `challenge_token` — the gate refused before the password was checked, so
+  nothing about them was wrong, and retyping would punish them for someone
+  else's guessing.
+
+  Ten mutations red against two green no-op controls, across three suites: the
+  refusal dropping the site key; the old sentence returning where no challenge
+  can be rendered; the gate offering a key with no verifier; the page ignoring
+  the key, rendering a widget without one, dropping `challenge_token`, and
+  rendering on any failure; `frame-src` dropped; the origin landing in the
+  static-asset block instead; and one of the two document configs left out. The
+  CSP guard is derived in both directions, so removing the widget makes it
+  report the allowance as a widening with no user.
+
 - **Two more admin reads moved to the read replica, and two measured holes in
   the census that licensed them closed** (global-scale plan task 2.3, batch 5).
   `mfa_management.go handleListUserMFAStatus` and

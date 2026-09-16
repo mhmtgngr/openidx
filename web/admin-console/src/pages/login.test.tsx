@@ -183,4 +183,111 @@ describe('LoginPage', () => {
       expect(screen.queryByRole('checkbox', { name: /trust this browser/i })).not.toBeInTheDocument()
     })
   })
+
+  // THE BOT GATE'S CHALLENGE, FROM THE SIDE THE PERSON SEES.
+  //
+  // internal/botgate refuses a login with 403 challenge_required once an
+  // account name has collected enough failures from anywhere. The refusal used
+  // to be the whole story: the page printed "complete the verification
+  // challenge" and offered nothing to complete, so the only move left was to
+  // try again into the counter that had just refused. These cases are the two
+  // halves of the fix, and the second is the one that keeps it honest.
+  describe('bot gate challenge', () => {
+    const fetchMock = vi.fn()
+    const renderWidget = vi.fn()
+
+    beforeEach(() => {
+      sessionStorage.setItem('oidc_login_session', 'test-session')
+      fetchMock.mockReset()
+      renderWidget.mockReset()
+      vi.stubGlobal('fetch', fetchMock)
+      // Stand in for the script Cloudflare would have loaded. Its presence is
+      // what the component checks, so nothing here reaches the network.
+      vi.stubGlobal('turnstile', {
+        render: renderWidget.mockImplementation(
+          (_el: HTMLElement, opts: { sitekey: string; callback: (token: string) => void }) => {
+            ;(window as unknown as { __solve: (t: string) => void }).__solve = opts.callback
+            return 'widget-1'
+          },
+        ),
+        remove: vi.fn(),
+      })
+    })
+
+    afterEach(() => {
+      sessionStorage.clear()
+      vi.unstubAllGlobals()
+    })
+
+    const refuse = (body: unknown) =>
+      fetchMock.mockImplementationOnce(() =>
+        Promise.resolve({ ok: false, status: 403, json: () => Promise.resolve(body) } as Response)
+      )
+
+    const submitCredentials = async () => {
+      const user = userEvent.setup()
+      renderWithRouter(<LoginPage />)
+      await user.type(screen.getByLabelText(/username or email/i), 'testuser')
+      await user.type(screen.getByLabelText(/^password$/i), 'password123')
+      await user.click(screen.getByRole('button', { name: /sign in$/i }))
+      return user
+    }
+
+    it('renders the challenge and resubmits the same credentials with the token', async () => {
+      refuse({
+        error: 'challenge_required',
+        error_description: 'Too many failed attempts for this account. Complete the verification challenge and try again.',
+        site_key: '1x00000000000000000000AA',
+      })
+      await submitCredentials()
+
+      await screen.findByTestId('turnstile-challenge')
+      await waitFor(() => expect(renderWidget).toHaveBeenCalledTimes(1))
+      expect(renderWidget.mock.calls[0][1]).toMatchObject({ sitekey: '1x00000000000000000000AA' })
+
+      // Solving it must resend the credentials the person already typed: the
+      // gate refused BEFORE the password was checked, so nothing about them
+      // was wrong, and retyping would punish them for someone else's guessing.
+      fetchMock.mockImplementationOnce(() =>
+        Promise.resolve({ ok: true, json: () => Promise.resolve({ redirect_url: 'https://app.example.com/cb?code=abc' }) } as Response)
+      )
+      ;(window as unknown as { __solve: (t: string) => void }).__solve('solved-token')
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+      const [url, init] = fetchMock.mock.calls[1]
+      expect(String(url)).toContain('/oauth/login')
+      expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({
+        username: 'testuser',
+        password: 'password123',
+        challenge_token: 'solved-token',
+      })
+    })
+
+    it('shows no widget when the refusal carries no site key', async () => {
+      // The deployment shape that shipped: the gate enforces, no Turnstile is
+      // configured, and the server says to wait. A widget here would be one
+      // the server cannot check -- solving it would land back on this same
+      // refusal, which reads as a broken login rather than a lockout.
+      refuse({
+        error: 'challenge_required',
+        error_description: 'Too many failed attempts for this account. Wait a few minutes before trying again.',
+      })
+      await submitCredentials()
+
+      await screen.findByText(/wait a few minutes/i)
+      expect(screen.queryByTestId('turnstile-challenge')).not.toBeInTheDocument()
+      expect(renderWidget).not.toHaveBeenCalled()
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('leaves an ordinary failure alone', async () => {
+      // Vacuity guard: if the page rendered the widget on any 403, the case
+      // above would pass for the wrong reason.
+      refuse({ error: 'invalid_grant', error_description: 'Invalid username or password' })
+      await submitCredentials()
+
+      await screen.findByText(/invalid username or password/i)
+      expect(screen.queryByTestId('turnstile-challenge')).not.toBeInTheDocument()
+    })
+  })
 })

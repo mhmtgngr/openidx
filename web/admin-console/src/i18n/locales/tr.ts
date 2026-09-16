@@ -439,6 +439,10 @@ const tr: typeof en = {
     ariaLabel: 'İçerik haritası',
   },
   login: {
+    challenge: {
+      prompt: 'Devam etmek için insan olduğunuzu doğrulayın.',
+      unavailable: 'Doğrulama yüklenemedi. Birkaç dakika bekleyip yeniden deneyin.',
+    },
     errors: {
       authFailed: 'Kimlik doğrulama başarısız oldu. Lütfen tekrar deneyin.',
       loginFailed: 'Oturum açma başarısız oldu. Lütfen tekrar deneyin.',

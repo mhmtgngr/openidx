@@ -444,6 +444,10 @@ const en = {
     ariaLabel: 'Breadcrumb',
   },
   login: {
+    challenge: {
+      prompt: 'Verify that you are human to continue.',
+      unavailable: 'The verification challenge could not be loaded. Wait a few minutes and try again.',
+    },
     errors: {
       authFailed: 'Authentication failed. Please try again.',
       loginFailed: 'Login failed. Please try again.',

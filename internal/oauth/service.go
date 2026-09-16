@@ -429,6 +429,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 			Window:         time.Duration(cfg.LoginFailWindowSeconds) * time.Second,
 			ScoreHeader:    cfg.EdgeBotScoreHeader,
 			ChallengeBelow: cfg.EdgeBotScoreChallengeBelow,
+			SiteKey:        cfg.TurnstileSiteKey,
 		}, botgate.NewTurnstileVerifier(cfg.TurnstileSecret))
 	}
 
@@ -1971,6 +1972,44 @@ func (s *Service) deviceTrustGateBlocks(clientID string, deviceTrusted bool) boo
 		!deviceTrusted
 }
 
+// challengeRefusal is the 403 body for a login the bot gate refused, and what
+// it says depends on whether the login page can actually DO anything about it.
+//
+// THE MESSAGE USED TO BE THE SAME EITHER WAY, and it asked for something the
+// page could not offer: "complete the verification challenge and try again",
+// with nothing in the response naming a challenge or carrying the site key
+// needed to render one. The page had one move -- print the sentence -- so the
+// person read an instruction, found no widget, and tried again into a counter
+// that had already refused them. A control that tells someone to do something
+// it gives them no way to do is the same defect as one that reports success
+// without doing its job; this one just fails in the user's direction.
+//
+// So the site key travels with the refusal (Gate.ChallengeSiteKey answers only
+// when a verifier is configured too), and the wording follows it:
+//
+//   - with a site key, the page renders the widget and resubmits with
+//     challenge_token, and "complete the challenge" is a true instruction;
+//   - without one, this is a soft lockout keyed on the typed name until the
+//     window passes, and the refusal says THAT instead -- an honest "wait"
+//     rather than an impossible "prove it".
+//
+// The key is public by construction: it is rendered into the widget in every
+// browser that meets one. The secret half never leaves the server.
+func challengeRefusal(g *botgate.Gate, reason botgate.Reason) gin.H {
+	body := gin.H{
+		"error":     "challenge_required",
+		"challenge": "edge",
+		"reason":    string(reason),
+	}
+	if siteKey := g.ChallengeSiteKey(); siteKey != "" {
+		body["site_key"] = siteKey
+		body["error_description"] = "Too many failed attempts for this account. Complete the verification challenge and try again."
+		return body
+	}
+	body["error_description"] = "Too many failed attempts for this account. Wait a few minutes before trying again."
+	return body
+}
+
 func (s *Service) handleLogin(c *gin.Context) {
 	var req struct {
 		Username     string `json:"username"`
@@ -2022,12 +2061,7 @@ func (s *Service) handleLogin(c *gin.Context) {
 			}(c.ClientIP())
 			if dec.Challenge && enforced {
 				c.Header("Cache-Control", "no-store")
-				c.JSON(403, gin.H{
-					"error":             "challenge_required",
-					"error_description": "Too many failed attempts for this account. Complete the verification challenge and try again.",
-					"challenge":         "edge",
-					"reason":            string(dec.Reason),
-				})
+				c.JSON(403, challengeRefusal(s.botGate, dec.Reason))
 				return
 			}
 		}
