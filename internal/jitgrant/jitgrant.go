@@ -220,7 +220,27 @@ func EndAllForUser(ctx context.Context, q Querier, userID, orgID string) (int64,
 // elevation still held by a disabled user, ended. It runs under bypass-RLS from
 // the lifecycle sweep, so it takes no org and derives each write's org from the
 // row it came from.
-func EndAllForDisabledUsers(ctx context.Context, q Querier) (int64, error) {
+//
+// It returns the users whose tokens the caller must then cut, deduplicated and
+// filtered by TokenCarries, because a count cannot be revoked. This is the
+// asymmetry that made the gap easy to miss: EndAllForUser is handed the user,
+// so its callers already had the identity they needed, while this one FINDS its
+// users and reported only how many it had found. The identities were in hand
+// the whole time -- the SELECT above reads requester_id -- and simply were not
+// passed back, so the sweep ended the elevation in the database and left every
+// token that named it working.
+//
+// The list is returned alongside the error, not instead of it: a failure part
+// way through has already removed real access, and those users must still be
+// cut. Dropping them on the error path would make a partial sweep the one case
+// that severs access without severing the credential.
+//
+// The rows are ordered for that same reason. An abort part way through leaves a
+// prefix done and a suffix not; with no ORDER BY the next tick would retry a
+// differently-ordered set and could keep failing on a different row each time,
+// making progress invisible. Soonest expiry first also means the most overdue
+// elevation is the one that gets ended before any failure can stop the pass.
+func EndAllForDisabledUsers(ctx context.Context, q Querier) (int64, []string, error) {
 	rows, err := q.Query(ctx,
 		//orgscope:ignore install-wide lifecycle reconcile sweep; each write below is scoped to the org of the row it came from
 		`SELECT r.id, r.requester_id, r.resource_type, r.resource_id, r.org_id
@@ -229,9 +249,10 @@ func EndAllForDisabledUsers(ctx context.Context, q Querier) (int64, error) {
 		  WHERE r.status = 'fulfilled'
 		    AND r.expires_at IS NOT NULL AND r.expires_at > NOW()
 		    AND r.resource_type <> 'vault_credential'
-		    AND u.enabled = false`)
+		    AND u.enabled = false
+		  ORDER BY r.expires_at, r.id`)
 	if err != nil {
-		return 0, fmt.Errorf("list elevations of disabled users: %w", err)
+		return 0, nil, fmt.Errorf("list elevations of disabled users: %w", err)
 	}
 	type row struct{ id, user, rtype, rid, org string }
 	var pending []row
@@ -239,28 +260,37 @@ func EndAllForDisabledUsers(ctx context.Context, q Querier) (int64, error) {
 		var r row
 		if err := rows.Scan(&r.id, &r.user, &r.rtype, &r.rid, &r.org); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("scan elevation: %w", err)
+			return 0, nil, fmt.Errorf("scan elevation: %w", err)
 		}
 		pending = append(pending, r)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("list elevations of disabled users: %w", err)
+		return 0, nil, fmt.Errorf("list elevations of disabled users: %w", err)
 	}
 
 	var ended int64
+	var cutTokensFor []string
+	seen := map[string]bool{}
 	for _, r := range pending {
 		if err := Revoke(ctx, q, r.rtype, r.user, r.rid, r.org); err != nil {
-			return ended, fmt.Errorf("end elevation %s: %w", r.id, err)
+			return ended, cutTokensFor, fmt.Errorf("end elevation %s: %w", r.id, err)
+		}
+		// Collected after the access is actually gone, and only for a type the
+		// token carries: one user holding three elevations is cut once, and an
+		// elevation that no claim asserts is not a re-login.
+		if TokenCarries(r.rtype) && !seen[r.user] {
+			seen[r.user] = true
+			cutTokensFor = append(cutTokensFor, r.user)
 		}
 		if _, err := q.Exec(ctx,
 			`UPDATE access_requests SET status = 'expired', updated_at = NOW()
 			  WHERE id = $1 AND org_id = $2`, r.id, r.org); err != nil {
-			return ended, fmt.Errorf("mark elevation %s expired: %w", r.id, err)
+			return ended, cutTokensFor, fmt.Errorf("mark elevation %s expired: %w", r.id, err)
 		}
 		ended++
 	}
-	return ended, nil
+	return ended, cutTokensFor, nil
 }
 
 // ActiveForUserPredicate is the WHERE clause that identifies a user's live

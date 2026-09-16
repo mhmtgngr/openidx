@@ -94,6 +94,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The lifecycle reconcile net caught the access and let the credential
+  through.** The cross-pillar sweep exists for the disable paths that do NOT go
+  through `deprovisionUser` -- SCIM deactivation, directory sync, a lifecycle
+  policy, a direct database change -- and `deprovisionUser` is the path that
+  cuts tokens. So for every path this sweep is the net for, the token was never
+  cut: it removed the disabled user's time-bound elevation rows, logged how
+  many, and the access token in their browser kept naming the role that the
+  enforcement point resolves on every request.
+
+  It was never a missing identity. `EndAllForDisabledUsers` selects
+  `requester_id` to do its work, so the users were in hand the whole time and
+  simply were not passed back, because the function returned a count -- and a
+  count cannot be revoked. Its sibling `EndAllForUser` is *handed* the user,
+  which is why that one's two callers already cut tokens and this one did not;
+  the asymmetry is what hid the gap.
+
+  It now returns the users to cut, deduplicated (one user holding three
+  elevations is cut once) and filtered by `jitgrant.TokenCarries`, and the sweep
+  cuts them after the rows are gone -- Redis cannot join those statements, so
+  the revoke lives at the call site rather than inside the shared revoke.
+
+  **The list is returned alongside the error, not instead of it.** A sweep that
+  fails part way through has already removed real access, and those users are
+  exactly the ones whose tokens must not outlive it; dropping them on the error
+  path would make a partial failure the one case that severs access without
+  severing the credential. The rows are ordered by expiry for the same reason:
+  an abort leaves a prefix done, and without an order the next tick retries a
+  differently-ordered set.
+
+  Measured against a real PostgreSQL and a real Redis with the general and
+  revocation roles on separate databases. Six mutations red: removing the
+  revoke, writing to the general Redis, dropping the `TokenCarries` filter,
+  dropping the deduplication, dropping the list on the error path, and removing
+  the `ORDER BY`. The last one stayed green at first and the reason was worth
+  the fix rather than the excuse: Postgres happened to return insertion order,
+  which matched the order the test wanted, so the test was measuring luck. It
+  now inserts the failing row first and expires it last, so physical order and
+  expiry order disagree.
+
+  An install with no Redis still reconciles: refusing to run would leave the
+  elevation live in the database as well as the token.
+
+
 - **A JIT elevation outlived the expiry that defines it.** "Admin until 15:00"
   is enforced by one piece of code, the JIT expiry sweep, and that sweep deleted
   the assignment row and stopped there. The access token minted at 14:00 still

@@ -439,6 +439,13 @@ jobs:
           echo "$out"
           for want in TestTheLifecycleSweepIsIdempotentAcrossReplicas \
                       TestTheLifecycleSweepNeverTouchesAnEnabledUser \
+                      TestTheLifecycleSweepCutsTheTokenOfADisabledUserWhoseElevationItEnds \
+                      TestTheLifecycleSweepWritesTheMarkerToTheRevocationRedis \
+                      TestTheLifecycleSweepDoesNotCutAnEnabledUser \
+                      TestTheLifecycleSweepCutsNothingForAnApplicationElevation \
+                      TestTheLifecycleSweepCutsAUserHoldingSeveralElevationsOnce \
+                      TestTheLifecycleSweepReturnsEveryUserWhoseAccessItActuallyRemoved \
+                      TestTheLifecycleSweepStillEndsElevationsWithNoRedis \
                       TestEightConcurrentLifecycleSweepsConvergeTheSameWay \
                       TestThePostureExpirySweepChangesNoAccessDecision \
                       TestEightConcurrentPostureExpirySweepsConvergeTheSameWay \

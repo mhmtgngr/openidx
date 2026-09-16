@@ -23,8 +23,10 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/jitgrant"
+	"github.com/openidx/openidx/internal/revocation"
 )
 
 // StartLifecycleEnforcement starts the background sweep. Interval should match
@@ -83,11 +85,37 @@ func (s *Service) runLifecycleEnforcement(ctx context.Context) {
 
 	// Time-bound elevations of disabled users. This used to update jit_grants,
 	// which nothing in the product writes, so the sweep reconciled nothing.
-	if n, err := jitgrant.EndAllForDisabledUsers(ctx, s.db.Pool); err != nil {
+	//
+	// The elevations end here AND the tokens carrying them are cut below. The
+	// sweep used to do only the first: it removed the assignment rows and
+	// logged how many, so a user disabled by SCIM, a directory sync or a
+	// lifecycle policy lost the row while the access token in their browser
+	// kept naming the role -- and this sweep is the reconcile net precisely for
+	// the disable paths that do NOT go through deprovisionUser, which does cut
+	// tokens. The net caught the access and let the credential through.
+	n, cutTokensFor, err := jitgrant.EndAllForDisabledUsers(ctx, s.db.Pool)
+	if err != nil {
 		s.logger.Warn("lifecycle sweep: ending elevations of disabled users failed",
 			zap.Int64("ended_before_failure", n), zap.Error(err))
 	} else if n > 0 {
 		s.logger.Info("lifecycle sweep: ended time-bound elevations of disabled users", zap.Int64("count", n))
+	}
+	// Cut whatever was actually ended, including on the error path: a sweep
+	// that failed part way through has still removed real access, and those
+	// users are exactly the ones whose tokens must not outlive it. Redis cannot
+	// join the statements above, so this runs after them, here at the call
+	// site, rather than inside the shared revoke.
+	for _, userID := range cutTokensFor {
+		if s.redis == nil {
+			// An install with no Redis still reconciles: the elevations above
+			// are already gone, and refusing to run would leave them live in
+			// the database as well as the token.
+			break
+		}
+		if err := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); err != nil {
+			s.logger.Warn("lifecycle sweep: failed to cut tokens of a disabled user whose elevation ended",
+				zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
+		}
 	}
 
 	// Live privileged sessions of disabled/deleted users. Rows are marked
