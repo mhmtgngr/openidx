@@ -662,6 +662,17 @@ Yani 3.2'nin hem yapılandırma hem de yayın yarısı, hiçbir küme olmadan, g
 
 ---
 
+### Arka plan işinin koordinasyon sayımı (2026-09-16)
+
+`cmd/background_work_census_test.go`: her binary'nin çağırdığı her `Start*` başlatıcısı bir koordinasyon cevabına bağlanmak zorunda.
+
+- **ÖLÇÜM:** 26 başlatıcı — **14 leader-gated, 11 kendi dosyasında ticker, 1 periyodik değil** (`cmd/profiler`'ın pprof dinleyicisi, gerekçesiyle kütükte). `access-service` tek başına 11 başlatıyor.
+- **ÖNCE VARSAYDIM, SONRA ÖLÇTÜM:** "süpürücülerin bir kısmı kapısız koşuyor olabilir" beklentisiyle başladım. Değil. On tanesi `leader.RunPeriodic`'e devrediyor; ticker ve kapı aynı yardımcıda. **Kapısız süpürücü YOK.** Ölçüp bulamamak da bir sonuçtur.
+- **ASIL BOŞLUK BU ÖLÇÜMDEN ÇIKTI:** `internal/common/leader` sayımı işi `time.NewTicker` arayarak buluyor. Ticker bir yardımcıya taşınınca sayım onu GÖRMÜYOR. `leader.RunPeriodic` için bu doğru — çünkü o yardımcı kapının kendisi. Ama kapısı OLMAYAN bir `runEvery(d, fn)` yardımcısı sekiz serviste çağrılsa, sayım TEK dosya görür, sekiz süpürücü replika başına koşar ve ağaçta bunu söyleyen hiçbir şey olmaz. Yeni sayım tam bu şekli yakalıyor (mutasyonla doğrulandı: yeni ve kapısız bir süpürücü eklemek kırmızı).
+- **KENDİ SAYIM NOTUM BİLE BAYATLADI:** elle saydığımda 10 leader-gated çıkardım; türetilmiş sayı 14. Bazı dosyalar HEM ticker HEM kapı taşıyor ve sınıflandırıcı önce kapıyı okuyor. Elle taşınan bir sayı sabitlenseydi dört süpürücü kapısını kaybedip yeşil okunabilirdi.
+- **6 mutasyon kırmızı, 1 no-op kontrol yeşil.** Aralarında: kapının import takma adıyla gizlenmesi (metin eşleyen bir sayımın kör noktası), periyodik bir başlatıcının "periyodik değil" diye kütüğe yazılması, sabitlenmiş sayının düşmesine izin verilmesi, ve yeni kapısız bir süpürücü.
+- **ÖLÇÜLMEYEN, İDDİA EDİLMEYEN:** bu süpürücülerin `cmd/<svc>-worker`'a AYRILMASININ faydası. Bu bir yük sorusu — istek sunan bir pod'un CPU ve havuz bütçesinden ne kadarını aldıkları — ve yük altında bir staging hücresi ister. Sınıflandırma ölçülebilir; ayırmanın faydası ölçülemez.
+
 ## Faz 4 — Hücre modeli ve ikinci bölge (8–12 hafta)
 
 ### 4.1 Kiracı dizini (küresel kontrol düzlemi, minimal)

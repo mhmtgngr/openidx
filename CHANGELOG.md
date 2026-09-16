@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A census joining every binary's background starters to a coordination
+  answer** (`cmd/background_work_census_test.go`). Two censuses already existed
+  and neither made this join: `internal/common/leader`'s classifies the
+  coordination of every file containing `time.NewTicker`, and
+  `cmd/identity-service`'s asks whether a starter belongs to the plane the
+  process serves. What was missing is which *binaries* call which starters, and
+  whether every one of those calls reaches an answer at all.
+
+  **The hole that makes it worth having, measured on this tree.** The sweeps
+  census finds work by looking for `time.NewTicker` in a file. Ten of the
+  starters here have no ticker in their own file — they hand the interval to
+  `leader.RunPeriodic`, which owns the ticker and the gate together. That is
+  correct, and it is exactly why the census cannot see them: **the ticker moved
+  into a helper.** The shape this guard exists for is the same move *without*
+  the gate — a `runEvery(d, fn)` in a util package, called from eight services,
+  where the sweeps census sees one file while eight sweeps run once per replica.
+  Nothing in the tree would have said so.
+
+  Measured split: **14 leader-gated, 11 with a ticker in their own file, 1 not
+  periodic** (`cmd/profiler`'s pprof listener, registered with its reason). The
+  14 is pinned, because every entry in it is a sweep that would otherwise run
+  once per replica and `access-service` autoscales to eight.
+
+  **What this does not measure, and does not claim.** Whether these starters
+  would be better off in their own `cmd/<svc>-worker` binaries is a question
+  about load — how much of a request-serving pod's CPU and pool budget the
+  sweeps take. That needs a staging cell under load. The classification is
+  measurable and is what this does; the benefit of splitting is not.
+
 - **The tenant directory: which cell serves which org** (migration `v195`,
   `internal/common/celldir`). `org → {cell_id, region, residency, status}`,
   with `Lookup`, `HomeCell` and an upsert `Place`.
