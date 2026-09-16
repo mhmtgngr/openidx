@@ -39,6 +39,23 @@ import (
 //     c.Param, c.Query, c.PostForm, c.GetHeader and their variants. Not
 //     c.GetString("user_id") -- that is a value the auth middleware put on the
 //     context after validating a token, not text the caller chose.
+//   - Plus the request target read straight off the request object:
+//     c.Request.URL.Path, .RawPath, .RawQuery and .Fragment, logged inline
+//     rather than through a local. THIS HALF WAS MISSING and the gap is the
+//     reason this comment is being edited: CodeQL reported
+//     internal/common/cell/cell.go for logging c.Request.URL.Path on the 421
+//     path, and four more sites in internal/common/handlers/decorator.go had
+//     the same shape. The package comment next door already NAMED that vector
+//     ("a percent-encoded %0A in a request target arrives in
+//     c.Request.URL.Path as a real newline"), so the guard documented a class
+//     it did not check -- a control reporting success while the thing it was
+//     meant to make true was not true.
+//
+//     c.Request.RemoteAddr is deliberately NOT in that set, and the three
+//     sites in internal/audit/stream.go that log it stay as they are. It is
+//     written by net/http from the accepted connection, not by the caller; it
+//     is bounded by an address and a port. Calling it tainted would be noise,
+//     and a guard that reports noise is a guard somebody turns off.
 //   - Function-scoped, not file-scoped. Two functions in one file routinely
 //     name different things `id` or `token`, and a file-scoped reading calls
 //     the second one tainted because the first one was.
@@ -56,6 +73,36 @@ var requestReaders = map[string]bool{
 	"DefaultPostForm": true,
 	"GetHeader":       true,
 	"FormValue":       true,
+}
+
+// requestTargetFields are the fields of c.Request.URL that hold text the
+// caller wrote into the request line. A selector ending in one of these, whose
+// receiver chain runs through .Request.URL, is tainted wherever it appears --
+// there is no local to track, which is exactly how these sites escaped.
+var requestTargetFields = map[string]bool{
+	"Path":     true,
+	"RawPath":  true,
+	"RawQuery": true,
+	"Fragment": true,
+}
+
+// isRequestTarget reports whether e is c.Request.URL.<one of those>, seeing
+// through parentheses. The receiver's own name is not checked: a handler is
+// free to call its context anything, and what matters is the .Request.URL.
+func isRequestTarget(e ast.Expr) bool {
+	if p, ok := e.(*ast.ParenExpr); ok {
+		return isRequestTarget(p.X)
+	}
+	leaf, ok := e.(*ast.SelectorExpr)
+	if !ok || !requestTargetFields[leaf.Sel.Name] {
+		return false
+	}
+	url, ok := leaf.X.(*ast.SelectorExpr)
+	if !ok || url.Sel.Name != "URL" {
+		return false
+	}
+	req, ok := url.X.(*ast.SelectorExpr)
+	return ok && req.Sel.Name == "Request"
 }
 
 // taintedLocals returns the local identifiers in fn that were assigned the
@@ -132,10 +179,11 @@ func findTaintedFields(fset *token.FileSet, f *ast.File, rel string) []string {
 	var found []string
 
 	inspectFunc := func(fn ast.Node) {
+		// NOT `if len(tainted) == 0 { return }`. A function that logs
+		// c.Request.URL.Path and reads nothing else out of the request has no
+		// tainted locals at all, and every site this guard missed had exactly
+		// that shape.
 		tainted := taintedLocals(fn)
-		if len(tainted) == 0 {
-			return
-		}
 		ast.Inspect(fn, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok || len(call.Args) != 2 {
@@ -152,12 +200,18 @@ func findTaintedFields(fset *token.FileSet, f *ast.File, rel string) []string {
 			if washed(call.Args[1]) {
 				return true
 			}
+			at := rel + ":" + strconv.Itoa(fset.Position(call.Args[1].Pos()).Line)
+			if isRequestTarget(call.Args[1]) {
+				found = append(found, at+": zap.String logs the request target straight off "+
+					"c.Request.URL; a percent-encoded %0A arrives there as a real newline; use logsafe.String")
+				return true
+			}
 			name := bareIdent(call.Args[1])
 			reader, isTainted := tainted[name]
 			if !isTainted {
 				return true
 			}
-			found = append(found, rel+":"+strconv.Itoa(fset.Position(call.Args[1].Pos()).Line)+
+			found = append(found, at+
 				": zap.String logs "+name+", read from the request with c."+reader+
 				"; use logsafe.String")
 			return true
@@ -269,6 +323,60 @@ func h(c *gin.Context) {
 }`,
 			want: 0,
 			why:  "the guard does not follow aliases; it must not claim to",
+		},
+		{
+			name: "the request target logged inline",
+			src: `package p
+func h(c *gin.Context) {
+	log.Error("failed", zap.String("path", c.Request.URL.Path))
+}`,
+			want: 1,
+			why:  "no local to track; this is the shape the guard used to miss entirely",
+		},
+		{
+			name: "the request target washed",
+			src: `package p
+func h(c *gin.Context) {
+	log.Error("failed", logsafe.String("path", c.Request.URL.Path))
+}`,
+			want: 0,
+			why:  "the fix must not be reported as the defect",
+		},
+		{
+			name: "the raw query is the same text",
+			src: `package p
+func h(c *gin.Context) {
+	log.Error("failed", zap.String("query", c.Request.URL.RawQuery))
+}`,
+			want: 1,
+			why:  "the caller wrote the query string too",
+		},
+		{
+			name: "RemoteAddr is not the caller's text",
+			src: `package p
+func h(c *gin.Context) {
+	log.Error("failed", zap.String("remote_addr", c.Request.RemoteAddr))
+}`,
+			want: 0,
+			why:  "net/http writes it from the accepted connection; flagging it is the noise that gets a guard turned off",
+		},
+		{
+			name: "some other struct that happens to have a Path",
+			src: `package p
+func h(entry logEntry) {
+	log.Error("failed", zap.String("path", entry.Path))
+}`,
+			want: 0,
+			why:  "the chain must run through .Request.URL, not merely end in Path",
+		},
+		{
+			name: "a URL that is not the request's",
+			src: `package p
+func h(cfg config) {
+	log.Error("failed", zap.String("path", cfg.URL.Path))
+}`,
+			want: 0,
+			why:  "an upstream URL from configuration is not text the caller wrote",
 		},
 		{
 			name: "a constant is not a request value",

@@ -56,6 +56,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A guard documented a class it did not check.** `internal/common/logsafe`'s
+  package comment names the request target as attacker-controlled text — "a
+  percent-encoded `%0A` in a request target arrives in `c.Request.URL.Path` as
+  a real newline" — but `no_tainted_field_test.go` only tracked values assigned
+  to a local from `c.Param`/`c.Query`/`c.GetHeader`. A function that logs
+  `c.Request.URL.Path` inline has no tainted local at all, so it was skipped
+  entirely: the guard's first act was `if len(tainted) == 0 { return }`.
+  CodeQL reported one such site; four more had the same shape in
+  `internal/common/handlers/decorator.go`. All five now go through
+  `logsafe.String`, and the guard reads `c.Request.URL.{Path,RawPath,RawQuery,
+  Fragment}` wherever they appear rather than only through a local.
+
+  `c.Request.RemoteAddr` is deliberately left alone: net/http writes it from the
+  accepted connection, it is bounded by an address and a port, and a guard that
+  reports noise is a guard somebody turns off. The three sites logging it stay
+  as they are, and the exclusion is a test case rather than an omission.
+
 - **The identity plane split reached the routes and not the background work.**
   `cmd/identity-service/main.go` started its sweeps without ever consulting
   `serviceProfile`, so `SERVICE_PROFILE=auth` — the ISSUE half, which registers

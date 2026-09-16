@@ -19,6 +19,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // Claim is the JWT claim naming the cell that minted a token.
@@ -83,10 +85,19 @@ func Guard(serving string, logger *zap.Logger) gin.HandlerFunc {
 		// right, which leaves retrying as the only move.
 		c.Header(Header, serving)
 		if logger != nil {
+			// The path and the token's cell are washed; the serving cell is
+			// not. serving comes from this process's own CELL_ID, and the
+			// token cell arrives inside a signature -- but a signature says
+			// who minted the value, not that the value is short or free of
+			// control characters, and these lines are shipped to
+			// Elasticsearch and onward where zap's escaping does not reach.
+			// A percent-encoded %0A in a request target arrives here as a
+			// real newline (internal/common/logsafe/encoder_test.go measures
+			// exactly that).
 			logger.Warn("request carried a token minted in another cell",
-				zap.String("token_cell", asString),
+				logsafe.String("token_cell", asString),
 				zap.String("serving_cell", serving),
-				zap.String("path", c.Request.URL.Path))
+				logsafe.String("path", c.Request.URL.Path))
 		}
 		c.AbortWithStatusJSON(http.StatusMisdirectedRequest, gin.H{
 			"error":             "misdirected_request",

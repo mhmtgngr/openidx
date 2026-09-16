@@ -13,6 +13,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // Decorator wraps a handler with additional behavior
@@ -47,7 +49,7 @@ func WithLogging(logger *zap.Logger) Decorator {
 			// Log request
 			logger.Debug("Request started",
 				zap.String("method", c.Request.Method),
-				zap.String("path", c.Request.URL.Path),
+				logsafe.String("path", c.Request.URL.Path),
 				zap.String("client_ip", c.ClientIP()),
 			)
 
@@ -58,7 +60,7 @@ func WithLogging(logger *zap.Logger) Decorator {
 			duration := time.Since(start)
 			logger.Info("Request completed",
 				zap.String("method", c.Request.Method),
-				zap.String("path", c.Request.URL.Path),
+				logsafe.String("path", c.Request.URL.Path),
 				zap.Int("status", c.Writer.Status()),
 				zap.Duration("duration", duration),
 			)
@@ -76,7 +78,7 @@ func WithErrorLogging(logger *zap.Logger) Decorator {
 			if len(c.Errors) > 0 {
 				for _, err := range c.Errors {
 					logger.Error("Handler error",
-						zap.String("path", c.Request.URL.Path),
+						logsafe.String("path", c.Request.URL.Path),
 						zap.Error(err.Err),
 					)
 				}
@@ -388,7 +390,7 @@ func WithRecovery(logger *zap.Logger) Decorator {
 				if err := recover(); err != nil {
 					logger.Error("Panic recovered",
 						zap.Any("error", err),
-						zap.String("path", c.Request.URL.Path),
+						logsafe.String("path", c.Request.URL.Path),
 					)
 					c.JSON(http.StatusInternalServerError, gin.H{
 						"error": "internal_server_error",
