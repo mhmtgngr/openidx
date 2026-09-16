@@ -9,6 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The tenant directory: which cell serves which org** (migration `v195`,
+  `internal/common/celldir`). `org → {cell_id, region, residency, status}`,
+  with `Lookup`, `HomeCell` and an upsert `Place`.
+
+  **This is the routing decision; the 421 is the backstop behind it.** The two
+  halves of the cell model are easy to conflate. `cell.Guard` answers 421
+  Misdirected Request to a token stamped with another cell — what happens when
+  a routing decision was already made and was wrong. This table *is* the
+  decision, the record the edge reads to send a request to the right cell in
+  the first place. Neither substitutes for the other.
+
+- **The issuer now stamps the tenant's home cell, not its own.** This closes a
+  gap in the guard shipped alongside it. The stamp used to be `CELL_ID` — the
+  cell that *minted* the token — which catches a token carried from one cell to
+  another and **cannot catch a login that reached the wrong cell**: an `eu-1`
+  issuer serving a `us-1` tenant stamped `cell=eu-1`, every `eu-1` guard
+  compared `eu-1` against `eu-1` and agreed, and the request was served from a
+  database that does not hold that tenant. That is the confident 404 the 421
+  exists to replace, arriving through the one door the guard cannot watch. All
+  three access-token mint paths now resolve the home cell, including RFC 8693
+  token exchange — where it matters most, because `oauth-service` mounts no
+  guard, so a subject token from another cell can be exchanged there and would
+  otherwise be laundered into one this cell accepts.
+
+  **Both fallbacks land on today's behaviour, deliberately.** An uncelled
+  install (`CELL_ID` empty — every install today) does no lookup at all. A
+  celled install whose directory is *unreachable* stamps the serving cell and
+  logs, rather than refusing to mint: an issuer that failed closed here would
+  turn a control-plane outage into an authentication outage, which is the
+  failure the plan's own acceptance criterion budgets against.
+
+  **No foreign key to `organizations`, and that is the point.** In a celled
+  deployment the directory is global and `organizations` is per-cell, so the
+  row saying "org X lives in us-1" is precisely a row about an org this cell's
+  database does not have. A foreign key would make the table unable to record
+  the only fact it exists for. The cost — nothing cleans up a placement when an
+  org is deleted — is stated rather than discovered. `cell_id` is `CHECK`ed
+  non-empty because `cell.Misdirected` reads an empty cell as "this token
+  predates the claim" and *serves* the request: a placement naming no cell
+  would be a tenant placed nowhere and refused by nobody.
+
+  The table is `org_id`-scoped under forced RLS from creation; the readers that
+  legitimately cross tenants use `orgctx.WithBypassRLS`, as the outbox relay and
+  SSF transmitter already do.
+
+### Fixed
+
+- **`X-OpenIDX-Cell` names the cell that answered, not the one that should
+  have.** The `cell` package doc claimed the opposite while the code did the
+  former. The guard holds no directory and cannot know where a tenant lives —
+  that is `celldir`'s job, and keeping the database dependency out of the guard
+  is deliberate. RFC 9110 defines no "go there instead" header for 421 either.
+
+### Added
+
 - **A request that reached the wrong cell now says so, instead of answering a
   confident 404 from a database that does not hold the tenant.** `CELL_ID`
   (`config.cellId`) names the cell a process serves. Empty — every install

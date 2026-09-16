@@ -383,6 +383,42 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # The tenant directory (task 4.1, migration v195): which cell serves which
+      # org. It runs as openidx_app for the reason the suite above does -- a
+      # superuser is exempt from every policy, so an isolation assertion would
+      # pass with the belt cut. That is not hypothetical here: the belt test was
+      # written against a superuser first and failed, which is the lucky
+      # direction; written the other way round it would have passed forever
+      # while proving nothing.
+      #
+      # It needs a step of its own rather than riding the internal/common unit
+      # job, because that job sets no DSN and the whole suite would SKIP -- a
+      # guard that never fires is the shape this branch keeps finding one step
+      # before production. The named-test check below is what makes the skip
+      # visible: a skipped test does not print "--- PASS".
+      #
+      # The suite applies the registered v195 SQL itself, so this needs no
+      # migrated database and tests what the loader ships. Running as the role
+      # that OWNS the table is the point rather than an accident: FORCE ROW
+      # LEVEL SECURITY is precisely what extends the policy to the owner, so
+      # against any other role its absence is unobservable. Measured -- with a
+      # non-owner connection, deleting FORCE from the migration left the
+      # isolation test green.
+      - name: The tenant directory is belted, and refuses a placement with no cell
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/common/celldir/ -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          for want in TestOneTenantCannotReadAnothersPlacement \
+                      TestAnEmptyCellIsRefusedTwice \
+                      TestAPlacementCanNameAnOrgThisCellDoesNotHave \
+                      TestAPlacementRoundTrips; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # The platform outbox (task 3.1, migration v192). Every claim it makes is
       # about transactions and row-level security -- atomicity, visibility
       # before commit, a policy that hides another tenant's rows -- and a fake
