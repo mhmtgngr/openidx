@@ -211,10 +211,27 @@ func TestAPlacementCanNameAnOrgThisCellDoesNotHave(t *testing.T) {
 	ctx := context.Background()
 
 	const stranger = "cccccccc-0000-0000-0000-00000000000c"
-	var orgRows int
-	require.NoError(t, pool.QueryRow(ctx,
-		"SELECT count(*) FROM organizations WHERE id=$1", stranger).Scan(&orgRows))
-	require.Zero(t, orgRows, "fixture problem: this org was supposed to be absent")
+
+	// The precondition is that this database does not hold the org. There are
+	// two ways for that to be true and BOTH have to be accepted, which the
+	// first version of this test got wrong: it asked organizations for a count
+	// and CI has no organizations table at all, so the assertion died on
+	// "relation does not exist" before reaching the thing it was testing.
+	//
+	// A missing table is not a broken fixture here -- it is the STRONGER form
+	// of the precondition, and it is what a real cell's directory would face if
+	// the directory were ever split out to its own database. So the count is
+	// taken when the table is there and skipped when it is not.
+	var orgTable *string
+	require.NoError(t, pool.QueryRow(ctx, "SELECT to_regclass('public.organizations')::text").Scan(&orgTable))
+	if orgTable != nil {
+		var orgRows int
+		require.NoError(t, pool.QueryRow(ctx,
+			"SELECT count(*) FROM organizations WHERE id=$1", stranger).Scan(&orgRows))
+		require.Zero(t, orgRows, "fixture problem: this org was supposed to be absent")
+	} else {
+		t.Log("no organizations table in this database at all -- the strongest form of the precondition")
+	}
 
 	require.NoError(t, Place(ctx, pool, Placement{OrgID: stranger, CellID: "us-1"}),
 		"the directory refused a tenant this cell does not hold, which is the only kind it exists to record")
