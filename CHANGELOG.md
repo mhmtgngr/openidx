@@ -94,6 +94,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A JIT elevation outlived the expiry that defines it.** "Admin until 15:00"
+  is enforced by one piece of code, the JIT expiry sweep, and that sweep deleted
+  the assignment row and stopped there. The access token minted at 14:00 still
+  carried the role in its `roles` claim, and the enforcement point resolves that
+  claim's permissions on every request -- so at 15:01 the row was gone, the
+  audit said `jit_access_expired` / `success`, and the elevation kept working
+  until the token expired on its own. An expiry sweep whose entire purpose is a
+  deadline was the path that missed it.
+
+  Two other severs sat right next to it and neither is this one: the DELETE
+  removes what a *future* login would read, and `enqueueNetworkRevocation`
+  closes Ziti circuits on the overlay. Reading a call site is not enough to tell
+  -- the same sweep's sibling path, the access-review decision, does cut tokens,
+  but one frame up from the shared revoke, after its transaction commits.
+
+  Which resource types need the cut is now a single answered question,
+  `jitgrant.TokenCarries`, next to the revoke itself. It is read off what the
+  issuer puts in a token and what the enforcement point reads back: `role`,
+  `privileged_role` and `group` are claims, so ending one leaves a live
+  credential; `application` is in no claim -- access is read from the table at
+  the moment it is used, so the row being gone *is* the enforcement, and cutting
+  there would force a re-login that changes no decision. An unknown type answers
+  yes, because a type nobody classified is likelier to be a forgotten claim than
+  a live table read, and being wrong that way costs one re-authentication rather
+  than access that outlives its own expiry.
+
+  The marker is written only after the access is actually gone. A revoke that
+  failed leaves the request `fulfilled` for the next tick and cuts nothing: a
+  marker for a user whose access is still live is a re-login that fixes nothing
+  while reading, in the log, as though the deadline had been enforced.
+
+  `killUserSessions` now takes the reason it was called for, because the marker
+  is one key and the log line is the only place the caller survives.
+
+  Measured against a real PostgreSQL and a real Redis, with the general and
+  revocation roles bound to separate Redis databases so a marker written to the
+  wrong one is visible, and read back through the key the enforcement point
+  reads. Five mutations red: removing the revoke, writing to the general Redis,
+  making every resource type carry a token (which erases the `application`
+  decision), cutting before the access is removed, and removing the missing-Redis
+  guard. An install with no Redis still sweeps -- refusing to run would leave the
+  elevation live in the database *and* the token.
+
+
 - **Three admin-plane paths take a role away, and none of them cut the token.**
   `RemoveUserRole`, `UpdateUserRoles` and `DeleteRole` are each reached from an
   HTTP handler an administrator drives directly. None disables the account, so

@@ -116,6 +116,39 @@ func Revoke(ctx context.Context, q Execer, resourceType, userID, resourceID, org
 	return nil
 }
 
+// TokenCarries reports whether ending a grant of this resource type leaves a
+// live credential in an already-issued access token -- which is what decides
+// whether the caller must also cut the user's tokens after the row is gone.
+//
+// The answer is a property of the token, so it is read off what the issuer
+// puts in one (internal/oauth builds "roles", "groups" and "permissions" from
+// the database at issuance) and what the enforcement point then reads back:
+//
+//   - role, privileged_role: YES. The enforcement point takes the role list
+//     from the token's "roles" claim and resolves that set's permissions
+//     itself, so a token issued before the DELETE still names the role and
+//     still resolves everything the role grants. This is the whole hole.
+//   - group: YES. "groups" is a claim on the token for the same reason, so a
+//     token issued before the membership ended still asserts it.
+//   - application: NO, and this is a decision, not an oversight.
+//     user_application_assignments appears in no claim; access to an
+//     application is read from the table at the moment it is used, so the row
+//     being gone IS the enforcement. Cutting the token here would force a
+//     re-login that changes no decision.
+//
+// An unknown type answers YES. A type nobody has classified is more likely to
+// be a claim someone forgot than a table read live, and the cost of being
+// wrong in that direction is one re-authentication rather than access that
+// outlives its own expiry.
+func TokenCarries(resourceType string) bool {
+	switch resourceType {
+	case "application":
+		return false
+	default:
+		return true
+	}
+}
+
 // activeForUser is the definition of "a time-bound elevation this user holds":
 // a fulfilled access request with an expiry that has not passed. vault
 // credentials are deliberately excluded -- their authorization is the vault

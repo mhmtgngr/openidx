@@ -27,6 +27,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/leader"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/revocation"
 	"github.com/openidx/openidx/internal/vault"
@@ -606,7 +607,7 @@ func (s *Service) SubmitReviewDecision(ctx context.Context, reviewID, itemID str
 	// Redis is not transactional with Postgres, so invalidate the revoked user's
 	// sessions only after the revocation has committed.
 	if revokedUserID != "" {
-		s.killUserSessions(ctx, revokedUserID)
+		s.killUserSessions(ctx, revokedUserID, "access_review")
 	}
 	return nil
 }
@@ -656,8 +657,9 @@ func (s *Service) revokeReviewItemAccess(ctx context.Context, tx pgx.Tx, itemID,
 }
 
 // killUserSessions forces a user to re-authenticate by setting the user-wide
-// token-revocation marker, so a live session cannot keep using access an access
-// review just revoked.
+// token-revocation marker, so a live session cannot keep using access that has
+// just been severed. why names the path, because the marker is one key and the
+// log line is the only place the caller survives.
 //
 // It used to write auth:user_revoked:<uid>, a key format that came from
 // internal/auth's TokenService -- a service no binary reaches. NOTHING HAS EVER
@@ -671,14 +673,16 @@ func (s *Service) revokeReviewItemAccess(ctx context.Context, tx pgx.Tx, itemID,
 // Best-effort remains right: the revocation has already committed, so a Redis
 // hiccup must not fail the request. Guards a missing Redis (e.g. in tests)
 // rather than panicking.
-func (s *Service) killUserSessions(ctx context.Context, userID string) {
+func (s *Service) killUserSessions(ctx context.Context, userID, why string) {
 	if s.redis == nil || s.redis.Client == nil {
 		return
 	}
 	if err := s.redis.RevocationDB().Set(ctx, revocation.UserTokensRevokedAtKey(userID),
 		revocation.MarkerValue(time.Now()), revocation.MarkerTTL).Err(); err != nil {
-		s.logger.Warn("failed to invalidate sessions after access-review revocation",
-			zap.String("user_id", userID), zap.Error(err))
+		s.logger.Warn("failed to invalidate sessions after severing access",
+			zap.String("user_id", logsafe.Clean(userID)),
+			zap.String("reason", why),
+			zap.Error(err))
 	}
 }
 
@@ -1448,7 +1452,7 @@ func (s *Service) BatchSubmitDecisions(ctx context.Context, reviewID string, ite
 
 	// Invalidate revoked users' sessions after the batch has committed.
 	for _, uid := range revokedUserIDs {
-		s.killUserSessions(ctx, uid)
+		s.killUserSessions(ctx, uid, "access_review_batch")
 	}
 	return nil
 }
