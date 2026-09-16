@@ -92,7 +92,13 @@ config:
   # every source address; after loginFailChallengeAfter failures in
   # loginFailWindowSeconds the next attempt answers challenge_required.
   # off (default) | observe (record who would be challenged) | enforce.
-  # TURNSTILE_SECRET, if used, belongs in the secret store, not here.
+  # Turnstile has two halves and they are not interchangeable: TURNSTILE_SECRET
+  # (the verifier) belongs in the secret store, and turnstileSiteKey (the public
+  # key the login page renders the widget with) belongs here, because every
+  # challenged browser receives it anyway. With either missing a challenged
+  # account waits out the window and the refusal says to wait rather than
+  # asking for a challenge that cannot be shown.
+  turnstileSiteKey: ""
   # Tenant-scope transport (task 2.1): session | local. Default session is
   # today's behaviour. "local" is required before any transaction pooler
   # (pgcat below) may be put in front of Postgres.

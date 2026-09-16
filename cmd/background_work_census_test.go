@@ -34,6 +34,13 @@ import (
 // calls has to resolve to one of three answers, and a new one resolves to none
 // of them until its author picks.
 //
+// AND THIS CENSUS HAS ITS OWN BLIND SPOT, which a third one now covers. Both
+// this file and the sweeps census are keyed on a SPELLING -- Start<Name>( here,
+// time.NewTicker there -- so a loop that repeats on a timer using neither is
+// invisible to both. internal/common/events.Relay.Run is exactly that and is on
+// this tree today. internal/common/leader's periodic-shape census finds the
+// work by shape instead: every unbounded loop that waits on a timer.
+//
 // WHAT THIS DOES NOT MEASURE, and the plan says the same. Whether these
 // starters WOULD BE BETTER OFF in their own cmd/<svc>-worker binaries is a
 // question about load -- how much of a request-serving pod's CPU and pool

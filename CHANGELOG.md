@@ -9,6 +9,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A third coordination census, this one finding periodic work by SHAPE rather
+  than by name** (`internal/common/leader/periodic_shape_census_test.go`). The
+  two that existed are each keyed on a spelling: the sweeps census walks only
+  files containing `time.NewTicker`, and `cmd`'s background-work census derives
+  the `Start<Name>(` calls a `main.go` makes. A loop that repeats on a timer
+  using neither spelling is invisible to both.
+
+  **One exists on this tree, and it was found by measuring rather than
+  guessing.** `internal/common/events.Relay.Run` is the outbox poller: it loops
+  forever on `case <-time.After(PollInterval)`, its file holds zero
+  `time.NewTicker`, and `cmd/event-relay` starts it as `go relay.Run(ctx)` —
+  not a `Start`-anything name. So the sweeps census never opens the file and
+  `cmd`'s census never names the entry point. Both guards pass, and neither is
+  looking at it.
+
+  **Latent, not live.** The relay claims each batch `FOR UPDATE SKIP LOCKED`, so
+  two relays are correct rather than merely tolerated — the lock *is* the
+  coordination. That is now written down, together with the thing that makes it
+  worth writing: a future poller copied from this one **without** the
+  `SKIP LOCKED` claim would be the defect the other two censuses exist to catch,
+  arriving in the one spelling neither of them reads.
+
+  Derived: every loop that repeats without a counter and waits on `time.After`,
+  `Tick`, `Sleep`, `NewTimer` or `NewTicker` inside. **Five on this tree**, each
+  either leader-gated or registered with why every replica running it is
+  correct: the relay (the row lock), the email queue consumer (Redis `BRPop`
+  distributes, and its `Sleep` is an error backoff rather than the period), the
+  migration lock wait (the lock is the point, and it ends at a deadline), the
+  Ziti hosted-service listener (one terminator per pod IS the intent — one in
+  total would send every dial to a single pod), and the CLI's status poll (there
+  are no replicas of a command somebody typed).
+
+  The "unbounded" test admits `for {}` **and** `for cond {}` with no post
+  statement. The second shape matches nothing today — measured — and is included
+  so the derivation cannot be accused of being fitted to this tree; a bounded
+  `for i := 0; i < n; i++` retry with a sleep is deliberately out, because
+  retrying eight times is not periodic work.
+
+  Six mutations red against a green no-op control: a new `runEvery`-shaped loop
+  appearing undeclared; the relay's file starting to name a leader gate (which
+  makes its register entry stale); a register entry naming a loop that moved; a
+  reason thinned out; the derivation blinded to `time.After` — the very spelling
+  that hid the relay; and the pinned count drifting from the tree.
+
+- **The login page can now actually present the bot gate's challenge** — and
+  getting there meant fixing two things that made the instruction impossible to
+  follow (global-scale plan task 1.4, the open half).
+
+  **What shipped before.** `internal/botgate` refuses a login with
+  `403 challenge_required` once an account name has collected enough failures
+  from anywhere, and the body said *"Complete the verification challenge and try
+  again."* Nothing in that response named a challenge or carried a site key, and
+  a Turnstile widget cannot be rendered without one — the public key was not in
+  the configuration at all, only the secret. So the page had exactly one move:
+  print the sentence. The person read an instruction, found nothing to do, and
+  retried into the counter that had just refused them. **A control that tells
+  someone to do something it gives them no way to do is the same defect as one
+  that reports success without doing its job; it just fails in the user's
+  direction.**
+
+  **The site key travels with the refusal.** New `TURNSTILE_SITE_KEY`
+  (`config.turnstileSiteKey` in the chart, beside the secret rather than in the
+  secret store — it is served to every browser that is challenged). The gate
+  answers `ChallengeSiteKey()` only when a verifier is configured too, because
+  each half alone is a dead end: a verifier with no site key is what shipped,
+  and a site key with no verifier is worse — the widget renders, the person
+  solves it, and `Check` ignores the token and falls through to the same
+  counter, which is a loop with no exit and reads as a broken login rather than
+  a lockout. The wording follows the key: with one, "complete the challenge";
+  without one, "wait a few minutes", which is what a soft lockout actually is.
+
+  **And the layer under that: the challenge the browser is not allowed to
+  load.** Turnstile is a script from `challenges.cloudflare.com` that draws
+  itself in an iframe from the same origin, so `script-src 'self'` with no
+  `frame-src` blocks both halves — silently, in the browser, long after every
+  test here has passed. Measured across the three nginx configs:
+  `nginx/admin-console.conf`, which the shipped console image uses, sets no CSP
+  and would have worked; `oidx-nginx/nginx.conf` (which serves the SPA itself)
+  and `conf.d/openidx.tdv.org.conf` both set one that blocks it. **Live, not
+  latent, in two of three.** One pinned origin is now allowed in the directives
+  Turnstile needs, in the blocks that serve the login *document* — the
+  static-asset block keeps the narrow policy, and a test holds it there.
+
+  The console half is `TurnstileChallenge` plus the login page's handling:
+  solving the widget resubmits the credentials the person already typed with
+  `challenge_token` — the gate refused before the password was checked, so
+  nothing about them was wrong, and retyping would punish them for someone
+  else's guessing.
+
+  Ten mutations red against two green no-op controls, across three suites: the
+  refusal dropping the site key; the old sentence returning where no challenge
+  can be rendered; the gate offering a key with no verifier; the page ignoring
+  the key, rendering a widget without one, dropping `challenge_token`, and
+  rendering on any failure; `frame-src` dropped; the origin landing in the
+  static-asset block instead; and one of the two document configs left out. The
+  CSP guard is derived in both directions, so removing the widget makes it
+  report the allowance as a widening with no user.
+
 - **Two more admin reads moved to the read replica, and two measured holes in
   the census that licensed them closed** (global-scale plan task 2.3, batch 5).
   `mfa_management.go handleListUserMFAStatus` and

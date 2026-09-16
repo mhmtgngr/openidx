@@ -48,6 +48,12 @@ data:
   BOT_GATE: {{ .Values.config.botGate | default "off" | quote }}
   LOGIN_FAIL_CHALLENGE_AFTER: {{ .Values.config.loginFailChallengeAfter | default 5 | quote }}
   LOGIN_FAIL_WINDOW_SECONDS: {{ .Values.config.loginFailWindowSeconds | default 900 | quote }}
+  # The PUBLIC half of Turnstile. It is here rather than in the secret store on
+  # purpose: it is served to every browser the bot gate challenges, and the
+  # login page cannot render the widget without it. The SECRET half stays in
+  # the secret store. Either one missing means a challenged account waits out
+  # the window instead, and the refusal says so.
+  TURNSTILE_SITE_KEY: {{ .Values.config.turnstileSiteKey | default "" | quote }}
   # The externally reachable name of the access proxy. It is the host of every
   # temporary vendor-access link, so an unset value (in-code default:
   # "localhost") issues links that point at the RECIPIENT'S machine. Services

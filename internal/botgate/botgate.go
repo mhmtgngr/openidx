@@ -112,6 +112,12 @@ type Config struct {
 	Window         time.Duration
 	ScoreHeader    string
 	ChallengeBelow int
+	// SiteKey is the PUBLIC key the login page renders the challenge widget
+	// with (Cloudflare Turnstile's sitekey). It is not a credential -- it is
+	// served to every browser that is challenged -- and it is here rather than
+	// at the handler because whether a challenge can be RENDERED is the same
+	// question as whether one can be CHECKED. See ChallengeSiteKey.
+	SiteKey string
 }
 
 // Gate is the login-door decision maker. Safe for concurrent use.
@@ -147,6 +153,28 @@ func (g *Gate) Mode() Mode { return g.cfg.Mode }
 
 // ScoreHeader is the request header the gate reads the edge verdict from.
 func (g *Gate) ScoreHeader() string { return g.cfg.ScoreHeader }
+
+// ChallengeSiteKey is the public key the login page needs to render a
+// challenge, and it is empty unless this gate can also CHECK one.
+//
+// THE TWO TRAVEL TOGETHER OR NOT AT ALL, and each half alone is a different
+// kind of dead end. A verifier with no site key is what this deployment had:
+// the refusal told the person to complete a verification challenge, and
+// nothing in the response said what challenge or where to get it, so the page
+// could only print the sentence. A site key with no verifier is worse, because
+// it looks like it works: the widget renders, the person solves it, the token
+// is sent -- and Check, with no verifier, ignores it and falls through to the
+// counter that refused them in the first place. A loop with no exit reads as a
+// broken login, not as a lockout.
+//
+// So the gate answers this question once, for both halves, and a caller that
+// gets "" knows to say "wait" rather than "prove you are human".
+func (g *Gate) ChallengeSiteKey() string {
+	if g.verifier == nil {
+		return ""
+	}
+	return g.cfg.SiteKey
+}
 
 // Key is the Redis key for an account name in an org. The name is hashed:
 // the key must not be a list of usernames anyone with Redis access can read,

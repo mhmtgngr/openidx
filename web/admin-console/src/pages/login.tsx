@@ -14,6 +14,7 @@ import { decodeCredentialRequestOptions, serializeAssertionResponse, type Public
 import { QRCodeSVG } from 'qrcode.react'
 import { LanguageSwitcher } from '../components/language-switcher'
 import { AuthCardFooter, PoweredBy } from '../components/auth-card-footer'
+import { TurnstileChallenge } from '../components/turnstile-challenge'
 
 interface MFAOption {
   method: string
@@ -34,6 +35,12 @@ export function LoginPage() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // The bot gate's challenge (global-scale plan task 1.4). challengeSiteKey is
+  // non-empty only between a 403 challenge_required that carried a site key and
+  // the resubmission that answers it -- the server sends one only when it can
+  // also verify the answer, so a page that has one can always finish.
+  const [challengeSiteKey, setChallengeSiteKey] = useState('')
 
   // MFA state
   const [mfaRequired, setMfaRequired] = useState(false)
@@ -293,6 +300,16 @@ export function LoginPage() {
 
   const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    await submitCredentials()
+  }
+
+  // submitCredentials is the credentials POST, with or without a solved
+  // challenge. The challenge path re-sends the SAME credentials the person
+  // already typed rather than asking them to type them again: the gate refused
+  // the attempt before the password was checked, so nothing about it was
+  // wrong yet, and making them retype it would be a second punishment for the
+  // failures of whoever else was guessing their account name.
+  const submitCredentials = async (challengeToken?: string) => {
     setError('')
     setIsSubmitting(true)
 
@@ -306,15 +323,25 @@ export function LoginPage() {
           username,
           password,
           login_session: loginSession,
+          ...(challengeToken ? { challenge_token: challengeToken } : {}),
         }),
       })
 
       const data = await response.json()
 
       if (!response.ok) {
+        // A refusal carrying a site key is the one failure the person can do
+        // something about. Without a key the server is telling us it cannot
+        // check an answer either, so the message says to wait and no widget
+        // appears -- rendering one that can never be accepted would be worse
+        // than the sentence alone.
+        setChallengeSiteKey(
+          data.error === 'challenge_required' && typeof data.site_key === 'string' ? data.site_key : '',
+        )
         setError(data.error_description || t('login.errors.loginFailed'))
         return
       }
+      setChallengeSiteKey('')
 
       // Check if concurrent session limit reached
       if (data.concurrent_limit_reached) {
@@ -1180,6 +1207,23 @@ export function LoginPage() {
                 <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
                   <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
                   <p className="text-sm text-red-600">{error}</p>
+                </div>
+              )}
+
+              {challengeSiteKey && (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">{t('login.challenge.prompt')}</p>
+                  <TurnstileChallenge
+                    siteKey={challengeSiteKey}
+                    onSolved={(token) => {
+                      setChallengeSiteKey('')
+                      void submitCredentials(token)
+                    }}
+                    onError={() => {
+                      setChallengeSiteKey('')
+                      setError(t('login.challenge.unavailable'))
+                    }}
+                  />
                 </div>
               )}
 
