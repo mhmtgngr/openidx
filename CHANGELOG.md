@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A third coordination census, this one finding periodic work by SHAPE rather
+  than by name** (`internal/common/leader/periodic_shape_census_test.go`). The
+  two that existed are each keyed on a spelling: the sweeps census walks only
+  files containing `time.NewTicker`, and `cmd`'s background-work census derives
+  the `Start<Name>(` calls a `main.go` makes. A loop that repeats on a timer
+  using neither spelling is invisible to both.
+
+  **One exists on this tree, and it was found by measuring rather than
+  guessing.** `internal/common/events.Relay.Run` is the outbox poller: it loops
+  forever on `case <-time.After(PollInterval)`, its file holds zero
+  `time.NewTicker`, and `cmd/event-relay` starts it as `go relay.Run(ctx)` —
+  not a `Start`-anything name. So the sweeps census never opens the file and
+  `cmd`'s census never names the entry point. Both guards pass, and neither is
+  looking at it.
+
+  **Latent, not live.** The relay claims each batch `FOR UPDATE SKIP LOCKED`, so
+  two relays are correct rather than merely tolerated — the lock *is* the
+  coordination. That is now written down, together with the thing that makes it
+  worth writing: a future poller copied from this one **without** the
+  `SKIP LOCKED` claim would be the defect the other two censuses exist to catch,
+  arriving in the one spelling neither of them reads.
+
+  Derived: every loop that repeats without a counter and waits on `time.After`,
+  `Tick`, `Sleep`, `NewTimer` or `NewTicker` inside. **Five on this tree**, each
+  either leader-gated or registered with why every replica running it is
+  correct: the relay (the row lock), the email queue consumer (Redis `BRPop`
+  distributes, and its `Sleep` is an error backoff rather than the period), the
+  migration lock wait (the lock is the point, and it ends at a deadline), the
+  Ziti hosted-service listener (one terminator per pod IS the intent — one in
+  total would send every dial to a single pod), and the CLI's status poll (there
+  are no replicas of a command somebody typed).
+
+  The "unbounded" test admits `for {}` **and** `for cond {}` with no post
+  statement. The second shape matches nothing today — measured — and is included
+  so the derivation cannot be accused of being fitted to this tree; a bounded
+  `for i := 0; i < n; i++` retry with a sleep is deliberately out, because
+  retrying eight times is not periodic work.
+
+  Six mutations red against a green no-op control: a new `runEvery`-shaped loop
+  appearing undeclared; the relay's file starting to name a leader gate (which
+  makes its register entry stale); a register entry naming a loop that moved; a
+  reason thinned out; the derivation blinded to `time.After` — the very spelling
+  that hid the relay; and the pinned count drifting from the tree.
+
 - **The login page can now actually present the bot gate's challenge** — and
   getting there meant fixing two things that made the instruction impossible to
   follow (global-scale plan task 1.4, the open half).
