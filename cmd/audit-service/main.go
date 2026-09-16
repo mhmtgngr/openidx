@@ -17,6 +17,7 @@ import (
 	"github.com/openidx/openidx/internal/api"
 	"github.com/openidx/openidx/internal/audit"
 	"github.com/openidx/openidx/internal/auth"
+	"github.com/openidx/openidx/internal/common/cell"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
@@ -295,6 +296,9 @@ func main() {
 	}
 
 	// Register standard audit routes
+	// The cell guard runs after this service's own authentication, so the
+	// cell it reads is one a signature covered.
+	auditAuth = append(auditAuth, cell.Guard(cfg.CellID, log))
 	audit.RegisterRoutes(router, auditService, auditAuth...)
 	audit.RegisterReportRoutes(router.Group("/api/v1/audit"), auditService, auditAuth...)
 

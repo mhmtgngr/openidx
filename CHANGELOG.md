@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A request that reached the wrong cell now says so, instead of answering a
+  confident 404 from a database that does not hold the tenant.** `CELL_ID`
+  (`config.cellId`) names the cell a process serves. Empty — every install
+  today — changes nothing. Set, the issuer stamps the cell into a `cell` claim
+  on every access token it mints, and `cell.Guard` answers **421 Misdirected
+  Request** with `X-OpenIDX-Cell` naming the cell that should have served the
+  request, so a caller can correct its routing without a directory lookup and
+  an operator can tell a misroute from a genuinely missing tenant. Without it
+  those two are the same 404.
+
+  **This is the backstop, not the routing.** The edge decides which cell serves
+  a tenant, from the tenant directory; this is what happens when that decision
+  was stale. The two are easy to conflate and neither substitutes for the
+  other — the directory makes the common case right, and this makes the
+  uncommon case legible.
+
+  **Three flows mint an access token, and stamping one of them would have been
+  worse than stamping none.** `GenerateJWT`, the SAML flow's
+  `generateTokensForUser` and RFC 8693's `issueExchangedToken` all produce a
+  bearer an API is handed; only the first was stamped when this was written.
+  A guard that refuses tokens from one login flow and serves tokens from
+  another makes the behaviour depend on how the caller signed in, which is the
+  hardest kind of failure to report. All three are stamped now, and a census
+  derives every `jwt.MapClaims` the package mints from the source: each one is
+  either registered as a stamped bearer or carries a written reason it is not.
+  ID tokens (both of them) are not stamped — an ID token is handed to the
+  client to read, never presented back as a bearer, so the guard never sees it.
+
+  **An unstamped token is served, deliberately.** Requiring the claim would
+  make setting `CELL_ID` a flag day: every token outstanding at that moment
+  would start failing, including ones minted seconds earlier by the same
+  process. During the rollout window a misrouted request carrying an old token
+  gets the 404 it would have got anyway. The cost is written down rather than
+  discovered.
+
+  The guard is mounted in `access-service`, `admin-api`, `audit-service`,
+  `governance-service` and `provisioning-service`. `identity-service` and
+  `oauth-service` are not mounted and a register in `cmd/` names why, so the
+  gap is a backlog entry rather than something a second cell discovers.
+  `CELL_ID` reaches all of them plus the issuer through the shared ConfigMap,
+  and the chart render asserts which containers actually consume it: every
+  service in one cell must agree on which cell it is, because a cell where one
+  service refuses a foreign token and another serves it is worse than one where
+  none do.
+
+### Fixed
+
+- **A guard documented a class it did not check.** `internal/common/logsafe`'s
+  package comment names the request target as attacker-controlled text — "a
+  percent-encoded `%0A` in a request target arrives in `c.Request.URL.Path` as
+  a real newline" — but `no_tainted_field_test.go` only tracked values assigned
+  to a local from `c.Param`/`c.Query`/`c.GetHeader`. A function that logs
+  `c.Request.URL.Path` inline has no tainted local at all, so it was skipped
+  entirely: the guard's first act was `if len(tainted) == 0 { return }`.
+  CodeQL reported one such site; four more had the same shape in
+  `internal/common/handlers/decorator.go`. All five now go through
+  `logsafe.String`, and the guard reads `c.Request.URL.{Path,RawPath,RawQuery,
+  Fragment}` wherever they appear rather than only through a local.
+
+  `c.Request.RemoteAddr` is deliberately left alone: net/http writes it from the
+  accepted connection, it is bounded by an address and a port, and a guard that
+  reports noise is a guard somebody turns off. The three sites logging it stay
+  as they are, and the exclusion is a test case rather than an omission.
+
+- **The identity plane split reached the routes and not the background work.**
+  `cmd/identity-service/main.go` started its sweeps without ever consulting
+  `serviceProfile`, so `SERVICE_PROFILE=auth` — the ISSUE half, which registers
+  login and MFA routes only — also ran `StartRoleExpirationChecker`. That sweep
+  deletes expired time-bound role assignments across every org and revokes the
+  tokens still carrying them; nothing about it belongs to a login. It now sits
+  behind `serviceProfile.ServesAdmin()`, and since the unsplit process is
+  `ProfileAll` (which serves ADMIN), **a default install is unchanged**.
+
+  **The reason is latent rather than live, and saying which is the point.** The
+  sweep is leader-gated, so the cost was already one replica per minute
+  cluster-wide, and an auth pod winning that election is harmless today:
+  `values.yaml` gives *both* halves the `admin` database role. What makes it
+  matter is the move that file already names as next — the auth half to the
+  `issue` role, whose `statement_timeout` is sized for a login query rather than
+  a `DELETE` across every org. Elected onto an ISSUE pod after that move, this
+  sweep would fail every tick it won. Gating it now keeps that move a
+  configuration change instead of an incident.
+
+  **The SMS config watcher is deliberately not gated.** It reads one
+  `system_settings` row and writes nothing: the tick swaps *this process's own*
+  SMS provider, so a pod skipping it would keep sending codes through a provider
+  an admin has already replaced — and the auth half is the one sending MFA codes
+  during login. The sweeps census in `internal/common/leader` already records it
+  as per-process for that reason, and gating it was one of the mutations.
+
+  A register in `cmd/identity-service` now requires every background starter to
+  declare its plane: ADMIN-plane work behind the profile check, per-process work
+  outside it with the reason a pod skipping it would be wrong. An unclassified
+  starter fails the build, and so does a register entry for a starter `main.go`
+  no longer calls. Four mutations red; a fifth did not compile, so it was not
+  treated as a signal and was redone in a form that did.
+
+  **A measurement in the plan is corrected alongside it:** an earlier paragraph
+  said eleven tickers stood "undecided" in the sweeps census. The register
+  carries **one** today (`internal/access/ziti_reconciler.go`, parked for want of
+  a Ziti controller to measure against), and a test pins that count. The
+  coordination question is closed; the open one is which sweeps run *inside*
+  request-serving processes — seven binaries start more than twenty between
+  them, ten in `access-service` alone.
+
 ### Changed
 
 - **The Redis half moved to `internal/common/redisclient`, and a claim about

@@ -32,6 +32,7 @@ import (
 	"github.com/openidx/openidx/internal/abac"
 	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/botgate"
+	"github.com/openidx/openidx/internal/common/cell"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
@@ -247,6 +248,13 @@ type Service struct {
 	signer           atomic.Pointer[signerSnapshot]
 	issuer           string
 	tenantBaseDomain string // when set, JWT iss is derived per-tenant (https://<slug>.<base>)
+	// cellID stamps every access token this issuer mints with the cell it was
+	// minted in, so a cell that receives one can tell whether it is the cell
+	// that should have. Empty on a single-cell install, which is every install
+	// today, and empty means the claim is not emitted at all rather than
+	// emitted blank -- an empty claim is a value downstream has to
+	// special-case, and its absence already says the same thing.
+	cellID string
 	// dcrInitialAccessToken gates POST /oauth/register (RFC 7591). Empty = open
 	// registration (dev/first-run); set to require a bearer initial access token.
 	dcrInitialAccessToken string
@@ -404,6 +412,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		keyStore:                 keyStore,
 		issuer:                   issuer,
 		tenantBaseDomain:         cfg.TenantBaseDomain,
+		cellID:                   cfg.CellID,
 		dcrInitialAccessToken:    cfg.DCRInitialAccessToken,
 		dcrAllowOpenRegistration: cfg.DCRAllowOpenRegistration,
 		ssfReceiverConfig:        SSFReceiverConfig{Issuer: cfg.SSFReceiverIssuer, JWKSURL: cfg.SSFReceiverJWKSURL},
@@ -1236,6 +1245,14 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 		"roles":       roleNames,
 		"groups":      groupNames,
 		"permissions": permStrings,
+	}
+
+	// The cell this token was minted in, when this install is celled. On the
+	// ACCESS token only: cell.Guard reads the bearer a request presents, and an
+	// ID token is handed to the client rather than back to the API, so stamping
+	// one would be a claim nothing reads.
+	if s.cellID != "" {
+		claims[cell.Claim] = s.cellID
 	}
 
 	// Add session ID claim if provided
@@ -4604,6 +4621,14 @@ func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, cli
 	if containsScope(scopes, "email") {
 		claims["email"] = user.Email
 		claims["email_verified"] = true
+	}
+
+	// The cell this token was minted in, on the same terms as GenerateJWT: this
+	// is the SAML flow's own access token and it is presented to the same APIs,
+	// so it has to carry the same stamp. The ID token below deliberately does
+	// not -- see the register in cell_claim_census_test.go.
+	if s.cellID != "" {
+		claims[cell.Claim] = s.cellID
 	}
 
 	signKid, signKey := s.signingKey()

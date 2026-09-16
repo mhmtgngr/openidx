@@ -441,6 +441,65 @@ jobs:
 
           echo "the relay ships with a broker, or does not ship"
 
+      - name: Every service in a cell agrees on which cell it is
+        run: |
+          set -euo pipefail
+          base=(--set secrets.postgresPassword=render-only
+                --set secrets.redisPassword=render-only
+                --set secrets.encryptionKey=render-only-not-a-credential32b)
+
+          # Off by default: an install that never heard of cells must mint
+          # unstamped tokens and refuse nothing.
+          helm template cell-render-check "$CHART" "${base[@]}" > /tmp/render-cell-default.yaml
+          # Set, and it has to LAND: the Go half reads CELL_ID, the guard is
+          # mounted in five binaries, and none of that is reachable if the
+          # value stops at the ConfigMap. So the assertion is which containers
+          # actually consume it, not that the key rendered.
+          helm template cell-render-check "$CHART" "${base[@]}" \
+                 --set config.cellId=eu-1 > /tmp/render-cell-on.yaml
+          python3 - /tmp/render-cell-default.yaml /tmp/render-cell-on.yaml <<'PYEOF'
+          import sys, yaml
+
+          def load(path):
+              return [d for d in yaml.safe_load_all(open(path)) if d]
+
+          default_docs, on_docs = load(sys.argv[1]), load(sys.argv[2])
+
+          def config_map(docs):
+              return next(d for d in docs if d["kind"] == "ConfigMap"
+                          and d["metadata"]["name"].endswith("-config"))
+
+          assert config_map(default_docs)["data"]["CELL_ID"] == "", "cells are not on by default"
+          cm = config_map(on_docs)
+          assert cm["data"]["CELL_ID"] == "eu-1", cm["data"]["CELL_ID"]
+
+          # Which Deployments read that ConfigMap.
+          reads = set()
+          for d in on_docs:
+              if d["kind"] != "Deployment":
+                  continue
+              component = d["metadata"]["labels"].get("app.kubernetes.io/component")
+              for c in d["spec"]["template"]["spec"]["containers"]:
+                  for src in c.get("envFrom") or []:
+                      if src.get("configMapRef", {}).get("name") == cm["metadata"]["name"]:
+                          reads.add(component)
+
+          # The five that mount cell.Guard (cmd/cell_guard_census_test.go) plus
+          # the issuer, which stamps the claim the guard reads. A guard with no
+          # CELL_ID refuses nothing; an issuer with no CELL_ID mints tokens the
+          # guards of OTHER cells cannot tell from pre-cell tokens, so both
+          # halves have to receive it or the feature is off with the switch on.
+          need = {"access-service", "admin-api", "audit-service",
+                  "governance-service", "provisioning-service", "oauth-service"}
+          missing = need - reads
+          assert not missing, f"these never see CELL_ID: {sorted(missing)}"
+
+          # verify-service is deliberately NOT here: it carries no envFrom at
+          # all (see the step above) and mounts no guard -- it serves the key
+          # set, which is the same in every cell.
+          assert "verify-service" not in reads
+          PYEOF
+
       - name: The verify tier holds nothing, and can reach the issuer
         run: |
           set -euo pipefail

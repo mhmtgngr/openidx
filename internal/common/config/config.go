@@ -82,6 +82,18 @@ type Config struct {
 	// identity.ParseProfile.
 	ServiceProfile string `mapstructure:"service_profile"`
 
+	// CellID names the cell this process serves (global-scale plan 4.1). Empty
+	// is a single-cell install, which is every install today, and with it empty
+	// nothing about token minting or request handling changes.
+	//
+	// Set, it does two things: the issuer stamps it into the `cell` claim of
+	// every access token it mints, and cell.Guard answers 421 Misdirected
+	// Request to a token stamped with a DIFFERENT cell. The second is a
+	// backstop, not routing -- the edge decides which cell serves a tenant, and
+	// this is what makes the case where that decision was stale legible instead
+	// of arriving as a confident 404 from a cell that does not hold the data.
+	CellID string `mapstructure:"cell_id"`
+
 	// Admission control (global-scale plan task 3.5, ADR-10). A bound on how
 	// many requests this process carries AT ONCE, which is not a rate limit: a
 	// rate limiter bounds arrivals and cannot see what the process is already
@@ -1077,6 +1089,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("outbox_keep_for_hours", 0)
 	// Empty = "all": every route, i.e. today's behaviour.
 	v.SetDefault("service_profile", "")
+	v.SetDefault("cell_id", "")
 	// Admission control is off until an operator sizes it (task 3.5).
 	v.SetDefault("admission_max_inflight", 0)
 	v.SetDefault("admission_queue_timeout", "")
@@ -1307,6 +1320,7 @@ func bindEnvVars(v *viper.Viper) {
 		"event_subject_prefix":                "EVENT_SUBJECT_PREFIX",
 		"outbox_keep_for_hours":               "OUTBOX_KEEP_FOR_HOURS",
 		"service_profile":                     "SERVICE_PROFILE",
+		"cell_id":                             "CELL_ID",
 		"admission_max_inflight":              "ADMISSION_MAX_INFLIGHT",
 		"admission_queue_timeout":             "ADMISSION_QUEUE_TIMEOUT",
 		"admission_retry_after":               "ADMISSION_RETRY_AFTER",

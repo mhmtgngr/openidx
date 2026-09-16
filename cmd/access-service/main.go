@@ -18,6 +18,7 @@ import (
 	"github.com/openidx/openidx/internal/apikeys"
 	"github.com/openidx/openidx/internal/audit"
 	"github.com/openidx/openidx/internal/auth"
+	"github.com/openidx/openidx/internal/common/cell"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/leader"
@@ -629,7 +630,7 @@ func main() {
 	// /api/v1/access surface unauthenticated (see the PAM endpoint-control fix).
 	if cfg.Environment != "development" {
 		apiKeyService := apikeys.NewService(db, redis, log)
-		access.RegisterRoutes(router, accessService, middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, apiKeyService.MiddlewareValidator()))
+		access.RegisterRoutes(router, accessService, middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, apiKeyService.MiddlewareValidator()), cell.Guard(cfg.CellID, log))
 	} else if cfg.AccessAPIRequireAuth {
 		// Dev mode but the box is reachable off-localhost: force the same
 		// hard-blocking auth as production so the data API refuses anonymous
@@ -638,9 +639,9 @@ func main() {
 		// and stay public.
 		apiKeyService := apikeys.NewService(db, redis, log)
 		log.Warn("ACCESS_API_REQUIRE_AUTH=true: forcing hard auth on /api/v1/access data API despite APP_ENV=development")
-		access.RegisterRoutes(router, accessService, middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, apiKeyService.MiddlewareValidator()))
+		access.RegisterRoutes(router, accessService, middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, apiKeyService.MiddlewareValidator()), cell.Guard(cfg.CellID, log))
 	} else {
-		access.RegisterRoutes(router, accessService, middleware.SoftAuth(cfg.OAuthJWKSURL))
+		access.RegisterRoutes(router, accessService, middleware.SoftAuth(cfg.OAuthJWKSURL), cell.Guard(cfg.CellID, log))
 	}
 
 	// Create HTTP server

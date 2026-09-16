@@ -8,6 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/cell"
 )
 
 // Token Exchange (RFC 8693).
@@ -196,6 +198,15 @@ func (s *Service) issueExchangedToken(c *gin.Context, subject, audience, scope s
 			act["act"] = prior
 		}
 		claims["act"] = act
+	}
+
+	// The cell stamp is minted fresh rather than copied from the subject token.
+	// The loop above preserves identity claims because they describe the
+	// subject; `cell` describes the ISSUER, and the issuer of this token is this
+	// process. Copying it would let a token exchanged here claim to have been
+	// minted somewhere else.
+	if s.cellID != "" {
+		claims[cell.Claim] = s.cellID
 	}
 
 	kid, signKey := s.signingKey()

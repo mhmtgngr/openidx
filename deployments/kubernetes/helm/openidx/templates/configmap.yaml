@@ -33,6 +33,16 @@ data:
   #                       ONLY mode a transaction pooler may sit in front of.
   # pgcat.enabled requires "local"; the chart refuses to render otherwise.
   RLS_MODE: {{ .Values.config.rlsMode | default "session" | quote }}
+  # The cell this install serves (global-scale plan task 4.1). Empty is a
+  # single-cell install, which is every install today, and empty changes
+  # nothing. Set, the issuer stamps it into the `cell` claim of every access
+  # token, and the services answer 421 Misdirected Request to a token stamped
+  # with a DIFFERENT cell instead of a 404 from a database that does not hold
+  # that tenant. It belongs in this shared ConfigMap rather than per service
+  # BECAUSE every service in one cell must agree on the answer: a cell where
+  # one service refuses a foreign token and another serves it is worse than one
+  # where none do, since the behaviour then depends on which endpoint was hit.
+  CELL_ID: {{ .Values.config.cellId | default "" | quote }}
   # Bot gate at the login door (global-scale plan task 1.4): off | observe |
   # enforce. Start in observe and read the bot_gate audit rows before enforce.
   BOT_GATE: {{ .Values.config.botGate | default "off" | quote }}

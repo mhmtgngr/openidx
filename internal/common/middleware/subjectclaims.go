@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/openidx/openidx/internal/common/cell"
 )
 
 // BindSubjectClaims puts the caller's identity from a verified token into the
@@ -40,6 +42,13 @@ func BindSubjectClaims(c *gin.Context, claims map[string]interface{}) {
 	}
 	if groups := stringsFromClaim(claims["groups"]); groups != nil {
 		c.Set("groups", groups)
+	}
+	// The cell that minted this token, for cell.Guard. It is bound here rather
+	// than read from the header the request arrived with for the reason the
+	// whole function exists: what a policy or a guard decides on has to be
+	// something the signature covered. A caller can set any header it likes.
+	if mintedIn, ok := claims[cell.Claim].(string); ok && mintedIn != "" {
+		c.Set(cell.Claim, mintedIn)
 	}
 }
 

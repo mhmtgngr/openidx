@@ -97,6 +97,12 @@ config:
   # today's behaviour. "local" is required before any transaction pooler
   # (pgcat below) may be put in front of Postgres.
   rlsMode: "session"
+  # The cell this install serves (task 4.1). Empty = a single-cell install,
+  # which is every install today; nothing changes until it is set. When it is,
+  # every service in the cell reads the SAME value from the shared ConfigMap,
+  # and a token minted in another cell gets 421 with X-OpenIDX-Cell naming this
+  # one. It is a backstop behind the edge's routing decision, not the routing.
+  cellId: ""
   botGate: "off"
   loginFailChallengeAfter: 5
   loginFailWindowSeconds: 900

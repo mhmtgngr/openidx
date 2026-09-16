@@ -19,6 +19,7 @@ import (
 	"github.com/openidx/openidx/internal/apikeys"
 	"github.com/openidx/openidx/internal/audit"
 	"github.com/openidx/openidx/internal/auth"
+	"github.com/openidx/openidx/internal/common/cell"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/health"
@@ -355,6 +356,10 @@ func main() {
 		// In dev mode, use soft auth to identify caller without blocking
 		v1.Use(middleware.SoftAuth(cfg.OAuthJWKSURL))
 	}
+
+	// After authentication, whichever branch above supplied it: the cell claim
+	// is only worth reading once a signature has covered it.
+	v1.Use(cell.Guard(cfg.CellID, log))
 
 	// Resolve permissions from roles (cached in Redis)
 	v1.Use(middleware.PermissionResolver(db.Pool, redis.Client))
