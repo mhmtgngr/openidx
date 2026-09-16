@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`openidx cell place|show` — the tenant directory's write path, which did not
+  exist** (global-scale plan task 4.1). `internal/common/celldir` has held a
+  `Place` since the directory landed, and the package's own comment calls
+  `Execer` "the write surface, for the placement tool". Measured across
+  `internal/` and `cmd/`: **nothing called it.** The read half was live — the
+  issuer looks up a tenant's home cell to stamp a token with it — so the
+  directory was a table that could only ever answer "not placed", and every
+  token fell back to whichever cell minted it. A capability that is declared and
+  cannot be exercised is the shape this branch keeps finding; this is that shape
+  with the tool missing rather than the claim wrong.
+
+  **A command, not an endpoint.** Placing a tenant is a control-plane act and
+  the control plane is not inside a cell: an admin-api in `eu-1` deciding that a
+  tenant lives in `us-1` is one cell's view of a directory spanning all of them,
+  and every cell would need the same write. A command run against the directory
+  database by whoever is moving the tenant is also the only thing that can run
+  before any cell serves that tenant at all.
+
+  **What the belt costs the tool, measured rather than assumed.** `org_cells` is
+  org-scoped and FORCE-belted, so a connection carrying no tenant scope writes
+  nothing — including this one. The placement runs in a transaction that sets
+  `app.bypass_rls` locally, the same door the outbox relay and the SSF
+  transmitter go through, named at the call site rather than granted to
+  everybody by leaving the table unbelted.
+  `TestWithoutTheControlPlaneBypassTheBeltRefusesTheWrite` drives the same
+  `INSERT` without it and requires the policy to refuse — against a real
+  PostgreSQL, as the role that OWNS the table, which is what makes `FORCE`
+  observable at all.
+
+  Six mutations red against a green baseline: the command dropping the bypass
+  (the write is refused); the empty-cell refusal removed; the upsert no longer
+  moving a placed tenant; a move rewriting `created_at`, which is when the
+  tenant was *first* placed; `show` treating an unplaced org as a failure rather
+  than as the answer it is for every install today; and `FORCE` deleted from
+  v195, which turns the belt's refusal into an acceptance.
+
+  The suite has its own CI step with named `--- PASS:` checks, because a
+  database test in a job that sets no DSN skips silently — a guard that never
+  fires being the shape this branch keeps finding one step before production.
+
+  **Not built, and not claimed:** a cross-tenant `list`. It needs a read surface
+  `celldir` does not have, and adding one is a decision about the control
+  plane's read path rather than part of making the write path exist.
+
 - **A third coordination census, this one finding periodic work by SHAPE rather
   than by name** (`internal/common/leader/periodic_shape_census_test.go`). The
   two that existed are each keyed on a spelling: the sweeps census walks only

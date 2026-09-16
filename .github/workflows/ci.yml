@@ -419,6 +419,31 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # The placement tool, and the belt it has to go through to write. The
+      # directory's write path did not exist until this step's suite did:
+      # celldir.Place had no caller anywhere, so the table could only ever
+      # answer "not placed". These tests drive the real cobra command against a
+      # real belted table, as the role that OWNS it -- which is what makes both
+      # halves observable. With the transaction-local bypass the placement
+      # lands; without it the policy refuses the same INSERT, and deleting
+      # FORCE from v195 turns that refusal into an acceptance. Measured, all
+      # three.
+      - name: The placement tool writes the directory, and the belt refuses it without the bypass
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./cmd/openidx/commands/ -run 'PlacementTool|PlacingTwice|WithoutTheControlPlaneBypass|AnEmptyCellIsRefusedByTheTool|ShowingAnUnplacedOrg' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          for want in TestThePlacementToolWritesTheDirectory \
+                      TestPlacingTwiceMovesTheTenantAndKeepsItsHistory \
+                      TestWithoutTheControlPlaneBypassTheBeltRefusesTheWrite \
+                      TestAnEmptyCellIsRefusedByTheTool \
+                      TestShowingAnUnplacedOrgIsNotAnError; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # The platform outbox (task 3.1, migration v192). Every claim it makes is
       # about transactions and row-level security -- atomicity, visibility
       # before commit, a policy that hides another tenant's rows -- and a fake
