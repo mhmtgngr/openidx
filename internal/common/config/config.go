@@ -1019,6 +1019,8 @@ func setDefaults(v *viper.Viper, serviceName string) {
 		// only. It is in the table anyway so the chart's probe and the binary
 		// agree without either of them hardcoding a number.
 		"event-relay": 8009,
+		// The verification tier: /.well-known/jwks.json, /health, /metrics.
+		"verify-service": 8010,
 	}
 	if port, ok := ports[serviceName]; ok {
 		v.SetDefault("port", port)

@@ -1,4 +1,4 @@
-package middleware
+package jwksverify
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
@@ -19,8 +19,11 @@ import (
 //   - openidx_jwks_stale_seconds high             → how far past TTL the served key
 //     set is; approaching JWKS_MAX_STALE
 //     means verify is about to fail
+//
+// The counters are exported because the drills that prove the serve-stale
+// belt engages live in the packages that call this one.
 var (
-	jwksRefreshSuccessTotal = promauto.NewCounter(
+	RefreshSuccessTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "openidx",
 			Name:      "jwks_refresh_success_total",
@@ -28,7 +31,7 @@ var (
 		},
 	)
 
-	jwksRefreshFailuresTotal = promauto.NewCounter(
+	RefreshFailuresTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "openidx",
 			Name:      "jwks_refresh_failures_total",
@@ -36,7 +39,7 @@ var (
 		},
 	)
 
-	jwksServeStaleTotal = promauto.NewCounter(
+	ServeStaleTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "openidx",
 			Name:      "jwks_serve_stale_total",
@@ -44,7 +47,7 @@ var (
 		},
 	)
 
-	jwksStaleSeconds = promauto.NewGauge(
+	StaleSeconds = promauto.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "openidx",
 			Name:      "jwks_stale_seconds",

@@ -84,7 +84,7 @@ Bu bölüm övgü de eleştiri de değildir; planın üzerine kurulduğu zemindi
 | 8 bağımsız süreç, ayrı Deployment, replika 2, PDB, anti-affinity, NetworkPolicy default-deny | `deployments/kubernetes/helm/openidx/values.yaml`, `templates/networkpolicy.yaml` |
 | Ingress HA: ≥2 controller, HPA, AZ yayılımı, NLB, `externalTrafficPolicy: Local` | `deployments/kubernetes/ingress-nginx-values.yaml` |
 | Tek L7 kenar (APISIX), gateway-service istek yolundan çıkarıldı | `docs/architecture/edge.md` |
-| Durumsuz verify: RS256 + JWKS, bayat-servis (`JWKS_MAX_STALE`), PG'den bağımsız | `internal/common/middleware/jwks_metrics.go`, `docs/architecture/always-available-auth-plan.md` Tier 0 |
+| Durumsuz verify: RS256 + JWKS, bayat-servis (`JWKS_MAX_STALE`), PG'den bağımsız | `internal/common/jwksverify/`, `cmd/verify-service/`, `docs/architecture/always-available-auth-plan.md` Tier 0 |
 | Redis tabanlı dağıtık hız sınırı; auth yolları Redis yokken **kapalı-başarısız** | `internal/common/middleware/ratelimit.go` |
 | Kiracı yalıtımı DB'de: FORCE RLS + `orgscope` CI kapısı | `docs/SECURITY-TENANCY.md`, `tools/orgscope` |
 | Lider seçimi (Redis SET NX) ile arka plan işleri tek kopyada | `internal/common/leader/leader.go` |

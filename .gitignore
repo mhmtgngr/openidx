@@ -24,6 +24,7 @@ bin/
 # hand-maintained and it drifted: the relay's binary was committed, 42.8 MB of
 # it, because a new cmd/ does not add itself. tools/repohygiene is the guard.
 /event-relay
+/verify-service
 /backup
 /demo-app
 /migrate

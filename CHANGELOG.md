@@ -9,6 +9,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A verification tier that cannot reach the database.** `cmd/verify-service`
+  serves `/.well-known/jwks.json` and nothing else, from a process with no
+  connection pool. `cmd/verify-service/main_test.go` walks its transitive import
+  graph and fails the build if `github.com/jackc/pgx` or
+  `internal/common/database` ever appears in it, which is the whole point: the
+  claim is not that this binary happens not to open a connection today, it is
+  that it *cannot*, so it can be deployed with no egress to PostgreSQL and run
+  at a replica count the database could never support.
+
+  **It serves only JWKS, and the plan records why.** ADR-2 asks for a tier
+  serving "JWKS, introspection and forward-auth, with no PostgreSQL dependency".
+  Measured against the code, two of those three cannot be served without
+  PostgreSQL, for reasons that are not incidental. Introspection is protected by
+  client authentication — RFC 7662 §2.1 requires it, and
+  `requireTokenEndpointClientAuth` exists because this endpoint was once open —
+  and authenticating the *caller* means reading `oauth_clients`; a tier that
+  skipped the check to stay database-free would reopen the hole that middleware
+  was added to close, and one that cached the registry would hold client secrets
+  in a tier whose whole claim is that it holds nothing. A refresh token, in any
+  case, is a row with no signature to check offline. `/access/.auth/*` is a
+  login flow rather than a verification: `/login` and `/callback` run the OIDC
+  exchange and `/idps` reads `identity_providers` and `proxy_routes`. Only
+  `/session` is database-free, and one session-info endpoint is not forward-auth.
+
+  What is left is still worth its own process. JWKS is the highest-fanout
+  endpoint in the product — every relying party and every sidecar verifier polls
+  it — and it is answered today by the same pod that mints tokens and holds the
+  write pool.
+
+  **The chart ships it, off by default**, and with the flag off the render is
+  byte-identical to before. Turned on it gets a Deployment, a Service, a
+  PodDisruptionBudget, and — with `networkPolicy.enabled` — the only policy in
+  the chart that has an Egress section: DNS and the issuer, nothing else. The
+  build guard and the network policy assert the same claim at two layers,
+  because a claim with one enforcement point survives exactly one refactor.
+
+  **It mounts no platform Secret and no database URL.** Every other service
+  takes both through `envFrom`; this one takes three plain environment
+  variables. The binary is built for that — it skips the platform production
+  validator, which in production demands an encryption key, a vault KEK and an
+  audit chain secret from a process that encrypts nothing, has no vault and
+  seals no chain. Mounting them so it could serve a public document would hand
+  the most sensitive material in the install to the one pod whose claim is that
+  it carries none of it.
+
+  Two policies can be individually correct and jointly broken: the tier's egress
+  rule permits the connection to the issuer, and the issuer's own ingress policy
+  did not admit it — a tier that renders perfectly, passes its health check and
+  answers 503 forever. The issuer's policy gained the rule and the CI assertion
+  reads both sides. One chart mutation stayed green and the reason is recorded:
+  hardcoding the JWKS URL was byte-identical to the derived value because the
+  CI render's release name is `openidx`, so the step now renders under a name
+  that cannot collide.
+
+  **The edge sends it the key set, and only the key set.** `/.well-known` was
+  one Prefix rule to the issuer; behind the same flag there is now an Exact
+  rule for `/.well-known/jwks.json`. Kubernetes gives Exact precedence over
+  Prefix whatever order they appear in, so `openid-configuration`, the SSF
+  metadata and the mobile app-association files keep going to the issuer —
+  each is built from the database or from config, and this tier could not
+  answer any of them. `jwks_uri` in the discovery document needs no change: it
+  names the same public URL, and what moved is which pod answers.
+
+  The assertion drives requests through the same Exact-then-longest-Prefix
+  matcher the plane-split step uses, rather than checking that a rule exists —
+  what matters is where a request lands. One mutation there stayed green and
+  the reason was the test: turning `Exact` into `Prefix` changed nothing,
+  because `/.well-known/jwks.json` beats `/.well-known` as a longest prefix
+  too. The two match types diverge only on sub-paths, which nothing was
+  driving, so `/.well-known/jwks.json/anything` is now one of the cases. A
+  mutation that survives is sometimes evidence about the test rather than
+  about the code.
+
+  **An unreachable issuer with nothing cached answers 503, not an empty key
+  set.** `{"keys":[]}` with a 200 tells a relying party, authoritatively, that
+  this issuer signs nothing, and the correct thing to do with that answer is to
+  reject every token it holds — including the valid ones. The tier also
+  publishes only keys it would itself verify with (RSA, `use=sig`, parseable),
+  because a document advertising a key the product will not accept is the same
+  kind of lie in the other direction.
+
+### Changed
+
+- **The JWKS cache moved out of `internal/common/middleware` into
+  `internal/common/jwksverify`.** Verification needs a public key and a
+  signature, not a database — but the package holding it also holds
+  `PermissionResolver` and `RequireFreshMFA`, which read tenant-scoped tables,
+  so `pgx` sat in the import graph of *every* binary that merely validated a
+  bearer. Nothing was copied: `middleware` calls the new package and keeps its
+  old spellings as aliases, so there is still one key cache, one serve-stale
+  window and one algorithm pin in the tree, and no call site changed.
+
+  This is the same mixed-plane shape in three places, and only one of them is
+  fixed here. `internal/metrics` reaches `pgx` for its pool collector, so the
+  verify tier serves `/metrics` from `promhttp` directly. `cmd/gateway-service`
+  links a PostgreSQL driver today for no reason but `database.NewRedisFromConfig`
+  sharing a package with the Postgres half — recorded, not yet split.
+
+- **The access-token blacklist key and the revocation check moved to
+  `internal/revocation`.** That package exists because this product once had two
+  spellings of the per-user revocation marker, one of which nothing read, so an
+  access review could revoke somebody and their session kept working. The
+  blacklist key was private to `internal/oauth`, which was correct while the
+  revoking endpoint and the enforcement point were one process. They are not any
+  more. `internal/oauth` now calls the shared check inside its own circuit
+  breaker — the breaker is that service's policy for a Redis brownout, not part
+  of the answer.
+
+  An unreadable marker is now an error rather than "no marker": somebody
+  revoked, and the record of it cannot be interpreted, so the token is refused
+  rather than served.
+
+### Fixed
+
+- **`/access/.auth/session` reported an expiry it had never read.**
+  `getSessionFromRequest` consumed the session blob's `expires` field to decide
+  whether the session was still alive and then dropped it, while
+  `handleSessionInfo` reports `session.ExpiresAt` — so every live session
+  answered with the zero time. A consumer honouring that value re-authenticates
+  on every request; one ignoring it never learns the session is about to end.
+  The absolute expiry was always enforced (the check above the drop), so what
+  was wrong was only the answer — which is the same shape as the rest of this
+  work: a report that reads as authoritative while the value it names was never
+  filled in. Measured over the real route against a real Redis; two mutations
+  red, including setting a plausible-but-wrong `time.Now()`.
+
 - **The event relay is deployable.** A Dockerfile, an image in the build matrix,
   a Helm Deployment with its Service and PodDisruptionBudget, and an
   `eventRelay` values block — off by default. Port 8009 carries `/health` and

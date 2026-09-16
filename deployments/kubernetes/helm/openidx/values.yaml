@@ -1045,6 +1045,49 @@ pgcat:
 # The worker that drains the outbox table into the broker. Off by default,
 # because without a broker it has nowhere to drain -- the chart refuses to
 # render it in that state rather than shipping a pod that dies at boot.
+# The verification tier (ADR-2, plan 3.4): a pod that serves
+# /.well-known/jwks.json and holds nothing. No database URL, no platform Secret,
+# no Redis -- the binary links no PostgreSQL driver and the NetworkPolicy gives
+# it egress to DNS and the issuer only.
+#
+# It serves JWKS and not introspection, and that is measured rather than
+# pending: introspection is protected by client authentication (RFC 7662 2.1),
+# which means reading oauth_clients, and a refresh token is a database row with
+# no signature to check offline. The plan records the measurement.
+#
+# Off by default. Turning it on is only half the move -- the edge still has to
+# send /.well-known/jwks.json here instead of to oauth-service -- so it changes
+# nothing until that route exists.
+verifyService:
+  enabled: false
+  # Scale with fanout, not with what the database can take: nothing in this pod
+  # contends for a connection pool, which is the reason it was split off the one
+  # that mints tokens.
+  replicaCount: 2
+  image:
+    repository: verify-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  # Empty means "the oauth-service this chart ships", which requires
+  # oauthService.enabled. Point it at an external issuer's JWKS endpoint to run
+  # the tier in front of something the chart does not own; the render fails if
+  # neither is set, because a verify tier with no issuer answers every fetch
+  # with a 503 while looking healthy.
+  jwksUrl: ""
+  # Empty leaves the binary's defaults (1h fresh, 12h max-stale). Max-stale is
+  # the availability belt: a token already issued keeps verifying through an
+  # issuer outage for this long, so shortening it trades outage tolerance for
+  # how fast a retired key stops being served.
+  jwksTtl: ""
+  jwksMaxStale: ""
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 500m
+      memory: 128Mi
+
 eventRelay:
   enabled: false
   # More than one is safe and is the point: the drain claims rows with

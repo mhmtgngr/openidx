@@ -1,4 +1,4 @@
-package middleware
+package jwksverify
 
 import (
 	"crypto/rand"

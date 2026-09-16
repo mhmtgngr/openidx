@@ -157,6 +157,27 @@ spec:
                 name: {{ include "openidx.fullname" $ }}-oauth-service
                 port:
                   name: http
+          {{- if $.Values.verifyService.enabled }}
+          # The key set, and ONLY the key set, goes to the verification tier.
+          #
+          # Exact beats Prefix in Kubernetes path matching regardless of the
+          # order they appear in, so this takes /.well-known/jwks.json out from
+          # under the rule below while every other well-known document --
+          # openid-configuration, the SSF metadata, the mobile app-association
+          # files -- keeps going to the issuer, which is the only thing that can
+          # produce them. The discovery document's `jwks_uri` needs no change:
+          # it names this same public URL, and what moved is which pod answers.
+          #
+          # Without this rule, verifyService.enabled changes nothing: the tier
+          # renders, comes up, and nothing is ever routed to it.
+          - path: /.well-known/jwks.json
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-verify-service
+                port:
+                  name: http
+          {{- end }}
           - path: /.well-known
             pathType: Prefix
             backend:

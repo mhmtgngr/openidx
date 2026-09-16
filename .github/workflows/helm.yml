@@ -441,6 +441,162 @@ jobs:
 
           echo "the relay ships with a broker, or does not ship"
 
+      - name: The verify tier holds nothing, and can reach the issuer
+        run: |
+          set -euo pipefail
+          base=(--set secrets.postgresPassword=render-only
+                --set secrets.redisPassword=render-only
+                --set secrets.encryptionKey=render-only-not-a-credential32b)
+          render() { helm template openidx "$CHART" "${base[@]}" "$@"; }
+
+          # 1. Off by default, and off means absent. To a file, because
+          #    `if render | grep` reads a failed render and an absent match as
+          #    the same answer.
+          render > /tmp/render-verify-default.yaml
+          if grep -qi 'component: verify-service' /tmp/render-verify-default.yaml; then
+            echo "::error::the verify tier rendered with verifyService.enabled unset"; exit 1
+          fi
+
+          # 2. Enabled with no issuer is refused, not rendered. A tier with no
+          #    issuer comes up, passes its health check and answers every key
+          #    fetch with a 503 -- healthy from outside, serving nothing.
+          if render --set verifyService.enabled=true \
+                    --set oauthService.enabled=false >/dev/null 2>&1; then
+            echo "::error::the verify tier rendered with no issuer configured"; exit 1
+          fi
+
+          # 3. The whole claim of this tier is what it does NOT carry.
+          #    Rendered under a release name that is NOT "openidx", deliberately:
+          #    with the usual name a hardcoded "openidx-oauth-service" is
+          #    byte-identical to the derived value, so the "it is derived"
+          #    assertion below passed against a hardcoded URL. Measured -- that
+          #    mutation stayed green until the release name stopped colliding.
+          helm template verify-render-check "$CHART" "${base[@]}" \
+                 --set verifyService.enabled=true \
+                 --set networkPolicy.enabled=true > /tmp/render-verify.yaml
+          python3 - /tmp/render-verify.yaml <<'PYEOF'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          def by(kind, component):
+              return next(d for d in docs if d["kind"] == kind
+                          and d["metadata"]["labels"].get("app.kubernetes.io/component") == component)
+
+          dep = by("Deployment", "verify-service")
+          c = dep["spec"]["template"]["spec"]["containers"][0]
+
+          # No platform Secret and no database URL. Every other service mounts
+          # both through envFrom; this one must not, because the binary skips
+          # the platform production validator precisely so an operator is not
+          # made to hand a vault KEK and an audit chain secret to the one pod
+          # whose claim is that it carries neither.
+          assert not c.get("envFrom"), c.get("envFrom")
+          names = {e["name"] for e in c["env"]}
+          assert names == {"APP_ENV", "LOG_LEVEL", "OAUTH_JWKS_URL"}, names
+          for e in c["env"]:
+              assert "valueFrom" not in e, e
+
+          # The issuer URL is DERIVED from the issuer's own Service, so a
+          # renamed service or a moved port cannot leave this pointing at
+          # nothing that answers.
+          svc = by("Service", "oauth-service")
+          port = svc["spec"]["ports"][0]["port"]
+          want = f'http://{svc["metadata"]["name"]}:{port}/.well-known/jwks.json'
+          got = next(e["value"] for e in c["env"] if e["name"] == "OAUTH_JWKS_URL")
+          assert got == want, (got, want)
+
+          # Egress is the interesting half: DNS and the issuer, nothing else.
+          # Two policies that are individually correct and jointly broken is
+          # exactly what this checks -- the tier permitting a connection the
+          # issuer refuses would render perfectly and serve 503 forever.
+          def policy(component):
+              return next(d for d in docs if d["kind"] == "NetworkPolicy"
+                          and d["metadata"]["labels"].get("app.kubernetes.io/component") == component)
+
+          verify = policy("verify-service")["spec"]
+          assert set(verify["policyTypes"]) == {"Ingress", "Egress"}, verify["policyTypes"]
+          reaches = set()
+          for rule in verify["egress"]:
+              for to in rule["to"]:
+                  labels = to.get("podSelector", {}).get("matchLabels", {})
+                  reaches.add(labels.get("app.kubernetes.io/component") or labels.get("k8s-app"))
+          assert reaches == {"kube-dns", "oauth-service"}, reaches
+
+          issuer = policy("oauth-service")["spec"]
+          admits = {f["podSelector"]["matchLabels"].get("app.kubernetes.io/component")
+                    for rule in issuer["ingress"] for f in rule["from"]}
+          assert "verify-service" in admits, admits
+
+          assert c["ports"][0]["containerPort"] == 8010
+          PYEOF
+
+          # 4. The routing, which is what makes the flag mean anything. Driven
+          #    the way Kubernetes matches -- Exact first, then the longest
+          #    Prefix -- rather than asserting a rule exists: what matters is
+          #    where a REQUEST lands. /.well-known is a Prefix rule to the
+          #    issuer, and everything except the key set must keep going there.
+          helm template verify-render-check "$CHART" "${base[@]}" \
+                 --set verifyService.enabled=true \
+                 --set ingress.enabled=true > /tmp/render-verify-ingress-on.yaml
+          render --set ingress.enabled=true > /tmp/render-verify-ingress-off.yaml
+          python3 - /tmp/render-verify-ingress-on.yaml /tmp/render-verify-ingress-off.yaml <<'PYEOF'
+          import sys, yaml
+
+          def rules(path):
+              docs = [d for d in yaml.safe_load_all(open(path)) if d]
+              ing = next(d for d in docs if d["kind"] == "Ingress"
+                         and d["metadata"]["name"].endswith("-api"))
+              return [(r["path"], r["pathType"], r["backend"]["service"]["name"])
+                      for r in ing["spec"]["rules"][0]["http"]["paths"]]
+
+          def router(paths):
+              def route(p):
+                  exact = [b for (path, t, b) in paths if t == "Exact" and path == p]
+                  if exact:
+                      return exact[0]
+                  best, backend = -1, None
+                  for (path, t, b) in paths:
+                      if t == "Prefix" and (p == path.rstrip("/") or p.startswith(path.rstrip("/") + "/")):
+                          if len(path) > best:
+                              best, backend = len(path), b
+                  return backend
+              return route
+
+          # The other well-known documents are produced from the database --
+          # openid-configuration is built per tenant, the SSF metadata names
+          # this issuer's streams, the app-association files come from config --
+          # so a rule that swept them along with the key set would point them at
+          # a tier that cannot answer any of them.
+          stays = ["/.well-known/openid-configuration", "/.well-known/ssf-configuration",
+                   "/.well-known/apple-app-site-association", "/.well-known/assetlinks.json",
+                   "/oauth/token"]
+
+          on = router(rules(sys.argv[1]))
+          got = on("/.well-known/jwks.json")
+          assert got and got.endswith("-verify-service"), \
+              f"with the tier enabled, the key set still routes to {got}"
+          for p in stays:
+              got = on(p)
+              assert got and got.endswith("-oauth-service"), f"{p} routed to {got}, want the issuer"
+
+          # Exact, not Prefix, and this is the case that tells them apart: a
+          # longest-prefix rule spelled /.well-known/jwks.json would ALSO claim
+          # everything beneath it. Nothing serves a sub-path of the key set, so
+          # the difference is only ever which pod gets to refuse it -- and the
+          # tier that is meant to answer exactly one document should not be the
+          # one fielding requests for paths that do not exist.
+          got = on("/.well-known/jwks.json/anything")
+          assert got and got.endswith("-oauth-service"), \
+              f"a sub-path of the key set routed to {got}; the rule is Prefix where it should be Exact"
+
+          # And with the flag off nothing moved: same edge as before the tier existed.
+          off = router(rules(sys.argv[2]))
+          for p in ["/.well-known/jwks.json"] + stays:
+              got = off(p)
+              assert got and got.endswith("-oauth-service"), f"{p} routed to {got} with the tier disabled"
+          PYEOF
+
+          echo "the verify tier carries nothing, reaches its issuer, and is what answers /.well-known/jwks.json"
+
       - name: The transaction pooler is safe by construction
         run: |
           set -euo pipefail

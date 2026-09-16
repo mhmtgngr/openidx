@@ -256,6 +256,21 @@ spec:
       ports:
         - protocol: TCP
           port: 8006
+    {{- if .Values.verifyService.enabled }}
+    # The verification tier fetching /.well-known/jwks.json. Without this rule
+    # the two policies would be individually correct and jointly broken: the
+    # tier's own egress rule permits exactly this connection, and this policy
+    # would refuse it -- a tier that renders perfectly, passes its health check
+    # and answers every key fetch with a 503 forever.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: verify-service
+      ports:
+        - protocol: TCP
+          port: 8006
+    {{- end }}
 {{- end }}
 ---
 ###############################################################################
