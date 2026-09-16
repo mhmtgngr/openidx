@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The SSF transmitter advertised seven event types and sent one.**
+  `/.well-known/ssf-configuration` listed all seven CAEP/RISC events the package
+  defines under `events_supported`. `EmitCAEPEvent` has one production caller,
+  inside `revokeAllUserSessions`, and it emits `session-revoked`. Nothing has
+  ever sent `account-disabled`, `account-purged`, `credential-change`,
+  `assurance-level-change`, `token-claims-change` or `device-compliance-change`.
+
+  A receiver reads that document, subscribes to `account-disabled` so its apps
+  drop a disabled user immediately, gets an enabled stream back, and waits
+  forever — with nothing misconfigured on either side and nothing to debug. It
+  asked for what it was offered. That is this branch's recurring shape one layer
+  up: not a control reporting success while the thing it was meant to make true
+  is not true, but a capability document describing a product that does not
+  exist.
+
+  **The cause is structural rather than an oversight**, and it explains why the
+  plan asks for an outbox migration here. `EmitCAEPEvent` is a method on the
+  oauth service, so the paths that cause those events cannot call it: accounts
+  are disabled in identity, access, admin, directory and provisioning, and none
+  of the nine sever paths fixed earlier on this branch can reach it. The outbox
+  is the seam — the severing path writes the event in its own transaction and a
+  consumer in oauth-service turns it into a SET for the existing delivery queue.
+  SSF's own queue (`ssf_stream_delivery`) is already durable, with retry,
+  backoff, stall-requeue and dead-lettering, so moving it for its own sake would
+  close no defect; reaching the other services is the whole point.
+
+  `events_supported` now names only `session-revoked`. The six that left are not
+  abandoned, they are unbuilt, and the difference is written down.
+  `CreateSSFStream` never validated `events_requested` against the advertised
+  list, so no existing stream changes behaviour — only the document stops being
+  untrue.
+
+  **A census holds both directions.** It reads the constants from `ssf.go`, the
+  advertisement from `ssf_handlers.go` and the emitters from the `EmitCAEPEvent`
+  call sites — nothing is hand-listed, and an empty read fails rather than
+  passing vacuously. Advertising an event nothing emits fails the build, and so
+  does emitting one nothing advertises, which would be a SET no receiver could
+  have subscribed to. The list can grow again exactly when an emitter appears.
+  Four mutations red.
+
 ### Added
 
 - **A verification tier that cannot reach the database.** `cmd/verify-service`

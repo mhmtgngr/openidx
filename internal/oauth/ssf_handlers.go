@@ -48,10 +48,29 @@ func (s *Service) handleSSFConfiguration(c *gin.Context) {
 		"delivery_methods_supported": []string{
 			"https://schemas.openid.net/secevent/risc/delivery-method/push",
 		},
+		// EXACTLY WHAT THIS TRANSMITTER SENDS, and nothing else.
+		//
+		// This list used to name all seven event types the package defines,
+		// while EmitCAEPEvent had one production caller and emitted one of
+		// them. A receiver reads this document, subscribes to
+		// account-disabled so its apps drop a disabled user immediately, gets
+		// an enabled stream back, and waits forever -- with nothing
+		// misconfigured on either side and nothing to debug. It asked for what
+		// it was offered.
+		//
+		// The six that left are not abandoned, they are unbuilt, and the
+		// reason is structural rather than an oversight: EmitCAEPEvent is a
+		// method on this service, so the paths that cause those events cannot
+		// call it. Disabling an account happens in identity, access, admin,
+		// directory and provisioning; a posture change happens in access. The
+		// outbox (internal/common/events) is the seam that reaches them, and
+		// the plan carries the design.
+		//
+		// TestEverySSFEventAdvertisedIsActuallyEmitted holds both directions,
+		// so this list grows again exactly when an emitter appears and not
+		// before.
 		"events_supported": []string{
-			EventSessionRevoked, EventCredentialChange, EventAssuranceLevelChange,
-			EventTokenClaimsChange, EventDeviceComplianceChange,
-			EventAccountDisabled, EventAccountPurged,
+			EventSessionRevoked,
 		},
 	})
 }
