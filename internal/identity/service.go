@@ -1276,10 +1276,17 @@ func (s *Service) UpdateGroup(ctx context.Context, group *Group) error {
 // DeleteGroup deletes a group
 func (s *Service) DeleteGroup(ctx context.Context, groupID string) error {
 	s.logger.Info("Deleting group", zap.String("group_id", groupID))
-	// Repo removes memberships then the group row (primary pool).
-	if err := s.groups.Delete(ctx, groupID); err != nil {
+	// Repo removes memberships then the group row (primary pool), and returns
+	// who lost a membership -- deleting a group is a mass removal, and a path
+	// that cuts by PREDICATE has no identity to revoke unless it says which
+	// rows it took. Same fix as DeleteRole.
+	members, err := s.groups.Delete(ctx, groupID)
+	if err != nil {
 		return err
 	}
+	// After the delete, never inside it: the repository has no Redis and the
+	// marker must not be written for access a failure would have left in place.
+	s.revokeAfterRoleLoss(ctx, "identity.DeleteGroup", members...)
 	s.logAuditEvent(ctx, "identity", "group_management", "group.deleted", "success",
 		actorIDFromContext(ctx), groupID, "group", nil)
 	return nil
@@ -1367,6 +1374,13 @@ func (s *Service) RemoveGroupMember(ctx context.Context, groupID, userID string)
 	if result.RowsAffected() == 0 {
 		return ErrNotGroupMember
 	}
+
+	// "groups" is a claim on the token, built from group_memberships at
+	// issuance, so the membership row going away stops only the NEXT login: a
+	// token issued a minute ago still asserts the group. Only on an actual
+	// removal -- RowsAffected is 0 above, and the early return means we never
+	// cut somebody who was not a member.
+	s.revokeAfterRoleLoss(ctx, "identity.RemoveGroupMember", userID)
 
 	s.logAuditEvent(ctx, "identity", "group_management", "group.member_removed", "success",
 		actorIDFromContext(ctx), userID, "user", map[string]interface{}{

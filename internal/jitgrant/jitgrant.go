@@ -135,6 +135,16 @@ func Revoke(ctx context.Context, q Execer, resourceType, userID, resourceID, org
 //     application is read from the table at the moment it is used, so the row
 //     being gone IS the enforcement. Cutting the token here would force a
 //     re-login that changes no decision.
+//   - vault_access, vault_credential: NO, for the same reason and one more.
+//     A vault grant's authorization IS its own expires_at, read live from
+//     vault_access_grants on every reveal, and no claim mirrors it.
+//   - rotation_policy: NO. Disabling a credential rotation policy is not a
+//     removal of anyone's access; there is no user principal involved.
+//
+// It answers for every resource-type name a sever path in this product uses,
+// not only the ones Revoke maps, because the question is about the token
+// rather than about which table the row lives in -- and the census test that
+// checks every sever path needs one place to ask.
 //
 // An unknown type answers YES. A type nobody has classified is more likely to
 // be a claim someone forgot than a table read live, and the cost of being
@@ -142,7 +152,7 @@ func Revoke(ctx context.Context, q Execer, resourceType, userID, resourceID, org
 // outlives its own expiry.
 func TokenCarries(resourceType string) bool {
 	switch resourceType {
-	case "application":
+	case "application", "vault_access", "vault_credential", "rotation_policy":
 		return false
 	default:
 		return true

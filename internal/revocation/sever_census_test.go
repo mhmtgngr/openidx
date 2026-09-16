@@ -36,6 +36,14 @@ import (
 // WITH A REASON, and an entry that stops reproducing fails the run -- so the
 // list can only shrink.
 
+// What a path takes away. Both leave a live credential in an issued token, and
+// the remedy is the same marker, but the sentence an engineer needs to read is
+// not: one is "this account is gone", the other "this role is gone".
+const (
+	seversAccount = "account"
+	seversGrant   = "grant"
+)
+
 // sever verdicts.
 const (
 	// revokedByCaller: the sever is a primitive and its CALLER writes the
@@ -56,6 +64,37 @@ var severRegister = map[string]struct{ verdict, reason string }{
 		"Service.DeleteUser calls deprovisionUser -- which writes the marker -- BEFORE this, deliberately, " +
 			"so a concurrent refresh grant cannot slip through against a still-present user. Verified by " +
 			"reading that caller; this function is the row removal and nothing else, as its own comment says."},
+
+	// ---- the grant shape -------------------------------------------------
+
+	"internal/identity/group_repository.go::Delete": {revokedByCaller,
+		"Service.DeleteGroup calls this and cuts the tokens of everyone it returns. The repository has no " +
+			"Redis and should not: deleting a group is a mass removal, so the fix was to make this say WHICH " +
+			"users it removed (RETURNING user_id) rather than to give the row-removal layer a marker write. " +
+			"Verified by reading that caller."},
+
+	"internal/jitgrant/jitgrant.go::Revoke": {revokedByCaller,
+		"this is the shared primitive, and the revoke deliberately lives in its callers: it takes an Execer " +
+			"so a caller can run it inside its own transaction, Redis cannot join a Postgres transaction, " +
+			"and a marker written inside a transaction that later rolls back logs a user out of access they " +
+			"still hold. Every caller was read: governance's review decision (both the single and batch " +
+			"paths, after tx.Commit), its JIT expiry sweep, EndAllForUser's two callers (deprovisionUser and " +
+			"the kill switch) and EndAllForDisabledUsers via the lifecycle sweep."},
+
+	"internal/directory/sync.go::replaceDirectoryMemberships": {unaudited,
+		"OPEN, and the fix is named rather than guessed: it clears every directory-managed membership and " +
+			"re-inserts the current ones in one transaction, so most users it DELETEs it immediately puts " +
+			"back. Cutting on the delete would log out every member of every synced group on every sync, for " +
+			"nothing -- a grant that has not reached the token permits nothing it should not. Only the " +
+			"DIFFERENCE is a revocation, so this needs RETURNING user_id minus memberUserIDs, cut after " +
+			"commit, the same shape as identity's lostRoles. Its own package doc already records that its " +
+			"revoke goes through a function-valued field, which this census cannot follow either."},
+
+	"internal/provisioning/service.go::UpdateSCIMGroup": {unaudited,
+		"OPEN, same shape and same fix as replaceDirectoryMemberships above: it clears group_memberships and " +
+			"re-inserts group.Members inside one transaction, so only the users NOT in the new member list " +
+			"have lost anything. An IdP pushing a SCIM group update is the most common way a membership is " +
+			"taken away in this product, and a token issued before it still carries the group."},
 
 	"internal/admin/ibdr.go::executeFullQuarantine": {revokesIndirectly,
 		"it calls the revoke function the admin Service injects, which reaches RevokeUserTokens. A field " +
@@ -97,7 +136,7 @@ var severRegister = map[string]struct{ verdict, reason string }{
 }
 
 func TestEverySeverPathRevokesOrIsOnTheRegister(t *testing.T) {
-	severs, satisfied := severCensus(t)
+	severs, satisfied, grantShape := severCensus(t)
 
 	// Vacuity: a census that finds nothing proves nothing, and would also mean
 	// no path in this product disables or deletes a user.
@@ -117,6 +156,16 @@ func TestEverySeverPathRevokesOrIsOnTheRegister(t *testing.T) {
 	}
 	sort.Strings(unregistered)
 	for _, key := range unregistered {
+		if grantShape[key] {
+			t.Errorf("%s takes a role or a group away and no path from it writes the revocation marker.\n"+
+				"Removing the assignment stops the NEXT login. The enforcement point reads the role list from "+
+				"the token's \"roles\" claim and resolves that set's permissions itself, and \"groups\" is a "+
+				"claim for the same reason -- so a token issued before the DELETE still names what was taken "+
+				"away, and keeps working until it expires. Call revocation.RevokeUserTokens AFTER the removal "+
+				"commits (Redis cannot join a Postgres transaction), or record the verdict in severRegister "+
+				"with the reason.", key)
+			continue
+		}
 		t.Errorf("%s severs a user's access and no path from it writes the revocation marker.\n"+
 			"Disabling or deleting the row stops the NEXT login. /oauth/userinfo and /oauth/introspect read "+
 			"the per-user marker and the per-token blacklist and nothing else, so the access token already in "+
@@ -163,11 +212,12 @@ func TestEverySeverRegisterEntryHasAVerdictAndAReason(t *testing.T) {
 
 // severCensus returns every function that disables or deletes a user, and which
 // of them reach revocation.RevokeUserTokens directly or through a call.
-func severCensus(t *testing.T) (severs []string, satisfied map[string]bool) {
+func severCensus(t *testing.T) (severs []string, satisfied, grantShape map[string]bool) {
 	t.Helper()
 	type fn struct {
 		key     string
 		severs  bool
+		shape   string
 		revokes bool
 		calls   map[string]bool
 	}
@@ -205,6 +255,26 @@ func severCensus(t *testing.T) (severs []string, satisfied map[string]bool) {
 					if (strings.Contains(v, "update users") && strings.Contains(v, "enabled") && strings.Contains(v, "false")) ||
 						strings.Contains(v, "delete from users") {
 						f.severs = true
+						f.shape = seversAccount
+					}
+					// The SECOND shape. Taking a role or a group away does not
+					// touch the user row, so the check above never saw it --
+					// and the token carries both: the enforcement point reads
+					// the role list from the "roles" claim and resolves that
+					// set's permissions itself, and "groups" is a claim for the
+					// same reason. A token issued before the DELETE still names
+					// what was taken away.
+					//
+					// user_application_assignments is deliberately NOT here:
+					// it appears in no claim, so the row being gone IS the
+					// enforcement (jitgrant.TokenCarries is where that decision
+					// is written down).
+					if strings.Contains(v, "delete from user_roles") ||
+						strings.Contains(v, "delete from group_memberships") {
+						f.severs = true
+						if f.shape == "" {
+							f.shape = seversGrant
+						}
 					}
 				}
 				switch e := n.(type) {
@@ -248,15 +318,19 @@ func severCensus(t *testing.T) (severs []string, satisfied map[string]bool) {
 	}
 
 	satisfied = map[string]bool{}
+	grantShape = map[string]bool{}
 	for _, f := range ordered {
 		if !f.severs {
 			continue
 		}
 		severs = append(severs, f.key)
+		if f.shape == seversGrant {
+			grantShape[f.key] = true
+		}
 		if f.revokes {
 			satisfied[f.key] = true
 		}
 	}
 	sort.Strings(severs)
-	return severs, satisfied
+	return severs, satisfied, grantShape
 }

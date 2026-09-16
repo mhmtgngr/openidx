@@ -94,6 +94,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Taking a role away and cutting the token that names it were two things, and
+  the census could not see the difference.** The sever census guards one shape:
+  an account disabled or deleted. Removing a role or a group does not touch the
+  user row, so it never looked — while the token carries both, because the
+  issuer builds `roles` from `user_roles` and `groups` from `group_memberships`
+  and the enforcement point resolves the role claim's permissions on every
+  request.
+
+  Four paths closed: an access certification refusing someone's access
+  (`admin/attestation.go`, which had its own hand-rolled DELETEs rather than the
+  shared revoke), a bulk `remove_role` and a bulk `remove_from_group` (one
+  operator action, one live credential per user — the same switch's
+  `disable_users` and `delete_users` branches already knew this), and
+  `identity.RemoveGroupMember`. Deleting a group is the mass case: the
+  repository cut by predicate and reported nothing, so `DeleteGroup` had no
+  identities to revoke — the fourth time in this programme that a sever path
+  needed `RETURNING` for that reason.
+
+  Removal only. A bulk `assign_role` cuts nobody, and neither removal cuts a
+  user who did not hold what was removed (`RowsAffected` is 0): a grant that has
+  not reached the token permits nothing it should not, so cutting there is an
+  outage with no security gain.
+
+  **The census now recognises the second shape**, so a new path that deletes
+  from `user_roles` or `group_memberships` without revoking fails the build. It
+  found four more the moment it could look: `jitgrant.Revoke` and
+  `identity`'s group repository are `revoked-by-caller` (both verified by
+  reading every caller — the revoke belongs in the caller because Redis cannot
+  join a Postgres transaction), and `directory`'s `replaceDirectoryMemberships`
+  and `provisioning`'s `UpdateSCIMGroup` are recorded OPEN with the fix named:
+  both clear every membership and re-insert the current ones in one
+  transaction, so only the DIFFERENCE is a revocation and cutting on the delete
+  would log out every member of every synced group on every sync. The register
+  only shrinks, so neither can be forgotten.
+
+  Ten mutations red, measured against a real PostgreSQL and a real Redis with
+  the general and revocation roles on separate databases. Two of them needed
+  the tests fixed rather than excused. Moving the certification's revoke from
+  after the commit to beside the DELETE stayed green, because the only failure
+  the suite injected killed the DELETE itself and the handler returned before
+  reaching either placement; a `DEFERRABLE` constraint trigger now forces the
+  case that distinguishes them — the DELETE succeeds, the COMMIT does not, and
+  a marker written inside the transaction would survive the rollback that gave
+  the role back. And the two bulk mutations first "passed" against tests that
+  had silently skipped, because one shell export derived a variable from
+  another set in the same statement; the runs were repeated with the
+  environment proven.
+
+
 - **The lifecycle reconcile net caught the access and let the credential
   through.** The cross-pillar sweep exists for the disable paths that do NOT go
   through `deprovisionUser` -- SCIM deactivation, directory sync, a lifecycle
