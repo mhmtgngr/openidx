@@ -1505,12 +1505,29 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 		}
 		defer tx.Rollback(ctx)
 
-		// Clear existing members
-		if _, err := tx.Exec(ctx, "DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2", groupID, org.ID); err != nil {
+		// Clear existing members. RETURNING, because the users this drops for
+		// good have to have their tokens cut and a row count cannot be revoked.
+		rows, err := tx.Query(ctx,
+			"DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2 RETURNING user_id::text", groupID, org.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to clear group members: %w", err)
+		}
+		var removed []string
+		for rows.Next() {
+			var uid string
+			if serr := rows.Scan(&uid); serr != nil {
+				rows.Close()
+				return nil, fmt.Errorf("failed to read the members being replaced: %w", serr)
+			}
+			removed = append(removed, uid)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
 			return nil, fmt.Errorf("failed to clear group members: %w", err)
 		}
 
 		// Add new members
+		kept := make([]string, 0, len(group.Members))
 		for _, member := range group.Members {
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO group_memberships (user_id, group_id, joined_at, org_id)
@@ -1519,14 +1536,77 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 			`, member.Value, groupID, now, org.ID); err != nil {
 				return nil, fmt.Errorf("failed to add group member: %w", err)
 			}
+			kept = append(kept, member.Value)
 		}
 
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("failed to commit transaction: %w", err)
 		}
+
+		// A REPLACEMENT IS BOTH A GRANT AND A REVOCATION. This clears every
+		// membership and re-inserts the ones the IdP still sends, so most of
+		// the rows it removed it also put back; cutting on the delete would log
+		// out every member of every SCIM-managed group on every push, for
+		// nothing -- a grant that has not reached the token permits nothing it
+		// should not. Only the DIFFERENCE is a revocation.
+		//
+		// After the commit, because Redis cannot join a Postgres transaction
+		// and a marker written inside one that rolls back logs somebody out of
+		// a membership they still have. An IdP pushing a group update is the
+		// commonest way a membership is taken away in this product, and
+		// "groups" is a claim on the access token.
+		s.revokeAfterMembershipLoss(ctx, "scim.UpdateSCIMGroup", membershipsLost(removed, kept)...)
 	}
 
 	return group, nil
+}
+
+// membershipsLost returns the ids in removed that are not in kept, each once.
+// It is the group counterpart of identity's lostRoles and directory's function
+// of the same name: a wholesale replacement is a grant and a revocation at
+// once, and treating the two alike would end live sessions on every sync.
+func membershipsLost(removed, kept []string) []string {
+	still := make(map[string]struct{}, len(kept))
+	for _, id := range kept {
+		still[id] = struct{}{}
+	}
+	var lost []string
+	seen := make(map[string]struct{}, len(removed))
+	for _, id := range removed {
+		if id == "" {
+			continue
+		}
+		if _, back := still[id]; back {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		lost = append(lost, id)
+	}
+	return lost
+}
+
+// revokeAfterMembershipLoss cuts the outstanding access tokens of users who
+// have just lost a group. Best-effort and loud, the contract every sever path
+// in this product shares: the membership is already gone when this runs, so a
+// Redis hiccup must not fail the SCIM request -- but "the membership was
+// removed and the token carrying it was not cut" is what an operator needs in
+// the record.
+func (s *Service) revokeAfterMembershipLoss(ctx context.Context, why string, userIDs ...string) {
+	if s.redis == nil {
+		return
+	}
+	for _, userID := range userIDs {
+		if userID == "" {
+			continue
+		}
+		if err := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); err != nil {
+			s.logger.Error("a group membership was removed, but the tokens still asserting it were not revoked",
+				zap.String("path", why), zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
+		}
+	}
 }
 
 // DeleteSCIMGroup deletes a group via SCIM
@@ -1543,8 +1623,46 @@ func (s *Service) DeleteSCIMGroup(ctx context.Context, groupID string) error {
 	s.logAuditEvent(ctx, "provisioning", "scim", "scim.group_deleted", "success",
 		actorID, groupID, "group", nil)
 
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1 AND org_id = $2", groupID, org.ID)
-	return err
+	// THE CASCADE IS THE PART THAT HIDES. group_memberships.group_id carries
+	// ON DELETE CASCADE, so this statement takes every membership with it
+	// without ever naming group_memberships -- which is why the sever census
+	// could not see this path. The members are read BEFORE the delete because a
+	// cascade returns nothing, and cut after it, because "groups" is a claim
+	// and a member of a group that has stopped existing keeps asserting it.
+	members, mErr := s.groupMembers(ctx, groupID, org.ID)
+	if mErr != nil {
+		// The group goes either way: leaving it in place is worse than removing
+		// it without cutting. Loud, because this is the case where a live token
+		// keeps a membership the IdP has dropped.
+		s.logger.Warn("could not read the members of a SCIM group being deleted; their tokens will not be cut",
+			zap.String("group_id", logsafe.Clean(groupID)), zap.Error(mErr))
+		members = nil
+	}
+	if _, err = s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1 AND org_id = $2", groupID, org.ID); err != nil {
+		return err
+	}
+	s.revokeAfterMembershipLoss(ctx, "scim.DeleteSCIMGroup", members...)
+	return nil
+}
+
+// groupMembers lists the users in a group, for the paths that must cut tokens
+// after a delete the database performs by cascade.
+func (s *Service) groupMembers(ctx context.Context, groupID, orgID string) ([]string, error) {
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT user_id::text FROM group_memberships WHERE group_id = $1 AND org_id = $2`, groupID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		out = append(out, uid)
+	}
+	return out, rows.Err()
 }
 
 // ListSCIMGroups lists groups via SCIM

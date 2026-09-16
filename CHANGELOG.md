@@ -94,6 +94,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The census found the last two grant paths, and looking for them found a
+  third shape it could not see at all.** `directory`'s
+  `replaceDirectoryMemberships` and `provisioning`'s `UpdateSCIMGroup` both
+  clear every membership and re-insert the current ones in one transaction, so
+  most of what they remove they put straight back. Cutting on the delete would
+  log out every member of every synced group on every sync, for nothing — a
+  grant that has not reached the token permits nothing it should not. Both now
+  `DELETE ... RETURNING user_id`, subtract the members they re-insert, and cut
+  only the difference, after the commit.
+
+  **`group_memberships.group_id` and `user_roles.role_id` carry
+  `ON DELETE CASCADE`**, so deleting the parent takes every assignment with it
+  and the statement never names the child table. Three live paths were in
+  exactly that position and the census — which reads SQL — reported the set
+  closed: SCIM group deletion, and the LDAP and Azure AD syncs dropping a group
+  the directory no longer has. Each silently removed a claim from every member
+  while their tokens kept asserting it. A cascade returns nothing, so these
+  cannot use `RETURNING`: they read the members before the delete and cut them
+  after.
+
+  The census now recognises that third shape, so a new parent delete that
+  severs by cascade fails the build. Both `unaudited` entries are gone from its
+  register; the two directory paths remain listed as `revokes-indirectly`,
+  because their cut goes through the injected `e.revoke` — a function-valued
+  field that name-based reachability cannot follow, which `revoker_wiring_test.go`
+  covers instead.
+
+  Six mutations red, measured against a real PostgreSQL and a real Redis with
+  the general and revocation roles on separate databases. **One stayed green
+  and it was the same gap as the last round, which is why it is worth writing
+  down twice:** moving the SCIM revoke from after the commit to inside the
+  transaction passed, because no test forced a commit to fail — a failing
+  DELETE returns before either placement runs. A `DEFERRABLE` constraint
+  trigger now forces it: the DELETE succeeds, the COMMIT does not, both
+  memberships come back, and a marker written inside the transaction would have
+  survived that rollback.
+
+  Installs with no Redis, and installs that never wired the directory revoker,
+  still sync: refusing would leave the membership live in the database as well
+  as the token.
+
+
 - **Taking a role away and cutting the token that names it were two things, and
   the census could not see the difference.** The sever census guards one shape:
   an account disabled or deleted. Removing a role or a group does not touch the

@@ -42,6 +42,7 @@ import (
 const (
 	seversAccount = "account"
 	seversGrant   = "grant"
+	seversCascade = "cascade"
 )
 
 // sever verdicts.
@@ -81,20 +82,21 @@ var severRegister = map[string]struct{ verdict, reason string }{
 			"paths, after tx.Commit), its JIT expiry sweep, EndAllForUser's two callers (deprovisionUser and " +
 			"the kill switch) and EndAllForDisabledUsers via the lifecycle sweep."},
 
-	"internal/directory/sync.go::replaceDirectoryMemberships": {unaudited,
-		"OPEN, and the fix is named rather than guessed: it clears every directory-managed membership and " +
-			"re-inserts the current ones in one transaction, so most users it DELETEs it immediately puts " +
-			"back. Cutting on the delete would log out every member of every synced group on every sync, for " +
-			"nothing -- a grant that has not reached the token permits nothing it should not. Only the " +
-			"DIFFERENCE is a revocation, so this needs RETURNING user_id minus memberUserIDs, cut after " +
-			"commit, the same shape as identity's lostRoles. Its own package doc already records that its " +
-			"revoke goes through a function-valued field, which this census cannot follow either."},
+	"internal/directory/sync.go::deleteSyncedGroup": {revokesIndirectly,
+		"the cascade path, fixed: group_memberships.group_id is ON DELETE CASCADE, so deleting a group the " +
+			"directory no longer has removes every membership without the statement naming the child table. " +
+			"It reads the members BEFORE the delete -- a cascade returns nothing, so RETURNING is not " +
+			"available here -- and cuts them after. Listed for the same reason as the entries below: the cut " +
+			"goes through the injected e.revoke, which name-based reachability cannot follow."},
 
-	"internal/provisioning/service.go::UpdateSCIMGroup": {unaudited,
-		"OPEN, same shape and same fix as replaceDirectoryMemberships above: it clears group_memberships and " +
-			"re-inserts group.Members inside one transaction, so only the users NOT in the new member list " +
-			"have lost anything. An IdP pushing a SCIM group update is the most common way a membership is " +
-			"taken away in this product, and a token issued before it still carries the group."},
+	"internal/directory/sync.go::replaceDirectoryMemberships": {revokesIndirectly,
+		"FIXED, and listed only because the census cannot see the fix. It now DELETEs ... RETURNING user_id, " +
+			"subtracts the members it re-inserts, and cuts the difference after the commit -- because a " +
+			"replacement is a grant and a revocation at once, and cutting on the delete would log out every " +
+			"member of every synced group on every sync. The cut goes through e.revokeTokens -> e.revoke, a " +
+			"function-valued field with no declared name for this census to follow, the same indirection as " +
+			"deprovisionHR below. revoker_wiring_test.go fails when a binary that starts the scheduler does " +
+			"not supply the callback."},
 
 	"internal/admin/ibdr.go::executeFullQuarantine": {revokesIndirectly,
 		"it calls the revoke function the admin Service injects, which reaches RevokeUserTokens. A field " +
@@ -276,6 +278,29 @@ func severCensus(t *testing.T) (severs []string, satisfied, grantShape map[strin
 							f.shape = seversGrant
 						}
 					}
+					// THE THIRD SHAPE, AND THE ONE THAT HID FROM THE SECOND.
+					// group_memberships.group_id and user_roles.role_id both
+					// carry ON DELETE CASCADE, so deleting the PARENT takes
+					// every assignment with it -- and the statement never names
+					// the child table, so the check above cannot see it. Three
+					// live paths were in exactly that position: SCIM group
+					// deletion and the LDAP and Azure AD syncs dropping a group
+					// the directory no longer has. Each one silently removed a
+					// claim from every member while their tokens kept asserting
+					// it, and a census that only reads the SQL it is shown
+					// would have reported the set closed.
+					//
+					// A cascade returns nothing, so these paths cannot use
+					// RETURNING: they have to read the members before the
+					// delete. That is a different fix, which is why it is a
+					// different shape rather than one more string here.
+					if strings.Contains(v, "delete from groups ") ||
+						strings.Contains(v, "delete from roles ") {
+						f.severs = true
+						if f.shape == "" {
+							f.shape = seversCascade
+						}
+					}
 				}
 				switch e := n.(type) {
 				case *ast.SelectorExpr:
@@ -324,7 +349,7 @@ func severCensus(t *testing.T) (severs []string, satisfied, grantShape map[strin
 			continue
 		}
 		severs = append(severs, f.key)
-		if f.shape == seversGrant {
+		if f.shape == seversGrant || f.shape == seversCascade {
 			grantShape[f.key] = true
 		}
 		if f.revokes {
