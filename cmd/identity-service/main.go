@@ -371,11 +371,37 @@ func main() {
 		identityService.SetSMSProvider(smsService)
 	}
 
-	// Start SMS config watcher (polls DB every 30s for admin console changes)
+	// THE SMS WATCHER RUNS IN EVERY PROFILE, and that is not an oversight.
+	// It reads one system_settings row and writes nothing: the tick swaps THIS
+	// process's own SMS provider, so a pod that skipped it would keep sending
+	// codes through a provider an admin has already replaced. The auth half is
+	// the one sending MFA codes during login, so it is the last pod that should
+	// miss the swap. internal/common/leader's sweeps census records it as
+	// per-process for the same reason.
 	go identityService.StartSMSConfigWatcher(bgCtx, 30*time.Second)
 
-	// Start role expiration checker (cleans up expired time-bound role assignments)
-	identityService.StartRoleExpirationChecker(bgCtx)
+	// THE ROLE-EXPIRY SWEEP IS ADMIN-PLANE WORK, so the ISSUE half does not run
+	// it. It deletes expired time-bound assignments across every org and cuts
+	// the tokens still carrying them -- nothing about it belongs to a login.
+	//
+	// It is leader-gated, so the cost was already one replica per minute
+	// cluster-wide, and today an auth pod winning that election is harmless:
+	// values.yaml assigns BOTH halves the `admin` database role. What this
+	// guards is the move that file already names as next -- the auth half to
+	// the `issue` role, whose statement_timeout is sized for a login query, not
+	// for a DELETE across every org. Elected onto an ISSUE pod after that move,
+	// this sweep would start failing every tick it won. Gating it now means the
+	// election only ever happens among pods that can do the work.
+	//
+	// The unsplit process is ProfileAll, which serves ADMIN, so a default
+	// install is unchanged.
+	if serviceProfile.ServesAdmin() {
+		identityService.StartRoleExpirationChecker(bgCtx)
+	} else {
+		log.Info("role expiration sweep not started: this process serves the ISSUE plane only",
+			zap.String("service_profile", string(serviceProfile)),
+			zap.String("runs_in", "the SERVICE_PROFILE=admin half"))
+	}
 
 	// Initialize portal service (with the optional local AI client for
 	// plain-language security insights; template output when disabled)

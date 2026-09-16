@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The identity plane split reached the routes and not the background work.**
+  `cmd/identity-service/main.go` started its sweeps without ever consulting
+  `serviceProfile`, so `SERVICE_PROFILE=auth` — the ISSUE half, which registers
+  login and MFA routes only — also ran `StartRoleExpirationChecker`. That sweep
+  deletes expired time-bound role assignments across every org and revokes the
+  tokens still carrying them; nothing about it belongs to a login. It now sits
+  behind `serviceProfile.ServesAdmin()`, and since the unsplit process is
+  `ProfileAll` (which serves ADMIN), **a default install is unchanged**.
+
+  **The reason is latent rather than live, and saying which is the point.** The
+  sweep is leader-gated, so the cost was already one replica per minute
+  cluster-wide, and an auth pod winning that election is harmless today:
+  `values.yaml` gives *both* halves the `admin` database role. What makes it
+  matter is the move that file already names as next — the auth half to the
+  `issue` role, whose `statement_timeout` is sized for a login query rather than
+  a `DELETE` across every org. Elected onto an ISSUE pod after that move, this
+  sweep would fail every tick it won. Gating it now keeps that move a
+  configuration change instead of an incident.
+
+  **The SMS config watcher is deliberately not gated.** It reads one
+  `system_settings` row and writes nothing: the tick swaps *this process's own*
+  SMS provider, so a pod skipping it would keep sending codes through a provider
+  an admin has already replaced — and the auth half is the one sending MFA codes
+  during login. The sweeps census in `internal/common/leader` already records it
+  as per-process for that reason, and gating it was one of the mutations.
+
+  A register in `cmd/identity-service` now requires every background starter to
+  declare its plane: ADMIN-plane work behind the profile check, per-process work
+  outside it with the reason a pod skipping it would be wrong. An unclassified
+  starter fails the build, and so does a register entry for a starter `main.go`
+  no longer calls. Four mutations red; a fifth did not compile, so it was not
+  treated as a signal and was redone in a form that did.
+
+  **A measurement in the plan is corrected alongside it:** an earlier paragraph
+  said eleven tickers stood "undecided" in the sweeps census. The register
+  carries **one** today (`internal/access/ziti_reconciler.go`, parked for want of
+  a Ziti controller to measure against), and a test pins that count. The
+  coordination question is closed; the open one is which sweeps run *inside*
+  request-serving processes — seven binaries start more than twenty between
+  them, ten in `access-service` alone.
+
 ### Changed
 
 - **The Redis half moved to `internal/common/redisclient`, and a claim about
