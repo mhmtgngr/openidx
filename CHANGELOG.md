@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The scope lint now sees the connections it could not, and a rekey that could
+  have silently rewritten nothing now refuses to start.**
+
+  `tools/orgscope`'s `Raw()` rules both begin from a `ScopedPool`, because that
+  is the type task 2.1b put the tenant scope into. **A connection opened with
+  `pgx.Connect` or `pgxpool.New` never becomes one** — it is not `Raw()`, it is
+  not `Pool`, it is a different object — so neither question is ever asked about
+  it. The lint was watching the marked door and not the wall beside it. Measured
+  on this tree: six non-test files under `internal/` and `cmd/` open a
+  connection that way. Each is now registered with the reason its work has no
+  tenant to carry, and a new one is a blocking finding until somebody writes
+  that sentence.
+
+  **The register caught its author on its first run.** Three of the entries I
+  wrote from memory rather than from the measurement — `cmd/migrate/main.go`
+  (which reaches the database through `Raw()`, not a direct connection) and two
+  files under `internal/common/database` (which the rule skips by design, since
+  that package *builds* the scope) — and `TestTheDirectConnRegisterDoesNotRot`
+  named all three. An entry for code that does not do what it says reads as a
+  reviewed decision and is not one.
+
+  **And the live defect the census led to.** `cmd/rekey` rewrites every tenant's
+  encrypted columns, so it takes the cross-tenant bypass — with a single
+  `pool.Exec`, best-effort, error discarded. `set_config(..., false)` is
+  SESSION-scoped: it belongs to one backend, and a pool is many. Probed against
+  a real server: after that one `Exec`, the connection that served it reported
+  `app.bypass_rls = "on"` and a second connection from the same pool reported
+  `""`. Any query landing on a later connection runs unbypassed, and under
+  `FORCE ROW LEVEL SECURITY` that is not an error — it is **zero rows**. A rekey
+  that sees nothing rewrites nothing, prints `0 rekeyed`, exits 0, and the next
+  KEK rotation retires a key that is still decrypting live data.
+
+  Whether it bit on a given run depended on whether the pool happened to hand
+  back the same connection, which it usually does for this binary's sequential
+  work and stops doing the moment a connection ages out or anything runs
+  concurrently. The bypass is now set in `AfterConnect`, so every connection the
+  pool opens carries it, and the binary refuses to start at all if it still
+  cannot read across tenants — asking the database what is true rather than
+  whether a statement returned no error, because the owner of these tables may
+  be exempt from RLS without any setting.
+
+  Six mutations red against a green baseline: the bypass taken once on the pool
+  instead of per connection (which reproduces the bug and fails the new test);
+  the see-everything check hardwired to yes; a new unregistered direct
+  connection; a register entry naming a file that no longer opens one; a reason
+  thinned out; and the lint blinded to `pgx.Connect`. A seventh **did not apply
+  at all** — the edit missed and the suite stayed green, which is not a signal
+  and is recorded as one that was redone. Blinding `pgxpool.New` then proved
+  nothing either, for a measured reason: `cmd/rekey` had moved to
+  `NewWithConfig` in this very change, so no file on this tree uses that
+  spelling. The constructor list is a vocabulary, not a census, and now says so.
+
+  The rekey checks have their own CI step with named `--- PASS:` checks — and
+  adding them made a second guard fire: `tools/testmatrix` carried `cmd/rekey`
+  on its register with the reason that the package's only test file sat behind
+  the `integration` build tag, so the matrix's `./cmd/...` entry "looked like
+  coverage and compiled zero tests". Untagged tests in that package make the
+  line excuse nothing, and `TestTheRegisterCarriesNothingTheMatrixAlreadyRuns`
+  said so on the first run. The entry is gone, with why it went.
+
 - **`openidx cell place|show` — the tenant directory's write path, which did not
   exist** (global-scale plan task 4.1). `internal/common/celldir` has held a
   `Place` since the directory landed, and the package's own comment calls
