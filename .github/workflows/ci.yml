@@ -543,12 +543,19 @@ jobs:
       # unrecoverable: one decrypt pass then returns ciphertext and the row
       # still reads "sealed". The sealer refuses ciphertext now, and the
       # announcement is a claim.
+      #
+      # The certificate-rotation claim is checked in three pieces rather than by
+      # racing two replicas. The race version passed for weeks, then failed on
+      # main, and measured 6 failures in 20 runs: the CA path takes the claim
+      # and hands it straight back, so whether the loser stood down depended on
+      # whether its UPDATE landed inside a microsecond-wide window. It reported
+      # on the scheduler. These three assert what holds under any interleaving.
       - name: A recording is sealed once, and announced once
         env:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
-          out=$(go test ./internal/access/ -run 'Sealed|SealOnce|ClaimingReplica|OversizedFrame|OneReplicaCreatesAUsers|ClaimsACertificateRotation' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          out=$(go test ./internal/access/ -run 'Sealed|SealOnce|ClaimingReplica|OversizedFrame|OneReplicaCreatesAUsers|RotationClaim|ConcurrentReplicasEndInOneOfTwo' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestSealingAnAlreadySealedRecordingIsRefused \
                       TestAPlaintextRecordingIsNeverMistakenForSealed \
@@ -556,7 +563,9 @@ jobs:
                       TestTwoConcurrentSealersAnnounceTheSealOnce \
                       TestOnlyTheClaimingReplicaAnnouncesASeal \
                       TestOnlyOneReplicaCreatesAUsersZitiIdentity \
-                      TestOnlyOneReplicaClaimsACertificateRotation; do
+                      TestAHeldRotationClaimExcludesEveryOtherReplica \
+                      TestAReleasedRotationClaimIsTakenAgain \
+                      TestConcurrentReplicasEndInOneOfTwoLegitimateOutcomes; do
             grep -q -- "--- PASS: $want " <<<"$out" \
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done

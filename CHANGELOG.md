@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A test that reported on the scheduler rather than on the code** — `Go CI`
+  went red on `main` at `323f692` in
+  `TestOnlyOneReplicaClaimsACertificateRotation`, and the honest answer was
+  neither "flake" nor a defect in the rotation.
+
+  The test raced two replicas at one certificate and asserted that **exactly
+  one** stood down. Measured here: **6 failures in 20 runs.** The cause is
+  structural. `RotateCertificate` claims with
+  `UPDATE ... SET status='rotating' WHERE id=$1 AND status='active'`, and that
+  claim is exclusive — but the CA path, which the test uses because it completes
+  without a Ziti controller, refuses the certificate and calls
+  `revertCertStatus`, putting the row straight back to `active`. The claim lasts
+  microseconds. Whether the second replica stood down depended on whether its
+  `UPDATE` landed inside that window, so **"exactly one of two concurrent
+  replicas stands down" was never a property of the code** — it was a property
+  of the scheduler.
+
+  Replaced with the three things that are true:
+
+  - **A held claim excludes everyone else**, asserted with the claim held
+    outright rather than raced for, so there is no window to lose. It also
+    requires the stand-down to be `errRotationNotClaimed` and not a bare error,
+    because the expiry monitor's log level is chosen from exactly that
+    distinction — an operator who watches a security-relevant rotation "fail"
+    every hour learns to skip the line.
+  - **A released claim is taken again**, which is *why* the old assertion could
+    not hold: two sequential claims on a CA certificate are two no-ops, not a
+    duplicated rotation.
+  - **Under any interleaving**, each racer either stood down or took the claim
+    and refused the CA certificate — no third outcome — and the row is left
+    `active` either way, because a certificate parked in `rotating` is one no
+    replica will ever pick up again.
+
+  0 failures in 30 runs, against 6 in 20 before. Four mutations red against a
+  green no-op control: the claim losing `AND status='active'`; the refusal
+  parking the certificate in `rotating`; the stand-down no longer wrapping
+  `errRotationNotClaimed`; and a CA certificate reported as successfully
+  rotated. The CI step's named `--- PASS:` checks were updated with it — a
+  renamed test that nothing looks for is the silent skip those checks exist to
+  prevent.
+
 - **The scope lint now sees the connections it could not, and a rekey that could
   have silently rewritten nothing now refuses to start.**
 
