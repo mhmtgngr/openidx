@@ -13,6 +13,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/jitgrant"
 	"github.com/openidx/openidx/internal/webhooks"
 )
 
@@ -693,6 +694,11 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 	}
 
 	// If revoked and campaign type involves access removal, handle it
+	// Set when the branch below actually removes access, so the tokens carrying
+	// it can be cut AFTER the transaction commits. Redis cannot join a Postgres
+	// transaction, and a marker written inside one that later rolls back would
+	// log a user out of access they still hold.
+	var cutTokensFor string
 	if req.Decision == "revoked" {
 		var resourceType string
 		var userID, resourceID *string
@@ -734,6 +740,15 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 			if !ok {
 				return
 			}
+			// A certification refusing someone's access is the sibling of an
+			// access-review revocation, which cuts tokens -- and this path did
+			// not. The row went, the campaign recorded "revoked", and the
+			// access token in that browser kept naming the role the enforcement
+			// point resolves on every request. The certification said the
+			// access was removed while it was still being granted.
+			if jitgrant.TokenCarries(resourceType) {
+				cutTokensFor = *userID
+			}
 		}
 
 		// resource-only revocations (no user principal required)
@@ -751,6 +766,12 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 		s.logger.Error("could not commit the attestation decision", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update decision"})
 		return
+	}
+
+	// Only now: the revocation is durable, so cutting the tokens cannot log
+	// someone out of access a rollback gave back.
+	if cutTokensFor != "" {
+		s.revokeAfterSever(ctx, cutTokensFor, "attestation.revoked")
 	}
 
 	// Check if all items are decided - auto-complete campaign.

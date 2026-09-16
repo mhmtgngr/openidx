@@ -116,6 +116,49 @@ func Revoke(ctx context.Context, q Execer, resourceType, userID, resourceID, org
 	return nil
 }
 
+// TokenCarries reports whether ending a grant of this resource type leaves a
+// live credential in an already-issued access token -- which is what decides
+// whether the caller must also cut the user's tokens after the row is gone.
+//
+// The answer is a property of the token, so it is read off what the issuer
+// puts in one (internal/oauth builds "roles", "groups" and "permissions" from
+// the database at issuance) and what the enforcement point then reads back:
+//
+//   - role, privileged_role: YES. The enforcement point takes the role list
+//     from the token's "roles" claim and resolves that set's permissions
+//     itself, so a token issued before the DELETE still names the role and
+//     still resolves everything the role grants. This is the whole hole.
+//   - group: YES. "groups" is a claim on the token for the same reason, so a
+//     token issued before the membership ended still asserts it.
+//   - application: NO, and this is a decision, not an oversight.
+//     user_application_assignments appears in no claim; access to an
+//     application is read from the table at the moment it is used, so the row
+//     being gone IS the enforcement. Cutting the token here would force a
+//     re-login that changes no decision.
+//   - vault_access, vault_credential: NO, for the same reason and one more.
+//     A vault grant's authorization IS its own expires_at, read live from
+//     vault_access_grants on every reveal, and no claim mirrors it.
+//   - rotation_policy: NO. Disabling a credential rotation policy is not a
+//     removal of anyone's access; there is no user principal involved.
+//
+// It answers for every resource-type name a sever path in this product uses,
+// not only the ones Revoke maps, because the question is about the token
+// rather than about which table the row lives in -- and the census test that
+// checks every sever path needs one place to ask.
+//
+// An unknown type answers YES. A type nobody has classified is more likely to
+// be a claim someone forgot than a table read live, and the cost of being
+// wrong in that direction is one re-authentication rather than access that
+// outlives its own expiry.
+func TokenCarries(resourceType string) bool {
+	switch resourceType {
+	case "application", "vault_access", "vault_credential", "rotation_policy":
+		return false
+	default:
+		return true
+	}
+}
+
 // activeForUser is the definition of "a time-bound elevation this user holds":
 // a fulfilled access request with an expiry that has not passed. vault
 // credentials are deliberately excluded -- their authorization is the vault
@@ -187,7 +230,27 @@ func EndAllForUser(ctx context.Context, q Querier, userID, orgID string) (int64,
 // elevation still held by a disabled user, ended. It runs under bypass-RLS from
 // the lifecycle sweep, so it takes no org and derives each write's org from the
 // row it came from.
-func EndAllForDisabledUsers(ctx context.Context, q Querier) (int64, error) {
+//
+// It returns the users whose tokens the caller must then cut, deduplicated and
+// filtered by TokenCarries, because a count cannot be revoked. This is the
+// asymmetry that made the gap easy to miss: EndAllForUser is handed the user,
+// so its callers already had the identity they needed, while this one FINDS its
+// users and reported only how many it had found. The identities were in hand
+// the whole time -- the SELECT above reads requester_id -- and simply were not
+// passed back, so the sweep ended the elevation in the database and left every
+// token that named it working.
+//
+// The list is returned alongside the error, not instead of it: a failure part
+// way through has already removed real access, and those users must still be
+// cut. Dropping them on the error path would make a partial sweep the one case
+// that severs access without severing the credential.
+//
+// The rows are ordered for that same reason. An abort part way through leaves a
+// prefix done and a suffix not; with no ORDER BY the next tick would retry a
+// differently-ordered set and could keep failing on a different row each time,
+// making progress invisible. Soonest expiry first also means the most overdue
+// elevation is the one that gets ended before any failure can stop the pass.
+func EndAllForDisabledUsers(ctx context.Context, q Querier) (int64, []string, error) {
 	rows, err := q.Query(ctx,
 		//orgscope:ignore install-wide lifecycle reconcile sweep; each write below is scoped to the org of the row it came from
 		`SELECT r.id, r.requester_id, r.resource_type, r.resource_id, r.org_id
@@ -196,9 +259,10 @@ func EndAllForDisabledUsers(ctx context.Context, q Querier) (int64, error) {
 		  WHERE r.status = 'fulfilled'
 		    AND r.expires_at IS NOT NULL AND r.expires_at > NOW()
 		    AND r.resource_type <> 'vault_credential'
-		    AND u.enabled = false`)
+		    AND u.enabled = false
+		  ORDER BY r.expires_at, r.id`)
 	if err != nil {
-		return 0, fmt.Errorf("list elevations of disabled users: %w", err)
+		return 0, nil, fmt.Errorf("list elevations of disabled users: %w", err)
 	}
 	type row struct{ id, user, rtype, rid, org string }
 	var pending []row
@@ -206,28 +270,37 @@ func EndAllForDisabledUsers(ctx context.Context, q Querier) (int64, error) {
 		var r row
 		if err := rows.Scan(&r.id, &r.user, &r.rtype, &r.rid, &r.org); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("scan elevation: %w", err)
+			return 0, nil, fmt.Errorf("scan elevation: %w", err)
 		}
 		pending = append(pending, r)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("list elevations of disabled users: %w", err)
+		return 0, nil, fmt.Errorf("list elevations of disabled users: %w", err)
 	}
 
 	var ended int64
+	var cutTokensFor []string
+	seen := map[string]bool{}
 	for _, r := range pending {
 		if err := Revoke(ctx, q, r.rtype, r.user, r.rid, r.org); err != nil {
-			return ended, fmt.Errorf("end elevation %s: %w", r.id, err)
+			return ended, cutTokensFor, fmt.Errorf("end elevation %s: %w", r.id, err)
+		}
+		// Collected after the access is actually gone, and only for a type the
+		// token carries: one user holding three elevations is cut once, and an
+		// elevation that no claim asserts is not a re-login.
+		if TokenCarries(r.rtype) && !seen[r.user] {
+			seen[r.user] = true
+			cutTokensFor = append(cutTokensFor, r.user)
 		}
 		if _, err := q.Exec(ctx,
 			`UPDATE access_requests SET status = 'expired', updated_at = NOW()
 			  WHERE id = $1 AND org_id = $2`, r.id, r.org); err != nil {
-			return ended, fmt.Errorf("mark elevation %s expired: %w", r.id, err)
+			return ended, cutTokensFor, fmt.Errorf("mark elevation %s expired: %w", r.id, err)
 		}
 		ended++
 	}
-	return ended, nil
+	return ended, cutTokensFor, nil
 }
 
 // ActiveForUserPredicate is the WHERE clause that identifies a user's live

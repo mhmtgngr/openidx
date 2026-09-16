@@ -11,6 +11,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // SyncEngine performs directory synchronization
@@ -64,6 +65,21 @@ func NewSyncEngine(db *database.PostgresDB, logger *zap.Logger) *SyncEngine {
 // One transaction closes all three: the old rows and the new ones move
 // together, and a failure leaves the previous membership exactly as it was for
 // the caller to report.
+// A REPLACEMENT IS BOTH A GRANT AND A REVOCATION, AND ONLY THE REVOCATION HALF
+// CUTS TOKENS.
+//
+// "groups" is a claim: internal/oauth builds it onto the access token from
+// group_memberships at issuance, so a user dropped from a synced group keeps
+// asserting it until that token expires. But this function DELETEs every
+// directory-managed membership and immediately re-inserts the current ones, so
+// most of the rows it removes it also puts back. Cutting on the delete would
+// log out every member of every synced group on every sync, for nothing: a
+// grant that has not reached the token permits nothing it should not.
+//
+// So only the DIFFERENCE is a revocation -- the users the delete removed and
+// the insert did not restore -- and it is cut AFTER the commit, because Redis
+// cannot join a Postgres transaction and a marker written inside one that
+// later rolls back logs somebody out of a membership they still have.
 func (e *SyncEngine) replaceDirectoryMemberships(ctx context.Context, groupID, directoryID, orgID string, memberUserIDs []string) error {
 	tx, err := e.db.Pool.Begin(ctx)
 	if err != nil {
@@ -71,10 +87,25 @@ func (e *SyncEngine) replaceDirectoryMemberships(ctx context.Context, groupID, d
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx,
+	// RETURNING, because a row count cannot be revoked.
+	rows, err := tx.Query(ctx,
 		`DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $3 AND user_id IN (
 			SELECT id FROM users WHERE directory_id = $2 AND org_id = $3
-		)`, groupID, directoryID, orgID); err != nil {
+		) RETURNING user_id::text`, groupID, directoryID, orgID)
+	if err != nil {
+		return fmt.Errorf("clear the directory-managed members: %w", err)
+	}
+	var removed []string
+	for rows.Next() {
+		var uid string
+		if serr := rows.Scan(&uid); serr != nil {
+			rows.Close()
+			return fmt.Errorf("read the members being replaced: %w", serr)
+		}
+		removed = append(removed, uid)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
 		return fmt.Errorf("clear the directory-managed members: %w", err)
 	}
 
@@ -89,7 +120,90 @@ func (e *SyncEngine) replaceDirectoryMemberships(ctx context.Context, groupID, d
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
+
+	for _, userID := range membershipsLost(removed, memberUserIDs) {
+		e.revokeTokens(ctx, userID, "directory sync: removed from a synced group")
+	}
 	return nil
+}
+
+// deleteSyncedGroup removes a group the directory no longer has, and cuts the
+// tokens of everyone who was in it.
+//
+// THE CASCADE IS THE PART THAT HIDES. group_memberships.group_id carries
+// ON DELETE CASCADE, so `DELETE FROM groups` takes every membership with it
+// without the statement ever naming group_memberships -- which is why the sever
+// census could not see this path, and why the members were read here BEFORE the
+// delete rather than returned by it: a cascade returns nothing.
+//
+// "groups" is a claim on the access token, so a member of a group that has just
+// stopped existing keeps asserting it until that token expires.
+func (e *SyncEngine) deleteSyncedGroup(ctx context.Context, groupID, orgID, why string) error {
+	members, err := e.groupMembers(ctx, groupID, orgID)
+	if err != nil {
+		// Do not let an unreadable member list stop the delete: the group is
+		// gone from the directory either way, and leaving it in place is worse
+		// than removing it without cutting. Loud, because that is the case
+		// where a live token keeps a membership the directory has dropped.
+		e.logger.Warn("could not read the members of a group being deleted; their tokens will not be cut",
+			logsafe.String("group_id", groupID), zap.String("why", why), zap.Error(err))
+		members = nil
+	}
+	if _, err := e.db.Pool.Exec(ctx, `DELETE FROM groups WHERE id = $1 AND org_id = $2`, groupID, orgID); err != nil {
+		return err
+	}
+	// After the delete, never before: a marker written for a delete that then
+	// fails is a logout that took nothing away.
+	for _, userID := range members {
+		e.revokeTokens(ctx, userID, why)
+	}
+	return nil
+}
+
+func (e *SyncEngine) groupMembers(ctx context.Context, groupID, orgID string) ([]string, error) {
+	rows, err := e.db.Pool.Query(ctx,
+		`SELECT user_id::text FROM group_memberships WHERE group_id = $1 AND org_id = $2`, groupID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		out = append(out, uid)
+	}
+	return out, rows.Err()
+}
+
+// membershipsLost returns the user ids in removed that are not in kept, each
+// once. It is the group counterpart of identity's lostRoles, and exists for the
+// same reason: a wholesale replacement is a grant and a revocation at once, and
+// treating the two alike would end live sessions on every sync.
+func membershipsLost(removed, kept []string) []string {
+	still := make(map[string]struct{}, len(kept))
+	for _, id := range kept {
+		still[id] = struct{}{}
+	}
+	var lost []string
+	seen := make(map[string]struct{}, len(removed))
+	for _, id := range removed {
+		if id == "" {
+			continue
+		}
+		if _, back := still[id]; back {
+			continue
+		}
+		// One user can only lose this group once, however many rows said so.
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		lost = append(lost, id)
+	}
+	return lost
 }
 
 // record runs one of the sync's bookkeeping writes and says what is lost when
@@ -548,7 +662,7 @@ func (e *SyncEngine) syncGroups(ctx context.Context, connector *LDAPConnector, d
 
 	for dn, id := range dbGroups {
 		if !ldapDNs[dn] {
-			if _, err := e.db.Pool.Exec(ctx, `DELETE FROM groups WHERE id = $1 AND org_id = $2`, id, orgID); err != nil {
+			if err := e.deleteSyncedGroup(ctx, id, orgID, "LDAP sync: group removed from the directory"); err != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("failed to delete group: %v", err))
 			} else {
 				result.GroupsDeleted++
@@ -877,7 +991,7 @@ func (e *SyncEngine) syncAzureADGroups(ctx context.Context, connector *AzureADCo
 	// Delete groups that no longer exist in Azure AD
 	for extID, id := range dbGroups {
 		if !seenIDs[extID] {
-			if _, err := e.db.Pool.Exec(ctx, `DELETE FROM groups WHERE id = $1 AND org_id = $2`, id, orgID); err != nil {
+			if err := e.deleteSyncedGroup(ctx, id, orgID, "Azure AD sync: group removed from the directory"); err != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("failed to delete group: %v", err))
 			} else {
 				result.GroupsDeleted++

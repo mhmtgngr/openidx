@@ -59,13 +59,15 @@ func (f *fakeGroupRepository) Update(_ context.Context, g *Group) error {
 	return nil
 }
 
-func (f *fakeGroupRepository) Delete(_ context.Context, id string) error {
+func (f *fakeGroupRepository) Delete(_ context.Context, id string) ([]string, error) {
 	g, ok := f.byID[id]
 	if ok {
 		delete(f.byID, id)
 		delete(f.byName, g.GetName())
 	}
-	return nil // idempotent, matches the legacy DeleteGroup contract
+	// No membership store here, so no members lost; the real repository returns
+	// them via RETURNING and group_repository_testdb_test.go measures that.
+	return nil, nil // idempotent, matches the legacy DeleteGroup contract
 }
 
 func serviceWithGroupRepo(repo GroupRepository) *Service {

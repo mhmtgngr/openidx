@@ -213,9 +213,23 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 			if roleID == "" {
 				errMsg = "role_id parameter required"
 			} else {
-				_, err := s.db.Pool.Exec(ctx, "DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3", uid, roleID, orgID)
+				// The token has to be cut too. The enforcement point reads the
+				// role list from the "roles" claim and resolves that set's
+				// permissions itself, so deleting the row alone stops only the
+				// NEXT login -- a bulk "remove admin from these 400 users"
+				// would leave 400 live admin tokens. Two branches of this same
+				// switch already knew that (disable_users, delete_users); the
+				// ones that take away a role or a group did not.
+				//
+				// Only on an actual removal: RowsAffected is 0 when the user
+				// never held the role, and cutting there is a logout that took
+				// nothing away. Outside a transaction (each Exec runs on the
+				// pool), so the delete has committed by the time this runs.
+				tag, err := s.db.Pool.Exec(ctx, "DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3", uid, roleID, orgID)
 				if err != nil {
 					errMsg = err.Error()
+				} else if tag.RowsAffected() > 0 {
+					s.revokeAfterSever(ctx, uid, "bulk remove_role")
 				}
 			}
 		case "add_to_group":
@@ -235,9 +249,13 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 			if groupID == "" {
 				errMsg = "group_id parameter required"
 			} else {
-				_, err := s.db.Pool.Exec(ctx, "DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2 AND org_id = $3", uid, groupID, orgID)
+				// "groups" is a claim on the token for the same reason "roles"
+				// is, so ending a membership leaves a token still asserting it.
+				tag, err := s.db.Pool.Exec(ctx, "DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2 AND org_id = $3", uid, groupID, orgID)
 				if err != nil {
 					errMsg = err.Error()
+				} else if tag.RowsAffected() > 0 {
+					s.revokeAfterSever(ctx, uid, "bulk remove_from_group")
 				}
 			}
 		case "reset_passwords":

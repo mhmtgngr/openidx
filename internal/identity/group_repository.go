@@ -45,7 +45,10 @@ type GroupRepository interface {
 	// Delete removes a group and its memberships in the caller's tenant. WRITE
 	// (primary). Idempotent on memberships; returns nil even if the group row was
 	// already absent (matches the legacy DeleteGroup contract).
-	Delete(ctx context.Context, id string) error
+	// Delete removes the group and returns the users who lost a membership,
+	// because deleting a group revokes it from everyone who held it and a
+	// caller cannot cut tokens it has no identities for.
+	Delete(ctx context.Context, id string) ([]string, error)
 }
 
 // PostgresGroupRepository is the pgx implementation of GroupRepository.
@@ -177,20 +180,38 @@ func (r *PostgresGroupRepository) Update(ctx context.Context, group *Group) erro
 
 // Delete implements GroupRepository. WRITE — primary pool. Removes memberships
 // first, then the group, so no orphaned membership rows remain. Idempotent.
-func (r *PostgresGroupRepository) Delete(ctx context.Context, id string) error {
+func (r *PostgresGroupRepository) Delete(ctx context.Context, id string) ([]string, error) {
 	org, err := orgctx.From(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := r.db.Pool.Exec(ctx,
-		`DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2`, id, org.ID); err != nil {
-		return fmt.Errorf("remove group memberships: %w", err)
+	// RETURNING, because the caller has to cut the tokens of everyone this
+	// removes and a row count cannot be revoked.
+	rows, err := r.db.Pool.Query(ctx,
+		`DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2 RETURNING user_id::text`, id, org.ID)
+	if err != nil {
+		return nil, fmt.Errorf("remove group memberships: %w", err)
+	}
+	var members []string
+	for rows.Next() {
+		var uid string
+		if serr := rows.Scan(&uid); serr != nil {
+			rows.Close()
+			return nil, fmt.Errorf("read the members losing the group: %w", serr)
+		}
+		members = append(members, uid)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("remove group memberships: %w", err)
 	}
 	if _, err := r.db.Pool.Exec(ctx,
 		`DELETE FROM groups WHERE id = $1 AND org_id = $2`, id, org.ID); err != nil {
-		return fmt.Errorf("delete group: %w", err)
+		// The memberships are already gone, so the caller must still cut those
+		// tokens: they name a group the holder no longer has.
+		return members, fmt.Errorf("delete group: %w", err)
 	}
-	return nil
+	return members, nil
 }
 
 // Ensure the concrete type satisfies the interface at compile time.

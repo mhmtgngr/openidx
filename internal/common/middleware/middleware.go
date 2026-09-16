@@ -538,14 +538,9 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 			c.Set("session_id", sid)
 		}
 
-		// Extract roles
-		if roles, ok := claims["roles"].([]interface{}); ok {
-			roleStrings := make([]string, len(roles))
-			for i, role := range roles {
-				roleStrings[i] = fmt.Sprint(role)
-			}
-			c.Set("roles", roleStrings)
-		}
+		// Roles AND groups, in one place: see BindSubjectClaims for why the
+		// two had drifted apart and what depends on both.
+		BindSubjectClaims(c, claims)
 		// Extract amr (authentication methods references) so downstream can tell
 		// whether the session actually completed MFA. Tokens don't emit it yet
 		// (so this is absent → treated as no-MFA); wiring it here keeps
@@ -638,13 +633,9 @@ func SoftAuth(jwksURL string) gin.HandlerFunc {
 		if sid, ok := claims["sid"].(string); ok && sid != "" {
 			c.Set("session_id", sid)
 		}
-		if roles, ok := claims["roles"].([]interface{}); ok {
-			roleStrings := make([]string, len(roles))
-			for i, role := range roles {
-				roleStrings[i] = fmt.Sprint(role)
-			}
-			c.Set("roles", roleStrings)
-		}
+		// Roles AND groups, in one place: see BindSubjectClaims for why the
+		// two had drifted apart and what depends on both.
+		BindSubjectClaims(c, claims)
 		// Extract amr (authentication methods references) so downstream can tell
 		// whether the session actually completed MFA. Tokens don't emit it yet
 		// (so this is absent → treated as no-MFA); wiring it here keeps

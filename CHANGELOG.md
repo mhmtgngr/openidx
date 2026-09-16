@@ -94,6 +94,231 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The OPA policy was written against a caller the middleware never supplied.**
+  `OPAAuthz` builds its authorization input from `c.Get("roles")` and
+  `c.Get("groups")`, and `authz.rego` opens with `default allow := false` and
+  grants by role. **Nothing anywhere called `c.Set("groups")`** — not in
+  production, not in tests — although the issuer mints a `groups` claim onto
+  every token beside `roles`. Worse, two of the three services that mount
+  `OPAAuthz` authenticate with their own middleware
+  (`governance-service`, `provisioning-service`), and those bound `user_id`,
+  `email` and `name` and **neither `roles` nor `groups`**.
+
+  So with `ENABLE_OPA_AUTHZ` on, every role-based rule in the policy was decided
+  against an empty list. That is not a silent hole: against
+  `default allow := false` it is a service that denies nearly everything except
+  the two path-scoped rules, which is presumably why nobody had switched it on.
+  The separation-of-duties `deny` failed the other way — it looks for
+  conflicting roles held together, so an empty list satisfies nothing and that
+  rule has never produced a message.
+
+  `opa.ResourceContext`'s own doc already records this shape twice, for `owner`
+  and for the resource `tenant_id`, and both were deleted because nothing could
+  ever fill them. These two are the opposite case: the claims were minted all
+  along and simply were not passed on. So they are bound — in one place,
+  `middleware.BindSubjectClaims`, called by `AuthWithAPIKey`, `SoftAuth`, and
+  governance's and provisioning's own middlewares, because four copies of this
+  is how the four drifted apart.
+
+  **A census now finds the authentication middlewares itself** — a function that
+  reads token claims and writes the caller's id — and fails the build when one
+  binds no subject. `internal/identity` is on its register with a reason: it
+  mounts neither `OPAAuthz` nor `RequireRole`. The register only shrinks.
+
+  **This changes behaviour where OPA is enabled.** Governance and provisioning
+  go from denying nearly everything to letting the policy decide, and on all
+  three services `authz.rego`'s `admin-group` rule starts firing for members of
+  that group. That is what the policy says; it had simply never been given the
+  input to say it. Anyone running with `ENABLE_OPA_AUTHZ=true` should read
+  `deployments/docker/opa/policies/authz.rego` before taking this upgrade.
+
+  Four mutations red: dropping the groups binding, binding a malformed claim
+  instead of rejecting it, removing governance's call to the binder (caught by
+  the census, which is the defect that existed), and loosening the census's own
+  detector. A fifth was a real find rather than a mutation: the census's first
+  run accused this package's own middlewares, because it matched only the
+  qualified `middleware.BindSubjectClaims` and not the bare identifier used
+  inside the package.
+
+
+- **The census found the last two grant paths, and looking for them found a
+  third shape it could not see at all.** `directory`'s
+  `replaceDirectoryMemberships` and `provisioning`'s `UpdateSCIMGroup` both
+  clear every membership and re-insert the current ones in one transaction, so
+  most of what they remove they put straight back. Cutting on the delete would
+  log out every member of every synced group on every sync, for nothing — a
+  grant that has not reached the token permits nothing it should not. Both now
+  `DELETE ... RETURNING user_id`, subtract the members they re-insert, and cut
+  only the difference, after the commit.
+
+  **`group_memberships.group_id` and `user_roles.role_id` carry
+  `ON DELETE CASCADE`**, so deleting the parent takes every assignment with it
+  and the statement never names the child table. Three live paths were in
+  exactly that position and the census — which reads SQL — reported the set
+  closed: SCIM group deletion, and the LDAP and Azure AD syncs dropping a group
+  the directory no longer has. Each silently removed a claim from every member
+  while their tokens kept asserting it. A cascade returns nothing, so these
+  cannot use `RETURNING`: they read the members before the delete and cut them
+  after.
+
+  The census now recognises that third shape, so a new parent delete that
+  severs by cascade fails the build. Both `unaudited` entries are gone from its
+  register; the two directory paths remain listed as `revokes-indirectly`,
+  because their cut goes through the injected `e.revoke` — a function-valued
+  field that name-based reachability cannot follow, which `revoker_wiring_test.go`
+  covers instead.
+
+  Six mutations red, measured against a real PostgreSQL and a real Redis with
+  the general and revocation roles on separate databases. **One stayed green
+  and it was the same gap as the last round, which is why it is worth writing
+  down twice:** moving the SCIM revoke from after the commit to inside the
+  transaction passed, because no test forced a commit to fail — a failing
+  DELETE returns before either placement runs. A `DEFERRABLE` constraint
+  trigger now forces it: the DELETE succeeds, the COMMIT does not, both
+  memberships come back, and a marker written inside the transaction would have
+  survived that rollback.
+
+  Installs with no Redis, and installs that never wired the directory revoker,
+  still sync: refusing would leave the membership live in the database as well
+  as the token.
+
+
+- **Taking a role away and cutting the token that names it were two things, and
+  the census could not see the difference.** The sever census guards one shape:
+  an account disabled or deleted. Removing a role or a group does not touch the
+  user row, so it never looked — while the token carries both, because the
+  issuer builds `roles` from `user_roles` and `groups` from `group_memberships`
+  and the enforcement point resolves the role claim's permissions on every
+  request.
+
+  Four paths closed: an access certification refusing someone's access
+  (`admin/attestation.go`, which had its own hand-rolled DELETEs rather than the
+  shared revoke), a bulk `remove_role` and a bulk `remove_from_group` (one
+  operator action, one live credential per user — the same switch's
+  `disable_users` and `delete_users` branches already knew this), and
+  `identity.RemoveGroupMember`. Deleting a group is the mass case: the
+  repository cut by predicate and reported nothing, so `DeleteGroup` had no
+  identities to revoke — the fourth time in this programme that a sever path
+  needed `RETURNING` for that reason.
+
+  Removal only. A bulk `assign_role` cuts nobody, and neither removal cuts a
+  user who did not hold what was removed (`RowsAffected` is 0): a grant that has
+  not reached the token permits nothing it should not, so cutting there is an
+  outage with no security gain.
+
+  **The census now recognises the second shape**, so a new path that deletes
+  from `user_roles` or `group_memberships` without revoking fails the build. It
+  found four more the moment it could look: `jitgrant.Revoke` and
+  `identity`'s group repository are `revoked-by-caller` (both verified by
+  reading every caller — the revoke belongs in the caller because Redis cannot
+  join a Postgres transaction), and `directory`'s `replaceDirectoryMemberships`
+  and `provisioning`'s `UpdateSCIMGroup` are recorded OPEN with the fix named:
+  both clear every membership and re-insert the current ones in one
+  transaction, so only the DIFFERENCE is a revocation and cutting on the delete
+  would log out every member of every synced group on every sync. The register
+  only shrinks, so neither can be forgotten.
+
+  Ten mutations red, measured against a real PostgreSQL and a real Redis with
+  the general and revocation roles on separate databases. Two of them needed
+  the tests fixed rather than excused. Moving the certification's revoke from
+  after the commit to beside the DELETE stayed green, because the only failure
+  the suite injected killed the DELETE itself and the handler returned before
+  reaching either placement; a `DEFERRABLE` constraint trigger now forces the
+  case that distinguishes them — the DELETE succeeds, the COMMIT does not, and
+  a marker written inside the transaction would survive the rollback that gave
+  the role back. And the two bulk mutations first "passed" against tests that
+  had silently skipped, because one shell export derived a variable from
+  another set in the same statement; the runs were repeated with the
+  environment proven.
+
+
+- **The lifecycle reconcile net caught the access and let the credential
+  through.** The cross-pillar sweep exists for the disable paths that do NOT go
+  through `deprovisionUser` -- SCIM deactivation, directory sync, a lifecycle
+  policy, a direct database change -- and `deprovisionUser` is the path that
+  cuts tokens. So for every path this sweep is the net for, the token was never
+  cut: it removed the disabled user's time-bound elevation rows, logged how
+  many, and the access token in their browser kept naming the role that the
+  enforcement point resolves on every request.
+
+  It was never a missing identity. `EndAllForDisabledUsers` selects
+  `requester_id` to do its work, so the users were in hand the whole time and
+  simply were not passed back, because the function returned a count -- and a
+  count cannot be revoked. Its sibling `EndAllForUser` is *handed* the user,
+  which is why that one's two callers already cut tokens and this one did not;
+  the asymmetry is what hid the gap.
+
+  It now returns the users to cut, deduplicated (one user holding three
+  elevations is cut once) and filtered by `jitgrant.TokenCarries`, and the sweep
+  cuts them after the rows are gone -- Redis cannot join those statements, so
+  the revoke lives at the call site rather than inside the shared revoke.
+
+  **The list is returned alongside the error, not instead of it.** A sweep that
+  fails part way through has already removed real access, and those users are
+  exactly the ones whose tokens must not outlive it; dropping them on the error
+  path would make a partial failure the one case that severs access without
+  severing the credential. The rows are ordered by expiry for the same reason:
+  an abort leaves a prefix done, and without an order the next tick retries a
+  differently-ordered set.
+
+  Measured against a real PostgreSQL and a real Redis with the general and
+  revocation roles on separate databases. Six mutations red: removing the
+  revoke, writing to the general Redis, dropping the `TokenCarries` filter,
+  dropping the deduplication, dropping the list on the error path, and removing
+  the `ORDER BY`. The last one stayed green at first and the reason was worth
+  the fix rather than the excuse: Postgres happened to return insertion order,
+  which matched the order the test wanted, so the test was measuring luck. It
+  now inserts the failing row first and expires it last, so physical order and
+  expiry order disagree.
+
+  An install with no Redis still reconciles: refusing to run would leave the
+  elevation live in the database as well as the token.
+
+
+- **A JIT elevation outlived the expiry that defines it.** "Admin until 15:00"
+  is enforced by one piece of code, the JIT expiry sweep, and that sweep deleted
+  the assignment row and stopped there. The access token minted at 14:00 still
+  carried the role in its `roles` claim, and the enforcement point resolves that
+  claim's permissions on every request -- so at 15:01 the row was gone, the
+  audit said `jit_access_expired` / `success`, and the elevation kept working
+  until the token expired on its own. An expiry sweep whose entire purpose is a
+  deadline was the path that missed it.
+
+  Two other severs sat right next to it and neither is this one: the DELETE
+  removes what a *future* login would read, and `enqueueNetworkRevocation`
+  closes Ziti circuits on the overlay. Reading a call site is not enough to tell
+  -- the same sweep's sibling path, the access-review decision, does cut tokens,
+  but one frame up from the shared revoke, after its transaction commits.
+
+  Which resource types need the cut is now a single answered question,
+  `jitgrant.TokenCarries`, next to the revoke itself. It is read off what the
+  issuer puts in a token and what the enforcement point reads back: `role`,
+  `privileged_role` and `group` are claims, so ending one leaves a live
+  credential; `application` is in no claim -- access is read from the table at
+  the moment it is used, so the row being gone *is* the enforcement, and cutting
+  there would force a re-login that changes no decision. An unknown type answers
+  yes, because a type nobody classified is likelier to be a forgotten claim than
+  a live table read, and being wrong that way costs one re-authentication rather
+  than access that outlives its own expiry.
+
+  The marker is written only after the access is actually gone. A revoke that
+  failed leaves the request `fulfilled` for the next tick and cuts nothing: a
+  marker for a user whose access is still live is a re-login that fixes nothing
+  while reading, in the log, as though the deadline had been enforced.
+
+  `killUserSessions` now takes the reason it was called for, because the marker
+  is one key and the log line is the only place the caller survives.
+
+  Measured against a real PostgreSQL and a real Redis, with the general and
+  revocation roles bound to separate Redis databases so a marker written to the
+  wrong one is visible, and read back through the key the enforcement point
+  reads. Five mutations red: removing the revoke, writing to the general Redis,
+  making every resource type carry a token (which erases the `application`
+  decision), cutting before the access is removed, and removing the missing-Redis
+  guard. An install with no Redis still sweeps -- refusing to run would leave the
+  elevation live in the database *and* the token.
+
+
 - **Three admin-plane paths take a role away, and none of them cut the token.**
   `RemoveUserRole`, `UpdateUserRoles` and `DeleteRole` are each reached from an
   HTTP handler an administrator drives directly. None disables the account, so

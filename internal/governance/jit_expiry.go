@@ -10,6 +10,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/jitgrant"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
@@ -107,6 +108,27 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 		// Sever the user's live overlay circuits too (Wave B2): a JIT grant that
 		// expired shouldn't leave an open circuit until the app closes it.
 		s.enqueueNetworkRevocation(ctx, requesterID, orgID, "jit_expiry")
+
+		// AND cut the tokens the elevation was issued into. The two severs
+		// above end different things and neither ends this one: the DELETE
+		// removes the row a future login would read, and
+		// enqueueNetworkRevocation closes Ziti circuits on the overlay. The
+		// access token minted while the elevation was live still carries the
+		// role in its "roles" claim, and the enforcement point resolves that
+		// claim's permissions on every request -- so without this, "expired at
+		// 15:00" means the row is gone at 15:00 and the elevation keeps
+		// working until the token expires on its own. An expiry sweep whose
+		// whole purpose is a deadline cannot be the path that misses it.
+		//
+		// There is no transaction here (each statement runs on the pool), so
+		// there is no commit to wait for; the marker goes in once the access
+		// is actually gone. Best-effort, like the marker everywhere else: the
+		// row is already deleted, so a Redis hiccup must not stop the sweep --
+		// but it is logged, because the access is then severed in the database
+		// while a live token still asserts it.
+		if jitgrant.TokenCarries(resourceType) {
+			s.killUserSessions(ctx, requesterID, "jit_expiry")
+		}
 
 		// Mark the access request as expired
 		_, err := s.db.Pool.Exec(ctx,
