@@ -9,6 +9,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The cell guard's blind spot: the mount was measured, what could reach it was
+  not** — two registers that said what they covered and nothing about what they
+  did not.
+
+  `cmd/cell_guard_census_test.go` recorded which binaries mount `cell.Guard`,
+  read off the text of `main.go`. It named **seven binaries; `cmd/` holds
+  seventeen.** The other ten were not exempt and not deferred — they were
+  *invisible*, which is worse than either, because nothing would ever have
+  mentioned them. A list can be a vocabulary or a census; this one read as a
+  census and behaved as a vocabulary. The universe is now derived from the tree:
+  every directory under `cmd/` with a `main.go` must appear in exactly one of
+  `mounts`, `unmounted` (request-serving, guard not mounted, **with the
+  reason**) or `notRequestServing`. Closing it **found no defect** — all ten are
+  legitimately out of scope, and their reasons are written down
+  (`gateway-service` does not authenticate at all; `verify-service` serves only
+  JWKS and has no caller identity; `event-relay`'s HTTP surface is `/health` and
+  `/metrics`; `demo-app` is a demonstration relying party; six are CLIs or batch
+  jobs). That is the honest result and it is worth what a defect would have
+  been: the next one cannot be invisible.
+
+  The classification is **checked rather than trusted**: a binary filed as
+  answering no requests must not contain a listener, or the cheapest way to
+  satisfy the census would be to file a new service under `notRequestServing`
+  and never think about it again. An exemption that writes itself is the defect
+  shape this branch keeps finding. A mirror check requires the listener
+  spellings to still match the servers, because a guard keyed on a spelling that
+  matches nothing passes forever.
+
+  The second blind spot cannot be closed from `cmd/` at all, and it is the one
+  that nearly shipped a defect: **mounting the guard says nothing about whether
+  the authentication in front of it binds the claim the guard reads.**
+  `identity-service` bound roles by hand and never bound the cell claim, so a
+  guard mounted there would have answered 200 to every misdirected request while
+  the census recorded it as guarded. That was fixed; the *property* was still
+  not measured. `internal/common/middleware/cell_credential_census_test.go` now
+  measures it as a census of **credential kinds** rather than of mounts — real
+  RSA-signed tokens, a real JWKS endpoint, the real middleware, the guard
+  mounted in the order every binary uses. Of the five ways a caller can
+  authenticate here, three are refused with a 421 and **two cannot be refused at
+  all**:
+
+  - **an API key** carries no claims. `AuthWithAPIKey` looks it up by its
+    globally-unique hash in *this* process's own database and binds `user_id`,
+    `org_id`, `scopes` and `roles` from the row, returning before
+    `BindSubjectClaims` is reached — measured: the cell key is left unset and
+    the guard serves. That is **correct**: a key that validated here is a row
+    this cell holds, so there is nothing misdirected to refuse. The cost is on
+    the other side and is **not fixable here** — a valid key belonging to a
+    tenant in another cell is simply absent from this database, so it comes back
+    `401 invalid API key`, a credential error for what is really a routing
+    error. Telling those apart needs the tenant directory, and `cell.Guard`
+    deliberately has no database dependency.
+  - **an anonymous request** under `SoftAuth` names no caller and therefore no
+    tenant, so there is no cell it could have been misdirected from.
+
+  **Nothing here is a live defect.** Both exemptions are correct today for the
+  reasons recorded against them. What was live is only the silence: an operator
+  reading "access-service mounts cell.Guard" had no way to learn that one of its
+  two authenticated paths can never produce a 421. The exemptions are now
+  measured, so a change that makes one of them false fails the build instead of
+  shipping — and a control asserts the same credential naming the *serving* cell
+  is served, without which a middleware that rejected everything would satisfy
+  the census.
+
+  **Ten mutations red against a green no-op control**, run either side:
+  `BindSubjectClaims` no longer binding the cell claim; the guard calling
+  `c.Next()` instead of refusing; the guard refusing *everything* (caught by the
+  control, which is the point of it); `api_key` deleted from the blind-spot
+  register; the API-key branch binding the claim after all; the register naming
+  a credential kind nothing produces; a binary dropped from every register; a
+  binary filed in two; a CLI growing a listener; and the mirror check looking
+  for a spelling nothing uses.
+
 - **A test that reported on the scheduler rather than on the code** — `Go CI`
   went red on `main` at `323f692` in
   `TestOnlyOneReplicaClaimsACertificateRotation`, and the honest answer was
