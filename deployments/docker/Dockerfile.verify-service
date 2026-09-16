@@ -1,0 +1,68 @@
+# Multi-stage build for the Verify Service (global-scale plan task 3.4).
+#
+# What matters about this image is what is not in it. The binary links no
+# PostgreSQL driver -- cmd/verify-service/main_test.go fails the build if one
+# ever appears in its import graph -- so the container can be given a
+# NetworkPolicy with no egress to the database at all, and run at a replica
+# count the database could never support.
+#
+# Its only dependency is OAUTH_JWKS_URL, and it refuses to start without one: a
+# verify tier with no issuer comes up, passes its health check and answers every
+# key fetch with a 503, which is the failure hardest to see from outside.
+#
+# The healthcheck is deliberately shallow for the same reason the readiness
+# probe is: whether the issuer is reachable belongs in jwks_refresh_failures and
+# jwks_stale_seconds, not in a probe that would pull the whole tier out of
+# rotation during an issuer blip -- precisely when the serve-stale cache is what
+# is keeping verification alive.
+
+# ============================================
+# Stage 1: Build
+# ============================================
+FROM golang:1.26-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates gcc musl-dev && \
+    echo 'precedence ::ffff:0:0/96 100' >> /etc/gai.conf
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
+
+COPY . .
+
+ARG VERSION=dev
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build \
+    -a \
+    -ldflags="-w -s -X main.Version=${VERSION}" \
+    -trimpath \
+    -o /app/verify-service \
+    ./cmd/verify-service && \
+    ls -lh /app/verify-service && \
+    strip /app/verify-service 2>/dev/null || true
+
+# ============================================
+# Stage 2: Runtime
+# ============================================
+FROM alpine:3.24
+
+RUN apk add --no-cache ca-certificates tzdata wget && \
+    rm -rf /var/cache/apk/*
+
+RUN addgroup -S openidx && \
+    adduser -S openidx -G openidx
+
+WORKDIR /app
+
+COPY --from=builder /app/verify-service /app/service
+
+USER openidx
+
+EXPOSE 8010
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -q --spider http://localhost:8010/health || exit 1
+
+ENTRYPOINT ["/app/service"]

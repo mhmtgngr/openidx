@@ -33,6 +33,9 @@ package revocation
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -184,4 +187,65 @@ func Revoker(client redis.UniversalClient, logger *zap.Logger) func(ctx context.
 				zap.String("path", why), zap.String("user_id", userID), zap.Error(err))
 		}
 	}
+}
+
+// AccessTokenBlacklistKey is the Redis key for a single revoked access token,
+// set by /oauth/revoke and by a single-session /oauth/logout. The token is
+// hashed: the key space is readable by anyone with access to the Redis, and a
+// bearer stored verbatim there would be a credential at rest.
+//
+// It lives here for the reason this package exists. The spelling used to be
+// private to internal/oauth, which was correct for as long as the enforcement
+// point and the revoking endpoint were the same process. They are not any more:
+// ADR-2 splits a verification tier off that answers introspection without a
+// database, and a tier computing this key for itself would be a second
+// implementation of a revocation check -- the shape recorded at the top of this
+// file, where a revocation is written to a key with no reader.
+func AccessTokenBlacklistKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return "oauth:revoked_access_token:" + hex.EncodeToString(sum[:])
+}
+
+// IsAccessTokenRevoked reports whether an access token has been revoked, by
+// either of the two mechanisms this product has: the token's own blacklist
+// entry, or the user's "revoke everything issued up to T" marker standing at or
+// after the token's iat.
+//
+// It takes the revocation Redis, not a general client. An error means the
+// question could not be answered, and EVERY caller must fail closed on it --
+// introspection answers active:false, the middleware refuses the bearer. A
+// revocation check that cannot reach Redis and reports "not revoked" is the
+// defect this package was written about: a control that returns success while
+// the thing it is supposed to establish is unknown.
+func IsAccessTokenRevoked(ctx context.Context, client redis.UniversalClient, token, userID string, issuedAt int64) (bool, error) {
+	if noClient(client) {
+		return false, fmt.Errorf("revocation redis not configured")
+	}
+
+	if n, err := client.Exists(ctx, AccessTokenBlacklistKey(token)).Result(); err != nil {
+		return false, err
+	} else if n > 0 {
+		return true, nil
+	}
+
+	// The per-user marker only bears on a token that says who it is for and
+	// when it was minted; without both there is nothing to compare.
+	if userID == "" || issuedAt <= 0 {
+		return false, nil
+	}
+	v, err := client.Get(ctx, UserTokensRevokedAtKey(userID)).Result()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	cutoff, perr := ParseMarker(v)
+	if perr != nil {
+		// An unreadable marker is not "no marker": somebody revoked, and the
+		// record of it cannot be interpreted. Fail closed rather than serve a
+		// token the install has already been told to stop honouring.
+		return false, fmt.Errorf("unreadable revocation marker for user: %w", perr)
+	}
+	return IsRevoked(issuedAt, cutoff), nil
 }

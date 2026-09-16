@@ -56,6 +56,8 @@ jobs:
           # so its image exists to be scheduled, not to be routed to.
           - service: event-relay
             dockerfile: deployments/docker/Dockerfile.event-relay
+          - service: verify-service
+            dockerfile: deployments/docker/Dockerfile.verify-service
           # The admin-console image builds the `production` (nginx) stage and
           # needs the repo root as context to copy the nginx config.
           - service: admin-console

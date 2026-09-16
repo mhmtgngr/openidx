@@ -120,11 +120,17 @@ high impact.
    (default 12h). So even if `oauth-service`/DB is down, in-flight verification
    never breaks. Metrics: `openidx_jwks_refresh_failures_total`,
    `openidx_jwks_serve_stale_total`, `openidx_jwks_stale_seconds`
-   (`internal/common/middleware/jwks_metrics.go`); alerts in the
+   (`internal/common/jwksverify/metrics.go`); alerts in the
    `openidx.jwks_availability` PrometheusRule group. The oauth JWKS endpoint
    itself serves from an in-memory atomic snapshot, so it does not hit Postgres
-   per request — the verify path is DB-independent end to end. Tests:
-   `internal/common/middleware/jwks_stale_test.go`.
+   per request. That snapshot is *loaded* from `oauth_signing_keys`, though, so
+   oauth-service's own JWKS endpoint needs the database at startup and again
+   whenever a token arrives bearing a kid it has never seen — this paragraph
+   used to claim the verify path was "DB-independent end to end", which is true
+   of the request but not of the process. The tier that genuinely has no
+   database is `cmd/verify-service`, which re-serves the key set from the HTTP
+   cache in `internal/common/jwksverify` and links no driver at all. Tests:
+   `internal/common/jwksverify/stale_test.go`.
 2. **Keep access-token TTL short, refresh-token TTL long.** Confirm access tokens
    are short-lived (≈5–15 min) and revocation is checked from Redis, not Postgres,
    on the hot path. Long-lived refresh tokens mean a DB brownout is only felt at

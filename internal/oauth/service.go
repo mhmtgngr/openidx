@@ -9,7 +9,6 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -972,11 +971,15 @@ func (s *Service) revokeRefreshTokenFamily(ctx context.Context, familyID string)
 }
 
 // accessTokenBlacklistKey returns the Redis key used to mark a given access
-// token as revoked. The token is hashed (not stored verbatim) so the key
-// stays bounded and we don't keep raw bearer tokens around in Redis.
+// token as revoked.
+//
+// The spelling moved to internal/revocation for the same reason the per-user
+// marker did: this service is no longer the only reader. The verification tier
+// answers introspection from the same Redis without a database, and two
+// processes computing one key separately is how this product previously ended
+// up writing a revocation where nothing read it.
 func accessTokenBlacklistKey(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return "oauth:revoked_access_token:" + hex.EncodeToString(sum[:])
+	return revocation.AccessTokenBlacklistKey(token)
 }
 
 // userTokensRevokedAtKey returns the Redis key recording the most recent
@@ -1040,37 +1043,15 @@ func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID
 
 	var revoked bool
 	err := s.revocationBreakerExec(func() error {
-		// Per-token blacklist (set by /oauth/revoke and /oauth/logout).
-		if n, err := s.redis.RevocationDB().Exists(ctx, accessTokenBlacklistKey(token)).Result(); err != nil {
+		// One implementation of "is this token revoked", shared with the
+		// verification tier that answers introspection without a database.
+		// The breaker stays here: it is this service's policy for how to
+		// behave during a Redis brownout, not part of the answer.
+		r, err := revocation.IsAccessTokenRevoked(ctx, s.redis.RevocationDB(), token, userID, issuedAt)
+		if err != nil {
 			return err
-		} else if n > 0 {
-			revoked = true
-			return nil
 		}
-
-		// Per-user "revoke everything before now" marker (set by /oauth/logout-all).
-		if userID != "" && issuedAt > 0 {
-			v, err := s.redis.RevocationDB().Get(ctx, userTokensRevokedAtKey(userID)).Result()
-			if err != nil && !errors.Is(err, redis.Nil) {
-				return err
-			}
-			if v != "" {
-				cutoff, perr := revocation.ParseMarker(v)
-				// `<=` means "tokens issued in the same wall-clock second as
-				// (or before) the logout-all call are revoked." This is the
-				// right semantic for /oauth/logout-all: every outstanding
-				// access token that existed at the moment the user said
-				// "kill everything" should stop working — including ones
-				// issued in the very same second. The previous
-				// inter-subtest-pollution worry about `handleLogout` bumping
-				// the cutoff went away when handleLogout switched to a
-				// per-token blacklist for single-session logout (only
-				// logout-all bumps the cutoff now).
-				if perr == nil && revocation.IsRevoked(issuedAt, cutoff) {
-					revoked = true
-				}
-			}
-		}
+		revoked = r
 		return nil
 	})
 	if err != nil {
