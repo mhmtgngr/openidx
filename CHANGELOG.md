@@ -9,6 +9,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Security: any authenticated user could take interactive control of any
+  enrolled device in their tenant** — and the census written to catch exactly
+  this could not see the route, three times over.
+
+  `POST /api/v1/access/remote-support/sessions` starts a remote-control session
+  on a named agent. Its default mode is `interactive`, not `view`. It carried
+  **no authorization gate at all**: the group it is mounted on has
+  `promoteWebSocketBearer` and the authentication middleware and nothing else,
+  `HandleStartSession` checks tenancy and request shape but neither role nor MFA
+  freshness, and the device-side consent that looks like a second control is
+  **chosen by the caller** — `consent_required` is a field in the start request
+  body and it defaults to `false`. Measured, not inferred, from the route table,
+  the group's middleware chain and the handler.
+
+  It now carries `requireFreshMFA("remote_support.start_session")` at the same
+  enforcement point as `POST /pam/apps/:id/launch`, because taking interactive
+  control of a device is that same act. The gate is passed into
+  `RegisterRemoteSupportAdminRoutes` as a parameter: it is a method on `Service`
+  and that handler has none.
+
+  **Why the step-up census missed it.** `stepup_route_census_test.go` read one
+  file (`service.go`), matched one group name (`api`), and looked at one path
+  prefix (`/pam/`). Measured: `internal/access` registers **23 mutating routes
+  in five other files**, on the receivers `r`, `router` and `publicAgent` — any
+  one of the three limits was enough to hide this route. A guard keyed on a
+  spelling cannot see work that uses none of them. The file and the receiver are
+  gone as limits: the census now reads every non-test file in the package and
+  accepts any receiver. The **path prefix cannot go**, because nothing in the
+  tree says which routes open privileged access — that is the judgement the
+  census exists to make somebody write down. So it stays and is named as a
+  `privilegedSurfaces` **vocabulary** rather than left to look like a census,
+  each entry is checked to still match a route, and the residual blind spot — a
+  privileged surface under a fourth prefix — is stated rather than left to be
+  discovered.
+
+  The newly visible remote-support routes are classified: session start gated;
+  ending a session, the recording upload pair and the device's own consent
+  callback registered with reasons. Two entries record something **undecided
+  rather than settled**: placing and releasing a legal hold on a session
+  recording grants no host access, so the freshness gate is the wrong control —
+  but they are governance actions open to any authenticated caller in the
+  tenant, and whether they should take `requireAdminRole()` is a decision nobody
+  has made. Written down so it gets made rather than inherited.
+
+  **The first version of this census's own gate check was wrong in the way this
+  file exists to catch, and a mutation is what found it.** It accepted the
+  literal `privileged...` in a registration line as proof of a gate — so
+  deleting `svc.requireFreshMFA(...)` from the mount site left the census
+  **green**: a control reporting success while the thing it exists to make true
+  is not true. A variadic gate is now *resolved*: the parameter proves nothing,
+  and the census reads every call of the enclosing function and requires a real
+  gate in the arguments of **all** of them. One gated caller out of two is a
+  service guarded on one port and open on another.
+
+  **Seven mutations red against a green no-op control** run either side: the
+  gate dropped at the mount site (the one that initially stayed green, and the
+  reason `gatedBy` exists); `/remote-support/` deleted from the vocabulary; a
+  prefix that matches no route; the scan narrowed back to `service.go`; the
+  receiver narrowed back to `api`; a register entry deleted; and a second,
+  ungated mount of the same helper.
+
+  What is measured here is the *registration*: that the route carries the gate.
+  That the gate itself refuses — fails closed on an unreadable session, honours
+  the console window, lets machine callers through — is measured where it lives,
+  in `stepup_gate_test.go`, and is unchanged.
+
 - **The cell guard's blind spot: the mount was measured, what could reach it was
   not** — two registers that said what they covered and nothing about what they
   did not.
