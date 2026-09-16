@@ -248,18 +248,6 @@ func TestElasticsearchClient(t *testing.T) {
 	})
 }
 
-// TestBuildRedisTLSConfig tests buildRedisTLSConfig function behavior
-func TestBuildRedisTLSConfig(t *testing.T) {
-	t.Run("TLS disabled returns nil", func(t *testing.T) {
-		cfg := RedisConfig{
-			TLSEnabled: false,
-		}
-		tlsCfg, err := buildRedisTLSConfig(cfg)
-		require.NoError(t, err)
-		assert.Nil(t, tlsCfg)
-	})
-}
-
 // TestPostgresDB_ParseAndApplyTLS tests connection string parsing with TLS
 func TestPostgresDB_ParseAndApplyTLS(t *testing.T) {
 	tests := []struct {
@@ -508,16 +496,8 @@ func extractRedisPassword(url string) string {
 
 // TestReadCACert tests CA certificate file reading
 func TestReadCACert(t *testing.T) {
-	t.Run("Non-existent CA cert file", func(t *testing.T) {
-		cfg := RedisConfig{
-			TLSEnabled: true,
-			TLSCACert:  "/nonexistent/path/to/ca.crt",
-		}
-		_, err := buildRedisTLSConfig(cfg)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "CA cert")
-	})
-
+	// The Redis half of this test moved with buildTLSConfig to
+	// internal/common/redisclient.
 	t.Run("Non-existent ES CA cert file", func(t *testing.T) {
 		// Create a temporary directory for test
 		tmpDir := t.TempDir()
