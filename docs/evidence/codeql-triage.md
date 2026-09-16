@@ -356,6 +356,39 @@ shape is already checked in the tree rather than enumerated here:
   fails if somebody makes this scanner quiet by weakening `Clean` into the
   CR/LF `ReplaceAll` that CodeQL recognises.
 
+### Update — the fourth recurrence, and the first raised BY the guard
+
+Alerts **2763–2767**, raised on `5cf0385`, sit on `internal/common/cell/cell.go:100`
+and `internal/common/handlers/decorator.go:52, 63, 81, 393`. Every one of those
+five lines reads `logsafe.String(...)`. The rule below closes them, and the
+reason is the one this section has now recorded four times: the count goes up
+when the sanitiser is applied to a site the query already reached.
+
+What is new is *why* those five lines changed. CodeQL first reported
+`cell.go` while it logged `c.Request.URL.Path` raw — a real defect, the class
+this file's rule is about, and the alert was correct. The fix went further than
+the one line because `TestNoRequestValueReachesALogFieldUnwashed` had not
+caught it: that guard only tracked values assigned to a LOCAL from `c.Param` /
+`c.Query` / `c.GetHeader`, and it opened with `if len(tainted) == 0 { return }`,
+so a function logging `c.Request.URL.Path` inline was never inspected at all.
+The guard documented a class it did not check. It now reads
+`c.Request.URL.{Path,RawPath,RawQuery,Fragment}` wherever they appear, which
+found four more sites in `decorator.go`.
+
+So the five new alerts are the arithmetic this entry predicts: four sites
+sanitised for the first time, one sanitised correctly after a real finding, and
+CodeQL counting all five because it still cannot see `logsafe.Clean`. **The
+alerts went up because the defect went down.** That is not a reason to stop
+applying the sanitiser, and it is emphatically not a reason to rewrite `Clean`
+as a CR/LF `ReplaceAll` — read the "eleven alerts" entry above before touching
+it, and note that `TestCleanIsNotReplaceAllOfCRLF` fails if anybody does.
+
+`c.Request.RemoteAddr` is deliberately outside the widened guard: net/http
+writes it from the accepted connection rather than the caller, and it is
+bounded by an address and a port. The three sites in `internal/audit/stream.go`
+that log it are unchanged, and the exclusion is a test case in the guard rather
+than an omission.
+
 Triage rule, final form: a `go/log-injection` alert on a **field** that reaches
 `logsafe` is closed by this entry, whatever its id. One on a **message**, or on
 a field that does not, is a defect and those three tests are what decide which
@@ -406,8 +439,8 @@ alert list nobody has triaged is an alert list nobody reads.
    re-recorded whenever a vendor bump moves those lines.
 3b. Dismiss as **"false positive"**, citing this file: every `go/log-injection`
    alert whose flagged line passes its value through a `logsafe` call. At the
-   time of writing that is 2477–2486, 2488–2489 and 2493, but **apply the rule,
-   not the list** — see "the numbered list is itself a list that drifts". Read
+   time of writing that is 2477–2486, 2488–2489, 2493 and 2763–2767, but
+   **apply the rule, not the list** — see "the numbered list is itself a list that drifts". Read
    the "eleven alerts on lines that ARE sanitised" entry first: the reason
    matters, because the change that would clear them is a change that must not
    be made.
