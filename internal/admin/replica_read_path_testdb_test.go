@@ -87,12 +87,24 @@ func TestTheOffloadedHandlersAnswerOverAReadOnlyReplica(t *testing.T) {
 			high_findings int NOT NULL DEFAULT 0, medium_findings int NOT NULL DEFAULT 0,
 			low_findings int NOT NULL DEFAULT 0, snapshot_date date NOT NULL,
 			PRIMARY KEY (org_id, snapshot_date));
-		CREATE TABLE IF NOT EXISTS `+schema+`.users (id uuid PRIMARY KEY, org_id uuid NOT NULL);
+		CREATE TABLE IF NOT EXISTS `+schema+`.users (
+			id uuid PRIMARY KEY, org_id uuid NOT NULL, username text NOT NULL DEFAULT '', email text);
 		CREATE TABLE IF NOT EXISTS `+schema+`.mfa_totp (user_id uuid, org_id uuid, enabled bool);
 		CREATE TABLE IF NOT EXISTS `+schema+`.mfa_sms (user_id uuid, org_id uuid, enabled bool, verified bool);
 		CREATE TABLE IF NOT EXISTS `+schema+`.mfa_email_otp (user_id uuid, org_id uuid, enabled bool);
 		CREATE TABLE IF NOT EXISTS `+schema+`.mfa_push_devices (user_id uuid, org_id uuid, enabled bool);
-		CREATE TABLE IF NOT EXISTS `+schema+`.mfa_webauthn (user_id uuid, org_id uuid);`)
+		CREATE TABLE IF NOT EXISTS `+schema+`.mfa_webauthn (user_id uuid, org_id uuid);
+		CREATE TABLE IF NOT EXISTS `+schema+`.mfa_backup_codes (user_id uuid, org_id uuid, used bool NOT NULL DEFAULT false);
+		CREATE TABLE IF NOT EXISTS `+schema+`.notifications (org_id uuid NOT NULL, read bool NOT NULL DEFAULT false, channel text NOT NULL DEFAULT 'email');
+		CREATE TABLE IF NOT EXISTS `+schema+`.notification_routing_rules (org_id uuid NOT NULL, enabled bool NOT NULL DEFAULT true);
+		CREATE TABLE IF NOT EXISTS `+schema+`.broadcast_messages (
+			id uuid PRIMARY KEY, org_id uuid NOT NULL, title text NOT NULL, body text NOT NULL,
+			channel text NOT NULL DEFAULT 'email', target_type text NOT NULL DEFAULT 'all',
+			target_ids jsonb NOT NULL DEFAULT '[]'::jsonb, priority text NOT NULL DEFAULT 'normal',
+			scheduled_at timestamptz, sent_at timestamptz, status text NOT NULL DEFAULT 'sent',
+			total_recipients int NOT NULL DEFAULT 0, delivered_count int NOT NULL DEFAULT 0,
+			read_count int NOT NULL DEFAULT 0, created_by text,
+			created_at timestamptz NOT NULL DEFAULT NOW(), updated_at timestamptz NOT NULL DEFAULT NOW());`)
 	require.NoError(t, err, "create the probe schema")
 	t.Cleanup(func() {
 		_, _ = db.Pool.Raw().Exec(context.Background(), `DROP SCHEMA IF EXISTS `+schema+` CASCADE;`)
@@ -114,9 +126,17 @@ func TestTheOffloadedHandlersAnswerOverAReadOnlyReplica(t *testing.T) {
 	seed(`INSERT INTO ispm_scores (org_id, overall_score, total_findings, critical_findings, snapshot_date)
 	      VALUES ($1, 71, 9, 2, $2), ($1, 64, 14, 3, $3), ($4, 12, 99, 40, $2)`,
 		orgA, today, today.AddDate(0, 0, -1), orgB)
-	seed(`INSERT INTO users (id, org_id) VALUES ($1, $3), ($2, $3), ($4, $5)`, u1, u2, orgA, u3, orgB)
+	seed(`INSERT INTO users (id, org_id, username, email) VALUES ($1, $3, 'ada', 'ada@example.test'),
+	      ($2, $3, 'grace', 'grace@example.test'), ($4, $5, 'intruder', 'intruder@example.test')`,
+		u1, u2, orgA, u3, orgB)
 	seed(`INSERT INTO mfa_totp (user_id, org_id, enabled) VALUES ($1, $2, true)`, u1, orgA)
 	seed(`INSERT INTO mfa_webauthn (user_id, org_id) VALUES ($1, $2)`, u3, orgB)
+	seed(`INSERT INTO mfa_backup_codes (user_id, org_id, used) VALUES ($1, $2, false), ($1, $2, false), ($1, $2, true)`, u1, orgA)
+	seed(`INSERT INTO mfa_backup_codes (user_id, org_id, used) VALUES ($1, $2, false)`, u3, orgB)
+	seed(`INSERT INTO notifications (org_id, read, channel) VALUES ($1, true, 'email'), ($1, false, 'email'), ($1, false, 'sms'), ($2, false, 'email')`, orgA, orgB)
+	seed(`INSERT INTO notification_routing_rules (org_id, enabled) VALUES ($1, true), ($1, false), ($2, true)`, orgA, orgB)
+	seed(`INSERT INTO broadcast_messages (id, org_id, title, body) VALUES ($1, $2, 'maintenance window', 'at 02:00'), ($3, $4, 'other tenant', 'not yours')`,
+		"00000000-0000-0000-0000-0000000000c1", orgA, "00000000-0000-0000-0000-0000000000c2", orgB)
 
 	s := &Service{db: db, logger: zap.NewNop()}
 	call := func(orgID string, h gin.HandlerFunc) *httptest.ResponseRecorder {
@@ -162,8 +182,64 @@ func TestTheOffloadedHandlersAnswerOverAReadOnlyReplica(t *testing.T) {
 		assert.Equal(t, 0, got.WebAuthnCount, "org B's webauthn credential must not be counted")
 	})
 
-	// And the control: the pool those two handlers just read from really does
-	// refuse a write. Without this the test above would pass just as well
+	t.Run("the user MFA table comes back from the replica, tenant-scoped", func(t *testing.T) {
+		w := call(orgA, s.handleListUserMFAStatus)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var got struct {
+			Data  []UserMFAStatus `json:"data"`
+			Total int             `json:"total"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+		assert.Equal(t, 2, got.Total, "org B's user must not be counted")
+		require.Len(t, got.Data, 2)
+		for _, u := range got.Data {
+			assert.NotEqual(t, "intruder", u.Username, "org B's user leaked through the replica read")
+		}
+		// The correlated subquery is the interesting half, and it has to be read
+		// on BOTH rows. It carries its own org_id AND its own correlation to the
+		// user, and a mutation that drops the correlation leaves ada's count
+		// unchanged at 2 -- it is the row that holds all of this tenant's unused
+		// codes. Only grace can tell the two apart: she holds none, and a
+		// subquery that has stopped correlating hands her ada's two. Asserting
+		// on ada alone let that mutation through, which is a fact about the
+		// assertion rather than about the query.
+		byName := map[string]UserMFAStatus{}
+		for _, u := range got.Data {
+			byName[u.Username] = u
+		}
+		require.Contains(t, byName, "ada")
+		require.Contains(t, byName, "grace")
+		assert.Equal(t, 2, byName["ada"].BackupCodesRemaining, "ada holds two unused codes and one used one")
+		assert.Equal(t, 0, byName["grace"].BackupCodesRemaining, "grace holds none; a count of 2 here is ada's, reached through a subquery that no longer correlates")
+		assert.True(t, byName["ada"].TOTPEnabled)
+		assert.False(t, byName["grace"].TOTPEnabled)
+	})
+
+	t.Run("notification stats come back from the replica, tenant-scoped", func(t *testing.T) {
+		w := call(orgA, s.handleNotificationStats)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var got struct {
+			TotalSent         int                `json:"total_sent"`
+			TotalRead         int                `json:"total_read"`
+			TotalUnread       int                `json:"total_unread"`
+			ChannelBreakdown  map[string]int     `json:"channel_breakdown"`
+			RecentBroadcasts  []BroadcastMessage `json:"recent_broadcasts"`
+			RoutingRulesCount int                `json:"routing_rules_count"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+		assert.Equal(t, 3, got.TotalSent, "org B's notification must not be counted")
+		assert.Equal(t, 1, got.TotalRead)
+		assert.Equal(t, 2, got.TotalUnread)
+		assert.Equal(t, map[string]int{"email": 2, "sms": 1}, got.ChannelBreakdown)
+		assert.Equal(t, 1, got.RoutingRulesCount, "only the enabled rule, and only this tenant's")
+		require.Len(t, got.RecentBroadcasts, 1, "org B's broadcast must not appear in this tenant's preview")
+		assert.Equal(t, "maintenance window", got.RecentBroadcasts[0].Title)
+	})
+
+	// And the control: the pool those FOUR handlers just read from really does
+	// refuse a write. Without this the tests above would pass just as well
 	// against a second writable pool, and would be measuring nothing about
 	// replicas at all.
 	t.Run("the pool they read from refuses a write", func(t *testing.T) {

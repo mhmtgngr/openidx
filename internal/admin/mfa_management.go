@@ -416,14 +416,19 @@ func (s *Service) handleListUserMFAStatus(c *gin.Context) {
 		return
 	}
 
+	// The replica: this table is the tenant's enrolment state, and the MFA
+	// screen writes POLICIES. Its three mutations all invalidate
+	// ['mfa-policies'] and nothing invalidates ['mfa-user-status'], so no
+	// mutation on this screen -- or any other -- refetches this table.
+	// offloadedHandlers records the evidence and the guard.
 	var total int
-	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&total)
+	err = s.db.Reader().QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to count user MFA records", err))
 		return
 	}
 
-	rows, err := s.db.Pool.Query(ctx,
+	rows, err := s.db.Reader().Query(ctx,
 		`SELECT u.id::text, u.username, COALESCE(u.email, ''),`+mfaStatusColumns+`,
 		        (SELECT COUNT(*) FROM mfa_backup_codes b WHERE b.user_id = u.id AND b.org_id = $1 AND NOT b.used) AS backup_codes_remaining
 		 FROM users u

@@ -9,6 +9,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Two more admin reads moved to the read replica, and two measured holes in
+  the census that licensed them closed** (global-scale plan task 2.3, batch 5).
+  `mfa_management.go handleListUserMFAStatus` and
+  `notification_management.go handleNotificationStats` now read through
+  `Reader()`, declared one handler at a time in `offloadedHandlers` with the
+  console evidence that nothing refetches them.
+
+  **The first hole, found by deriving what the census never derived.** The
+  handler tier checks that the declared query KEY is declared in exactly one
+  console file and invalidated by nothing. That is an argument about a TILE.
+  What moves to the replica is a HANDLER, and a handler answers a ROUTE, which
+  more than one tile may fetch under more than one key. Deriving every
+  `useQuery` that fetches an `internal/admin` route:
+  `/api/v1/security-alerts` is fetched under `['ops-security-alerts']` on the
+  ops cockpit, which nothing invalidates, and under `['security-alerts']` on two
+  other screens, which a mutation does. `handleListSecurityAlerts` could
+  therefore have been declared with an entirely true sentence about the cockpit
+  and passed every test in the file, while the other screens read after their
+  own writes. **Latent, not live**: neither handler declared before this change
+  shares its route. It would have gone live on this very batch, because
+  `/security-alerts` is one of the candidates the console criterion alone marks
+  safe. `TestOffloadedHandlerRoutesAreFetchedOnlyUnderTheDeclaredKey` now
+  requires every key that fetches a declared handler's route to be the declared
+  one.
+
+  **The second hole: `invalidateQueries` is not the only way a tile is
+  refetched.** `useQuery` returns `refetch()`, which refetches that component's
+  query without invalidating anything, so "no mutation invalidates this key" is
+  necessary and not sufficient. Measured: seven `refetch()` call sites in the
+  console, six wired to a Refresh button's `onClick` — an operator asking for
+  fresh data is not a read-after-write — and none in a file that declares an
+  offloaded key. Latent too, and guarded rather than noted, because the file is
+  the unit and `refetch()` binds to the `useQuery` instance in that component.
+
+  **Batch 5, with the console evidence.** `mfa-user-status` is the per-user
+  enrolment table on the same screen as the already-offloaded enrolment tile;
+  the screen's only three mutations are policy create, update and delete and all
+  three invalidate `['mfa-policies']`. `notification-stats` is the notification
+  overview; the screen holds seven mutations and every one invalidates
+  `['routing-rules']` or `['broadcasts']`. The stats tile carries a preview of
+  the last five broadcasts, which is the sharp edge and the reason it is safe
+  rather than despite it: sending a broadcast already does not refresh this
+  tile, so it is stale until remount, and a second of replication lag is not
+  visible inside a staleness that already lasts that long.
+
+  The key matcher now accepts a PREFIX key, because `mfa-user-status` is
+  paginated (`['mfa-user-status', page]`) and TanStack invalidates by prefix —
+  matching only the single-element form made this tier unable to say anything
+  about a paginated screen, which is most of them.
+
+  Both handlers were added to the read-only-replica path test, which drives them
+  against a real PostgreSQL session with `default_transaction_read_only=on`:
+  they answer, they stay tenant-scoped, and the pool they read from still
+  refuses a write with SQLSTATE 25006.
+
+  Eight mutations red against two green no-op controls (one per round). The one
+  that survived is worth recording: dropping the correlation from the
+  backup-code subquery left `ada`'s count unchanged, because she holds all of
+  the tenant's unused codes — the assertion was reading the one row where both
+  branches agree. It now asserts on `grace` as well, who holds none, and the
+  mutation goes red. **A mutation that survives is sometimes a fact about the
+  assertion rather than about the query.**
+
 - **identity-service refuses a token minted in another cell** — and the reason
   it could not before was not the one written down. `cell.Guard` now rides
   behind identity-service's authentication, mounted through a new variadic
