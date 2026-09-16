@@ -94,6 +94,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The OPA policy was written against a caller the middleware never supplied.**
+  `OPAAuthz` builds its authorization input from `c.Get("roles")` and
+  `c.Get("groups")`, and `authz.rego` opens with `default allow := false` and
+  grants by role. **Nothing anywhere called `c.Set("groups")`** — not in
+  production, not in tests — although the issuer mints a `groups` claim onto
+  every token beside `roles`. Worse, two of the three services that mount
+  `OPAAuthz` authenticate with their own middleware
+  (`governance-service`, `provisioning-service`), and those bound `user_id`,
+  `email` and `name` and **neither `roles` nor `groups`**.
+
+  So with `ENABLE_OPA_AUTHZ` on, every role-based rule in the policy was decided
+  against an empty list. That is not a silent hole: against
+  `default allow := false` it is a service that denies nearly everything except
+  the two path-scoped rules, which is presumably why nobody had switched it on.
+  The separation-of-duties `deny` failed the other way — it looks for
+  conflicting roles held together, so an empty list satisfies nothing and that
+  rule has never produced a message.
+
+  `opa.ResourceContext`'s own doc already records this shape twice, for `owner`
+  and for the resource `tenant_id`, and both were deleted because nothing could
+  ever fill them. These two are the opposite case: the claims were minted all
+  along and simply were not passed on. So they are bound — in one place,
+  `middleware.BindSubjectClaims`, called by `AuthWithAPIKey`, `SoftAuth`, and
+  governance's and provisioning's own middlewares, because four copies of this
+  is how the four drifted apart.
+
+  **A census now finds the authentication middlewares itself** — a function that
+  reads token claims and writes the caller's id — and fails the build when one
+  binds no subject. `internal/identity` is on its register with a reason: it
+  mounts neither `OPAAuthz` nor `RequireRole`. The register only shrinks.
+
+  **This changes behaviour where OPA is enabled.** Governance and provisioning
+  go from denying nearly everything to letting the policy decide, and on all
+  three services `authz.rego`'s `admin-group` rule starts firing for members of
+  that group. That is what the policy says; it had simply never been given the
+  input to say it. Anyone running with `ENABLE_OPA_AUTHZ=true` should read
+  `deployments/docker/opa/policies/authz.rego` before taking this upgrade.
+
+  Four mutations red: dropping the groups binding, binding a malformed claim
+  instead of rejecting it, removing governance's call to the binder (caught by
+  the census, which is the defect that existed), and loosening the census's own
+  detector. A fifth was a real find rather than a mutation: the census's first
+  run accused this package's own middlewares, because it matched only the
+  qualified `middleware.BindSubjectClaims` and not the bare identifier used
+  inside the package.
+
+
 - **The census found the last two grant paths, and looking for them found a
   third shape it could not see at all.** `directory`'s
   `replaceDirectoryMemberships` and `provisioning`'s `UpdateSCIMGroup` both

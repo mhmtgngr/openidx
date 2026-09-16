@@ -27,6 +27,7 @@ import (
 	"github.com/openidx/openidx/internal/revocation"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/common/middleware"
 )
 
 // ctxKey is an unexported type for context keys in this package.
@@ -371,6 +372,12 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 		if name, ok := claims["name"].(string); ok {
 			c.Set("name", name)
 		}
+		// Roles and groups, which this middleware never bound. OPAAuthz is
+		// mounted on this service's routes and builds its authorization input
+		// from these two keys, so without them every role- and group-based rule
+		// in authz.rego was evaluated against an empty list -- and that policy
+		// opens with `default allow := false`. See BindSubjectClaims.
+		middleware.BindSubjectClaims(c, claims)
 
 		c.Next()
 	}
