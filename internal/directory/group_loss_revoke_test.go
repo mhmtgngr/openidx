@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
 )
 
 // A SYNC THAT DROPS SOMEBODY FROM A GROUP MUST CUT THE TOKEN THAT STILL SAYS
@@ -23,6 +25,25 @@ import (
 // revoker_wiring_test.go is what proves the binaries supply it, and
 // internal/revocation's census records that name-based reachability cannot
 // follow a function-valued field.
+
+// seedGroupRow makes the group row the delete targets.
+//
+// It reuses groupsSchema and CREATE TABLE IF NOT EXISTS ON PURPOSE. This
+// package's container harness (setupGroupsDB) already creates `groups`, while
+// the OPENIDX_TEST_DATABASE_URL path drops the schema first and does not. A
+// plain CREATE TABLE therefore passed locally, where the table had been
+// dropped, and failed in CI, where it had not -- which is exactly what
+// happened.
+func seedGroupRow(t *testing.T, ctx context.Context, db *database.PostgresDB) {
+	t.Helper()
+	if _, err := db.Pool.Exec(ctx, groupsSchema); err != nil {
+		t.Fatalf("create groups: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx,
+		`INSERT INTO groups (id, name, org_id) VALUES ($1, 'synced-group', $2)`, memGroup, memOrg); err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+}
 
 func TestAMembershipReplacementCutsOnlyTheMembersItDropped(t *testing.T) {
 	db, cleanup := membershipTestDB(t)
@@ -140,13 +161,7 @@ func TestDeletingASyncedGroupCutsEveryMemberItHad(t *testing.T) {
 	// The real schema cascades from groups; this fixture has no groups table,
 	// so the delete is a no-op here and the assertion is about WHO gets cut,
 	// which is what the cascade makes impossible to recover afterwards.
-	if _, err := db.Pool.Exec(ctx, `CREATE TABLE groups (id UUID PRIMARY KEY, org_id UUID NOT NULL)`); err != nil {
-		t.Fatalf("create groups: %v", err)
-	}
-	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO groups (id, org_id) VALUES ($1, $2)`, memGroup, memOrg); err != nil {
-		t.Fatalf("seed group: %v", err)
-	}
+	seedGroupRow(t, ctx, db)
 
 	rec := &recordingRevoker{}
 	e := &SyncEngine{db: db, logger: zap.NewNop(), revoke: rec.fn}
@@ -183,13 +198,7 @@ func TestTheSyncPathsRunWithNoRevokerWired(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 	seedMembershipFixture(t, ctx, db)
-	if _, err := db.Pool.Exec(ctx, `CREATE TABLE groups (id UUID PRIMARY KEY, org_id UUID NOT NULL)`); err != nil {
-		t.Fatalf("create groups: %v", err)
-	}
-	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO groups (id, org_id) VALUES ($1, $2)`, memGroup, memOrg); err != nil {
-		t.Fatalf("seed group: %v", err)
-	}
+	seedGroupRow(t, ctx, db)
 
 	e := &SyncEngine{db: db, logger: zap.NewNop()} // revoke stays nil
 

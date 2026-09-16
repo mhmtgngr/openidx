@@ -1642,7 +1642,7 @@ func (s *Service) DeleteSCIMGroup(ctx context.Context, groupID string) error {
 		// it without cutting. Loud, because this is the case where a live token
 		// keeps a membership the IdP has dropped.
 		s.logger.Warn("could not read the members of a SCIM group being deleted; their tokens will not be cut",
-			zap.String("group_id", logsafe.Clean(groupID)), zap.Error(mErr))
+			logsafe.String("group_id", groupID), zap.Error(mErr))
 		members = nil
 	}
 	if _, err = s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1 AND org_id = $2", groupID, org.ID); err != nil {

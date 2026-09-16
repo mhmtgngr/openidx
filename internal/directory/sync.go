@@ -146,7 +146,7 @@ func (e *SyncEngine) deleteSyncedGroup(ctx context.Context, groupID, orgID, why 
 		// than removing it without cutting. Loud, because that is the case
 		// where a live token keeps a membership the directory has dropped.
 		e.logger.Warn("could not read the members of a group being deleted; their tokens will not be cut",
-			zap.String("group_id", logsafe.Clean(groupID)), zap.String("why", why), zap.Error(err))
+			logsafe.String("group_id", groupID), zap.String("why", why), zap.Error(err))
 		members = nil
 	}
 	if _, err := e.db.Pool.Exec(ctx, `DELETE FROM groups WHERE id = $1 AND org_id = $2`, groupID, orgID); err != nil {
