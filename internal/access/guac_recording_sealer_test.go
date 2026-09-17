@@ -84,8 +84,8 @@ func TestSealOneGuacRecording_RoundTrip(t *testing.T) {
 	}
 
 	// The temp file must be gone (atomic rename committed).
-	if _, err := os.Stat(recPath + ".sealing"); !os.IsNotExist(err) {
-		t.Fatal("temp .sealing file should not remain after a successful seal")
+	if left, _ := filepath.Glob(recPath + ".sealing*"); len(left) != 0 {
+		t.Fatalf("temp .sealing file(s) should not remain after a successful seal: %v", left)
 	}
 
 	// Decrypt via the same reader the download handler uses.

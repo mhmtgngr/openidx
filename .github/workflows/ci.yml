@@ -555,12 +555,15 @@ jobs:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
         run: |
           set -euo pipefail
-          out=$(go test ./internal/access/ -run 'Sealed|SealOnce|ClaimingReplica|OversizedFrame|OneReplicaCreatesAUsers|RotationClaim|ConcurrentReplicasEndInOneOfTwo' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          out=$(go test ./internal/access/ -run 'Sealed|SealOnce|ClaimingReplica|OversizedFrame|OneReplicaCreatesAUsers|RotationClaim|ConcurrentReplicasEndInOneOfTwo|OneEnvelope|ShareOneInode|ShareATempFile' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestSealingAnAlreadySealedRecordingIsRefused \
                       TestAPlaintextRecordingIsNeverMistakenForSealed \
                       TestAnOversizedFrameLengthIsRejectedRatherThanAllocated \
                       TestTwoConcurrentSealersAnnounceTheSealOnce \
+                      TestASealerThatOpenedPlaintextBeforeAnotherReplicaRenamedProducesOneEnvelope \
+                      TestTheProbeAndTheEncryptShareOneInode \
+                      TestConcurrentSealersNeverShareATempFile \
                       TestOnlyTheClaimingReplicaAnnouncesASeal \
                       TestOnlyOneReplicaCreatesAUsersZitiIdentity \
                       TestAHeldRotationClaimExcludesEveryOtherReplica \
