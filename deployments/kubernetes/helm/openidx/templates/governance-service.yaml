@@ -35,6 +35,7 @@ spec:
                     app.kubernetes.io/component: governance-service
                 topologyKey: kubernetes.io/hostname
       {{- end }}
+      {{- include "openidx.waitForPooler" . | nindent 6 }}
       containers:
         - name: governance-service
           image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.governanceService.image.repository }}:{{ .Values.governanceService.image.tag }}"

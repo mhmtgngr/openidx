@@ -1038,6 +1038,12 @@ pgcat:
   # the real count. Without --wait the pooler crash-loops until the hooks
   # finish and then recovers on its own; an UPGRADE is unaffected, because
   # its hooks are pre-upgrade and run first.
+  #
+  # Turning the pooler ON is one upgrade that rolls it and the eight services
+  # together. Each service waits for the pooler's port in an init container
+  # (templates/_helpers.tpl, openidx.waitForPooler) -- without that they
+  # dialled first, failed fast and sat in CrashLoopBackOff for ten minutes of
+  # growing back-off, which an --atomic upgrade reads as a failed rollout.
   replicaCount: 2
   port: 6432
   # pgcat's Prometheus exporter (pgcat_pools_* gauges). Its own port, scraped by

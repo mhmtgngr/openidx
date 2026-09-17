@@ -806,8 +806,17 @@ jobs:
                   admitted.add(src["podSelector"]["matchLabels"]["app.kubernetes.io/component"])
           assert admitted == {s.split("openidx-", 1)[1] for (_, s) in services}, \
               f"the pooler admits {sorted(admitted)}, the DSN was repointed for {sorted(services)}"
+          # Each pooled service waits for the pooler before its first connect;
+          # without this the rollout that enables the pooler crash-loops for ten
+          # minutes of growing back-off (measured on kind) and an --atomic
+          # upgrade rolls it back.
+          for d in docs:
+              if (d["kind"], d["metadata"]["name"]) in services:
+                  inits = [c["name"] for c in d["spec"]["template"]["spec"].get("initContainers") or []]
+                  assert "wait-for-pooler" in inits, f"{d['metadata']['name']} does not wait for the pooler: {inits}"
           print(f"pooler routes {len(services)} services, leaves the Jobs direct, "
-                f"transaction mode, statement cache {size}, and admits exactly those {len(admitted)} services")
+                f"transaction mode, statement cache {size}, admits exactly those {len(admitted)} services, "
+                f"and each of them waits for it")
           PYEOF
 
       - name: Each plane connects as its own role, or none of them does
@@ -1347,7 +1356,11 @@ jobs:
   # this job also proves the chart's policies do not black-hole the cell
   # shape -- which the third run found they did: the pooler's pods sit under
   # the default-deny and had no allow rule, so every service's dial to it
-  # timed out while the pooler itself reported healthy.
+  # timed out while the pooler itself reported healthy. The fourth run found
+  # the rollout order: pooler and services rolled together, the services
+  # dialled first, failed fast, and CrashLoopBackOff's growing delay put
+  # convergence ten minutes out -- past --wait. Each pooled service now
+  # carries an init container that waits for the pooler (openidx.waitForPooler).
   #
   # What it does NOT prove, and says so in values-ci-cell.yaml: load and
   # failover timing (no traffic, one node), three Redis roles on three

@@ -58,8 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default-deny selects, and kind enforces policies, so a healthy pooler
   holding upstream connections was unreachable by every service for twelve
   minutes. `-pgcat-allow` now admits exactly the eight services the DSN is
-  repointed for, and the lint job asserts the two sets agree. **Not proved,
-  and said so in the values file:** load and failover timing,
+  repointed for, and the lint job asserts the two sets agree. (6) Measured
+  by its fourth run: the upgrade that turns the pooler on rolls it and the
+  eight services together; the services dial first, fail fast by design,
+  and CrashLoopBackOff's growing delay put convergence ten minutes out, past
+  `--wait` and past what an `--atomic` upgrade would tolerate. Each pooled
+  service now carries a `wait-for-pooler` init container, and the lint job
+  asserts every repointed Deployment has it. **Not proved, and said so in
+  the values file:** load and failover timing,
   three Redis roles on three instances, `database.planeRoles` (interlocked
   with the pooler by design), ingress and external secrets. Those wait for a
   real cell.

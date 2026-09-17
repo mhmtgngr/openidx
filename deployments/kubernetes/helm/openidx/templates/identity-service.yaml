@@ -87,6 +87,7 @@ spec:
                     app.kubernetes.io/component: identity-service
                 topologyKey: kubernetes.io/hostname
       {{- end }}
+      {{- include "openidx.waitForPooler" $ | nindent 6 }}
       containers:
         - name: identity-service
           image: "{{ include "openidx.imageRegistry" $ }}/{{ $.Values.identityService.image.repository }}:{{ $.Values.identityService.image.tag }}"
