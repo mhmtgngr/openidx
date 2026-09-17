@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The global-scale plan says where it stops** — a closing section in
+  `docs/plans/2026-09-13-global-scale-cell-architecture-plan.md` lists every
+  item still open after this run (live k6 game day, pgcat and the read
+  replica in `values-prod.yaml`, the remaining `Reader()` batches, sweepers
+  into worker binaries, per-plane APISIX upstreams, the Terraform cell
+  module, the second region and canary cell, per-cell KMS, the Ziti
+  controller's L4 exposure and per-tenant enrolment quota, and the quarterly
+  cadence) and for each says what remains, why it cannot be measured in a
+  build environment (no cell, no cloud account, no load, or a product
+  decision not yet taken), and what unblocks it. Measured where a number
+  belongs: nine `internal/admin` files read from the replica today and 57
+  still read the primary, which is why the next `Reader()` batch is a
+  screen-by-screen decision and not a rule. Nothing is checked off by this
+  entry; the acceptance rule (measured, not done) is restated, and the
+  decisions the plan cannot take on its own (K2, K5, whether the device
+  fleet is per-tenant) are named as decisions.
+
 - **The release wave: canary-1, then eu-1, then us-1, and it stops at the
   first cell that does not come up** (global-scale plan 4.3, the workflow
   half). Measured first: `release.yml` built binaries, published and signed a
