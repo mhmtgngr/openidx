@@ -53,8 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Twelve minutes of `Role "openidx_app" does not exist` and a
   CrashLoopBackOff with the hooks never created. The job's first pass now
   keeps the pooler at zero too, and `values.yaml` says why an operator has
-  to do the same on a fresh cell. **Not proved, and said so in the values
-  file:** load and failover timing,
+  to do the same on a fresh cell. (5) Measured by its third run: the pooler
+  had no NetworkPolicy of its own, its pods carry the label the chart's
+  default-deny selects, and kind enforces policies, so a healthy pooler
+  holding upstream connections was unreachable by every service for twelve
+  minutes. `-pgcat-allow` now admits exactly the eight services the DSN is
+  repointed for, and the lint job asserts the two sets agree. **Not proved,
+  and said so in the values file:** load and failover timing,
   three Redis roles on three instances, `database.planeRoles` (interlocked
   with the pooler by design), ingress and external secrets. Those wait for a
   real cell.

@@ -343,6 +343,111 @@ spec:
 {{- end }}
 ---
 ###############################################################################
+# pgcat, the transaction pooler (pgcat.port, default 6432)
+# Receives traffic from: the eight request-serving services -- the same set
+# templates/_helpers.tpl's openidx.pooledDatabaseUrl repoints at it.
+#
+# This policy did not exist for the pooler's first two chart versions, and it
+# was measured rather than reasoned (helm.yml, kind-cell): the pooler's pods
+# carry app.kubernetes.io/part-of=openidx, which is what the default-deny
+# policy above selects, so with networkPolicy.enabled and no allow rule the
+# pooler was healthy, held upstream connections, and every service's dial to
+# it timed out. A pooler nobody can reach is every service down behind a
+# green rollout, which is the shape this chart exists to refuse. The migration
+# Job, the bootstrap hook and the backup CronJob are deliberately absent: they
+# keep the direct DSN (see pgcat.yaml).
+###############################################################################
+{{- if .Values.pgcat.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-pgcat-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgcat
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: pgcat
+  policyTypes:
+    - Ingress
+  ingress:
+    # identity-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: identity-service
+      ports:
+        - protocol: TCP
+          port: {{ .Values.pgcat.port }}
+    # governance-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: governance-service
+      ports:
+        - protocol: TCP
+          port: {{ .Values.pgcat.port }}
+    # provisioning-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: provisioning-service
+      ports:
+        - protocol: TCP
+          port: {{ .Values.pgcat.port }}
+    # audit-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: audit-service
+      ports:
+        - protocol: TCP
+          port: {{ .Values.pgcat.port }}
+    # admin-api
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: admin-api
+      ports:
+        - protocol: TCP
+          port: {{ .Values.pgcat.port }}
+    # oauth-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: oauth-service
+      ports:
+        - protocol: TCP
+          port: {{ .Values.pgcat.port }}
+    # gateway-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: gateway-service
+      ports:
+        - protocol: TCP
+          port: {{ .Values.pgcat.port }}
+    # access-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: access-service
+      ports:
+        - protocol: TCP
+          port: {{ .Values.pgcat.port }}
+{{- end }}
+---
+###############################################################################
 # PostgreSQL (port 5432)
 # Receives traffic from: all backend services
 ###############################################################################

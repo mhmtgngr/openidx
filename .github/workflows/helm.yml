@@ -727,7 +727,7 @@ jobs:
           }
           safe=(--set config.rlsMode=local --set pgcat.enabled=true
                 --set pgcat.password=render-only --set pgcat.adminPassword=render-only
-                --set pgcat.postgresHost=openidx-postgresql)
+                --set pgcat.postgresHost=openidx-postgresql --set networkPolicy.enabled=true)
 
           # Off by default, and off means absent -- not a scaled-to-zero Deployment.
           # Here-string, not a pipe: see the note in the origin-cloaking step.
@@ -792,8 +792,22 @@ jobs:
           assert size > 0, "prepared_statements_cache_size is missing from the POOL section"
           assert "prepared_statements_cache_size" not in cfg["general"], \
               "prepared_statements_cache_size is in [general], where pgcat ignores it"
+          # The pooler's pods are under the default-deny policy (they carry
+          # part-of=openidx), so without an allow rule of their own every
+          # service's dial to the pooler times out -- measured on kind, where
+          # a healthy pooler sat unreachable for twelve minutes. The rule has
+          # to admit exactly the services the DSN was repointed for.
+          pol = next(d for d in docs if d["kind"] == "NetworkPolicy" and d["metadata"]["name"] == "openidx-pgcat-allow")
+          assert pol["spec"]["podSelector"]["matchLabels"].get("app.kubernetes.io/component") == "pgcat"
+          admitted = set()
+          for rule in pol["spec"]["ingress"]:
+              assert any(p["port"] == 6432 for p in rule["ports"]), rule
+              for src in rule["from"]:
+                  admitted.add(src["podSelector"]["matchLabels"]["app.kubernetes.io/component"])
+          assert admitted == {s.split("openidx-", 1)[1] for (_, s) in services}, \
+              f"the pooler admits {sorted(admitted)}, the DSN was repointed for {sorted(services)}"
           print(f"pooler routes {len(services)} services, leaves the Jobs direct, "
-                f"transaction mode, statement cache {size}")
+                f"transaction mode, statement cache {size}, and admits exactly those {len(admitted)} services")
           PYEOF
 
       - name: Each plane connects as its own role, or none of them does
@@ -1329,6 +1343,12 @@ jobs:
   # both Jobs as no-ops first. It is also the order an operator has to take on
   # a fresh cell with the bundled database and --wait (values.yaml, pgcat).
   #
+  # kind enforces NetworkPolicy (kindnet ships kube-network-policies), so
+  # this job also proves the chart's policies do not black-hole the cell
+  # shape -- which the third run found they did: the pooler's pods sit under
+  # the default-deny and had no allow rule, so every service's dial to it
+  # timed out while the pooler itself reported healthy.
+  #
   # What it does NOT prove, and says so in values-ci-cell.yaml: load and
   # failover timing (no traffic, one node), three Redis roles on three
   # instances, database.planeRoles (interlocked with the pooler by design),
@@ -1483,13 +1503,22 @@ jobs:
       # the scope is transaction-local, so on a fresh statement openidx_app
       # sees nothing, inside a transaction with a local bypass it sees the
       # seeded rows, and on the statement after that transaction it sees
-      # nothing again. Driven from the primary's pod, which has psql and can
-      # reach the pooler's Service.
+      # nothing again.
+      #
+      # Driven from a probe pod wearing identity-service's labels, and that is
+      # a claim too: kind enforces NetworkPolicy, the pooler is under the
+      # chart's default-deny, and its allow rule admits the eight services --
+      # so a pod that is not one of them cannot reach it (the Postgres pod
+      # this step first used could not), and a pod that is, can.
       - name: The tenant belt holds through the pooler
         run: |
           set -euo pipefail
+          kubectl -n "$NS" run belt-probe --image=postgres:16-alpine --restart=Never \
+            --labels="app.kubernetes.io/name=openidx,app.kubernetes.io/instance=$RELEASE,app.kubernetes.io/component=identity-service" \
+            --command -- sleep 1800
+          kubectl -n "$NS" wait --for=condition=Ready pod/belt-probe --timeout=180s
           via_pool() { # via_pool <user> <password> <db> <sql>
-            kubectl -n "$NS" exec "statefulset/$RELEASE-postgresql-primary" -- \
+            kubectl -n "$NS" exec belt-probe -- \
               env PGPASSWORD="$2" psql -h "$RELEASE-pgcat" -p 6432 -U "$1" -d "$3" -v ON_ERROR_STOP=1 -tAc "$4"
           }
           pools=$(via_pool pgcat ci-pgcat-admin-password pgcat 'SHOW POOLS')
