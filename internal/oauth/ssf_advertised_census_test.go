@@ -108,8 +108,12 @@ func identsInCallArg(t *testing.T, fn string, arg int) map[string]bool {
 	return out
 }
 
-// advertisedEvents are the constants named in handleSSFConfiguration's
-// events_supported list, read from the source.
+// advertisedEvents are the constants in ssfEventsSupported, read from the
+// source -- and the census also holds handleSSFConfiguration's
+// events_supported key to THAT variable. The variable is what events_delivered
+// is computed from, so if the handler grew its own literal list again the
+// discovery document and the stream configuration could offer two different
+// sets, and this census would be reading the one the receiver never sees.
 func advertisedEvents(t *testing.T) map[string]bool {
 	t.Helper()
 	f, err := parser.ParseFile(token.NewFileSet(), "ssf_handlers.go", nil, 0)
@@ -117,25 +121,41 @@ func advertisedEvents(t *testing.T) map[string]bool {
 		t.Fatalf("parse ssf_handlers.go: %v", err)
 	}
 	out := map[string]bool{}
+	handlerRefersToVar := false
 	ast.Inspect(f, func(n ast.Node) bool {
-		kv, ok := n.(*ast.KeyValueExpr)
-		if !ok {
-			return true
-		}
-		key, ok := kv.Key.(*ast.BasicLit)
-		if !ok || !strings.Contains(key.Value, "events_supported") {
-			return true
-		}
-		ast.Inspect(kv.Value, func(m ast.Node) bool {
-			if id, ok := m.(*ast.Ident); ok && strings.HasPrefix(id.Name, "Event") {
-				out[id.Name] = true
+		switch v := n.(type) {
+		case *ast.ValueSpec:
+			for i, name := range v.Names {
+				if name.Name != "ssfEventsSupported" || i >= len(v.Values) {
+					continue
+				}
+				ast.Inspect(v.Values[i], func(m ast.Node) bool {
+					if id, ok := m.(*ast.Ident); ok && strings.HasPrefix(id.Name, "Event") {
+						out[id.Name] = true
+					}
+					return true
+				})
 			}
-			return true
-		})
-		return false
+		case *ast.KeyValueExpr:
+			key, ok := v.Key.(*ast.BasicLit)
+			if !ok || !strings.Contains(key.Value, "events_supported") {
+				return true
+			}
+			if id, ok := v.Value.(*ast.Ident); ok && id.Name == "ssfEventsSupported" {
+				handlerRefersToVar = true
+			} else {
+				t.Errorf("handleSSFConfiguration's events_supported is not the variable ssfEventsSupported; " +
+					"the discovery document and events_delivered would be computed from two lists")
+			}
+			return false
+		}
+		return true
 	})
 	if len(out) == 0 {
-		t.Fatal("found no events_supported entries; the census is reading nothing")
+		t.Fatal("found no ssfEventsSupported entries; the census is reading nothing")
+	}
+	if !handlerRefersToVar {
+		t.Error("handleSSFConfiguration does not advertise ssfEventsSupported under events_supported")
 	}
 	return out
 }
