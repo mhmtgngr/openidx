@@ -813,7 +813,8 @@ Yani 3.2'nin hem yapılandırma hem de yayın yarısı, hiçbir küme olmadan, g
 ### 4.3 İkinci bölge ve kanarya hücre
 
 - [ ] `eu-1` (mevcut) + `us-1`; `canary-1` küçük hücre, sürüm dalgası: canary → eu-1 → us-1.
-- [ ] Release workflow (`.github/workflows/release.yml`) hücre sıralı dağıtım adımı.
+- [x] Release workflow (`.github/workflows/release.yml`) hücre sıralı dağıtım adımı.
+  - **Yapıldı (2026-09-17) — dalganın şekli; canlı dağıtım değil.** Önce ölçüldü: `release.yml` binary üretiyor, chart'ı basıp imzalıyor ve **hiçbir yere dağıtmıyordu**; hücre sıralı bir adımın tutunacağı yer yoktu. Şimdi: yeniden kullanılabilir `rollout-cell.yml` — her çağrı bir hücre, `cell-<id>` GitHub ortamında (hücrenin `KUBECONFIG`'i ve zorunlu gözden geçiren orada), `helm upgrade --install --atomic`, `values-prod.yaml` üstüne hücrenin kendi `deployments/kubernetes/cells/<id>.yaml`'ı, ve dağıtım sonrası ConfigMap'ten `CELL_ID`'yi geri okuyup kendi adıyla cevap vermeyen hücreyi reddeden adım — ve `release.yml`'de birbirini `needs` ile bekleyen üç job: `canary-1 → eu-1 → us-1`. Gelemeyen hücre geri alınır (`--atomic`), job düşer, sonraki hücreler **denenmez**. **Varsayılan kapalı:** yalnız `CELL_ROLLOUT` deposu değişkeni `"true"` ise koşar; hücresi olmayan kurulumda release eskisiyle aynı. Şekil muhafızı `scripts/check-release-rollout.sh` (sıra, sonraki hücrede `always()` yok, kapı, `secrets: inherit`, `--atomic`, ortam, kimlik doğrulaması, her values dosyası kendini adlandırır); öz-testi on bükülmüş şekilde kırmızı. **Ölçülmedi, iddia edilmiyor:** canlı dağıtım (bu ortamda hücre yok) ve hücreler arası bake (canary'nin sağlıklı mı, yalnız ayakta mı olduğu) — otomatikleşene kadar `cell-eu-1` ortamındaki zorunlu gözden geçiren.
 - **Kabul:** Bir hücrenin tamamen kapatılması (oyun günü) diğer hücrenin SLO'larını **hiç** etkilemez; ölçüm panoda.
 
 ### 4.4 Hücre başına anahtar ve KEK

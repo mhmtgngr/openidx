@@ -79,6 +79,35 @@ trusted, because unlike a pushed tag it is free-text input.
   `vX.Y`, `vX` and `stable` — both spellings, pointing at one manifest. Pull
   either; `X.Y.Z` is the one this document and the chart use.
 
+## Rolling out to cells (off by default)
+
+A release does not deploy itself anywhere until the repository variable
+`CELL_ROLLOUT` is `"true"`. With it set, `release.yml` runs the wave from the
+global-scale plan (§4.3) after the chart is pushed and signed:
+
+```
+release ─┬─ helm-chart ─→ rollout-canary-1 ─→ rollout-eu-1 ─→ rollout-us-1
+         └─ …
+```
+
+Each cell is one call of `.github/workflows/rollout-cell.yml`, running in the
+GitHub environment `cell-<id>` (`cell-canary-1`, `cell-eu-1`, `cell-us-1`).
+The environment holds that cell's `KUBECONFIG` (base64 of the kubeconfig
+file) and is where a **required reviewer** goes in front of a production
+cell — that reviewer is the canary bake until an automated SLO watch between
+waves exists. The call is `helm upgrade --install --atomic`, layering
+`values-prod.yaml` and then `deployments/kubernetes/cells/<id>.yaml`, which is
+the only place a cell's `config.cellId` is set. A cell that does not come up
+within the timeout is rolled back, its job fails, and the cells after it are
+skipped, not attempted. After the upgrade the job reads `CELL_ID` back out of
+the deployed ConfigMap and refuses a cell that does not answer with its own
+name.
+
+To add a cell: a values file under `deployments/kubernetes/cells/`, an
+environment `cell-<id>` with `KUBECONFIG`, and a job in `release.yml` that
+`needs` the cell before it. `scripts/check-release-rollout.sh` holds the
+wave's shape: order, gate, atomic upgrade, environment, identity check.
+
 ## Verify
 
 - The GitHub Release exists with notes, the binaries, and the signed

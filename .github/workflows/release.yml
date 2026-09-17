@@ -219,6 +219,45 @@ jobs:
           cosign sign --yes \
             "${CHART_OCI_REPO}/openidx@${{ steps.push.outputs.digest }}"
 
+  # THE RELEASE WAVE (global-scale plan 4.3): canary-1, then eu-1, then us-1.
+  #
+  # Each cell is one call of rollout-cell.yml, in that cell's GitHub
+  # environment, and each job `needs` the one before it: a cell that fails to
+  # come up (the call is --atomic, so it is also rolled back) stops the wave
+  # there, and the cells after it are skipped rather than attempted. Off by
+  # default: the wave runs only where the repository variable CELL_ROLLOUT is
+  # "true", so a release on an install with no cells is exactly the release it
+  # was before this existed. What the wave does not measure is the bake
+  # between cells -- whether canary-1 is HEALTHY, not merely up -- and until
+  # that is automated it is a required reviewer on the cell-eu-1 environment.
+  rollout-canary-1:
+    name: Roll out to canary-1
+    needs: [release, helm-chart]
+    if: vars.CELL_ROLLOUT == 'true'
+    uses: ./.github/workflows/rollout-cell.yml
+    with:
+      cell: canary-1
+      version: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+    secrets: inherit
+
+  rollout-eu-1:
+    name: Roll out to eu-1
+    needs: rollout-canary-1
+    uses: ./.github/workflows/rollout-cell.yml
+    with:
+      cell: eu-1
+      version: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+    secrets: inherit
+
+  rollout-us-1:
+    name: Roll out to us-1
+    needs: rollout-eu-1
+    uses: ./.github/workflows/rollout-cell.yml
+    with:
+      cell: us-1
+      version: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+    secrets: inherit
+
   # Closes the dispatch path's last gap.
   #
   # A pushed tag starts docker.yml on its own, and its release-tag job stamps
