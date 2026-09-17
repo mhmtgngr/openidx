@@ -84,7 +84,7 @@ func TestDeviceRevoke_RevokesTheTokensTheDeviceHolds(t *testing.T) {
 	hour := time.Now().Add(time.Hour).Format(time.RFC3339)
 	seeds := []string{
 		`INSERT INTO users (id, org_id, username, email) VALUES ('` + devUser + `','` + devOrg + `','dana','dana@x.io')`,
-		`INSERT INTO enrolled_agents (agent_id, ziti_identity_id, status, enrolled_by_user_id) VALUES ('agent-phone','zid-p','active','` + devUser + `')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, ziti_identity_id, status, enrolled_by_user_id) VALUES ('` + devOrg + `','agent-phone','zid-p','active','` + devUser + `')`,
 		// Two sign-ins on the phone, each with its own session and chain; the
 		// second has rotated once, so the family has two rows.
 		`INSERT INTO sessions (id, user_id, client_id, org_id, expires_at) VALUES ('` + revSessMine + `','` + devUser + `','openidx-mobile','` + devOrg + `','` + hour + `')`,
@@ -175,7 +175,7 @@ func TestDeviceRevoke_UnboundDeviceIsHonest(t *testing.T) {
 	hour := time.Now().Add(time.Hour).Format(time.RFC3339)
 	for _, seed := range []string{
 		`INSERT INTO users (id, org_id, username, email) VALUES ('` + devUser + `','` + devOrg + `','dana','dana@x.io')`,
-		`INSERT INTO enrolled_agents (agent_id, status, enrolled_by_user_id) VALUES ('agent-old','active','` + devUser + `')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, status, enrolled_by_user_id) VALUES ('` + devOrg + `','agent-old','active','` + devUser + `')`,
 		`INSERT INTO sessions (id, user_id, client_id, org_id, expires_at) VALUES ('` + revSessMine + `','` + devUser + `','openidx-mobile','` + devOrg + `','` + hour + `')`,
 		`INSERT INTO oauth_refresh_tokens (token, client_id, user_id, session_id, org_id, expires_at) VALUES ('rt-legacy','openidx-mobile','` + devUser + `','` + revSessMine + `','` + devOrg + `','` + hour + `')`,
 	} {

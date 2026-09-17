@@ -456,15 +456,12 @@ func (h *KioskAPIHandler) HandleUnassignPolicy(c *gin.Context) {
 // belt failing the operation closed rather than scoping it. The same explicit
 // opt-out the SAML and SSF pre-tenant paths use applies here.
 //
-// That leaves the cross-tenant TARGET open, and it is worth being plain about
-// it: target_id names an agent, enrolled_agents has no org_id by a decision
-// recorded in three comments in this package, and so there is no tenant term to
-// put on the match below. v159 stops one tenant from aiming ANOTHER tenant's
-// policy (the assignment handlers now verify the policy is the caller's); it
-// does not stop a tenant aiming their OWN policy at a device enrolled by
-// somebody else, because "somebody else's device" is not a thing this schema
-// can express. Whether the fleet is per-tenant is a product decision, and it is
-// recorded in the readiness guide rather than settled here.
+// v159 left the cross-tenant TARGET open and said so: target_id names an
+// agent, and enrolled_agents had no org_id, so there was no tenant term to put
+// on the match. v197 settles it -- the fleet is per-tenant -- and the match
+// below now also requires the device to be enrolled in the POLICY's
+// organization. One tenant still cannot aim another's policy (v159); it now
+// also cannot aim its own policy at a device it does not manage.
 func resolveEffectiveKioskPolicy(
 	ctx context.Context,
 	db *database.PostgresDB,
@@ -484,8 +481,9 @@ SELECT kp.id, kp.name, COALESCE(kp.description, ''), kp.mode,
        kp.enabled, kp.created_at, kp.updated_at
   FROM kiosk_policies kp
   JOIN kiosk_policy_assignments kpa ON kpa.policy_id = kp.id
-  LEFT JOIN enrolled_agents ea ON ea.agent_id = $1
+  LEFT JOIN enrolled_agents ea ON ea.agent_id = $1 AND ea.org_id = kp.org_id
  WHERE kp.enabled = TRUE
+   AND EXISTS (SELECT 1 FROM enrolled_agents t WHERE t.agent_id = $1 AND t.org_id = kp.org_id)
    AND (
      (kpa.target_kind = 'agent' AND kpa.target_id = $1)
      OR (kpa.target_kind = 'tag'

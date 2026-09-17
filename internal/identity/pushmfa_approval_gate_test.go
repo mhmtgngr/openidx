@@ -50,7 +50,7 @@ var pushGateSchema = []string{
 		location VARCHAR(255))`,
 	`CREATE TABLE IF NOT EXISTS enrolled_agents (
 		agent_id VARCHAR(64) PRIMARY KEY, status VARCHAR(20) NOT NULL DEFAULT 'active',
-		enrolled_by_user_id UUID)`,
+		enrolled_by_user_id UUID, org_id UUID)`,
 }
 
 const (
@@ -90,7 +90,7 @@ func newPushGateFixture(t *testing.T) *pushGateFixture {
 		`INSERT INTO mfa_push_devices (id, user_id, device_token, platform, enabled, agent_id, org_id) VALUES ('` + pushDevAgent + `','` + pushOwner + `','ntfy:agent','android',true,'agent-phone','` + pushOrg + `')`,
 		// One the user switched off.
 		`INSERT INTO mfa_push_devices (id, user_id, device_token, platform, enabled, org_id) VALUES ('` + pushDevOff + `','` + pushOwner + `','ntfy:off','android',false,'` + pushOrg + `')`,
-		`INSERT INTO enrolled_agents (agent_id, status, enrolled_by_user_id) VALUES ('agent-phone','active','` + pushOwner + `')`,
+		`INSERT INTO enrolled_agents (agent_id, status, enrolled_by_user_id, org_id) VALUES ('agent-phone','active','` + pushOwner + `','` + pushOrg + `')`,
 	} {
 		if _, err := db.Pool.Exec(ctx, seed); err != nil {
 			t.Fatalf("seed: %v\n%s", err, seed)
@@ -332,7 +332,7 @@ func TestApprovingDeviceUsableReasons(t *testing.T) {
 					t.Fatalf("setup: %v", err)
 				}
 				defer f.db.Pool.Exec(f.ctx, //nolint:errcheck // test cleanup
-					`INSERT INTO enrolled_agents (agent_id, status, enrolled_by_user_id) VALUES ('agent-phone','active','`+pushOwner+`') ON CONFLICT (agent_id) DO NOTHING`)
+					`INSERT INTO enrolled_agents (agent_id, status, enrolled_by_user_id, org_id) VALUES ('agent-phone','active','`+pushOwner+`','`+pushOrg+`') ON CONFLICT (agent_id) DO NOTHING`)
 			}
 			ok, why, err := f.svc.approvingDeviceUsable(f.ctx, tc.deviceID)
 			if err != nil {

@@ -58,7 +58,7 @@ func TestMyApplicationsMatchesOverviewCount(t *testing.T) {
 		    org_id UUID, requester_id UUID, status VARCHAR(16), expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE ziti_identities (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		    org_id UUID, user_id UUID, enrolled BOOLEAN)`,
-		`CREATE TABLE enrolled_agents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), enrolled_by_user_id UUID)`,
+		`CREATE TABLE enrolled_agents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), enrolled_by_user_id UUID, org_id UUID)`,
 		`CREATE TABLE known_devices (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		    user_id UUID, org_id UUID, trusted BOOLEAN)`,
 	}
@@ -149,7 +149,7 @@ func TestMyApplicationsMatchesOverviewCount_ShowAllAppsWhenUnassigned(t *testing
 		    org_id UUID, requester_id UUID, status VARCHAR(16), expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE ziti_identities (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		    org_id UUID, user_id UUID, enrolled BOOLEAN)`,
-		`CREATE TABLE enrolled_agents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), enrolled_by_user_id UUID)`,
+		`CREATE TABLE enrolled_agents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), enrolled_by_user_id UUID, org_id UUID)`,
 		`CREATE TABLE known_devices (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		    user_id UUID, org_id UUID, trusted BOOLEAN)`,
 	}

@@ -479,15 +479,13 @@ func (s *Service) collectZitiPillar(ctx context.Context, orgID, userID string, o
 		out.Identity = &ident
 	}
 
-	// Devices: endpoint agents this user enrolled. enrolled_agents has no
-	// org_id column; the JOIN back to the org-verified user provides scoping.
-	//orgscope:ignore enrolled_agents is scoped through the org-verified enrolled_by_user_id join
+	// Devices: endpoint agents this user enrolled, in this tenant.
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT ea.agent_id, COALESCE(ea.platform, ''), ea.status,
 		        ea.compliance_status, COALESCE(ea.ziti_identity_id, ''), ea.last_seen_at
 		   FROM enrolled_agents ea
-		  WHERE ea.enrolled_by_user_id = $1
-		  ORDER BY ea.enrolled_at DESC`, userID)
+		  WHERE ea.enrolled_by_user_id = $1 AND ea.org_id = $2
+		  ORDER BY ea.enrolled_at DESC`, userID, orgID)
 	if err != nil {
 		return err
 	}

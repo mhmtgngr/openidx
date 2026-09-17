@@ -336,6 +336,10 @@ jobs:
           CREATE ROLE openidx_app LOGIN PASSWORD 'apppw';
           GRANT ALL ON SCHEMA public TO openidx_app;
           ALTER DATABASE openidx_rls OWNER TO openidx_app;
+          -- A throwaway database for the suites that build the whole schema
+          -- from the registered migrations (setupTestDB drops and recreates
+          -- public on every call, so it must never point at openidx_rls).
+          CREATE DATABASE openidx_scratch;
           SQL
 
       # Negative control first: pointed at the superuser, the suite must REFUSE
@@ -699,6 +703,32 @@ jobs:
           echo "$out"
           for want in TestKidPrefixNamesTheCell \
                       TestGeneratedKidsCarryTheCellAndTheLegacyImportKeepsItsName; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
+      # The device fleet is per-tenant (v197). enrolled_agents,
+      # agent_posture_results and agent_enrollment_tokens carried no org_id
+      # for 196 migrations, on a decision three comments in internal/access
+      # asserted; the admin fleet list, revoke and approve were the
+      # installation's, a kiosk policy could be aimed at another tenant's
+      # device, and the per-tenant enrolment quota the plan asks for had no
+      # column to count on. The belt half runs as openidx_app (the fixture
+      # refuses a role that bypasses RLS); the migration half builds the real
+      # schema from every registered migration and checks the backfill, the
+      # per-tenant fingerprint key and the handlers.
+      - name: The device fleet is one tenant's, and an agent still enrols and reports with no tenant on its context
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+          OPENIDX_TEST_DATABASE_URL: postgres://postgres:test_secret@127.0.0.1:5433/openidx_scratch?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/access/ -run 'TestFleetBelt|TestFleet_TenantIsolation|TestKioskPolicy_TenantIsolation|TestEnrollFingerprintIsPerTenant' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          for want in TestFleetBelt_TenantRowsAreInvisibleAcrossTenantsAndThePublicDoorsStillOpen \
+                      TestFleet_TenantIsolation \
+                      TestKioskPolicy_TenantIsolation \
+                      TestEnrollFingerprintIsPerTenant; do
             grep -q -- "--- PASS: $want " <<<"$out" \
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done

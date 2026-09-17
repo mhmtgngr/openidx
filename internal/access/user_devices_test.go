@@ -27,13 +27,13 @@ var deviceSchema = []string{
 		UNIQUE(user_id, fingerprint))`,
 	`CREATE TABLE IF NOT EXISTS enrolled_agents (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id VARCHAR(64) UNIQUE,
-		ziti_identity_id VARCHAR(255), status VARCHAR(20) DEFAULT 'active',
+		org_id UUID NOT NULL, ziti_identity_id VARCHAR(255), status VARCHAR(20) DEFAULT 'active',
 		platform VARCHAR(32), management_mode VARCHAR(32),
 		compliance_status VARCHAR(20) DEFAULT 'unknown', compliance_score FLOAT DEFAULT 0,
 		last_seen_at TIMESTAMPTZ, enrolled_at TIMESTAMPTZ DEFAULT NOW(),
 		enrolled_by_user_id UUID, known_device_id UUID)`,
 	`CREATE TABLE IF NOT EXISTS agent_posture_results (
-		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id VARCHAR(64),
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, agent_id VARCHAR(64),
 		check_type VARCHAR(64), status VARCHAR(10), severity VARCHAR(10),
 		reported_at TIMESTAMPTZ DEFAULT NOW())`,
 }
@@ -65,14 +65,14 @@ func TestUserDeviceCorrelation(t *testing.T) {
 		`INSERT INTO users (id, org_id, username, email) VALUES ('` + devUser + `','` + devOrg + `','dana','dana@x.io')`,
 		// A device seen by BOTH pillars: known_device linked to an agent.
 		`INSERT INTO known_devices (id, user_id, org_id, fingerprint, name, device_type, trusted) VALUES ('` + linkedKD + `','` + devUser + `','` + devOrg + `','agent:device-1','Dana Laptop','agent',true)`,
-		`INSERT INTO enrolled_agents (agent_id, ziti_identity_id, status, platform, management_mode, compliance_status, compliance_score, enrolled_by_user_id, known_device_id) VALUES ('agent-linked','zid-linked','active','linux','device_owner','non_compliant',55,'` + devUser + `','` + linkedKD + `')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, ziti_identity_id, status, platform, management_mode, compliance_status, compliance_score, enrolled_by_user_id, known_device_id) VALUES ('` + devOrg + `','agent-linked','zid-linked','active','linux','device_owner','non_compliant',55,'` + devUser + `','` + linkedKD + `')`,
 		// A browser device seen by IAM only (no agent).
 		`INSERT INTO known_devices (id, user_id, org_id, fingerprint, name, device_type, trusted) VALUES ('` + iamKD + `','` + devUser + `','` + devOrg + `','browserhash','Dana Browser','desktop',false)`,
 		// An agent with no linked known_device (token-enrolled / legacy).
-		`INSERT INTO enrolled_agents (agent_id, ziti_identity_id, status, platform, compliance_status, compliance_score, enrolled_by_user_id, known_device_id) VALUES ('agent-ziti','zid-ziti','active','android','compliant',95,'` + devUser + `',NULL)`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, ziti_identity_id, status, platform, compliance_status, compliance_score, enrolled_by_user_id, known_device_id) VALUES ('` + devOrg + `','agent-ziti','zid-ziti','active','android','compliant',95,'` + devUser + `',NULL)`,
 		// Posture for the linked agent: one failing check.
-		`INSERT INTO agent_posture_results (agent_id, check_type, status, severity) VALUES ('agent-linked','disk_encryption','fail','high')`,
-		`INSERT INTO agent_posture_results (agent_id, check_type, status, severity) VALUES ('agent-linked','os_version','pass','low')`,
+		`INSERT INTO agent_posture_results (org_id, agent_id, check_type, status, severity) VALUES ('` + devOrg + `','agent-linked','disk_encryption','fail','high')`,
+		`INSERT INTO agent_posture_results (org_id, agent_id, check_type, status, severity) VALUES ('` + devOrg + `','agent-linked','os_version','pass','low')`,
 	}
 	for _, s := range seeds {
 		if _, err := db.Pool.Exec(ctx, s); err != nil {
@@ -149,7 +149,7 @@ func TestAgentEnroll_LinksKnownDevice(t *testing.T) {
 	// The agent row exists (issueAgentCredentials wrote it); linking is the step
 	// under test.
 	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO enrolled_agents (agent_id, ziti_identity_id, status, enrolled_by_user_id) VALUES ('agent-oauth','zid-o','active',$1)`, devUser); err != nil {
+		`INSERT INTO enrolled_agents (org_id, agent_id, ziti_identity_id, status, enrolled_by_user_id) VALUES ($2,'agent-oauth','zid-o','active',$1)`, devUser, devOrg); err != nil {
 		t.Fatalf("seed agent: %v", err)
 	}
 
@@ -208,7 +208,7 @@ func TestDeviceRevoke_CrossPillar(t *testing.T) {
 	seeds := []string{
 		`INSERT INTO users (id, org_id, username, email) VALUES ('` + devUser + `','` + devOrg + `','dana','dana@x.io')`,
 		`INSERT INTO known_devices (id, user_id, org_id, fingerprint, name, trusted) VALUES ('` + kd + `','` + devUser + `','` + devOrg + `','agent:device-9','Dana Laptop',true)`,
-		`INSERT INTO enrolled_agents (agent_id, ziti_identity_id, status, enrolled_by_user_id, known_device_id) VALUES ('agent-x','zid-x','active','` + devUser + `','` + kd + `')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, ziti_identity_id, status, enrolled_by_user_id, known_device_id) VALUES ('` + devOrg + `','agent-x','zid-x','active','` + devUser + `','` + kd + `')`,
 	}
 	for _, s := range seeds {
 		if _, err := db.Pool.Exec(ctx, s); err != nil {

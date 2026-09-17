@@ -133,7 +133,7 @@ var crossPillarSchema = []string{
 		id UUID PRIMARY KEY, org_id UUID, name VARCHAR(255), policy_type VARCHAR(10),
 		service_roles JSONB DEFAULT '[]', identity_roles JSONB DEFAULT '[]')`,
 	`CREATE TABLE IF NOT EXISTS enrolled_agents (
-		id UUID PRIMARY KEY, agent_id VARCHAR(64), platform VARCHAR(32),
+		id UUID PRIMARY KEY, org_id UUID, agent_id VARCHAR(64), platform VARCHAR(32),
 		status VARCHAR(20), compliance_status VARCHAR(20) DEFAULT 'unknown',
 		ziti_identity_id VARCHAR(255), last_seen_at TIMESTAMPTZ,
 		enrolled_at TIMESTAMPTZ DEFAULT NOW(), enrolled_by_user_id UUID)`,
@@ -213,8 +213,8 @@ func TestUserAccessMap_CrossPillar(t *testing.T) {
 		  VALUES (gen_random_uuid(),$1,'zsvc-1','prod-db',true)`, []any{testOrg}},
 		{`INSERT INTO ziti_service_policies (id, org_id, name, policy_type, service_roles, identity_roles)
 		  VALUES (gen_random_uuid(),$1,'platform-dial','Dial','["@zsvc-1"]','["#Platform"]')`, []any{testOrg}},
-		{`INSERT INTO enrolled_agents (id, agent_id, platform, status, compliance_status, enrolled_by_user_id)
-		  VALUES (gen_random_uuid(),'agent-1','linux','active','compliant',$1)`, []any{testUser}},
+		{`INSERT INTO enrolled_agents (id, org_id, agent_id, platform, status, compliance_status, enrolled_by_user_id)
+		  VALUES (gen_random_uuid(),$2,'agent-1','linux','active','compliant',$1)`, []any{testUser, testOrg}},
 		{`INSERT INTO known_devices (id, user_id, org_id, trusted) VALUES (gen_random_uuid(),$1,$2,true)`,
 			[]any{testUser, testOrg}},
 		{`INSERT INTO unified_audit_events (id, org_id, source, event_type, user_id)

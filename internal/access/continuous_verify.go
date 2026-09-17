@@ -301,7 +301,7 @@ func (s *Service) severUserZitiCircuits(ctx context.Context, userID, reason stri
 		zitiIDs = append(zitiIDs, userZitiID)
 	}
 	rows, err := s.db.Pool.Query(ctx,
-		//orgscope:ignore enrolled_agents scoped through the org-verified enrolled_by_user_id key (data plane)
+		//orgscope:ignore mid-session network termination on the continuous-verify sweep; the agents are the session user's own, keyed by their user id, and the sweep carries no tenant of its own (v197: the row's org_id is the user's)
 		`SELECT ziti_identity_id FROM enrolled_agents
 		  WHERE enrolled_by_user_id = $1 AND ziti_identity_id IS NOT NULL AND ziti_identity_id <> ''`, userID)
 	if err == nil {

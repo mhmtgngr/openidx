@@ -33,32 +33,37 @@ import (
 // RemoteSupportHandler.verifyAgentAuth delegate to it.
 
 // verifyEnrolledAgent reports whether token is the credential enrollment issued
-// for agentID, by comparing its SHA-256 against enrolled_agents.auth_token_hash.
+// for agentID, by comparing its SHA-256 against enrolled_agents.auth_token_hash,
+// and returns the tenant the agent belongs to.
 //
-// enrolled_agents is a global fleet table keyed on the globally-unique agent_id
-// and carries no org_id: an agent callback arrives with no tenant context, so
-// the read bypasses RLS deliberately. The tenant, where a handler needs one, is
-// resolved from what the agent is bound to (its enrolling user, its Windows app
-// host) and never from the request.
+// Since v197 the fleet is per-tenant and enrolled_agents is belted. An agent
+// callback still arrives with no tenant context -- its credential is the agent
+// token, not a tenant JWT -- so this ONE read runs under an explicit RLS
+// bypass keyed by the globally-unique agent_id, and the row's own org_id is
+// what the caller puts on the request context. Everything after this read is
+// tenant-scoped; nothing after it is allowed to bypass.
 //
 // With no database — unit tests and dev builds that construct a handler without
-// one — any non-empty token is accepted, matching what the two existing
-// verifiers have always done. Nothing is persisted on that path either.
-func verifyEnrolledAgent(ctx context.Context, db *database.PostgresDB, agentID, token string) bool {
+// one — any non-empty token is accepted with an empty tenant, matching what the
+// two existing verifiers have always done. Nothing is persisted on that path.
+func verifyEnrolledAgent(ctx context.Context, db *database.PostgresDB, agentID, token string) (orgID string, ok bool) {
 	if agentID == "" || token == "" {
-		return false
+		return "", false
 	}
 	if db == nil || db.Pool == nil {
-		return true // dev mode: any non-empty token, as the other agent surfaces do
+		return "", true // dev mode: any non-empty token, as the other agent surfaces do
 	}
 	var stored string
-	//orgscope:ignore agent credential check keys on the globally-unique agent_id; enrolled_agents is a fleet table with no org_id
+	//orgscope:ignore agent credential check: keyed by the globally-unique agent_id before any tenant is resolvable; the row's own org_id is what scopes everything after
 	if err := db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
-		`SELECT auth_token_hash FROM enrolled_agents WHERE agent_id = $1`,
-		agentID).Scan(&stored); err != nil {
-		return false
+		`SELECT auth_token_hash, org_id::text FROM enrolled_agents WHERE agent_id = $1`,
+		agentID).Scan(&stored, &orgID); err != nil {
+		return "", false
 	}
-	return stored != "" && sha256Hex(token) == stored
+	if stored == "" || sha256Hex(token) != stored {
+		return "", false
+	}
+	return orgID, true
 }
 
 // agentCredentials reads the agent id and token a request presents.
@@ -86,20 +91,40 @@ func agentCredentials(c *gin.Context) (agentID, token string) {
 	return agentID, token
 }
 
-// requireEnrolledAgent authenticates the calling agent and returns its id.
+// requireEnrolledAgent authenticates the calling agent, puts the agent's tenant
+// on the request context, and returns the agent id.
 //
 // On failure it answers 401 and returns ok=false; the caller must return. The
 // refusal is audited with the id that was claimed, because a report arriving
 // for an agent id with the wrong credential is the shape of someone probing the
 // fleet, and the endpoint is public.
+//
+// The tenant on the context is what makes every fleet query after this point
+// tenant-scoped under the v197 belt without a bypass: the agent proved it
+// holds the credential for a row, and that row names its tenant.
 func (h *AgentAPIHandler) requireEnrolledAgent(c *gin.Context) (string, bool) {
 	agentID, token := agentCredentials(c)
-	if !verifyEnrolledAgent(c.Request.Context(), h.db, agentID, token) {
+	orgID, ok := verifyEnrolledAgent(c.Request.Context(), h.db, agentID, token)
+	if !ok {
 		h.logAuditEvent("agent.auth_failed", agentID, "denied", "invalid agent credentials")
 		h.logAuditEventToDB(c.Request.Context(), "agent.auth_failed", agentID, "denied",
 			"invalid agent credentials")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid agent credentials"})
 		return "", false
 	}
+	if orgID != "" {
+		c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: orgID}))
+	}
 	return agentID, true
+}
+
+// orgIDFrom is the tenant on ctx, or "" when none is attached. Fleet queries
+// use it as their org_id predicate; with "" the predicate matches nothing,
+// which under the belt is also what RLS would have returned.
+func orgIDFrom(ctx context.Context) string {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return ""
+	}
+	return org.ID
 }

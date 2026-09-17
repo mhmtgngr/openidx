@@ -32,7 +32,7 @@ var agentStateSchema = []string{
 		trusted BOOLEAN DEFAULT false, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 	`CREATE TABLE IF NOT EXISTS enrolled_agents (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id VARCHAR(64) UNIQUE,
-		auth_token_hash VARCHAR(128), status VARCHAR(20) DEFAULT 'pending',
+		org_id UUID NOT NULL, auth_token_hash VARCHAR(128), status VARCHAR(20) DEFAULT 'pending',
 		platform VARCHAR(32), known_device_id UUID, enrolled_by_user_id UUID)`,
 	`CREATE TABLE IF NOT EXISTS posture_checks (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), check_type VARCHAR(64),
@@ -61,12 +61,12 @@ func TestAgentConfig_TellsTheDeviceItsOwnState(t *testing.T) {
 		`INSERT INTO posture_checks (check_type, severity, enabled) VALUES ('os_version','low',true)`,
 		`INSERT INTO known_devices (id, org_id, trusted) VALUES ('` + trustedKD + `','` + devOrg + `',true)`,
 		`INSERT INTO known_devices (id, org_id, trusted) VALUES ('` + untrustedKD + `','` + devOrg + `',false)`,
-		`INSERT INTO enrolled_agents (agent_id, auth_token_hash, status, known_device_id) VALUES ('agent-waiting','` + tokenHash + `','pending','` + untrustedKD + `')`,
-		`INSERT INTO enrolled_agents (agent_id, auth_token_hash, status, known_device_id) VALUES ('agent-tier1','` + tokenHash + `','active','` + untrustedKD + `')`,
-		`INSERT INTO enrolled_agents (agent_id, auth_token_hash, status, known_device_id) VALUES ('agent-tier2','` + tokenHash + `','active','` + trustedKD + `')`,
-		`INSERT INTO enrolled_agents (agent_id, auth_token_hash, status) VALUES ('agent-unlinked','` + tokenHash + `','active')`,
-		`INSERT INTO enrolled_agents (agent_id, auth_token_hash, status, known_device_id) VALUES ('agent-held','` + tokenHash + `','suspended','` + untrustedKD + `')`,
-		`INSERT INTO enrolled_agents (agent_id, auth_token_hash, status) VALUES ('agent-gone','` + tokenHash + `','revoked')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, auth_token_hash, status, known_device_id) VALUES ('` + devOrg + `','agent-waiting','` + tokenHash + `','pending','` + untrustedKD + `')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, auth_token_hash, status, known_device_id) VALUES ('` + devOrg + `','agent-tier1','` + tokenHash + `','active','` + untrustedKD + `')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, auth_token_hash, status, known_device_id) VALUES ('` + devOrg + `','agent-tier2','` + tokenHash + `','active','` + trustedKD + `')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, auth_token_hash, status) VALUES ('` + devOrg + `','agent-unlinked','` + tokenHash + `','active')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, auth_token_hash, status, known_device_id) VALUES ('` + devOrg + `','agent-held','` + tokenHash + `','suspended','` + untrustedKD + `')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, auth_token_hash, status) VALUES ('` + devOrg + `','agent-gone','` + tokenHash + `','revoked')`,
 	} {
 		if _, err := db.Pool.Exec(ctx, seed); err != nil {
 			t.Fatalf("seed: %v\n%s", err, seed)
@@ -151,7 +151,7 @@ func TestAgentConfig_StateNeedsTheAgentsOwnCredential(t *testing.T) {
 		}
 	}
 	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO enrolled_agents (agent_id, auth_token_hash, status) VALUES ('agent-x',$1,'active')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, auth_token_hash, status) VALUES ('`+devOrg+`','agent-x',$1,'active')`,
 		sha256Hex("the-real-secret")); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

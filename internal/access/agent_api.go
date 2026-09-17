@@ -264,11 +264,17 @@ type issuedAgentCredentials struct {
 //
 // It does NOT validate enrollment tokens or OAuth JWTs; that lives in the
 // HTTP handlers, which decide whether to call this helper at all.
+//
+// orgID is the tenant the device enrols into (v197): the tenant of the token
+// or session that admitted it, or of the OAuth caller. Every row this writes
+// carries it, and the stable-identity lookup is within it -- one physical
+// machine may be managed by two tenants, and each sees its own agent.
 func (h *AgentAPIHandler) issueAgentCredentials(
 	ctx context.Context,
 	req enrollRequest,
 	method string,
 	enrolledByUserID string,
+	orgID string,
 ) issuedAgentCredentials {
 	agentID := "agent-" + uuid.New().String()[:8]
 	deviceID := "device-" + uuid.New().String()[:8]
@@ -304,8 +310,8 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 			var existingAgentID, existingDeviceID string
 			err := h.db.Pool.QueryRow(ctx, `
                 SELECT agent_id, device_id FROM enrolled_agents
-                WHERE device_fingerprint = $1
-            `, fp).Scan(&existingAgentID, &existingDeviceID)
+                WHERE device_fingerprint = $1 AND org_id = $2
+            `, fp, orgID).Scan(&existingAgentID, &existingDeviceID)
 			if err == nil && existingAgentID != "" {
 				_, upErr := h.db.Pool.Exec(ctx, `
                     UPDATE enrolled_agents
@@ -315,9 +321,9 @@ func (h *AgentAPIHandler) issueAgentCredentials(
                            enrollment_method = COALESCE(NULLIF($6,''), enrollment_method),
                            management_mode = COALESCE(NULLIF($7,''), management_mode),
                            is_device_owner = $8, last_seen_at = NOW()
-                     WHERE agent_id = $1
+                     WHERE agent_id = $1 AND org_id = $9
                 `, existingAgentID, authTokenHash, metadata,
-					platform, formFactor, method, managementMode, isDeviceOwner)
+					platform, formFactor, method, managementMode, isDeviceOwner, orgID)
 				if upErr != nil {
 					h.logger.Error("Failed to refresh existing agent enrollment", zap.Error(upErr))
 				} else {
@@ -355,14 +361,14 @@ func (h *AgentAPIHandler) issueAgentCredentials(
                 agent_id, device_id, status, auth_token_hash,
                 enrolled_at, compliance_status, metadata,
                 platform, form_factor, enrollment_method, enrolled_by_user_id,
-                management_mode, is_device_owner, device_fingerprint
+                management_mode, is_device_owner, device_fingerprint, org_id
             )
             VALUES ($1,$2,$3,$4, NOW(), 'unknown', $5,
                     NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), $9,
-                    NULLIF($10,''), $11, $12)
+                    NULLIF($10,''), $11, $12, $13)
         `, agentID, deviceID, status, authTokenHash, metadata,
 			platform, formFactor, method, userIDArg,
-			managementMode, isDeviceOwner, fpArg)
+			managementMode, isDeviceOwner, fpArg, orgID)
 		if err != nil {
 			h.logger.Error("Failed to persist agent enrollment", zap.Error(err))
 		}
@@ -404,8 +410,8 @@ func (h *AgentAPIHandler) ensureAgentZitiIdentity(ctx context.Context, agentID s
 	if h.db != nil && h.db.Pool != nil {
 		var existing string
 		if err := h.db.Pool.QueryRow(ctx,
-			`SELECT COALESCE(ziti_identity_id,'') FROM enrolled_agents WHERE agent_id = $1`,
-			agentID).Scan(&existing); err == nil && existing != "" {
+			`SELECT COALESCE(ziti_identity_id,'') FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
+			agentID, orgIDFrom(ctx)).Scan(&existing); err == nil && existing != "" {
 			// The agent has an identity, so it can route the base API over the
 			// overlay: always advertise the service, even when already enrolled.
 			result.ZitiService = remoteSupportZitiService
@@ -450,8 +456,8 @@ func (h *AgentAPIHandler) ensureAgentZitiIdentity(ctx context.Context, agentID s
 	// has to be visible in the meantime.
 	if h.db != nil && h.db.Pool != nil {
 		if _, err := h.db.Pool.Exec(ctx,
-			"UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2",
-			zitiID, agentID); err != nil {
+			"UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2 AND org_id = $3",
+			zitiID, agentID, orgIDFrom(ctx)); err != nil {
 			h.logger.Error("created a Ziti identity for an agent and could not link it to the agent row; "+
 				"the identity holds #openidx-agent on the overlay and nothing in the product names it "+
 				"until this agent enrols again",
@@ -543,6 +549,9 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 			return
 		}
 		tokenID, reusable := tok.ID, tok.Reusable
+		// The token's tenant is the device's tenant (v197). From here on every
+		// fleet query in this request is scoped to it; nothing below bypasses.
+		ctx = orgctx.With(ctx, orgctx.Org{ID: tok.OrgID})
 
 		// Correlate to a unified enrollment session (short code / QR / deep-link).
 		// A session ties this token to the user who created it from an MFA-verified
@@ -555,7 +564,7 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 			enrolledBy = sess.CreatedByUID
 		}
 
-		creds := h.issueAgentCredentials(ctx, enrollReq, method, enrolledBy)
+		creds := h.issueAgentCredentials(ctx, enrollReq, method, enrolledBy, tok.OrgID)
 
 		// Track the most recent enrolling agent (single-use tokens only; a
 		// reusable token enrolls many, so this field is left for the last one).
@@ -565,8 +574,8 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 			// does not happen, so a token whose enrolling agent is unknown has
 			// a reason in the log rather than a blank column.
 			if _, err := h.db.Pool.Exec(ctx,
-				`UPDATE agent_enrollment_tokens SET used_by_agent = $1 WHERE id = $2`,
-				creds.AgentID, tokenID); err != nil {
+				`UPDATE agent_enrollment_tokens SET used_by_agent = $1 WHERE id = $2 AND org_id = $3`,
+				creds.AgentID, tokenID, tok.OrgID); err != nil {
 				h.logger.Warn("could not record which agent redeemed the enrollment token", zap.Error(err))
 			}
 		}
@@ -624,7 +633,7 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 		return
 	}
 
-	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "token", "")
+	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "token", "", "")
 	writeEnrollResponse(c, creds, "token", nil)
 	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=token (no-db, development only)")
 }
@@ -731,7 +740,7 @@ func (h *AgentAPIHandler) HandleEnrollOAuth(c *gin.Context) {
 	// false: safe, and silently unlike the path next to it.
 	trusted, mode := decideAutoTrust(h.cfg(), h.logger, amrIndicatesMFA(c.GetStringSlice("amr")), false, org.ID)
 
-	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "oauth", userID)
+	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "oauth", userID, org.ID)
 
 	// Converge the two device registries: a user-bound enrollment means we know
 	// which OpenIDX user owns this machine, so mirror it into the IAM
@@ -855,8 +864,8 @@ func (h *AgentAPIHandler) linkAgentToKnownDevice(ctx context.Context, clientIP, 
 	}
 
 	if _, err := h.db.Pool.Exec(wctx,
-		`UPDATE enrolled_agents SET known_device_id = $1 WHERE agent_id = $2`,
-		knownDeviceID, agentID); err != nil {
+		`UPDATE enrolled_agents SET known_device_id = $1 WHERE agent_id = $2 AND org_id = $3`,
+		knownDeviceID, agentID, orgID); err != nil {
 		h.logger.Warn("agent device link: enrolled_agents update failed",
 			zap.String("agent_id", agentID), zap.Error(err))
 		return
@@ -935,10 +944,10 @@ func (h *AgentAPIHandler) bridgeDevicePostureResult(ctx context.Context, agentID
 	// reads/writes key on the agent's own globally-unique identity.
 	ctx = orgctx.WithBypassRLS(ctx)
 	var identityID string
-	//orgscope:ignore posture bridge resolves the reporting agent's own Ziti identity by globally-unique agent_id (data plane)
+	//orgscope:ignore posture bridge resolves the reporting agent's own Ziti identity by globally-unique agent_id within the agent's own tenant (data plane)
 	if err := h.db.Pool.QueryRow(ctx, `
 		SELECT zi.id::text FROM ziti_identities zi
-		JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id
+		JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id AND ea.org_id = zi.org_id
 		WHERE ea.agent_id = $1 LIMIT 1`, agentID).Scan(&identityID); err != nil {
 		h.logger.Debug("posture bridge: no Ziti identity for agent's enrolling user",
 			zap.String("agent_id", agentID), zap.Error(err))
@@ -1049,10 +1058,10 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 			_, dbErr := h.db.Pool.Exec(ctx, `
 				INSERT INTO agent_posture_results
 					(agent_id, check_type, status, score, severity, details, message,
-					 reported_at, expires_at, enforced, enforcement_action)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW() + INTERVAL '24 hours', $8, $9)
+					 reported_at, expires_at, enforced, enforcement_action, org_id)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW() + INTERVAL '24 hours', $8, $9, $10)
 			`, agentID, r.CheckType, r.Result.Status, r.Result.Score, r.Severity,
-				string(detailsJSON), r.Result.Message, enforced, action)
+				string(detailsJSON), r.Result.Message, enforced, action, orgIDFrom(ctx))
 			h.bridgeDevicePostureResult(ctx, agentID, r.CheckType, r.Result.Status, detailsJSON)
 			if dbErr != nil {
 				h.logger.Warn("Failed to persist posture result",
@@ -1100,8 +1109,8 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 			    compliance_status = $2,
 			    last_seen_at = $3,
 			    last_report_at = $3
-			WHERE agent_id = $4
-		`, complianceScore, complianceStatus, now, agentID)
+			WHERE agent_id = $4 AND org_id = $5
+		`, complianceScore, complianceStatus, now, agentID, orgIDFrom(ctx))
 		if dbErr != nil {
 			h.logger.Warn("Failed to update agent compliance",
 				logsafe.String("agent_id", agentID),
@@ -1154,10 +1163,10 @@ func (h *AgentAPIHandler) applyPostureDeviceTrust(ctx context.Context, agentID, 
 	// enrolling user, exactly like the posture bridge does.
 	rctx := orgctx.WithBypassRLS(ctx)
 	var zitiID string
-	//orgscope:ignore posture->tier gate resolves the reporting agent's own Ziti identity by globally-unique agent_id (data plane)
+	//orgscope:ignore posture->tier gate resolves the reporting agent's own Ziti identity by globally-unique agent_id within the agent's own tenant (data plane)
 	if err := h.db.Pool.QueryRow(rctx, `
 		SELECT zi.ziti_id FROM ziti_identities zi
-		JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id
+		JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id AND ea.org_id = zi.org_id
 		WHERE ea.agent_id = $1 LIMIT 1`, agentID).Scan(&zitiID); err != nil {
 		h.logger.Debug("posture tier: no Ziti identity for agent's enrolling user",
 			zap.String("agent_id", agentID), zap.Error(err))
@@ -1408,8 +1417,8 @@ func (h *AgentAPIHandler) windowsAppDiscoveryForAgent(ctx context.Context, agent
 	}
 	var bound bool
 	if err := h.db.Pool.QueryRow(ctx,
-		`SELECT windows_app_host_entry_id IS NOT NULL FROM enrolled_agents WHERE agent_id = $1`,
-		agentID).Scan(&bound); err != nil || !bound {
+		`SELECT windows_app_host_entry_id IS NOT NULL FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
+		agentID, orgIDFrom(ctx)).Scan(&bound); err != nil || !bound {
 		return nil
 	}
 	return &windowsAppDiscoveryJob{
@@ -1457,8 +1466,8 @@ func (h *AgentAPIHandler) zitiServiceForAgent(ctx context.Context, agentID strin
 	}
 	var zitiID string
 	err := h.db.Pool.QueryRow(ctx,
-		`SELECT COALESCE(ziti_identity_id,'') FROM enrolled_agents WHERE agent_id = $1`,
-		agentID).Scan(&zitiID)
+		`SELECT COALESCE(ziti_identity_id,'') FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
+		agentID, orgIDFrom(ctx)).Scan(&zitiID)
 	if err != nil || zitiID == "" {
 		return ""
 	}
@@ -1517,8 +1526,11 @@ func (h *AgentAPIHandler) enforceExpiredGracePeriods(ctx context.Context) {
 		return
 	}
 
-	// Find agents with expired grace periods
-	rows, err := h.db.Pool.Query(ctx, `
+	// Find agents with expired grace periods. This sweep runs once per install
+	// over every tenant's fleet (v197 belted the table), so it opts out of RLS
+	// explicitly; each row it returns carries its own tenant.
+	//orgscope:ignore install-wide compliance sweep over every tenant's fleet; the RETURNING rows carry their own org_id
+	rows, err := h.db.Pool.Query(orgctx.WithBypassRLS(ctx), `
 		UPDATE enrolled_agents
 		SET status = 'suspended', compliance_status = 'non_compliant'
 		WHERE compliance_status = 'grace_period'
@@ -1609,12 +1621,11 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	var status string
 	var platform *string
 	var deviceTrusted *bool
-	//orgscope:ignore enrolled_agents is a fleet table with no org_id; the agent authenticated with its own credential above
 	err := h.db.Pool.QueryRow(ctx, `
 		SELECT ea.status, ea.platform, kd.trusted
 		  FROM enrolled_agents ea
 		  LEFT JOIN known_devices kd ON kd.id = ea.known_device_id
-		 WHERE ea.agent_id = $1`, agentID,
+		 WHERE ea.agent_id = $1 AND ea.org_id = $2`, agentID, orgIDFrom(ctx),
 	).Scan(&status, &platform, &deviceTrusted)
 	if err != nil {
 		// Agent not found or DB error — return defaults.
@@ -1796,13 +1807,20 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	// This organization's fleet, not the installation's (v197).
 	rows, err := h.db.Pool.Query(ctx, `
 		SELECT agent_id, device_id,
 		       COALESCE(metadata->>'hostname',''), COALESCE(platform, metadata->>'platform',''),
 		       status, compliance_status, compliance_score, last_seen_at, enrolled_at
 		FROM enrolled_agents
+		WHERE org_id = $1
 		ORDER BY last_seen_at DESC NULLS LAST, enrolled_at DESC
-	`)
+	`, org.ID)
 	if err != nil {
 		h.logger.Error("HandleListAgents: failed to query enrolled_agents", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list agents"})
@@ -1874,15 +1892,20 @@ func (h *AgentAPIHandler) HandleAgentPosture(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
-	// Latest row per check_type (DISTINCT ON, newest first).
+	// Latest row per check_type (DISTINCT ON, newest first), this tenant's.
 	rows, err := h.db.Pool.Query(ctx, `
 		SELECT DISTINCT ON (check_type)
 		       check_type, status, score, severity, COALESCE(message,''),
 		       enforced, COALESCE(enforcement_action,''), reported_at, expires_at
 		  FROM agent_posture_results
-		 WHERE agent_id = $1
-		 ORDER BY check_type, reported_at DESC`, agentID)
+		 WHERE agent_id = $1 AND org_id = $2
+		 ORDER BY check_type, reported_at DESC`, agentID, org.ID)
 	if err != nil {
 		h.logger.Warn("HandleAgentPosture: query failed", zap.String("agent_id", logsafe.Clean(agentID)), zap.Error(err))
 		c.JSON(http.StatusOK, resp)
@@ -1910,11 +1933,10 @@ func (h *AgentAPIHandler) HandleAgentPosture(c *gin.Context) {
 	if h.zm != nil {
 		rctx := orgctx.WithBypassRLS(ctx)
 		var zitiID string
-		//orgscope:ignore console posture view resolves the agent's own Ziti identity by globally-unique agent_id (admin read)
 		if err := h.db.Pool.QueryRow(rctx, `
 			SELECT zi.ziti_id FROM ziti_identities zi
-			JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id
-			WHERE ea.agent_id = $1 LIMIT 1`, agentID).Scan(&zitiID); err == nil && zitiID != "" {
+			JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id AND ea.org_id = zi.org_id
+			WHERE ea.agent_id = $1 AND ea.org_id = $2 LIMIT 1`, agentID, org.ID).Scan(&zitiID); err == nil && zitiID != "" {
 			if attrs, aerr := h.zm.GetIdentityRoleAttributes(rctx, zitiID); aerr == nil {
 				for _, a := range attrs {
 					if a == "device-trusted" {
@@ -1941,22 +1963,32 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 
 	if h.db != nil && h.db.Pool != nil {
 		ctx := c.Request.Context()
+		org, err := orgctx.From(ctx)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+			return
+		}
 
 		// Fetch the Ziti identity ID before revoking so we can remove it.
 		var zitiIdentityID string
 		_ = h.db.Pool.QueryRow(ctx,
-			`SELECT COALESCE(ziti_identity_id, '') FROM enrolled_agents WHERE agent_id = $1`,
-			agentID,
+			`SELECT COALESCE(ziti_identity_id, '') FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
+			agentID, org.ID,
 		).Scan(&zitiIdentityID)
 
-		_, err := h.db.Pool.Exec(ctx,
-			`UPDATE enrolled_agents SET status = 'revoked' WHERE agent_id = $1`,
-			agentID,
+		tag, err := h.db.Pool.Exec(ctx,
+			`UPDATE enrolled_agents SET status = 'revoked' WHERE agent_id = $1 AND org_id = $2`,
+			agentID, org.ID,
 		)
 		if err != nil {
 			h.logger.Error("HandleRevokeAgent: failed to update status",
 				logsafe.String("agent_id", agentID), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke agent"})
+			return
+		}
+		// Another tenant's device is not found, not revoked (v197).
+		if tag.RowsAffected() == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
 			return
 		}
 
@@ -1996,9 +2028,14 @@ func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
 
 	if h.db != nil && h.db.Pool != nil {
 		ctx := c.Request.Context()
+		org, err := orgctx.From(ctx)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+			return
+		}
 		tag, err := h.db.Pool.Exec(ctx,
-			`UPDATE enrolled_agents SET status = 'active' WHERE agent_id = $1 AND status = 'pending'`,
-			agentID,
+			`UPDATE enrolled_agents SET status = 'active' WHERE agent_id = $1 AND org_id = $2 AND status = 'pending'`,
+			agentID, org.ID,
 		)
 		if err != nil {
 			h.logger.Error("HandleApproveAgent: failed to update status",
@@ -2020,8 +2057,8 @@ func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
 				h.logger.Warn("HandleApproveAgent: failed to create Ziti identity",
 					logsafe.String("agent_id", agentID), zap.Error(zitiErr))
 			} else if _, linkErr := h.db.Pool.Exec(ctx,
-				`UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2`,
-				zitiID, agentID); linkErr != nil {
+				`UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2 AND org_id = $3`,
+				zitiID, agentID, org.ID); linkErr != nil {
 				// Approving is what puts this device on the network. The
 				// identity is live; the row that says which agent owns it is
 				// not, so removing the agent will not remove its access.
@@ -2079,11 +2116,18 @@ func (h *AgentAPIHandler) HandleGenerateToken(c *gin.Context) {
 
 	if h.db != nil && h.db.Pool != nil {
 		ctx := c.Request.Context()
-		err := h.db.Pool.QueryRow(ctx, `
-			INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at, reusable)
-			VALUES ($1, $2, $3, $4, $5)
+		// The token is minted in the caller's tenant, and the device it admits
+		// enrols into that tenant (v197).
+		org, err := orgctx.From(ctx)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+			return
+		}
+		err = h.db.Pool.QueryRow(ctx, `
+			INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at, reusable, org_id)
+			VALUES ($1, $2, $3, $4, $5, $6)
 			RETURNING id
-		`, hash, req.Description, req.CreatedBy, expiresAt, req.Reusable).Scan(&tokenID)
+		`, hash, req.Description, req.CreatedBy, expiresAt, req.Reusable, org.ID).Scan(&tokenID)
 		if err != nil {
 			h.logger.Error("HandleGenerateToken: failed to insert token", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
@@ -2165,11 +2209,16 @@ func (h *AgentAPIHandler) HandleGenerateQR(c *gin.Context) {
 
 	if h.db != nil && h.db.Pool != nil {
 		ctx := c.Request.Context()
-		err := h.db.Pool.QueryRow(ctx, `
-			INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at)
-			VALUES ($1,$2,$3,$4)
+		org, err := orgctx.From(ctx)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+			return
+		}
+		err = h.db.Pool.QueryRow(ctx, `
+			INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at, org_id)
+			VALUES ($1,$2,$3,$4,$5)
 			RETURNING id
-		`, hash, description, createdBy, expiresAt).Scan(&tokenID)
+		`, hash, description, createdBy, expiresAt, org.ID).Scan(&tokenID)
 		if err != nil {
 			h.logger.Error("HandleGenerateQR: failed to insert token", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate QR token"})
@@ -2266,11 +2315,17 @@ func (h *AgentAPIHandler) HandleListTokens(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	rows, err := h.db.Pool.Query(ctx, `
 		SELECT id, COALESCE(description, ''), created_at, expires_at, used_at, revoked
 		FROM agent_enrollment_tokens
+		WHERE org_id = $1
 		ORDER BY created_at DESC
-	`)
+	`, org.ID)
 	if err != nil {
 		h.logger.Error("HandleListTokens: failed to query tokens", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list tokens"})
@@ -2311,14 +2366,24 @@ func (h *AgentAPIHandler) HandleRevokeToken(c *gin.Context) {
 
 	if h.db != nil && h.db.Pool != nil {
 		ctx := c.Request.Context()
-		_, err := h.db.Pool.Exec(ctx,
-			`UPDATE agent_enrollment_tokens SET revoked = true WHERE id = $1`,
-			tokenID,
+		org, err := orgctx.From(ctx)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+			return
+		}
+		tag, err := h.db.Pool.Exec(ctx,
+			`UPDATE agent_enrollment_tokens SET revoked = true WHERE id = $1 AND org_id = $2`,
+			tokenID, org.ID,
 		)
 		if err != nil {
 			h.logger.Error("HandleRevokeToken: failed to revoke token",
 				logsafe.String("token_id", tokenID), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke token"})
+			return
+		}
+		// Another tenant's token is not found, not revoked (v197).
+		if tag.RowsAffected() == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "token not found"})
 			return
 		}
 	}

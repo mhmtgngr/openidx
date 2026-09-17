@@ -467,13 +467,12 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 		return nil, fmt.Errorf("failed to query privileged overview: %w", err)
 	}
 
-	// Ziti pillar: network identity + devices. enrolled_agents has no org_id;
-	// it is scoped through the org-verified user key.
+	// Ziti pillar: network identity + devices, this user's in this tenant.
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT
 		   EXISTS(SELECT 1 FROM ziti_identities WHERE user_id = $1 AND org_id = $2),
 		   COALESCE((SELECT enrolled FROM ziti_identities WHERE user_id = $1 AND org_id = $2 LIMIT 1), false),
-		   (SELECT COUNT(*) FROM enrolled_agents WHERE enrolled_by_user_id = $1),
+		   (SELECT COUNT(*) FROM enrolled_agents WHERE enrolled_by_user_id = $1 AND org_id = $2),
 		   EXISTS(SELECT 1 FROM known_devices WHERE user_id = $1 AND org_id = $2 AND trusted = true)`,
 		userID, org.ID,
 	).Scan(&overview.Network.ZitiLinked, &overview.Network.ZitiEnrolled,

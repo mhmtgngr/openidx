@@ -763,7 +763,7 @@ func TestRefreshThenCollectZitiPillar(t *testing.T) {
 			user_id UUID, org_id UUID, enrolled BOOLEAN DEFAULT false,
 			attributes JSONB DEFAULT '[]')`,
 		`CREATE TABLE enrolled_agents (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID,
 			agent_id VARCHAR(255), platform VARCHAR(64), status VARCHAR(64),
 			compliance_status VARCHAR(64), ziti_identity_id VARCHAR(255),
 			enrolled_by_user_id UUID, enrolled_at TIMESTAMPTZ DEFAULT NOW(),

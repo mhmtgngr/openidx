@@ -43,9 +43,11 @@ import (
 // exchange proceeds and the family is simply unbound, as every family was
 // before v185).
 //
-// enrolled_agents is an install-wide fleet table with no org_id — a decision
-// recorded in v43, v120 and v165 — so the tenant term is the enrolling user,
-// who was resolved from an org-scoped authorization code.
+// enrolled_agents is per-tenant since v197. This read still runs under an RLS
+// bypass keyed by the globally-unique agent_id, because the token exchange has
+// no tenant on its context here; the tenant term is the enrolling user, who
+// was resolved from an org-scoped authorization code, and the ownership check
+// below is what admits or refuses the binding.
 func (s *Service) agentBindingForUser(ctx context.Context, claimedAgentID, userID string) string {
 	if claimedAgentID == "" || userID == "" || s.db == nil || s.db.Pool == nil {
 		return ""
@@ -53,8 +55,8 @@ func (s *Service) agentBindingForUser(ctx context.Context, claimedAgentID, userI
 
 	var ownerID *string
 	var status string
-	//orgscope:ignore enrolled_agents is a fleet table with no org_id; scoped here by the enrolling user, who came from an org-scoped authorization code
 	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
+		//orgscope:ignore device binding on the token exchange: keyed by the globally-unique agent_id under bypass, admitted only when enrolled_by_user_id is the exchanging user, who came from an org-scoped authorization code
 		`SELECT enrolled_by_user_id::text, COALESCE(status,'') FROM enrolled_agents WHERE agent_id = $1`,
 		claimedAgentID).Scan(&ownerID, &status)
 	if err != nil {

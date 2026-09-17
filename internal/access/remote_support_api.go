@@ -1098,7 +1098,8 @@ func (h *RemoteSupportHandler) evictSession(sessionID string) {
 // this was the second of three copies; the shared one also rejects an empty
 // agent id outright and bypasses RLS, which this copy did not.
 func (h *RemoteSupportHandler) verifyAgentAuth(ctx context.Context, agentID, token string) bool {
-	return verifyEnrolledAgent(ctx, h.db, agentID, token)
+	_, ok := verifyEnrolledAgent(ctx, h.db, agentID, token)
+	return ok
 }
 
 // activeSessionInfo carries the per-agent session pointer that

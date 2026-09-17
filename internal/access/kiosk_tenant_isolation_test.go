@@ -184,7 +184,20 @@ func TestKioskPolicy_TenantIsolation(t *testing.T) {
 		// WithBypassRLS on purpose: /agent/config is called by a device with
 		// no organization on its context, and under the belt an unscoped read
 		// returns nothing — which the caller treats as "no policy applies" and
-		// silently omits the lockdown.
+		// silently omits the lockdown. Since v197 the fleet is per-tenant, so
+		// the resolver also requires the device to be ENROLLED in the policy's
+		// organization: a policy aimed at an agent id that only another tenant
+		// owns must resolve to nothing.
+		for _, seed := range []struct{ agent, org string }{
+			{"agent-" + suffix, orgA}, {"twin-" + suffix, orgB},
+		} {
+			if _, err := db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+				`INSERT INTO enrolled_agents (agent_id, device_id, org_id, auth_token_hash, status, platform)
+				 VALUES ($1, $1, $2::uuid, $3, 'active', 'android')`,
+				seed.agent, seed.org, sha256Hex("t-"+seed.agent)); err != nil {
+				t.Fatalf("seed agent %s: %v", seed.agent, err)
+			}
+		}
 		got, err := resolveEffectiveKioskPolicy(ctx, db, "agent-"+suffix)
 		if err != nil {
 			t.Fatalf("agent policy resolution failed: %v", err)
@@ -193,6 +206,19 @@ func TestKioskPolicy_TenantIsolation(t *testing.T) {
 			t.Errorf("the agent's effective policy is %v, want org A's. Belting the "+
 				"table without the bypass would silently unlock every managed "+
 				"device on the next config poll", got)
+		}
+		// Org A also aims policyA at a device id it does not own: the agent
+		// belongs to org B, so the lockdown must not reach it.
+		if w := call(h.HandleAssignPolicy, orgA, "POST", "/kiosk/policies/"+policyA+"/assignments",
+			`{"target_kind":"agent","target_id":"twin-`+suffix+`"}`, p); w.Code != 201 {
+			t.Fatalf("assign to twin: status %d, body %s", w.Code, w.Body.String())
+		}
+		if twin, err := resolveEffectiveKioskPolicy(ctx, db, "twin-"+suffix); err != nil {
+			t.Fatalf("twin resolution failed: %v", err)
+		} else if twin != nil {
+			t.Errorf("org B's device resolved org A's kiosk policy %s: the fleet is "+
+				"per-tenant, so a policy may only lock a device enrolled in its own "+
+				"organization", twin.ID)
 		}
 	})
 
