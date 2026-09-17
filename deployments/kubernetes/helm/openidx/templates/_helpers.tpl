@@ -207,6 +207,34 @@ would hand each of them a different backend mid-flight.
 {{- end }}
 
 {{/*
+The bundled PostgreSQL's PRIMARY, by Service name.
+
+The Bitnami subchart names its Service `<release>-postgresql` in standalone
+mode and `<release>-postgresql-primary` once `postgresql.architecture` is
+"replication" -- the same chart, a different name, and every DSN this chart
+builds used to spell the standalone one. Turning replication on therefore
+broke every connection string at once: the migration Job waited on a Service
+that did not exist and `helm --wait` burned its timeout. One helper, every
+template that names the host uses it, and the read replica has its own below.
+*/}}
+{{- define "openidx.postgresHost" -}}
+{{- if eq (.Values.postgresql.architecture | default "standalone") "replication" -}}
+{{- include "openidx.fullname" . }}-postgresql-primary
+{{- else -}}
+{{- include "openidx.fullname" . }}-postgresql
+{{- end -}}
+{{- end }}
+
+{{/*
+The bundled PostgreSQL's READ replicas, by Service name. Only meaningful when
+postgresql.architecture is "replication"; the subchart renders nothing under
+this name otherwise.
+*/}}
+{{- define "openidx.postgresReadHost" -}}
+{{- include "openidx.fullname" . }}-postgresql-read
+{{- end }}
+
+{{/*
 The availability plane a service connects as, validated.
 
 A misspelled plane must not render: the value picks a Postgres role, and a name

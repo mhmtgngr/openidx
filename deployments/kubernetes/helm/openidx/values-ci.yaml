@@ -2,6 +2,12 @@
 # `kind-install`). Not a deployment profile — do not copy this for a real
 # install; start from values.yaml or values-prod.yaml.
 #
+# values-ci-cell.yaml layers the CELL shape over this file (job `kind-cell`):
+# same data plane, plus the pooler, transaction-local tenant scope, a
+# streaming replica, the identity plane split and a cell id, with this tree's
+# identity and oauth binaries running behind them. Read that file for what it
+# proves and what it does not.
+#
 # What this overlay is for
 # ------------------------
 # `helm template` proves the chart RENDERS. It cannot prove the manifests are

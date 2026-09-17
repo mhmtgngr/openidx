@@ -15,6 +15,13 @@ on:
       - 'internal/migrations/**'
       - 'scripts/check-chart-images*.sh'
       - 'scripts/ci-retry.sh'
+      # kind-cell also builds identity-service and oauth-service from this
+      # tree and runs them behind the pooler, the plane split and the cell
+      # guard. Their Go sources are ci.yml's to test; what this workflow
+      # proves is the CHART's cell shape with real binaries behind it, so it
+      # re-runs when the chart or the two Dockerfiles change.
+      - 'deployments/docker/Dockerfile.identity-service'
+      - 'deployments/docker/Dockerfile.oauth-service'
   pull_request:
     branches: [main]
     paths:
@@ -29,6 +36,13 @@ on:
       - 'internal/migrations/**'
       - 'scripts/check-chart-images*.sh'
       - 'scripts/ci-retry.sh'
+      # kind-cell also builds identity-service and oauth-service from this
+      # tree and runs them behind the pooler, the plane split and the cell
+      # guard. Their Go sources are ci.yml's to test; what this workflow
+      # proves is the CHART's cell shape with real binaries behind it, so it
+      # re-runs when the chart or the two Dockerfiles change.
+      - 'deployments/docker/Dockerfile.identity-service'
+      - 'deployments/docker/Dockerfile.oauth-service'
   workflow_dispatch:
 
 permissions:
@@ -87,6 +101,52 @@ jobs:
 
       - name: Template (production values)
         run: helm template openidx "$CHART" -f "$CHART/values-prod.yaml" > /tmp/render-prod.yaml
+
+      # The cell shape (values-ci-cell.yaml over values-ci.yaml): pooler,
+      # transaction-local scope, streaming replica, plane split and cell id in
+      # one render. Every interlock below is exercised on its own; this is the
+      # one render where all of them are on at once, which is what the
+      # kind-cell job then installs.
+      - name: Template (cell shape)
+        run: |
+          helm template openidx "$CHART" -f "$CHART/values-ci.yaml" -f "$CHART/values-ci-cell.yaml" \
+            > /tmp/render-cell.yaml
+          python3 - /tmp/render-cell.yaml <<'PYEOF'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          def by(kind, name):
+              for d in docs:
+                  if d["kind"] == kind and d["metadata"]["name"] == name:
+                      return d
+              raise AssertionError(f"{kind}/{name} did not render")
+          # Replication renames the primary's Service; every DSN has to follow.
+          db = by("Secret", "openidx-db-url")["stringData"]
+          assert "@openidx-postgresql-primary:5432/" in db["DATABASE_URL"], db["DATABASE_URL"]
+          assert "@openidx-postgresql-read:5432/" in db["DATABASE_READ_URL"], db["DATABASE_READ_URL"]
+          assert db["DATABASE_READ_URL"].startswith("postgres://openidx_app:"), \
+              "the replica pool must be the same role as the pooled primary pool"
+          toml = by("ConfigMap", "openidx-pgcat")["data"]["pgcat.toml"]
+          assert '"openidx-postgresql-primary", 5432' in toml, "pgcat is not pointed at the replication-mode primary"
+          boot = by("Job", "openidx-db-bootstrap")["spec"]["template"]["spec"]["containers"][0]["env"]
+          env = {e["name"]: e for e in boot}
+          assert env["PGHOST"]["value"] == "openidx-postgresql-primary", env["PGHOST"]
+          assert env["OPENIDX_APP_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "app-password"
+          auth = by("Secret", "openidx-datastore-auth")["stringData"]
+          assert auth["app-password"] == "ci-pgcat-password", "the hook sets the pooler's upstream credential"
+          assert "replication-password" in auth, "the read replica cannot stream without it"
+          np = by("NetworkPolicy", "openidx-postgres-allow")["spec"]["podSelector"]
+          comps = {v for e in np.get("matchExpressions", []) if e["key"] == "app.kubernetes.io/component" for v in e["values"]}
+          assert comps == {"primary", "read"}, f"the Postgres policy covers {comps}, and the readers dial the replica"
+          for half in ("auth", "admin"):
+              dep = by("Deployment", f"openidx-identity-{half}")
+              c = dep["spec"]["template"]["spec"]["containers"][0]
+              e = {x["name"]: x for x in c["env"]}
+              assert e["SERVICE_PROFILE"]["value"] == half
+              assert e["DATABASE_URL"]["valueFrom"]["secretKeyRef"]["name"] == "openidx-pgcat-dsn"
+          cm = by("ConfigMap", "openidx-config")["data"]
+          assert cm["CELL_ID"] == "canary-1" and cm["RLS_MODE"] == "local", cm
+          print("cell shape renders: replication-mode DSNs, pooler upstream, hook credential, replica policy, two planes, cell id")
+          PYEOF
 
       # `| default N` on a replica count silently turns an operator's 0 back
       # into N, because Go templates treat 0 as empty. oauth-service, OPA and
@@ -1039,7 +1099,8 @@ jobs:
       - name: No doubled dollar in a container command line
         run: |
           set -euo pipefail
-          for values in "" "-f $CHART/values-prod.yaml" "-f $CHART/values-ci.yaml"; do
+          for values in "" "-f $CHART/values-prod.yaml" "-f $CHART/values-ci.yaml" \
+                        "-f $CHART/values-ci.yaml -f $CHART/values-ci-cell.yaml"; do
             # shellcheck disable=SC2086
             helm template openidx "$CHART" \
               --set secrets.postgresPassword=render-only-not-a-credential \
@@ -1242,3 +1303,367 @@ jobs:
           kubectl -n "$NS" logs "statefulset/$RELEASE-postgresql" --tail=120 2>&1 || true
           echo "===== events ====="
           kubectl -n "$NS" get events --sort-by=.lastTimestamp 2>&1 | tail -80 || true
+
+  # The CELL shape, installed and driven (global-scale plan 4.2/4.3, the half
+  # this environment can measure). kind-install proves the chart installs and
+  # the schema lands. This job layers values-ci-cell.yaml over the same values
+  # and turns on every switch the plan added -- the transaction pooler with
+  # RLS_MODE=local, a streaming read replica, the identity plane split, a cell
+  # id -- with this tree's identity-service and oauth-service running behind
+  # them, and asserts against the LIVE cluster what the lint job can only
+  # assert against a render: that the switched-on positions work together.
+  #
+  # Two helm passes, deliberately. Migrations are a post-install hook, and
+  # `helm --wait` waits for every Deployment to be Ready BEFORE it runs
+  # post-install hooks; a service that needs the schema to become Ready would
+  # therefore hold the install until the timeout, and the schema would never
+  # land. So the first pass installs the data plane with the services at zero
+  # (the hooks bootstrap the roles and migrate), and the second pass scales the
+  # services up -- a pre-upgrade hook re-runs both Jobs as no-ops first. It is
+  # also the order an operator would take on a real cell.
+  #
+  # What it does NOT prove, and says so in values-ci-cell.yaml: load and
+  # failover timing (no traffic, one node), three Redis roles on three
+  # instances, database.planeRoles (interlocked with the pooler by design),
+  # ingress and external secrets. Those wait for a real cell.
+  kind-cell:
+    name: A cell-shaped install on kind
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      CHART: deployments/kubernetes/helm/openidx
+      NS: openidx-cell
+      # The release name is load-bearing: values-ci-cell.yaml names
+      # openidx-oauth-service as the JWKS host, and every assertion below
+      # names the resources the way this release renders them.
+      RELEASE: openidx
+      REGISTRY: ghcr.io/mhmtgngr/openidx
+      # The default organization the migrations seed, which owns the seeded
+      # api-service client; the misdirection case moves it between cells.
+      ORG: 00000000-0000-0000-0000-000000000010
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.14.4
+
+      - name: Add chart repos
+        run: bash scripts/ci-retry.sh 3 5 -- helm repo add bitnami https://charts.bitnami.com/bitnami
+
+      - name: Build chart dependencies
+        run: bash scripts/ci-retry.sh 3 5 -- helm dependency build "$CHART"
+
+      - name: Create kind cluster
+        id: kind
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: openidx-cell
+
+      # Three images from THIS tree: the migration tools, and the two services
+      # the cell shape runs. Pulling main's `latest` would test someone else's
+      # binaries against this chart.
+      - name: Build the tools, identity-service and oauth-service images
+        run: |
+          set -euo pipefail
+          for img in tools identity-service oauth-service; do
+            docker build -f "deployments/docker/Dockerfile.$img" -t "$REGISTRY/$img:ci" .
+          done
+
+      - name: Load them into the cluster
+        run: |
+          set -euo pipefail
+          for img in tools identity-service oauth-service; do
+            kind load docker-image "$REGISTRY/$img:ci" --name openidx-cell
+          done
+
+      # Side-loaded so an anonymous registry rate limit cannot stall the hooks,
+      # which would stall `helm --wait` and read as a chart failure: the
+      # bootstrap hook's psql client, the migration Job's wait-for-postgres
+      # init image, and the pooler.
+      - name: Pre-load the images the hooks and the pooler pull
+        run: |
+          set -euo pipefail
+          render=$(helm template "$RELEASE" "$CHART" -f "$CHART/values-ci.yaml" -f "$CHART/values-ci-cell.yaml")
+          imgs=$(printf '%s\n' "$render" \
+            | sed -n 's/^[[:space:]]*image:[[:space:]]*"\{0,1\}\([^"[:space:]]*\)"\{0,1\}[[:space:]]*$/\1/p' \
+            | grep -E '^(postgres:|busybox:|ghcr.io/postgresml/pgcat:)' | sort -u)
+          test -n "$imgs" || { echo "could not read the hook and pooler images from the chart"; exit 1; }
+          echo "$imgs"
+          for img in $imgs; do
+            bash scripts/ci-retry.sh 3 5 -- docker pull "$img"
+            kind load docker-image "$img" --name openidx-cell
+          done
+
+      # Pass one: the data plane and the hooks, services at zero (see the job
+      # header for why). --wait blocks on the primary, the replica, Redis, OPA
+      # and the pooler becoming Ready and on both hook Jobs succeeding.
+      - name: helm install --wait (data plane, services at zero)
+        run: |
+          helm upgrade --install "$RELEASE" "$CHART" \
+            --namespace "$NS" --create-namespace \
+            -f "$CHART/values-ci.yaml" -f "$CHART/values-ci-cell.yaml" \
+            --set identityService.replicaCount=0 \
+            --set oauthService.replicaCount=0 \
+            --wait --timeout 15m
+
+      - name: The hooks ran, and the bootstrap gave the pooler its upstream credential
+        run: |
+          set -euo pipefail
+          for job in db-bootstrap migrate; do
+            succeeded=$(kubectl -n "$NS" get job "$RELEASE-$job" -o jsonpath='{.status.succeeded}')
+            test "${succeeded:-0}" -ge 1 || { echo "$job Job did not succeed"; exit 1; }
+          done
+          logs=$(kubectl -n "$NS" logs "job/$RELEASE-db-bootstrap" --tail=20)
+          echo "$logs"
+          grep -q "openidx_app: password set" <<<"$logs" \
+            || { echo "::error::the bootstrap hook did not set openidx_app's password; the pooler could never log in"; exit 1; }
+
+      # The migration Job took the direct path and the services will take the
+      # pooled one: neither is an accident of which Secret happened to win.
+      - name: Migrations went direct; the services go through the pooler
+        run: |
+          set -euo pipefail
+          direct=$(kubectl -n "$NS" get secret "$RELEASE-db-url" -o jsonpath='{.data.DATABASE_URL}' | base64 -d)
+          pooled=$(kubectl -n "$NS" get secret "$RELEASE-pgcat-dsn" -o jsonpath='{.data.DATABASE_URL}' | base64 -d)
+          grep -q "@$RELEASE-postgresql-primary:5432/" <<<"$direct" || { echo "direct DSN does not name the replication-mode primary"; exit 1; }
+          grep -q "@$RELEASE-pgcat:6432/" <<<"$pooled" || { echo "pooled DSN does not name the pooler"; exit 1; }
+          from=$(kubectl -n "$NS" get job "$RELEASE-migrate" -o jsonpath='{.spec.template.spec.containers[0].envFrom[*].secretRef.name}')
+          grep -q "$RELEASE-db-url" <<<"$from" || { echo "the migration Job does not read the direct DSN: $from"; exit 1; }
+          override=$(kubectl -n "$NS" get job "$RELEASE-migrate" -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="DATABASE_URL")].name}')
+          test -z "$override" || { echo "the migration Job carries a DATABASE_URL env override; it would go through the pooler"; exit 1; }
+          echo "migrate: direct ($RELEASE-postgresql-primary); services: pooled ($RELEASE-pgcat)"
+
+      # A replica that is up is not a replica that is streaming. Ask the
+      # replica whether it is in recovery, then whether the schema the primary
+      # just received has arrived -- the same count on both sides.
+      - name: The replica streams, and the schema arrived on it
+        run: |
+          set -euo pipefail
+          psql_on() { # psql_on <statefulset> <sql>
+            kubectl -n "$NS" exec "statefulset/$1" -- \
+              env PGPASSWORD=ci-postgres-password psql -U openidx -d openidx -tAc "$2"
+          }
+          recovery=$(psql_on "$RELEASE-postgresql-read" 'SELECT pg_is_in_recovery()')
+          test "$recovery" = "t" || { echo "the read replica is not in recovery (got '$recovery'): it is a second primary, not a replica"; exit 1; }
+          primary=$(psql_on "$RELEASE-postgresql-primary" 'SELECT count(*) FROM schema_migrations')
+          test "$primary" -gt 100 || { echo "expected the full migration set on the primary, got $primary"; exit 1; }
+          for _ in $(seq 1 30); do
+            replica=$(psql_on "$RELEASE-postgresql-read" 'SELECT count(*) FROM schema_migrations' 2>/dev/null || echo 0)
+            if [ "$replica" = "$primary" ]; then
+              echo "replica in recovery, $replica migrations on both sides"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::the replica holds $replica migrations after 60s, the primary $primary"; exit 1
+
+      # The belt THROUGH the pooler, as the role the fleet runs as. This is the
+      # measured hazard of docs/evidence/2026-09-13-rls-transaction-pooling.md:
+      # a session-scoped tenant handed to the next client. Under RLS_MODE=local
+      # the scope is transaction-local, so on a fresh statement openidx_app
+      # sees nothing, inside a transaction with a local bypass it sees the
+      # seeded rows, and on the statement after that transaction it sees
+      # nothing again. Driven from the primary's pod, which has psql and can
+      # reach the pooler's Service.
+      - name: The tenant belt holds through the pooler
+        run: |
+          set -euo pipefail
+          via_pool() { # via_pool <user> <password> <db> <sql>
+            kubectl -n "$NS" exec "statefulset/$RELEASE-postgresql-primary" -- \
+              env PGPASSWORD="$2" psql -h "$RELEASE-pgcat" -p 6432 -U "$1" -d "$3" -v ON_ERROR_STOP=1 -tAc "$4"
+          }
+          pools=$(via_pool pgcat ci-pgcat-admin-password pgcat 'SHOW POOLS')
+          echo "$pools"
+          grep -q 'openidx' <<<"$pools" && grep -q 'transaction' <<<"$pools" \
+            || { echo "::error::pgcat is not pooling openidx in transaction mode"; exit 1; }
+
+          bare=$(via_pool openidx_app ci-pgcat-password openidx 'SELECT count(*) FROM users')
+          test "$bare" = "0" || { echo "::error::openidx_app with no tenant scope sees $bare users through the pooler; the belt is not FORCE'd against it"; exit 1; }
+          # A multi-statement -c runs on one backend; psql prints the last result.
+          inside=$(via_pool openidx_app ci-pgcat-password openidx \
+            "BEGIN; SELECT set_config('app.bypass_rls','on',true); SELECT count(*) FROM users")
+          test "$inside" -ge 1 || { echo "::error::a transaction-local bypass shows $inside users; the seeded admin is missing or the scope did not apply"; exit 1; }
+          after=$(via_pool openidx_app ci-pgcat-password openidx \
+            "BEGIN; SELECT set_config('app.bypass_rls','on',true); COMMIT; SELECT count(*) FROM users")
+          test "$after" = "0" || { echo "::error::the scope outlived its transaction through the pooler: $after users visible after COMMIT"; exit 1; }
+          echo "belt holds through the pooler: bare=0, inside a local bypass=$inside, after COMMIT=0"
+
+      # Pass two: the services. A pre-upgrade hook re-runs the bootstrap and
+      # the migration as no-ops, then the two identity halves and oauth roll
+      # out and have to become Ready through the pooler.
+      - name: helm upgrade --wait (services up)
+        run: |
+          helm upgrade --install "$RELEASE" "$CHART" \
+            --namespace "$NS" \
+            -f "$CHART/values-ci.yaml" -f "$CHART/values-ci-cell.yaml" \
+            --wait --timeout 12m
+
+      - name: Two identity planes and the issuer are Ready through the pooler and read the replica
+        run: |
+          set -euo pipefail
+          for dep in identity-auth identity-admin oauth-service pgcat; do
+            ready=$(kubectl -n "$NS" get deploy "$RELEASE-$dep" -o jsonpath='{.status.readyReplicas}')
+            test "${ready:-0}" -ge 1 || { echo "$dep has ${ready:-0} ready replicas"; exit 1; }
+          done
+          for half in auth admin; do
+            profile=$(kubectl -n "$NS" get deploy "$RELEASE-identity-$half" \
+              -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SERVICE_PROFILE")].value}')
+            test "$profile" = "$half" || { echo "identity-$half runs SERVICE_PROFILE=$profile"; exit 1; }
+          done
+          # Live health, not the manifest: database (through pgcat) and
+          # database_replica (the read Service) both up, on all three pods.
+          check() { # check <deployment> <port>
+            kubectl -n "$NS" port-forward "deploy/$RELEASE-$1" "$2:$2" >/dev/null 2>&1 &
+            local pf=$!
+            local body=""
+            for _ in $(seq 1 20); do
+              body=$(curl -sS "http://127.0.0.1:$2/health" 2>/dev/null || true)
+              [ -n "$body" ] && break
+              sleep 1
+            done
+            kill $pf 2>/dev/null || true
+            wait $pf 2>/dev/null || true
+            echo "$1: $body"
+            test "$(jq -r '.components.database.status' <<<"$body")" = "up" \
+              || { echo "::error::$1: database is not up through the pooler"; exit 1; }
+            test "$(jq -r '.components.database_replica.status' <<<"$body")" = "up" \
+              || { echo "::error::$1: the read replica is not up"; exit 1; }
+            if jq -r '.components.database_replica.details' <<<"$body" | grep -q 'no read replica configured'; then
+              echo "::error::$1 has no read replica configured; DATABASE_READ_URL did not reach it"; exit 1
+            fi
+          }
+          check identity-auth 8001
+          check identity-admin 8001
+          check oauth-service 8006
+
+      # The split, live: a route is served by exactly one half. /users is
+      # ADMIN (401 from the admin pod: registered, wants a token; 404 from the
+      # auth pod: not registered there). The WebAuthn credential list is ISSUE
+      # and the mirror image. Anything else -- 404 on both, 401 on both --
+      # means the profile did not take.
+      - name: Each identity half serves only its own plane
+        run: |
+          set -euo pipefail
+          code_on() { # code_on <deployment> <path>
+            kubectl -n "$NS" port-forward "deploy/$RELEASE-$1" 18001:8001 >/dev/null 2>&1 &
+            local pf=$!
+            for _ in $(seq 1 20); do
+              curl -s -o /dev/null http://127.0.0.1:18001/health 2>/dev/null && break
+              sleep 1
+            done
+            local code
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:18001$2")
+            kill $pf 2>/dev/null || true
+            wait $pf 2>/dev/null || true
+            echo "$code"
+          }
+          admin_route=/api/v1/identity/users
+          issue_route=/api/v1/identity/mfa/webauthn/credentials
+          a_admin=$(code_on identity-auth  "$admin_route");  m_admin=$(code_on identity-admin "$admin_route")
+          a_issue=$(code_on identity-auth  "$issue_route");  m_issue=$(code_on identity-admin "$issue_route")
+          echo "GET $admin_route: auth=$a_admin admin=$m_admin"
+          echo "GET $issue_route: auth=$a_issue admin=$m_issue"
+          test "$m_admin" = "401" || { echo "::error::the admin half does not serve $admin_route (got $m_admin)"; exit 1; }
+          test "$a_admin" = "404" || { echo "::error::the auth half serves $admin_route (got $a_admin); the plane split did not take"; exit 1; }
+          test "$a_issue" = "401" || { echo "::error::the auth half does not serve $issue_route (got $a_issue)"; exit 1; }
+          test "$m_issue" = "404" || { echo "::error::the admin half serves $issue_route (got $m_issue); the plane split did not take"; exit 1; }
+
+      # The cell claim, live, both ways. A token minted here for a tenant the
+      # directory has not placed carries this cell, and a live admin pod serves
+      # it. Then the tenant is PLACED in another cell (the directory is
+      # internal/common/celldir; org_cells is belted, so the write runs under a
+      # transaction-local bypass on the direct connection), the issuer stamps
+      # the tenant's home cell instead of its own, and the same pod answers 421
+      # Misdirected Request naming the cell that answered. No forged token: the
+      # signature is the issuer's, and only the placement changed.
+      - name: A token names its cell, and a token for a tenant placed elsewhere gets 421
+        run: |
+          set -euo pipefail
+          kubectl -n "$NS" port-forward "deploy/$RELEASE-oauth-service" 18006:8006 >/dev/null 2>&1 &
+          pf_oauth=$!
+          kubectl -n "$NS" port-forward "deploy/$RELEASE-identity-admin" 18002:8001 >/dev/null 2>&1 &
+          pf_admin=$!
+          trap 'kill $pf_oauth $pf_admin 2>/dev/null || true' EXIT
+          for port in 18006 18002; do
+            for _ in $(seq 1 20); do
+              curl -s -o /dev/null "http://127.0.0.1:$port/health" 2>/dev/null && break
+              sleep 1
+            done
+          done
+
+          mint() {
+            curl -fsS -X POST http://127.0.0.1:18006/oauth/token \
+              -H 'Content-Type: application/x-www-form-urlencoded' \
+              -d 'grant_type=client_credentials&client_id=api-service&client_secret=api-service-secret&scope=openid api' \
+              | jq -r '.access_token'
+          }
+          claim() { # claim <jwt> <name>
+            local payload
+            payload=$(cut -d. -f2 <<<"$1" | tr '_-' '/+')
+            case $(( ${#payload} % 4 )) in 2) payload="$payload==";; 3) payload="$payload=";; esac
+            base64 -d <<<"$payload" 2>/dev/null | jq -r ".$2 // empty"
+          }
+          place() { # place <cell>  -- upsert the default org's placement on the direct connection
+            kubectl -n "$NS" exec "statefulset/$RELEASE-postgresql-primary" -- \
+              env PGPASSWORD=ci-postgres-password psql -U openidx -d openidx -v ON_ERROR_STOP=1 -tAc \
+              "BEGIN; SELECT set_config('app.bypass_rls','on',true);
+               INSERT INTO org_cells (org_id, cell_id, region) VALUES ('$ORG', '$1', 'ci')
+                 ON CONFLICT (org_id) DO UPDATE SET cell_id = EXCLUDED.cell_id, updated_at = NOW();
+               COMMIT; SELECT cell_id FROM org_cells WHERE org_id = '$ORG'" 2>&1 | tail -1
+          }
+          ask_admin() { # ask_admin <jwt> -> "<code> <X-OpenIDX-Cell header or ->"
+            local hdr code
+            hdr=$(mktemp)
+            code=$(curl -s -o /dev/null -D "$hdr" -w '%{http_code}' -H "Authorization: Bearer $1" http://127.0.0.1:18002/api/v1/identity/users)
+            echo "$code $(sed -n 's/^[Xx]-[Oo]pen[Ii][Dd][Xx]-[Cc]ell:[[:space:]]*//p' "$hdr" | tr -d '\r' | head -1)"
+          }
+
+          home=$(mint); test -n "$home" || { echo "::error::could not mint a client_credentials token"; exit 1; }
+          cell=$(claim "$home" cell)
+          test "$cell" = "canary-1" || { echo "::error::a token minted in canary-1 carries cell='$cell'"; exit 1; }
+          read -r code hdr <<<"$(ask_admin "$home")"
+          case "$code" in
+            421) echo "::error::a same-cell token was refused as misdirected"; exit 1;;
+            401) echo "::error::the admin pod did not accept the issuer's token (401): JWKS not reachable?"; exit 1;;
+          esac
+          echo "same cell: token cell=$cell, admin pod answered $code"
+
+          placed=$(place eu-1)
+          test "$placed" = "eu-1" || { echo "::error::could not place $ORG in eu-1: $placed"; exit 1; }
+          away=$(mint)
+          cell=$(claim "$away" cell)
+          test "$cell" = "eu-1" || { echo "::error::after placing the tenant in eu-1 the issuer stamped cell='$cell'; the directory was not consulted"; exit 1; }
+          read -r code hdr <<<"$(ask_admin "$away")"
+          test "$code" = "421" || { echo "::error::a token for a tenant placed in eu-1 was answered $code by canary-1, want 421"; exit 1; }
+          test "$hdr" = "canary-1" || { echo "::error::421 without X-OpenIDX-Cell naming the answering cell (got '$hdr')"; exit 1; }
+          echo "misdirected: token cell=eu-1, canary-1 answered 421 with X-OpenIDX-Cell: $hdr"
+
+          # And back: the placement, not the pod, decides.
+          place canary-1 >/dev/null
+          back=$(mint)
+          read -r code hdr <<<"$(ask_admin "$back")"
+          test "$code" != "421" || { echo "::error::after placing the tenant back in canary-1 the pod still refuses"; exit 1; }
+          echo "placed back: token cell=$(claim "$back" cell), admin pod answered $code"
+
+      - name: Diagnose
+        if: failure() && steps.kind.conclusion == 'success'
+        run: |
+          kubectl -n "$NS" get all,networkpolicy,secret 2>&1 | head -120 || true
+          echo "===== pods ====="
+          kubectl -n "$NS" describe pods 2>&1 | tail -250 || true
+          for job in db-bootstrap migrate; do
+            echo "===== $job job ====="
+            kubectl -n "$NS" describe job "$RELEASE-$job" 2>&1 | tail -40 || true
+            kubectl -n "$NS" logs "job/$RELEASE-$job" --all-containers --tail=120 2>&1 || true
+          done
+          for dep in pgcat identity-auth identity-admin oauth-service; do
+            echo "===== $dep ====="
+            kubectl -n "$NS" logs "deploy/$RELEASE-$dep" --all-containers --tail=150 2>&1 || true
+          done
+          echo "===== postgres primary ====="
+          kubectl -n "$NS" logs "statefulset/$RELEASE-postgresql-primary" --tail=120 2>&1 || true
+          echo "===== postgres read ====="
+          kubectl -n "$NS" logs "statefulset/$RELEASE-postgresql-read" --tail=120 2>&1 || true
+          echo "===== events ====="
+          kubectl -n "$NS" get events --sort-by=.lastTimestamp 2>&1 | tail -100 || true

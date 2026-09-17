@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The cell shape, installed and driven on kind** (global-scale plan 4.2/4.3,
+  the half a build environment can measure). Every switch the plan added was
+  a switch the lint job could only prove RENDERS: the transaction pooler with
+  `RLS_MODE=local`, the read replica, the identity plane split, the cell id
+  and the guard that reads it. A new `values-ci-cell.yaml` layers all of them
+  over `values-ci.yaml`, and a new `kind-cell` job in `helm.yml` installs it
+  with this tree's `identity-service` and `oauth-service` behind them and
+  asserts against the live cluster: migrations landed through the direct DSN
+  and replicated to the streaming replica while the services connect through
+  pgcat; the tenant belt holds THROUGH the pooler as `openidx_app` (no scope,
+  zero rows; a transaction-local bypass, the seeded rows; the statement after
+  COMMIT, zero again); two identity Deployments each serve only their plane
+  (`/users` is 401 on the admin half and 404 on the auth half, the WebAuthn
+  credential list the mirror image), both healthy through the pooler and
+  reading the replica; a `client_credentials` token carries `cell: canary-1`
+  and a live admin pod serves it; and once the tenant directory places that
+  tenant in `eu-1`, the issuer stamps `eu-1` and the same pod answers
+  `421 Misdirected Request` with `X-OpenIDX-Cell: canary-1`, then serves
+  again when the placement moves back. No forged token: only the placement
+  changed. Two helm passes on purpose, because `--wait` holds post-install
+  hooks until every Deployment is Ready and a service that needs the schema
+  would deadlock the migration that provides it. **Measured while building
+  it, and fixed in the chart:** (1) `postgresql.architecture=replication`
+  renames the primary's Service to `-postgresql-primary`, and every DSN the
+  chart built spelled the standalone name, so turning replication on broke
+  every connection string at once; one `openidx.postgresHost` helper now
+  feeds the DSN Secret, the plane DSNs, the bootstrap hook, the migration
+  Job's wait and pgcat's upstream. (2) pgcat authenticates upstream as
+  `openidx_app` with `pgcat.password`, and migration v53 creates that role
+  passwordless, so with the bundled PostgreSQL the pooler could never log in
+  and every service behind it was down with the install green; the bootstrap
+  hook now sets the role's password from the same value, via psql variable
+  quoting. (3) The bundled database had no read-replica wiring at all
+  (`DATABASE_READ_URL` existed only in external-secrets mode); new
+  `database.bundledReadReplica` points it at `-postgresql-read`, refuses to
+  render without the replication architecture, and the Postgres
+  NetworkPolicy now admits traffic to the read pods too, which it did not.
+  **Not proved, and said so in the values file:** load and failover timing,
+  three Redis roles on three instances, `database.planeRoles` (interlocked
+  with the pooler by design), ingress and external secrets. Those wait for a
+  real cell.
+
 - **The device fleet is one tenant's** (migration v197; global-scale plan 4.5
   and the last product decision the orgscope register was waiting on).
   `enrolled_agents`, `agent_posture_results` and `agent_enrollment_tokens`

@@ -47,7 +47,7 @@ spec:
             - sh
             - -c
             - |
-              until nc -z {{ include "openidx.fullname" . }}-postgresql 5432; do
+              until nc -z {{ include "openidx.postgresHost" . }} 5432; do
                 echo "waiting for postgresql..."; sleep 2;
               done
           securityContext:

@@ -356,8 +356,17 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/component: primary
       app.kubernetes.io/name: postgresql
+    # The primary, and -- with postgresql.architecture=replication -- the read
+    # replicas the services' read pool dials (database.bundledReadReplica).
+    # A policy that covered only the primary would let the install come up
+    # and then refuse every offloaded read on a CNI that enforces policy,
+    # which the readers would report as a replica outage and fall back from,
+    # so the replica would be paid for and never used.
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [primary, read]
   policyTypes:
     - Ingress
   ingress:

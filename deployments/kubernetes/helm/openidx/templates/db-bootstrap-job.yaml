@@ -49,9 +49,13 @@
 #
 # The role stays passwordless, exactly as v53 leaves it — nothing logs in as
 # openidx_app until an operator sets a password out of band and points
-# DATABASE_URL at it. With an external database (postgresql.enabled=false)
-# neither object renders, so there the DSN the migration Job uses must itself
-# be able to CREATE ROLE, or openidx_app must already exist.
+# DATABASE_URL at it — with ONE exception: pgcat.enabled. The pooler's upstream
+# credential IS openidx_app, so with the bundled database this hook sets the
+# role's password to pgcat.password (see the script), or the pooler could never
+# log in and every service behind it would be down with the install green.
+# With an external database (postgresql.enabled=false) neither object renders,
+# so there the DSN the migration Job uses must itself be able to CREATE ROLE,
+# or openidx_app must already exist.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -135,6 +139,18 @@ data:
     $$;
     SQL
 
+    # The pooler's upstream credential. pgcat logs in to Postgres as openidx_app
+    # with pgcat.password, and nothing else ever sets that role's password on
+    # the bundled database -- so with pgcat.enabled this hook does, from the
+    # same value the pooler was given (templates/secrets.yaml, app-password).
+    # psql's :'var' quoting, not shell interpolation: the value is a credential
+    # and must never be pasted into SQL text.
+    if [ -n "${OPENIDX_APP_PASSWORD:-}" ]; then
+      psql -U postgres -v ON_ERROR_STOP=1 -v pw="$OPENIDX_APP_PASSWORD" \
+        -c "ALTER ROLE openidx_app PASSWORD :'pw'"
+      echo "openidx_app: password set (the pooler's upstream credential)"
+    fi
+
     # Say what was left behind. A bootstrap that silently did nothing and one
     # that worked have the same exit code.
     psql -U postgres -v ON_ERROR_STOP=1 -tAc \
@@ -181,7 +197,7 @@ spec:
               readOnly: true
           env:
             - name: PGHOST
-              value: {{ include "openidx.fullname" . }}-postgresql
+              value: {{ include "openidx.postgresHost" . }}
             - name: PGPORT
               value: "5432"
             - name: PGDATABASE
@@ -193,6 +209,15 @@ spec:
                 secretKeyRef:
                   name: openidx-datastore-auth
                   key: postgres-password
+            # The runtime role's password, present only when the pooler is on
+            # (templates/secrets.yaml). Optional so the key's absence is the
+            # signal, not a failed pod.
+            - name: OPENIDX_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-datastore-auth
+                  key: app-password
+                  optional: true
           resources:
             {{- toYaml .Values.migrations.roleBootstrap.resources | nindent 12 }}
           securityContext:

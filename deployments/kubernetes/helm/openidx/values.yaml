@@ -655,6 +655,20 @@ database:
   connectTimeout: ""
   statementTimeout: ""
 
+  # The BUNDLED read replica (global-scale plan task 2.3, the in-cluster
+  # shape). With postgresql.architecture=replication the subchart runs
+  # streaming replicas behind <release>-postgresql-read; this points the
+  # services' DATABASE_READ_URL at that Service so read-mostly, lag-tolerant
+  # queries are served from the replica (PostgresDB.Reader()) and the primary
+  # keeps the writes and the security-critical reads. A replica outage falls
+  # back to the primary with a breaker (readerfallback.go), so this is a
+  # degradation and not an outage. The chart refuses to render it without the
+  # replication architecture: in standalone mode there is no read Service, and
+  # a DATABASE_READ_URL naming a host that does not exist is a replica that
+  # every health check reports down and every offloaded read falls back from.
+  # Managed databases use externalSecrets.readReplica instead.
+  bundledReadReplica: false
+
   # Per-plane Postgres roles (global-scale plan task 2.4, ADR-2).
   #
   # Migration v189 creates openidx_issue / openidx_admin / openidx_event, each
@@ -752,6 +766,13 @@ postgresql:
     secretKeys:
       adminPasswordKey: postgres-password
       userPasswordKey: password
+  # standalone (default) or replication. replication adds streaming read
+  # replicas (readReplicas.replicaCount) behind <release>-postgresql-read and
+  # renames the primary's Service to <release>-postgresql-primary -- every DSN
+  # this chart builds follows that rename through the openidx.postgresHost
+  # helper. Point the services' read pool at the replicas with
+  # database.bundledReadReplica.
+  architecture: standalone
   primary:
     persistence:
       size: 20Gi
@@ -1035,9 +1056,19 @@ pgcat:
   # unprivileged application role (openidx_app), never the owner or a superuser:
   # a superuser bypasses every RLS policy, which would make the tenant belt
   # decorative.
+  # Empty means the bundled PostgreSQL's primary, under whichever Service name
+  # the subchart's architecture gives it (<release>-postgresql, or
+  # <release>-postgresql-primary with postgresql.architecture=replication);
+  # an external database has to be named here, because the chart cannot
+  # guess it and refuses to render an empty upstream.
   postgresHost: ""
   postgresPort: 5432
   databaseName: openidx
+  # With the bundled PostgreSQL the bootstrap hook gives openidx_app THIS
+  # password (pgcat.password), because v53 creates the role passwordless and
+  # nothing else would: a pooler that cannot log in upstream is every service
+  # down behind an install that reported green. With an external database set
+  # it on the server yourself: ALTER ROLE openidx_app PASSWORD '...'.
   username: openidx_app
   # password and adminPassword are deliberately NOT declared with an empty
   # default. templates/pgcat.yaml `required`s both, and `required` fails on a
