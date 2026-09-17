@@ -1695,12 +1695,18 @@ jobs:
             base64 -d <<<"$payload" 2>/dev/null | jq -r ".$2 // empty"
           }
           place() { # place <cell>  -- upsert the default org's placement on the direct connection
+            # The read-back sits INSIDE the transaction. org_cells is FORCE RLS and
+            # the owner is not a superuser, so once the transaction-local bypass
+            # ends with COMMIT the belt hides the row from the role that wrote it:
+            # this job's eighth run read back "COMMIT" (psql's last command tag,
+            # the SELECT having returned no row). -q drops the tags; tail keeps
+            # the SELECT's one row.
             kubectl -n "$NS" exec "statefulset/$RELEASE-postgresql-primary" -- \
-              env PGPASSWORD=ci-postgres-password psql -U openidx -d openidx -v ON_ERROR_STOP=1 -tAc \
+              env PGPASSWORD=ci-postgres-password psql -U openidx -d openidx -v ON_ERROR_STOP=1 -qtAc \
               "BEGIN; SELECT set_config('app.bypass_rls','on',true);
                INSERT INTO org_cells (org_id, cell_id, region) VALUES ('$ORG', '$1', 'ci')
                  ON CONFLICT (org_id) DO UPDATE SET cell_id = EXCLUDED.cell_id, updated_at = NOW();
-               COMMIT; SELECT cell_id FROM org_cells WHERE org_id = '$ORG'" 2>&1 | tail -1
+               SELECT cell_id FROM org_cells WHERE org_id = '$ORG'; COMMIT" 2>&1 | tail -1
           }
           ask_admin() { # ask_admin <jwt> -> "<code> <X-OpenIDX-Cell header or ->"
             local hdr code
