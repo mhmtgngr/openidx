@@ -1034,10 +1034,17 @@ pgcat:
   # hooks until every Deployment is Ready; and pgcat validates its upstream
   # pool at startup and EXITS when the login is refused. So --wait waits for
   # a pooler that is waiting for a hook that is waiting for --wait. Install
-  # once with `--set pgcat.replicaCount=0` (the hooks run), then upgrade with
-  # the real count. Without --wait the pooler crash-loops until the hooks
-  # finish and then recovers on its own; an UPGRADE is unaffected, because
-  # its hooks are pre-upgrade and run first.
+  # once with `--set pgcat.enabled=false` (the services take the direct DSN,
+  # the hooks run), then upgrade with the pooler on: the bootstrap hook is
+  # pre-upgrade too and sets the pooler's credential before pgcat starts.
+  # Zeroing only the pooler (`pgcat.replicaCount=0`) is NOT a first pass any
+  # more: every pooled service carries the wait-for-pooler init container
+  # below whenever the pooler is enabled, so with the pooler at zero the
+  # services sit in Init forever and --wait deadlocks the same way; the
+  # kind-cell job zeroes the pooler AND every pooled service in its first
+  # pass, which is the other shape that works. Without --wait the pooler
+  # crash-loops until the hooks finish and then recovers on its own; an
+  # UPGRADE is unaffected, because its hooks are pre-upgrade and run first.
   #
   # Turning the pooler ON is one upgrade that rolls it and the eight services
   # together. Each service waits for the pooler's port in an init container

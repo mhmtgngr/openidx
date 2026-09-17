@@ -224,7 +224,7 @@ openidx/
 - [Getting Started Guide](docs/GETTING-STARTED.md) — quick start and **first login**
 - [Project Readiness Guide](docs/PROJECT-READINESS-GUIDE.md) — the user-perspective state of the platform, next steps, and controls
 - [Production Readiness](docs/PRODUCTION-READINESS.md) — can I deploy this, and how
-- [Deployment Guide](docs/DEPLOYMENT.md)
+- [Deployment Guide](docs/DEPLOYMENT.md) and the condensed [Operator Guide](docs/docs/deployment/operator-guide.md) — what to run, supply, verify, upgrade and watch
 - [Zero Trust Architecture](docs/zero-trust-architecture.md) and [How Network Access Works](docs/how-network-access-works.md)
 - [How IAM ⇄ PAM ⇄ Ziti Interrelate](docs/IAM_PAM_ZITI_INTERRELATION.md)
 - [Zero Trust Network: Easy Ziti Deployment](docs/ZITI_EASY_DEPLOYMENT.md)

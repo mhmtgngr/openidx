@@ -94,6 +94,7 @@ nav:
   - Deployment:
       - Docker Compose: deployment/docker.md
       - Kubernetes (Helm): deployment/kubernetes.md
+      - Operator Guide: deployment/operator-guide.md
       - AWS (Terraform): deployment/aws.md
       - Configuration Reference: deployment/configuration.md
 
