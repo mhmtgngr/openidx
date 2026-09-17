@@ -1532,7 +1532,7 @@ jobs:
           kubectl -n "$NS" wait --for=condition=Ready pod/belt-probe --timeout=180s
           via_pool() { # via_pool <user> <password> <db> <sql>
             kubectl -n "$NS" exec belt-probe -- \
-              env PGPASSWORD="$2" psql -h "$RELEASE-pgcat" -p 6432 -U "$1" -d "$3" -v ON_ERROR_STOP=1 -tAc "$4"
+              env PGPASSWORD="$2" psql -h "$RELEASE-pgcat" -p 6432 -U "$1" -d "$3" -v ON_ERROR_STOP=1 -qtAc "$4"
           }
           pools=$(via_pool pgcat ci-pgcat-admin-password pgcat 'SHOW POOLS')
           echo "$pools"
@@ -1541,12 +1541,15 @@ jobs:
 
           bare=$(via_pool openidx_app ci-pgcat-password openidx 'SELECT count(*) FROM users')
           test "$bare" = "0" || { echo "::error::openidx_app with no tenant scope sees $bare users through the pooler; the belt is not FORCE'd against it"; exit 1; }
-          # A multi-statement -c runs on one backend; psql prints the last result.
+          # A multi-statement -c runs on one backend, and psql prints EVERY result of
+          # it, not only the last: without -q the first run of this step printed
+          # "BEGIN", "on", "5" for the query below. -q drops the command tags;
+          # tail -n1 keeps the count, which is the last SELECT's single row.
           inside=$(via_pool openidx_app ci-pgcat-password openidx \
-            "BEGIN; SELECT set_config('app.bypass_rls','on',true); SELECT count(*) FROM users")
+            "BEGIN; SELECT set_config('app.bypass_rls','on',true); SELECT count(*) FROM users" | tail -n1)
           test "$inside" -ge 1 || { echo "::error::a transaction-local bypass shows $inside users; the seeded admin is missing or the scope did not apply"; exit 1; }
           after=$(via_pool openidx_app ci-pgcat-password openidx \
-            "BEGIN; SELECT set_config('app.bypass_rls','on',true); COMMIT; SELECT count(*) FROM users")
+            "BEGIN; SELECT set_config('app.bypass_rls','on',true); COMMIT; SELECT count(*) FROM users" | tail -n1)
           test "$after" = "0" || { echo "::error::the scope outlived its transaction through the pooler: $after users visible after COMMIT"; exit 1; }
           echo "belt holds through the pooler: bare=0, inside a local bypass=$inside, after COMMIT=0"
 
