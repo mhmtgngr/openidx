@@ -107,50 +107,21 @@ func (s *Service) resolveEnrollSubject(c *gin.Context, req *darkEnrollRequest) (
 	return "", "", enrollError{"entitlement required (session, enrollment_token, or passkey)"}
 }
 
-// validateEnrollmentToken checks an enrollment token against
-// agent_enrollment_tokens (not-expired, not-revoked, single-use unless reusable)
-// and returns the subject to enroll. It mirrors HandleEnroll's token check;
-// single-use tokens are marked consumed. The returned subject is the token's
-// created_by (the user the token was issued for) when present, else the token id
-// as a device-identity name.
+// validateEnrollmentToken redeems an enrollment token through the one redeemer
+// both public routes share (see enrollment_token_redeem.go): unknown, revoked,
+// expired and already-spent tokens are refused, and a single-use token is
+// spent here, exactly once, before anything is minted against it. The returned
+// subject is the token's created_by (the user the token was issued for) when
+// present, else the token id as a device-identity name.
 func (s *Service) validateEnrollmentToken(ctx context.Context, token string) (string, error) {
-	incomingHash := sha256Hex(token)
-	var (
-		tokenID   string
-		createdBy *string
-		expiresAt interface{}
-		usedAt    interface{}
-		revoked   bool
-	)
-	// Use a lightweight scan; reusability handling matches HandleEnroll.
-	var reusable bool
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT id, created_by, expires_at, used_at, revoked, COALESCE(reusable, false)
-		FROM agent_enrollment_tokens WHERE token_hash = $1
-	`, incomingHash).Scan(&tokenID, &createdBy, &expiresAt, &usedAt, &revoked, &reusable)
+	tok, err := redeemEnrollmentToken(ctx, s.db.Pool, token)
 	if err != nil {
 		return "", err
 	}
-	if revoked {
-		return "", enrollError{"enrollment token revoked"}
+	if tok.CreatedBy != "" {
+		return tok.CreatedBy, nil
 	}
-	if !reusable && usedAt != nil {
-		return "", enrollError{"enrollment token already used"}
-	}
-	if !reusable {
-		// This IS the single-use property. The error was discarded, so a failed
-		// mark left used_at NULL and the same one-time enrolment token could be
-		// redeemed again -- while this function returned success. A token that
-		// cannot be spent is not a token that may be used.
-		if _, err := s.db.Pool.Exec(ctx,
-			`UPDATE agent_enrollment_tokens SET used_at = NOW() WHERE id = $1`, tokenID); err != nil {
-			return "", fmt.Errorf("mark enrollment token used: %w", err)
-		}
-	}
-	if createdBy != nil && *createdBy != "" {
-		return *createdBy, nil
-	}
-	return "enroll-" + tokenID, nil
+	return "enroll-" + tok.ID, nil
 }
 
 // mintZitiEnrollmentJWT ensures the subject has a Ziti identity and returns its
