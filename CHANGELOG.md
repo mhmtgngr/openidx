@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A privileged-session recording could be sealed twice and stop decrypting**
+  — a race in the Guacamole recording sealer, measured, root-caused, and closed
+  by construction.
+
+  `TestTwoConcurrentSealersAnnounceTheSealOnce` failed on `main` in **1 of 60
+  runs** with "got 32801 bytes, want 32768": `32801 − 32768 = 33`, exactly one
+  seal envelope. The recording on disk was `seal(seal(plaintext))`, and one
+  decrypt pass returned ciphertext. On a product that records privileged
+  sessions for compliance, that is evidence an auditor cannot read by the
+  documented path — and nothing on the row said so.
+
+  **Root cause.** `sealOneGuacRecording` asked "is this path plaintext?" and
+  then opened the path: **two `open(2)` calls on one name.** When the other
+  replica's `rename` landed between them, the second call resolved the *new*
+  inode — the other replica's ciphertext — while the sealer still held a
+  "plaintext" answer about an inode no longer behind the name. It encrypted
+  ciphertext. A second, independent race sat beside it: every sealer used the
+  **same** temp name, `path + ".sealing"`, with `O_TRUNC`, so two concurrent
+  sealers wiped each other's frames mid-write.
+
+  **Fix, by construction rather than by lock.** `openUnsealedRecording` opens
+  once and proves plaintext **on that descriptor** (`sealedFile` takes the
+  `*os.File`, not the path; the probe's AES-GCM authentication is now about the
+  inode that will be encrypted), seeks back to zero, and `sealFrom` encrypts
+  from it into a **private** `os.CreateTemp` beside the recording. If the other
+  replica renames after this open, this sealer encrypts the old plaintext inode
+  and its rename replaces one valid single envelope with another of the same
+  plaintext — same digest, different nonces; the row claim (`recordGuacSeal`)
+  decides who announces, and the file is sound either way. `alreadySealed(path)`
+  stays as a path-form wrapper for callers that only want the answer; the
+  sealer itself may not use it.
+
+  **Measured after the fix: 0 failures in 60 runs** of the racing test.
+
+  **Driven deterministically, not by racing** (`guac_recording_seal_interleaving_test.go`):
+  replica B opens plaintext and is held; A seals to completion; B seals from the
+  descriptor it held → one envelope, and B's digest is the plaintext's. The
+  window itself is shown as two facts — a path answer of "plaintext", then a
+  fresh open yielding ciphertext — and the new API refuses in that position.
+  Two sealers never receive the same temp file. The CI step
+  `A recording is sealed once, and announced once` names all three, so a rename
+  cannot skip them silently.
+
+  **Four mutations red against a green no-op control:** `sealFrom` re-opening by
+  path (the old TOCTOU); the temp name reverted to the shared
+  `path+".sealing"`; the seek back to zero dropped (the recording loses its
+  head — two tests catch it); `sealedFile` always answering plaintext.
+
 - **The outbox has no producer, and the guard written to catch exactly that was
   watching the other end** — plus the decision it forces.
 

@@ -173,13 +173,59 @@ func (h *RemoteSupportHandler) sealGuacRecordings(ctx context.Context) {
 // leaves the original plaintext intact (and the row still unsealed), so the
 // next tick retries cleanly — never a half-encrypted, unplayable file.
 func (h *RemoteSupportHandler) sealOneGuacRecording(path string) (string, byte, error) {
-	// Refuse ciphertext BEFORE opening the file for sealing. This is a proof
-	// rather than a guess: the probe decrypts the first frame, and AES-GCM
-	// authenticates it, so a plaintext recording cannot be mistaken for a
-	// sealed one.
-	if h.alreadySealed(path) {
-		return "", 0, errAlreadySealed
+	src, err := h.openUnsealedRecording(path)
+	if err != nil {
+		return "", 0, err
 	}
+	defer src.Close()
+	return h.sealFrom(src, path)
+}
+
+// openUnsealedRecording opens path ONCE and proves, on that same descriptor,
+// that it holds plaintext.
+//
+// THE RACE THIS CLOSES, measured rather than reasoned about: the seal sweep
+// runs in every replica, and two of them selected the same unsealed row. The
+// old shape was probe-by-path, then open-by-path -- two separate open(2) calls
+// on the same name. Between them the other replica's rename landed, so the
+// second call resolved the NEW inode: the first replica's ciphertext. The probe
+// had said "plaintext" about an inode that no longer sat behind the name, and
+// the sealer encrypted ciphertext. On disk: seal(seal(plaintext)). One decrypt
+// pass returned 32801 bytes for a 32768-byte session -- exactly one envelope
+// too many -- in 1 of 60 runs on main. A recording that does not decrypt by the
+// documented path is evidence an auditor cannot read.
+//
+// Binding the proof to the descriptor removes the window by construction: the
+// bytes the probe authenticated are the bytes that will be encrypted, whatever
+// happens to the directory entry in between. If the other replica renames
+// after this open, this sealer encrypts the old (plaintext) inode and its
+// rename replaces one valid single envelope with another valid single envelope
+// of the same plaintext -- same digest, different nonces. The row claim
+// (recordGuacSeal) then decides who announces; the file is sound either way.
+func (h *RemoteSupportHandler) openUnsealedRecording(path string) (*os.File, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	if h.sealedFile(f, path) {
+		_ = f.Close()
+		return nil, errAlreadySealed
+	}
+	// The probe consumed the first frame's worth of bytes; the encrypt pass
+	// has to start from zero or the recording loses its head.
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// sealFrom encrypts an already-opened, already-proven-plaintext descriptor into
+// a private temp file and renames it over path. It is split from
+// sealOneGuacRecording so the interleaving that used to corrupt recordings can
+// be driven deterministically in a test: open here, let another replica finish,
+// then seal from the descriptor that was held.
+func (h *RemoteSupportHandler) sealFrom(src *os.File, path string) (string, byte, error) {
 	activeID := h.guacRecordingRing.ActiveID()
 	master, err := h.guacRecordingRing.masterFor(activeID)
 	if err != nil {
@@ -194,17 +240,17 @@ func (h *RemoteSupportHandler) sealOneGuacRecording(path string) (string, byte, 
 		return "", 0, err
 	}
 
-	src, err := os.Open(path)
+	// A PRIVATE temp per sealer. The old name was path+".sealing" for every
+	// replica, so two concurrent sealers opened the same temp with O_TRUNC:
+	// each wiped the other's frames mid-write, and whichever renamed first
+	// installed a file the other was still writing. CreateTemp gives each
+	// sealer its own inode, so the only shared step left is the rename, and a
+	// rename is atomic.
+	dst, err := newSealTemp(path)
 	if err != nil {
 		return "", 0, err
 	}
-	defer src.Close()
-
-	tmp := path + ".sealing"
-	dst, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return "", 0, err
-	}
+	tmp := dst.Name()
 	// Best-effort cleanup of the temp file on any error path before rename.
 	committed := false
 	defer func() {
@@ -257,28 +303,43 @@ func guacRecordingSessionKey(path string) string {
 	return filepath.Base(filepath.Dir(path)) + "/" + filepath.Base(path)
 }
 
-// alreadySealed reports whether path already holds sealed frames, by decrypting
-// its first frame through the very reader playback uses. A successful read is
-// an AES-GCM authentication: the key id, the nonce and the tag all have to be
-// right, so the answer is not a heuristic about how the bytes look.
+// sealedFile reports whether the open descriptor f already holds sealed frames,
+// by decrypting its first frame through the very reader playback uses. A
+// successful read is an AES-GCM authentication: the key id, the nonce and the
+// tag all have to be right, so the answer is not a heuristic about how the
+// bytes look. It takes the DESCRIPTOR, not the path, so that the answer is
+// about the inode the caller is holding -- see openUnsealedRecording for the
+// race that a path-based answer left open.
 //
 // False is the safe direction and every uncertain case returns it: an
 // unreadable file, an empty one, a frame that does not authenticate. The caller
-// then seals, which is what it would have done anyway.
-func (h *RemoteSupportHandler) alreadySealed(path string) bool {
+// then seals, which is what it would have done anyway. f's offset is advanced
+// by the probe; the caller seeks back.
+func (h *RemoteSupportHandler) sealedFile(f *os.File, path string) bool {
 	if h.guacRecordingRing == nil || !h.guacRecordingRing.Enabled() {
 		return false
 	}
+	r := newDecryptingReader(f, h.guacRecordingRing, guacRecordingSessionKey(path))
+	var probe [1]byte
+	n, err := r.Read(probe[:])
+	return n > 0 && err == nil
+}
+
+// alreadySealed is the path form of sealedFile, for callers that only want the
+// answer and are not about to encrypt. The sealer itself must not use it: a
+// path answer and a later open are two lookups of one name.
+func (h *RemoteSupportHandler) alreadySealed(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
 		return false
 	}
 	defer f.Close()
+	return h.sealedFile(f, path)
+}
 
-	r := newDecryptingReader(f, h.guacRecordingRing, guacRecordingSessionKey(path))
-	var probe [1]byte
-	n, err := r.Read(probe[:])
-	return n > 0 && err == nil
+// newSealTemp creates this sealer's private temp file beside the recording.
+func newSealTemp(path string) (*os.File, error) {
+	return os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".sealing-*")
 }
 
 // guacRecordingPathSafe rejects empty paths, the recordings root itself, and
