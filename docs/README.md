@@ -24,6 +24,7 @@ front door; this directory is the full depth behind it.
 | [../README.md](../README.md) | **The** quick start (Docker Compose, generated secrets) — maintained in exactly one place |
 | [GETTING-STARTED.md](./GETTING-STARTED.md) | Developer setup from source + first-time tasks incl. the authoritative **First Login** |
 | [USER_GUIDE.md](./USER_GUIDE.md) | End-user walkthrough of the portal and console |
+| [docs/deployment/operator-guide.md](./docs/deployment/operator-guide.md) | **The condensed operator manual**: install paths, the secrets and the production gate, what is enforced and how to check it, upgrade and rollback, the scale knobs in order, backup and drills, alerts, the recurring controls, and what is not done |
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Production deployment reference |
 | [PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md) | Deploy-side readiness view |
 | [PROJECT-READINESS-GUIDE.md](./PROJECT-READINESS-GUIDE.md) | User-perspective readiness: mental model, journey scorecard, P0–P4 program, recurring controls |

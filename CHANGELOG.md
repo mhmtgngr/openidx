@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A condensed operator guide** (`docs/docs/deployment/operator-guide.md`,
+  in the docs nav and linked from both READMEs): the fourteen sections an
+  operator reads instead of six thousand lines of readiness notes. What you
+  run, the install paths, the secrets and the production gate, the first
+  install and its verification, what is enforced and how to check it in a
+  minute, upgrade and rollback, the scale knobs in the order to turn them
+  on, cells and the release wave, backup and the drills, the alerts that
+  matter, the recurring controls, the six failures you will actually hit,
+  and what is not done and not claimed. Writing it caught a stale claim in
+  the chart's own values file: the two-pass fresh install was documented as
+  "zero only the pooler", which stopped being a first pass when every pooled
+  service gained the `wait-for-pooler` init container (finding 6 below); with
+  the pooler at zero the services sit in Init forever and `--wait` deadlocks
+  the same way. Measured by render: the three running services in the cell
+  overlay each carry the init container while the pooler has zero replicas.
+  The values file and the guide now say `--set pgcat.enabled=false` for the
+  first pass (services on the direct DSN, no init containers, hooks run; the
+  bootstrap hook is pre-upgrade too and sets the pooler's credential before
+  pgcat starts), and name the kind-cell job's shape (pooler and every pooled
+  service at zero) as the other one that works. The `enabled=false` pass is
+  reasoned from the hook phases and checked by render, not run live.
+
 - **The cell shape, installed and driven on kind** (global-scale plan 4.2/4.3,
   the half a build environment can measure). Every switch the plan added was
   a switch the lint job could only prove RENDERS: the transaction pooler with
