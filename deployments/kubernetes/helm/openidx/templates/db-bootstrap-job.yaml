@@ -144,10 +144,14 @@ data:
     # the bundled database -- so with pgcat.enabled this hook does, from the
     # same value the pooler was given (templates/secrets.yaml, app-password).
     # psql's :'var' quoting, not shell interpolation: the value is a credential
-    # and must never be pasted into SQL text.
+    # and must never be pasted into SQL text. On STDIN, not -c: psql applies
+    # variable interpolation to what it reads, and NOT to a -c string, which
+    # the server then receives with the literal :'pw' and refuses -- measured
+    # as three fast failures of this Job and a whole install held at the hook.
     if [ -n "${OPENIDX_APP_PASSWORD:-}" ]; then
-      psql -U postgres -v ON_ERROR_STOP=1 -v pw="$OPENIDX_APP_PASSWORD" \
-        -c "ALTER ROLE openidx_app PASSWORD :'pw'"
+      psql -U postgres -v ON_ERROR_STOP=1 -v pw="$OPENIDX_APP_PASSWORD" <<'SQL'
+    ALTER ROLE openidx_app PASSWORD :'pw';
+    SQL
       echo "openidx_app: password set (the pooler's upstream credential)"
     fi
 
