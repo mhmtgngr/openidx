@@ -34,6 +34,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/ssfsignal"
 )
@@ -301,7 +302,7 @@ func (r *PostgresUserRepository) Delete(ctx context.Context, id string) error {
 	}); serr != nil {
 		// The repository carries no logger; the process logger is the honest
 		// fallback, and silence is the one thing this must not do.
-		zap.L().Warn("user deleted but the account-disabled signal was not enqueued", zap.String("user_id", id), zap.Error(serr))
+		zap.L().Warn("user deleted but the account-disabled signal was not enqueued", logsafe.String("user_id", id), zap.Error(serr))
 	}
 	return nil
 }

@@ -83,7 +83,10 @@ func Enqueue(ctx context.Context, exec Execer, sig Signal) error {
 		VALUES ($1, $2, $3, $4, $5)`,
 		sig.OrgID, sig.EventType, sig.SubjectID, sig.SubjectEmail, body)
 	if err != nil {
-		return fmt.Errorf("ssfsignal: enqueue %s for %s: %w", sig.EventType, sig.SubjectID, err)
+		// The subject and event type are caller-supplied and end up in the
+		// caller's log line under a sanitised field; they do not belong in the
+		// error text as well, where they would reach the log unsanitised.
+		return fmt.Errorf("ssfsignal: enqueue: %w", err)
 	}
 	return nil
 }
