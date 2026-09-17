@@ -55,18 +55,23 @@ type Store struct {
 	pool   *pgxpool.Pool
 	cipher *secretcrypt.Cipher
 	logger *zap.Logger
+	// cell is the cell whose keys this store mints (config.CellID); empty on
+	// a single-cell install. It names every generated kid -- see KidPrefix.
+	cell string
 }
 
-// NewStore builds a Store. encryptionKey follows the same contract as the
+// NewStore builds a Store. cellID is the cell this process serves (empty on a
+// single-cell install) and becomes the prefix of every kid the store
+// generates. encryptionKey follows the same contract as the
 // rest of the codebase: a 32-byte key enables AES-256 at rest; anything else
 // degrades to plaintext storage with a warning.
-func NewStore(pool *pgxpool.Pool, encryptionKey string, logger *zap.Logger) *Store {
+func NewStore(pool *pgxpool.Pool, encryptionKey, cellID string, logger *zap.Logger) *Store {
 	cipher, err := secretcrypt.New(encryptionKey)
 	if err != nil {
 		logger.Warn("OAuth signing keys will be stored WITHOUT encryption at rest (plaintext); set a 32-byte ENCRYPTION_KEY", zap.Error(err))
 		cipher = secretcrypt.NewNoop()
 	}
-	return &Store{pool: pool, cipher: cipher, logger: logger}
+	return &Store{pool: pool, cipher: cipher, logger: logger, cell: cellID}
 }
 
 // EnsureActive returns the active signing key, creating one if the table has
@@ -89,7 +94,7 @@ func (s *Store) EnsureActive(ctx context.Context, legacy *rsa.PrivateKey) (*Key,
 		if err != nil {
 			return nil, fmt.Errorf("generate signing key: %w", err)
 		}
-		kid = newKid()
+		kid = s.newKid()
 		priv = generated
 	}
 	stored, err := s.encodeKey(priv)
@@ -157,7 +162,7 @@ func (s *Store) Rotate(ctx context.Context, grace time.Duration) (*Key, error) {
 	if err != nil {
 		return nil, err
 	}
-	kid := newKid()
+	kid := s.newKid()
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -265,12 +270,33 @@ func (s *Store) decodeKey(stored string) (*rsa.PrivateKey, error) {
 	return x509.ParsePKCS1PrivateKey(block.Bytes)
 }
 
-func newKid() string {
+// KidPrefix is the prefix every kid generated for cellID carries:
+// "<cell>-key-" when the process serves a named cell, "openidx-key-" on a
+// single-cell install (which keeps every kid minted before cells existed
+// recognisable). The plan (4.4) writes this as kid=<cell>-<n>; the <n> is
+// random hex, not a counter, because nothing coordinates a counter across
+// the replicas that may rotate, and the kid only has to be unique and
+// legible -- the JWKS entry, the token header and the rotation log all
+// then say which cell minted the key without a lookup.
+//
+// The prefix is attribution, not the isolation. A cell refuses another
+// cell's token because its verification set (its own oauth_signing_keys, in
+// its own database) does not hold that kid, whatever the kid is called; the
+// prefix is what makes that refusal readable in a log as "a eu-1 key reached
+// us-1" rather than "unknown kid".
+func KidPrefix(cellID string) string {
+	if cellID == "" {
+		return "openidx-key-"
+	}
+	return cellID + "-key-"
+}
+
+func (s *Store) newKid() string {
 	buf := make([]byte, 6)
 	if _, err := rand.Read(buf); err != nil {
 		// crypto/rand failure is unrecoverable for key generation anyway;
 		// this path only runs when rsa.GenerateKey already succeeded.
 		return LegacyKid
 	}
-	return "openidx-key-" + hex.EncodeToString(buf)
+	return KidPrefix(s.cell) + hex.EncodeToString(buf)
 }

@@ -681,6 +681,24 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # Signing key kid names its cell (plan 4.4, code half). Against the real
+      # oauth_signing_keys table from the registered v79 DDL: a store serving
+      # cell eu-1 generates and rotates kids under eu-1-key-, a single-cell
+      # install keeps openidx-key-, and the legacy import keeps openidx-key-1
+      # whatever cell it lands in, because pre-upgrade tokens carry that name.
+      - name: A signing key names the cell that minted it, and the legacy import keeps its name
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/signingkeys/ -run 'Kid' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          for want in TestKidPrefixNamesTheCell \
+                      TestGeneratedKidsCarryTheCellAndTheLegacyImportKeepsItsName; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # Usage metering (task 3.4 census). The rollup is an INCREMENT and the
       # cursor was read with no lock, so three audit-service replicas billed a
       # customer three times for the same overlay traffic. Two processes
