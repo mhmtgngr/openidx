@@ -64,7 +64,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and CrashLoopBackOff's growing delay put convergence ten minutes out, past
   `--wait` and past what an `--atomic` upgrade would tolerate. Each pooled
   service now carries a `wait-for-pooler` init container, and the lint job
-  asserts every repointed Deployment has it. **Not proved, and said so in
+  asserts every repointed Deployment has it. (7) Measured by its sixth run,
+  once everything before it held: the issuer's NetworkPolicy admitted only
+  the gateway and the admin console, but seven services verify bearer
+  tokens by fetching `/.well-known/jwks.json` from the oauth-service
+  directly, so on an enforcing CNI the hardened profile answered 401 to a
+  token the issuer had minted seconds earlier (`failed to fetch JWKS:
+  context deadline exceeded`) with every health check green. Latent in every
+  install with `networkPolicy.enabled` on a CNI that enforces it; the plain
+  kind job could not see it because it never presents a token, and to its
+  plane-split step a 401 is the expected answer. `-oauth-service-allow` now
+  admits the token verifiers, and the lint job derives that set from the
+  rendered manifests (who carries `OAUTH_JWKS_URL`, directly or through the
+  ConfigMap) and asserts each one is admitted. **Not proved, and said so in
   the values file:** load and failover timing,
   three Redis roles on three instances, `database.planeRoles` (interlocked
   with the pooler by design), ingress and external secrets. Those wait for a

@@ -221,7 +221,21 @@ spec:
 ---
 ###############################################################################
 # OAuth Service (port 8006)
-# Receives traffic from: APISIX gateway, admin-console (login flow)
+# Receives traffic from: APISIX gateway, admin-console (login flow), and every
+# service that verifies bearer tokens against the issuer's own JWKS.
+#
+# The second group was missing for as long as this policy existed, and it was
+# measured, not reasoned (helm.yml, kind-cell): identity-service verifies a
+# token by fetching /.well-known/jwks.json from this Service, the rule below
+# admitted only the gateway and the console, kind enforces policy, and a
+# token the issuer had minted seconds earlier was answered 401 with "failed
+# to fetch JWKS: context deadline exceeded" in the pod's log. Every service
+# that reads OAUTH_JWKS_URL is in the same position, so on a CNI that
+# enforces policy the hardened profile rejected every bearer token it was
+# shown, while /health stayed green. The plain kind job could not see it: it
+# never presents a token, and to the plane-split step a 401 is the expected
+# answer. The lint job now derives the set of issuer consumers from the
+# rendered manifests and asserts each is admitted here.
 ###############################################################################
 {{- if .Values.oauthService.enabled }}
 apiVersion: networking.k8s.io/v1
@@ -256,6 +270,18 @@ spec:
       ports:
         - protocol: TCP
           port: 8006
+    # Token verifiers fetching /.well-known/jwks.json (OAUTH_JWKS_URL). Both
+    # identity planes carry the identity-service component label.
+    {{- range $c := list "identity-service" "governance-service" "provisioning-service" "audit-service" "admin-api" "gateway-service" "access-service" }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" $ | nindent 14 }}
+              app.kubernetes.io/component: {{ $c }}
+      ports:
+        - protocol: TCP
+          port: 8006
+    {{- end }}
     {{- if .Values.verifyService.enabled }}
     # The verification tier fetching /.well-known/jwks.json. Without this rule
     # the two policies would be individually correct and jointly broken: the

@@ -817,6 +817,39 @@ jobs:
           print(f"pooler routes {len(services)} services, leaves the Jobs direct, "
                 f"transaction mode, statement cache {size}, admits exactly those {len(admitted)} services, "
                 f"and each of them waits for it")
+
+          # The issuer's policy has to admit every pod that verifies tokens
+          # against its JWKS, or on an enforcing CNI each of them answers 401
+          # to a token the issuer just minted while /health stays green --
+          # measured on kind-cell, where identity-admin's JWKS fetch timed out.
+          # Derived from the render, not listed: a consumer is a Deployment
+          # whose containers set OAUTH_JWKS_URL or OAUTH_ISSUER, or envFrom the
+          # ConfigMap that carries them; the issuer itself is not a consumer.
+          cm_names = {d["metadata"]["name"] for d in docs
+                      if d["kind"] == "ConfigMap" and "OAUTH_JWKS_URL" in (d.get("data") or {})}
+          assert cm_names, "no ConfigMap carries OAUTH_JWKS_URL"
+          consumers = set()
+          for d in docs:
+              if d["kind"] != "Deployment":
+                  continue
+              comp = d["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/component"]
+              if comp == "oauth-service":
+                  continue
+              for c in d["spec"]["template"]["spec"].get("containers") or []:
+                  names = {e["name"] for e in (c.get("env") or [])}
+                  froms = {(ef.get("configMapRef") or {}).get("name") for ef in (c.get("envFrom") or [])}
+                  if names & {"OAUTH_JWKS_URL", "OAUTH_ISSUER"} or froms & cm_names:
+                      consumers.add(comp)
+          assert consumers, "no Deployment consumes the issuer's URL; the derivation is broken"
+          pol = next(d for d in docs if d["kind"] == "NetworkPolicy" and d["metadata"]["name"] == "openidx-oauth-service-allow")
+          issuer_admits = set()
+          for rule in pol["spec"]["ingress"]:
+              if any(p["port"] == 8006 for p in rule["ports"]):
+                  for src in rule["from"]:
+                      issuer_admits.add(src["podSelector"]["matchLabels"]["app.kubernetes.io/component"])
+          refused = consumers - issuer_admits
+          assert not refused, f"these token verifiers cannot reach the issuer's JWKS: {sorted(refused)}"
+          print(f"the issuer admits all {len(consumers)} services that verify against its JWKS: {sorted(consumers)}")
           PYEOF
 
       - name: Each plane connects as its own role, or none of them does
