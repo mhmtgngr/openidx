@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Four open plan items closed by decision, not by code** — the event path
+  is an accelerator, never the only route for a security-critical outcome, and
+  that decision now settles the items that were waiting on it. Migrating the
+  SSF and SCIM outbound queues onto the shared outbox: **won't do** (both are
+  durable, claim-based PostgreSQL queues already; the move would put two
+  security-critical deliveries behind a broker whose chart default is off).
+  Making the webhook deliverer an outbox consumer: **won't do** (v194 made
+  delivery a claimed row; the remaining step would only have changed the
+  carrier). The "nothing writes to the outbox and nothing runs the relay" note:
+  **closed** by `cmd/event-relay` and the producers census. The kill-switch
+  event to a Ziti reconciler: **superseded** by the synchronous sever
+  `executeKillSwitch` already performs in-request (Ziti sessions terminated and
+  identity deleted on the controller, Guacamole sessions closed, PAM leases and
+  tokens revoked, every step reported by name in `warnings`). Not measured and
+  not claimed: the controller call's own latency.
+
 - **An SSF stream configuration now says what the stream will get** —
   `events_delivered`, computed from the one list the discovery document
   advertises, and a stream that could never deliver is refused instead of
