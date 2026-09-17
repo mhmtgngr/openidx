@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/migrations"
 )
 
 // Offboarding is one operation, so a partial one is not reported as whole.
@@ -39,6 +40,12 @@ func TestOffboardingIsAllOrNothing(t *testing.T) {
 		CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID);
 	`); err != nil {
 		t.Fatalf("schema: %v", err)
+	}
+	// The sixth write is the account-disabled signal to the SSF receivers
+	// (migration v196, applied from the DDL the loader ships): it rides the
+	// same transaction, so it is subject to the same all-or-nothing claim.
+	if _, err := db.Pool.Exec(ctx, registeredMigrationUpSQL(t, 196)); err != nil {
+		t.Fatalf("schema (v196): %v", err)
 	}
 
 	const org = "00000000-0000-0000-0000-0000000000e1"
@@ -78,6 +85,11 @@ func TestOffboardingIsAllOrNothing(t *testing.T) {
 		}
 		return n
 	}
+	pendingSignals := func() int {
+		t.Helper()
+		return count(`SELECT COUNT(*) FROM ssf_pending_events WHERE subject_id=$1
+			AND event_type='https://schemas.openid.net/secevent/risc/event-type/account-disabled'`)
+	}
 	stillHeld := func() (int, int, int, int, bool) {
 		t.Helper()
 		var enabled bool
@@ -112,6 +124,31 @@ func TestOffboardingIsAllOrNothing(t *testing.T) {
 				"groups=%d roles=%d sessions=%d; all five steps are one operation",
 				enabled, keys, groups, roles, sessions)
 		}
+		if n := pendingSignals(); n != 0 {
+			t.Errorf("a failed offboarding told the SSF receivers the account was disabled (%d pending signal(s)); it was not", n)
+		}
+	})
+
+	t.Run("a signal that cannot be written changes nothing", func(t *testing.T) {
+		// The five sever steps all succeed; only the signal to the receivers
+		// cannot be written. If the enqueue rode outside the transaction the
+		// leaver would be disabled, the operator told "offboarded", and the
+		// partners never told at all -- the exact shape this item removes.
+		if _, err := db.Pool.Exec(ctx, `ALTER TABLE ssf_pending_events RENAME TO ssf_pending_events_hidden`); err != nil {
+			t.Fatalf("hide ssf_pending_events: %v", err)
+		}
+		code := offboard()
+		if _, err := db.Pool.Exec(ctx, `ALTER TABLE ssf_pending_events_hidden RENAME TO ssf_pending_events`); err != nil {
+			t.Fatalf("restore ssf_pending_events: %v", err)
+		}
+		if code != http.StatusInternalServerError {
+			t.Errorf("an offboarding whose signal was not written answered %d, want 500", code)
+		}
+		keys, groups, roles, sessions, enabled := stillHeld()
+		if !enabled || keys != 1 || groups != 1 || roles != 1 || sessions != 1 {
+			t.Errorf("the sever committed without its signal: enabled=%v keys=%d groups=%d roles=%d sessions=%d",
+				enabled, keys, groups, roles, sessions)
+		}
 	})
 
 	t.Run("a complete offboarding removes everything", func(t *testing.T) {
@@ -123,5 +160,22 @@ func TestOffboardingIsAllOrNothing(t *testing.T) {
 			t.Errorf("a leaver kept something: enabled=%v keys=%d groups=%d roles=%d sessions=%d",
 				enabled, keys, groups, roles, sessions)
 		}
+		if n := pendingSignals(); n != 1 {
+			t.Errorf("a completed offboarding left %d account-disabled signal(s) for the SSF receivers, want exactly 1", n)
+		}
 	})
+}
+
+// registeredMigrationUpSQL applies what the loader actually ships, not a copy
+// of it: a v196 that stops being registered, or whose DDL drifts from what the
+// producer writes, fails here rather than passing against a duplicate.
+func registeredMigrationUpSQL(t *testing.T, version int) string {
+	t.Helper()
+	for _, m := range migrations.All() {
+		if m.Version == version {
+			return m.UpSQL
+		}
+	}
+	t.Fatalf("migration v%d is not registered", version)
+	return ""
 }

@@ -71,6 +71,11 @@ func (s *Service) handleSSFConfiguration(c *gin.Context) {
 		// before.
 		"events_supported": []string{
 			EventSessionRevoked,
+			// Emitted by the signal drainer (ssf_signal_drain.go) for every
+			// path that disables or deletes a user, via internal/common/ssfsignal.
+			// The census in ssf_advertised_census_test.go holds this list to
+			// what is actually emitted, in both directions.
+			EventAccountDisabled,
 		},
 	})
 }

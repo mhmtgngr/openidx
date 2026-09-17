@@ -338,6 +338,7 @@ func (s *Service) applyRecommendation(ctx context.Context, orgID string, r Recom
 		}
 		for _, id := range disabled {
 			s.revokeAfterSever(ctx, id, "stale account cleanup")
+			s.signalAfterSever(ctx, orgID, id, "stale account cleanup")
 		}
 		return applyOutcome{
 			Action:  "accounts_disabled",

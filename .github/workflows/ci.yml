@@ -629,6 +629,31 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # SSF account-disabled (migration v196, internal/common/ssfsignal). The
+      # paths that disable or delete a user live in identity, directory and
+      # admin; the only process that can sign a security event about it is
+      # oauth-service. The seam is a PostgreSQL table the producers write under
+      # their tenant and the drainer reads under bypass. Measured against the
+      # real database with the real v196 DDL, as openidx_app so the RLS belt is
+      # in force: one signed SET per subscribing stream of the row's tenant and
+      # none for any other; an unknown event type is retired unsigned; a stalled
+      # claim is handed back and a poisoned row is left alone; a tenant cannot
+      # see or write another tenant's pending signal.
+      - name: A severed account reaches the SSF receivers that asked to hear about it
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/oauth/ -run 'SubscribedStreamOfItsTenant|NeverSigned|PoisonedRowIsLeftAlone|InvisibleToAnotherTenant' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          for want in TestAPendingAccountDisabledSignalBecomesOneSignedSETPerSubscribedStreamOfItsTenant \
+                      TestAnUnknownEventTypeIsRetiredWithZeroStreamsAndNeverSigned \
+                      TestAStalledClaimIsHandedBackAndAPoisonedRowIsLeftAlone \
+                      TestAPendingSignalIsInvisibleToAnotherTenant; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # Usage metering (task 3.4 census). The rollup is an INCREMENT and the
       # cursor was read with no lock, so three audit-service replicas billed a
       # customer three times for the same overlay traffic. Two processes

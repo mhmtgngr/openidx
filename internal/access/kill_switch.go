@@ -29,6 +29,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/revocation"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
@@ -152,6 +153,14 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 			warn("disable_user", err)
 		} else {
 			res.UserDisabled = true
+			// Tell the SSF receivers too. A containment that only this
+			// product knows about leaves the same account alive at every
+			// partner that subscribed to account-disabled.
+			if serr := ssfsignal.Enqueue(ctx, s.db.Pool, ssfsignal.Signal{
+				OrgID: orgID, SubjectID: userID, Claims: map[string]any{"reason": "kill_switch"},
+			}); serr != nil {
+				warn("signal_account_disabled", serr)
+			}
 		}
 	}
 

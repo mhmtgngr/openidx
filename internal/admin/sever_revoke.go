@@ -6,6 +6,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/revocation"
 )
 
@@ -26,6 +27,27 @@ import (
 //
 // why names the path, so a log line says which control left a live credential
 // behind rather than only that one did.
+// signalAfterSever enqueues the SSF `account-disabled` signal for a user this
+// package has just disabled or deleted, so the receivers that subscribed to
+// that event in /.well-known/ssf-configuration stop honouring the account.
+//
+// Same contract as revokeAfterSever: the sever has already happened when this
+// runs, so a failure to enqueue must not fail the request, and it is loud
+// because "the partners were never told" is what an operator needs to see.
+// The row goes into ssf_pending_events on the handle the sever used; the
+// oauth-service drainer signs and fans it out to every subscribed stream.
+func (s *Service) signalAfterSever(ctx context.Context, orgID, userID, why string) {
+	if s.db == nil || s.db.Pool == nil || userID == "" {
+		return
+	}
+	if err := ssfsignal.Enqueue(ctx, s.db.Pool, ssfsignal.Signal{
+		OrgID: orgID, SubjectID: userID, Claims: map[string]any{"reason": why},
+	}); err != nil {
+		s.logger.Error("account severed, but the account-disabled signal was not enqueued",
+			zap.String("path", why), logsafe.String("user_id", userID), zap.Error(err))
+	}
+}
+
 func (s *Service) revokeAfterSever(ctx context.Context, userID, why string) {
 	if s.redis == nil || userID == "" {
 		return

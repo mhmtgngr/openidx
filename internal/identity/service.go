@@ -39,6 +39,7 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/pwhash"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
+	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/common/syssettings"
 	"github.com/openidx/openidx/internal/revocation"
 	"github.com/openidx/openidx/internal/risk"
@@ -6328,6 +6329,20 @@ func (s *Service) handleOffboardUser(c *gin.Context) {
 		}
 	}
 
+	// The signal to the SSF receivers rides the same transaction as the
+	// sever: either the leaver is disabled here AND the partners will be
+	// told, or neither happened. This is the one sever path that holds a
+	// transaction, so it is the one where the guarantee is free.
+	if err := ssfsignal.Enqueue(ctx, tx, ssfsignal.Signal{
+		OrgID: org.ID, SubjectID: userID, Claims: map[string]any{"reason": "offboarded"},
+	}); err != nil {
+		s.logger.Error("offboarding step failed; nothing was changed",
+			zap.String("step", "enqueue the account-disabled signal"),
+			logsafe.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "failed to offboard user: could not enqueue the account-disabled signal"})
+		return
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		s.logger.Error("failed to commit the offboarding", zap.Error(err))
 		c.JSON(500, gin.H{"error": "failed to offboard user"})
@@ -6800,6 +6815,12 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 		if rerr := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); rerr != nil {
 			s.logger.Error("lifecycle disabled the account, but its outstanding access tokens were not revoked",
 				logsafe.String("user_id", userID), zap.Error(rerr))
+		}
+		if serr := ssfsignal.Enqueue(ctx, s.db.Pool, ssfsignal.Signal{
+			OrgID: org.ID, SubjectID: userID, Claims: map[string]any{"reason": "lifecycle_disable"},
+		}); serr != nil {
+			s.logger.Error("lifecycle disabled the account, but the account-disabled signal was not enqueued",
+				logsafe.String("user_id", userID), zap.Error(serr))
 		}
 		return nil
 

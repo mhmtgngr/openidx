@@ -24,6 +24,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
+	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/revocation"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
@@ -811,7 +812,18 @@ func (s *Service) DeleteSCIMUser(ctx context.Context, userID string) error {
 
 	// Delete from users table (CASCADE will delete from scim_users)
 	_, err = s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", userID, org.ID)
-	return err
+	if err != nil {
+		return err
+	}
+	// An inbound SCIM delete is an upstream IdP saying "this person is gone";
+	// the SSF receivers downstream of this product have to hear it too.
+	if serr := ssfsignal.Enqueue(ctx, s.db.Pool, ssfsignal.Signal{
+		OrgID: org.ID, SubjectID: userID, Claims: map[string]any{"reason": "scim_deleted"},
+	}); serr != nil {
+		s.logger.Error("SCIM deleted the user, but the account-disabled signal was not enqueued",
+			logsafe.String("user_id", userID), zap.Error(serr))
+	}
+	return nil
 }
 
 // ListSCIMUsers lists users via SCIM

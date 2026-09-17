@@ -9,6 +9,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A severed account now reaches the SSF receivers that subscribed to
+  `account-disabled`** — the RISC event the product advertised for months and
+  never sent once, with the seam built in the place the measurement said it had
+  to be.
+
+  **The problem was structural, not an oversight.** The SSF transmitter
+  (`EmitCAEPEvent`) is a method on oauth-service: it reads the tenant's streams,
+  signs a SET with the issuer's key and enqueues it on `ssf_stream_delivery`,
+  whose `set_jwt` column is `NOT NULL`. The paths that disable or delete a user
+  live in identity, directory, admin, access, risk and provisioning — other
+  binaries, no signing key, no way to call it. The earlier recorded direction
+  ("a shared writer into `ssf_stream_delivery` inside the severing transaction")
+  was measured against that column and does not work: a producer without the
+  key has no SET to write. So the seam sits one step earlier.
+
+  - **Migration v196, `ssf_pending_events`:** a row per signal, org-scoped
+    with forced RLS, claimed with `FOR UPDATE SKIP LOCKED`, `published_at` as
+    the done marker, `attempts` as the poison guard, a partial backlog index.
+    The outbox's shape on purpose, and **not the outbox itself**, for two
+    measured reasons: the outbox has one consumer by construction (the relay
+    claims and deletes, so a second drainer would split the rows), and its
+    sink is NATS, whose chart default is off — a security signal behind a
+    broker the default install does not run is a signal the default install
+    never sends.
+  - **`internal/common/ssfsignal`:** the producer half. `Enqueue(ctx, exec,
+    Signal)` takes any `Exec`-shaped handle — the pool, or the severing
+    transaction — and refuses a signal with no tenant or no subject.
+  - **The drainer, in oauth-service:** `StartSSFSignalDrainer` claims a batch
+    under bypass-RLS, resolves the row's event type through an allow-list to
+    the package's own constant (so a poisoned row cannot make the issuer sign
+    an event nobody advertised), calls the same `EmitCAEPEvent` the in-process
+    callers use, and marks the row published with how many streams it reached
+    — so "drained into zero streams" is readable on the row and distinct from
+    lost. At-least-once, in the stated direction: mark-after-emit, so a crash
+    re-emits rather than loses; RFC 8935 receivers already de-duplicate on
+    `jti`. Stalled claims are handed back after five minutes. The sweeps
+    census in `internal/common/leader` records the drainer as claim-coordinated
+    — the row lock is the coordination, so any number of replicas drain
+    safely and no leader is needed.
+  - **Fifteen producers wired.** `Delete` in the user repository; both HRIS
+    deprovision branches; four directory-sync branches (LDAP/Azure AD
+    deleted/disabled); IBDR quarantine; every admin sever (`signalAfterSever`
+    beside `revokeAfterSever`: stale-account cleanup, bulk disable/delete,
+    lifecycle-policy disable/delete, ISPM remediation, DSAR erasure and
+    restrict); the kill switch; anomaly auto-remediation; lifecycle
+    `disable_user`; inbound SCIM delete; and **offboarding, where the enqueue
+    rides the severing transaction** — the one path that holds one, so the
+    one where "disabled here AND the partners will be told, or neither" is
+    free. Every other producer is best-effort after the sever, loud on
+    failure, on the same contract as token revocation.
+  - **`events_supported` grows to two**, and the advertised-events census
+    (which reads the constant passed to `EmitCAEPEvent`) sees the drainer's
+    call because the allow-list resolves to a constant, not a variable.
+
+  **The sever census now asks a second question.** Beside "does every path
+  that disables or deletes a user also revoke its tokens", it asks "does a
+  path from it enqueue the account-disabled signal", transitively, with a
+  register for the ones that must not. One entry: `applyCAEPEvent` in the SSF
+  *receiver* — it applies a partner-originated disable locally, and
+  re-emitting it would echo the event back to every stream, including the
+  partner that sent it; two OpenIDX deployments subscribed to each other
+  would loop. A receiver applies; it does not originate.
+
+  **Measured against a live PostgreSQL, as `openidx_app` so the RLS belt is in
+  force, with the v196 DDL the loader ships:** one signed SET on the tenant's
+  subscribing stream, none on the tenant's stream that asked only for
+  session-revoked, none on the other tenant's stream that asked for
+  everything; the SET's `events` carry the RISC URI, the producer's claims and
+  the email subject; a second drain does nothing. An unknown event type is
+  retired with zero streams and never signed. A stalled claim is handed back,
+  a row over the attempt cap is left alone, a fresh claim inside the grace is
+  still the other drainer's. A tenant sees only its own pending rows and
+  cannot write a row into another tenant. CI runs the four by name.
+
+  **Nine mutations red against a green no-op control:** the drainer never
+  emitting; stale claims never handed back; the attempt cap never biting; the
+  fan-out crossing tenants (the `OR $1<>''` shape this transmitter once had);
+  another drainer's fresh claim stolen; zero-stream rows never retired; one
+  producer dropped (the census names it); the register entry misspelled (the
+  census refuses an entry it cannot find); and the offboarding enqueue moved
+  after the commit — `TestOffboardingIsAllOrNothing` gained a third case, a
+  signal that cannot be written, and under that mutation it reports the
+  leaver disabled, the operator told "offboarded", and the partners never
+  told, which is the exact shape this item removes.
+
+  **Not measured, and not claimed:** the ten-second ticker and the process
+  wiring in `cmd/oauth-service` are read, not driven; the drainer's core is
+  driven directly. Whether a real receiver accepts these SETs is the push
+  worker's existing contract, unchanged here.
+
 - **Placing and releasing a legal hold on a session recording now requires admin
   authority** — a decision the step-up census had recorded as undecided, made.
 

@@ -1392,5 +1392,12 @@ func allMigrations() []*Migration {
 			UpSQL:       orgCellsUp,
 			DownSQL:     orgCellsDown,
 		},
+		{
+			Version:     196,
+			Name:        "ssf_pending_events",
+			Description: "Create ssf_pending_events: the seam between the paths that sever an account and the one process that can sign a security event about it. EmitCAEPEvent is a method on oauth-service -- it reads the tenant's streams, signs a SET with the issuer's key and enqueues it on ssf_stream_delivery -- and the paths that disable or delete a user live in identity, directory and admin, with no signing key and no way to call it. The sever census fixed nine of them to revoke tokens; none could tell a federated partner the account was gone, which is what RISC account-disabled exists for, and the product advertised that event for months without sending it once. NOT THE OUTBOX, for two measured reasons: the outbox has one consumer by construction (the relay claims with SKIP LOCKED and deletes on acceptance, so a second drainer would split the rows, not share them), and its sink is NATS, whose chart default is off -- a security signal behind a broker the default install does not run is a signal the default install never sends. So: its own table, in the PostgreSQL every severing path already writes to, drained by oauth-service, which holds the key. The outbox's shape on purpose (org-scoped row per event, SKIP LOCKED claim, published_at as done, attempts as the poison guard, partial backlog index) plus what this consumer needs: claimed_at so a drainer that dies mid-batch hands its rows back after a grace, streams_enqueued so an operator can tell drained-into-zero-streams from lost. Forced org-scoped RLS as in v192 and v195. Down drops the table: a pending signal is a work item, not a record, and an install rolling back is one where account-disabled was never sent, which is where it already was.",
+			UpSQL:       ssfPendingEventsUp,
+			DownSQL:     ssfPendingEventsDown,
+		},
 	}
 }

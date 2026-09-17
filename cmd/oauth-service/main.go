@@ -303,6 +303,10 @@ func main() {
 	// SSF/CAEP transmitter: drain the SET outbox and push signed security event
 	// tokens to subscribed receivers. Idle until a stream is configured.
 	oauthService.StartSSFPushWorker(ctx)
+	// The seam from the severing paths in other binaries: rows they wrote to
+	// ssf_pending_events become signed SETs here, where the key is. Same
+	// shape as the push worker above; see internal/oauth/ssf_signal_drain.go.
+	oauthService.StartSSFSignalDrainer(ctx)
 
 	// The client-management API (/api/v1/oauth/clients) is ALWAYS authenticated
 	// — it creates/modifies OAuth clients, so it must never be reachable
