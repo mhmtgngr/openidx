@@ -839,6 +839,61 @@ jobs:
           PYEOF
 
 
+      # Each half of the split can be pinned to its own node pool (task 3.4):
+      # ADMIN load cannot starve ISSUE of CPU when the two Deployments do not
+      # share nodes. nodeSelector is the pool's label and tolerations its
+      # taint; with neither set nothing about scheduling changes, and that
+      # absence is asserted too -- a rendered `nodeSelector: {}` is not the
+      # same as none.
+      - name: Each identity half can be pinned to its own node pool
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set identityService.planeSplit.enabled=true "$@"
+          }
+          render > /tmp/render-unpinned.yaml
+          render --set 'identityService.planeSplit.auth.nodeSelector.openidx\.io/plane=issue' \
+                 --set 'identityService.planeSplit.admin.nodeSelector.openidx\.io/plane=admin' \
+                 --set 'identityService.planeSplit.auth.tolerations[0].key=openidx.io/plane' \
+                 --set 'identityService.planeSplit.auth.tolerations[0].operator=Equal' \
+                 --set 'identityService.planeSplit.auth.tolerations[0].value=issue' \
+                 --set 'identityService.planeSplit.auth.tolerations[0].effect=NoSchedule' \
+                 --set 'identityService.planeSplit.admin.tolerations[0].key=openidx.io/plane' \
+                 --set 'identityService.planeSplit.admin.tolerations[0].operator=Equal' \
+                 --set 'identityService.planeSplit.admin.tolerations[0].value=admin' \
+                 --set 'identityService.planeSplit.admin.tolerations[0].effect=NoSchedule' > /tmp/render-pinned.yaml
+          python3 - /tmp/render-unpinned.yaml /tmp/render-pinned.yaml <<'PYEOF'
+          import sys, yaml
+          def load(path):
+              return [d for d in yaml.safe_load_all(open(path)) if d]
+          def pod(docs, half):
+              for d in docs:
+                  if d["kind"] == "Deployment" and d["metadata"]["name"] == f"openidx-identity-{half}":
+                      return d["spec"]["template"]["spec"]
+              raise AssertionError(f"Deployment/openidx-identity-{half} did not render")
+
+          unpinned = load(sys.argv[1])
+          for half in ("auth", "admin"):
+              s = pod(unpinned, half)
+              assert "nodeSelector" not in s and "tolerations" not in s, \
+                  f"identity-{half} rendered node placement with none configured: {s.get('nodeSelector')} {s.get('tolerations')}"
+
+          pinned = load(sys.argv[2])
+          want = {"auth": "issue", "admin": "admin"}
+          for half, pool in want.items():
+              s = pod(pinned, half)
+              assert s.get("nodeSelector") == {"openidx.io/plane": pool}, f"identity-{half} nodeSelector = {s.get('nodeSelector')}"
+              tol = s.get("tolerations") or []
+              assert any(t.get("key") == "openidx.io/plane" and t.get("value") == pool and t.get("effect") == "NoSchedule" for t in tol), \
+                  f"identity-{half} does not tolerate its pool's taint: {tol}"
+          assert pod(pinned, "auth")["nodeSelector"] != pod(pinned, "admin")["nodeSelector"], "both halves pinned to the same pool"
+          print("unpinned: no placement rendered; pinned: auth -> issue pool, admin -> admin pool, each tolerating its own taint")
+          PYEOF
+
       - name: The plane split sends every login path to the auth pod
         run: |
           set -euo pipefail

@@ -136,15 +136,29 @@ identityService:
   #
   # Why it is worth two Deployments: ADMIN is the first plane shed under load,
   # and shedding it buys nothing while the same process also answers logins.
+  #
+  # Each half can be pinned to its own node pool (plan 3.4: ADMIN load must not
+  # be able to starve ISSUE of CPU, and two Deployments on the same nodes still
+  # share them). nodeSelector is the pool's label, tolerations its taint; both
+  # are empty by default and then nothing about scheduling changes. A pool
+  # that carries a taint needs BOTH -- a selector alone leaves the pods
+  # Pending against the taint, a toleration alone lets them land anywhere.
+  #   auth:
+  #     nodeSelector: { openidx.io/plane: issue }
+  #     tolerations: [{ key: openidx.io/plane, operator: Equal, value: issue, effect: NoSchedule }]
   planeSplit:
     enabled: false
     auth:
       # Both fall back to identityService.replicaCount / .resources when unset.
       replicaCount: null
       resources: null
+      nodeSelector: {}
+      tolerations: []
     admin:
       replicaCount: null
       resources: null
+      nodeSelector: {}
+      tolerations: []
   enabled: true
   replicaCount: 2
   image:
