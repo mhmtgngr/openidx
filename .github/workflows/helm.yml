@@ -1440,8 +1440,11 @@ jobs:
       - name: Build the tools, identity-service and oauth-service images
         run: |
           set -euo pipefail
+          # Retried for the reason scripts/ci-retry.sh gives: this job's sixth run
+          # died in the builder's `go mod download` on a proxy.golang.org stream
+          # error, before a single chart step had run.
           for img in tools identity-service oauth-service; do
-            docker build -f "deployments/docker/Dockerfile.$img" -t "$REGISTRY/$img:ci" .
+            bash scripts/ci-retry.sh 3 5 -- docker build -f "deployments/docker/Dockerfile.$img" -t "$REGISTRY/$img:ci" .
           done
 
       - name: Load them into the cluster
