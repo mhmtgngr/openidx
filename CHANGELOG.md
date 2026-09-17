@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The release wave: canary-1, then eu-1, then us-1, and it stops at the
+  first cell that does not come up** (global-scale plan 4.3, the workflow
+  half). Measured first: `release.yml` built binaries, published and signed a
+  chart, and deployed nothing anywhere; there was no place a cell-sequenced
+  rollout could attach. There is now a reusable
+  `.github/workflows/rollout-cell.yml` — one cell per call, in the GitHub
+  environment `cell-<id>` (where that cell's `KUBECONFIG` and a required
+  reviewer live), `helm upgrade --install --atomic` layering `values-prod.yaml`
+  and the cell's own `deployments/kubernetes/cells/<id>.yaml`, and a
+  post-deploy read of `CELL_ID` from the deployed ConfigMap that refuses a
+  cell answering as another cell — and three jobs in `release.yml` that
+  `need` each other in wave order. **Off by default:** the wave runs only
+  where the repository variable `CELL_ROLLOUT` is `"true"`, so a release on
+  an install with no cells is exactly the release it was. A new guard,
+  `scripts/check-release-rollout.sh`, pins the shape (order, no
+  `always()` on a later cell, gate, `secrets: inherit`, `--atomic`,
+  environment, identity check, each values file naming itself) and its
+  self-test goes red on ten bent shapes. **Not measured, not claimed:** a
+  live rollout — there is no cell to roll out to in this environment — and
+  the bake between cells (whether canary-1 is healthy rather than merely
+  up), which is the required reviewer on `cell-eu-1` until it is automated.
+
 - **Each identity half can be pinned to its own node pool** (global-scale
   plan 3.4, the placement half of "APISIX upstreams per plane;
   `nodeSelector: plane=issue` separate node pool"). Measured first: the chart

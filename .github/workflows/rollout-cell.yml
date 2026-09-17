@@ -1,0 +1,119 @@
+name: Roll a release out to one cell
+
+# ONE CELL, ATOMICALLY, AND THE CELL SAYS WHO IT IS AFTERWARDS.
+#
+# release.yml calls this once per cell, in wave order (global-scale plan 4.3):
+# canary-1, then eu-1, then us-1. Each call runs in the GitHub environment
+# `cell-<id>`, which is where that cell's KUBECONFIG lives and where a
+# required reviewer can be put in front of a production cell. The upgrade is
+# `--atomic`: a cell that does not come up within the timeout is rolled back
+# to what it was running, and the failed job stops the wave -- the next cell's
+# job `needs` this one and is skipped, not attempted.
+#
+# The cell's values file (deployments/kubernetes/cells/<id>.yaml) is what
+# names the cell (config.cellId); this workflow sets nothing about identity
+# itself. The last step reads CELL_ID back out of the deployed ConfigMap and
+# refuses a cell that does not answer with its own name, because a cell that
+# thinks it is another cell is exactly the misrouting cell.Guard exists to
+# make legible (plan 4.1), and it should not be created by the rollout.
+#
+# What this does NOT do: create the cluster (plan 4.2, Terraform), decide
+# which tenants live in the cell (plan 4.1, the tenant directory), or measure
+# whether the previous cell is healthy beyond its own rollout status. A live
+# canary bake -- SLO watch between waves -- is a required reviewer on the
+# next environment until it is automated.
+on:
+  workflow_call:
+    inputs:
+      cell:
+        description: "Cell id, e.g. canary-1. Must have deployments/kubernetes/cells/<cell>.yaml and a GitHub environment cell-<cell>."
+        required: true
+        type: string
+      version:
+        description: "Release tag to roll out, e.g. v1.40.0 (the chart version is the tag without its v)."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  rollout:
+    name: Roll out to ${{ inputs.cell }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: cell-${{ inputs.cell }}
+    env:
+      CELL: ${{ inputs.cell }}
+      VERSION: ${{ inputs.version }}
+      CHART_OCI_REPO: ghcr.io/${{ github.repository }}/charts
+      NAMESPACE: openidx
+      RELEASE: openidx
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.14.4
+
+      - name: The cell has a values file
+        run: |
+          set -euo pipefail
+          f="deployments/kubernetes/cells/${CELL}.yaml"
+          [ -f "$f" ] || { echo "::error::no values file for cell $CELL at $f"; exit 1; }
+          # The file must name the cell it is for; the post-deploy check below
+          # reads the same value back out of the cluster.
+          python3 - "$f" "$CELL" <<'PYEOF'
+          import sys, yaml
+          doc = yaml.safe_load(open(sys.argv[1])) or {}
+          got = (doc.get("config") or {}).get("cellId")
+          assert got == sys.argv[2], f"{sys.argv[1]} names cell {got!r}, not {sys.argv[2]!r}"
+          PYEOF
+
+      - name: Log in to GHCR (helm)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # The environment's secret, not a repository secret: cell-eu-1's
+      # kubeconfig is visible to a job running in cell-eu-1 and to nothing else.
+      - name: Kubeconfig for this cell
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KUBECONFIG_B64:-}" ]; then
+            echo "::error::environment cell-$CELL carries no KUBECONFIG secret; the wave cannot reach the cell"
+            exit 1
+          fi
+          umask 077
+          mkdir -p "$RUNNER_TEMP/kube"
+          printf '%s' "$KUBECONFIG_B64" | base64 -d > "$RUNNER_TEMP/kube/config"
+          echo "KUBECONFIG=$RUNNER_TEMP/kube/config" >> "$GITHUB_ENV"
+
+      # --atomic: a rollout that does not become ready within the timeout is
+      # rolled back to the previous release, and this job fails -- which is
+      # what stops the wave at this cell.
+      - name: Upgrade the cell, atomically
+        run: |
+          set -euo pipefail
+          helm upgrade --install "$RELEASE" "oci://${CHART_OCI_REPO}/openidx" \
+            --version "${VERSION#v}" \
+            --namespace "$NAMESPACE" --create-namespace \
+            -f deployments/kubernetes/helm/openidx/values-prod.yaml \
+            -f "deployments/kubernetes/cells/${CELL}.yaml" \
+            --atomic --wait --timeout 20m
+
+      # Read the identity back out of the cluster, not out of the values file:
+      # what the pods will stamp into every token is what the ConfigMap says.
+      - name: The cell answers as itself
+        run: |
+          set -euo pipefail
+          got=$(kubectl -n "$NAMESPACE" get configmap "$RELEASE-config" -o jsonpath='{.data.CELL_ID}')
+          if [ "$got" != "$CELL" ]; then
+            echo "::error::cell $CELL is running with CELL_ID='$got' after the rollout"
+            exit 1
+          fi
+          echo "cell $CELL is running $VERSION and answers as $CELL"

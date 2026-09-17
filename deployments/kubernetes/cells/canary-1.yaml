@@ -1,0 +1,18 @@
+# Cell canary-1 -- layered over values-prod.yaml by .github/workflows/rollout-cell.yml.
+#
+# config.cellId is what every service in the cell stamps into the tokens it
+# mints and what cell.Guard compares an arriving token against (plan 4.1).
+# The rollout refuses this file if the id below does not match the file name,
+# and refuses the cell if the deployed ConfigMap does not answer with it.
+config:
+  cellId: "canary-1"
+
+# The small-cell profile (plan 4.2): one replica per service is enough for a
+# cell whose job is to take the release first, and cheap enough to keep.
+identityService:
+  replicaCount: 1
+oauthService:
+  replicaCount: 1
+accessService:
+  replicaCount: 1
+
