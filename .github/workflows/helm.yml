@@ -1317,10 +1317,17 @@ jobs:
   # `helm --wait` waits for every Deployment to be Ready BEFORE it runs
   # post-install hooks; a service that needs the schema to become Ready would
   # therefore hold the install until the timeout, and the schema would never
-  # land. So the first pass installs the data plane with the services at zero
-  # (the hooks bootstrap the roles and migrate), and the second pass scales the
-  # services up -- a pre-upgrade hook re-runs both Jobs as no-ops first. It is
-  # also the order an operator would take on a real cell.
+  # land. THE POOLER IS IN THE SAME POSITION, and the first run of this job
+  # measured it: pgcat validates its upstream pool at startup and exits when
+  # Postgres refuses the login, and the login is refused until the bootstrap
+  # hook creates openidx_app and gives it the password -- which is a
+  # post-install hook, held by --wait, which was waiting for pgcat. Twelve
+  # minutes of "Role openidx_app does not exist" and a CrashLoopBackOff, with
+  # the hooks never created. So the first pass installs the data plane with
+  # the services AND the pooler at zero (the hooks bootstrap the roles and
+  # migrate), and the second pass scales them up -- a pre-upgrade hook re-runs
+  # both Jobs as no-ops first. It is also the order an operator has to take on
+  # a fresh cell with the bundled database and --wait (values.yaml, pgcat).
   #
   # What it does NOT prove, and says so in values-ci-cell.yaml: load and
   # failover timing (no traffic, one node), three Redis roles on three
@@ -1396,16 +1403,17 @@ jobs:
             kind load docker-image "$img" --name openidx-cell
           done
 
-      # Pass one: the data plane and the hooks, services at zero (see the job
-      # header for why). --wait blocks on the primary, the replica, Redis, OPA
-      # and the pooler becoming Ready and on both hook Jobs succeeding.
-      - name: helm install --wait (data plane, services at zero)
+      # Pass one: the data plane and the hooks, services and pooler at zero
+      # (see the job header for why). --wait blocks on the primary, the
+      # replica, Redis and OPA becoming Ready and on both hook Jobs succeeding.
+      - name: helm install --wait (data plane, services and pooler at zero)
         run: |
           helm upgrade --install "$RELEASE" "$CHART" \
             --namespace "$NS" --create-namespace \
             -f "$CHART/values-ci.yaml" -f "$CHART/values-ci-cell.yaml" \
             --set identityService.replicaCount=0 \
             --set oauthService.replicaCount=0 \
+            --set pgcat.replicaCount=0 \
             --wait --timeout 15m
 
       - name: The hooks ran, and the bootstrap gave the pooler its upstream credential
@@ -1458,6 +1466,17 @@ jobs:
           done
           echo "::error::the replica holds $replica migrations after 60s, the primary $primary"; exit 1
 
+      # Pass two: the pooler and the services. A pre-upgrade hook re-runs the
+      # bootstrap and the migration as no-ops, then pgcat comes up against a
+      # role that can now log in, and the two identity halves and oauth roll
+      # out and have to become Ready through it.
+      - name: helm upgrade --wait (pooler and services up)
+        run: |
+          helm upgrade --install "$RELEASE" "$CHART" \
+            --namespace "$NS" \
+            -f "$CHART/values-ci.yaml" -f "$CHART/values-ci-cell.yaml" \
+            --wait --timeout 12m
+
       # The belt THROUGH the pooler, as the role the fleet runs as. This is the
       # measured hazard of docs/evidence/2026-09-13-rls-transaction-pooling.md:
       # a session-scoped tenant handed to the next client. Under RLS_MODE=local
@@ -1488,16 +1507,6 @@ jobs:
             "BEGIN; SELECT set_config('app.bypass_rls','on',true); COMMIT; SELECT count(*) FROM users")
           test "$after" = "0" || { echo "::error::the scope outlived its transaction through the pooler: $after users visible after COMMIT"; exit 1; }
           echo "belt holds through the pooler: bare=0, inside a local bypass=$inside, after COMMIT=0"
-
-      # Pass two: the services. A pre-upgrade hook re-runs the bootstrap and
-      # the migration as no-ops, then the two identity halves and oauth roll
-      # out and have to become Ready through the pooler.
-      - name: helm upgrade --wait (services up)
-        run: |
-          helm upgrade --install "$RELEASE" "$CHART" \
-            --namespace "$NS" \
-            -f "$CHART/values-ci.yaml" -f "$CHART/values-ci-cell.yaml" \
-            --wait --timeout 12m
 
       - name: Two identity planes and the issuer are Ready through the pooler and read the replica
         run: |

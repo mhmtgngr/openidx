@@ -1027,6 +1027,17 @@ keda:
 # pooling (session-scoped advisory locks, one snapshot per dump).
 pgcat:
   enabled: false
+  # A FRESH install with the bundled PostgreSQL and `helm install --wait`
+  # needs two passes, and this was measured rather than reasoned (helm.yml,
+  # kind-cell): the role pgcat logs in as is created and given its password
+  # by the bootstrap hook, which is post-install; --wait holds post-install
+  # hooks until every Deployment is Ready; and pgcat validates its upstream
+  # pool at startup and EXITS when the login is refused. So --wait waits for
+  # a pooler that is waiting for a hook that is waiting for --wait. Install
+  # once with `--set pgcat.replicaCount=0` (the hooks run), then upgrade with
+  # the real count. Without --wait the pooler crash-loops until the hooks
+  # finish and then recovers on its own; an UPGRADE is unaffected, because
+  # its hooks are pre-upgrade and run first.
   replicaCount: 2
   port: 6432
   # pgcat's Prometheus exporter (pgcat_pools_* gauges). Its own port, scraped by

@@ -79,7 +79,10 @@ database:
 pgcat:
   enabled: true
   # One, not two: the job needs a pooler to be installable and to hold the
-  # belt, not to survive losing a replica of itself.
+  # belt, not to survive losing a replica of itself. The job's first pass
+  # overrides this to 0: on a fresh install with --wait the pooler must come
+  # up AFTER the bootstrap hook that gives its role a password (values.yaml,
+  # pgcat, and the job header for the twelve minutes that taught it).
   replicaCount: 1
   # Throwaway, credential-SHAPED values for a cluster that lives one job; each
   # is named in .gitleaks.toml as an anchored literal so a real credential

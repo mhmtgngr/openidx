@@ -46,7 +46,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `database.bundledReadReplica` points it at `-postgresql-read`, refuses to
   render without the replication architecture, and the Postgres
   NetworkPolicy now admits traffic to the read pods too, which it did not.
-  **Not proved, and said so in the values file:** load and failover timing,
+  (4) Measured by the job's own first run: a FRESH `helm install --wait`
+  with pgcat and the bundled database deadlocks, because the role pgcat logs
+  in as is created by a post-install hook that `--wait` holds until every
+  Deployment is Ready, and pgcat exits at startup when the login is refused.
+  Twelve minutes of `Role "openidx_app" does not exist` and a
+  CrashLoopBackOff with the hooks never created. The job's first pass now
+  keeps the pooler at zero too, and `values.yaml` says why an operator has
+  to do the same on a fresh cell. **Not proved, and said so in the values
+  file:** load and failover timing,
   three Redis roles on three instances, `database.planeRoles` (interlocked
   with the pooler by design), ingress and external secrets. Those wait for a
   real cell.
