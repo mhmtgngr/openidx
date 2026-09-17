@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One redeemer for the enrollment token, and the spend is a claim** — an
+  admin/MDM enrollment token (`agent_enrollment_tokens`) admits a device on two
+  public routes, the agent's `POST /agent/enroll` and the dark-mode
+  `POST /api/v1/access/enroll`, and each carried its own copy of the check.
+  Measured against the real table: the dark-mode copy read `expires_at` and
+  never compared it, so a token issued for 24 hours admitted a device for ever
+  (live defect); the agent copy compared it but marked `used_at` with a warning
+  on failure, so a single-use token that could not be spent was accepted and
+  stayed spendable (latent: needs the UPDATE to fail); and neither made the
+  spend a claim: with the old SELECT-then-UPDATE shape reproduced, twenty
+  concurrent redemptions of one single-use token admitted 12, 20, 12, 7 and 12
+  devices in five rounds, and 19 through the agent route (live, measured). Both routes now call
+  `redeemEnrollmentToken`: unknown, revoked and expired tokens are refused on
+  both, a single-use token is spent by
+  `UPDATE ... SET used_at = NOW() WHERE id = $1 AND used_at IS NULL` and zero
+  rows is a refusal, a spend that fails returns the failure (the agent route
+  answers 503 and mints nothing) and a reusable fleet token is never spent but
+  still expires. Seven tests against PostgreSQL (fixture DDL taken from the
+  registered v43 and v86 migrations, twenty racers on one row, a trigger that
+  makes the spend fail) and a shape census that every non-test file in the
+  package satisfies: a lookup of the token table by the presented `token_hash`
+  and any `SET used_at` live only in the redeemer, and both redemption
+  functions call it. Seven mutations red (expiry dropped, claim predicate
+  dropped, row count ignored, failed spend tolerated, reusable waiving expiry,
+  a private copy of the lookup, a second spend site), one no-op control green.
+  Own CI step with named pass checks. **Not done, and said so:** the plan's
+  "N enrolments per tenant per hour" cannot be enforced on this table, which
+  carries no `org_id` (it is on the needs-scoping register behind the
+  is-the-fleet-per-tenant decision); the Ziti controller's own L4 exposure is
+  infrastructure. The `used_at IS NULL` claim also closes the window between a
+  session cancel's `revoked = true` and a spend already in flight only for the
+  spend; a revoke racing the SELECT is still admitted once, by design of the
+  two-statement shape, and the token was valid at the moment it was read.
+
 - **Four open plan items closed by decision, not by code** — the event path
   is an accelerator, never the only route for a security-critical outcome, and
   that decision now settles the items that were waiting on it. Migrating the

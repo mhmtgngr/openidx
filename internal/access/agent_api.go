@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -517,51 +518,31 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 		return
 	}
 
-	// Validate enrollment token against the database when configured. The token
-	// itself is consumed (marked used) before credentials are minted so a
-	// failure to mint cannot leak a still-usable token.
+	// Redeem the enrollment token against the database when configured. The
+	// redeemer (enrollment_token_redeem.go) is shared with the dark-mode route:
+	// it refuses unknown, revoked, expired and already-spent tokens, and spends
+	// a single-use token -- exactly once, as a claim -- before credentials are
+	// minted, so a failure to mint cannot leak a still-usable token and two
+	// devices presenting the same token cannot both be enrolled.
 	if h.db != nil && h.db.Pool != nil {
 		ctx := c.Request.Context()
 		incomingHash := sha256Hex(token)
 
-		var tokenID string
-		var expiresAt time.Time
-		var usedAt *time.Time
-		var revoked bool
-		var reusable bool
-		err := h.db.Pool.QueryRow(ctx, `
-			SELECT id, expires_at, used_at, revoked, reusable
-			FROM agent_enrollment_tokens
-			WHERE token_hash = $1
-		`, incomingHash).Scan(&tokenID, &expiresAt, &usedAt, &revoked, &reusable)
-		if err != nil {
-			h.logger.Warn("HandleEnroll: enrollment token not found", zap.Error(err))
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid enrollment token"})
+		tok, err := redeemEnrollmentToken(ctx, h.db.Pool, token)
+		var refusal enrollError
+		switch {
+		case errors.As(err, &refusal):
+			h.logger.Warn("HandleEnroll: enrollment token refused", zap.String("reason", refusal.msg))
+			c.JSON(http.StatusUnauthorized, gin.H{"error": refusal.msg})
+			return
+		case err != nil:
+			// Not a refusal: the database could not answer or could not spend
+			// the token. The token was not redeemed, so no credential is minted.
+			h.logger.Error("HandleEnroll: enrollment token could not be redeemed", zap.Error(err))
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "enrollment token could not be redeemed"})
 			return
 		}
-		if revoked {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "enrollment token has been revoked"})
-			return
-		}
-		if time.Now().UTC().After(expiresAt) {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "enrollment token has expired"})
-			return
-		}
-		// Single-use enforcement is skipped for reusable (fleet/MDM) tokens.
-		if !reusable && usedAt != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "enrollment token has already been used"})
-			return
-		}
-
-		if !reusable {
-			// Mark single-use tokens consumed (agent_id stamped post-issue).
-			if _, err = h.db.Pool.Exec(ctx, `
-				UPDATE agent_enrollment_tokens SET used_at = NOW() WHERE id = $1
-			`, tokenID); err != nil {
-				h.logger.Warn("HandleEnroll: failed to mark token as used",
-					zap.String("token_id", tokenID), zap.Error(err))
-			}
-		}
+		tokenID, reusable := tok.ID, tok.Reusable
 
 		// Correlate to a unified enrollment session (short code / QR / deep-link).
 		// A session ties this token to the user who created it from an MFA-verified
@@ -580,7 +561,7 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 		// reusable token enrolls many, so this field is left for the last one).
 		if !reusable {
 			// Bookkeeping, not a control -- the single-use property is enforced
-			// by used_at in validateEnrollmentToken. Still worth saying when it
+			// by the used_at claim in redeemEnrollmentToken. Still worth saying when it
 			// does not happen, so a token whose enrolling agent is unknown has
 			// a reason in the log rather than a blank column.
 			if _, err := h.db.Pool.Exec(ctx,

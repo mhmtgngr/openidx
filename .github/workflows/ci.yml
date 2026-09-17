@@ -654,6 +654,33 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # Enrollment token redemption (plan 4.5, code half). Two public routes
+      # traded an agent_enrollment_tokens row for credentials with two copies of
+      # the check: the dark-mode copy never compared expires_at, the agent copy
+      # accepted a token whose spend failed, and neither made the spend a claim,
+      # so two devices presenting one single-use token in the same instant were
+      # both enrolled. One redeemer now, and the spend is UPDATE ... WHERE
+      # used_at IS NULL with the row count as the verdict. Measured against the
+      # real table built from the registered v43 + v86 DDL, twenty racers on one
+      # row, and a trigger that makes the spend fail.
+      - name: A single-use enrollment token admits exactly one device, on either route, and never after it expires
+        env:
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/access/ -run 'EnrollmentToken|OneTimeToken|Redeemer' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          for want in TestAValidSingleUseEnrollmentTokenIsRedeemedOnceAndSpentOnBothRoutes \
+                      TestAnExpiredEnrollmentTokenIsRefusedOnBothRoutes \
+                      TestARevokedOrUnknownEnrollmentTokenIsRefusedOnBothRoutes \
+                      TestAReusableEnrollmentTokenEnrollsManyAndIsNeverSpent \
+                      TestAConcurrentDoubleRedemptionOfAOneTimeTokenAdmitsExactlyOne \
+                      TestAOneTimeTokenWhoseSpendFailsIsNotRedeemed \
+                      TestEveryEnrollmentTokenRedemptionGoesThroughTheOneRedeemer; do
+            grep -q -- "--- PASS: $want " <<<"$out" \
+              || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+          done
+
       # Usage metering (task 3.4 census). The rollup is an INCREMENT and the
       # cursor was read with no lock, so three audit-service replicas billed a
       # customer three times for the same overlay traffic. Two processes
