@@ -23,8 +23,12 @@ import (
 // letter of "the relay is run" while delivering nothing, which is the failure
 // this is really about.
 //
-// This is a REACHABILITY test, not a style rule. It fails when the answer to
-// "does anything actually publish these events" becomes no.
+// This is a REACHABILITY test, not a style rule, and it measures ONE END: that
+// a process drains the outbox into a real broker. It cannot see whether
+// anything WRITES the outbox -- that is outbox_has_producer_test.go, which was
+// written when this doc claimed to cover both and measurement showed it did
+// not: nothing outside this package constructs an OutboxBus, and this test was
+// green.
 func TestSomeBinaryRunsTheOutboxRelay(t *testing.T) {
 	const cmdDir = "../../../cmd"
 

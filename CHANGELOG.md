@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The outbox has no producer, and the guard written to catch exactly that was
+  watching the other end** — plus the decision it forces.
+
+  Measured by shape, not spelling: `NewOutboxBus` has no caller outside
+  `internal/common/events`; `events.Event{}` is constructed nowhere outside it;
+  the only `INSERT INTO outbox` in production code is inside
+  `OutboxBus.Publish` itself. **`cmd/event-relay` drains a table that nothing
+  writes to.** The plan already said so, honestly, and kept the item open.
+  What nothing did was *measure* it: `TestSomeBinaryRunsTheOutboxRelay`'s own
+  doc said it would fail "when the answer to 'does anything actually publish
+  these events' becomes no" — and it measures the drain (`NewRelay`,
+  `NewNATSSink` in `cmd/`), which cannot see a producer. The answer was no and
+  it was green. The defect shape this tree keeps finding, inside the guard
+  written to prevent it.
+
+  `outbox_has_producer_test.go` measures the producer end: every function under
+  `internal/` and `cmd/` that constructs an `OutboxBus`, by AST. With none, the
+  `noProducerYet` statement must say why; with one, that statement must be
+  empty and the producer must be in the `producers` register **naming the
+  completion guarantee it keeps when the broker is absent** — `nats.enabled`
+  defaults false, so in the default install a publish reaches nobody. A ghost
+  register entry fails; a vacuous scan fails; the consumer guard's doc now
+  states its one-end scope and a test keeps the over-claim from growing back.
+
+  **The decision this encodes — the event path is an accelerator, not a
+  dependency.** The two paths proposed as first producers each already have a
+  broker-free completion guarantee: the audit indexer reconciles against
+  `indexed_at IS NULL` in PostgreSQL (`StartESReconciler`, leader-gated); SSF
+  posts to partner endpoints over HTTP with its own durable retry queue. Moving
+  either onto the bus would replace a guarantee that self-heals from durable
+  state with a delivery that, in the default install, never happens — with
+  `elasticsearch.enabled: true` by default, an operator would get the
+  Elasticsearch they provisioned, silently empty. So: `StartESReconciler` is
+  **not** retired; the audit-indexer migration item is closed as *won't do*,
+  with the measurement that closed it; and the earlier proposal of a chart
+  interlock is withdrawn — it would have broken the default render rather than
+  fixing the dependency direction. For SSF's `account-disabled`, the seam
+  problem is real (sever paths live in other services) and the decided
+  direction is a shared writer into the existing `ssf_stream_delivery` queue,
+  inside the severing transaction — broker-free.
+
+  **Seven mutations against a green no-op control:** six red (statement emptied
+  with no producer; a producer with an empty register; a producer registered
+  but the statement left stale; a ghost register entry; the consumer guard's
+  over-claim restored; the census pointed at an empty tree) and one
+  **deliberately green** — producer + register + statement cleared, the
+  legitimate future state, which is the positive path's control.
+
 - **Security: any authenticated user could take interactive control of any
   enrolled device in their tenant** — and the census written to catch exactly
   this could not see the route, three times over.
