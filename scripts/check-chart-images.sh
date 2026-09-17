@@ -75,13 +75,17 @@ PLACEHOLDER_SECRETS=(
 render_and_check "values.yaml" "${PLACEHOLDER_SECRETS[@]}"
 render_and_check "values-prod.yaml" -f "$CHART/values-prod.yaml"
 render_and_check "values-ci.yaml" -f "$CHART/values-ci.yaml"
+# The cell shape layers over values-ci.yaml (job kind-cell) and turns on the
+# pooler, the replica architecture and the plane split -- so it names images
+# the other files do not (pgcat; the replica's own postgresql image path).
+render_and_check "values-ci-cell.yaml" -f "$CHART/values-ci.yaml" -f "$CHART/values-ci-cell.yaml"
 # volumePermissions init containers are off by default and pull their own image.
 render_and_check "volumePermissions" "${PLACEHOLDER_SECRETS[@]}" \
   --set postgresql.volumePermissions.enabled=true \
   --set redis.volumePermissions.enabled=true \
   --set elasticsearch.volumePermissions.enabled=true
-# The transaction pooler is off in every values file above, so its image would
-# never be rendered and never be checked. It shipped with a tag that does not
+# The transaction pooler is off in every values file above except the cell
+# layer, so on its own its image would never be rendered and never be checked. It shipped with a tag that does not
 # exist (`1.1.1`; the registry's only released tag is `v1.2.0`) and every
 # render-time check passed, because a tag is only wrong at pull time — which is
 # the exact failure this script exists to catch.

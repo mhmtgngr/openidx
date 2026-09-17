@@ -107,11 +107,13 @@ regexes = [
 
 
 [[allowlists]]
-description = "Placeholder credentials that exist so the Helm chart can be rendered and installed without real ones. templates/secrets.yaml wraps four values in `required`, so `helm template` and `helm install` both refuse to run without them: values-ci.yaml carries the four the kind job installs into a cluster that lives for the length of one job, and the `render-only-*` strings are what Makefile:helm-template, helm.yml and check-chart-images.sh pass on the command line purely to get a render. Each is listed as an anchored literal rather than by path, so a real secret added to any of those files is still caught."
+description = "Placeholder credentials that exist so the Helm chart can be rendered and installed without real ones. templates/secrets.yaml wraps four values in `required`, so `helm template` and `helm install` both refuse to run without them: values-ci.yaml carries the four the kind job installs into a cluster that lives for the length of one job (and values-ci-cell.yaml the two the pooler needs on top of them), and the `render-only-*` strings are what Makefile:helm-template, helm.yml and check-chart-images.sh pass on the command line purely to get a render. Each is listed as an anchored literal rather than by path, so a real secret added to any of those files is still caught."
 regexes = [
   '''^ci-postgres-password$''',
   '''^ci-redis-password$''',
   '''^ci-encryption-key-exactly-32-byte$''',
+  '''^ci-pgcat-password$''',
+  '''^ci-pgcat-admin-password$''',
   '''^render-only-not-a-credential$''',
   '''^render-only-not-a-credential-000000$''',
   '''^render-only-not-a-credential32b$''',

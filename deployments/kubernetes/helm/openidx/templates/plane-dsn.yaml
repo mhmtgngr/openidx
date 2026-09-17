@@ -42,7 +42,7 @@ stringData:
   DATABASE_URL_ADMIN: {{ $pr.adminUrl | quote }}
   DATABASE_URL_EVENT: {{ $pr.eventUrl | quote }}
   {{- else }}
-  {{- $host := printf "%s-postgresql:5432" (include "openidx.fullname" .) }}
+  {{- $host := printf "%s:5432" (include "openidx.postgresHost" .) }}
   {{- $db := .Values.postgresql.auth.database | default "openidx" }}
   {{- $ssl := .Values.database.sslMode | default "disable" }}
   DATABASE_URL_ISSUE: "postgres://openidx_issue:{{ $pr.password }}@{{ $host }}/{{ $db }}?sslmode={{ $ssl }}"

@@ -1,0 +1,115 @@
+# The CELL shape, for the `kind` proof (.github/workflows/helm.yml, job
+# `kind-cell`). Layered OVER values-ci.yaml:
+#
+#   helm upgrade --install openidx deployments/kubernetes/helm/openidx \
+#     -f values-ci.yaml -f values-ci-cell.yaml
+#
+# Not a deployment profile -- do not copy this for a real install; a cell is
+# values-prod.yaml plus deployments/kubernetes/cells/<id>.yaml.
+#
+# What this overlay is for
+# ------------------------
+# Every switch the global-scale plan added is a switch: the pooler, the
+# transaction-local tenant scope it requires, the read replica, the identity
+# plane split, the cell id and the guard that reads it. `helm template` proves
+# each renders; the lint job proves each interlock refuses the unsafe
+# combination. Neither proves the switched-ON positions WORK TOGETHER against
+# a real API server and a real database -- and that is where "separately
+# correct, jointly broken" lives. This overlay turns them all on at once and
+# the job asserts against the running cluster:
+#
+#   - migrations landed through the DIRECT DSN and replicated to the streaming
+#     replica, while the services connect through the pooler;
+#   - the tenant belt holds THROUGH the pooler as openidx_app: a scope set in
+#     one transaction is gone from the next, and the belt hides every row
+#     without one;
+#   - identity runs as two Deployments, each serving only its plane, both
+#     healthy through pgcat and reading the replica;
+#   - a token minted in this cell carries `cell: canary-1`, and a token minted
+#     for a tenant the directory places in ANOTHER cell is refused with 421
+#     Misdirected Request by a live pod, naming this cell.
+#
+# What it deliberately does NOT prove
+# -----------------------------------
+# Load and failover timing -- there is no traffic on kind and one node; that
+# needs a real cell (plan 4.2/4.3). Redis per loss profile: one in-cluster
+# Redis, so the three roles alias one instance here (redis.roles / the
+# externalSecrets half cover the wiring, and the loss profiles are a property
+# of managed instances). database.planeRoles: interlocked with the pooler by
+# design (templates/plane-dsn.yaml), so a cell chooses one; this one is the
+# pooler. Ingress and external secrets: no controller and no store on kind.
+#
+# The two binaries that run are built from THIS tree and side-loaded (see the
+# job), for the same reason values-ci.yaml builds the tools image: pulling
+# main's `latest` would test someone else's build against this chart.
+
+global:
+  # kind is not production. APP_ENV=production refuses sslmode=disable (the
+  # bundled PostgreSQL serves no TLS here) and a loopback access-proxy
+  # domain, both of which are correct for a throwaway cluster.
+  environment: "development"
+
+config:
+  # The cell this install answers as (plan 4.1). Every service reads it from
+  # the shared ConfigMap; the issuer stamps it into access tokens and the
+  # guards answer 421 to a token stamped with another cell.
+  cellId: "canary-1"
+  # Transaction-local tenant scope (plan 2.1): the only mode the pooler below
+  # may sit in front of, and the chart refuses the other combination.
+  rlsMode: "local"
+  # In-cluster names: identity validates tokens against the issuer's JWKS,
+  # and the default names a Service (`oauth-service`) this release does not
+  # create -- the release prefixes it.
+  oauthIssuer: "http://openidx-oauth-service:8006"
+  oauthJwksUrl: "http://openidx-oauth-service:8006/.well-known/jwks.json"
+
+# ----- Data plane: a primary and one streaming replica -----
+postgresql:
+  architecture: replication
+  readReplicas:
+    replicaCount: 1
+    persistence:
+      size: 1Gi
+
+database:
+  # DATABASE_READ_URL -> <release>-postgresql-read (plan 2.3, in-cluster shape).
+  bundledReadReplica: true
+
+# ----- The transaction pooler (plan 2.2) -----
+pgcat:
+  enabled: true
+  # One, not two: the job needs a pooler to be installable and to hold the
+  # belt, not to survive losing a replica of itself. The job's first pass
+  # overrides this to 0: on a fresh install with --wait the pooler must come
+  # up AFTER the bootstrap hook that gives its role a password (values.yaml,
+  # pgcat, and the job header for the twelve minutes that taught it).
+  replicaCount: 1
+  # Throwaway, credential-SHAPED values for a cluster that lives one job; each
+  # is named in .gitleaks.toml as an anchored literal so a real credential
+  # added here still goes red. The bootstrap hook gives openidx_app the first
+  # one, which is how the pooler logs in upstream.
+  password: "ci-pgcat-password"
+  adminPassword: "ci-pgcat-admin-password"
+  # postgresHost is left empty on purpose: the chart resolves it to the
+  # bundled primary under its replication-mode name.
+
+# ----- Application tier: two binaries from this tree, everything else at 0 -----
+identityService:
+  replicaCount: 1
+  image:
+    repository: identity-service
+    tag: ci
+    # Never: side-loaded into the cluster by the job; IfNotPresent would let a
+    # stale node-cached layer win.
+    pullPolicy: Never
+  # Two Deployments, one per availability plane (plan 3.4): -identity-auth
+  # serves the ISSUE routes and -identity-admin everything else.
+  planeSplit:
+    enabled: true
+
+oauthService:
+  replicaCount: 1
+  image:
+    repository: oauth-service
+    tag: ci
+    pullPolicy: Never

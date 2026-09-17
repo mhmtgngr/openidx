@@ -40,6 +40,7 @@ spec:
                     app.kubernetes.io/component: oauth-service
                 topologyKey: kubernetes.io/hostname
       {{- end }}
+      {{- include "openidx.waitForPooler" . | nindent 6 }}
       containers:
         - name: oauth-service
           image: "{{ include "openidx.imageRegistry" . }}/{{ .Values.oauthService.image.repository | default "oauth-service" }}:{{ .Values.oauthService.image.tag | default "latest" }}"

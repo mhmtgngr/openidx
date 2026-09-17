@@ -9,6 +9,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The cell shape, installed and driven on kind** (global-scale plan 4.2/4.3,
+  the half a build environment can measure). Every switch the plan added was
+  a switch the lint job could only prove RENDERS: the transaction pooler with
+  `RLS_MODE=local`, the read replica, the identity plane split, the cell id
+  and the guard that reads it. A new `values-ci-cell.yaml` layers all of them
+  over `values-ci.yaml`, and a new `kind-cell` job in `helm.yml` installs it
+  with this tree's `identity-service` and `oauth-service` behind them and
+  asserts against the live cluster: migrations landed through the direct DSN
+  and replicated to the streaming replica while the services connect through
+  pgcat; the tenant belt holds THROUGH the pooler as `openidx_app` (no scope,
+  zero rows; a transaction-local bypass, the seeded rows; the statement after
+  COMMIT, zero again); two identity Deployments each serve only their plane
+  (`/users` is 401 on the admin half and 404 on the auth half, the WebAuthn
+  credential list the mirror image), both healthy through the pooler and
+  reading the replica; a `client_credentials` token carries `cell: canary-1`
+  and a live admin pod serves it; and once the tenant directory places that
+  tenant in `eu-1`, the issuer stamps `eu-1` and the same pod answers
+  `421 Misdirected Request` with `X-OpenIDX-Cell: canary-1`, then serves
+  again when the placement moves back. No forged token: only the placement
+  changed. Two helm passes on purpose, because `--wait` holds post-install
+  hooks until every Deployment is Ready and a service that needs the schema
+  would deadlock the migration that provides it. **Measured while building
+  it, and fixed in the chart:** (1) `postgresql.architecture=replication`
+  renames the primary's Service to `-postgresql-primary`, and every DSN the
+  chart built spelled the standalone name, so turning replication on broke
+  every connection string at once; one `openidx.postgresHost` helper now
+  feeds the DSN Secret, the plane DSNs, the bootstrap hook, the migration
+  Job's wait and pgcat's upstream. (2) pgcat authenticates upstream as
+  `openidx_app` with `pgcat.password`, and migration v53 creates that role
+  passwordless, so with the bundled PostgreSQL the pooler could never log in
+  and every service behind it was down with the install green; the bootstrap
+  hook now sets the role's password from the same value, via psql variable
+  quoting. (3) The bundled database had no read-replica wiring at all
+  (`DATABASE_READ_URL` existed only in external-secrets mode); new
+  `database.bundledReadReplica` points it at `-postgresql-read`, refuses to
+  render without the replication architecture, and the Postgres
+  NetworkPolicy now admits traffic to the read pods too, which it did not.
+  (4) Measured by the job's own first run: a FRESH `helm install --wait`
+  with pgcat and the bundled database deadlocks, because the role pgcat logs
+  in as is created by a post-install hook that `--wait` holds until every
+  Deployment is Ready, and pgcat exits at startup when the login is refused.
+  Twelve minutes of `Role "openidx_app" does not exist` and a
+  CrashLoopBackOff with the hooks never created. The job's first pass now
+  keeps the pooler at zero too, and `values.yaml` says why an operator has
+  to do the same on a fresh cell. (5) Measured by its third run: the pooler
+  had no NetworkPolicy of its own, its pods carry the label the chart's
+  default-deny selects, and kind enforces policies, so a healthy pooler
+  holding upstream connections was unreachable by every service for twelve
+  minutes. `-pgcat-allow` now admits exactly the eight services the DSN is
+  repointed for, and the lint job asserts the two sets agree. (6) Measured
+  by its fourth run: the upgrade that turns the pooler on rolls it and the
+  eight services together; the services dial first, fail fast by design,
+  and CrashLoopBackOff's growing delay put convergence ten minutes out, past
+  `--wait` and past what an `--atomic` upgrade would tolerate. Each pooled
+  service now carries a `wait-for-pooler` init container, and the lint job
+  asserts every repointed Deployment has it. (7) Measured by its sixth run,
+  once everything before it held: the issuer's NetworkPolicy admitted only
+  the gateway and the admin console, but seven services verify bearer
+  tokens by fetching `/.well-known/jwks.json` from the oauth-service
+  directly, so on an enforcing CNI the hardened profile answered 401 to a
+  token the issuer had minted seconds earlier (`failed to fetch JWKS:
+  context deadline exceeded`) with every health check green. Latent in every
+  install with `networkPolicy.enabled` on a CNI that enforces it; the plain
+  kind job could not see it because it never presents a token, and to its
+  plane-split step a 401 is the expected answer. `-oauth-service-allow` now
+  admits the token verifiers, and the lint job derives that set from the
+  rendered manifests (who carries `OAUTH_JWKS_URL`, directly or through the
+  ConfigMap) and asserts each one is admitted. **Not proved, and said so in
+  the values file:** load and failover timing,
+  three Redis roles on three instances, `database.planeRoles` (interlocked
+  with the pooler by design), ingress and external secrets. Those wait for a
+  real cell.
+
 - **The device fleet is one tenant's** (migration v197; global-scale plan 4.5
   and the last product decision the orgscope register was waiting on).
   `enrolled_agents`, `agent_posture_results` and `agent_enrollment_tokens`

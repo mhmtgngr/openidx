@@ -207,6 +207,65 @@ would hand each of them a different backend mid-flight.
 {{- end }}
 
 {{/*
+Wait for the pooler before a request-serving service starts (with pgcat.enabled).
+
+Measured on kind, not reasoned: a helm upgrade that turns the pooler on rolls
+the pooler and the eight services in the same pass, the services dial the
+pooler before it has an endpoint, fail the connect and exit -- by design, a
+service with no database fails fast -- and Kubernetes restarts them with a
+growing back-off: 10s, 20s, 40s, 80s, 160s, 300s. They converged after ten
+minutes of CrashLoopBackOff, which is longer than an --atomic upgrade waits,
+so the rollout that ENABLES the pooler would have been rolled back for a
+condition that resolves itself. This init container holds the pod until the
+pooler's port answers, so the service's first attempt is the one that works.
+The same shape the migration Job uses for Postgres; the same busybox image.
+*/}}
+{{- define "openidx.waitForPooler" -}}
+{{- if .Values.pgcat.enabled }}
+initContainers:
+  - name: wait-for-pooler
+    image: busybox:1.36
+    command:
+      - sh
+      - -c
+      - |
+        until nc -z {{ include "openidx.fullname" . }}-pgcat {{ .Values.pgcat.port }}; do
+          echo "waiting for the pooler..."; sleep 2;
+        done
+    securityContext:
+      {{- toYaml .Values.securityContext | nindent 6 }}
+{{- end }}
+{{- end }}
+
+{{/*
+The bundled PostgreSQL's PRIMARY, by Service name.
+
+The Bitnami subchart names its Service `<release>-postgresql` in standalone
+mode and `<release>-postgresql-primary` once `postgresql.architecture` is
+"replication" -- the same chart, a different name, and every DSN this chart
+builds used to spell the standalone one. Turning replication on therefore
+broke every connection string at once: the migration Job waited on a Service
+that did not exist and `helm --wait` burned its timeout. One helper, every
+template that names the host uses it, and the read replica has its own below.
+*/}}
+{{- define "openidx.postgresHost" -}}
+{{- if eq (.Values.postgresql.architecture | default "standalone") "replication" -}}
+{{- include "openidx.fullname" . }}-postgresql-primary
+{{- else -}}
+{{- include "openidx.fullname" . }}-postgresql
+{{- end -}}
+{{- end }}
+
+{{/*
+The bundled PostgreSQL's READ replicas, by Service name. Only meaningful when
+postgresql.architecture is "replication"; the subchart renders nothing under
+this name otherwise.
+*/}}
+{{- define "openidx.postgresReadHost" -}}
+{{- include "openidx.fullname" . }}-postgresql-read
+{{- end }}
+
+{{/*
 The availability plane a service connects as, validated.
 
 A misspelled plane must not render: the value picks a Postgres role, and a name

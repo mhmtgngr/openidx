@@ -89,7 +89,14 @@ data:
     server_lifetime = 3600000
 
     [pools.{{ .Values.pgcat.databaseName }}.shards.0]
-    servers = [["{{ required "pgcat.postgresHost is required when pgcat.enabled" .Values.pgcat.postgresHost }}", {{ .Values.pgcat.postgresPort }}, "primary"]]
+    {{- /* Empty means the bundled PostgreSQL's primary, whichever Service
+           name the subchart's architecture gives it; an external database
+           has to be named, because the chart cannot guess it. */}}
+    {{- $upstream := .Values.pgcat.postgresHost }}
+    {{- if and (not $upstream) .Values.postgresql.enabled }}
+    {{- $upstream = include "openidx.postgresHost" . }}
+    {{- end }}
+    servers = [["{{ required "pgcat.postgresHost is required when pgcat.enabled and the database is not the bundled one (postgresql.enabled=false)" $upstream }}", {{ .Values.pgcat.postgresPort }}, "primary"]]
     database = "{{ .Values.pgcat.databaseName }}"
 ---
 # The DSN the request-serving services use while the pooler is enabled. It is
