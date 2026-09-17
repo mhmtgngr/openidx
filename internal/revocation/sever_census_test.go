@@ -138,7 +138,7 @@ var severRegister = map[string]struct{ verdict, reason string }{
 }
 
 func TestEverySeverPathRevokesOrIsOnTheRegister(t *testing.T) {
-	severs, satisfied, grantShape := severCensus(t)
+	severs, satisfied, grantShape, _ := severCensus(t)
 
 	// Vacuity: a census that finds nothing proves nothing, and would also mean
 	// no path in this product disables or deletes a user.
@@ -214,13 +214,14 @@ func TestEverySeverRegisterEntryHasAVerdictAndAReason(t *testing.T) {
 
 // severCensus returns every function that disables or deletes a user, and which
 // of them reach revocation.RevokeUserTokens directly or through a call.
-func severCensus(t *testing.T) (severs []string, satisfied, grantShape map[string]bool) {
+func severCensus(t *testing.T) (severs []string, satisfied, grantShape, signalling map[string]bool) {
 	t.Helper()
 	type fn struct {
 		key     string
 		severs  bool
 		shape   string
 		revokes bool
+		signals bool // enqueues the account-disabled signal (ssfsignal.Enqueue)
 		calls   map[string]bool
 	}
 	fset := token.NewFileSet()
@@ -307,6 +308,9 @@ func severCensus(t *testing.T) (severs []string, satisfied, grantShape map[strin
 					if e.Sel.Name == "RevokeUserTokens" {
 						f.revokes = true
 					}
+					if x, ok := e.X.(*ast.Ident); ok && x.Name == "ssfsignal" && e.Sel.Name == "Enqueue" {
+						f.signals = true
+					}
 					f.calls[e.Sel.Name] = true
 				case *ast.Ident:
 					f.calls[e.Name] = true
@@ -329,18 +333,19 @@ func severCensus(t *testing.T) (severs []string, satisfied, grantShape map[strin
 	for changed := true; changed; {
 		changed = false
 		for _, f := range ordered {
-			if f.revokes {
-				continue
-			}
 			for c := range f.calls {
 				for _, g := range byName[c] {
-					if g.revokes {
+					if g.revokes && !f.revokes {
 						f.revokes, changed = true, true
+					}
+					if g.signals && !f.signals {
+						f.signals, changed = true, true
 					}
 				}
 			}
 		}
 	}
+	signalling = map[string]bool{}
 
 	satisfied = map[string]bool{}
 	grantShape = map[string]bool{}
@@ -355,7 +360,72 @@ func severCensus(t *testing.T) (severs []string, satisfied, grantShape map[strin
 		if f.revokes {
 			satisfied[f.key] = true
 		}
+		if f.signals {
+			signalling[f.key] = true
+		}
 	}
 	sort.Strings(severs)
-	return severs, satisfied, grantShape
+	return severs, satisfied, grantShape, signalling
+}
+
+// THE SECOND THING A SEVER OWES, and the reason a marker was never enough.
+//
+// Revoking tokens stops THIS product from honouring the account. It says
+// nothing to the federated partners that were told, in /.well-known/ssf-
+// configuration, that they could subscribe to account-disabled -- an event the
+// product advertised for months and never sent once, because the transmitter
+// is oauth-service's and the severing paths are not. internal/common/ssfsignal
+// is the seam; this counts the account-severing paths that use it.
+//
+// Only the ACCOUNT shape is held to it. Taking a role or a group away is
+// token-claims-change, a different event with a different subject, and is
+// stated here as not done rather than pretended.
+
+// signalRegister names the account-severing paths that do not enqueue the
+// signal, with why. Same contract as severRegister: only shrinks.
+var signalRegister = map[string]string{
+	// This is the RECEIVING end of the same protocol: a partner sent us
+	// account-disabled (or session-revoked) and we applied it locally.
+	// Re-emitting it would echo the event back to every stream, including
+	// the partner that originated it, and two OpenIDX deployments subscribed
+	// to each other would loop. A receiver applies; it does not originate.
+	"internal/oauth/ssf_receiver.go::applyCAEPEvent": "receiver of a partner-originated event; re-emitting would echo it (and loop between two mutually subscribed deployments)",
+}
+
+func TestEveryAccountSeverSignalsTheReceiversOrIsOnTheRegister(t *testing.T) {
+	severs, _, grantShape, signalling := severCensus(t)
+
+	var unregistered []string
+	for _, key := range severs {
+		if grantShape[key] || signalling[key] {
+			continue
+		}
+		if _, ok := signalRegister[key]; !ok {
+			unregistered = append(unregistered, key)
+		}
+	}
+	sort.Strings(unregistered)
+	for _, key := range unregistered {
+		t.Errorf("%s disables or deletes a user and no path from it enqueues the account-disabled signal.\n"+
+			"The receivers that subscribed to that event in /.well-known/ssf-configuration go on honouring "+
+			"the account. Call ssfsignal.Enqueue with the org and the user after the sever (the handle you "+
+			"already hold; a transaction if you have one), or record the reason in signalRegister.", key)
+	}
+
+	for key, why := range signalRegister {
+		found := false
+		for _, k := range severs {
+			if k == key {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("signalRegister names %s, which this census no longer finds as a severing path (%s). "+
+				"Delete the line, or the census stopped seeing it.", key, why)
+			continue
+		}
+		if signalling[key] {
+			t.Errorf("signalRegister names %s, but it signals now. Delete the line.", key)
+		}
+	}
 }

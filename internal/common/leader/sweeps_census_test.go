@@ -89,6 +89,7 @@ var tickerCensus = map[string]sweep{
 	"internal/access/network_grant_worker.go":      {how: coordClaim, reason: "claims grants with FOR UPDATE SKIP LOCKED, so a row another replica holds is invisible to this one"},
 	"internal/access/network_revocation_worker.go": {how: coordClaim, reason: "claims revocations with FOR UPDATE SKIP LOCKED"},
 	"internal/oauth/ssf_transmitter.go":            {how: coordClaim, reason: "claims SSF outbox rows with FOR UPDATE SKIP LOCKED"},
+	"internal/oauth/ssf_signal_drain.go":           {how: coordClaim, reason: "claims ssf_pending_events rows with FOR UPDATE SKIP LOCKED and hands back a claim stalled past its grace; the row lock is the coordination, any number of replicas drain safely, and a leader would add an availability gap for an ordering guarantee nobody asked for"},
 	"internal/provisioning/outbound_worker.go":     {how: coordClaim, reason: "claims queue items with FOR UPDATE SKIP LOCKED and requeues its own abandoned claims"},
 	"internal/audit/chain.go":                      {how: coordAdvisory, reason: "SealOrg takes pg_advisory_xact_lock per org: the tamper-evident chain is a sequence only one writer may extend, so a row claim would be the wrong shape"},
 	"internal/audit/siem_forwarder.go":             {how: coordClaim, reason: "holds the singleton forward cursor with FOR UPDATE SKIP LOCKED for the whole batch; the SIEM dedupes on event id but bills by ingest volume, so steady-state duplication costs the customer"},

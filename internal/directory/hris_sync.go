@@ -236,6 +236,7 @@ func (e *SyncEngine) deprovisionHR(ctx context.Context, orgID, userID, username,
 		// The row is gone; the access token in that browser is a separate
 		// credential and outlives it.
 		e.revokeTokens(ctx, userID, "HRIS deprovision (delete)")
+		e.signalAccountDisabled(ctx, orgID, userID, "", "hris_deleted")
 		result.UsersDisabled++
 		return
 	}
@@ -250,6 +251,7 @@ func (e *SyncEngine) deprovisionHR(ctx context.Context, orgID, userID, username,
 	// stops the next login; without this their access token keeps answering
 	// for the rest of its life.
 	e.revokeTokens(ctx, userID, "HRIS deprovision (terminate)")
+	e.signalAccountDisabled(ctx, orgID, userID, "", "hris_terminated")
 	result.UsersDisabled++
 }
 

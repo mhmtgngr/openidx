@@ -12,6 +12,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/common/ssfsignal"
 )
 
 // SyncEngine performs directory synchronization
@@ -575,6 +576,7 @@ func (e *SyncEngine) syncUsers(ctx context.Context, connector *LDAPConnector, di
 						// The row is gone; the access token in that browser is
 						// a separate credential and outlives it.
 						e.revokeTokens(ctx, user.ID, "LDAP sync deprovision (delete)")
+						e.signalAccountDisabled(ctx, orgID, user.ID, user.Email, "ldap_deleted")
 						result.UsersDisabled++
 					}
 				} else {
@@ -582,6 +584,7 @@ func (e *SyncEngine) syncUsers(ctx context.Context, connector *LDAPConnector, di
 						result.Errors = append(result.Errors, fmt.Sprintf("failed to disable user %s: %v", user.Username, err))
 					} else {
 						e.revokeTokens(ctx, user.ID, "LDAP sync deprovision (disable)")
+						e.signalAccountDisabled(ctx, orgID, user.ID, user.Email, "ldap_disabled")
 						result.UsersDisabled++
 					}
 				}
@@ -871,6 +874,7 @@ func (e *SyncEngine) syncAzureADUsers(ctx context.Context, connector *AzureADCon
 						// The row is gone; the access token in that browser is
 						// a separate credential and outlives it.
 						e.revokeTokens(ctx, user.ID, "Azure AD sync deprovision (delete)")
+						e.signalAccountDisabled(ctx, orgID, user.ID, user.Email, "azure_ad_deleted")
 						result.UsersDisabled++
 					}
 				} else {
@@ -878,6 +882,7 @@ func (e *SyncEngine) syncAzureADUsers(ctx context.Context, connector *AzureADCon
 						result.Errors = append(result.Errors, fmt.Sprintf("failed to disable user %s: %v", user.Username, err))
 					} else {
 						e.revokeTokens(ctx, user.ID, "Azure AD sync deprovision (disable)")
+						e.signalAccountDisabled(ctx, orgID, user.ID, user.Email, "azure_ad_disabled")
 						result.UsersDisabled++
 					}
 				}
@@ -1068,6 +1073,21 @@ func (e *SyncEngine) syncAzureADMemberships(ctx context.Context, connector *Azur
 // revokeTokens cuts the access tokens an account is still holding, when this
 // engine has been given a way to. Nil-safe: see the field's comment for why a
 // sync without one still runs.
+// signalAccountDisabled enqueues the RISC account-disabled event for the
+// receivers that subscribed to it. The transmitter is oauth-service's; this
+// engine cannot call it, so it writes the seam row (internal/common/ssfsignal)
+// with the handle it already holds. Best-effort by the same contract as
+// revokeTokens: the sever stands whether or not the signal is written, and a
+// failure is logged where an operator can see it rather than failing the sync.
+func (e *SyncEngine) signalAccountDisabled(ctx context.Context, orgID, userID, email, reason string) {
+	if err := ssfsignal.Enqueue(ctx, e.db.Pool, ssfsignal.Signal{
+		OrgID: orgID, SubjectID: userID, SubjectEmail: email, Claims: map[string]any{"reason": reason},
+	}); err != nil {
+		e.logger.Warn("account severed but the account-disabled signal was not enqueued",
+			zap.String("user_id", userID), zap.String("reason", reason), zap.Error(err))
+	}
+}
+
 func (e *SyncEngine) revokeTokens(ctx context.Context, userID, why string) {
 	if e.revoke == nil {
 		return

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/revocation"
 	"go.uber.org/zap"
 )
@@ -523,6 +524,17 @@ func (s *Service) RemediateAccountLock(ctx context.Context, userID string) error
 		`UPDATE users SET enabled = false WHERE id = $1 AND org_id = $2`, userID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to lock account: %w", err)
+	}
+
+	// AND THE RECEIVERS. A compromised account this product has locked is
+	// still honoured by every partner that subscribed to account-disabled
+	// until the signal reaches them. Best-effort and loud, like the token
+	// revocation below.
+	if serr := ssfsignal.Enqueue(ctx, s.db.Pool, ssfsignal.Signal{
+		OrgID: org.ID, SubjectID: userID, Claims: map[string]any{"reason": "anomaly_remediation"},
+	}); serr != nil {
+		s.logger.Error("account locked, but the account-disabled signal was not enqueued",
+			zap.String("user_id", userID), zap.Error(serr))
 	}
 
 	// AND THE TOKENS THE ACCOUNT ALREADY HOLDS. Disabling the row stops the

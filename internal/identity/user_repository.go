@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.uber.org/zap"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,6 +35,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/ssfsignal"
 )
 
 // ErrUserNotFound is returned by the repository when no user matches within the
@@ -289,6 +291,17 @@ func (r *PostgresUserRepository) Delete(ctx context.Context, id string) error {
 	}
 	if result.RowsAffected() == 0 {
 		return ErrUserNotFound
+	}
+	// The row is gone. Tell the federated receivers that subscribed to
+	// account-disabled; the transmitter lives in oauth-service, so this is the
+	// seam (internal/common/ssfsignal). Best-effort by the same contract as
+	// token revocation: the delete stands whether or not the signal is written.
+	if serr := ssfsignal.Enqueue(ctx, r.db.Pool, ssfsignal.Signal{
+		OrgID: org.ID, SubjectID: id, Claims: map[string]any{"reason": "user_deleted"},
+	}); serr != nil {
+		// The repository carries no logger; the process logger is the honest
+		// fallback, and silence is the one thing this must not do.
+		zap.L().Warn("user deleted but the account-disabled signal was not enqueued", zap.String("user_id", id), zap.Error(serr))
 	}
 	return nil
 }

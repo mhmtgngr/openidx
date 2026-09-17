@@ -17,6 +17,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/ssfsignal"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
@@ -620,6 +621,14 @@ func (s *ibdrService) executeFullQuarantine(ctx context.Context, incident *Breac
 		// revokeUserSessions below ends the refresh path rather than this one.
 		if s.revoke != nil {
 			s.revoke(ctx, userID, "IBDR full quarantine")
+		}
+		// A containment the federated partners never hear about is one they
+		// keep honouring. Seam to the transmitter; best-effort like the revoke.
+		if serr := ssfsignal.Enqueue(ctx, s.db.Pool, ssfsignal.Signal{
+			OrgID: org.ID, SubjectID: userID, Claims: map[string]any{"reason": "ibdr_full_quarantine"},
+		}); serr != nil {
+			s.logger.Warn("full quarantine: account-disabled signal was not enqueued",
+				zap.String("user_id", logsafe.Clean(userID)), zap.Error(serr))
 		}
 		actions = append(actions, fmt.Sprintf("disabled_user_%s", userID))
 	}
