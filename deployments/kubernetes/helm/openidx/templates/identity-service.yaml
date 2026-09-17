@@ -24,10 +24,14 @@ Deployment's (immutable) selector is unchanged.
 {{- $planes = list
       (dict "name" "identity-auth"  "profile" "auth"  "plane" "auth"
             "replicas" ($auth.replicaCount  | default .Values.identityService.replicaCount)
-            "resources" ($auth.resources  | default .Values.identityService.resources))
+            "resources" ($auth.resources  | default .Values.identityService.resources)
+            "nodeSelector" ($auth.nodeSelector | default dict)
+            "tolerations" ($auth.tolerations | default list))
       (dict "name" "identity-admin" "profile" "admin" "plane" "admin"
             "replicas" ($admin.replicaCount | default .Values.identityService.replicaCount)
-            "resources" ($admin.resources | default .Values.identityService.resources)) }}
+            "resources" ($admin.resources | default .Values.identityService.resources)
+            "nodeSelector" ($admin.nodeSelector | default dict)
+            "tolerations" ($admin.tolerations | default list)) }}
 {{- end }}
 {{- range $p := $planes }}
 ---
@@ -62,6 +66,16 @@ spec:
       serviceAccountName: {{ include "openidx.serviceAccountName" $ }}
       securityContext:
         {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      {{- /* This half's own node pool (task 3.4). Rendered only when set, so
+             an install that never named a pool schedules exactly as before. */}}
+      {{- with $p.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $p.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if $.Values.podAntiAffinity.enabled }}
       affinity:
         podAntiAffinity:

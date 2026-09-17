@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Each identity half can be pinned to its own node pool** (global-scale
+  plan 3.4, the placement half of "APISIX upstreams per plane;
+  `nodeSelector: plane=issue` separate node pool"). Measured first: the chart
+  had no `nodeSelector` or `tolerations` anywhere, so `identityService.planeSplit`
+  produced two Deployments that still shared every node, and ADMIN load could
+  still take ISSUE's CPU. `planeSplit.auth` and `planeSplit.admin` now each
+  take `nodeSelector` (the pool's label) and `tolerations` (its taint), both
+  empty by default and rendered only when set, so an install that never named
+  a pool schedules exactly as before, and that absence is asserted (a rendered
+  `nodeSelector: {}` is not none). Own step in the Helm workflow renders both
+  modes. Four mutations red (selector never rendered, both halves given the
+  auth pool, tolerations dropped, empty selector rendered anyway), no-op
+  control green. **Not done, and said so:** per-plane APISIX upstreams. The
+  Docker edge runs one `identity-service` container, so a per-plane upstream
+  has nothing to point at until that stack also runs two profiles, and its
+  routes are hand-written rather than generated from `identity-planes.json`
+  the way the Ingress rules are; both are the same decision and it is not
+  taken here.
+
 - **A signing key names the cell that minted it, and a token names the key
   that signed it** (global-scale plan 4.4, code half). `signingkeys.NewStore`
   takes the cell id: every kid the store generates or rotates is now
