@@ -261,9 +261,10 @@ func defaultSTUNServers() json.RawMessage {
 // RegisterRemoteSupportAdminRoutes mounts the admin (and admin-WS) surface.
 // MUST go behind middleware.Auth.
 //
-// privileged is the step-up gate applied to starting a session, and it is a
-// parameter rather than something this file reaches for because the gate is a
-// method on Service and this handler does not have one.
+// stepUp is the freshness gate applied to starting a session and admin is the
+// role gate applied to the legal-hold surface. Both are parameters rather than
+// something this file reaches for because each is a method on Service and this
+// handler does not have one.
 //
 // WHY STARTING A SESSION IS GATED AND THE REST IS NOT. HandleStartSession opens
 // an INTERACTIVE remote-control session on a named device -- the default mode
@@ -282,9 +283,18 @@ func defaultSTUNServers() json.RawMessage {
 // service.go, matched only registrations on the group named `api`, and looked
 // only at paths beginning /pam/. A guard keyed on a spelling cannot see work
 // that uses none of them.
-func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGroup, privileged ...gin.HandlerFunc) {
+// withGate prepends a gate to a handler chain, skipping a nil gate so a test
+// that wants the bare handler can pass nil without gin panicking on it.
+func withGate(gate gin.HandlerFunc, handlers ...gin.HandlerFunc) []gin.HandlerFunc {
+	if gate == nil {
+		return handlers
+	}
+	return append([]gin.HandlerFunc{gate}, handlers...)
+}
+
+func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGroup, stepUp, admin gin.HandlerFunc) {
 	r.GET("/remote-support/sessions", h.HandleListSessions)
-	r.POST("/remote-support/sessions", append(append([]gin.HandlerFunc{}, privileged...), h.HandleStartSession)...)
+	r.POST("/remote-support/sessions", withGate(stepUp, h.HandleStartSession)...)
 	r.GET("/remote-support/sessions/:id", h.HandleGetSession)
 	r.POST("/remote-support/sessions/:id/end", h.HandleEndSession)
 	// Admin-side WebSocket — the browser viewer connects here.
@@ -296,7 +306,7 @@ func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGro
 	// Per-tenant retention policy.
 	h.RegisterRetentionAdminRoutes(r)
 	// Legal hold workflow (exempts a session's recording from sweep).
-	h.RegisterLegalHoldAdminRoutes(r)
+	h.RegisterLegalHoldAdminRoutes(r, admin)
 }
 
 // RegisterRemoteSupportPublicRoutes mounts the agent-facing WebSocket. It
