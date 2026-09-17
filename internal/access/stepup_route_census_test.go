@@ -81,21 +81,14 @@ var notPrivilegedLaunch = map[string]string{
 	"POST /pam/sessions/:id/end":          "ends a PAM session; see moderation/:id/end.",
 
 	// The remote-support surface, visible here for the first time. Session
-	// START is gated (see RegisterRemoteSupportAdminRoutes); these are the rest.
+	// START carries the step-up gate and the two legal-hold WRITES carry
+	// requireAdminRole (see RegisterLegalHoldAdminRoutes for the decision);
+	// these are the rest.
 	"POST /remote-support/sessions/:id/end": "ends a remote-control session. Ending access is never the " +
 		"thing to interrupt for a second factor -- see moderation/:id/end.",
 	"POST /remote-support/sessions/:id/recording/chunk": "uploads a recording chunk for a session that was " +
 		"gated at its start. Refusing it would lose the evidence of a session that is running anyway.",
 	"POST /remote-support/sessions/:id/recording/finalize": "closes out that upload; see recording/chunk.",
-	"POST /remote-support/sessions/:id/legal-hold": "exempts a session's recording from the retention sweep. " +
-		"It grants access to no host and reveals no credential, so the freshness gate is the wrong control " +
-		"for it. It is NOT nothing, though, and this entry is the honest version rather than a silence: it " +
-		"is a governance action available to any authenticated caller in the tenant, and whether it should " +
-		"take requireAdminRole() is a decision nobody has made. Recorded here so that it is made rather than " +
-		"inherited.",
-	"DELETE /remote-support/sessions/:id/legal-hold": "releases that hold; see the entry above, including the " +
-		"undecided part -- releasing a hold is the direction that loses evidence, so if either of the two " +
-		"takes an admin check, it is this one.",
 	"POST /agent/remote-support/sessions/:id/consent": "the DEVICE answering attended-support consent, " +
 		"authenticated as a device (X-Agent-ID + X-Auth-Token) on the public group. There is no human " +
 		"session to step up, and this is the endpoint by which the person at the machine REFUSES -- gating " +
@@ -222,17 +215,45 @@ func funcName(line string) string {
 // is ungated, and says so.
 func gatedBy(t *testing.T, routes []routeReg, r routeReg) bool {
 	t.Helper()
-	if strings.Contains(r.chain, "requireAdminRole(") || strings.Contains(r.chain, "requireFreshMFA(") {
+	if hasLiteralGate(r.chain) {
 		return true
 	}
-	if !strings.Contains(r.chain, "privileged") || r.fn == "" {
+	if r.fn == "" {
 		return false
 	}
+	// The chain names one of the enclosing function's parameters; find which,
+	// then follow THAT parameter through the callers by position.
+	param := paramNamedIn(t, r.fn, r.chain)
+	if param == "" {
+		return false
+	}
+	return argGatedAtEveryCall(t, r.fn, param, 0)
+}
+
+func hasLiteralGate(expr string) bool {
+	return strings.Contains(expr, "requireAdminRole(") || strings.Contains(expr, "requireFreshMFA(")
+}
+
+// THE FIRST TRANSITIVE VERSION OF THIS WAS POSITIONALLY BLIND, and a mutation
+// found it: it accepted ANY literal gate anywhere on a caller's line. So with
+// the mount site passing requireFreshMFA(...) for stepUp and nil for admin,
+// the legal-hold writes -- wired to admin -- read as gated by the freshness
+// gate that went to a different parameter. A control reporting success while
+// the thing it exists to make true is not true, for the fourth time in this
+// tree's censuses. Resolution now follows the PARAMETER: which one the route's
+// chain names, which argument position that is in each caller, and what sits
+// in that position -- a literal gate, another parameter (recurse), or anything
+// else (an open mount).
+
+// funcDecls maps every top-level function in the package to its declaration
+// line, so a parameter list can be read for any function a route names.
+func funcDecls(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("readdir: %v", err)
 	}
-	callsAny, gatedCalls := 0, 0
 	for _, e := range entries {
 		n := e.Name()
 		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
@@ -243,18 +264,160 @@ func gatedBy(t *testing.T, routes []routeReg, r routeReg) bool {
 			t.Fatalf("read %s: %v", n, err)
 		}
 		for _, line := range strings.Split(string(b), "\n") {
-			if !strings.Contains(line, "."+r.fn+"(") || strings.Contains(line, "func ") {
-				continue
-			}
-			callsAny++
-			if strings.Contains(line, "requireFreshMFA(") || strings.Contains(line, "requireAdminRole(") {
-				gatedCalls++
+			if strings.HasPrefix(line, "func ") {
+				out[funcName(line)] = line
 			}
 		}
 	}
-	// Every mount has to pass one. One gated caller out of two is a service
-	// that is guarded on one port and open on another.
-	return callsAny > 0 && callsAny == gatedCalls
+	return out
+}
+
+// paramNames reads the parameter names off a func declaration line, in order.
+// "r *gin.RouterGroup, stepUp, admin gin.HandlerFunc" -> [r stepUp admin].
+func paramNames(decl string) []string {
+	rest := decl
+	if i := strings.Index(rest, ") "); strings.HasPrefix(strings.TrimPrefix(rest, "func "), "(") && i >= 0 {
+		rest = rest[i+2:] // skip the receiver
+	}
+	open := strings.Index(rest, "(")
+	if open < 0 {
+		return nil
+	}
+	inner := rest[open+1:]
+	if close := matchParen(inner); close >= 0 {
+		inner = inner[:close]
+	}
+	var names []string
+	for _, group := range splitTopLevel(inner) {
+		fields := strings.Fields(strings.TrimSpace(group))
+		if len(fields) == 0 {
+			continue
+		}
+		names = append(names, fields[0]) // "admin gin.HandlerFunc" or bare "stepUp"
+	}
+	return names
+}
+
+// paramNamedIn returns which parameter of fn the chain mentions, as a whole
+// word, or "" if none.
+func paramNamedIn(t *testing.T, fn, chain string) string {
+	t.Helper()
+	decl, ok := funcDecls(t)[fn]
+	if !ok {
+		return ""
+	}
+	for _, name := range paramNames(decl) {
+		if regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`).MatchString(chain) {
+			return name
+		}
+	}
+	return ""
+}
+
+// argGatedAtEveryCall follows parameter param of fn through every call site.
+func argGatedAtEveryCall(t *testing.T, fn, param string, depth int) bool {
+	t.Helper()
+	if depth > 3 {
+		return false
+	}
+	decls := funcDecls(t)
+	idx := -1
+	for i, name := range paramNames(decls[fn]) {
+		if name == param {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return false
+	}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	calls := 0
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(n)
+		if err != nil {
+			t.Fatalf("read %s: %v", n, err)
+		}
+		enclosing := ""
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(line, "func ") {
+				enclosing = funcName(line)
+				continue
+			}
+			at := strings.Index(line, "."+fn+"(")
+			if at < 0 {
+				continue
+			}
+			calls++
+			args := splitTopLevel(argList(line[at+len(fn)+2:]))
+			if idx >= len(args) {
+				return false // the gate position is not even supplied
+			}
+			arg := strings.TrimSpace(args[idx])
+			switch {
+			case hasLiteralGate(arg):
+			case enclosing != "" && paramNamedIn(t, enclosing, arg) == arg:
+				if !argGatedAtEveryCall(t, enclosing, arg, depth+1) {
+					return false
+				}
+			default:
+				return false // nil, a stub, or anything that is not a gate
+			}
+		}
+	}
+	return calls > 0
+}
+
+// argList returns the text inside the call's parentheses, given the text that
+// follows the opening paren.
+func argList(afterOpen string) string {
+	if close := matchParen(afterOpen); close >= 0 {
+		return afterOpen[:close]
+	}
+	return afterOpen
+}
+
+// matchParen returns the index of the ")" that closes an already-open "(".
+func matchParen(s string) int {
+	depth := 0
+	for i, ch := range s {
+		switch ch {
+		case '(':
+			depth++
+		case ')':
+			if depth == 0 {
+				return i
+			}
+			depth--
+		}
+	}
+	return -1
+}
+
+// splitTopLevel splits on commas that are not inside parentheses or braces.
+func splitTopLevel(s string) []string {
+	var out []string
+	depth, start := 0, 0
+	for i, ch := range s {
+		switch ch {
+		case '(', '{', '[':
+			depth++
+		case ')', '}', ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				out = append(out, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(out, s[start:])
 }
 
 func onPrivilegedSurface(path string) bool {

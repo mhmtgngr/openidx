@@ -39,9 +39,22 @@ type legalHoldRow struct {
 // RegisterLegalHoldAdminRoutes mounts the legal-hold surface. MUST go
 // behind middleware.Auth — these endpoints capture the caller's
 // user_id for the audit trail.
-func (h *RemoteSupportHandler) RegisterLegalHoldAdminRoutes(r *gin.RouterGroup) {
-	r.POST("/remote-support/sessions/:id/legal-hold", h.HandlePlaceLegalHold)
-	r.DELETE("/remote-support/sessions/:id/legal-hold", h.HandleReleaseLegalHold)
+//
+// WHY THE TWO WRITES TAKE THE ADMIN GATE. Placing a hold exempts a session's
+// recording from the retention sweep; releasing one is what lets the sweep
+// purge it. Neither opens a host or reveals a credential, so the step-up gate
+// the PAM launches carry was the wrong control -- but the group these mount on
+// carries authentication and nothing else, so before this any authenticated
+// caller in the tenant could place or release a litigation hold. Releasing is
+// the direction that destroys evidence. The step-up census recorded the
+// question as undecided rather than settled; this is the decision: both
+// writes are admin authority, and under STEPUP_GATE requireAdminRole already
+// asks an admin WRITE for a fresh second factor, so release inherits that too.
+// The list stays open to any authenticated caller: reading which holds exist
+// grants nothing.
+func (h *RemoteSupportHandler) RegisterLegalHoldAdminRoutes(r *gin.RouterGroup, admin gin.HandlerFunc) {
+	r.POST("/remote-support/sessions/:id/legal-hold", withGate(admin, h.HandlePlaceLegalHold)...)
+	r.DELETE("/remote-support/sessions/:id/legal-hold", withGate(admin, h.HandleReleaseLegalHold)...)
 	r.GET("/remote-support/sessions/:id/legal-holds", h.HandleListLegalHolds)
 }
 

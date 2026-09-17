@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Placing and releasing a legal hold on a session recording now requires admin
+  authority** — a decision the step-up census had recorded as undecided, made.
+
+  `POST` and `DELETE /remote-support/sessions/:id/legal-hold` were open to any
+  authenticated caller in the tenant: the group they mount on carries
+  authentication and nothing else, and the handlers gate on session visibility,
+  not on role. Neither opens a host nor reveals a credential, so the freshness
+  gate the PAM launches carry was the wrong control — but **releasing a hold is
+  what lets the retention sweep purge the recording it protected.** Both writes
+  now take `requireAdminRole()`; under `STEPUP_GATE` that gate already asks an
+  admin *write* for a fresh second factor, so release inherits it. The list
+  (`GET .../legal-holds`) stays open: reading which holds exist grants nothing.
+
+  `RegisterRemoteSupportAdminRoutes` now takes two named gates, `stepUp` and
+  `admin`, and hands `admin` to `RegisterLegalHoldAdminRoutes`; the mount site
+  in `service.go` supplies `requireFreshMFA(...)` and `requireAdminRole()`.
+
+  **The census had to learn to follow a parameter more than one frame.** Its
+  gate resolution accepted a gate passed by name and looked at the enclosing
+  function's callers — one level. `RegisterLegalHoldAdminRoutes(r, admin)` is
+  called from inside `RegisterRemoteSupportAdminRoutes` with the *parameter*,
+  and the literal gate is one frame further up in `service.go`. On the day the
+  writes were gated, the census called them ungated — correctly refusing to
+  trust the spelling `admin`, wrongly stopping before the frame that spelled the
+  gate. Resolution is now transitive with a depth bound of three; a caller that
+  passes nothing is still an open mount. The two "undecided" register entries
+  are gone — a gated route cannot sit in the register, and the test enforces it.
+
+  A behavioural pair measures what the text-reading census cannot:
+  `requireAdminRole` refuses `user`/no roles and admits `admin`/`super_admin`;
+  and the legal-hold registration puts a gate in front of both writes and not
+  the read, observed with a sentinel gate rather than a database.
+
+  **Eight mutations against a green no-op control — and two of them stayed
+  green on the first run, each exposing a limit in the census that was then
+  closed:**
+
+  - the mount site passing `nil` for the admin gate stayed **green**: the
+    census's caller resolution accepted *any* literal gate anywhere on the
+    caller's line, so the freshness gate going to a *different* parameter
+    counted for the legal-hold writes. A control reporting success while the
+    thing it exists to make true is not true — the fourth time this tree has
+    found that shape inside a census. Resolution now follows the **parameter
+    position**: which parameter the route's chain names, which argument that is
+    at each call site, and what sits there (a literal gate; another parameter,
+    recurse; anything else, an open mount). Red after the fix.
+  - the two gates **swapped** at the mount site stayed **green by the census's
+    own rule** — it accepts either gate as a classification — while letting any
+    user with a fresh second factor release a litigation hold.
+    `TestTheLegalHoldGateIsTheAdminGateNotTheFreshnessGate` pins the mount line
+    to *which* gate goes *where*, the same shape as
+    `TestTheLaunchRoutesActuallyCarryTheGate`. Red after the pin.
+  - red first time: the registration ignoring the parameter (census and
+    behaviour); `withGate` dropping the gate — **text unchanged, so the census
+    stays green and only the behavioural test goes red**, which is why it
+    exists; `requireAdminRole` admitting everyone; the caller resolution made
+    non-transitive; and the read gated too (the positive-path control).
+
 - **A privileged-session recording could be sealed twice and stop decrypting**
   — a race in the Guacamole recording sealer, measured, root-caused, and closed
   by construction.
