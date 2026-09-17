@@ -100,9 +100,8 @@ func (s *Service) approvingDeviceUsable(ctx context.Context, deviceID string) (b
 	}
 
 	var status string
-	//orgscope:ignore enrolled_agents is an install-wide fleet table with no org_id; keyed here by the globally-unique agent_id already recorded on this user's own push device
-	err = s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), `
-		SELECT COALESCE(status, '') FROM enrolled_agents WHERE agent_id = $1`, agentID).Scan(&status)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(status, '') FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`, agentID, org.ID).Scan(&status)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// The push row names an agent the fleet no longer has. Refusing is

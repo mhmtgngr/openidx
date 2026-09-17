@@ -48,9 +48,9 @@ func TestARefusedRemoteSupportSessionIsActuallyEnded(t *testing.T) {
 	agentID := fmt.Sprintf("consent-agent-%d", time.Now().UnixNano())
 	const token = "an-agent-token"
 	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO enrolled_agents (agent_id, device_id, platform, status, compliance_status, auth_token_hash)
-		 VALUES ($1, $1, 'linux', 'active', 'compliant', $2)`,
-		agentID, sha256Hex(token)); err != nil {
+		`INSERT INTO enrolled_agents (agent_id, device_id, platform, status, compliance_status, auth_token_hash, org_id)
+		 VALUES ($1, $1, 'linux', 'active', 'compliant', $2, $3)`,
+		agentID, sha256Hex(token), orgID); err != nil {
 		t.Fatalf("seed agent: %v", err)
 	}
 

@@ -1399,5 +1399,12 @@ func allMigrations() []*Migration {
 			UpSQL:       ssfPendingEventsUp,
 			DownSQL:     ssfPendingEventsDown,
 		},
+		{
+			Version:     197,
+			Name:        "fleet_per_tenant",
+			Description: "The device fleet is per-tenant: org_id + backfill + FORCE RLS on enrolled_agents, agent_posture_results and agent_enrollment_tokens -- the last three tables on the orgscope needsScoping register, held there since v138 behind the product question this migration answers (decided 2026-09-17). A device's tenant is the tenant of the token that admitted it: agent_enrollment_tokens.org_id is set by the administrator or user who minted the token, enrolled_agents.org_id is copied from the token or the enrollment session at redemption, and agent_posture_results.org_id from the agent at report time. The public redemption path reads the token under an explicit RLS bypass keyed by its SHA-256 (as v171 did for enrollment_sessions) and carries the tenant it finds into everything after it. What this closes: the admin fleet and token lists were the installation's rather than the organization's; kiosk assignments could target another tenant's device (v159 left the target open for want of a tenant term); the per-tenant enrolment quota of plan 4.5 had no tenant to count against; a token-enrolled device with no enrolling user had no tenant at all. Backfill most-exact-first: tokens from the minting user (created_by matched as text against users.id, never cast), agents from the enrolling user then the admitting token then the linked known device, posture from its agent; anything unattributed goes to the oldest organization. v93's install-wide unique device_fingerprint key becomes (org_id, device_fingerprint): one machine may be managed by two tenants. token_hash stays UNIQUE install-wide because it is the lookup key BEFORE a tenant is known. No column DEFAULT.",
+			UpSQL:       fleetPerTenantUp,
+			DownSQL:     fleetPerTenantDown,
+		},
 	}
 }

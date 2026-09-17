@@ -3388,6 +3388,19 @@ class this whole program exists for.
    `internal/access` assert the fleet is deliberately install-wide, which is why
    cross-tenant kiosk *targeting* has no tenant term available to close it.
 
+   **Batch 26 shipped (migration v197, `needsScoping` 5 → 2): the fleet
+   decision was taken — per-tenant.** `enrolled_agents`,
+   `agent_posture_results` and `agent_enrollment_tokens` carry `org_id`
+   (backfilled most-exact-first, NOT NULL, cascade to `organizations`), v93's
+   install-wide device-fingerprint key became `(org_id, device_fingerprint)`,
+   and all three are under `FORCE ROW LEVEL SECURITY`. The two pre-tenant
+   doors — token redemption and the agent's own credential check — run under
+   an explicit bypass and put the row's tenant on the request context, so an
+   agent's report lands in its tenant and nowhere else. The kiosk resolver
+   now also requires the target device to be enrolled in the policy's
+   organization, which closes the v159 finding above. What is left on
+   `needsScoping` is the two external-identity-link tables.
+
    **One tenant could annotate another tenant's role.** `entitlement_metadata`
    (v54) is the governance annotation on a role, a group or an application: its
    risk level, its owner, its tags, whether it requires review. It had no tenant
@@ -4014,9 +4027,10 @@ class this whole program exists for.
    is what got it there — every table that left it brought its own queries under
    the missing-predicate rule in the same commit.
 
-   What remains on any register is the five deferred `needsScoping` tables, each
+   What remains on any register is the two deferred `needsScoping` tables, each
    waiting on a product decision (may one external account link to a user in two
-   tenants; is the agent fleet per-tenant) rather than a migration.
+   tenants) rather than a migration; the agent fleet's decision was taken with
+   v197 (per-tenant).
 
    **Batch 34 (`predicateAuditPending` 18 → 16): the argument that stops
    applying where it matters most.**
@@ -4367,9 +4381,9 @@ class this whole program exists for.
    **Both registers are now empty and pinned at zero.** `needsBelt` began at 34
    and `predicateAuditPending` at 96 queries across 19 tables. A table carrying
    `org_id` without `FORCE ROW LEVEL SECURITY` fails the build; a scoped table
-   whose queries do not name `org_id` fails the build. What remains is the five
+   whose queries do not name `org_id` fails the build. What remains is the two
    deferred `needsScoping` tables, each waiting on a product decision rather than
-   a migration.
+   a migration (the agent fleet's was taken with v197).
 
    ### The probe that proved nothing about what it probed
 

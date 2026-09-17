@@ -60,7 +60,7 @@ func TestGetAccessOverview_CrossPillar(t *testing.T) {
 		`CREATE TABLE ziti_identities (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, user_id UUID, enrolled BOOLEAN)`,
 		`CREATE TABLE enrolled_agents (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), enrolled_by_user_id UUID)`,
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), enrolled_by_user_id UUID, org_id UUID)`,
 		`CREATE TABLE known_devices (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, trusted BOOLEAN)`,
 	}
@@ -83,7 +83,7 @@ func TestGetAccessOverview_CrossPillar(t *testing.T) {
 		`INSERT INTO guacamole_sessions (org_id, user_id, status) VALUES ('` + orgID + `','` + userID + `','active')`,
 		`INSERT INTO guacamole_session_requests (org_id, requester_id, status) VALUES ('` + orgID + `','` + userID + `','pending')`,
 		`INSERT INTO ziti_identities (org_id, user_id, enrolled) VALUES ('` + orgID + `','` + userID + `',true)`,
-		`INSERT INTO enrolled_agents (enrolled_by_user_id) VALUES ('` + userID + `')`,
+		`INSERT INTO enrolled_agents (enrolled_by_user_id, org_id) VALUES ('` + userID + `','` + orgID + `')`,
 		`INSERT INTO known_devices (user_id, org_id, trusted) VALUES ('` + userID + `','` + orgID + `',true)`,
 	}
 	for _, s := range seeds {

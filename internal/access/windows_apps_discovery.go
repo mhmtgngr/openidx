@@ -36,7 +36,8 @@ import (
 // and, more to the point, where /agent/report and /agent/config finally get the
 // check that this file's own header said they already had.
 func (s *Service) verifyAgentToken(ctx context.Context, agentID, token string) bool {
-	return verifyEnrolledAgent(ctx, s.db, agentID, token)
+	_, ok := verifyEnrolledAgent(ctx, s.db, agentID, token)
+	return ok
 }
 
 // handleAgentWindowsAppReport — POST /agent/windows-apps/report (public agent
@@ -59,15 +60,17 @@ func (s *Service) handleAgentWindowsAppReport(c *gin.Context) {
 		return
 	}
 
-	// Resolve the bound host + its tenant. Bypass RLS: the lookup keys on the
-	// globally-unique agent_id and the pam_entries FK, and the agent request
-	// carries no org context. org_id comes from the host entry, not the agent.
+	// Resolve the bound host + its tenant. Bypass RLS: the agent request
+	// carries no tenant JWT, so the lookup keys on the globally-unique
+	// agent_id; since v197 the agent row names its tenant, and the host entry
+	// must be in the SAME tenant -- an agent cannot report for another tenant's
+	// host.
 	rctx := orgctx.WithBypassRLS(ctx)
 	var hostEntryID, orgID string
 	err := s.db.Pool.QueryRow(rctx, `
 		SELECT ea.windows_app_host_entry_id::text, pe.org_id::text
 		  FROM enrolled_agents ea
-		  JOIN pam_entries pe ON pe.id = ea.windows_app_host_entry_id
+		  JOIN pam_entries pe ON pe.id = ea.windows_app_host_entry_id AND pe.org_id = ea.org_id
 		 WHERE ea.agent_id = $1 AND ea.windows_app_host_entry_id IS NOT NULL`,
 		agentID).Scan(&hostEntryID, &orgID)
 	if err != nil {
@@ -129,25 +132,26 @@ func (s *Service) handleWindowsAppHostLinkAgent(c *gin.Context) {
 		return
 	}
 
-	// The agent exists in the global fleet (bypass RLS for that check only).
-	rctx := orgctx.WithBypassRLS(ctx)
+	// The agent exists in THIS tenant's fleet (v197: the fleet is per-tenant,
+	// so another tenant's agent is not found rather than bound).
 	var exists bool
-	if err := s.db.Pool.QueryRow(rctx,
-		`SELECT EXISTS(SELECT 1 FROM enrolled_agents WHERE agent_id = $1)`, agentID).Scan(&exists); err != nil || !exists {
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2)`,
+		agentID, org.ID).Scan(&exists); err != nil || !exists {
 		c.JSON(http.StatusNotFound, gin.H{"error": "enrolled agent not found"})
 		return
 	}
 
 	// Enforce one agent per host: clear any other agent currently bound to this
 	// host, then bind the requested agent.
-	if _, err := s.db.Pool.Exec(rctx,
+	if _, err := s.db.Pool.Exec(ctx,
 		`UPDATE enrolled_agents SET windows_app_host_entry_id = NULL
-		  WHERE windows_app_host_entry_id = $1 AND agent_id <> $2`, entryID, agentID); err != nil {
+		  WHERE windows_app_host_entry_id = $1 AND agent_id <> $2 AND org_id = $3`, entryID, agentID, org.ID); err != nil {
 		s.logger.Warn("link agent: clearing prior binding failed", zap.Error(err))
 	}
-	if _, err := s.db.Pool.Exec(rctx,
-		`UPDATE enrolled_agents SET windows_app_host_entry_id = $1 WHERE agent_id = $2`,
-		entryID, agentID); err != nil {
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE enrolled_agents SET windows_app_host_entry_id = $1 WHERE agent_id = $2 AND org_id = $3`,
+		entryID, agentID, org.ID); err != nil {
 		s.logger.Error("link agent: bind failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to link agent"})
 		return
@@ -173,10 +177,9 @@ func (s *Service) handleWindowsAppHostUnlinkAgent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	rctx := orgctx.WithBypassRLS(ctx)
-	if _, err := s.db.Pool.Exec(rctx,
-		`UPDATE enrolled_agents SET windows_app_host_entry_id = NULL WHERE windows_app_host_entry_id = $1`,
-		entryID); err != nil {
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE enrolled_agents SET windows_app_host_entry_id = NULL WHERE windows_app_host_entry_id = $1 AND org_id = $2`,
+		entryID, org.ID); err != nil {
 		s.logger.Error("unlink agent: failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unlink agent"})
 		return
@@ -198,20 +201,14 @@ type windowsAppHostAgent struct {
 }
 
 // listWindowsAppHostAgents returns the agent bindings for every windows_app_host
-// entry in the tenant. It joins the global enrolled_agents fleet to this org's
-// windows_app_host entries, so it needs the entry set from an org-scoped read;
-// the join predicate restricts to entries owned by orgID.
+// entry in the tenant. Both sides of the join are this tenant's since v197.
 func (s *Service) listWindowsAppHostAgents(ctx context.Context, orgID string) ([]windowsAppHostAgent, error) {
-	// Bypass RLS to read the global enrolled_agents table, but constrain the
-	// join to windows_app_host entries owned by this tenant so only in-tenant
-	// bindings are returned.
-	rctx := orgctx.WithBypassRLS(ctx)
-	rows, err := s.db.Pool.Query(rctx, `
+	rows, err := s.db.Pool.Query(ctx, `
 		SELECT ea.windows_app_host_entry_id::text, ea.agent_id,
 		       COALESCE(ea.status,''), COALESCE(ea.last_seen_at::text,'')
 		  FROM enrolled_agents ea
 		  JOIN pam_entries pe ON pe.id = ea.windows_app_host_entry_id
-		 WHERE ea.windows_app_host_entry_id IS NOT NULL
+		 WHERE ea.windows_app_host_entry_id IS NOT NULL AND ea.org_id = $1
 		   AND pe.org_id = $1 AND pe.entry_type = 'windows_app_host'`, orgID)
 	if err != nil {
 		return nil, err

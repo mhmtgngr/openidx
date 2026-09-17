@@ -63,7 +63,7 @@ func TestGetAccessOverview_AppsCountIncludesGroupAssignments(t *testing.T) {
 		`CREATE TABLE ziti_identities (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, user_id UUID, enrolled BOOLEAN)`,
 		`CREATE TABLE enrolled_agents (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), enrolled_by_user_id UUID)`,
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), enrolled_by_user_id UUID, org_id UUID)`,
 		`CREATE TABLE known_devices (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, trusted BOOLEAN)`,
 	}

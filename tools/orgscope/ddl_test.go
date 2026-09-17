@@ -351,7 +351,8 @@ func TestRegistersOnlyShrink(t *testing.T) {
 		// by a query naming two columns the table never had, the second by
 		// nothing at all. What remains is the deferred half; see scoped.go for
 		// the two questions it is waiting on.
-		{"needsScoping", len(needsScoping), 5},
+		// 5 -> 2 with v197: the agent fleet is per-tenant (decided 2026-09-17).
+		{"needsScoping", len(needsScoping), 2},
 		// 34 → 19: migration v140 belted the fifteen whose queries already
 		// carried their org predicate. Re-pinned rather than left at 34, or
 		// the register could grow back into the room the fix just made.

@@ -209,15 +209,13 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 	}
 
 	// Ziti agents with no linked known device (token-enrolled / legacy).
-	// enrolled_agents has no org_id; scoped through the org-verified user key.
-	//orgscope:ignore enrolled_agents is scoped through the org-verified enrolled_by_user_id key
 	aRows, err := s.db.Pool.Query(ctx,
 		`SELECT agent_id, COALESCE(ziti_identity_id,''), COALESCE(status,''),
 		        COALESCE(platform,''), COALESCE(management_mode,''),
 		        COALESCE(compliance_status,'unknown'), COALESCE(compliance_score,0), last_seen_at
 		   FROM enrolled_agents
-		  WHERE enrolled_by_user_id = $1 AND known_device_id IS NULL
-		  ORDER BY enrolled_at DESC`, userID)
+		  WHERE enrolled_by_user_id = $1 AND org_id = $2 AND known_device_id IS NULL
+		  ORDER BY enrolled_at DESC`, userID, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +237,7 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 
 	// Attach each agent's latest posture result per check_type.
 	if len(agentIDs) > 0 {
-		if err := s.attachDevicePosture(ctx, agentIDs, agentEntry); err != nil {
+		if err := s.attachDevicePosture(ctx, orgID, agentIDs, agentEntry); err != nil {
 			return nil, err
 		}
 	}
@@ -249,14 +247,13 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 
 // attachDevicePosture fills the latest posture result per (agent, check_type)
 // onto the matching DeviceZiti entries.
-func (s *Service) attachDevicePosture(ctx context.Context, agentIDs []string, byAgent map[string]*DeviceZiti) error {
-	//orgscope:ignore agent_posture_results keyed by globally-unique agent_id, restricted to the org-verified agent set above
+func (s *Service) attachDevicePosture(ctx context.Context, orgID string, agentIDs []string, byAgent map[string]*DeviceZiti) error {
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT DISTINCT ON (agent_id, check_type)
 		        agent_id, check_type, status, COALESCE(severity,''), reported_at
 		   FROM agent_posture_results
-		  WHERE agent_id = ANY($1)
-		  ORDER BY agent_id, check_type, reported_at DESC`, agentIDs)
+		  WHERE agent_id = ANY($1) AND org_id = $2
+		  ORDER BY agent_id, check_type, reported_at DESC`, agentIDs, orgID)
 	if err != nil {
 		return err
 	}
@@ -313,15 +310,12 @@ func (s *Service) handleRevokeUserDevice(c *gin.Context) {
 		return
 	}
 
-	// The agent must belong to this user (defense in depth: enrolled_agents has
-	// no org_id, so the enrolled_by_user_id match plus the org-verified user is
-	// the tenant gate).
+	// The agent must belong to this user, in this tenant.
 	var zitiIdentityID, knownDeviceID string
-	//orgscope:ignore enrolled_agents scoped through the org-verified enrolled_by_user_id match
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT COALESCE(ziti_identity_id,''), COALESCE(known_device_id::text,'')
-		   FROM enrolled_agents WHERE agent_id = $1 AND enrolled_by_user_id = $2`,
-		agentID, userID).Scan(&zitiIdentityID, &knownDeviceID)
+		   FROM enrolled_agents WHERE agent_id = $1 AND enrolled_by_user_id = $2 AND org_id = $3`,
+		agentID, userID, org.ID).Scan(&zitiIdentityID, &knownDeviceID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "device not found for this user"})
 		return
@@ -400,10 +394,9 @@ func (s *Service) executeDeviceRevoke(ctx context.Context, orgID, agentID, zitiI
 	}
 
 	// Ziti mirror + IAM: mark the agent revoked and untrust the known device.
-	//orgscope:ignore enrolled_agents keyed by globally-unique agent_id resolved from the org-verified user above
 	if _, err := s.db.Pool.Exec(ctx,
-		`UPDATE enrolled_agents SET status = 'revoked', ziti_identity_id = NULL WHERE agent_id = $1`,
-		agentID); err != nil {
+		`UPDATE enrolled_agents SET status = 'revoked', ziti_identity_id = NULL WHERE agent_id = $1 AND org_id = $2`,
+		agentID, orgID); err != nil {
 		warn("revoke_agent", err)
 	} else {
 		res.AgentRevoked = true

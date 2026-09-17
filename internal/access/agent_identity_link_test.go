@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // An overlay identity nothing in the product names.
@@ -36,6 +37,7 @@ import (
 const agentLinkSchema = `
 CREATE TABLE IF NOT EXISTS enrolled_agents (
     agent_id VARCHAR(255) PRIMARY KEY,
+    org_id UUID NOT NULL,
     status VARCHAR(32) DEFAULT 'pending',
     ziti_identity_id VARCHAR(255),
     updated_at TIMESTAMPTZ DEFAULT NOW());`
@@ -51,14 +53,16 @@ func agentLinkFixture(t *testing.T) (*AgentAPIHandler, *zitiStub, *database.Post
 		return nil, nil, nil, nil, nil, func() {}
 	}
 	gin.SetMode(gin.TestMode)
-	ctx := context.Background()
+	// Approval is an admin call: the fleet is per-tenant (v197), so the
+	// handler wants the administrator's organization on the context.
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: devOrg})
 
 	if _, err := db.Pool.Exec(ctx, agentLinkSchema); err != nil {
 		cleanup()
 		t.Fatalf("schema: %v", err)
 	}
 	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO enrolled_agents (agent_id, status) VALUES ($1, 'pending')`, linkedAgent); err != nil {
+		`INSERT INTO enrolled_agents (agent_id, org_id, status) VALUES ($1, $2, 'pending')`, linkedAgent, devOrg); err != nil {
 		cleanup()
 		t.Fatalf("seed the agent: %v", err)
 	}

@@ -54,18 +54,20 @@ func newEnrollTokenFixture(t *testing.T) *enrollTokenFixture {
 	_, err = db.Pool.Exec(ctx, `DROP TABLE IF EXISTS agent_enrollment_tokens, enrolled_agents, enrollment_sessions`)
 	require.NoError(t, err)
 	// The token table is the one under test, so it is built from the migrations
-	// that shipped it: v43 creates it, v86 adds reusable.
+	// that shipped it: v43 creates it, v86 adds reusable, v197 adds the tenant.
 	_, err = db.Pool.Exec(ctx, registeredEnrollmentTokenDDL(t))
 	require.NoError(t, err)
 	// The rows HandleEnroll writes after a redemption. Minimal shapes: they are
-	// not what is measured, they only have to accept the writes.
+	// not what is measured, they only have to accept the writes -- except
+	// org_id on the agent, which IS measured: the device lands in the token's
+	// tenant.
 	_, err = db.Pool.Exec(ctx, `
 		CREATE TABLE enrolled_agents (
 			agent_id text primary key, device_id text, status text, auth_token_hash text,
 			enrolled_at timestamptz, compliance_status text, metadata jsonb,
 			platform text, form_factor text, enrollment_method text, enrolled_by_user_id text,
 			management_mode text, is_device_owner boolean, device_fingerprint text,
-			ziti_identity_id text, last_seen_at timestamptz);
+			ziti_identity_id text, last_seen_at timestamptz, org_id uuid not null);
 		CREATE TABLE enrollment_sessions (
 			id uuid primary key, token_hash text, created_by_user_id text, org_id uuid,
 			mfa_verified boolean, status text, expires_at timestamptz);`)
@@ -77,27 +79,38 @@ func newEnrollTokenFixture(t *testing.T) *enrollTokenFixture {
 }
 
 // registeredEnrollmentTokenDDL returns the agent_enrollment_tokens statements
-// from the migrations register: the CREATE TABLE (with its index) from v43
-// and the whole of v86. A fixture built from anything else would measure the
-// fixture.
+// from the migrations register: the CREATE TABLE (with its index) from v43,
+// the whole of v86, and v197's tenant column. A fixture built from anything
+// else would measure the fixture. (v197's backfill, NOT NULL, foreign keys and
+// belt need organizations and users and are measured by the fleet tenant
+// isolation test against the full chain; here the column is enough, because
+// what this file measures is redemption.)
 func registeredEnrollmentTokenDDL(t *testing.T) string {
 	t.Helper()
-	var v43, v86 string
+	var v43, v86, v197 string
 	for _, m := range migrations.All() {
 		switch m.Version {
 		case 43:
 			v43 = m.UpSQL
 		case 86:
 			v86 = m.UpSQL
+		case 197:
+			v197 = m.UpSQL
 		}
 	}
 	require.NotEmpty(t, v43, "migration v43 (agent_enrollment_tokens) is not registered")
 	require.NotEmpty(t, v86, "migration v86 (reusable) is not registered")
+	require.NotEmpty(t, v197, "migration v197 (fleet per tenant) is not registered")
 	create := regexp.MustCompile(`(?s)CREATE TABLE IF NOT EXISTS agent_enrollment_tokens \(.*?\);\s*CREATE INDEX[^;]*agent_enrollment_tokens[^;]*;`)
 	stmt := create.FindString(v43)
 	require.NotEmpty(t, stmt, "v43 no longer carries CREATE TABLE agent_enrollment_tokens")
-	return stmt + "\n" + v86
+	addOrg := regexp.MustCompile(`ALTER TABLE agent_enrollment_tokens\s+ADD COLUMN IF NOT EXISTS org_id UUID;`).FindString(v197)
+	require.NotEmpty(t, addOrg, "v197 no longer adds agent_enrollment_tokens.org_id")
+	return stmt + "\n" + v86 + "\n" + addOrg
 }
+
+// redeemOrg is the tenant every token in these tests is minted in.
+const redeemOrg = "00000000-0000-0000-0000-00000000dd01"
 
 type seededToken struct {
 	plaintext string
@@ -109,9 +122,9 @@ func (f *enrollTokenFixture) seed(t *testing.T, createdBy string, expiresIn time
 	plaintext := uuid.New().String()
 	var id string
 	err := f.db.Pool.QueryRow(f.ctx, `
-		INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at, reusable, revoked)
-		VALUES ($1, 'test', $2, NOW() + $3::interval, $4, $5) RETURNING id`,
-		sha256Hex(plaintext), createdBy, expiresIn.String(), reusable, revoked).Scan(&id)
+		INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at, reusable, revoked, org_id)
+		VALUES ($1, 'test', $2, NOW() + $3::interval, $4, $5, $6) RETURNING id`,
+		sha256Hex(plaintext), createdBy, expiresIn.String(), reusable, revoked, redeemOrg).Scan(&id)
 	require.NoError(t, err)
 	return seededToken{plaintext: plaintext, id: id}
 }
@@ -163,9 +176,11 @@ func TestAValidSingleUseEnrollmentTokenIsRedeemedOnceAndSpentOnBothRoutes(t *tes
 	require.NoError(t, err)
 	assert.Equal(t, "user-42", got.CreatedBy)
 	assert.False(t, got.Reusable)
+	assert.Equal(t, redeemOrg, got.OrgID, "the redeemer did not hand back the token's tenant")
 	require.NotNil(t, f.usedAt(t, tok.id), "a redeemed single-use token was not spent")
 
-	// Positive control, agent route: a fresh token enrolls, and is spent.
+	// Positive control, agent route: a fresh token enrolls, and is spent, and
+	// the device lands in the token's tenant (v197).
 	tok = f.seed(t, "user-42", time.Hour, false, false)
 	w := agentEnroll(f.agentHandler(), tok.plaintext)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -173,7 +188,10 @@ func TestAValidSingleUseEnrollmentTokenIsRedeemedOnceAndSpentOnBothRoutes(t *tes
 	require.NotNil(t, f.usedAt(t, tok.id), "the agent route enrolled without spending the token")
 	var usedBy *string
 	require.NoError(t, f.db.Pool.QueryRow(f.ctx, `SELECT used_by_agent FROM agent_enrollment_tokens WHERE id = $1`, tok.id).Scan(&usedBy))
-	assert.NotNil(t, usedBy, "the enrolling agent was not recorded on the token")
+	require.NotNil(t, usedBy, "the enrolling agent was not recorded on the token")
+	var agentOrg string
+	require.NoError(t, f.db.Pool.QueryRow(f.ctx, `SELECT org_id::text FROM enrolled_agents WHERE agent_id = $1`, *usedBy).Scan(&agentOrg))
+	assert.Equal(t, redeemOrg, agentOrg, "the enrolled device is not in the token's tenant")
 
 	// The same token a second time is refused -- on either route.
 	w = agentEnroll(f.agentHandler(), tok.plaintext)

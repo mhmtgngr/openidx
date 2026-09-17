@@ -73,11 +73,11 @@ var beltExempt = map[string]string{
 //
 //   - the external identity links: may one external account link to a user in
 //     two tenants at once, and if so which tenant owns the link row?
-//   - the agent fleet: three separate comments in internal/access assert that
-//     the fleet is deliberately install-wide, so an agent id names a device
-//     without naming a tenant. v159 raised this in the readiness guide as an
-//     open product decision after finding that it leaves cross-tenant kiosk
-//     TARGETING open with no tenant term available to close it.
+//   - (closed) the agent fleet: three separate comments in internal/access
+//     asserted that the fleet was deliberately install-wide, so an agent id
+//     named a device without naming a tenant, and v159 found that this left
+//     cross-tenant kiosk TARGETING open. Decided per-tenant on 2026-09-17;
+//     v197 gives the three tables org_id, backfill and the belt.
 //
 // Every table on this register that did NOT need such a decision has now been
 // scoped or dropped.
@@ -86,10 +86,9 @@ var needsScoping = map[string]string{
 	"user_identity_links":  "per-user external identity links; needs the one-account-two-tenants decision",
 	"social_account_links": "per-user social provider links; needs the one-account-two-tenants decision",
 
-	// Agent fleet — the devices enrolled by a tenant's users.
-	"enrolled_agents":         "enrolled devices with tokens and compliance state (v43); needs the is-the-fleet-per-tenant decision",
-	"agent_posture_results":   "per-device posture results (v43); follows enrolled_agents",
-	"agent_enrollment_tokens": "enrolment tokens that admit a device to the fleet (v43); follows enrolled_agents",
+	// The agent fleet (enrolled_agents, agent_posture_results,
+	// agent_enrollment_tokens) left this register with v197: the fleet is
+	// per-tenant, decided 2026-09-17.
 }
 
 // needsBelt: EMPTY, AND PINNED AT ZERO.

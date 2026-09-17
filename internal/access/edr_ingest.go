@@ -443,13 +443,13 @@ func (s *Service) resolveIdentityForDevice(ctx context.Context, src *EDRSource, 
 		// enrolled_agents stores device attributes in a JSONB metadata blob;
 		// match the reported hostname to the enrolling user's Ziti identity.
 		query = `SELECT zi.id::text FROM ziti_identities zi
-                 JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id
+                 JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id AND ea.org_id = zi.org_id
                  WHERE lower(ea.metadata->>'hostname') = lower($1) AND zi.org_id = $2::uuid
                  LIMIT 1`
 	default: // serial
 		matchVal = d.Serial
 		query = `SELECT zi.id::text FROM ziti_identities zi
-                 JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id
+                 JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id AND ea.org_id = zi.org_id
                  WHERE ea.metadata->>'serial' = $1 AND zi.org_id = $2::uuid
                  LIMIT 1`
 	}

@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The device fleet is one tenant's** (migration v197; global-scale plan 4.5
+  and the last product decision the orgscope register was waiting on).
+  `enrolled_agents`, `agent_posture_results` and `agent_enrollment_tokens`
+  had no `org_id` for 196 migrations, on a decision three comments in
+  `internal/access` asserted and v159 already found wanting: a kiosk policy
+  could be aimed at a device another tenant managed, because "somebody else's
+  device" was not a thing the schema could express. Measured first, against
+  the real schema: the admin fleet list, revoke and approve were the
+  installation's, not the organization's; a token minted in one tenant
+  enrolled a device that every tenant's console then listed; and the
+  per-tenant enrolment quota the plan asks for had no column to count on.
+  **Decided per-tenant**, because the fleet is administered, revoked, listed
+  and locked down from one organization's console, and every other
+  per-organization table in the product is belted the same way. v197 adds
+  `org_id` to the three tables, backfills most-exact-first (a token from the
+  user who minted it; a device from the user who enrolled it, then from the
+  token that admitted it, then from the known device it is linked to; posture
+  from its agent; the rest to the oldest organization), makes it NOT NULL with
+  a cascade to `organizations`, replaces v93's install-wide device-fingerprint
+  key with a per-tenant one so one physical machine may be managed by two
+  tenants, and puts all three under `FORCE ROW LEVEL SECURITY`. Every fleet
+  query in `internal/access`, `internal/portal`, `internal/identity` and
+  `internal/oauth` now carries the tenant; the admin handlers refuse a request
+  with no organization on its context (403) and answer 404, not 200, when a
+  revoke or approve matches no row of the caller's. **The two pre-tenant
+  doors stay open and are said to be open:** an agent redeeming an enrolment
+  token or presenting its credential arrives with no tenant, so those two
+  lookups run under an explicit RLS bypass keyed by the token's SHA-256 or the
+  agent id, and the row's own `org_id` is put on the request context so
+  everything after them is scoped — an agent's report lands in its tenant
+  and nowhere else. The kiosk resolver additionally requires the device to be
+  enrolled in the policy's organization, which closes the v159 finding. The
+  `needsScoping` register goes 5 → 2 (the two external-identity-link tables,
+  which wait on a different decision); the compliance grace sweep is the one
+  deliberate install-wide reader left and carries its reason. Two PostgreSQL
+  suites: the belt as `openidx_app` (cross-tenant rows invisible, cross-tenant
+  writes refused, both public doors open, a report lands in its own tenant),
+  and the migration end to end (backfill source by source, the fingerprint
+  key, list, revoke, approve, mint-and-enrol). Seven mutations red — the
+  redeemer's bypass removed, the list's predicate dropped, one backfill step
+  removed, the install-wide key kept, ENABLE removed, FORCE removed, the agent
+  auth no longer putting the row's tenant on the context — and the no-op
+  control green. FORCE was expected to be latent (the runtime role is not the
+  owner) and was live in both suites: the belt fixture's role owns the table
+  it builds, which is exactly the single-role install where FORCE is what
+  belts it.
+
 - **The global-scale plan says where it stops** — a closing section in
   `docs/plans/2026-09-13-global-scale-cell-architecture-plan.md` lists every
   item still open after this run (live k6 game day, pgcat and the read

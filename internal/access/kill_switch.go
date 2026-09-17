@@ -272,11 +272,10 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 	if err == nil && userZitiID != "" {
 		zitiIDs = append(zitiIDs, userZitiID)
 	}
-	//orgscope:ignore enrolled_agents is scoped through the org-verified enrolled_by_user_id key
 	agentRows, err := s.db.Pool.Query(ctx,
 		`SELECT ziti_identity_id FROM enrolled_agents
-		  WHERE enrolled_by_user_id = $1 AND ziti_identity_id IS NOT NULL AND ziti_identity_id <> ''`,
-		userID)
+		  WHERE enrolled_by_user_id = $1 AND org_id = $2 AND ziti_identity_id IS NOT NULL AND ziti_identity_id <> ''`,
+		userID, orgID)
 	if err != nil {
 		warn("list_device_identities", err)
 	} else {

@@ -118,9 +118,9 @@ func (h *AgentAPIHandler) HandleCreateEnrollSession(c *gin.Context) {
 	expiresAt := time.Now().UTC().Add(h.enrollSessionTTL())
 
 	if _, err := h.db.Pool.Exec(ctx, `
-		INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at, reusable)
-		VALUES ($1, $2, $3, $4, false)
-	`, tokenHash, "enrollment session", userID, expiresAt); err != nil {
+		INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at, reusable, org_id)
+		VALUES ($1, $2, $3, $4, false, $5)
+	`, tokenHash, "enrollment session", userID, expiresAt, orgID); err != nil {
 		h.logger.Error("HandleCreateEnrollSession: token insert failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start enrollment session"})
 		return
@@ -218,7 +218,7 @@ func (h *AgentAPIHandler) HandleCancelEnrollSession(c *gin.Context) {
 	// redeems. The error was discarded, so a cancel could mark the session
 	// canceled, report success, and leave the enrolment token live.
 	if _, err := h.db.Pool.Exec(ctx,
-		`UPDATE agent_enrollment_tokens SET revoked = true WHERE token_hash = $1`, tokenHash); err != nil {
+		`UPDATE agent_enrollment_tokens SET revoked = true WHERE token_hash = $1 AND org_id = $2`, tokenHash, org.ID); err != nil {
 		h.logger.Error("enrollment session canceled but its token could not be revoked", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not revoke the enrollment token"})
 		return

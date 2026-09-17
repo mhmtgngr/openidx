@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // THE TWO DOORS INTO THE FLEET HAD DIFFERENT LOCKS.
@@ -36,6 +38,12 @@ import (
 // rather than logged. Reusable (fleet/MDM bootstrap) tokens are never spent and
 // are checked for revocation and expiry only.
 
+// Since v197 the token table is per-tenant and belted. An agent redeeming a
+// token arrives with no tenant -- no JWT, no subdomain the resolver can trust
+// -- so the lookup runs under an explicit RLS bypass keyed by the token's
+// SHA-256 (as v171 did for enrollment_sessions), and the tenant the token
+// carries is handed back to the caller, who scopes everything after it.
+
 // enrollTokenStore is the slice of *database.ScopedPool the redeemer needs.
 type enrollTokenStore interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
@@ -48,6 +56,9 @@ type redeemedEnrollmentToken struct {
 	ID        string
 	CreatedBy string
 	Reusable  bool
+	// OrgID is the tenant the token was minted in, and therefore the tenant the
+	// device enrols into (v197).
+	OrgID string
 }
 
 // Refusals a caller may show the client. Anything else the redeemer returns
@@ -71,11 +82,15 @@ func redeemEnrollmentToken(ctx context.Context, store enrollTokenStore, token st
 		expiresAt time.Time
 		revoked   bool
 	)
+	// The one pre-tenant read on this table: the presented token is the key,
+	// and the row names the tenant.
+	ctx = orgctx.WithBypassRLS(ctx)
+	//orgscope:ignore public token redemption: keyed by the high-entropy token hash before any tenant is resolvable; the row's own org_id scopes everything after
 	err := store.QueryRow(ctx, `
-		SELECT id, created_by, expires_at, COALESCE(revoked, false), COALESCE(reusable, false)
+		SELECT id, created_by, expires_at, COALESCE(revoked, false), COALESCE(reusable, false), org_id::text
 		FROM agent_enrollment_tokens
 		WHERE token_hash = $1
-	`, sha256Hex(token)).Scan(&out.ID, &createdBy, &expiresAt, &revoked, &out.Reusable)
+	`, sha256Hex(token)).Scan(&out.ID, &createdBy, &expiresAt, &revoked, &out.Reusable, &out.OrgID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return redeemedEnrollmentToken{}, errEnrollmentTokenUnknown
 	}
@@ -99,8 +114,8 @@ func redeemEnrollmentToken(ctx context.Context, store enrollTokenStore, token st
 	// to this statement and the database lets exactly one of them through.
 	tag, err := store.Exec(ctx, `
 		UPDATE agent_enrollment_tokens SET used_at = NOW()
-		WHERE id = $1 AND used_at IS NULL
-	`, out.ID)
+		WHERE id = $1 AND org_id = $2 AND used_at IS NULL
+	`, out.ID, out.OrgID)
 	if err != nil {
 		return redeemedEnrollmentToken{}, fmt.Errorf("spend enrollment token: %w", err)
 	}

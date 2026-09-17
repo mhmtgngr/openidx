@@ -52,6 +52,7 @@ func TestAgentReportRequiresTheAgentsOwnCredential(t *testing.T) {
 	if _, err := db.Pool.Exec(ctx, `
 		CREATE TABLE enrolled_agents (
 			agent_id          VARCHAR(64) PRIMARY KEY,
+			org_id            UUID NOT NULL,
 			auth_token_hash   VARCHAR(128) NOT NULL,
 			status            VARCHAR(20) NOT NULL DEFAULT 'active',
 			platform          VARCHAR(32),
@@ -63,6 +64,7 @@ func TestAgentReportRequiresTheAgentsOwnCredential(t *testing.T) {
 	}
 	if _, err := db.Pool.Exec(ctx, `
 		CREATE TABLE agent_posture_results (
+			org_id             UUID NOT NULL,
 			agent_id           VARCHAR(64) NOT NULL,
 			check_type         VARCHAR(64) NOT NULL,
 			status             VARCHAR(20),
@@ -89,8 +91,8 @@ func TestAgentReportRequiresTheAgentsOwnCredential(t *testing.T) {
 		{theAgent, theToken}, {anotherAgent, anotherToken},
 	} {
 		if _, err := db.Pool.Exec(ctx,
-			`INSERT INTO enrolled_agents (agent_id, auth_token_hash) VALUES ($1, $2)`,
-			a.id, sha256Hex(a.token)); err != nil {
+			`INSERT INTO enrolled_agents (agent_id, auth_token_hash, org_id) VALUES ($1, $2, $3)`,
+			a.id, sha256Hex(a.token), devOrg); err != nil {
 			t.Fatalf("seed %s: %v", a.id, err)
 		}
 	}
