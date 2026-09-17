@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An SSF stream configuration now says what the stream will get** —
+  `events_delivered`, computed from the one list the discovery document
+  advertises, and a stream that could never deliver is refused instead of
+  created enabled and left silent.
+
+  The discovery document was made honest earlier: `events_supported` names
+  what this transmitter emits and nothing else. This is the same honesty one
+  step later. A receiver posts `events_requested`; the Shared Signals
+  Framework answers with `events_delivered`, the intersection with what is
+  supported, and OpenIDX answered with the request echoed back and an enabled
+  stream. A receiver that asked for `credential-change` — never sent — was told
+  nothing and waited. The stream configuration and the discovery document were
+  two places that could disagree, and the receiver only ever reads the second.
+
+  - `ssfEventsSupported` is now **one variable** in `ssf_handlers.go`: the
+    handler advertises it and `ssfEventsDelivered` intersects against it, in
+    the advertised order. An empty request means everything — the reading the
+    emit side (`streamWantsEvent`) already gives it, and a test holds the two
+    sides to the same answer.
+  - `SSFStream` carries `events_delivered` on every read.
+  - `CreateSSFStream` refuses a request whose intersection is empty, **before
+    the INSERT**, with the offered list in the error where the receiver's
+    operator is looking.
+  - The advertised-events census reads the variable and additionally holds the
+    handler's `events_supported` key to *that* variable, so a literal list
+    growing back in the handler is a census failure, not a second truth.
+
+  **Five mutations red against a green no-op control:** `events_delivered`
+  echoing the request; the refusal removed (the stream is created); the read
+  path echoing the request (the CRUD test against a live database catches it);
+  the handler growing its own literal list (the census pin); and an empty
+  request meaning nothing on the configuration side while the emit side
+  delivers everything.
+
+  Not measured: no receiver-facing HTTP round trip is driven here; the handler
+  maps the create error to 400 as before, unchanged.
+
 - **A severed account now reaches the SSF receivers that subscribed to
   `account-disabled`** — the RISC event the product advertised for months and
   never sent once, with the seam built in the place the measurement said it had

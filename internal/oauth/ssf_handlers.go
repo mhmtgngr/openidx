@@ -68,16 +68,24 @@ func (s *Service) handleSSFConfiguration(c *gin.Context) {
 		//
 		// TestEverySSFEventAdvertisedIsActuallyEmitted holds both directions,
 		// so this list grows again exactly when an emitter appears and not
-		// before.
-		"events_supported": []string{
-			EventSessionRevoked,
-			// Emitted by the signal drainer (ssf_signal_drain.go) for every
-			// path that disables or deletes a user, via internal/common/ssfsignal.
-			// The census in ssf_advertised_census_test.go holds this list to
-			// what is actually emitted, in both directions.
-			EventAccountDisabled,
-		},
+		// before. The list itself is ssfEventsSupported, ONE variable, because
+		// the stream configuration's events_delivered is computed from the
+		// same list: what this document offers and what a stream is told it
+		// will get cannot be two lists that drift.
+		"events_supported": ssfEventsSupported,
 	})
+}
+
+// ssfEventsSupported is what this transmitter actually emits. It is the list
+// /.well-known/ssf-configuration advertises AND the list a stream's
+// events_requested is intersected with to produce events_delivered. The
+// census in ssf_advertised_census_test.go holds it to the EmitCAEPEvent calls
+// in both directions.
+var ssfEventsSupported = []string{
+	EventSessionRevoked,
+	// Emitted by the signal drainer (ssf_signal_drain.go) for every path that
+	// disables or deletes a user, via internal/common/ssfsignal.
+	EventAccountDisabled,
 }
 
 func (s *Service) handleListSSFStreams(c *gin.Context) {

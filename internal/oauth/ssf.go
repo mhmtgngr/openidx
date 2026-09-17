@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -33,15 +34,22 @@ const (
 
 // SSFStream is a configured transmitter push stream.
 type SSFStream struct {
-	ID               string    `json:"stream_id"`
-	OrgID            string    `json:"-"`
-	Description      string    `json:"description,omitempty"`
-	Audience         string    `json:"aud"`
-	DeliveryEndpoint string    `json:"-"`
-	EventsRequested  []string  `json:"events_requested"`
-	Status           string    `json:"status"`
-	CreatedAt        time.Time `json:"-"`
-	UpdatedAt        time.Time `json:"-"`
+	ID               string   `json:"stream_id"`
+	OrgID            string   `json:"-"`
+	Description      string   `json:"description,omitempty"`
+	Audience         string   `json:"aud"`
+	DeliveryEndpoint string   `json:"-"`
+	EventsRequested  []string `json:"events_requested"`
+	// EventsDelivered is what the receiver will actually get: events_requested
+	// intersected with what this transmitter emits (or everything it emits,
+	// when nothing specific was requested). SSF puts this field in the stream
+	// configuration for exactly the case it settles here -- a receiver that
+	// asked for an event nobody sends is told so in the answer to its request,
+	// not by an enabled stream that stays silent forever.
+	EventsDelivered []string  `json:"events_delivered"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"-"`
+	UpdatedAt       time.Time `json:"-"`
 	// Delivery is the SSF delivery method descriptor returned in the config.
 	Delivery map[string]interface{} `json:"delivery,omitempty"`
 }
@@ -150,6 +158,13 @@ func (s *Service) CreateSSFStream(ctx context.Context, orgID string, in *SSFStre
 	if events == nil {
 		events = []string{}
 	}
+	// A stream that could never deliver anything is refused here, where the
+	// receiver's operator is looking, rather than created enabled and left to
+	// wait. The answer names what IS offered so the fix is in the error.
+	if len(events) > 0 && len(ssfEventsDelivered(events)) == 0 {
+		return nil, fmt.Errorf("none of the requested events is emitted by this transmitter; events_supported: %s",
+			strings.Join(ssfEventsSupported, ", "))
+	}
 	eventsJSON, _ := json.Marshal(events)
 	authEnc, err := s.ssfEncrypt(in.DeliveryAuth)
 	if err != nil {
@@ -231,6 +246,28 @@ func ssfNullIfEmpty(s string) interface{} {
 	return s
 }
 
+// ssfEventsDelivered is events_requested reduced to what this transmitter
+// emits, in the advertised order. An empty request means "everything", the
+// same reading streamWantsEvent gives it on the emit side -- the two MUST
+// agree, or the configuration would promise one set and the fan-out deliver
+// another.
+func ssfEventsDelivered(requested []string) []string {
+	if len(requested) == 0 {
+		return append([]string{}, ssfEventsSupported...)
+	}
+	want := make(map[string]bool, len(requested))
+	for _, e := range requested {
+		want[e] = true
+	}
+	out := []string{}
+	for _, e := range ssfEventsSupported {
+		if want[e] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 type ssfRowScanner interface {
 	Scan(dest ...interface{}) error
 }
@@ -246,6 +283,7 @@ func scanSSFStream(row ssfRowScanner) (*SSFStream, error) {
 	if st.EventsRequested == nil {
 		st.EventsRequested = []string{}
 	}
+	st.EventsDelivered = ssfEventsDelivered(st.EventsRequested)
 	st.Delivery = map[string]interface{}{
 		"method":       "https://schemas.openid.net/secevent/risc/delivery-method/push",
 		"endpoint_url": st.DeliveryEndpoint,
