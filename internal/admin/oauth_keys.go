@@ -27,7 +27,7 @@ type signingKeyView struct {
 }
 
 func (s *Service) signingKeyStore() *signingkeys.Store {
-	return signingkeys.NewStore(s.db.Pool.Raw(), s.config.EncryptionKey, s.logger)
+	return signingkeys.NewStore(s.db.Pool.Raw(), s.config.EncryptionKey, s.config.CellID, s.logger)
 }
 
 // handleListOAuthSigningKeys returns metadata for every signing key (never

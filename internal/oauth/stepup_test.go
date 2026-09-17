@@ -28,7 +28,7 @@ func TestGenerateStepUpToken_RoundTrip(t *testing.T) {
 	)
 
 	before := time.Now()
-	tokStr, err := generateStepUpToken(priv, userID, reason, issuer)
+	tokStr, err := generateStepUpToken("test-kid-7", priv, userID, reason, issuer)
 	if err != nil {
 		t.Fatalf("generateStepUpToken: %v", err)
 	}
@@ -50,8 +50,8 @@ func TestGenerateStepUpToken_RoundTrip(t *testing.T) {
 		t.Fatal("parsed token reported Valid=false")
 	}
 
-	if kid, _ := parsed.Header["kid"].(string); kid != "openidx-key-1" {
-		t.Errorf("kid header = %q, want %q", kid, "openidx-key-1")
+	if kid, _ := parsed.Header["kid"].(string); kid != "test-kid-7" {
+		t.Errorf("kid header = %q, want the signing key's own kid %q", kid, "test-kid-7")
 	}
 
 	claims, ok := parsed.Claims.(jwt.MapClaims)
@@ -98,7 +98,7 @@ func TestGenerateStepUpToken_PassesReasonThrough(t *testing.T) {
 	}
 
 	for _, reason := range []string{"manual", "policy-required", "elevated-scope-grant", ""} {
-		tokStr, err := generateStepUpToken(priv, "u", reason, "iss")
+		tokStr, err := generateStepUpToken("test-kid-7", priv, "u", reason, "iss")
 		if err != nil {
 			t.Fatalf("generateStepUpToken(reason=%q): %v", reason, err)
 		}

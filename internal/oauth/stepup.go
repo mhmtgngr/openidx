@@ -312,7 +312,8 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 	}
 
 	// Generate a short-lived step-up JWT (5 minutes)
-	stepUpToken, err := generateStepUpToken(s.activePrivateKey(), userID, reason, s.issuer)
+	signKid, signKey := s.signingKey()
+	stepUpToken, err := generateStepUpToken(signKid, signKey, userID, reason, s.issuer)
 	if err != nil {
 		s.logger.Error("Failed to generate step-up token",
 			zap.String("user_id", userID),
@@ -454,8 +455,16 @@ func (s *Service) verifyStepUpFactor(ctx context.Context, userID, method, code, 
 	}
 }
 
-// generateStepUpToken creates a short-lived RS256 JWT with step-up claims.
-func generateStepUpToken(privateKey *rsa.PrivateKey, userID, reason, issuer string) (string, error) {
+// generateStepUpToken signs a five-minute step-up assertion with the key the
+// service signs everything else with, under THAT key's kid. It used to stamp
+// the legacy kid "openidx-key-1" as a literal while signing with whatever
+// key was active, so on any install whose active key was not the legacy one
+// -- every fresh install, and every install after its first rotation -- the
+// token named a key that had not signed it, and a JWKS verifier would either
+// fail to find the kid or find the wrong key. Nothing in the tree verified
+// this token, which is why that was latent; it is still a token the product
+// hands out, and a token that misnames its own key is wrong on its face.
+func generateStepUpToken(kid string, privateKey *rsa.PrivateKey, userID, reason, issuer string) (string, error) {
 	now := time.Now()
 	claims := jwt.MapClaims{
 		"sub":     userID,
@@ -467,6 +476,6 @@ func generateStepUpToken(privateKey *rsa.PrivateKey, userID, reason, issuer stri
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	token.Header["kid"] = "openidx-key-1"
+	token.Header["kid"] = kid
 	return token.SignedString(privateKey)
 }

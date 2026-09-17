@@ -70,7 +70,7 @@ func TestRefreshingTheSignerDoesNotRaceWithSAMLSigning(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS oauth_signing_keys;`) })
 
-	store := signingkeys.NewStore(pool, "", zap.NewNop())
+	store := signingkeys.NewStore(pool, "", "", zap.NewNop())
 	active, err := store.EnsureActive(ctx, nil)
 	require.NoError(t, err)
 

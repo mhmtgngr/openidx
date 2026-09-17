@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A signing key names the cell that minted it, and a token names the key
+  that signed it** (global-scale plan 4.4, code half). `signingkeys.NewStore`
+  takes the cell id: every kid the store generates or rotates is now
+  `<cell>-key-<hex>` (`openidx-key-<hex>` on a single-cell install, so nothing
+  changes where `CELL_ID` is unset), and the legacy import keeps
+  `openidx-key-1` in any cell because pre-upgrade tokens carry that name. The
+  `<n>` is random hex rather than a counter: nothing coordinates a counter
+  across replicas and the kid only has to be unique and legible. **This is
+  attribution, not isolation:** a cell refuses another cell's token because
+  its own JWKS does not hold the kid, whatever it is called (pinned by a
+  cross-cell verification test: another cell's token is refused naming the
+  foreign kid, a leaked foreign key wearing this cell's kid fails on
+  signature, this cell's own token verifies); the prefix is what makes that
+  refusal readable in a log. **Found while measuring:** the step-up JWT
+  (`generateStepUpToken`) stamped the literal kid `openidx-key-1` while
+  signing with whatever key was active, so on every fresh install (whose
+  first key is generated, not imported) and every install after its first
+  rotation the token named a key that had not signed it. Latent, since
+  nothing in the tree verifies that token; fixed anyway, since it is a token
+  the product hands out. It now carries the signer's kid, and an AST census
+  refuses any kid header in `internal/oauth` set from a string literal. Five
+  mutations red (prefix ignores the cell, store drops the cell, rotation
+  keeps the single-cell prefix, legacy import renamed into the cell, literal
+  kid restored), no-op control green. Own CI step. **Not done:** OpenBao/KMS
+  per cell is infrastructure; `cmd/rekey` needs no cell scope because it
+  re-encrypts one database and a cell is one database.
+
 - **One redeemer for the enrollment token, and the spend is a claim** — an
   admin/MDM enrollment token (`agent_enrollment_tokens`) admits a device on two
   public routes, the agent's `POST /agent/enroll` and the dark-mode
