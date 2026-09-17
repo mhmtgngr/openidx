@@ -843,6 +843,33 @@ Yani 3.2'nin hem yapılandırma hem de yayın yarısı, hiçbir küme olmadan, g
 
 ---
 
+## Bu ortamda yapılabilenlerin sonu — açık kalanlar ve neyle açılırlar (2026-09-17)
+
+Bu bölüm planın **kod tarafında** kalan hiçbir kalem olmadığını söylemek için
+değil, kalan her kalemin **neden bu ortamda ölçülemediğini ve neyle
+açılacağını** tek yerde söylemek için var. Kural değişmedi: bir kalem ancak
+kabul ölçütü ÖLÇÜLDÜĞÜNDE kapanır; aşağıdakilerin hiçbiri "yaptım" diye
+işaretlenmedi ve işaretlenmeyecek. Her satır üç şey söyler: ne kaldı, neyi
+bekliyor, kim/ne verince kapanır.
+
+| Kalem | Ne kaldı | Neden burada değil | Neyle açılır |
+|---|---|---|---|
+| **1.5** k6 DDoS oyun günü (satır 150) | Altı senaryonun STAGING hücresine karşı **canlı** koşusu; "VERIFY p99 değişmedi / ISSUE > %99" ölçümü | Bir hücre yok. `--check` ve öz-test CI'da yeşil; ölçüm bir küme ister | Oyun günü M1; sonuç `docs/evidence/` altına yazılınca kapanır |
+| **2.2** pgcat üretimde (satır 192) | `values-prod.yaml`'da `pgcat.enabled=true`; Terraform RDS `max_connections`; "ISSUE HPA 30 replikaya çıkarken PG bağlantısı sabit" ölçümü | Chart pooler'ı gemiye aldı ve `RLS_MODE=local` kilidi render'da; asıl iddia yük altında bir RDS ister | Kanarya kapısı: `RLS_MODE=local` 2 hafta + `orgscope` yeşil; sonra prod values + RDS parametresi tek PR |
+| **2.3** okuma replikası varsayılan (satır 202) | `values-prod.yaml` `readReplica: true` | Mağazaya `database-read-url` yazılmadan bayrağı açmak ExternalSecret'ı **tüm gizin** senkronunu düşürecek bir anahtara bağlar; kod tarafı (gerçek geri düşüş, kesici, 25006 ölçümü) bitti | Runbook'taki iki adım: mağazaya reader endpoint'i, sonra bayrak |
+| **2.3** `Reader()` partileri (satır 203) | Bugün **dokuz** dosya replikada (`ai_intelligence`, `analytics_enhanced`, `dashboard`, `ispm`, `mfa_management`, `notification_management`, `pam_overview`, `predictive_analytics`, `risk_analytics`); `internal/admin`'de `db.Pool` okuyan **57** dosya birincide | Ölçüt yapısal değil anlamsal: bir işleyicinin offload edilebilmesi konsolda **hangi ekranın** onu okuduğuna ve o ekranın bir mutasyondan sonra tazelenip tazelenmediğine bağlı (4. ve 5. partilerin dersi). Her aday, konsol kaynağı okunarak tek tek karara bağlanır; otomatik bir kural yanlış işleyiciyi taşır | Ekran ekran kanıtla, parti parti; sayım (`replica_offload_test.go`) iki yönlü muhafazasıyla yeni partiyi sırt sırta korur |
+| **3.4** süpürücüler `cmd/<svc>-worker`'a (satır 650) | governance/provisioning/audit periyodik işlerinin ayrı binary'lere taşınması | Sınıflandırma ölçüldü (üç sayım: süpürücü, `cmd`, şekil); **ayırmanın faydası yük ister** ve bu ortamda yük yok. Yük ölçülmeden taşımak, "daha iyi" iddiasını kanıtsız yapar | Bir hücrede `SERVICE_PROFILE` ile ISSUE/ADMIN ayrımının ölçümü; süpürücülerin API pod'una maliyeti görünürse taşınır |
+| **3.4** APISIX düzlem başına upstream (satır 658) | Docker kenarında `identity-auth` / `identity-admin` upstream'leri | Compose yığını **tek** identity konteyneri koşturuyor; upstream'in işaret edeceği şey yok, ve APISIX rotaları `identity-planes.json`'dan üretilmiyor (Ingress kuralları üretiliyor). Düğüm havuzu yarısı yapıldı | Compose'a iki profil + rotaların üretilmesi — tek karar, iki dosya |
+| **4.2** `modules/cell` + küçük hücre profili (809–810) | Terraform modülü; `terraform apply` < 90 dk ölçümü | Bulut hesabı ve `terraform apply` yetkisi ister; burada yalnız `terraform validate` mümkün. Küçük hücrenin **değer** yüzü var (`deployments/kubernetes/cells/canary-1.yaml`), altyapı yüzü yok | K5 kararı (bölge, `s`/`m`) + bir bulut aboneliği |
+| **4.3** `eu-1` + `us-1` + `canary-1` (satır 815) | Hücrelerin kendisi; "bir hücre kapanınca diğerinin SLO'su değişmez" oyun günü | 4.2'yi bekler. Dağıtım dalgasının şekli yapıldı ve muhafızlı (`rollout-cell.yml`, `check-release-rollout.sh`); dalganın **koştuğu** hiç görülmedi | 4.2 + `CELL_ROLLOUT=true` + `cell-<id>` ortamları; ilk gerçek dalga `docs/evidence/`'e |
+| **4.4** OpenBao/KMS hücre başına (satır 822) | Hücre başına KEK; sızan anahtarın çapraz hücrede doğrulatamaması **canlı** testi | Kod yarısı yapıldı (`kid=<cell>-key-<hex>`, çapraz hücre `jwksverify` testi); KEK bir KMS ister | 4.2 modülüne KMS/OpenBao girdisi; `ENCRYPTION_KEY` mağazadan hücre başına |
+| **4.5** Ziti controller L4 LB + kiracı başına saatte N (satır 829) | Ayrı hostname + L4 LB; enrollment kotası | Kod yarısı yapıldı (tek kullanımlık token gerçekten tek kullanımlık). Kota **bu tabloda uygulanamaz**: `agent_enrollment_tokens`'ın `org_id`'si yok, "filo kiracı başına mı" kararını bekliyor (`needsScoping`). L4 LB altyapı | Filo kararı → `org_id` migrasyonu → kota; LB 4.2 ile |
+| **5** çeyreklik takvim (838–842) | Oyun günü, canlı kaos, SLO incelemesi, CIDR drift, planın yeniden doğrulanması | Bunlar **takvim** kalemleri, kod değil; her biri bir hücre ve bir tarih ister. Statik yarıları var: `make k8s-chaos` statik CI'da, `edge-cidr-sync` CronJob'u chart'ta, k6 `--check` CI'da | M1 sonrası ilk çeyrek; her koşu `docs/evidence/` altına |
+
+**Bu turda kapanan kod kalemleri (2026-09-16 → 2026-09-17, PR #911–#922):** legal-hold admin kapısı; SSF `account-disabled` dikişi (v196) ve `events_delivered`; dört kalemin kararla kapanması (olay yolu bağımlılık değil); kayıt token'ının tek itfacısı; `kid` hücre adı + step-up kid düzeltmesi; düzlem başına düğüm havuzu; release dalgası. Her biri ölçüm → mutasyon → belge → PR sırasıyla gitti; hiçbirinde "yaptım" yazan bir kutu, ölçülmemiş bir kabul ölçütünün önüne geçmedi.
+
+**Karar bekleyenler (planın sessizce alamayacağı):** K2 (ilk kamu pazarı/bölge), K5 (hücre boyutu) — 4.2/4.3'ün önünde; "filo kiracı başına mı" — 4.5 kotasının ve `enrolled_agents` ailesinin `orgscope` kaydının önünde. Bunlar ADR ister, PR değil.
+
 ## Bağımlılık grafiği
 
 ```mermaid
