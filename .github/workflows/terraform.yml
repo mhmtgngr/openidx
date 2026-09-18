@@ -33,6 +33,22 @@ jobs:
           - deployments/terraform/edge
           - deployments/terraform/modules/edge-cloudflare
           - deployments/terraform/modules/edge-azure
+          # The Azure root and the four data-plane modules were never in this
+          # matrix. Validated standalone for the first time on 2026-09-18, two
+          # of them were broken: openziti's and audit-service's `set {}` blocks
+          # are the helm 2.x provider syntax and neither module pinned a
+          # provider (they only ever validated through the root, which does),
+          # audit-service defined `production_safe` twice, and its ConfigMap
+          # wrote label keys with dots unquoted, which HCL reads as a resource
+          # reference. No root calls audit-service, so no job had ever parsed
+          # it. A directory that no
+          # job validates is a directory whose next edit is checked by whoever
+          # runs `terraform apply`.
+          - deployments/terraform/azure
+          - deployments/terraform/modules/rds
+          - deployments/terraform/modules/elasticache
+          - deployments/terraform/modules/openziti
+          - deployments/terraform/modules/audit-service
     steps:
       - uses: actions/checkout@v7
 

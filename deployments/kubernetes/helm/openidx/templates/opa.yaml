@@ -19,6 +19,7 @@ spec:
   # watched oauth-service scale 0 -> 2 and crash-loop. `dig` returns the value
   # when the key is present, including 0, and the default only when absent.
   replicas: {{ dig "replicas" 2 (.Values.opa | default dict) }}
+  {{- include "openidx.rollingStrategy" . | nindent 2 }}
   selector:
     matchLabels:
       {{- include "openidx.selectorLabels" . | nindent 6 }}
@@ -29,6 +30,13 @@ spec:
         {{- include "openidx.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: opa
     spec:
+      # The static chaos drill (scripts/k8s-chaos-drill.sh --static) demands
+      # the same four always-on settings of every Deployment; this one was
+      # the one of eleven that lacked them, and the drill was red on main
+      # for as long as nothing ran it. The preStop is the sleep handler, not
+      # the shell hook: the OPA image has no shell.
+      {{- include "openidx.gracefulTermination" . | nindent 6 }}
+      {{- include "openidx.topologySpread" (dict "ctx" . "component" "opa") | nindent 6 }}
       serviceAccountName: {{ .Values.serviceAccount.name | default "openidx" }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
@@ -46,6 +54,7 @@ spec:
       containers:
         - name: opa
           image: {{ .Values.opa.image | quote }}
+          {{- include "openidx.preStopSleep" . | nindent 10 }}
           args:
             - "run"
             - "--server"

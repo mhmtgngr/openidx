@@ -442,7 +442,9 @@ Platform:
 - A test administrator action appears in the audit table and in the SIEM
   forwarder, and chain verification passes.
 - The backup ran in the last day and the latest restore-verify passed.
-- No `latest` image tags; digests pinned.
+- No `latest` image tags in the production values; every service pinned to
+  the release tag. Digest pinning is not done anywhere in this repository
+  yet, chart or Dockerfiles, so there is no box to tick for it.
 - Grafana and the other observability endpoints are not open with default
   credentials.
 
@@ -483,8 +485,10 @@ Say these to a customer before they find them:
   user in two tenants (the last two tables outside the tenant belt), and
   what the per-tenant enrolment quota is (the column to count on exists
   since migration v197, the number does not).
-- **Terraform** provisions AWS; other clouds are values files and a cluster
-  you bring.
+- **Terraform** has an AWS root (EKS, RDS, ElastiCache, OpenZiti) and an
+  Azure root (AKS, Flexible Server, Redis, Key Vault) under
+  `deployments/terraform/`. Neither has been applied from this repository;
+  other clouds are values files and a cluster you bring.
 
 ---
 

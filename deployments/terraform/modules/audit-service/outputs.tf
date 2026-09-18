@@ -46,20 +46,3 @@ output "autoscaling_enabled" {
   value       = var.autoscaling_enabled
 }
 
-output "production_safe" {
-  description = "Security assessment for production deployment"
-  value = {
-    safe = !(
-      var.environment == "prod" && contains(var.audit_stream_allowed_origins, "*")
-    )
-    warnings = concat(
-      var.environment == "prod" && contains(var.audit_stream_allowed_origins, "*") ? ["SECURITY: Wildcard origin '*' allows connections from any origin"] : [],
-      var.environment == "prod" && var.tls_enabled == false ? ["SECURITY: TLS is disabled - traffic is unencrypted"] : [],
-      var.environment == "prod" && var.audit_stream_enable_security_logging == false ? ["SECURITY: Security logging is disabled - cannot audit connection attempts"] : [],
-    )
-    recommendations = concat(
-      length(var.audit_stream_allowed_origins) == 0 ? ["Consider explicitly configuring allowed origins for better security posture"] : [],
-      var.environment != "prod" && contains(var.audit_stream_allowed_origins, "*") ? ["Wildcard origin is acceptable for development, but not production"] : [],
-    )
-  }
-}

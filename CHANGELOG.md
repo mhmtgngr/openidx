@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The docs say what CI proves, and CI proves what the docs say.** Three
+  claims measured on 2026-09-18 and made true rather than deleted. (1) The
+  global-scale plan has said since 2026-09-13 that the static chaos drill
+  (`make k8s-chaos`) runs on every PR; no workflow ran it, and run for the
+  first time it was red: the OPA Deployment lacked `preStop`,
+  `terminationGracePeriodSeconds`, `topologySpreadConstraints` and a
+  `rollingUpdate` strategy, the one Deployment of eleven the always-on
+  profile did not cover. The chart now gives it all four (the preStop is the
+  Kubernetes sleep handler, because the OPA image has no shell), and the
+  Helm lint job runs the drill with kubeconform and promtool installed, so
+  "not measured" cannot read as a pass. (2) `terraform.yml` validated five
+  of ten Terraform directories. The Azure root and the rds, elasticache,
+  openziti and audit-service modules join the matrix; validated standalone,
+  two were broken — the openziti and audit-service modules write helm 2.x
+  `set {}` blocks and pinned no provider, so alone they pulled 3.x and
+  failed on the first block; audit-service also defined the
+  `production_safe` output twice and wrote its ConfigMap label keys
+  unquoted, which HCL reads as a resource reference, and no root calls
+  that module, so nothing had ever parsed it. All fixed. (3) Four documents said
+  things the tree did not: `PROJECT-STATUS.md` was a May snapshot calling
+  Helm and Terraform incomplete (rewritten as a one-page current snapshot
+  that points at the authorities); `evidence/release-gate.md` recorded
+  v1.34.0 as "not cut" after v1.34.0 and v1.35.0 had both shipped signed
+  (rows written from the releases and runs, dated as written after the
+  fact); the operator guide asked operators to confirm "digests pinned"
+  when nothing in the repository pins a digest, and said Terraform covers
+  only AWS when an Azure root exists; migration 042's comment called three
+  tables unimplemented that migration 043 creates.
+
 - **A condensed operator guide** (`docs/docs/deployment/operator-guide.md`,
   in the docs nav and linked from both READMEs): the fourteen sections an
   operator reads instead of six thousand lines of readiness notes. What you
