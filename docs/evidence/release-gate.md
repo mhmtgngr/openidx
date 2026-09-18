@@ -79,4 +79,5 @@ they all ran on that commit.
 
 | Version | Date | CI run for the tagged commit | Signed | Notes |
 |---|---|---|---|---|
-| v1.34.0 | _(not cut)_ | | will be the first signed release | |
+| v1.34.0 | 2026-09-06 | https://github.com/mhmtgngr/openidx/actions/runs/34036228213 | `SHA256SUMS.sig` + `SHA256SUMS.pem` on the release (cosign keyless) | the first signed release; tag push. Row written 2026-09-18 from the release and the run, not on the day |
+| v1.35.0 | 2026-09-10 | https://github.com/mhmtgngr/openidx/actions/runs/34469261188 | `SHA256SUMS.sig` + `SHA256SUMS.pem` on the release (cosign keyless) | the tag run (34463088810) died on a runner bound (#890); cut by dispatch from the same commit. Row written 2026-09-18 |

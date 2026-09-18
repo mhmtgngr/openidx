@@ -169,10 +169,10 @@ resource "kubernetes_config_map" "audit_service_config" {
     name      = "openidx-audit-service-config"
     namespace = "openidx"
     labels = {
-      app.kubernetes.io / name       = "audit-service"
-      app.kubernetes.io / instance   = "openidx"
-      app.kubernetes.io / part-of    = "openidx"
-      app.kubernetes.io / managed-by = "terraform"
+      "app.kubernetes.io/name"       = "audit-service"
+      "app.kubernetes.io/instance"   = "openidx"
+      "app.kubernetes.io/part-of"    = "openidx"
+      "app.kubernetes.io/managed-by" = "terraform"
     }
   }
 
@@ -219,6 +219,10 @@ output "production_safe" {
       var.environment == "prod" && var.tls_enabled == false ? ["TLS is disabled in production"] : [],
       var.environment == "prod" && var.audit_stream_enable_security_logging == false ? ["Security logging is disabled in production"] : [],
       var.environment == "prod" && length(var.audit_stream_allowed_origins) == 0 ? ["No explicit allowed origins configured - same-origin policy enforced"] : [],
+    )
+    recommendations = concat(
+      length(var.audit_stream_allowed_origins) == 0 ? ["Consider explicitly configuring allowed origins for better security posture"] : [],
+      var.environment != "prod" && contains(var.audit_stream_allowed_origins, "*") ? ["Wildcard origin is acceptable for development, but not production"] : [],
     )
   }
 }

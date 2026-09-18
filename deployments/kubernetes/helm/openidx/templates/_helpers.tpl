@@ -89,6 +89,22 @@ preStop lifecycle hook, applied at container level.
 Kept separate from the pod-level setting above because Kubernetes puts them in
 different places in the spec.
 */}}
+{{- define "openidx.preStopSleep" -}}
+{{- /*
+The same delay as openidx.preStopHook, for images that carry no shell: the
+OPA image is distroless, so an exec hook of `sh -c sleep` fails at
+termination and the kubelet logs FailedPreStopHook instead of draining.
+Kubernetes has had a native sleep handler since 1.29 (GA in 1.32).
+*/ -}}
+{{- $g := .Values.gracefulTermination | default dict -}}
+{{- if ne (dig "enabled" true $g) false }}
+lifecycle:
+  preStop:
+    sleep:
+      seconds: {{ dig "preStopSeconds" 5 $g }}
+{{- end }}
+{{- end }}
+
 {{- define "openidx.preStopHook" -}}
 {{- $g := .Values.gracefulTermination | default dict -}}
 {{- if ne (dig "enabled" true $g) false }}

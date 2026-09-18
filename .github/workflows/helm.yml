@@ -88,6 +88,27 @@ jobs:
       - name: Lint
         run: helm lint "$CHART"
 
+      # The global-scale plan (line 22) has said since 2026-09-13 that
+      # `make k8s-chaos` (static) runs on every PR. Nothing ran it, and when
+      # first run on 2026-09-18 it was red: the OPA Deployment lacked preStop,
+      # terminationGracePeriodSeconds, topologySpreadConstraints and a
+      # rollingUpdate strategy. kubeconform and promtool are what the drill
+      # calls; without them it reports "not measured", which it counts as a
+      # failure rather than a pass.
+      - name: Install kubeconform and promtool (the static chaos drill calls both)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/k8sha
+          bash scripts/ci-retry.sh 3 5 -- curl -sSL -o /tmp/k8sha/kubeconform.tgz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/k8sha/kubeconform.tgz -C /tmp/k8sha kubeconform
+          bash scripts/ci-retry.sh 3 5 -- curl -sSL -o /tmp/k8sha/prom.tgz \
+            https://github.com/prometheus/prometheus/releases/download/v2.53.4/prometheus-2.53.4.linux-amd64.tar.gz
+          tar -xzf /tmp/k8sha/prom.tgz --strip-components=1 -C /tmp/k8sha prometheus-2.53.4.linux-amd64/promtool
+          /tmp/k8sha/kubeconform -v && /tmp/k8sha/promtool --version
+      - name: Chaos drill, static half (global-scale plan line 22)
+        run: bash scripts/k8s-chaos-drill.sh --static
+
       # The bundled PostgreSQL/Redis passwords are `required` (an empty one
       # rendered a DSN that could not authenticate), so a render has to supply
       # them. These are placeholders for a manifest that is thrown away.

@@ -19,9 +19,10 @@ package migrations
 // columns but neither init-db.sql nor any migration ever created them, so a
 // campaign "Run" 500'd everywhere. Added here as ADD COLUMN IF NOT EXISTS.
 //
-// Still NOT covered (no schema exists anywhere in the repo — genuinely
-// unimplemented, tracked separately): agents (/api/v1/access/agents),
-// recommendations (/api/v1/recommendations), notification_digest_settings.
+// The three tables this note once called uncovered — enrolled_agents
+// (/api/v1/access/agents), ai_recommendations + recommendation_history
+// (/api/v1/recommendations) and notification_digests — are created by
+// migration 043 (sql_v43.go); this comment predates it.
 var tableGapV42Up = `-- Migration 042: reconcile init-db.sql-only + loose-SQL tables.
 
 -- Governance: ABAC policies -------------------------------------------------

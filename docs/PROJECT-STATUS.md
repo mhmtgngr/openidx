@@ -1,98 +1,44 @@
 # OpenIDX Project Status
 
-> ⚠️ **STALE — kept for history.** This snapshot is from **2026-05-20** and
-> no longer reflects the project: it drops PAM and IGA from the product
-> definition and calls Helm/Terraform incomplete. For the current state,
-> read **[PROJECT-READINESS-GUIDE.md](./PROJECT-READINESS-GUIDE.md)** (the
-> user-perspective readiness assessment, next steps, and controls) and
-> [PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md) (the deploy-side
-> view).
+**Last refreshed: 2026-09-18** against `main`. This file is a one-page
+snapshot; the documents it points to are the authority, and if this page and
+the code disagree, the code is right and this page has rotted.
 
-> **Last refreshed: 2026-05-20.** This document was previously badly out of
-> date (it claimed "2/7 services built" and listed shipped features as TODO).
-> It now reflects the actual state of the codebase. For where the project is
-> headed next, see the stabilize-and-deploy roadmap referenced at the bottom.
+| Question | Read |
+|---|---|
+| How do I install, verify, upgrade and operate it | [`docs/deployment/operator-guide.md`](./docs/deployment/operator-guide.md) |
+| What is enforced, what is proved by CI, what is left (P-numbered programme) | [`PROJECT-READINESS-GUIDE.md`](./PROJECT-READINESS-GUIDE.md) |
+| The global-scale (cell) plan and its closing table of open items | [`plans/2026-09-13-global-scale-cell-architecture-plan.md`](./plans/2026-09-13-global-scale-cell-architecture-plan.md) |
+| Cutting a release | [`RELEASING.md`](./RELEASING.md) |
 
 ## Snapshot
 
-OpenIDX is an open-source Zero Trust Access Platform (IAM + ZTNA). Core
-functionality is **largely built and tested** — the remaining work is
-hygiene, deployability, and test depth, not missing core features.
-
-## Backend services
-
-All eight services under `cmd/` are HTTP-wired with real PostgreSQL
-persistence and meaningful test coverage (~127 Go test files across the
-tree). Build everything with `make build-services`.
-
-| Service | Port | Status |
-|---|---|---|
-| Identity (`cmd/identity-service`) | 8001 | ✅ Built + tested — users, sessions, WebAuthn, push MFA, TOTP, federation, passwordless |
-| Governance (`cmd/governance-service`) | 8002 | ✅ Built + tested — access reviews, policies (SoD/risk/timebound), OPA |
-| Provisioning (`cmd/provisioning-service`) | 8003 | ✅ Built + tested — SCIM 2.0 users/groups |
-| Audit (`cmd/audit-service`) | 8004 | ✅ Built + tested — unified audit events, streaming, compliance reports |
-| Admin API (`cmd/admin-api`) | 8005 | ✅ Built + tested — aggregated admin surface |
-| OAuth/OIDC (`cmd/oauth-service`) | 8006 | ✅ Built + tested — OAuth2 + OIDC provider, PKCE, JWKS (RS256) |
-| Gateway (`cmd/gateway-service`) | 8088 | ✅ Built + tested — APISIX integration, proxy routes, Ziti |
-| Access (`cmd/access-service`) | — | ✅ Built + tested — Ziti zero-trust, posture, **Android agent / MDM / kiosk / remote support** |
-
-Supporting binaries: `cmd/migrate` (migrations), `cmd/backup` (backup/restore
-CLI), `cmd/profiler`.
-
-## Android unified agent (shipped)
-
-A native Android client (`agent-android/`) delivering MDM + kiosk + remote
-support over Ziti — enrollment (QR + OAuth), posture, Play Integrity
-verification, kiosk lockdown, WebRTC remote control with recording
-(filesystem + S3, encryption-at-rest + key rotation, retention + legal hold),
-and BYOD work-profile mode. Merged in PR #59. Server side lives in
-`internal/access/` (`agent_api.go`, `kiosk_api.go`, `remote_support*.go`,
-`play_integrity.go`, `turn_credentials.go`, `recording_crypto.go`). See
-`docs/superpowers/specs/2026-05-15-android-client-design.md`.
-
-## Admin console (frontend)
-
-`web/admin-console/` — React 18 + Vite + TanStack Query + Radix/Tailwind.
-~85 feature pages, nearly all wired to real backend APIs (users, groups,
-roles, governance, applications, Ziti, MFA, audit, analytics, agent fleet,
-kiosk policies, remote support, etc.). Build with `make build-web`.
-
-Known frontend gaps: the `/profile` page is still a placeholder; page-level
-test coverage is low (~11%); lint carries accumulated warnings being burned
-down incrementally.
-
-## Infrastructure & CI
-
-| Area | Status |
+| Area | State |
 |---|---|
-| Database schema + migrations | ✅ Complete (`internal/migrations/`, `deployments/docker/init-db.sql`) |
-| Docker Compose (infra) | ✅ Postgres/Redis/Elasticsearch/APISIX/OPA + healthchecks |
-| CI/CD | ✅ GitHub Actions: `ci.yml` (Go), `ci-web.yml` (frontend), `ci-android.yml`, `codeql.yml`, `docker.yml`, `security-scan.yml`, `release.yml`, `docs.yml` |
-| Config validation | ✅ `ValidateProduction()` blocks prod startup on insecure secrets / wildcard CORS / disabled CSRF / non-TLS DB |
-| Kubernetes / Helm | ⚠️ Chart skeleton exists; values/ingress/TLS incomplete |
-| Terraform (EKS) | ⚠️ Module structure exists; state bootstrap + wiring incomplete |
-| Observability | ⚠️ Prometheus collectors + health checks in code; backends (Prometheus/Grafana/Jaeger) not yet in the stack |
+| Release | `VERSION` 1.35.0 (2026-09-10, signed; see `evidence/release-gate.md`). The `[Unreleased]` section of `CHANGELOG.md` holds the cell work merged since. |
+| Services | Ten request-serving or worker binaries under `cmd/` plus `migrate`, `backup`, `rekey`, `openidx` (developer CLI). All on PostgreSQL with FORCE row-level security, CI-gated by `tools/orgscope`. |
+| Chart | `deployments/kubernetes/helm/openidx`: installed live on kind on every chart change, in the plain shape (`kind-install`) and the cell shape (`kind-cell`: transaction pooler, local RLS, streaming replica, identity plane split, cell guard). Network policies, PDBs, HPA/KEDA, PrometheusRule, backup CronJob, edge CIDR sync. |
+| Terraform | AWS root (EKS, RDS, ElastiCache, OpenZiti) and Azure root (AKS, Flexible Server, Redis, Key Vault); fmt and validate in CI, never applied from this repository. No cell module yet. |
+| Observability | Prometheus collectors and OpenTelemetry in the services; 26 chart alert rules; Compose stack ships Prometheus, Grafana, Alertmanager, Loki, OTel collector. |
+| Console | `web/admin-console`: 108 pages, 163 unit test files, 50 Playwright specs, English and Turkish. |
+| Guards | `scripts/run-ci-guards.sh` runs 64 gating guard invocations; `tools/deadconfig`, `tools/deadservice`, `tools/testmatrix`, `tools/routereach`, `tools/contractcheck`, `scripts/check-docs-drift.sh`. |
 
-## Running locally
+## What is left
 
-```bash
-make dev-infra        # Postgres, Redis, Elasticsearch, APISIX, OPA
-make build-services   # build all Go services into ./bin
-make build-web        # build the admin console
-# run services from ./bin (see Makefile dev targets), then:
-cd web/admin-console && npm run dev
-```
+Four classes, each named with its evidence in the two documents above:
 
-## What's actually left (roadmap)
-
-The near-term plan is **stabilize + make deployable**:
-
-1. **Stabilize** — repair frontend lint, stop the false-red Security Scanning
-   run, fix the `cmd/backup` CLI panic, build the `/profile` page, refresh
-   docs (this file).
-2. **Make deployable** — observability backends in the stack, image
-   build→push→scan pipeline, complete Helm + Terraform, production runbook
-   (`docs/DEPLOYMENT.md`).
-
-Longer term: FCM push wake for agents, and iOS/Windows/macOS/Linux unified
-clients (the Go agent already covers desktop today).
+1. **Needs a real cell in a real cloud account**: load and failover
+   measurement, the k6 game day, the live half of the chaos and DR drills,
+   the Terraform cell module, per-cell key management, the first real
+   release wave, the operator controls' first dated rows.
+2. **Needs a product decision**: may one external account link to a user in
+   two tenants (the last two tables outside the tenant belt); the per-tenant
+   enrolment quota; the first public region and cell size; whether the
+   event bus becomes a hard dependency.
+3. **Documentation that rots**: the guard `scripts/check-docs-drift.sh`
+   keeps paths honest; claims are corrected as they are found (this page
+   itself was the stale one until 2026-09-18).
+4. **Product shape**: NOTICE, SUPPORT and DCO files; a commercial substrate
+   (plan, quota, self-signup) if one is wanted; SDKs and an admin CLI;
+   connector catalogue for outbound provisioning; production code-signing
+   identities for the desktop and mobile clients.
