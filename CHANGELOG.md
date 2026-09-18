@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-09-18
+
+### Fixed
+
+- **The mobile engine builds again.** `client-mobile-build.yml` and
+  `client-mobile-release.yml` called `android-actions/setup-android@v3`
+  with no package list; v3's default asks sdkmanager for the legacy
+  `tools` package, which the SDK repository stopped offering, so the
+  gomobile Android job died in setup ("Failed to find package 'tools'")
+  on a commit that changed only a version number. Both now use v4 with an
+  explicit list (`platform-tools`, the pinned NDK), the shape
+  `ci-android.yml` already had.
+
 ### Added
 
 - **The docs say what CI proves, and CI proves what the docs say.** Three
@@ -10335,7 +10348,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.35.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.36.0...HEAD
+[1.36.0]: https://github.com/mhmtgngr/openidx/compare/v1.35.0...v1.36.0
 [1.35.0]: https://github.com/mhmtgngr/openidx/compare/v1.34.0...v1.35.0
 [1.34.0]: https://github.com/mhmtgngr/openidx/compare/v1.33.3...v1.34.0
 [1.33.3]: https://github.com/mhmtgngr/openidx/compare/v1.33.2...v1.33.3

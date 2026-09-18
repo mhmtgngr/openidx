@@ -59,8 +59,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # v4 with an explicit package list, the shape ci-android.yml already
+      # uses. v3 with no list asks sdkmanager for the legacy `tools` package,
+      # which the SDK repository stopped offering: on 2026-09-18 client-mobile-build died
+      # in setup with "Failed to find package 'tools'" before a single build
+      # step ran, on a commit that changed only a version number.
       - name: Set up Android SDK + NDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: >-
+            platform-tools
+            ndk;${{ env.NDK_VERSION }}
 
       - name: Install NDK
         run: sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
