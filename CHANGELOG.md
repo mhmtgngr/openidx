@@ -76,6 +76,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A real super admin is treated as one by every identity handler.** The
+  elevated role is spelled `super_admin` (`auth.RoleSuperAdmin`, the SQL
+  seed, the console, the route gate), but ten inline checks in
+  `internal/identity`, in the login-history, device-trust-request,
+  bypass-code list, bypass-code revoke-all and bypass audit-log handlers
+  and the lifecycle-execution list, compared roles against `superadmin`.
+  A super admin passed the route gate and then got 403 on another user's
+  records, or was silently narrowed to their own when they asked for all.
+  Measured with the handler: `super_admin` asking for another user's login
+  history was 403. The ten checks now call the one helper,
+  `identityCallerIsAdmin`, which accepts `admin` and `super_admin` and
+  refuses the look-alike; the portal's helper does the same. A test drives
+  the login-history handler both ways, and an AST guard fails the package
+  when any Go file under `internal/` or `cmd/` compares against the legacy
+  literal again (the privileged-account discovery list, which names other
+  systems' spellings, is the one exception).
 - **The License Compliance job said what it intended, not what it did.**
   Its npm half ran `license-reporter` without a subcommand, which printed
   usage and wrote no file, behind `|| true`; its summary then wrote

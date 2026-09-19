@@ -556,9 +556,12 @@ func requireUserID(c *gin.Context) (string, bool) {
 
 // callerIsAdmin reports whether the authenticated caller holds an admin role.
 // Roles are populated by the auth middleware into the "roles" context slice.
+// The elevated role is spelled "super_admin" (auth.RoleSuperAdmin); the
+// legacy "superadmin" spelling is not accepted anywhere in the repository
+// (see internal/identity/superadmin_spelling_test.go).
 func callerIsAdmin(c *gin.Context) bool {
 	for _, role := range c.GetStringSlice("roles") {
-		if role == "admin" || role == "superadmin" || role == "super_admin" {
+		if role == "admin" || role == "super_admin" {
 			return true
 		}
 	}

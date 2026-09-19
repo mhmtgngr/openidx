@@ -25,17 +25,22 @@ func phoneCallErrStatus(err error) int {
 
 // identityCallerIsAdmin reports whether the authenticated caller holds an
 // administrative role, for handlers that need their own authorization check
-// on top of (or instead of) the route-level gate.
+// on top of the route-level gate (requireAdminUnlessSelfService).
 //
-// It accepts both spellings of the elevated role deliberately: the shared
-// middleware (requireAdminUnlessSelfService) matches "super_admin" while the
-// inline checks in this file historically matched "superadmin". Accepting
-// either avoids locking a legitimate super admin out of a route that the
-// middleware already let through. Unifying the two spellings repo-wide is a
-// separate cleanup.
+// The elevated role is spelled "super_admin": auth.RoleSuperAdmin, the role
+// the SQL seeds create (migration v134), the console (lib/roles.ts) and the
+// route gate all use that spelling. Measured on 2026-09-19, ten inline checks
+// in this package compared the caller's roles against "superadmin" instead,
+// so a real super admin passed the route gate and then failed the handler's
+// own check: 403 on another user's login history, bypass codes and audit
+// log, and a silent narrowing to their own records when they asked for all.
+// Those checks now call this helper, and the legacy spelling is refused here
+// on purpose: a role that merely resembles the elevated one must not be
+// treated as it (superadmin_spelling_test.go keeps the spelling out of the
+// package).
 func identityCallerIsAdmin(c *gin.Context) bool {
 	for _, role := range c.GetStringSlice("roles") {
-		if role == "admin" || role == "superadmin" || role == "super_admin" {
+		if role == "admin" || role == "super_admin" {
 			return true
 		}
 	}
@@ -300,31 +305,16 @@ func (s *Service) handleListDeviceTrustRequests(c *gin.Context) {
 	status := c.Query("status")
 	requestedUserID := c.Query("user_id")
 	authUserID := c.GetString("user_id")
-	authRoles := c.GetStringSlice("roles")
 
 	// SECURITY: IDOR fix - Only allow admin to query arbitrary users' requests
 	if requestedUserID != "" && requestedUserID != authUserID {
-		isAdmin := false
-		for _, role := range authRoles {
-			if role == "admin" || role == "superadmin" {
-				isAdmin = true
-				break
-			}
-		}
-		if !isAdmin {
+		if !identityCallerIsAdmin(c) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to view other users' requests"})
 			return
 		}
 	} else if requestedUserID == "" {
 		// Non-admin users can only view their own requests
-		isAdmin := false
-		for _, role := range authRoles {
-			if role == "admin" || role == "superadmin" {
-				isAdmin = true
-				break
-			}
-		}
-		if !isAdmin {
+		if !identityCallerIsAdmin(c) {
 			requestedUserID = authUserID
 		}
 	}
@@ -476,31 +466,16 @@ func (s *Service) handleListBypassCodes(c *gin.Context) {
 	status := c.Query("status")
 	activeOnly := c.Query("active_only") == "true"
 	authUserID := c.GetString("user_id")
-	authRoles := c.GetStringSlice("roles")
 
 	// SECURITY: IDOR fix - Only allow admin to query arbitrary users' bypass codes
 	if requestedUserID != "" && requestedUserID != authUserID {
-		isAdmin := false
-		for _, role := range authRoles {
-			if role == "admin" || role == "superadmin" {
-				isAdmin = true
-				break
-			}
-		}
-		if !isAdmin {
+		if !identityCallerIsAdmin(c) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to view other users' bypass codes"})
 			return
 		}
 	} else if requestedUserID == "" {
 		// Non-admin users can only view their own codes
-		isAdmin := false
-		for _, role := range authRoles {
-			if role == "admin" || role == "superadmin" {
-				isAdmin = true
-				break
-			}
-		}
-		if !isAdmin {
+		if !identityCallerIsAdmin(c) {
 			requestedUserID = authUserID
 		}
 	}
@@ -536,18 +511,10 @@ func (s *Service) handleRevokeAllBypassCodes(c *gin.Context) {
 	// worked. tools/routereach now fails the build on this shape.
 	requestedUserID := c.Param("id")
 	adminID := c.GetString("user_id")
-	authRoles := c.GetStringSlice("roles")
 
 	// SECURITY: IDOR fix - Only allow admin to revoke other users' bypass codes
 	if requestedUserID != adminID {
-		isAdmin := false
-		for _, role := range authRoles {
-			if role == "admin" || role == "superadmin" {
-				isAdmin = true
-				break
-			}
-		}
-		if !isAdmin {
+		if !identityCallerIsAdmin(c) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to revoke other users' bypass codes"})
 			return
 		}
@@ -585,31 +552,16 @@ func (s *Service) handleVerifyBypassCode(c *gin.Context) {
 func (s *Service) handleGetBypassAuditLog(c *gin.Context) {
 	requestedUserID := c.Query("user_id")
 	authUserID := c.GetString("user_id")
-	authRoles := c.GetStringSlice("roles")
 
 	// SECURITY: IDOR fix - Only allow admin to query arbitrary users' audit logs
 	if requestedUserID != "" && requestedUserID != authUserID {
-		isAdmin := false
-		for _, role := range authRoles {
-			if role == "admin" || role == "superadmin" {
-				isAdmin = true
-				break
-			}
-		}
-		if !isAdmin {
+		if !identityCallerIsAdmin(c) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to view other users' audit logs"})
 			return
 		}
 	} else if requestedUserID == "" {
 		// Non-admin users can only view their own logs
-		isAdmin := false
-		for _, role := range authRoles {
-			if role == "admin" || role == "superadmin" {
-				isAdmin = true
-				break
-			}
-		}
-		if !isAdmin {
+		if !identityCallerIsAdmin(c) {
 			requestedUserID = authUserID
 		}
 	}
