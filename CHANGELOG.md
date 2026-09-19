@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/oauth/authorize` minted a fresh `login_session` and sent the browser to
   the login page, so the second application asked for the password again.
   The login flow's code issuance now sets an `openidx_sso` cookie (HttpOnly,
-  SameSite=Lax, Secure in production, 24h) holding a random token that the
+  SameSite=Lax, Secure, 24h) holding a random token that the
   session Redis maps to the identity session; `/oauth/authorize`, after the
   existing client/redirect_uri/scope/response_type validation, resolves it
   and — for a live, unrevoked, unexpired session of the request's tenant,

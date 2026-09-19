@@ -127,8 +127,10 @@ Automatic service configuration via `.well-known/openid-configuration`
 
 ### Single Sign-On across applications
 A login completion (password, MFA, passwordless, social, or after consent) sets
-a browser cookie, `openidx_sso` (HttpOnly, SameSite=Lax, Secure in production,
-24h). It holds a random token that the session Redis maps to the identity
+a browser cookie, `openidx_sso` (HttpOnly, SameSite=Lax, Secure, 24h). Secure
+is unconditional: the cookie is a credential, and the issuer is served over
+https wherever it is deployed (the compose stack terminates TLS at
+`oauth.localtest.me:8446`); a plain-http developer instance gets no SSO. It holds a random token that the session Redis maps to the identity
 session; it never carries a session or user id. `GET /oauth/authorize`, after
 validating `client_id`, `redirect_uri`, `scope` and `response_type` against the
 client exactly as before, reads that cookie:

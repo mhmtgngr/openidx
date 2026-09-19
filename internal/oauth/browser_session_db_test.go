@@ -345,8 +345,8 @@ func TestIssueAuthorizationCodeSetsSSOCookieThatAuthorizesNextRequest(t *testing
 	if !ck.HttpOnly || ck.SameSite != http.SameSiteLaxMode || ck.Path != "/" || ck.MaxAge != int(ssoCookieTTL/time.Second) {
 		t.Fatalf("cookie attributes: HttpOnly=%v SameSite=%v Path=%q MaxAge=%d", ck.HttpOnly, ck.SameSite, ck.Path, ck.MaxAge)
 	}
-	if ck.Secure {
-		t.Fatal("Secure must follow the environment; this config is not production")
+	if !ck.Secure {
+		t.Fatal("the SSO cookie is a credential and must be Secure in every environment")
 	}
 	if ck.Value == sessionID {
 		t.Fatal("the cookie must carry an opaque token, not the session id")
@@ -357,12 +357,6 @@ func TestIssueAuthorizationCodeSetsSSOCookieThatAuthorizesNextRequest(t *testing
 
 	// Round trip: the cookie authorizes the next /authorize for the same user.
 	mintedCode(t, db, ssoAuthorize(t, svc, ck.Value, nil), userID)
-
-	// Production: Secure.
-	svc.config = &config.Config{ABACEnforce: "off", Environment: "production"}
-	if ck := setSSOCookie(issue(svc)); ck == nil || !ck.Secure {
-		t.Fatal("in production the cookie must be Secure")
-	}
 
 	// No session_id (session creation failed at login): no cookie.
 	w = httptest.NewRecorder()

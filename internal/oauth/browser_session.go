@@ -17,7 +17,11 @@
 //     cookie, openidx_sso, holding a random token that Redis maps to the
 //     session id (sso_session:<token>). The cookie carries no session id, no
 //     user id, nothing a reader could use elsewhere; it is HttpOnly, SameSite
-//     Lax, Secure in production, and lives as long as the session (24h).
+//     Lax, Secure, and lives as long as the session (24h). Secure is
+//     unconditional: the cookie is a credential for /oauth/authorize, the
+//     issuer is https wherever it is deployed (the compose stack terminates
+//     TLS at oauth.localtest.me:8446), and a plain-http developer instance
+//     simply gets no SSO, which is what it had before.
 //   - /oauth/authorize, after it has validated client, redirect_uri, scope and
 //     response_type exactly as before, reads that cookie. A token that resolves
 //     to a live, unrevoked, unexpired session of the request's tenant mints a
@@ -221,7 +225,7 @@ func (s *Service) setBrowserSessionCookie(c *gin.Context, sessionID string) {
 		Value:    token,
 		Path:     "/",
 		MaxAge:   int(ssoCookieTTL / time.Second),
-		Secure:   s.config != nil && s.config.IsProduction(),
+		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
@@ -234,7 +238,7 @@ func (s *Service) clearBrowserSessionCookie(c *gin.Context) {
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
-		Secure:   s.config != nil && s.config.IsProduction(),
+		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
