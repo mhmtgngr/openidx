@@ -93,9 +93,11 @@ func Revoke(ctx context.Context, q Execer, resourceType, userID, resourceID, org
 	}
 
 	switch resourceType {
-	case "role", "privileged_role":
-		// privileged_role review items point at a plain user_roles assignment;
-		// the "privileged" flavor only reflects which rows the review surfaced.
+	case "role", "privileged_role", "role_assignment":
+		// privileged_role and role_assignment review items point at a plain
+		// user_roles assignment; the flavor only reflects which review surfaced
+		// the row (and, for role_assignment, that its name carries the reach
+		// through composite roles). Removing the row is the one lever either has.
 		if _, err := q.Exec(ctx,
 			`DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2`+filter, args...); err != nil {
 			return fmt.Errorf("revoke role: %w", err)

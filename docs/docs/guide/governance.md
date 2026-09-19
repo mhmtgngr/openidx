@@ -77,13 +77,15 @@ curl -X POST https://openidx.example.com/api/v1/governance/reviews \
   }'
 ```
 
-Three review types, each populated from real state rather than a spreadsheet:
+Four review types, each populated from real state rather than a spreadsheet
+(`populateReviewItems` in `internal/governance/service.go`):
 
 | `type` | What each item is |
 |---|---|
-| `user_access` | one user's access to one application |
-| `role_assignment` | one user's assignment to one role |
-| `application_access` | one application's set of users |
+| `user_access` | one enabled user's direct assignment to one role, named by the role |
+| `role_assignment` | the same assignment, named by what it grants: a composite role's item reads `platform_admin (also grants: auditor, reader)`, so the reviewer certifies the reach, not the label |
+| `application_access` | one enabled user's membership in one group (groups are how applications are assigned) |
+| `privileged_access` | one enabled user's assignment to `admin`, `manager` or `auditor` |
 
 Reviewers decide per item at `GET /reviews/{id}/items`, or in bulk with
 `POST /reviews/{id}/items/batch-decision`. A **revoke** decision does not file

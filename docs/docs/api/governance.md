@@ -17,7 +17,7 @@ The Governance Service manages access reviews, certification campaigns, and poli
 ### Review Types
 
 - `user_access` — Review individual user access rights
-- `role_assignment` — Review role assignments
+- `role_assignment` — Review role assignments, each named with what the role also grants through composite roles
 - `application_access` — Review application access
 - `privileged_access` — Review privileged/admin access
 
