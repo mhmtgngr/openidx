@@ -59,10 +59,22 @@ release. The retag job therefore stamps both spellings on both paths — on the
 tagged path the un-prefixed three are re-pointed at the digest they already
 name, which `imagetools create` does idempotently.
 
-Two consequences worth knowing: the images are stamped by the **docker.yml run
-this dispatch starts**, not by the release run itself, so check that run before
-announcing; and the dispatched version is validated (`vX.Y.Z`) rather than
-trusted, because unlike a pushed tag it is free-text input.
+The mobile artifacts have the same asymmetry and the same answer.
+`client-mobile-release.yml` attaches the APK and the IPA on a pushed tag; a
+token-created tag starts it no more than it starts `docker.yml`. So the same
+job also runs `gh workflow run client-mobile-release.yml --ref vX.Y.Z` on the
+tag it just created. This was measured, not reasoned: v1.36.0 (2026-09-18) was
+dispatched before that hand-off existed and shipped with binaries and a signed
+chart and no mobile artifact; v1.35.0 had both only because a maintainer
+dispatched the mobile workflow by hand. `scripts/check-release-dispatch.sh`
+holds this hand-off too.
+
+Three consequences worth knowing: the images are stamped by the **docker.yml
+run this dispatch starts** and the APK and IPA are attached by the
+**client-mobile-release.yml run it starts**, not by the release run itself,
+so check both before announcing; and the dispatched version is validated
+(`vX.Y.Z`) rather than trusted, because unlike a pushed tag it is free-text
+input.
 
 ## What the tag triggers (no manual steps)
 
@@ -78,6 +90,11 @@ trusted, because unlike a pushed tag it is free-text input.
   `ghcr.io/mhmtgngr/openidx/<service>` with `X.Y.Z`, `X.Y`, `X`, `vX.Y.Z`,
   `vX.Y`, `vX` and `stable` — both spellings, pointing at one manifest. Pull
   either; `X.Y.Z` is the one this document and the chart use.
+- **`client-mobile-release.yml`** — builds the mobile client and attaches
+  `openidx-agent-android-vX.Y.Z[-debugsigned].apk` and
+  `openidx-agent-ios-vX.Y.Z-unsigned.ipa` to the Release. The `-debugsigned`
+  suffix and the `-unsigned` name say exactly what they say; the workflow's
+  header explains both.
 
 ## Rolling out to cells (off by default)
 
@@ -117,6 +134,8 @@ wave's shape: order, gate, atomic upgrade, environment, identity check.
 - The chart resolves: `helm show chart
   oci://ghcr.io/mhmtgngr/openidx/charts/openidx --version X.Y.Z`.
 - A deployed service reports the version: `GET /health` → `"version":"vX.Y.Z"`.
+- The Release carries the APK and the IPA (on the dispatch path, from the
+  `client-mobile-release.yml` run the release started).
 
 ### Verifying downloaded binaries (consumers)
 

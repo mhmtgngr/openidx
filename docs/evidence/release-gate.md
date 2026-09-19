@@ -80,4 +80,5 @@ they all ran on that commit.
 | Version | Date | CI run for the tagged commit | Signed | Notes |
 |---|---|---|---|---|
 | v1.34.0 | 2026-09-06 | https://github.com/mhmtgngr/openidx/actions/runs/34036228213 | `SHA256SUMS.sig` + `SHA256SUMS.pem` on the release (cosign keyless) | the first signed release; tag push. Row written 2026-09-18 from the release and the run, not on the day |
+| v1.36.0 | 2026-09-18 | https://github.com/mhmtgngr/openidx/actions/runs/35372408791 | `SHA256SUMS.sig` + `SHA256SUMS.pem` on the release (cosign keyless) | dispatch from `main` (ebaac96); images stamped by docker.yml run 35374641388. Published with NO mobile artifacts: the dispatch path did not start `client-mobile-release.yml`; dispatched by hand on the tag 2026-09-19 and the hand-off added to release.yml the same day |
 | v1.35.0 | 2026-09-10 | https://github.com/mhmtgngr/openidx/actions/runs/34469261188 | `SHA256SUMS.sig` + `SHA256SUMS.pem` on the release (cosign keyless) | the tag run (34463088810) died on a runner bound (#890); cut by dispatch from the same commit. Row written 2026-09-18 |
