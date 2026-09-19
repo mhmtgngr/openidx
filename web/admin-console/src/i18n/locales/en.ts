@@ -1808,6 +1808,8 @@ const en = {
         hintService: 'Backend services using client credentials',
         redirectsLabel: 'Redirect URIs * (one per line)',
         redirectsHint: 'Valid OAuth 2.0 redirect URIs for your application',
+        backChannelLogoutLabel: 'Back-channel logout URI (optional)',
+        backChannelLogoutHint: 'Where this application receives a logout token when a session it took part in ends. https only (http on localhost).',
         scopesLabel: 'Scopes (comma-separated)',
         scopesHint: 'OAuth/OIDC scopes this client can request',
         pkce: 'Require PKCE (Recommended for mobile/SPA)',

@@ -203,11 +203,12 @@ fails the revocation itself: the tokens the session backed are cut by the
 revocation marker whether or not the relying party heard.
 
 Register the endpoint with `back_channel_logout_uri` on
-`POST /api/v1/oauth/clients` (and `PUT …/{id}`), or with
-`backchannel_logout_uri` at `POST /oauth/register`. It must be https (http
-only on localhost). The console's application form does not yet offer the
-field. A session the identity service ends on its own is not this process's
-revocation and is not announced.
+`POST /api/v1/oauth/clients` (and `PUT …/{id}`), with
+`backchannel_logout_uri` at `POST /oauth/register`, or in the console's
+application editor (which writes it, with `pkce_required`, to the backing
+OAuth client through `PUT /api/v1/applications/{id}`). It must be https
+(http only on localhost). A session the identity service ends on its own is
+not this process's revocation and is not announced.
 
 The cookie is set on the response to the login page's request to
 `/oauth/login`, so it is stored only when the login UI and the issuer share an

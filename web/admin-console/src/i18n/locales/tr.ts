@@ -1799,6 +1799,8 @@ const tr: typeof en = {
         hintService: 'İstemci kimlik bilgileri kullanan arka uç servisleri',
         redirectsLabel: "Yönlendirme URI'leri * (her satıra bir tane)",
         redirectsHint: "Uygulamanız için geçerli OAuth 2.0 yönlendirme URI'leri",
+        backChannelLogoutLabel: "Back-channel logout URI'si (isteğe bağlı)",
+        backChannelLogoutHint: 'Katıldığı bir oturum bittiğinde bu uygulamanın logout token alacağı adres. Yalnız https (localhost için http).',
         scopesLabel: 'Kapsamlar (virgülle ayrılmış)',
         scopesHint: 'Bu istemcinin isteyebileceği OAuth/OIDC kapsamları',
         pkce: 'PKCE Zorunlu (mobil/SPA için önerilir)',

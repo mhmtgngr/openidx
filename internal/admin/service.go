@@ -21,6 +21,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/validation"
 	"github.com/openidx/openidx/internal/sms"
 	"github.com/openidx/openidx/internal/webhooks"
 )
@@ -92,10 +93,25 @@ type Application struct {
 	// Requests page), and for a non-admin caller the field is left nil so the
 	// key is omitted entirely rather than leaking which applications are
 	// assignment-gated.
-	RequireAssignment *bool     `json:"require_assignment,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	RequireAssignment *bool `json:"require_assignment,omitempty"`
+	// PKCERequired and BackChannelLogoutURI are read from the backing
+	// oauth_clients row (joined on client_id within the tenant), because that
+	// row is what the OAuth flow enforces. Pointers: a listing tile with no
+	// OAuth client behind it (a proxy-app tile, client_id "proxy-app-<route>")
+	// has neither, and omitting the keys says so instead of inventing false
+	// and "". The console's edit dialog showed a "Require PKCE" box for every
+	// application and sent pkce_required on save; nothing read it and nothing
+	// wrote it, so the box displayed a default and enforced nothing.
+	PKCERequired         *bool     `json:"pkce_required,omitempty"`
+	BackChannelLogoutURI *string   `json:"back_channel_logout_uri,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
+
+// ErrInvalidBackChannelLogoutURI is returned by UpdateApplication when the
+// back_channel_logout_uri in the payload is not empty, https, or http on
+// loopback; the handler answers 400 rather than 500 for it.
+var ErrInvalidBackChannelLogoutURI = errors.New("back_channel_logout_uri must be https (http only for localhost)")
 
 // ApplicationSSOSettings represents SSO settings for an application
 type ApplicationSSOSettings struct {
@@ -738,18 +754,32 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		argCount++
 	}
 
-	if len(setParts) == 0 {
+	// Two settings live only on the backing OAuth client and are validated
+	// before anything is written, so a refused URI leaves both rows as they
+	// were.
+	pkceRequired, hasPKCE := updates["pkce_required"].(bool)
+	backChannelURI, hasBackChannel := updates["back_channel_logout_uri"].(string)
+	if hasBackChannel {
+		backChannelURI = strings.TrimSpace(backChannelURI)
+		if err := validation.ValidateBackChannelLogoutURI(backChannelURI); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidBackChannelLogoutURI, err)
+		}
+	}
+
+	if len(setParts) == 0 && !hasPKCE && !hasBackChannel {
 		return fmt.Errorf("no valid fields to update")
 	}
 
-	setParts = append(setParts, "updated_at = NOW()")
-	query := fmt.Sprintf("UPDATE applications SET %s WHERE id = $%d AND org_id = $%d",
-		strings.Join(setParts, ", "), argCount, argCount+1)
-	args = append(args, id, org.ID)
+	if len(setParts) > 0 {
+		setParts = append(setParts, "updated_at = NOW()")
+		query := fmt.Sprintf("UPDATE applications SET %s WHERE id = $%d AND org_id = $%d",
+			strings.Join(setParts, ", "), argCount, argCount+1)
+		args = append(args, id, org.ID)
 
-	_, err = s.db.Pool.Exec(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to update application: %w", err)
+		_, err = s.db.Pool.Exec(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("failed to update application: %w", err)
+		}
 	}
 
 	// Propagate editable settings to the backing OAuth client. The OAuth flow's
@@ -774,6 +804,16 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		urisJSON, _ := json.Marshal(syncRedirectURIs)
 		ocSet = append(ocSet, fmt.Sprintf("redirect_uris = $%d", ocN))
 		ocArgs = append(ocArgs, urisJSON)
+		ocN++
+	}
+	if hasPKCE {
+		ocSet = append(ocSet, fmt.Sprintf("pkce_required = $%d", ocN))
+		ocArgs = append(ocArgs, pkceRequired)
+		ocN++
+	}
+	if hasBackChannel {
+		ocSet = append(ocSet, fmt.Sprintf("back_channel_logout_uri = NULLIF($%d, '')", ocN))
+		ocArgs = append(ocArgs, backChannelURI)
 		ocN++
 	}
 	if len(ocSet) > 0 {
@@ -809,10 +849,12 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 	}
 
 	query := `
-		SELECT id, client_id, name, COALESCE(description, ''), type, protocol,
-		       COALESCE(base_url, ''), redirect_uris, enabled, require_assignment, created_at, updated_at
-		FROM applications
-		WHERE org_id = $1
+		SELECT a.id, a.client_id, a.name, COALESCE(a.description, ''), a.type, a.protocol,
+		       COALESCE(a.base_url, ''), a.redirect_uris, a.enabled, a.require_assignment,
+		       oc.pkce_required, oc.back_channel_logout_uri, a.created_at, a.updated_at
+		FROM applications a
+		LEFT JOIN oauth_clients oc ON oc.client_id = a.client_id AND oc.org_id = a.org_id
+		WHERE a.org_id = $1
 		ORDER BY name
 	`
 	args := []interface{}{org.ID}
@@ -840,7 +882,7 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 		if err := rows.Scan(
 			&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
 			&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.RequireAssignment,
-			&app.CreatedAt, &app.UpdatedAt,
+			&app.PKCERequired, &app.BackChannelLogoutURI, &app.CreatedAt, &app.UpdatedAt,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -1493,13 +1535,16 @@ func (s *Service) handleGetApplication(c *gin.Context) {
 	id := c.Param("id")
 	var app Application
 	err = s.db.Pool.QueryRow(c.Request.Context(), `
-		SELECT id, client_id, name, COALESCE(description, ''), type, protocol,
-		       COALESCE(base_url, ''), redirect_uris, enabled, require_assignment, created_at, updated_at
-		FROM applications WHERE id = $1 AND org_id = $2
+		SELECT a.id, a.client_id, a.name, COALESCE(a.description, ''), a.type, a.protocol,
+		       COALESCE(a.base_url, ''), a.redirect_uris, a.enabled, a.require_assignment,
+		       oc.pkce_required, oc.back_channel_logout_uri, a.created_at, a.updated_at
+		FROM applications a
+		LEFT JOIN oauth_clients oc ON oc.client_id = a.client_id AND oc.org_id = a.org_id
+		WHERE a.id = $1 AND a.org_id = $2
 	`, id, org.ID).Scan(
 		&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
 		&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.RequireAssignment,
-		&app.CreatedAt, &app.UpdatedAt,
+		&app.PKCERequired, &app.BackChannelLogoutURI, &app.CreatedAt, &app.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "Application not found"})
@@ -1516,6 +1561,10 @@ func (s *Service) handleUpdateApplication(c *gin.Context) {
 	}
 
 	if err := s.UpdateApplication(c.Request.Context(), id, updates); err != nil {
+		if errors.Is(err, ErrInvalidBackChannelLogoutURI) {
+			c.JSON(400, gin.H{"error": "invalid_request", "error_description": ErrInvalidBackChannelLogoutURI.Error()})
+			return
+		}
 		s.logger.Error("failed to update application", logsafe.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return

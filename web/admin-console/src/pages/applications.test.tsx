@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -80,6 +81,66 @@ describe('ApplicationsPage', () => {
     await waitFor(() => {
       const addButton = screen.queryByRole('button', { name: /register application/i })
       expect(addButton).toBeInTheDocument()
+    })
+  })
+
+  // The edit dialog's "Require PKCE" box and the back-channel logout URI come
+  // from, and go to, the backing OAuth client. Until this block existed the
+  // box showed its default for every application (the API never returned
+  // pkce_required) and the URI had no field at all.
+  describe('edit dialog OAuth client settings', () => {
+    const oidcApp = {
+      id: 'app-1',
+      client_id: 'grafana',
+      name: 'Grafana',
+      description: 'Dashboards',
+      type: 'web',
+      protocol: 'oidc',
+      base_url: 'https://grafana.example',
+      redirect_uris: ['https://grafana.example/cb'],
+      enabled: true,
+      pkce_required: false,
+      back_channel_logout_uri: 'https://grafana.example/bcl',
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: '2024-01-01T00:00:00Z',
+    }
+
+    const openEditDialog = async () => {
+      const user = userEvent.setup()
+      vi.mocked(api.getWithHeaders).mockResolvedValue({ data: [oidcApp], headers: {} })
+      render(<ApplicationsPage />, { wrapper: createWrapper() })
+      await screen.findByText('Grafana')
+      // The row menu trigger is the icon-only button carrying aria-haspopup.
+      const triggers = screen.getAllByRole('button').filter((b) => b.getAttribute('aria-haspopup') === 'menu')
+      expect(triggers.length).toBeGreaterThan(0)
+      await user.click(triggers[0])
+      const edit = await screen.findByRole('menuitem', { name: /edit application/i })
+      await user.click(edit)
+      await screen.findByLabelText(/back-channel logout uri/i)
+      return user
+    }
+
+    it('shows the application\'s own PKCE setting and logout URI, not defaults', async () => {
+      await openEditDialog()
+      expect((screen.getByLabelText(/require pkce/i) as HTMLInputElement).checked).toBe(false)
+      expect((screen.getByLabelText(/back-channel logout uri/i) as HTMLInputElement).value).toBe('https://grafana.example/bcl')
+    })
+
+    it('saves both settings to the application', async () => {
+      const user = await openEditDialog()
+      await user.click(screen.getByLabelText(/require pkce/i))
+      const uri = screen.getByLabelText(/back-channel logout uri/i)
+      await user.clear(uri)
+      await user.type(uri, 'https://grafana.example/bcl-v2')
+      await user.click(screen.getByRole('button', { name: /update application/i }))
+
+      await waitFor(() => expect(api.put).toHaveBeenCalled())
+      const [url, data] = vi.mocked(api.put).mock.calls[0]
+      expect(String(url)).toBe('/api/v1/applications/app-1')
+      expect(data).toMatchObject({
+        pkce_required: true,
+        back_channel_logout_uri: 'https://grafana.example/bcl-v2',
+      })
     })
   })
 })

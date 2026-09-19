@@ -4,6 +4,7 @@ package validation
 import (
 	"fmt"
 	"net/mail"
+	"net/url"
 	"regexp"
 	"strings"
 	"unicode"
@@ -616,4 +617,30 @@ func ValidateSortBy(columnName string) error {
 	}
 
 	return ValidateSQLColumnName(columnName)
+}
+
+// ValidateBackChannelLogoutURI accepts an empty value (the relying party is
+// not told when a session ends) or an absolute https URL; http is allowed
+// only on the loopback hosts a developer runs a relying party on, which is
+// the redirect_uri rule as well. It is shared by the OAuth client store, the
+// dynamic registration endpoint and the admin applications editor, so the
+// three writers of oauth_clients.back_channel_logout_uri cannot drift.
+func ValidateBackChannelLogoutURI(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	u, err := url.Parse(value)
+	if err != nil || u.Host == "" || u.Scheme == "" {
+		return &ValidationError{Field: "back_channel_logout_uri", Message: "must be an absolute URL", Value: value}
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		host := u.Hostname()
+		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+			return nil
+		}
+	}
+	return &ValidationError{Field: "back_channel_logout_uri", Message: "must be https (http only for localhost)", Value: value}
 }
