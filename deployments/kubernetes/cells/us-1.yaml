@@ -7,3 +7,11 @@
 config:
   cellId: "us-1"
 
+
+# Not set here, and the chart refuses the rollout until it is:
+# edge.originVerify.value, the Front Door profile GUID this cell's Ingress
+# checks X-Azure-FDID against. values-prod.yaml carries a REPLACE-WITH-
+# placeholder, and installing it as shipped would give an Ingress that answers
+# 403 to every request arriving through the edge. Put the cell's real value
+# here (`terraform output -raw origin_verification`), or pass it with --set
+# from a secret, before the first rollout of this cell.

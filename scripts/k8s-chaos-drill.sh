@@ -48,7 +48,11 @@ static_checks() {
 	# YAML/JSON and then reports "0 resources found", which would read as a
 	# clean validation of a manifest it never actually looked at.
 	local rendered; rendered="$(mktemp --suffix=.yaml)"
-	if ! "$HELM" template chaos "$CHART" -f "$VALUES" >"$rendered" 2>/dev/null; then
+	# values-prod.yaml ships edge.originVerify.value as a REPLACE-WITH-
+	# placeholder and the chart refuses to render one. This manifest is only
+	# inspected, never installed, so the placeholder is overridden here.
+	if ! "$HELM" template chaos "$CHART" -f "$VALUES" \
+		--set edge.originVerify.value=render-only-placeholder-override >"$rendered" 2>/dev/null; then
 		fail "helm template başarısız — chart dağıtılamaz durumda"
 		return
 	fi

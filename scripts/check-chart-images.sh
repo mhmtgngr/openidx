@@ -73,7 +73,11 @@ PLACEHOLDER_SECRETS=(
 )
 
 render_and_check "values.yaml" "${PLACEHOLDER_SECRETS[@]}"
-render_and_check "values-prod.yaml" -f "$CHART/values-prod.yaml"
+# values-prod.yaml ships edge.originVerify.value as a REPLACE-WITH- placeholder
+# and the chart refuses to render one (templates/no-placeholders.yaml). This
+# render is thrown away, so it overrides the placeholder on the command line.
+render_and_check "values-prod.yaml" -f "$CHART/values-prod.yaml" \
+  --set edge.originVerify.value=render-only-placeholder-override
 render_and_check "values-ci.yaml" -f "$CHART/values-ci.yaml"
 # The cell shape layers over values-ci.yaml (job kind-cell) and turns on the
 # pooler, the replica architecture and the plane split -- so it names images

@@ -313,3 +313,40 @@ Placed in `env:` rather than `envFrom:` on purpose: an `env` entry beats a
       name: {{ include "openidx.fullname" .ctx }}-plane-dsn
       key: DATABASE_URL_{{ upper $plane }}
 {{- end }}
+
+{{/*
+openidx.rejectPlaceholders -- refuse a render while any value still carries a
+"fill me in" marker.
+
+values-prod.yaml ships with `edge.originVerify.value: "REPLACE-WITH-FRONT-DOOR-
+PROFILE-GUID"`. Nothing in the chart could tell that string from a real profile
+GUID: `required` only asks whether the value is empty, so an operator who
+installs the file as shipped gets an Ingress whose snippet compares
+X-Azure-FDID against the literal placeholder and answers 403 to every request
+that arrives through the edge. Measured on 2026-09-19: `helm template` with
+values-prod.yaml plus deployments/kubernetes/cells/eu-1.yaml -- what
+rollout-cell.yml installs -- rendered exactly that snippet, and reported
+success.
+
+This walks every value (maps, lists, subchart values included) and fails on
+the first string containing REPLACE-WITH, naming its path. The marker is the
+shape, not the spelling of one key, so a placeholder added anywhere later is
+refused too. Renders that never reach a cluster (the lint job, the static
+chaos drill, the image check) pass an override on the command line; that
+override is the one place where "render-only" is written, and it is not a
+values file, so it cannot be installed by mistake.
+
+Called from templates/no-placeholders.yaml with (dict "v" .Values "path" "").
+*/}}
+{{- define "openidx.rejectPlaceholders" -}}
+{{- $v := .v -}}
+{{- if kindIs "map" $v -}}
+{{- range $k, $c := $v }}{{ include "openidx.rejectPlaceholders" (dict "v" $c "path" (printf "%s.%s" $.path $k)) }}{{ end -}}
+{{- else if kindIs "slice" $v -}}
+{{- range $i, $c := $v }}{{ include "openidx.rejectPlaceholders" (dict "v" $c "path" (printf "%s[%d]" $.path $i)) }}{{ end -}}
+{{- else if kindIs "string" $v -}}
+{{- if contains "REPLACE-WITH" $v -}}
+{{- fail (printf "%s is still the placeholder %q. values-prod.yaml ships it so that the install cannot silently carry a fake value into the cluster: for edge.originVerify.value the Ingress would compare X-Azure-FDID against this literal and answer 403 to every request. Set the real value (for a cell, in deployments/kubernetes/cells/<cell>.yaml or with --set from a secret). A render that never reaches a cluster passes --set <path>=render-only-placeholder-override, as the lint job does." (trimPrefix "." .path) $v) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
