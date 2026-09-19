@@ -17,6 +17,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/sessionend"
 	"github.com/openidx/openidx/internal/common/ssfsignal"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
@@ -712,6 +713,13 @@ func (s *ibdrService) revokeUserSessions(ctx context.Context, userIDs []string) 
 		return fmt.Errorf("session revocation requires an organization context: %w", err)
 	}
 	for _, userID := range userIDs {
+		// Captured before the rows are revoked: the relying parties the
+		// sessions reached are told through backchannel_logout_pending
+		// (internal/common/sessionend). An error is an error here for the
+		// same reason as below -- a containment record must be true.
+		if err := sessionend.ForUser(ctx, s.db.Pool, org.ID, userID); err != nil {
+			return fmt.Errorf("capture sessions for back-channel logout for user %s: %w", logsafe.Clean(userID), err)
+		}
 		if _, err := s.db.Pool.Exec(ctx, `
 			UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE user_id = $1 AND org_id = $2
 		`, userID, org.ID); err != nil {

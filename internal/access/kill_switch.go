@@ -29,6 +29,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/sessionend"
 	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/revocation"
 
@@ -203,6 +204,12 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 		} else {
 			res.AccessTokensRevoked = true
 		}
+	}
+	// Captured before the rows are revoked: the relying parties the sessions
+	// reached are told through backchannel_logout_pending
+	// (internal/common/sessionend). Reported like every other step.
+	if err := sessionend.ForUser(ctx, s.db.Pool, orgID, userID); err != nil {
+		warn("backchannel_logout_capture", err)
 	}
 	if tag, err := s.db.Pool.Exec(ctx,
 		`UPDATE sessions SET revoked = true, revoked_at = NOW()
