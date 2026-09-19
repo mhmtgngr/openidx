@@ -118,6 +118,14 @@ JWT tokens containing user identity claims:
 - Email
 - Name (given name, family name)
 - Email verification status
+- `sid`, `amr` and `auth_time` from the login session the code was bound to:
+  the session id, the authentication methods it recorded (`pwd`, `mfa`, ...)
+  and the moment it started. `auth_time` is the session's start, not the
+  token's `iat`: with single sign-on a token minted from a two-hour-old
+  session says so, and a client that requested `max_age` gets the number OIDC
+  Core §3.1.2.1 obliges the ID token to carry. Without a session (client
+  credentials, a code issued with no session bound) none of the three is
+  emitted rather than guessed.
 
 ### UserInfo Endpoint
 Retrieve detailed user information using access token.

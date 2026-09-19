@@ -1134,18 +1134,40 @@ func (s *Service) recordSessionAuthMethods(ctx context.Context, sessionID string
 // sessionAuthMethods returns the recorded auth methods for a login session, or
 // nil. Used to populate the amr token claim.
 func (s *Service) sessionAuthMethods(ctx context.Context, sessionID []string) []string {
+	methods, _ := s.sessionAuthContext(ctx, sessionID)
+	return methods
+}
+
+// sessionAuthContext reads what the ID token needs to say about HOW and WHEN
+// the user authenticated: the session's recorded auth methods (amr) and the
+// moment it started (auth_time), in one org-scoped query. authenticatedAt is
+// zero when there is no session to read (no id, no database, no tenant
+// context, no row), and the caller then omits auth_time rather than guess.
+//
+// started_at is the authentication instant because every login completion
+// creates the session at the moment the credential check passes, and single
+// sign-on (browser_session.go) reuses that session for later authorizations
+// without re-authenticating — which is exactly when auth_time and iat differ,
+// and exactly when OIDC Core §3.1.2.1 obliges the ID token to carry auth_time
+// (whenever the client asked with max_age).
+func (s *Service) sessionAuthContext(ctx context.Context, sessionID []string) (methods []string, authenticatedAt time.Time) {
 	if len(sessionID) == 0 || sessionID[0] == "" || s.db == nil {
-		return nil
+		return nil, time.Time{}
 	}
 	org, err := orgctx.From(ctx)
 	if err != nil {
-		return nil
+		return nil, time.Time{}
 	}
-	var methods []string
-	_ = s.db.Pool.QueryRow(ctx,
-		`SELECT auth_methods FROM sessions WHERE id = $1 AND org_id = $2`,
-		sessionID[0], org.ID).Scan(&methods)
-	return methods
+	var startedAt *time.Time
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT auth_methods, started_at FROM sessions WHERE id = $1 AND org_id = $2`,
+		sessionID[0], org.ID).Scan(&methods, &startedAt); err != nil {
+		return nil, time.Time{}
+	}
+	if startedAt == nil {
+		return methods, time.Time{}
+	}
+	return methods, *startedAt
 }
 
 // GenerateJWT generates a signed JWT access token
@@ -1382,8 +1404,16 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 	// Emit amr (authentication methods references) from the login session's
 	// recorded methods — server-verified, never client-supplied. This is the
 	// signal DEVICE_AUTOTRUST keys on to tell whether the session used MFA.
-	if amr := s.sessionAuthMethods(ctx, sessionID); len(amr) > 0 {
+	// auth_time (OIDC Core §2) is the session's start, not this token's iat:
+	// with single sign-on the two differ by however long ago the user actually
+	// typed a credential, and a client that asked with max_age is entitled to
+	// read that number, not the minting time.
+	amr, authenticatedAt := s.sessionAuthContext(ctx, sessionID)
+	if len(amr) > 0 {
 		claims["amr"] = amr
+	}
+	if !authenticatedAt.IsZero() {
+		claims["auth_time"] = authenticatedAt.Unix()
 	}
 
 	kid, signKey := s.signingKey()
@@ -1747,7 +1777,7 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		// it told every conforming SPA and native client that it had no usable
 		// authentication method here.
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic", "none"},
-		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "email", "email_verified", "name", "given_name", "family_name", "sid"},
+		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "auth_time", "amr", "email", "email_verified", "name", "given_name", "family_name", "sid"},
 		CodeChallengeMethodsSupported:     []string{"S256"},
 		RevocationEndpoint:                base + "/oauth/revoke",
 		IntrospectionEndpoint:             base + "/oauth/introspect",

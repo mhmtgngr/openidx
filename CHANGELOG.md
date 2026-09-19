@@ -42,6 +42,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page's request to `/oauth/login`, which is same-origin in the production
   layout and cross-origin (no credentials, no cookie) in the compose stack.
 
+- **The ID token carries `auth_time`, from the session the code was bound
+  to.** `GenerateIDToken` already read the session row for `sid` and `amr`
+  and emitted no `auth_time`; the only `auth_time` in the codebase was the
+  social/SAML immediate-issue path's, which is `now` because there the token
+  is minted the instant the assertion is consumed. Single sign-on made the
+  gap live: a token minted from a two-hour-old browser session said nothing
+  about those two hours, and OIDC Core §3.1.2.1 requires `auth_time`
+  whenever the client asked with `max_age`. The session read now returns
+  `auth_methods` and `started_at` in one org-scoped query; `auth_time` is
+  `started_at`, and is omitted — never guessed from `iat` — when no session
+  row is bound, the id is unknown, or the row belongs to another tenant.
+  `claims_supported` in the discovery document now lists `auth_time` and
+  `amr`, both of which the token has carried without saying so. Measured
+  against a real PostgreSQL: a session started two hours ago yields
+  `auth_time` equal to its start and about two hours before `iat`; six
+  mutations (auth_time from `iat`, auth_time never emitted, `started_at`
+  not read, tenant filter dropped, `auth_time` or `amr` dropped from
+  `claims_supported`) each turn a test red; a comment-text control stays
+  green.
+
 - **NOTICE, THIRD_PARTY_NOTICES.md, SUPPORT.md, and a Developer Certificate
   of Origin that is checked.** The repository shipped an Apache-2.0 LICENSE
   and nothing that named a single third-party licence. `NOTICE` now points
