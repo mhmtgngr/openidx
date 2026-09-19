@@ -55,6 +55,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -242,7 +243,7 @@ func (s *Service) fanOutBackchannelLogout(ctx context.Context, sessionID string)
 	targets, err := s.backchannelLogoutTargets(ctx, sessionID)
 	if err != nil {
 		s.logger.Warn("back-channel logout: could not resolve relying parties",
-			zap.String("session_id", sessionID), zap.Error(err))
+			logsafe.String("session_id", sessionID), zap.Error(err))
 		return 0, 0
 	}
 	for _, t := range targets {
@@ -253,7 +254,7 @@ func (s *Service) fanOutBackchannelLogout(ctx context.Context, sessionID string)
 			meta["error"] = derr.Error()
 			failed++
 			s.logger.Warn("back-channel logout delivery failed",
-				zap.String("client_id", t.clientID), zap.String("session_id", t.sessionID), zap.Error(derr))
+				logsafe.String("client_id", t.clientID), logsafe.String("session_id", t.sessionID), zap.Error(derr))
 		} else {
 			delivered++
 		}
