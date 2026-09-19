@@ -163,10 +163,11 @@ client exactly as before, reads that cookie:
 - `GET /oauth/authorize/v2` (the endpoint the mobile authenticator's
   browser-login fallback opens) reads the cookie the same way, with the same
   gates, `prompt` and `max_age` semantics and fallbacks. Its POST
-  (`/oauth/authorize/v2` consent) does not bind a cookie to the
-  client-supplied `session_id` it accepts: without proving that session is
-  the caller's, doing so would hand out an SSO cookie for another user's
-  session.
+  (`/oauth/authorize/v2` consent) accepts an optional `session_id` and binds
+  it to the code only when it is a live session of the authenticated caller
+  in this tenant; any other value is refused with `400 invalid_request`. The
+  session row is where `sid`, `amr` and `auth_time` come from, so a caller
+  must not be able to borrow another user's. No cookie is set on this path.
 
 The cookie is set on the response to the login page's request to
 `/oauth/login`, so it is stored only when the login UI and the issuer share an
