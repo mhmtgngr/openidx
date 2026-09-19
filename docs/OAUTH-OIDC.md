@@ -160,6 +160,13 @@ client exactly as before, reads that cookie:
 - `/oauth/logout` ends the browser session as well: the cookie's session is
   revoked, the Redis mapping deleted and the cookie cleared, whether or not
   the caller supplied `id_token_hint` or a bearer token.
+- `GET /oauth/authorize/v2` (the endpoint the mobile authenticator's
+  browser-login fallback opens) reads the cookie the same way, with the same
+  gates, `prompt` and `max_age` semantics and fallbacks. Its POST
+  (`/oauth/authorize/v2` consent) does not bind a cookie to the
+  client-supplied `session_id` it accepts: without proving that session is
+  the caller's, doing so would hand out an SSO cookie for another user's
+  session.
 
 The cookie is set on the response to the login page's request to
 `/oauth/login`, so it is stored only when the login UI and the issuer share an
