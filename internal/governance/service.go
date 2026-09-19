@@ -1523,9 +1523,92 @@ func (s *Service) populateUserAccessItems(ctx context.Context, tx pgx.Tx, review
 	return nil
 }
 
+// populateRoleAssignmentItems builds a role-assignment review: one item per
+// direct user-to-role assignment held by an enabled user of the org, named
+// with the assignment's EFFECTIVE reach through composite roles.
+//
+// Measured on 2026-09-19: this function was
+// `return s.populateUserAccessItems(ctx, tx, reviewID)` under the comment
+// "Same as user access for now", so the two review types produced identical
+// rows and a reviewer who chose "role assignment" learned nothing the other
+// review did not already say. What a role-assignment review exists to show is
+// what an assignment grants: a composite role hands its holder every
+// descendant role (internal/access/privgraph.go walks the same composite_roles
+// edges when it computes who can reach a resource), and a reviewer looking at
+// "platform_admin" cannot certify it without knowing it also carries auditor
+// and reader.
+//
+// The item stays one per DIRECT assignment because that is the only lever a
+// revoke has: a role reached through a parent cannot be removed on its own,
+// only by removing the parent (jitgrant.Revoke deletes the user_roles row).
+// The reach goes into resource_name, the one free-text column review_items
+// has; the type is 'role_assignment' so the console and the revocation switch
+// can tell these rows from a user-access review's.
+//
+// The walk is bounded (depth 16) and uses UNION, so a cycle in composite_roles
+// terminates; the root role is left out of its own reach.
 func (s *Service) populateRoleAssignmentItems(ctx context.Context, tx pgx.Tx, reviewID string) error {
-	// Same as user access for now
-	return s.populateUserAccessItems(ctx, tx, reviewID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		WITH RECURSIVE reach AS (
+			SELECT ur.user_id, ur.role_id AS root_role, ur.role_id AS role_id, 0 AS depth
+			FROM user_roles ur
+			JOIN users u ON u.id = ur.user_id
+			WHERE u.enabled = true AND u.org_id = $1 AND ur.org_id = $1
+			UNION
+			SELECT r.user_id, r.root_role, cr.child_role_id, r.depth + 1
+			FROM reach r
+			JOIN composite_roles cr ON cr.parent_role_id = r.role_id AND cr.org_id = $1
+			WHERE r.depth < 16
+		)
+		SELECT r.user_id, r.root_role, root.name,
+		       COALESCE(string_agg(DISTINCT child.name, ', ' ORDER BY child.name)
+		                FILTER (WHERE r.depth > 0 AND child.id IS NOT NULL AND child.id <> r.root_role), '') AS reach
+		FROM reach r
+		JOIN roles root ON root.id = r.root_role AND root.org_id = $1
+		LEFT JOIN roles child ON child.id = r.role_id AND child.org_id = $1 AND r.depth > 0
+		GROUP BY r.user_id, r.root_role, root.name
+		ORDER BY r.user_id, root.name
+	`, org.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var userID, roleID, roleName, reach string
+		if err := rows.Scan(&userID, &roleID, &roleName, &reach); err != nil {
+			return err
+		}
+		name := roleAssignmentItemName(roleName, reach)
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO review_items (id, review_id, user_id, resource_type, resource_id, resource_name, decision, org_id)
+			VALUES (gen_random_uuid(), $1, $2, 'role_assignment', $3, $4, 'pending', $5)
+		`, reviewID, userID, roleID, name, org.ID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// roleAssignmentItemName is the display name of a role-assignment review item:
+// the role, and when composite roles extend it, what else it grants.
+// review_items.resource_name is VARCHAR(255) in the shipped schema, so a long
+// reach is cut with an ellipsis rather than failing the insert.
+func roleAssignmentItemName(role, reach string) string {
+	name := role
+	if reach != "" {
+		name = role + " (also grants: " + reach + ")"
+	}
+	const max = 255
+	if r := []rune(name); len(r) > max {
+		return string(r[:max-1]) + "…"
+	}
+	return name
 }
 
 func (s *Service) populateApplicationAccessItems(ctx context.Context, tx pgx.Tx, reviewID string) error {

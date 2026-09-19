@@ -76,6 +76,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A role-assignment review shows what the assignment grants.**
+  `populateRoleAssignmentItems` was `return s.populateUserAccessItems(...)`
+  under the comment "Same as user access for now", so the `role_assignment`
+  and `user_access` review types produced identical rows. It now walks
+  `composite_roles` (the edges `internal/access/privgraph.go` already uses
+  to decide who can reach a resource) and names each direct assignment with
+  its effective reach: `platform_admin (also grants: auditor, reader)`. One
+  item per direct assignment remains, because removing that row is the only
+  lever a revoke has; the type is `role_assignment`, which
+  `jitgrant.Revoke` now maps to the same `user_roles` delete as `role`.
+  Disabled users are left out, the walk is bounded and a cycle terminates,
+  and the root role is not listed in its own reach. Measured against
+  PostgreSQL: with a composite `platform_admin → auditor → reader` and a
+  cycle back to the root, the review names the reach, the user-access
+  review of the same data names only `platform_admin`, and revoking the
+  item removes the assignment. The governance guide's review-type table
+  described items the code never produced (user access "to one
+  application", application access as "one application's set of users",
+  no `privileged_access`); it now says what each type populates.
 - **A real super admin is treated as one by every identity handler.** The
   elevated role is spelled `super_admin` (`auth.RoleSuperAdmin`, the SQL
   seed, the console, the route gate), but ten inline checks in
