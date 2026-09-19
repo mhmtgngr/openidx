@@ -125,6 +125,40 @@ Retrieve detailed user information using access token.
 ### Discovery
 Automatic service configuration via `.well-known/openid-configuration`
 
+### Single Sign-On across applications
+A login completion (password, MFA, passwordless, social, or after consent) sets
+a browser cookie, `openidx_sso` (HttpOnly, SameSite=Lax, Secure in production,
+24h). It holds a random token that the session Redis maps to the identity
+session; it never carries a session or user id. `GET /oauth/authorize`, after
+validating `client_id`, `redirect_uri`, `scope` and `response_type` against the
+client exactly as before, reads that cookie:
+
+- A token that resolves to a live, unrevoked, unexpired session of the request's
+  tenant goes through the same assignment/ABAC and consent gates as the login
+  flow and is redirected to the client with a code — no login page.
+- Anything less — no cookie, a token Redis has forgotten, a session revoked,
+  expired, deleted or belonging to another tenant, a session older than
+  `max_age`, `prompt=login` — falls through to the login flow. A cookie that
+  resolves to nothing is cleared.
+- `prompt` (OIDC Core §3.1.2.1): `none` never shows UI and is answered at the
+  `redirect_uri` with `login_required` (no usable session) or
+  `consent_required` (consent outstanding); `login` forces re-authentication;
+  `consent` and `select_account` need the login UI and take it. `none`
+  combined with another value, or an unknown value, is `invalid_request`.
+- `max_age` (seconds): a session authenticated longer ago than this
+  re-authenticates. Malformed values are `invalid_request`.
+- `/oauth/logout` ends the browser session as well: the cookie's session is
+  revoked, the Redis mapping deleted and the cookie cleared, whether or not
+  the caller supplied `id_token_hint` or a bearer token.
+
+The cookie is set on the response to the login page's request to
+`/oauth/login`, so it is stored only when the login UI and the issuer share an
+origin — the production layout (nginx serves the console and the issuer from
+one host). In the reference compose stack the console (`localhost:3000`) and
+the issuer (`oauth.localtest.me:8446`) are different origins, that request is
+cross-origin without credentials, and the cookie is never stored: there is no
+SSO there, which is what it was before.
+
 ## Quick Start
 
 ### 1. Register an OAuth Client

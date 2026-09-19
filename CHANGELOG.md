@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`/oauth/authorize` reads an existing browser session: single sign-on.**
+  The docs have promised "users log in once and access all connected
+  applications" since they were written, and nothing implemented it: every
+  `/oauth/authorize` minted a fresh `login_session` and sent the browser to
+  the login page, so the second application asked for the password again.
+  The login flow's code issuance now sets an `openidx_sso` cookie (HttpOnly,
+  SameSite=Lax, Secure in production, 24h) holding a random token that the
+  session Redis maps to the identity session; `/oauth/authorize`, after the
+  existing client/redirect_uri/scope/response_type validation, resolves it
+  and — for a live, unrevoked, unexpired session of the request's tenant,
+  through the same assignment/ABAC and consent gates — redirects to the
+  client with a code. Anything less (no cookie, forgotten token, revoked /
+  expired / deleted / other-tenant session, `prompt=login`, older than
+  `max_age`) falls through to the login flow, and a cookie that resolves to
+  nothing is cleared. `prompt` and `max_age` (OIDC Core §3.1.2.1) are read
+  for the first time: `prompt=none` never shows UI and answers
+  `login_required` / `consent_required` at the redirect_uri (§3.1.2.6);
+  `none` combined with another value, an unknown value, or a malformed
+  `max_age` is `invalid_request`. `/oauth/logout` ends the browser session
+  too (revoke + marker, mapping deleted, cookie cleared). The new mint site
+  is registered in both mint-site guards. Measured against a real PostgreSQL
+  and miniredis: live session → code; each stale shape → login with the
+  cookie cleared and nothing minted; fourteen mutations (revoked / expiry /
+  tenant check dropped, max_age ignored, prompt guard dropped, consent
+  skipped, HttpOnly dropped, stale cookie kept, logout keeps the session,
+  issuance sets no cookie, assignment gate skipped — caught by the source
+  guard and by a behavioural test, prompt=none without a cookie not
+  answered, authcode session binding dropped) each turn a test red; a
+  log-text control stays green.
+  Same-origin only, and documented as such: the cookie is set on the login
+  page's request to `/oauth/login`, which is same-origin in the production
+  layout and cross-origin (no credentials, no cookie) in the compose stack.
+
 - **NOTICE, THIRD_PARTY_NOTICES.md, SUPPORT.md, and a Developer Certificate
   of Origin that is checked.** The repository shipped an Apache-2.0 LICENSE
   and nothing that named a single third-party licence. `NOTICE` now points

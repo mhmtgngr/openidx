@@ -166,16 +166,49 @@ paths:
           schema:
             type: string
             enum: [S256]
+        - name: prompt
+          in: query
+          description: >-
+            OIDC Core §3.1.2.1, space-delimited. `none` never shows UI: with a
+            usable browser session the code is issued, otherwise the request is
+            answered at the `redirect_uri` with `login_required` (no session,
+            or one older than `max_age`) or `consent_required`. `login` forces
+            re-authentication even when a session exists. `consent` and
+            `select_account` take the interactive login path. `none` combined
+            with any other value, or an unrecognised value, is
+            `invalid_request`.
+          schema:
+            type: string
+            example: none
+        - name: max_age
+          in: query
+          description: >-
+            Maximum age of the browser session's authentication, in seconds. A
+            session authenticated longer ago than this re-authenticates (under
+            `prompt=none`, `login_required`). Non-integer or negative values
+            are `invalid_request`.
+          schema:
+            type: integer
+            minimum: 0
       responses:
         '302':
           description: >-
-            Two different redirects, and the `Location` says which.
+            Three different redirects, and the `Location` says which.
 
 
-            **Success** — the login UI (OAUTH_LOGIN_URL, default
+            **Single sign-on** — the client's `redirect_uri` with `code` and
+            `state`, issued without a login page when the browser presents an
+            `openidx_sso` cookie that resolves to a live, unrevoked, unexpired
+            session of this tenant and the client's assignment and consent
+            gates pass. The cookie is set by the login flow's code issuance
+            (same-origin only, see docs/OAUTH-OIDC.md).
+
+
+            **Login** — the login UI (OAUTH_LOGIN_URL, default
             `<issuer>/login`) with a `login_session` query parameter. Every
             client gets this, public and confidential alike; the server used to
-            render its own login form for public clients and no longer does.
+            render its own login form for public clients and no longer does. A
+            cookie that resolves to nothing is cleared on this response.
 
 
             **Request error** — the client's registered `redirect_uri`, with
@@ -183,10 +216,13 @@ paths:
             §4.1.2.1. `invalid_scope` is returned when a requested scope is not
             registered for the client; it is checked here rather than after the
             user has entered a password on a request that could never succeed.
+            `login_required` and `consent_required` are the `prompt=none`
+            answers of OIDC Core §3.1.2.6.
           headers:
             Location:
               description: >-
-                The login UI carrying `?login_session=...`, or the client's
+                The client's `redirect_uri` carrying `?code=...&state=...`, the
+                login UI carrying `?login_session=...`, or the client's
                 `redirect_uri` carrying `?error=...&error_description=...`.
               schema:
                 type: string
@@ -1036,6 +1072,11 @@ paths:
     get:
       tags: [Logout]
       summary: Logout
+      description: >-
+        Ends the user's sessions identified by `id_token_hint` or a bearer
+        token, and — regardless of either — the browser session named by the
+        `openidx_sso` cookie: that session is revoked, its mapping deleted and
+        the cookie cleared, so the next /oauth/authorize cannot ride it.
       operationId: logout
       x-openidx-handler: internal/oauth.(*Service).handleLogout
       responses:
