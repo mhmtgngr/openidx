@@ -476,6 +476,14 @@ const en = {
       magicLinkFailed: 'Failed to send sign-in link. Please try again.',
       qrCreateFailed: 'Failed to create QR login session.',
       qrExpired: 'QR session expired. Please try again.',
+      consentFailed: 'Your decision could not be recorded. Please sign in again.',
+    },
+    consent: {
+      title: 'Authorize application',
+      description: '{{client}} is asking for access to your account.',
+      scopesLabel: 'Requested permissions',
+      approve: 'Allow',
+      deny: 'Deny',
     },
     mfa: {
       chooseTitle: 'Choose Verification Method',

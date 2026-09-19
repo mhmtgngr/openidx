@@ -22,6 +22,28 @@ interface MFAOption {
   icon: React.ReactNode
 }
 
+// ConsentChallenge is what /oauth/login (and every other completion endpoint)
+// answers instead of a redirect_url when the application requires the user's
+// approval for the requested scopes (application_sso_settings.require_consent)
+// and none is on record. The decision goes back to POST /oauth/consent.
+interface ConsentChallenge {
+  consent_session: string
+  client_id: string
+  client_name: string
+  scopes: string[]
+}
+
+// AuthResult is the completion shape shared by every authentication path.
+interface AuthResult {
+  redirect_url?: string
+  consent_required?: boolean
+  consent_session?: string
+  client_id?: string
+  client_name?: string
+  scopes?: string[]
+  error_description?: string
+}
+
 export function LoginPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -73,6 +95,11 @@ export function LoginPage() {
     trustBrowserRef.current = value
     setTrustBrowser(value)
   }
+
+  // Consent challenge state: set when a completion path answers
+  // consent_required instead of redirect_url; cleared by the decision.
+  const [consentChallenge, setConsentChallenge] = useState<ConsentChallenge | null>(null)
+  const [consentSubmitting, setConsentSubmitting] = useState(false)
 
   // Concurrent session state
   const [concurrentLimitReached, setConcurrentLimitReached] = useState(false)
@@ -292,6 +319,60 @@ export function LoginPage() {
     window.location.href = url
   }
 
+  // finishAuth is the one place a successful completion response is acted on.
+  // Every path that ends an authentication (password, MFA verify, WebAuthn,
+  // push, passkey, QR poll, force-login) gets one of two answers from the
+  // server: a redirect_url to follow, or a consent challenge to render first.
+  // Until this helper existed each path checked only redirect_url, so the
+  // consent_required answer the server sends for an application with
+  // require_consent left this page silent: no error, no redirect, no screen,
+  // and nothing anywhere posted to /oauth/consent. Returns true when the
+  // response was handled.
+  const finishAuth = (data: AuthResult): boolean => {
+    if (data.consent_required && data.consent_session) {
+      setConsentChallenge({
+        consent_session: data.consent_session,
+        client_id: data.client_id || '',
+        client_name: data.client_name || data.client_id || '',
+        scopes: Array.isArray(data.scopes) ? data.scopes : [],
+      })
+      return true
+    }
+    if (data.redirect_url) {
+      completeOIDCRedirect(data.redirect_url)
+      return true
+    }
+    return false
+  }
+
+  // submitConsent posts the user's decision. The stash behind consent_session
+  // is one-time use server-side, so a refusal cannot be retried from here:
+  // the challenge is dropped and the person starts over from the login form.
+  const submitConsent = async (approve: boolean) => {
+    if (!consentChallenge) return
+    setError('')
+    setConsentSubmitting(true)
+    try {
+      const response = await fetch(`${baseURL}/oauth/consent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          consent_session: consentChallenge.consent_session,
+          approve,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok || !finishAuth(data)) {
+        setConsentChallenge(null)
+        setError(data.error_description || t('login.errors.consentFailed'))
+      }
+    } catch {
+      setError(t('login.errors.network'))
+    } finally {
+      setConsentSubmitting(false)
+    }
+  }
+
   const handleSSOLogin = (idp: IdentityProvider) => {
     setError('')
     const redirectUrl = `${baseURL}/oauth/authorize?response_type=code&client_id=admin-console&redirect_uri=${window.location.origin}/login&scope=openid%20profile%20email&idp_hint=${idp.id}`
@@ -386,9 +467,7 @@ export function LoginPage() {
       }
 
       // Redirect to the URL with the authorization code
-      if (data.redirect_url) {
-        completeOIDCRedirect(data.redirect_url)
-      }
+      finishAuth(data)
     } catch (err) {
       setError(t('login.errors.network'))
       console.error('Login error:', err)
@@ -470,9 +549,7 @@ export function LoginPage() {
         throw new Error(verifyData.error_description || t('login.errors.webauthnVerify'))
       }
 
-      if (verifyData.redirect_url) {
-        completeOIDCRedirect(verifyData.redirect_url)
-      }
+      finishAuth(verifyData)
     } catch (err) {
       const message = err instanceof Error ? err.message : t('login.errors.webauthnFailed')
       setError(message)
@@ -532,9 +609,7 @@ export function LoginPage() {
               return
             }
 
-            if (verifyData.redirect_url) {
-              completeOIDCRedirect(verifyData.redirect_url)
-            }
+            finishAuth(verifyData)
           } else if (statusData.status === 'denied') {
             clearInterval(pollInterval)
             pushPollingRef.current = null
@@ -622,9 +697,7 @@ export function LoginPage() {
         return
       }
 
-      if (data.redirect_url) {
-        completeOIDCRedirect(data.redirect_url)
-      }
+      finishAuth(data)
     } catch (err) {
       setError(t('login.errors.network'))
     } finally {
@@ -672,9 +745,7 @@ export function LoginPage() {
         }),
       })
       const data = await response.json()
-      if (data.redirect_url) {
-        completeOIDCRedirect(data.redirect_url)
-      } else {
+      if (!finishAuth(data)) {
         setError(data.error_description || t('login.errors.forceLogin'))
       }
     } catch (err) {
@@ -733,7 +804,7 @@ export function LoginPage() {
       })
       const finishData = await finishResp.json()
       if (!finishResp.ok) throw new Error(finishData.error_description || t('login.errors.passkeyVerify'))
-      if (finishData.redirect_url) completeOIDCRedirect(finishData.redirect_url)
+      finishAuth(finishData)
     } catch (err) {
       const msg = err instanceof Error ? err.message : t('login.errors.passkeyFailed')
       setError(msg)
@@ -818,14 +889,13 @@ export function LoginPage() {
         try {
           const pollResp = await fetch(`${baseURL}/oauth/qr-login/poll?session_token=${data.session_token}&login_session=${loginSession}`)
           const pollData = await pollResp.json()
-          if (pollData.redirect_url) {
-            if (qrPollingRef2.current) clearInterval(qrPollingRef2.current)
-            completeOIDCRedirect(pollData.redirect_url)
-          } else if (pollData.status === 'expired') {
+          if (pollData.status === 'expired') {
             if (qrPollingRef2.current) clearInterval(qrPollingRef2.current)
             setQrSession(null)
             setShowQRLogin(false)
             setError(t('login.errors.qrExpired'))
+          } else if (finishAuth(pollData)) {
+            if (qrPollingRef2.current) clearInterval(qrPollingRef2.current)
           }
         } catch { /* ignore polling errors */ }
       }, 2000)
@@ -838,6 +908,75 @@ export function LoginPage() {
   }
 
   // Show MFA method selection
+  // Consent screen: rendered from the challenge, whichever path produced it.
+  if (consentChallenge) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <div className="absolute top-4 right-4">
+          <LanguageSwitcher />
+        </div>
+        <Card className="w-full max-w-md shadow-xl">
+          <CardHeader className="text-center space-y-4">
+            <div className="flex justify-center">
+              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
+                <Shield className="h-9 w-9 text-white" />
+              </div>
+            </div>
+            <div>
+              <CardTitle className="text-2xl font-bold">{t('login.consent.title')}</CardTitle>
+              <CardDescription className="text-base mt-2">
+                {t('login.consent.description', { client: consentChallenge.client_name })}
+              </CardDescription>
+            </div>
+          </CardHeader>
+
+          <CardContent className="space-y-4">
+            {error && (
+              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
+                <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                <p className="text-sm text-red-600">{error}</p>
+              </div>
+            )}
+
+            <div>
+              <p className="text-sm font-medium mb-2">{t('login.consent.scopesLabel')}</p>
+              <ul aria-label={t('login.consent.scopesLabel')} className="space-y-2">
+                {consentChallenge.scopes.map((scope) => (
+                  <li key={scope} className="flex items-center gap-2 rounded-md border p-2 text-sm">
+                    <Check className="h-4 w-4 text-green-600 flex-shrink-0" />
+                    <span className="font-mono">{scope}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
+                disabled={consentSubmitting}
+                onClick={() => submitConsent(false)}
+              >
+                {t('login.consent.deny')}
+              </Button>
+              <Button
+                type="button"
+                className="flex-1"
+                disabled={consentSubmitting}
+                onClick={() => submitConsent(true)}
+              >
+                {consentSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : t('login.consent.approve')}
+              </Button>
+            </div>
+          </CardContent>
+
+          <AuthCardFooter />
+        </Card>
+      </div>
+    )
+  }
+
   if (mfaRequired && loginSession && mfaMethodSelectionStep) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">

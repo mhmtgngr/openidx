@@ -149,6 +149,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The login page renders the consent challenge; before, consent dead-ended
+  every login.** `application_sso_settings.require_consent` has been enforced
+  server-side since #513: when an application requires approval and none is
+  on record, `/oauth/login` (and every other completion endpoint) answers
+  `200 {consent_required, consent_session, client_name, scopes}` instead of a
+  `redirect_url`, and the decision is expected at `POST /oauth/consent`. No
+  client of that endpoint existed. The admin console's login page handled
+  `mfa_required`, `concurrent_limit_reached` and `redirect_url` and nothing
+  else, so the consent answer left it silent: no error, no redirect, no
+  screen, and the person stayed on the login form with a spent
+  `login_session`. Turning "Require consent" on for an application made it
+  unreachable through the browser. The page now hands every completion
+  response (password, MFA verify, WebAuthn, push, passkey, QR poll,
+  force-login) to one `finishAuth` helper that renders a consent screen
+  (application name, requested scopes, Allow / Deny) for a challenge and
+  follows `redirect_url` otherwise; the decision is posted to
+  `/oauth/consent` and its `redirect_url` (the code on Allow, `access_denied`
+  at the client on Deny) is followed the same way. A source census in the
+  page's tests fails if any completion path follows `redirect_url` on its
+  own again. English and Turkish strings added. Five mutations (challenge
+  ignored, decision always Allow, `consent_session` omitted, MFA path
+  bypassing the helper, spent challenge kept after a refusal) each red with
+  the new tests; a no-op control green.
 - **The v2 consent POST binds only the caller's own live session.**
   `POST /oauth/authorize/v2` accepts a client-supplied `session_id` "for
   linkage" and bound it to the code unverified; the token endpoint then read
