@@ -226,7 +226,18 @@ GET /oauth/authorize?
   code_challenge_method=S256
 ```
 
-**Step 2: User consents (handled by OpenIDX UI)**
+**Step 2: User authenticates and, if the application requires it, consents**
+
+The login page completes authentication and follows the `redirect_url` the
+server returns. When the application has **Require consent** enabled and the
+user has not yet approved the requested scopes, the completion endpoint
+(`/oauth/login`, `/oauth/mfa-verify`, passkey, push, QR, force-login) answers
+`consent_required` with a `consent_session`, the client name and the scopes
+instead of a `redirect_url`; the login page renders that as an approval
+screen and posts the decision to `POST /oauth/consent`, whose `redirect_url`
+carries the code on approval and `error=access_denied` back to the client on
+denial. A recorded approval is not asked for again unless the requested
+scopes widen.
 
 **Step 3: OAuth service redirects back**
 

@@ -471,6 +471,14 @@ const tr: typeof en = {
       magicLinkFailed: 'Oturum açma bağlantısı gönderilemedi. Lütfen tekrar deneyin.',
       qrCreateFailed: 'QR oturumu oluşturulamadı.',
       qrExpired: 'QR oturumunun süresi doldu. Lütfen tekrar deneyin.',
+      consentFailed: 'Kararınız kaydedilemedi. Lütfen yeniden oturum açın.',
+    },
+    consent: {
+      title: 'Uygulamayı yetkilendir',
+      description: '{{client}} hesabınıza erişim istiyor.',
+      scopesLabel: 'İstenen izinler',
+      approve: 'İzin ver',
+      deny: 'Reddet',
     },
     mfa: {
       chooseTitle: 'Doğrulama Yöntemini Seçin',

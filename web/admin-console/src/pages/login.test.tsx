@@ -290,4 +290,145 @@ describe('LoginPage', () => {
       expect(screen.queryByTestId('turnstile-challenge')).not.toBeInTheDocument()
     })
   })
+
+  // The server pauses code issuance with a consent challenge when the
+  // application requires the user's approval (require_consent) and none is on
+  // record. Until finishAuth existed the page checked only redirect_url, so
+  // that 200 left it silent: no error, no redirect, no screen, and nothing
+  // ever posted to /oauth/consent. These tests pin the screen, both decisions,
+  // and that the challenge is honoured whichever path produced it.
+  describe('consent challenge', () => {
+    const fetchMock = vi.fn()
+
+    const challenge = {
+      consent_required: true,
+      consent_session: 'consent-1',
+      client_id: 'crm',
+      client_name: 'Acme CRM',
+      scopes: ['openid', 'profile', 'email'],
+    }
+
+    beforeEach(() => {
+      sessionStorage.setItem('oidc_login_session', 'test-session')
+      fetchMock.mockReset()
+      vi.stubGlobal('fetch', fetchMock)
+      mockLocation.href = 'http://localhost:5173/login'
+    })
+
+    afterEach(() => {
+      sessionStorage.clear()
+      vi.unstubAllGlobals()
+    })
+
+    const jsonOnce = (body: unknown, ok = true) =>
+      fetchMock.mockImplementationOnce(() =>
+        Promise.resolve({ ok, json: () => Promise.resolve(body) } as Response)
+      )
+
+    const signIn = async () => {
+      const user = userEvent.setup()
+      renderWithRouter(<LoginPage />)
+      await user.type(screen.getByLabelText(/username or email/i), 'testuser')
+      await user.type(screen.getByLabelText(/^password$/i), 'password123')
+      await user.click(screen.getByRole('button', { name: /sign in$/i }))
+      return user
+    }
+
+    const reachConsentScreen = async () => {
+      jsonOnce(challenge)
+      const user = await signIn()
+      await screen.findByRole('button', { name: /^allow$/i })
+      return user
+    }
+
+    it('renders the application and the requested scopes instead of going silent', async () => {
+      await reachConsentScreen()
+      expect(screen.getByText(/Acme CRM/)).toBeInTheDocument()
+      for (const scope of challenge.scopes) {
+        expect(screen.getByText(scope)).toBeInTheDocument()
+      }
+      expect(screen.getByRole('button', { name: /^deny$/i })).toBeInTheDocument()
+      // Nothing was posted and nothing was followed until the person decides.
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(mockLocation.href).toBe('http://localhost:5173/login')
+    })
+
+    it('allowing posts approve=true to /oauth/consent and follows the redirect', async () => {
+      const user = await reachConsentScreen()
+      jsonOnce({ redirect_url: 'https://app.example.com/callback?code=abc&state=st' })
+      await user.click(screen.getByRole('button', { name: /^allow$/i }))
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+      const [url, init] = fetchMock.mock.calls[1]
+      expect(String(url)).toContain('/oauth/consent')
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+        consent_session: 'consent-1',
+        approve: true,
+      })
+      await waitFor(() =>
+        expect(mockLocation.href).toBe('https://app.example.com/callback?code=abc&state=st')
+      )
+      // The pending login_session marker is cleared like any other completion.
+      expect(sessionStorage.getItem('oidc_login_session')).toBeNull()
+    })
+
+    it('denying posts approve=false and follows the error redirect to the client', async () => {
+      const user = await reachConsentScreen()
+      jsonOnce({ redirect_url: 'https://app.example.com/callback?error=access_denied&state=st' })
+      await user.click(screen.getByRole('button', { name: /^deny$/i }))
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+      const [, init] = fetchMock.mock.calls[1]
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+        consent_session: 'consent-1',
+        approve: false,
+      })
+      await waitFor(() =>
+        expect(mockLocation.href).toBe('https://app.example.com/callback?error=access_denied&state=st')
+      )
+    })
+
+    it('a refused decision drops the one-time challenge and says so', async () => {
+      const user = await reachConsentScreen()
+      jsonOnce({ error: 'invalid_request', error_description: 'invalid or expired consent session' }, false)
+      await user.click(screen.getByRole('button', { name: /^allow$/i }))
+
+      await screen.findByText(/invalid or expired consent session/i)
+      expect(screen.queryByRole('button', { name: /^allow$/i })).not.toBeInTheDocument()
+      expect(mockLocation.href).toBe('http://localhost:5173/login')
+    })
+
+    it('a challenge returned after MFA verification is rendered too', async () => {
+      jsonOnce({ mfa_required: true, mfa_session: 'mfa-1', mfa_methods: ['totp'] })
+      const user = await signIn()
+      await screen.findByLabelText(/verification code/i)
+
+      jsonOnce(challenge)
+      await user.type(screen.getByLabelText(/verification code/i), '123456')
+      await user.click(screen.getByRole('button', { name: /^verify$/i }))
+
+      await screen.findByRole('button', { name: /^allow$/i })
+      expect(screen.getByText(/Acme CRM/)).toBeInTheDocument()
+      expect(mockLocation.href).toBe('http://localhost:5173/login')
+    })
+
+    it('a plain redirect_url still redirects (control)', async () => {
+      jsonOnce({ redirect_url: 'https://app.example.com/callback?code=xyz' })
+      await signIn()
+      await waitFor(() => expect(mockLocation.href).toBe('https://app.example.com/callback?code=xyz'))
+      expect(screen.queryByRole('button', { name: /^allow$/i })).not.toBeInTheDocument()
+    })
+
+    // Census: every completion path must hand its response to finishAuth.
+    // A path that follows redirect_url on its own is exactly the shape of the
+    // defect this block exists for, so the source is read and counted.
+    it('no completion path follows redirect_url on its own', async () => {
+      const source = (await import('./login.tsx?raw')).default as string
+      const directRedirects = source.match(/completeOIDCRedirect\(/g) ?? []
+      expect(directRedirects, 'completeOIDCRedirect is called from finishAuth only').toHaveLength(1)
+      const redirectReads = source.match(/\.redirect_url\b/g) ?? []
+      expect(redirectReads, 'redirect_url is read inside finishAuth only').toHaveLength(2)
+      expect(source.match(/finishAuth\(/g) ?? [], 'seven completion paths plus the consent decision itself').toHaveLength(8)
+    })
+  })
 })
