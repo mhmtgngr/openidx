@@ -29,38 +29,6 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Field, e.Message)
 }
 
-// ValidationErrors represents multiple validation errors
-type ValidationErrors struct {
-	Errors []*ValidationError `json:"errors"`
-}
-
-func (e *ValidationErrors) Error() string {
-	if len(e.Errors) == 0 {
-		return "validation failed"
-	}
-	if len(e.Errors) == 1 {
-		return e.Errors[0].Error()
-	}
-	return fmt.Sprintf("validation failed with %d errors", len(e.Errors))
-}
-
-// Add adds a validation error
-func (e *ValidationErrors) Add(field, message string, value ...string) {
-	verr := &ValidationError{
-		Field:   field,
-		Message: message,
-	}
-	if len(value) > 0 {
-		verr.Value = value[0]
-	}
-	e.Errors = append(e.Errors, verr)
-}
-
-// HasErrors returns true if there are validation errors
-func (e *ValidationErrors) HasErrors() bool {
-	return len(e.Errors) > 0
-}
-
 // String validators
 
 // ValidateRequired checks if a string is not empty
@@ -333,81 +301,6 @@ func ValidateNotEmpty(field string, value []string) error {
 
 // Composite validators
 
-// ValidatePassword checks if a password meets security requirements
-func ValidatePassword(field, value string) error {
-	if value == "" {
-		return nil // Use ValidateRequired for required check
-	}
-
-	errors := &ValidationErrors{}
-
-	// Minimum length
-	if len(value) < 8 {
-		errors.Add(field, "must be at least 8 characters long")
-	}
-
-	// Maximum length
-	if len(value) > 128 {
-		errors.Add(field, "must be at most 128 characters long")
-	}
-
-	// Must contain at least one uppercase letter
-	hasUpper := false
-	for _, char := range value {
-		if unicode.IsUpper(char) {
-			hasUpper = true
-			break
-		}
-	}
-	if !hasUpper {
-		errors.Add(field, "must contain at least one uppercase letter")
-	}
-
-	// Must contain at least one lowercase letter
-	hasLower := false
-	for _, char := range value {
-		if unicode.IsLower(char) {
-			hasLower = true
-			break
-		}
-	}
-	if !hasLower {
-		errors.Add(field, "must contain at least one lowercase letter")
-	}
-
-	// Must contain at least one digit
-	hasDigit := false
-	for _, char := range value {
-		if unicode.IsDigit(char) {
-			hasDigit = true
-			break
-		}
-	}
-	if !hasDigit {
-		errors.Add(field, "must contain at least one digit")
-	}
-
-	// Must contain at least one special character
-	hasSpecial := false
-	for _, char := range value {
-		if !unicode.IsLetter(char) && !unicode.IsDigit(char) && !unicode.IsSpace(char) {
-			hasSpecial = true
-			break
-		}
-	}
-	if !hasSpecial {
-		errors.Add(field, "must contain at least one special character")
-	}
-
-	if errors.HasErrors() {
-		return errors
-	}
-
-	return nil
-}
-
-// Sanitization functions
-
 // SanitizeString removes leading/trailing whitespace and normalizes spaces
 func SanitizeString(value string) string {
 	// Trim leading/trailing whitespace
@@ -432,29 +325,6 @@ func SanitizeUsername(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.ToLower(value)
 	return value
-}
-
-// Helper functions for batch validation
-
-// ValidateAll runs multiple validators and collects errors
-func ValidateAll(validators ...func() error) error {
-	errors := &ValidationErrors{}
-
-	for _, validator := range validators {
-		if err := validator(); err != nil {
-			if verr, ok := err.(*ValidationError); ok {
-				errors.Errors = append(errors.Errors, verr)
-			} else if verrs, ok := err.(*ValidationErrors); ok {
-				errors.Errors = append(errors.Errors, verrs.Errors...)
-			}
-		}
-	}
-
-	if errors.HasErrors() {
-		return errors
-	}
-
-	return nil
 }
 
 // SQL Column Name Validation

@@ -285,66 +285,6 @@ func TestValidateOneOf(t *testing.T) {
 	}
 }
 
-func TestValidatePassword(t *testing.T) {
-	tests := []struct {
-		name        string
-		password    string
-		expectError bool
-		errorCount  int // Expected number of validation errors
-	}{
-		{"Valid strong password", "MyP@ssw0rd123", false, 0},
-		{"Valid complex password", "C0mpl3x!Pass", false, 0},
-		{"Too short", "Pas$1", true, 1},
-		{"No uppercase", "myp@ssw0rd123", true, 1},
-		{"No lowercase", "MYP@SSW0RD123", true, 1},
-		{"No digit", "MyP@ssword", true, 1},
-		{"No special char", "MyPassword123", true, 1},
-		{"Multiple issues", "password", true, 3}, // no uppercase, digit, special
-		{"Empty - should pass", "", false, 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidatePassword("password", tt.password)
-			if tt.expectError {
-				assert.Error(t, err)
-				if verrs, ok := err.(*ValidationErrors); ok {
-					assert.Equal(t, tt.errorCount, len(verrs.Errors))
-				}
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestValidationErrors(t *testing.T) {
-	t.Run("Add and check errors", func(t *testing.T) {
-		errors := &ValidationErrors{}
-
-		assert.False(t, errors.HasErrors())
-
-		errors.Add("field1", "is required")
-		assert.True(t, errors.HasErrors())
-		assert.Equal(t, 1, len(errors.Errors))
-
-		errors.Add("field2", "is invalid", "bad_value")
-		assert.Equal(t, 2, len(errors.Errors))
-		assert.Equal(t, "bad_value", errors.Errors[1].Value)
-	})
-
-	t.Run("Error message", func(t *testing.T) {
-		errors := &ValidationErrors{}
-		assert.Equal(t, "validation failed", errors.Error())
-
-		errors.Add("field1", "is required")
-		assert.Contains(t, errors.Error(), "field1")
-
-		errors.Add("field2", "is invalid")
-		assert.Contains(t, errors.Error(), "2 errors")
-	})
-}
-
 func TestSanitizeString(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -406,44 +346,6 @@ func TestSanitizeUsername(t *testing.T) {
 	}
 }
 
-func TestValidateAll(t *testing.T) {
-	t.Run("All validations pass", func(t *testing.T) {
-		err := ValidateAll(
-			func() error { return ValidateRequired("field1", "value1") },
-			func() error { return ValidateEmail("field2", "user@example.com") },
-			func() error { return ValidateRange("field3", 5, 1, 10) },
-		)
-		assert.NoError(t, err)
-	})
-
-	t.Run("One validation fails", func(t *testing.T) {
-		err := ValidateAll(
-			func() error { return ValidateRequired("field1", "value1") },
-			func() error { return ValidateRequired("field2", "") }, // This fails
-			func() error { return ValidateRange("field3", 5, 1, 10) },
-		)
-		assert.Error(t, err)
-
-		verrs, ok := err.(*ValidationErrors)
-		assert.True(t, ok)
-		assert.Equal(t, 1, len(verrs.Errors))
-	})
-
-	t.Run("Multiple validations fail", func(t *testing.T) {
-		err := ValidateAll(
-			func() error { return ValidateRequired("field1", "") },     // Fails
-			func() error { return ValidateEmail("field2", "invalid") }, // Fails
-			func() error { return ValidateRange("field3", 15, 1, 10) }, // Fails
-		)
-		assert.Error(t, err)
-
-		verrs, ok := err.(*ValidationErrors)
-		assert.True(t, ok)
-		assert.Equal(t, 3, len(verrs.Errors))
-	})
-}
-
-// Benchmark tests
 func BenchmarkValidateEmail(b *testing.B) {
 	email := "user@example.com"
 	for i := 0; i < b.N; i++ {
@@ -455,13 +357,6 @@ func BenchmarkValidateUsername(b *testing.B) {
 	username := "john.doe"
 	for i := 0; i < b.N; i++ {
 		ValidateUsername("username", username)
-	}
-}
-
-func BenchmarkValidatePassword(b *testing.B) {
-	password := "MyP@ssw0rd123"
-	for i := 0; i < b.N; i++ {
-		ValidatePassword("password", password)
 	}
 }
 
