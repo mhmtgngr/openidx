@@ -18,6 +18,7 @@ import (
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/sessionend"
 )
 
 // UserConsent represents a user's consent record for privacy compliance
@@ -930,6 +931,15 @@ func (s *Service) executeDSARDelete(ctx context.Context, dsar *DataSubjectReques
 	// as the export's dropped categories, on the side where the promise is that
 	// data is gone. Failures are now collected and returned, and the request
 	// stays incomplete.
+	// The relying parties the subject's sessions reached are told through
+	// backchannel_logout_pending (internal/common/sessionend), captured
+	// before the wipe deletes the rows it reads. The capture carries the
+	// subject's id, as ssf_pending_events already does for the
+	// account-disabled signal: a work item for the drainer, not a record
+	// about the subject.
+	if err := sessionend.ForUser(ctx, s.db.Pool, orgID, dsar.UserID); err != nil {
+		s.logger.Warn("DSAR erasure: the sessions' relying parties will not be told", zap.Error(err))
+	}
 	wipes := []string{
 		`DELETE FROM sessions WHERE user_id = $1 AND org_id = $2`,
 		`DELETE FROM oauth_refresh_tokens WHERE user_id = $1 AND org_id = $2`,
@@ -1003,6 +1013,11 @@ func (s *Service) executeDSARRestrict(ctx context.Context, dsar *DataSubjectRequ
 
 	if _, err := s.db.Pool.Exec(ctx, `UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2`, dsar.UserID, orgID); err != nil {
 		return nil, fmt.Errorf("disable user: %w", err)
+	}
+	// Captured before the DELETE: the relying parties the sessions reached
+	// are told through backchannel_logout_pending.
+	if err := sessionend.ForUser(ctx, s.db.Pool, orgID, dsar.UserID); err != nil {
+		s.logger.Warn("DSAR restrict: the sessions' relying parties will not be told", zap.Error(err))
 	}
 	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND org_id = $2`, dsar.UserID, orgID); err != nil {
 		s.logger.Warn("DSAR restrict: failed to drop sessions", zap.Error(err))

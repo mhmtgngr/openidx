@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A session ended by another binary is announced to its relying parties
+  too (`backchannel_logout_pending`, migration v198).** Back-channel logout
+  fired from oauth-service's one revocation funnel and nowhere else could:
+  sixteen paths in five other binaries — the identity service's session
+  pages, password change, offboarding, lifecycle actions and deprovisioning;
+  the admin console's revoke-session and revoke-all, the breach responder,
+  the DSAR delete and restrict; risk remediation; device revoke and the
+  kill switch; SCIM deprovisioning — end sessions with a raw `UPDATE` or
+  `DELETE` and hold no signing key, and six of them delete the row, so no
+  later sweep could even find the session. Each of them now captures the
+  session first — tenant, user, id and every client it reached (the login
+  client and every client holding a refresh token bound to it) — into
+  `backchannel_logout_pending` through `internal/common/sessionend`, on the
+  handle it already holds (the offboarding transaction included) and before
+  its own statement; only live sessions some client reached are captured,
+  so a session oauth-service already announced is not announced twice and
+  a session nobody reached writes nothing. oauth-service's drainer claims
+  the rows with `SKIP LOCKED` (the SSF signal drainer's shape), resolves
+  the captured clients against the tenant's registered URIs and delivers
+  through the same code the funnel uses, recording `delivered`/`failed` so
+  "no relying party registered" and "every relying party refused" stay
+  distinguishable. A census in `sessionend` reads every function under
+  `internal/` that revokes or deletes `sessions` rows and fails when one
+  lacks the capture; the funnel is its one named exemption. Measured
+  against a real PostgreSQL and a real HTTP receiver: a session deleted the
+  identity service's way is announced to its login client and its
+  refresh-token client with the right `sid`, `aud` and `sub`; a named
+  capture takes only the named live session; nobody-reached sessions are
+  not captured; candidates resolve in the capture's tenant only; a refusing
+  relying party is counted failed and the row is done; a stale claim is
+  handed back and a poisoned row left alone; a failed offboarding captures
+  nothing. Ten mutations red, no-op control green.
 - **OpenID Connect Back-Channel Logout 1.0 is implemented, not only
   advertised.** The discovery document has said
   `backchannel_logout_supported: true` and
@@ -33,8 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `back_channel_logout_uri` on `POST/PUT /api/v1/oauth/clients`,
   `backchannel_logout_uri` at `POST /oauth/register` (echoed in the
   response), validated as https (http only on localhost), and on the
-  console's application editor (below). A session the identity service ends on its own is not
-  this process's revocation and is not announced. Measured against a real
+  console's application editor (below). A session another binary ends is
+  announced through the seam below. Measured against a real
   PostgreSQL and a real HTTP receiver: token shape and signature, one
   message per relying party per session, cookie-only logout, per-session
   announcements for a user-wide revocation, a failing relying party, tenant

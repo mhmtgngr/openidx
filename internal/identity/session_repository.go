@@ -24,6 +24,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/sessionend"
 )
 
 // sessionSlidingWindow is how far each activity update pushes a session's
@@ -199,6 +200,14 @@ func (r *PostgresSessionRepository) Terminate(ctx context.Context, sessionID str
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
+	}
+	// The relying parties this session reached are told through
+	// backchannel_logout_pending (internal/common/sessionend). The capture
+	// reads the row the DELETE below removes, so it comes first; a capture
+	// that cannot be written fails the termination rather than ending a
+	// session its relying parties will never hear about.
+	if err := sessionend.ForSession(ctx, r.db.Pool, org.ID, sessionID); err != nil {
+		return fmt.Errorf("terminate session: %w", err)
 	}
 	if _, err := r.db.Pool.Exec(ctx,
 		`DELETE FROM sessions WHERE id = $1 AND org_id = $2`, sessionID, org.ID); err != nil {

@@ -28,6 +28,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/sessionend"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
@@ -494,6 +495,12 @@ func (s *Service) revokeDeviceTokens(ctx context.Context, orgID, agentID string,
 		}
 	}
 
+	// Captured before the rows are revoked: the relying parties the sessions
+	// reached are told through backchannel_logout_pending
+	// (internal/common/sessionend).
+	if err := sessionend.ForSessions(ctx, s.db.Pool, orgID, ids); err != nil {
+		warn("backchannel_logout_capture", err)
+	}
 	if tag, err := s.db.Pool.Exec(ctx,
 		`UPDATE sessions SET revoked = true, revoked_at = NOW()
 		  WHERE id::text = ANY($1) AND org_id = $2 AND (revoked IS NULL OR revoked = false)`,

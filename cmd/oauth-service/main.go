@@ -307,6 +307,10 @@ func main() {
 	// ssf_pending_events become signed SETs here, where the key is. Same
 	// shape as the push worker above; see internal/oauth/ssf_signal_drain.go.
 	oauthService.StartSSFSignalDrainer(ctx)
+	// The seam from the paths that END SESSIONS in other binaries: captures
+	// they wrote to backchannel_logout_pending become logout tokens here,
+	// where the key is. See internal/oauth/backchannel_logout_drain.go.
+	oauthService.StartBackchannelLogoutDrainer(ctx)
 
 	// The client-management API (/api/v1/oauth/clients) is ALWAYS authenticated
 	// — it creates/modifies OAuth clients, so it must never be reachable

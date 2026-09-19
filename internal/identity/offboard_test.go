@@ -37,15 +37,23 @@ func TestOffboardingIsAllOrNothing(t *testing.T) {
 		CREATE TABLE api_keys (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, status VARCHAR(16), org_id UUID);
 		CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID);
 		CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID);
-		CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID);
+		CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID,
+			client_id VARCHAR(255) NOT NULL DEFAULT 'rp-a', revoked BOOLEAN DEFAULT false);
+		CREATE TABLE oauth_refresh_tokens (token VARCHAR(500) PRIMARY KEY, client_id VARCHAR(255),
+			user_id UUID, session_id UUID, org_id UUID);
 	`); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
 	// The sixth write is the account-disabled signal to the SSF receivers
 	// (migration v196, applied from the DDL the loader ships): it rides the
 	// same transaction, so it is subject to the same all-or-nothing claim.
-	if _, err := db.Pool.Exec(ctx, registeredMigrationUpSQL(t, 196)); err != nil {
-		t.Fatalf("schema (v196): %v", err)
+	// The seventh is the capture of the leaver's sessions for back-channel
+	// logout (v198): it rides the transaction too, and it runs FIRST, because
+	// the row it reads is what the "terminate the sessions" step deletes.
+	for _, v := range []int{196, 198} {
+		if _, err := db.Pool.Exec(ctx, registeredMigrationUpSQL(t, v)); err != nil {
+			t.Fatalf("schema (v%d): %v", v, err)
+		}
 	}
 
 	const org = "00000000-0000-0000-0000-0000000000e1"
@@ -90,6 +98,10 @@ func TestOffboardingIsAllOrNothing(t *testing.T) {
 		return count(`SELECT COUNT(*) FROM ssf_pending_events WHERE subject_id=$1
 			AND event_type='https://schemas.openid.net/secevent/risc/event-type/account-disabled'`)
 	}
+	pendingLogouts := func() int {
+		t.Helper()
+		return count(`SELECT COUNT(*) FROM backchannel_logout_pending WHERE user_id=$1`)
+	}
 	stillHeld := func() (int, int, int, int, bool) {
 		t.Helper()
 		var enabled bool
@@ -126,6 +138,9 @@ func TestOffboardingIsAllOrNothing(t *testing.T) {
 		}
 		if n := pendingSignals(); n != 0 {
 			t.Errorf("a failed offboarding told the SSF receivers the account was disabled (%d pending signal(s)); it was not", n)
+		}
+		if n := pendingLogouts(); n != 0 {
+			t.Errorf("a failed offboarding told the relying parties the sessions ended (%d pending logout(s)); they did not", n)
 		}
 	})
 

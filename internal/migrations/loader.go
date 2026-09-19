@@ -1406,5 +1406,12 @@ func allMigrations() []*Migration {
 			UpSQL:       fleetPerTenantUp,
 			DownSQL:     fleetPerTenantDown,
 		},
+		{
+			Version:     198,
+			Name:        "backchannel_logout_pending",
+			Description: "Create backchannel_logout_pending: the seam between the paths that end a session in another binary and the one process that can tell the relying parties. Back-channel logout (internal/oauth/backchannel_logout.go) mints a logout token with the issuer's key and POSTs it to every relying party a session reached, from oauth-service's one revocation funnel. Sixteen other paths in five binaries -- identity's session pages, password change, offboarding, lifecycle actions and deprovisioning; admin's revoke-session and revoke-all, the breach responder, the DSAR delete and restrict; risk's remediation; access's device revoke and kill switch; provisioning's deprovision -- end sessions with a raw UPDATE or DELETE and hold no key. Six of them DELETE the row, so no sweep in oauth-service could discover the session afterwards; that is why this is a capture written BEFORE the sever's own statement, on the handle it already holds, and not a sweep: the row keeps the tenant, the user, the session id the relying party saw as sid and every candidate client (the login client and every client holding a refresh token bound to the session), and oauth-service resolves the candidates against the tenant's registered back_channel_logout_uri when it drains. A capture naming no client is refused by CHECK rather than drained to nobody. v196's shape and v196's two reasons against the outbox, unchanged: SKIP LOCKED claim, claimed_at hand-back, published_at as done, attempts as poison guard, partial backlog index, forced org-scoped RLS, plus delivered and failed counts so an operator can tell no-URI-registered from every-party-refused. Down drops the table: a pending logout is a work item, and an install rolling back is one where sessions ended elsewhere were never announced, which is where it already was.",
+			UpSQL:       backchannelLogoutPendingUp,
+			DownSQL:     backchannelLogoutPendingDown,
+		},
 	}
 }
