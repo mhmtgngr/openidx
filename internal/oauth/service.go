@@ -70,6 +70,11 @@ type OAuthClient struct {
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 
+	// BackChannelLogoutURI is where this relying party receives a logout
+	// token (OpenID Connect Back-Channel Logout 1.0) when a session it was
+	// part of ends; empty means it is not told (backchannel_logout.go).
+	BackChannelLogoutURI string `json:"back_channel_logout_uri,omitempty"`
+
 	// RefreshTokenMaxLifetime caps the whole FAMILY, in seconds; 0 means
 	// uncapped. RefreshTokenLifetime limits how long one token may sit unused,
 	// and rotation restarts it, so on a client that refreshes hourly it bounds
@@ -237,17 +242,21 @@ type OIDCDiscovery struct {
 
 // Service provides OAuth/OIDC operations
 type Service struct {
-	db               *database.PostgresDB
-	redis            *database.RedisClient
-	config           *config.Config
-	logger           *zap.Logger
-	idpCipher        *secretcrypt.Cipher // decrypts identity_providers.client_secret (social login raw read)
-	privateKey       *rsa.PrivateKey
-	publicKey        *rsa.PublicKey
-	keyStore         *signingkeys.Store
-	signer           atomic.Pointer[signerSnapshot]
-	issuer           string
-	tenantBaseDomain string // when set, JWT iss is derived per-tenant (https://<slug>.<base>)
+	db         *database.PostgresDB
+	redis      *database.RedisClient
+	config     *config.Config
+	logger     *zap.Logger
+	idpCipher  *secretcrypt.Cipher // decrypts identity_providers.client_secret (social login raw read)
+	privateKey *rsa.PrivateKey
+
+	// backchannelObserver, when set (tests), is told the outcome of each
+	// session's back-channel logout fan-out (backchannel_logout.go).
+	backchannelObserver func(sessionID string, delivered, failed int)
+	publicKey           *rsa.PublicKey
+	keyStore            *signingkeys.Store
+	signer              atomic.Pointer[signerSnapshot]
+	issuer              string
+	tenantBaseDomain    string // when set, JWT iss is derived per-tenant (https://<slug>.<base>)
 	// cellID stamps every access token this issuer mints with the cell it was
 	// minted in, so a cell that receives one can tell whether it is the cell
 	// that should have. Empty on a single-cell install, which is every install

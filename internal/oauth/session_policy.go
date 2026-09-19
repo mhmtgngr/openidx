@@ -133,5 +133,9 @@ func (s *Service) revokeSessionWithRedis(ctx context.Context, sessionID string) 
 	s.redis.RevocationDB().Set(ctx, "revoked_session:"+sessionID, "1", 25*time.Hour)
 
 	s.logger.Info("Session revoked", zap.String("session_id", sessionID))
+
+	// Every relying party the session reached is told, from here, because
+	// this is the one place a session stops being live (backchannel_logout.go).
+	s.notifyBackchannelLogout(sessionID)
 	return nil
 }

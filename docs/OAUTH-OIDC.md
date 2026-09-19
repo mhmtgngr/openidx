@@ -179,6 +179,36 @@ client exactly as before, reads that cookie:
   session row is where `sid`, `amr` and `auth_time` come from, so a caller
   must not be able to borrow another user's. No cookie is set on this path.
 
+### Back-channel logout
+When a session stops being live — `/oauth/logout` (with the cookie, an
+`id_token_hint` or a bearer), `/oauth/logout-all`, an SSF receiver acting on
+an upstream signal, a concurrent-session eviction, a force-login termination,
+or the inactivity and absolute-timeout sweeps — every relying party that
+session reached is told, per OpenID Connect Back-Channel Logout 1.0. The
+relying parties of a session are the client it was created for and every
+client holding a refresh token bound to it (that is how a code issued from
+the browser session shows up); only those whose registration carries a
+`back_channel_logout_uri` in the session's tenant are told.
+
+The logout token is a JWT signed with the ID-token key (`typ`
+`logout+jwt`): `iss`, `sub` exactly as the relying party saw it in its ID
+token (pairwise or public), `aud` (the client), `iat`, `exp` (two minutes),
+`jti`, `events` naming `http://schemas.openid.net/event/backchannel-logout`,
+and `sid` — the session id the relying party saw as its ID token's `sid`.
+It never carries a `nonce`. It is POSTed as
+`application/x-www-form-urlencoded` `logout_token=…`; `200` means the relying
+party acted. Delivery is asynchronous and best-effort — one attempt, logged
+and audited as `backchannel_logout` delivered/failed — and never delays or
+fails the revocation itself: the tokens the session backed are cut by the
+revocation marker whether or not the relying party heard.
+
+Register the endpoint with `back_channel_logout_uri` on
+`POST /api/v1/oauth/clients` (and `PUT …/{id}`), or with
+`backchannel_logout_uri` at `POST /oauth/register`. It must be https (http
+only on localhost). The console's application form does not yet offer the
+field. A session the identity service ends on its own is not this process's
+revocation and is not announced.
+
 The cookie is set on the response to the login page's request to
 `/oauth/login`, so it is stored only when the login UI and the issuer share an
 origin — the production layout (nginx serves the console and the issuer from
