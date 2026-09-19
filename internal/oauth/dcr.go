@@ -43,6 +43,11 @@ type clientMetadata struct {
 	Contacts                []string `json:"contacts,omitempty"`
 	TOSUri                  string   `json:"tos_uri,omitempty"`
 	PolicyURI               string   `json:"policy_uri,omitempty"`
+	// BackchannelLogoutURI is the Back-Channel Logout 1.0 registration
+	// parameter (§2.2); it is stored on the client and used by
+	// backchannel_logout.go. Validated like redirect_uris: https, or http on
+	// loopback.
+	BackchannelLogoutURI string `json:"backchannel_logout_uri,omitempty"`
 }
 
 // clientRegistrationResponse is the RFC 7591 registration response. It echoes
@@ -64,6 +69,7 @@ type clientRegistrationResponse struct {
 	Scope                   string   `json:"scope,omitempty"`
 	TOSUri                  string   `json:"tos_uri,omitempty"`
 	PolicyURI               string   `json:"policy_uri,omitempty"`
+	BackchannelLogoutURI    string   `json:"backchannel_logout_uri,omitempty"`
 }
 
 // dcrError writes an RFC 7591 §3.2.2 registration error.
@@ -215,6 +221,10 @@ func (s *Service) buildClientFromMetadata(md *clientMetadata) (*OAuthClient, err
 		}
 	}
 
+	if err := validateBackChannelLogoutURI(md.BackchannelLogoutURI); err != nil {
+		return nil, &metadataError{"backchannel_logout_uri: " + err.Error()}
+	}
+
 	// public (no secret) when token_endpoint_auth_method=none, else confidential.
 	clientType := "confidential"
 	if md.TokenEndpointAuthMethod == "none" {
@@ -241,6 +251,7 @@ func (s *Service) buildClientFromMetadata(md *clientMetadata) (*OAuthClient, err
 		LogoURI:              md.LogoURI,
 		PolicyURI:            md.PolicyURI,
 		TOSUri:               md.TOSUri,
+		BackChannelLogoutURI: strings.TrimSpace(md.BackchannelLogoutURI),
 		PKCERequired:         clientType == "public",
 		AllowRefreshToken:    contains(grantTypes, "refresh_token"),
 		AccessTokenLifetime:  3600,
@@ -272,6 +283,7 @@ func (s *Service) registrationResponse(c *gin.Context, client *OAuthClient, regT
 		Scope:                   strings.Join(client.Scopes, " "),
 		TOSUri:                  client.TOSUri,
 		PolicyURI:               client.PolicyURI,
+		BackchannelLogoutURI:    client.BackChannelLogoutURI,
 	}
 	scheme := "https"
 	if c.Request.TLS == nil && strings.HasPrefix(c.Request.Host, "127.0.0.1") {

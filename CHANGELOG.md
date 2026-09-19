@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **OpenID Connect Back-Channel Logout 1.0 is implemented, not only
+  advertised.** The discovery document has said
+  `backchannel_logout_supported: true` and
+  `backchannel_logout_session_supported: true` since it was written, the
+  `oauth_clients` table has carried `back_channel_logout_uri` since v63, and
+  nothing read that column or sent a logout token: a relying party that
+  registered its endpoint and trusted the advertisement kept its own session
+  open after the user signed out here. Now, from the one place a session
+  stops being live (`revokeSessionWithRedis`: `/oauth/logout` with a cookie,
+  an `id_token_hint` or a bearer, `/oauth/logout-all`, an SSF receiver
+  acting on an upstream signal, concurrent-session eviction, force-login
+  termination, and the inactivity and absolute-timeout sweeps), every
+  relying party the session reached — the client it was created for and
+  every client holding a refresh token bound to it — that registered a URI
+  in the session's tenant is POSTed a logout token: RS256 with the ID-token
+  key, `typ` `logout+jwt`, `iss`, `sub` as the RP saw it (pairwise or
+  public), `aud`, `iat`, `exp` (two minutes), `jti`, the `events` claim
+  naming `http://schemas.openid.net/event/backchannel-logout`, `sid`, and
+  never a `nonce`. Delivery is asynchronous and best-effort (one attempt,
+  audited as `backchannel_logout` delivered/failed); it never delays or
+  fails the revocation. The URI is now a first-class client field:
+  `back_channel_logout_uri` on `POST/PUT /api/v1/oauth/clients`,
+  `backchannel_logout_uri` at `POST /oauth/register` (echoed in the
+  response), validated as https (http only on localhost). The console's
+  application form does not yet offer the field; that is written in the
+  plan, not hidden. A session the identity service ends on its own is not
+  this process's revocation and is not announced. Measured against a real
+  PostgreSQL and a real HTTP receiver: token shape and signature, one
+  message per relying party per session, cookie-only logout, per-session
+  announcements for a user-wide revocation, a failing relying party, tenant
+  scoping, store round-trip, DCR. Eleven mutations red, no-op control green.
 - **A browser session reaches the consent screen without a password:
   `POST /oauth/login/resume`.** Single sign-on stopped one screen short. A
   live `openidx_sso` session that reached an application still needing

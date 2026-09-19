@@ -1191,7 +1191,13 @@ paths:
         Ends the user's sessions identified by `id_token_hint` or a bearer
         token, and — regardless of either — the browser session named by the
         `openidx_sso` cookie: that session is revoked, its mapping deleted and
-        the cookie cleared, so the next /oauth/authorize cannot ride it.
+        the cookie cleared, so the next /oauth/authorize cannot ride it. Every
+        relying party a revoked session reached (the client it was created
+        for, and every client holding a refresh token bound to it) that
+        registered a `back_channel_logout_uri` is sent an OpenID Connect
+        Back-Channel Logout 1.0 logout token (`sid` = the session, `sub` as
+        in its ID token) in the background; delivery is best-effort and
+        never delays this response.
       operationId: logout
       x-openidx-handler: internal/oauth.(*Service).handleLogout
       responses:
@@ -2426,6 +2432,13 @@ components:
             type: string
         require_pkce:
           type: boolean
+        back_channel_logout_uri:
+          type: string
+          format: uri
+          description: >-
+            Where this relying party receives an OpenID Connect Back-Channel
+            Logout 1.0 logout token when a session it took part in ends.
+            Empty means it is not told. https, or http on localhost.
         enabled:
           type: boolean
         created_at:
@@ -2460,6 +2473,13 @@ components:
         require_pkce:
           type: boolean
           default: false
+        back_channel_logout_uri:
+          type: string
+          format: uri
+          description: >-
+            Optional. The relying party's back-channel logout endpoint
+            (OpenID Connect Back-Channel Logout 1.0). Also accepted as
+            `backchannel_logout_uri` at `POST /oauth/register`.
         enabled:
           type: boolean
           default: true

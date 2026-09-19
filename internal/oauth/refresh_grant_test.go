@@ -76,6 +76,7 @@ CREATE TABLE oauth_clients (
     -- unless a case sets it. Nullable rather than DEFAULT 0 so "no cap" and
     -- "a cap of zero seconds" stay distinguishable.
     refresh_token_max_lifetime INT,
+    back_channel_logout_uri VARCHAR(500),
     created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     org_id                 UUID NOT NULL,

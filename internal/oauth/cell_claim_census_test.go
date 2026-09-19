@@ -54,6 +54,10 @@ var (
 			"cell.Guard reads the bearer, so a stamp here would be a claim nothing consults -- and OIDC clients validate " +
 			"the claim set they are given, so an unexpected one is a change to a contract we do not own.",
 		"service.go#generateTokensForUser#idClaims": "The SAML flow's ID token, same reason as GenerateIDToken.",
+		"backchannel_logout.go#mintLogoutToken#claims": "A Back-Channel Logout 1.0 logout token: this issuer SENDS it to a " +
+			"relying party's endpoint as a notification that a session ended. It is never presented back to an API as a " +
+			"bearer, the guard never reads it, and §2.4 fixes its claim set (an unexpected claim is a change to a contract " +
+			"the relying party validates).",
 		"ssf.go#BuildSET#claims": "A Security Event Token: this issuer SENDS it to a receiver's endpoint. It is not " +
 			"presented to us and is never a bearer, and the cell that emitted an event is not something a receiver has " +
 			"any use for.",
