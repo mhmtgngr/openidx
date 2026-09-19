@@ -863,9 +863,41 @@ paths:
     get:
       tags: [Authorization]
       summary: Authorize V 2
+      description: >-
+        The authorization endpoint the mobile authenticator's browser-login
+        fallback opens. PKCE is required for public clients. It reads the
+        `openidx_sso` cookie exactly as `/oauth/authorize` does: a live session
+        of this tenant that passes the assignment and consent gates is
+        redirected to the client with a code, anything less goes to the login
+        UI, and `prompt` / `max_age` have the same meaning and the same
+        `prompt=none` answers.
       operationId: authorizeV2
       x-openidx-handler: internal/oauth.(*Service).handleAuthorizeV2
+      parameters:
+        - name: prompt
+          in: query
+          description: >-
+            OIDC Core §3.1.2.1, as on `/oauth/authorize`: `none` never shows
+            UI (`login_required` / `consent_required` at the `redirect_uri`
+            without a usable session), `login` forces re-authentication,
+            `consent` and `select_account` take the interactive path;
+            `none` with another value or an unknown value is `invalid_request`.
+          schema:
+            type: string
+        - name: max_age
+          in: query
+          description: >-
+            Maximum age of the browser session's authentication in seconds;
+            older re-authenticates. Non-integer or negative is `invalid_request`.
+          schema:
+            type: integer
+            minimum: 0
       responses:
+        '302':
+          description: >-
+            The client's `redirect_uri` with `code` and `state` (single
+            sign-on), the login UI with `login_session`, or the client's
+            `redirect_uri` with `error` and `error_description`.
         '200':
           description: Success
           content:

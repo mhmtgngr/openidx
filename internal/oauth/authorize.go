@@ -110,6 +110,34 @@ func (h *AuthorizeHandler) HandleAuthorizeRequest(c *gin.Context) {
 		return
 	}
 
+	// prompt / max_age (OIDC Core §3.1.2.1), parsed after redirect_uri is known
+	// to be the client's so a malformed value is reported to the client.
+	prompt, perr := parsePrompt(c.Query("prompt"))
+	if perr != nil {
+		h.handleError(c, req, ErrInvalidRequest, perr.Error())
+		return
+	}
+	maxAge, maxAgeSet, merr := parseMaxAge(c.Query("max_age"))
+	if merr != nil {
+		h.handleError(c, req, ErrInvalidRequest, merr.Error())
+		return
+	}
+
+	// Single sign-on. This comment used to read "would be from session
+	// cookie / for now, redirect to login", and that is what this endpoint
+	// did for every request: the mobile authenticator's browser-login
+	// fallback (docs/mobile-authenticator-developer-guide.md §3.2) is what
+	// reaches it, and a phone that had just signed in for one client typed
+	// the password again for the next. The login it redirects to completes
+	// through the same /oauth/login → issueAuthorizationCode path as the
+	// primary endpoint, which is where the openidx_sso cookie is set — so the
+	// cookie was already being issued to these browsers and never read here.
+	// Same gates, same code table, same redirect shape as /oauth/authorize
+	// (browser_session.go); no new mint site.
+	if h.service.authorizeFromBrowserSession(c, h.oauthParams(req), prompt, maxAge, maxAgeSet) {
+		return
+	}
+
 	// Store authorization request for later use
 	authSessionID := GenerateRandomToken(32)
 	if err := h.storeAuthorizationRequest(ctx, authSessionID, req, client); err != nil {
@@ -118,9 +146,23 @@ func (h *AuthorizeHandler) HandleAuthorizeRequest(c *gin.Context) {
 		return
 	}
 
-	// Check if user is authenticated (would be from session cookie)
-	// For now, redirect to login
+	// No usable browser session: the interactive login.
 	h.redirectToLogin(c, req, authSessionID)
+}
+
+// oauthParams is the request in the map shape the login flow and the SSO
+// fast path share (the keys login_session stashes).
+func (h *AuthorizeHandler) oauthParams(req *AuthorizeRequest) map[string]string {
+	return map[string]string{
+		"client_id":             req.ClientID,
+		"redirect_uri":          req.RedirectURI,
+		"response_type":         req.ResponseType,
+		"scope":                 req.Scope,
+		"state":                 req.State,
+		"nonce":                 req.Nonce,
+		"code_challenge":        req.CodeChallenge,
+		"code_challenge_method": req.CodeChallengeMethod,
+	}
 }
 
 // parseAuthorizeRequest parses and validates the authorization request parameters
@@ -319,17 +361,7 @@ func (h *AuthorizeHandler) storeAuthorizationRequest(ctx context.Context, sessio
 // The v2 hop therefore never completed for any client; it is repaired here
 // rather than left as a second broken path beside the one being deleted.
 func (h *AuthorizeHandler) redirectToLogin(c *gin.Context, req *AuthorizeRequest, sessionID string) {
-	oauthParams := map[string]string{
-		"client_id":             req.ClientID,
-		"redirect_uri":          req.RedirectURI,
-		"response_type":         req.ResponseType,
-		"scope":                 req.Scope,
-		"state":                 req.State,
-		"nonce":                 req.Nonce,
-		"code_challenge":        req.CodeChallenge,
-		"code_challenge_method": req.CodeChallengeMethod,
-	}
-	paramsJSON, err := json.Marshal(oauthParams)
+	paramsJSON, err := json.Marshal(h.oauthParams(req))
 	if err != nil {
 		c.JSON(500, gin.H{"error": "server_error"})
 		return

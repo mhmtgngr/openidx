@@ -62,6 +62,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `claims_supported`) each turn a test red; a comment-text control stays
   green.
 
+- **`/oauth/authorize/v2` reads the browser session too.** The v2
+  authorization endpoint — the one the mobile authenticator's browser-login
+  fallback opens — carried the comment "would be from session cookie / for
+  now, redirect to login" and did exactly that for every request, while the
+  login it redirected to set the `openidx_sso` cookie through the shared
+  `/oauth/login` path: the cookie was issued to these browsers and never
+  read. After its client, redirect_uri, response_type, scope and PKCE
+  validation it now parses `prompt` / `max_age` and runs the same SSO fast
+  path as `/oauth/authorize` (same gates, same code table, no new mint
+  site); a live session is redirected with a code and no `login_session` is
+  started, anything less takes the login path, and `prompt=none` answers at
+  the client. The v2 consent POST deliberately does not bind a cookie to the
+  client-supplied `session_id` it accepts. Measured against a real
+  PostgreSQL: live session → code with the PKCE challenge carried; no
+  cookie, revoked session, `prompt=login`, `max_age` older → login UI with
+  nothing minted; `prompt=none` → `login_required`; malformed values →
+  `invalid_request`. Three mutations (fast path never consulted, `prompt`
+  errors swallowed, `max_age` errors swallowed) each turn a test red; a
+  comment-text control stays green.
+
 - **NOTICE, THIRD_PARTY_NOTICES.md, SUPPORT.md, and a Developer Certificate
   of Origin that is checked.** The repository shipped an Apache-2.0 LICENSE
   and nothing that named a single third-party licence. `NOTICE` now points
