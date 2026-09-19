@@ -7641,6 +7641,18 @@ components:
             type: string
         enabled:
           type: boolean
+        pkce_required:
+          type: boolean
+          description: >-
+            From the backing OAuth client; omitted for a tile with no OAuth
+            client behind it (a proxy-app tile).
+        back_channel_logout_uri:
+          type: string
+          format: uri
+          description: >-
+            From the backing OAuth client: where the relying party receives an
+            OpenID Connect Back-Channel Logout 1.0 logout token when a session
+            it took part in ends. Omitted for a tile with no OAuth client.
         created_at:
           type: string
           format: date-time
@@ -7674,6 +7686,11 @@ components:
 
     ApplicationUpdate:
       type: object
+      description: >-
+        Fields absent from the payload are left alone. `pkce_required` and
+        `back_channel_logout_uri` are written to the backing OAuth client
+        (the row the OAuth flow enforces), `redirect_uris`, `name` and
+        `description` to both.
       properties:
         name:
           type: string
@@ -7687,6 +7704,14 @@ components:
             type: string
         enabled:
           type: boolean
+        pkce_required:
+          type: boolean
+        back_channel_logout_uri:
+          type: string
+          format: uri
+          description: >-
+            Empty clears it. Must be https, or http on localhost; anything
+            else is refused with 400 and nothing is written.
 
     ApplicationSSOSettings:
       type: object

@@ -32,9 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fails the revocation. The URI is now a first-class client field:
   `back_channel_logout_uri` on `POST/PUT /api/v1/oauth/clients`,
   `backchannel_logout_uri` at `POST /oauth/register` (echoed in the
-  response), validated as https (http only on localhost). The console's
-  application form does not yet offer the field; that is written in the
-  plan, not hidden. A session the identity service ends on its own is not
+  response), validated as https (http only on localhost), and on the
+  console's application editor (below). A session the identity service ends on its own is not
   this process's revocation and is not announced. Measured against a real
   PostgreSQL and a real HTTP receiver: token shape and signature, one
   message per relying party per session, cookie-only logout, per-session
@@ -206,6 +205,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Applications editor's "Require PKCE" box displayed a default and
+  enforced nothing; it and the back-channel logout URI now read from and
+  write to the backing OAuth client.** The console's edit dialog showed a
+  "Require PKCE" checkbox for every application and sent `pkce_required` on
+  save. Nothing read it: `GET /api/v1/applications` and its list never
+  returned the field, so the box always showed its default (checked).
+  Nothing wrote it: the admin update path's allowlist ignored the key and
+  its sync to the backing `oauth_clients` row did not carry it. An
+  administrator who unchecked the box saw it come back checked, and a
+  client registered without PKCE stayed without it whatever the box said —
+  a control that displays without enforcing. The applications GET and list
+  now join the backing OAuth client (on `client_id` within the tenant) and
+  return `pkce_required` and `back_channel_logout_uri`, omitting both for a
+  tile with no client behind it (a proxy-app tile); `PUT
+  /api/v1/applications/{id}` accepts both and writes them to the OAuth
+  client, validating the URI with the same rule as the OAuth store and
+  dynamic registration (https, or http on localhost; `400` and nothing
+  written otherwise), and a payload naming only these two fields is a
+  valid update. The edit dialog gains the back-channel logout URI field and
+  initialises both from the application; the register dialog offers the
+  URI too. English and Turkish strings added. Measured against a migrated
+  PostgreSQL: the detail and list report each tenant's own client row and
+  omit the keys for a tile; an update lands on the backing client and only
+  there, clearing persists, an unrelated edit disturbs neither, a
+  client-only payload is accepted; an insecure URI is refused before any
+  row is written and the handler answers 400. Seven server mutations and
+  three console mutations red, no-op controls green.
 - **The login page renders the consent challenge; before, consent dead-ended
   every login.** `application_sso_settings.require_consent` has been enforced
   server-side since #513: when an application requires approval and none is

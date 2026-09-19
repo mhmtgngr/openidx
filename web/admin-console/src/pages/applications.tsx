@@ -49,6 +49,11 @@ interface Application {
   redirect_uris: string[]
   enabled: boolean
   pkce_required?: boolean
+  // Where the application receives an OpenID Connect Back-Channel Logout
+  // logout token when a session it took part in ends. Both this and
+  // pkce_required come from the backing OAuth client; a tile with no client
+  // behind it has neither.
+  back_channel_logout_uri?: string
   // Opt-in OIDC gate: when true, only assigned users and groups can obtain a
   // token for this application. Edited in the Manage Access dialog.
   require_assignment?: boolean
@@ -86,6 +91,7 @@ export function ApplicationsPage() {
     grant_types: 'authorization_code,refresh_token',
     scopes: 'openid,profile,email,offline_access',
     pkce_required: true,
+    back_channel_logout_uri: '',
   })
   const [regenerateModal, setRegenerateModal] = useState(false)
   const [regenerateApp, setRegenerateApp] = useState<Application | null>(null)
@@ -139,6 +145,7 @@ export function ApplicationsPage() {
         grant_types: 'authorization_code,refresh_token',
         scopes: 'openid,profile,email,offline_access',
         pkce_required: true,
+        back_channel_logout_uri: '',
       })
     },
     onError: (error: Error) => {
@@ -229,6 +236,7 @@ export function ApplicationsPage() {
       grant_types: 'authorization_code,refresh_token',
       scopes: 'openid,profile,email,offline_access',
       pkce_required: app.pkce_required ?? true,
+      back_channel_logout_uri: app.back_channel_logout_uri || '',
     })
     setEditAppModal(true)
   }
@@ -297,6 +305,7 @@ export function ApplicationsPage() {
       response_types: ['code'],
       scopes: formData.scopes.split(',').map(s => s.trim()),
       pkce_required: formData.pkce_required,
+      back_channel_logout_uri: formData.back_channel_logout_uri.trim(),
       allow_refresh_token: true,
       access_token_lifetime: 3600,
       refresh_token_lifetime: 86400,
@@ -314,6 +323,7 @@ export function ApplicationsPage() {
           base_url: formData.base_url,
           redirect_uris: formData.redirect_uris.split('\n').filter(uri => uri.trim()),
           pkce_required: formData.pkce_required,
+          back_channel_logout_uri: formData.back_channel_logout_uri.trim(),
         },
       })
     }
@@ -618,6 +628,19 @@ export function ApplicationsPage() {
               </p>
             </div>
             <div className="space-y-2">
+              <Label htmlFor="back_channel_logout_uri">{t('pages.applications.registerDialog.backChannelLogoutLabel')}</Label>
+              <Input
+                id="back_channel_logout_uri"
+                name="back_channel_logout_uri"
+                value={formData.back_channel_logout_uri}
+                onChange={handleInputChange}
+                placeholder="https://example.com/backchannel-logout"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('pages.applications.registerDialog.backChannelLogoutHint')}
+              </p>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="scopes">{t('pages.applications.registerDialog.scopesLabel')}</Label>
               <Input
                 id="scopes"
@@ -714,6 +737,19 @@ export function ApplicationsPage() {
                 className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="https://example.com/callback&#10;https://example.com/redirect"
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit_back_channel_logout_uri">{t('pages.applications.registerDialog.backChannelLogoutLabel')}</Label>
+              <Input
+                id="edit_back_channel_logout_uri"
+                name="back_channel_logout_uri"
+                value={formData.back_channel_logout_uri}
+                onChange={handleInputChange}
+                placeholder="https://example.com/backchannel-logout"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('pages.applications.registerDialog.backChannelLogoutHint')}
+              </p>
             </div>
             <div className="flex items-center space-x-2">
               <input

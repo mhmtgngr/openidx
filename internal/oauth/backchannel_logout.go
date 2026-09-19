@@ -57,6 +57,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/validation"
 )
 
 const (
@@ -80,28 +81,12 @@ type backchannelTarget struct {
 	sessionID string
 }
 
-// validateBackChannelLogoutURI accepts an empty value (no back-channel
-// logout for this client) or an absolute https URL; http is allowed only for
-// the loopback hosts a developer runs a relying party on, mirroring the
-// redirect_uri rule in dcr.go.
+// validateBackChannelLogoutURI is the shared rule
+// (validation.ValidateBackChannelLogoutURI): empty, or https, or http on
+// loopback. The admin applications editor applies the same function, so a
+// URI the OAuth store refuses cannot arrive through the other door.
 func validateBackChannelLogoutURI(raw string) error {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || u.Scheme == "" {
-		return errors.New("back_channel_logout_uri must be an absolute URL")
-	}
-	switch u.Scheme {
-	case "https":
-		return nil
-	case "http":
-		host := u.Hostname()
-		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-			return nil
-		}
-	}
-	return errors.New("back_channel_logout_uri must be https (http only for localhost)")
+	return validation.ValidateBackChannelLogoutURI(raw)
 }
 
 // mintLogoutToken builds and signs the logout token for one relying party.
