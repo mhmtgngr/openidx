@@ -23,9 +23,15 @@
 #   2. it resolves the version from EITHER trigger, not just the ref,
 #   3. it validates a dispatched version rather than trusting the input,
 #   4. on dispatch it hands off to docker.yml, and
-#   5. docker.yml's stamping job is actually reachable from that hand-off.
+#   5. docker.yml's stamping job is actually reachable from that hand-off,
+#   6. …and it stamps the same names the tagged path publishes,
+#   7. and it hands off to client-mobile-release.yml on the tag it created,
+#      which must be dispatchable and gate its uploads on the tag ref, not the
+#      event. The same asymmetry one workflow over: v1.36.0 (2026-09-18) was
+#      published by dispatch with binaries and a signed chart and no APK or
+#      IPA, while the two releases before it had both.
 #
-# Miss 4 or 5 and the asymmetry is back, silently. This checks all five.
+# Miss any of 4 to 7 and the asymmetry is back, silently. This checks them all.
 #
 # Usage: check-release-dispatch.sh [--enforce]
 #   --enforce  exit non-zero on a finding (the CI mode; the default too)
@@ -44,8 +50,9 @@ finding() {
 
 release="$DIR/release.yml"
 docker="$DIR/docker.yml"
+mobile="$DIR/client-mobile-release.yml"
 
-for f in "$release" "$docker"; do
+for f in "$release" "$docker" "$mobile"; do
   if [ ! -f "$f" ]; then
     finding "no workflow at $f"
     exit 1
@@ -54,6 +61,7 @@ done
 
 rbody="$(cat "$release")"
 dbody="$(cat "$docker")"
+mbody="$(cat "$mobile")"
 
 # 1. release.yml has to be dispatchable, with a version to release.
 grep -q 'workflow_dispatch:' <<<"$rbody" ||
@@ -100,7 +108,24 @@ for out in bare bare_major_minor bare_major; do
     finding "docker.yml's retag step does not stamp \$$out; a dispatched release would publish v1.2.3 but not the 1.2.3 the docs tell consumers to pull"
 done
 
+# 7. The mobile artifacts. client-mobile-release.yml attaches the APK and the
+#    IPA on a pushed tag; the dispatch path's token-created tag starts it no
+#    more than it starts docker.yml. So release.yml has to dispatch it ON the
+#    tag (the ref its upload steps gate on), the workflow has to accept a
+#    dispatch, and those gates have to stay on the ref, not the event name:
+#    `if: github.event_name == 'push'` would build on the dispatch and attach
+#    nothing, which is a green run with an empty release.
+grep -q 'gh workflow run client-mobile-release.yml --ref "\$RELEASE_VERSION"' <<<"$rbody" ||
+  finding "release.yml never starts client-mobile-release.yml on the tag, so a dispatched release ships no APK or IPA"
+grep -q 'workflow_dispatch:' <<<"$mbody" ||
+  finding "client-mobile-release.yml is not dispatchable, so release.yml's hand-off is dropped"
+grep -q "startsWith(github.ref, 'refs/tags/')" <<<"$mbody" ||
+  finding "client-mobile-release.yml's upload steps no longer gate on the tag ref; a dispatch on the tag would attach nothing"
+if grep -q "github.event_name == 'push'" <<<"$mbody"; then
+  finding "client-mobile-release.yml gates on the push event; a dispatched release would build the artifacts and attach none"
+fi
+
 if [ "$fail" -eq 0 ]; then
-  echo "check-release-dispatch: ok — the dispatched release stamps images like the tagged one"
+  echo "check-release-dispatch: ok — the dispatched release stamps images and attaches the mobile artifacts like the tagged one"
 fi
 exit "$fail"

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A dispatched release attaches the mobile artifacts.** `release.yml`'s
+  dispatch path handed off to `docker.yml` so the images got their version
+  tags, and to nothing else. `client-mobile-release.yml` runs on a pushed
+  tag, a token-created tag starts no workflow, and so v1.36.0 was published
+  with eight binaries and a signed chart and no APK or IPA, while v1.34.0
+  (pushed tag) and v1.35.0 (a maintainer dispatched the mobile workflow by
+  hand) had both. The same job now dispatches `client-mobile-release.yml` on
+  the tag it created; `scripts/check-release-dispatch.sh` holds that
+  hand-off, the workflow's dispatchability and its tag-ref upload gates, with
+  three red cases in its self-test. `RELEASING.md` names the second run to
+  check before announcing. v1.36.0's artifacts were attached by a manual
+  dispatch on the tag on 2026-09-19.
+
 ## [1.36.0] - 2026-09-18
 
 ### Fixed

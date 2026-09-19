@@ -26,7 +26,8 @@ trap 'rm -rf "$TMP"' EXIT
 
 stage() { # stage a pristine copy of the real workflows
   WD="$TMP/wf"; rm -rf "$WD"; mkdir -p "$WD"
-  cp "$ROOT/.github/workflows/release.yml" "$ROOT/.github/workflows/docker.yml" "$WD/"
+  cp "$ROOT/.github/workflows/release.yml" "$ROOT/.github/workflows/docker.yml" \
+     "$ROOT/.github/workflows/client-mobile-release.yml" "$WD/"
 }
 
 # The tree as it stands must pass, or every red case below proves nothing.
@@ -91,6 +92,22 @@ expect red "docker.yml takes no version input"
 stage
 sed -i '/outputs\.bare/d' "$WD/docker.yml"
 expect red "retag stamps v1.2.3 but not the documented 1.2.3"
+
+# 8. The mobile hand-off is dropped: the shape v1.36.0 was released in.
+stage
+sed -i 's/gh workflow run client-mobile-release.yml/echo skip/' "$WD/release.yml"
+expect red "release.yml no longer starts client-mobile-release.yml"
+
+# 8b. The mobile workflow stops accepting a dispatch.
+stage
+sed -i 's/^  workflow_dispatch:$/  # removed/' "$WD/client-mobile-release.yml"
+expect red "client-mobile-release.yml not dispatchable"
+
+# 8c. Its uploads gate on the push event instead of the tag ref: a dispatch on
+#     the tag would build both artifacts and attach neither.
+stage
+sed -i "s#if: startsWith(github.ref, 'refs/tags/')#if: github.event_name == 'push'#" "$WD/client-mobile-release.yml"
+expect red "mobile uploads gate on the push event"
 
 echo "check-release-dispatch.test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
