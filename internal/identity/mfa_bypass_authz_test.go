@@ -65,9 +65,12 @@ func TestIdentityCallerIsAdmin(t *testing.T) {
 	require.False(t, identityCallerIsAdmin(withRoles([]string{"user"})))
 	require.False(t, identityCallerIsAdmin(withRoles(nil)))
 	require.True(t, identityCallerIsAdmin(withRoles([]string{"admin"})))
-	// Both spellings are accepted: the shared middleware matches "super_admin"
-	// while the inline checks in handlers_advanced_mfa.go use "superadmin".
-	require.True(t, identityCallerIsAdmin(withRoles([]string{"superadmin"})))
+	// One spelling. This used to accept "superadmin" as well, because the
+	// inline checks in handlers_advanced_mfa.go compared against it; those
+	// checks are gone (they call this helper now), and a role that merely
+	// resembles the elevated one is not the elevated one. See
+	// superadmin_spelling_test.go for the measurement.
+	require.False(t, identityCallerIsAdmin(withRoles([]string{"superadmin"})))
 	require.True(t, identityCallerIsAdmin(withRoles([]string{"super_admin"})))
 	require.True(t, identityCallerIsAdmin(withRoles([]string{"user", "admin"})))
 }

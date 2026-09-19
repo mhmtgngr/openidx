@@ -227,32 +227,17 @@ func (s *Service) handleGetRiskStats(c *gin.Context) {
 func (s *Service) handleGetLoginHistory(c *gin.Context) {
 	requestedUserID := c.Query("user_id")
 	authUserID := c.GetString("user_id")
-	authRoles := c.GetStringSlice("roles")
 
 	// SECURITY: IDOR fix - Only allow admin to query arbitrary users, otherwise users can only see their own history
 	if requestedUserID != "" && requestedUserID != authUserID {
 		// Check if user is admin
-		isAdmin := false
-		for _, role := range authRoles {
-			if role == "admin" || role == "superadmin" {
-				isAdmin = true
-				break
-			}
-		}
-		if !isAdmin {
+		if !identityCallerIsAdmin(c) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to view other users' history"})
 			return
 		}
 	} else if requestedUserID == "" {
 		// If no user_id specified, require admin to view all history
-		isAdmin := false
-		for _, role := range authRoles {
-			if role == "admin" || role == "superadmin" {
-				isAdmin = true
-				break
-			}
-		}
-		if !isAdmin {
+		if !identityCallerIsAdmin(c) {
 			// Non-admin users can only view their own history
 			requestedUserID = authUserID
 		}

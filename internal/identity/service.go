@@ -7147,18 +7147,10 @@ func (s *Service) handleListLifecycleExecutions(c *gin.Context) {
 	workflowID := c.Query("workflow_id")
 	requestedUserID := c.Query("user_id")
 	authUserID := c.GetString("user_id")
-	authRoles := c.GetStringSlice("roles")
 
 	// SECURITY: IDOR fix - Only allow admin to query arbitrary users' workflow executions
 	if requestedUserID != "" && requestedUserID != authUserID {
-		isAdmin := false
-		for _, role := range authRoles {
-			if role == "admin" || role == "superadmin" {
-				isAdmin = true
-				break
-			}
-		}
-		if !isAdmin {
+		if !identityCallerIsAdmin(c) {
 			c.JSON(403, gin.H{"error": "insufficient permissions to view other users' executions"})
 			return
 		}
