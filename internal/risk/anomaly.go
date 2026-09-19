@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/sessionend"
 	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/revocation"
 	"go.uber.org/zap"
@@ -564,6 +565,13 @@ func (s *Service) RemediateRevokeSessions(ctx context.Context, userID string) er
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
+	}
+	// Captured before the rows are revoked: the relying parties the sessions
+	// reached are told through backchannel_logout_pending
+	// (internal/common/sessionend).
+	if serr := sessionend.ForUser(ctx, s.db.Pool, org.ID, userID); serr != nil {
+		s.logger.Warn("auto-remediation: the sessions' relying parties will not be told",
+			zap.String("user_id", userID), zap.Error(serr))
 	}
 	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)`, userID, org.ID)

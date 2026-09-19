@@ -31,9 +31,14 @@
 //     id_token_hint or a bearer, /oauth/logout-all, an SSF receiver acting on
 //     an upstream signal, a concurrent-session eviction, a force-login
 //     termination, and the inactivity and absolute-timeout sweeps. A session
-//     the identity service ends on its own (its session admin pages) is not
-//     this process's revocation and is not covered here; that is written in
-//     the plan, not hidden.
+//     another binary ends -- the identity service's session pages, password
+//     change, offboarding, lifecycle actions and deprovisioning, the admin
+//     console's revoke paths, the breach responder, the DSAR delete and
+//     restrict, risk remediation, device revoke, the kill switch, SCIM
+//     deprovisioning -- is captured by that path into
+//     backchannel_logout_pending (internal/common/sessionend, migration v198)
+//     before its own statement runs, and the drainer in
+//     backchannel_logout_drain.go announces it from here, where the key is.
 //
 // Delivery is best-effort and asynchronous: the logout that caused it has
 // already happened, the caller's response is never held for a relying
@@ -115,10 +120,11 @@ func (s *Service) mintLogoutToken(org orgctx.Org, clientID, userID, sessionID st
 }
 
 // backchannelLogoutTargets resolves which relying parties learn that
-// sessionID ended. The session row supplies the tenant and the user; the
-// login client and every client holding a refresh token bound to the session
-// are candidates; only those registered with a back_channel_logout_uri in
-// that tenant are targets.
+// sessionID ended, for a session this process revoked and whose row is still
+// there. The session row supplies the tenant and the user; the login client
+// and every client holding a refresh token bound to the session are
+// candidates; resolveBackchannelTargets keeps those registered with a
+// back_channel_logout_uri in that tenant.
 func (s *Service) backchannelLogoutTargets(ctx context.Context, sessionID string) ([]backchannelTarget, error) {
 	var userID, orgID, loginClient string
 	err := s.db.Pool.QueryRow(ctx,
@@ -153,7 +159,18 @@ func (s *Service) backchannelLogoutTargets(ctx context.Context, sessionID string
 	for cid := range candidates {
 		ids = append(ids, cid)
 	}
+	return s.resolveBackchannelTargets(ctx, orgID, userID, sessionID, ids)
+}
 
+// resolveBackchannelTargets keeps, of the candidate client ids, those
+// registered in orgID with a back_channel_logout_uri, and shapes each into a
+// target for the session. It is the half the drainer shares: a capture from
+// another binary arrives with its candidates already named, because the
+// session row it would have read them from may be gone.
+func (s *Service) resolveBackchannelTargets(ctx context.Context, orgID, userID, sessionID string, ids []string) ([]backchannelTarget, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
 	org := orgctx.Org{ID: orgID}
 	// The slug decides the per-tenant issuer (issuerForOrg); a tenant without
 	// a row here gets the base issuer, as its ID tokens did.
@@ -231,6 +248,14 @@ func (s *Service) fanOutBackchannelLogout(ctx context.Context, sessionID string)
 			logsafe.String("session_id", sessionID), zap.Error(err))
 		return 0, 0
 	}
+	return s.deliverBackchannelTargets(ctx, targets)
+}
+
+// deliverBackchannelTargets POSTs one logout token to each target, logs and
+// audits each outcome, and counts them. The funnel and the drainer both end
+// here, so a relying party is told the same way whichever binary ended the
+// session.
+func (s *Service) deliverBackchannelTargets(ctx context.Context, targets []backchannelTarget) (delivered, failed int) {
 	for _, t := range targets {
 		status := "delivered"
 		meta := map[string]interface{}{"client_id": t.clientID, "session_id": t.sessionID}

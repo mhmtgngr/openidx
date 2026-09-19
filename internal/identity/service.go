@@ -39,6 +39,7 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/pwhash"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
+	"github.com/openidx/openidx/internal/common/sessionend"
 	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/common/syssettings"
 	"github.com/openidx/openidx/internal/revocation"
@@ -915,6 +916,13 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 		log.Warn("deprovision: ending time-bound elevations failed", zap.Error(err))
 	}
 
+	// Whichever branch below ends the sessions, the relying parties they
+	// reached are told through backchannel_logout_pending
+	// (internal/common/sessionend); the capture reads the rows, so it comes
+	// first.
+	if err := sessionend.ForUser(ctx, s.db.Pool, orgID, userID); err != nil {
+		log.Warn("deprovision: the sessions' relying parties will not be told", zap.Error(err))
+	}
 	if hardDelete {
 		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND org_id = $2`, userID, orgID); err != nil {
 			log.Warn("deprovision: delete sessions failed", zap.Error(err))
@@ -1607,6 +1615,13 @@ func (s *Service) RevokeUserSessionsOnPasswordChange(ctx context.Context, userID
 		return err
 	}
 
+	// The relying parties these sessions reached are told through
+	// backchannel_logout_pending (internal/common/sessionend), captured
+	// before the rows are revoked.
+	if err := sessionend.ForUser(ctx, s.db.Pool, org.ID, userID); err != nil {
+		s.logger.Error("password changed, but the sessions' relying parties will not be told",
+			logsafe.String("user_id", userID), zap.Error(err))
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id FROM sessions
 		WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)
@@ -6310,6 +6325,19 @@ func (s *Service) handleOffboardUser(c *gin.Context) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// The relying parties the leaver's sessions reached are told through
+	// backchannel_logout_pending (internal/common/sessionend). The capture
+	// reads the rows the "terminate the sessions" step deletes, so it is the
+	// first statement of the transaction and fails the offboarding the way a
+	// step does: nothing is changed.
+	if err := sessionend.ForUser(ctx, tx, org.ID, userID); err != nil {
+		s.logger.Error("offboarding step failed; nothing was changed",
+			zap.String("step", "capture the sessions for back-channel logout"),
+			logsafe.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "failed to offboard user: could not capture the sessions for back-channel logout"})
+		return
+	}
+
 	for _, step := range []struct {
 		what string
 		sql  string
@@ -6825,6 +6853,12 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 		return nil
 
 	case "revoke_sessions":
+		// Captured before the DELETE: the relying parties the sessions
+		// reached are told through backchannel_logout_pending.
+		if serr := sessionend.ForUser(ctx, s.db.Pool, org.ID, userID); serr != nil {
+			s.logger.Error("lifecycle revoke_sessions: the sessions' relying parties will not be told",
+				logsafe.String("user_id", userID), zap.Error(serr))
+		}
 		if _, err := s.db.Pool.Exec(ctx,
 			"DELETE FROM sessions WHERE user_id = $1 AND org_id = $2",
 			userID, org.ID); err != nil {

@@ -207,8 +207,21 @@ Register the endpoint with `back_channel_logout_uri` on
 `backchannel_logout_uri` at `POST /oauth/register`, or in the console's
 application editor (which writes it, with `pkce_required`, to the backing
 OAuth client through `PUT /api/v1/applications/{id}`). It must be https
-(http only on localhost). A session the identity service ends on its own is
-not this process's revocation and is not announced.
+(http only on localhost).
+
+A session ended by another binary is announced too. The identity service's
+session pages, password change, offboarding, lifecycle actions and
+deprovisioning, the admin console's revoke-session and revoke-all, the breach
+responder, the DSAR delete and restrict, risk remediation, device revoke, the
+kill switch and SCIM deprovisioning all end sessions with their own statement
+and hold no signing key. Each of them first captures the session — tenant,
+user, id and the clients it reached — into `backchannel_logout_pending`
+(migration v198, `internal/common/sessionend`), on the handle it already
+holds and before its own statement, because six of them delete the row.
+oauth-service's drainer resolves the captured clients against the tenant's
+registered URIs and delivers the same way. A guard in `sessionend` fails the
+build's tests if a function revokes or deletes `sessions` rows without the
+capture.
 
 The cookie is set on the response to the login page's request to
 `/oauth/login`, so it is stored only when the login UI and the issuer share an

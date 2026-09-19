@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/sessionend"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
@@ -200,6 +201,12 @@ func (s *Service) handleAdminRevokeSession(c *gin.Context) {
 		return
 	}
 
+	// The relying parties this session reached are told through
+	// backchannel_logout_pending (internal/common/sessionend), captured
+	// before the row is revoked.
+	if err := sessionend.ForSession(ctx, s.db.Pool, org.ID, sessionID); err != nil {
+		s.logger.Error("revoking a session whose relying parties will not be told", zap.Error(err), zap.String("session_id", logsafe.Clean(sessionID)))
+	}
 	result, err := s.db.Pool.Exec(ctx, `
 		UPDATE sessions SET revoked = true, revoked_at = NOW(), revoked_by = $1, revoke_reason = $2
 		WHERE id = $3 AND org_id = $4
@@ -251,6 +258,10 @@ func (s *Service) handleAdminRevokeAllUserSessions(c *gin.Context) {
 		return
 	}
 
+	// Captured before the rows are revoked; see handleAdminRevokeSession.
+	if err := sessionend.ForUser(ctx, s.db.Pool, org.ID, userID); err != nil {
+		s.logger.Error("revoking sessions whose relying parties will not be told", zap.Error(err), zap.String("user_id", logsafe.Clean(userID)))
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		UPDATE sessions SET revoked = true, revoked_at = NOW(), revoked_by = $1, revoke_reason = $2
 		WHERE user_id = $3 AND (revoked IS NULL OR revoked = false) AND org_id = $4

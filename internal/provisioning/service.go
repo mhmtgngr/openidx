@@ -24,6 +24,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
+	"github.com/openidx/openidx/internal/common/sessionend"
 	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/revocation"
 
@@ -756,6 +757,13 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 		}
 	}
 
+	// Whichever branch below ends the sessions, the relying parties they
+	// reached are told through backchannel_logout_pending
+	// (internal/common/sessionend); the capture reads the rows, so it comes
+	// first.
+	if err := sessionend.ForUser(ctx, s.db.Pool, orgID, userID); err != nil {
+		log.Warn("deprovision: the sessions' relying parties will not be told", zap.Error(err))
+	}
 	if hardDelete {
 		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND org_id = $2`, userID, orgID); err != nil {
 			log.Warn("deprovision: delete sessions failed", zap.Error(err))
