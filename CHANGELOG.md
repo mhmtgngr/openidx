@@ -30,6 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The console's API-docs page shows the API, not a stale copy of it.**
+  `web/admin-console/public/api-specs/` held ten hand-written OpenAPI files
+  that a comment called "copied from `api/openapi/` by the build". Nothing
+  copied them: they were stamped 0.1.0, last touched 2026-08-24, and each
+  held a fraction of the canonical spec's routes (access: 49 paths against
+  267); three of the ten were listed nowhere on the page, and their routes
+  already live in the canonical identity and admin-api specs. The ten files
+  are deleted. A vite plugin serves `api/openapi/*.yaml` at `/api-specs/` in
+  development and copies them into `dist/api-specs/` at build time, and
+  refuses to build without the directory rather than publish an empty
+  list; the console image copies `api/openapi/` to where the plugin looks.
+  `api-specs.test.ts` holds the page's list and the directory to each other
+  in both directions. `RELEASING.md` said "all ten OpenAPI specs"; there are
+  seven, and now the sync guard, the page and the document agree.
+
 - **A dispatched release attaches the mobile artifacts.** `release.yml`'s
   dispatch path handed off to `docker.yml` so the images got their version
   tags, and to nothing else. `client-mobile-release.yml` runs on a pushed

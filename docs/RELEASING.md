@@ -17,8 +17,8 @@ A release is cut by pushing a `vX.Y.Z` git tag — everything else is automated.
    v1.17.0. If you do only one thing here, do this one.
 4. `VERSION` matches the tag you are about to push, and
    `bash scripts/check-version-sync.sh --enforce` is green — it holds the
-   console, the Helm chart's `appVersion`, the Flutter client and all ten
-   OpenAPI specs to that number.
+   console, the Helm chart's `appVersion`, the Flutter client and the seven
+   OpenAPI specs under `api/openapi/` to that number.
 
 ## Cut the release
 

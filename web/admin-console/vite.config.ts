@@ -1,10 +1,63 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import fs from 'fs'
+import { fileURLToPath } from 'url'
+
+// Vite 8's native loader does not inject CommonJS __dirname (see
+// vitest.config.ts); derive it the same way so the plugin below resolves the
+// same directory under both loaders.
+const here = path.dirname(fileURLToPath(import.meta.url))
+
+// The API-docs page (src/pages/api-docs.tsx) renders /api-specs/<name>.yaml.
+// Those used to be ten checked-in files under public/api-specs/ that a comment
+// called "copied from api/openapi by the build". Nothing copied them: they
+// were hand-written, stamped 0.1.0, last touched 2026-08-24, and each held a
+// fraction of the routes the canonical spec holds (access: 49 paths against
+// 267). Three of the ten were not even listed on the page. So the console
+// served a stale subset of the API and said it was the API.
+//
+// This plugin makes the comment true: in `vite dev` the specs are served from
+// api/openapi/ directly, and `vite build` copies them into dist/api-specs/.
+// Nothing is checked in twice. A missing directory is an error, not an empty
+// list, because an API-docs page with no specs would otherwise render green.
+// The Docker build copies api/openapi/ to /api/openapi/, which is what
+// ../../api/openapi resolves to from /app.
+const SPEC_DIR = path.resolve(here, '../../api/openapi')
+function openapiSpecs(): Plugin {
+  const list = () => {
+    if (!fs.existsSync(SPEC_DIR)) {
+      throw new Error(`openapi specs: ${SPEC_DIR} does not exist; the API-docs page would publish nothing`)
+    }
+    const files = fs.readdirSync(SPEC_DIR).filter((f) => f.endsWith('.yaml'))
+    if (files.length === 0) throw new Error(`openapi specs: no *.yaml under ${SPEC_DIR}`)
+    return files
+  }
+  let outDir = 'dist'
+  return {
+    name: 'openidx-openapi-specs',
+    configResolved(config) {
+      outDir = config.build.outDir
+    },
+    configureServer(server) {
+      server.middlewares.use('/api-specs', (req, res, next) => {
+        const name = path.basename(decodeURIComponent((req.url ?? '/').split('?')[0]))
+        if (!name.endsWith('.yaml') || !list().includes(name)) return next()
+        res.setHeader('Content-Type', 'application/yaml; charset=utf-8')
+        fs.createReadStream(path.join(SPEC_DIR, name)).pipe(res)
+      })
+    },
+    closeBundle() {
+      const dst = path.resolve(here, outDir, 'api-specs')
+      fs.mkdirSync(dst, { recursive: true })
+      for (const f of list()) fs.copyFileSync(path.join(SPEC_DIR, f), path.join(dst, f))
+    },
+  }
+}
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), openapiSpecs()],
   // NOTE: custom manualChunks removed — isolating react/react-dom into a separate
   // chunk from its consumers (radix/router/query/charts/swagger/vendor) caused
   // "Cannot read properties of undefined (reading 'useLayoutEffect')" at runtime
