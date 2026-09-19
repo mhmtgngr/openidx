@@ -8,7 +8,7 @@ fail closed, OTP and OAuth authorization codes out of the logs, the
 fold + banners, PAM guide **and the full `/pam/*` OpenAPI spec**, auditor
 artifacts: [threat model](./THREAT-MODEL.md) and
 [control mapping](./COMPLIANCE-CONTROL-MAPPING.md), doc-tree separation
-via [docs/README.md](./README.md)), **P3.2–3.5 done** (Helm chart
+via [docs/README.md](https://github.com/mhmtgngr/openidx/blob/main/docs/README.md)), **P3.2–3.5 done** (Helm chart
 finished *and published per release* — migration hook Job, real OPA,
 ServiceMonitor, backup CronJob, Keycloak/APISIX ghosts removed, chart
 pushed to GHCR as a signed OCI artifact on every tag; WebAuthn→Redis;
@@ -35,7 +35,7 @@ proves each Definition-of-Done item.
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
-[PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md) (the deploy-side view,
+[PRODUCTION-READINESS.md](https://github.com/mhmtgngr/openidx/blob/main/docs/PRODUCTION-READINESS.md) (the deploy-side view,
 last refreshed 2026-06-08). It was produced by a fresh full-repo audit:
 backend (all `cmd/` + `internal/`), frontend (all apps), deployment assets,
 and all 122 docs, with the headline findings re-verified against the code.
@@ -69,13 +69,13 @@ one identity  →  one grant (application assignment)  →  one policy plane
 A decision made anywhere propagates everywhere: disable a user and IAM
 sessions, vault checkouts, live privileged sessions **and** Ziti network
 circuits are severed (three enforcement layers, ≤30 s worst case — see
-[IAM_PAM_ZITI_INTERRELATION.md](./IAM_PAM_ZITI_INTERRELATION.md), the best
+[IAM_PAM_ZITI_INTERRELATION.md](https://github.com/mhmtgngr/openidx/blob/main/docs/IAM_PAM_ZITI_INTERRELATION.md), the best
 conceptual doc in this repo).
 
 ### 1.1 Why it still *feels* confusing — the four parallel access systems
 
 The confusion is real and structural, and the project has already diagnosed
-it ([access-model-redesign.md](./access-model-redesign.md)): historically,
+it ([access-model-redesign.md](https://github.com/mhmtgngr/openidx/blob/main/docs/access-model-redesign.md)): historically,
 **four independent mechanisms decided what a user can reach, and they did
 not talk to each other**:
 
@@ -89,8 +89,8 @@ not talk to each other**:
 
 So an admin could "assign an app" and grant nothing, and a user could reach
 an app that never appeared in their portal. **The fix is designed, planned
-([access-and-login-convergence-design.md](./access-and-login-convergence-design.md),
-[plans/2026-08-30-access-and-login-convergence.md](./plans/2026-08-30-access-and-login-convergence.md))
+([access-and-login-convergence-design.md](https://github.com/mhmtgngr/openidx/blob/main/docs/access-and-login-convergence-design.md),
+[plans/2026-08-30-access-and-login-convergence.md](https://github.com/mhmtgngr/openidx/blob/main/docs/plans/2026-08-30-access-and-login-convergence.md))
 and — as of #878/#880 — fully landed in code**: one predicate package
 (`internal/appaccess`) consumed by the portal, the Ziti reconciler, the
 proxy and `/oauth/authorize`, plus one SPA login and a real MFA policy.
@@ -934,7 +934,7 @@ the first login through to a rotated admin password.
 ### P1 — One access model: execute the convergence rollout (~2–4 weeks, the anti-confusion fix)
 
 Follow Task 16 of
-[plans/2026-08-30-access-and-login-convergence.md](./plans/2026-08-30-access-and-login-convergence.md)
+[plans/2026-08-30-access-and-login-convergence.md](https://github.com/mhmtgngr/openidx/blob/main/docs/plans/2026-08-30-access-and-login-convergence.md)
 exactly — it is already written:
 
 1. Deploy phases A+C (no behaviour change), verify `openidx-appdial-*`
@@ -1012,7 +1012,7 @@ policy. This is the moment the IAM/PAM/ZTNA confusion structurally ends.
    (SOC 2 CC-series + ISO 27001:2022 Annex A → capability → evidence,
    with honest Provided/Configurable/Shared/Operator statuses and the
    §5-checklists-as-evidence-generator workflow). Linked from SECURITY.md.
-5. ✅ **Doc-tree separation shipped** — [docs/README.md](./README.md) is
+5. ✅ **Doc-tree separation shipped** — [docs/README.md](https://github.com/mhmtgngr/openidx/blob/main/docs/README.md) is
    the documentation map: product docs (start-here, security/compliance,
    concepts, feature guides, runbooks) cleanly separated from
    engineering artifacts (plans, designs, audits, contributor
@@ -6405,6 +6405,6 @@ This document follows the repo's convention: it cites the file that settles
 each claim, so it can be re-verified. If you fix something listed here,
 update or strike the entry in the same PR — a gap list that is not
 re-checked becomes a rumour (see the §6 preamble of
-[PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md), which learned this
+[PRODUCTION-READINESS.md](https://github.com/mhmtgngr/openidx/blob/main/docs/PRODUCTION-READINESS.md), which learned this
 the hard way). If this document and the code disagree, the code is right
 and this file has rotted: fix the file.

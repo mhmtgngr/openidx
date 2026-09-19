@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The docs site carries the guides it used to leave in the repository.**
+  Seventy-one of the hundred and seven documents under `docs/` never
+  rendered on the published site, among them the MFA, passwordless and
+  push, SSF/CAEP, SCIM, OAuth/OIDC, token exchange and DCR, tenancy,
+  hardening, threat model, compliance mapping, disaster recovery,
+  releasing, HR-driven JML, EDR/MDM posture, getting started and user
+  guides. A new **Guides** section in `docs/mkdocs.yml` shows eighteen of
+  them without copying: each page under `docs/docs/guides/` is a stub that
+  includes the source document at build time (`pymdownx.snippets`, which
+  the site already used, now with `docs/` as a second base path and
+  `check_paths: true`, so a renamed or missing source fails the build
+  instead of publishing an empty page). The stubs keep the source files'
+  names, so the relative links between those documents resolve on the
+  site exactly as on GitHub; the eleven links that pointed at documents
+  not on the site, in `GETTING-STARTED.md` and
+  `PROJECT-READINESS-GUIDE.md`, are now absolute GitHub URLs. Measured with
+  `mkdocs build --strict`: nine warnings before the link rewrite, none
+  after; a stub naming a missing source turns the build red.
+
 ### Fixed
 
 - **A dispatched release attaches the mobile artifacts.** `release.yml`'s
