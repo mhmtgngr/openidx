@@ -1582,6 +1582,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 
 		// Login endpoint for direct authentication (the SPA posts here).
 		oauth.POST("/login", svc.handleLogin)
+		// Completion from the browser session instead of credentials, when
+		// /oauth/authorize sent the page here with resume=1 (browser_session.go).
+		oauth.POST("/login/resume", svc.handleLoginResume)
 
 		// MFA verification endpoint
 		oauth.POST("/mfa-verify", svc.handleMFAVerify)
@@ -1938,6 +1941,17 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 		return
 	}
 
+	// prompt and max_age travel with the pending request: the login page may
+	// complete it from the browser session (POST /oauth/login/resume), and
+	// that endpoint must refuse a prompt=login request and honour max_age
+	// exactly as this one did. Raw strings, as validated above.
+	if raw := c.Query("prompt"); raw != "" {
+		oauthParams["prompt"] = raw
+	}
+	if raw := c.Query("max_age"); raw != "" {
+		oauthParams["max_age"] = raw
+	}
+
 	paramsJSON, _ := json.Marshal(oauthParams)
 	s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute)
 
@@ -1946,7 +1960,7 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	// native client whose redirect_uri is a custom scheme cannot host a page
 	// at it — sending everyone to the IdP's own login solves that without a
 	// second credential pipeline.
-	target := loginRedirectURL(s.loginURL(), loginSession)
+	target := loginRedirectURL(s.loginURL(), loginSession, oauthParams[resumeHintKey] == "1")
 	if target == "" {
 		c.JSON(500, gin.H{"error": "server_error", "error_description": "login URL is not configured"})
 		return
@@ -1995,13 +2009,21 @@ func (s *Service) loginURL() string {
 // default mode sent the browser BACK to the client with ?login_session= — a
 // shape only a client hosting its own login page could use. There is one login
 // UI now, so there is one destination.
-func loginRedirectURL(loginPageURL, loginSession string) string {
+//
+// resume adds resume=1: the browser holds a live session that /oauth/authorize
+// could not carry straight to a code because the login page has a screen to
+// show, and the page should first ask POST /oauth/login/resume to complete the
+// request from that session (browser_session.go).
+func loginRedirectURL(loginPageURL, loginSession string, resume bool) string {
 	u, err := url.Parse(loginPageURL)
 	if err != nil || u.Host == "" {
 		return ""
 	}
 	q := u.Query()
 	q.Set("login_session", loginSession)
+	if resume {
+		q.Set("resume", "1")
+	}
 	u.RawQuery = q.Encode()
 	return u.String()
 }

@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -14,7 +15,14 @@ import (
 // client cannot host a page at openidx://oauth-callback, so sending it there
 // was only ever survivable because the server rendered the form itself.
 func TestLoginRedirectURL(t *testing.T) {
-	got := loginRedirectURL("https://openidx.tdv.org/login", "sess-1")
+	got := loginRedirectURL("https://openidx.tdv.org/login", "sess-1", false)
+	// resume=1 rides along only when asked for (browser_session.go).
+	if withResume := loginRedirectURL("https://openidx.tdv.org/login", "sess-1", true); withResume != "https://openidx.tdv.org/login?login_session=sess-1&resume=1" {
+		t.Fatalf("loginRedirectURL(resume) = %q", withResume)
+	}
+	if strings.Contains(got, "resume") {
+		t.Fatalf("loginRedirectURL without resume must not carry the hint: %q", got)
+	}
 	u, err := url.Parse(got)
 	if err != nil {
 		t.Fatalf("not a URL: %v", err)
@@ -27,7 +35,7 @@ func TestLoginRedirectURL(t *testing.T) {
 	}
 
 	// A configured login URL that already carries query parameters keeps them.
-	got = loginRedirectURL("https://console.example.com/login?theme=dark", "sess-1")
+	got = loginRedirectURL("https://console.example.com/login?theme=dark", "sess-1", false)
 	u, err = url.Parse(got)
 	if err != nil {
 		t.Fatalf("not a URL: %v", err)
@@ -40,7 +48,7 @@ func TestLoginRedirectURL(t *testing.T) {
 	// into a 500 rather than a redirect to nowhere. A relative "/oauth/login"
 	// is exactly what the v2 handler used to emit.
 	for _, bad := range []string{"", "/oauth/login", "://nope"} {
-		if got := loginRedirectURL(bad, "sess-1"); got != "" {
+		if got := loginRedirectURL(bad, "sess-1", false); got != "" {
 			t.Errorf("loginRedirectURL(%q) = %q, want \"\" — a login URL with no host is not usable", bad, got)
 		}
 	}

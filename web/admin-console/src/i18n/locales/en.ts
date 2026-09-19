@@ -478,6 +478,9 @@ const en = {
       qrExpired: 'QR session expired. Please try again.',
       consentFailed: 'Your decision could not be recorded. Please sign in again.',
     },
+    resume: {
+      checking: 'Checking your existing session…',
+    },
     consent: {
       title: 'Authorize application',
       description: '{{client}} is asking for access to your account.',

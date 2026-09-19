@@ -43,10 +43,16 @@
 //
 // Consent is enforced by the consent UI the login page renders from the JSON
 // challenge beginConsent returns; a top-level GET navigation cannot render that
-// JSON. So a session that needs consent takes the login path (which shows the
-// consent screen after — not instead of — a credential check the user already
-// passed once), and under prompt=none it is consent_required. Forcing consent
-// to be re-shown (prompt=consent) is likewise the interactive path's job.
+// JSON. So a session that needs consent takes the login path — with a
+// `resume=1` hint on the login URL. The login page, seeing the hint, asks
+// POST /oauth/login/resume to complete the pending request from the browser
+// session instead of from credentials; the server re-verifies the cookie and
+// the request's prompt/max_age and answers the consent challenge (or the
+// code), so the person approves the application without retyping a password
+// they already typed. Under prompt=none consent outstanding is
+// consent_required. prompt=consent takes the same resume path and re-shows
+// the screen whatever is on record; prompt=login and select_account ask for
+// the login form itself and are never resumed.
 //
 // Same-origin only, and said plainly: the cookie is set on the response to the
 // login page's fetch of /oauth/login. In the production layout (nginx serves
@@ -62,6 +68,7 @@ package oauth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -92,6 +99,14 @@ const (
 	ErrorLoginRequired       = "login_required"
 	ErrorConsentRequired     = "consent_required"
 	ErrorInteractionRequired = "interaction_required"
+
+	// resumeHintKey marks, in the login_session stash, that /oauth/authorize
+	// saw a live browser session it could not carry straight to a code
+	// because the login page has a screen to show (consent). The login URL
+	// then carries resume=1 and POST /oauth/login/resume completes the
+	// request from that session. It is a hint: the resume endpoint verifies
+	// everything again from the cookie and the stash.
+	resumeHintKey = "sso_resume"
 )
 
 // authorizePrompt is the parsed `prompt` parameter (OIDC Core §3.1.2.1), a
@@ -308,8 +323,13 @@ func (s *Service) endBrowserSession(c *gin.Context) string {
 func (s *Service) authorizeFromBrowserSession(c *gin.Context, oauthParams map[string]string, prompt authorizePrompt, maxAge time.Duration, maxAgeSet bool) bool {
 	redirectURI, state := oauthParams["redirect_uri"], oauthParams["state"]
 
-	// A prompt that needs UI never rides an existing session.
-	if prompt.needsUI() {
+	// prompt=login and select_account ask for the login form itself: an
+	// existing session must not short-circuit them and there is nothing to
+	// resume. prompt=consent asks for the consent screen, not for a new
+	// authentication (§3.1.2.1 says consent MUST be re-obtained, not that
+	// the user MUST re-authenticate), so the session is resolved below and
+	// only the mint is withheld — the login page resumes from it.
+	if prompt.Login || prompt.SelectAccount {
 		return false
 	}
 
@@ -358,12 +378,16 @@ func (s *Service) authorizeFromBrowserSession(c *gin.Context, oauthParams map[st
 		c.JSON(500, gin.H{"error": ErrorServerError})
 		return true
 	}
-	if required {
+	if required || prompt.Consent {
 		if prompt.None {
 			s.redirectAuthorizeError(c, redirectURI, state, ErrorConsentRequired, "consent is required for this client")
 			return true
 		}
-		// The consent screen is rendered by the login page; take that path.
+		// The consent screen is the login page's. The session is not written
+		// into the stash — the resume endpoint reads it from the cookie again
+		// — but the hint is, and the caller puts resume=1 on the login URL.
+		delete(oauthParams, "session_id")
+		oauthParams[resumeHintKey] = "1"
 		return false
 	}
 
@@ -391,4 +415,107 @@ func (s *Service) authorizeFromBrowserSession(c *gin.Context, oauthParams map[st
 
 	c.Redirect(302, authorizationRedirectURL(redirectURI, code, state))
 	return true
+}
+
+// handleLoginResume is POST /oauth/login/resume: the login page, opened from
+// /oauth/authorize with a resume=1 hint, asks to complete the pending request
+// from the browser session the openidx_sso cookie names rather than from
+// credentials.
+//
+// Before this endpoint a live session that still needed consent — or a
+// prompt=consent request — was sent to the login page, and the login page
+// knew one way to reach the consent screen: a password. The person retyped a
+// password they had typed minutes earlier for another application, which is
+// the opposite of what single sign-on promises. The hint is only a hint: this
+// handler resolves the cookie again (tenant-scoped, live, unrevoked), reads
+// the request the stash holds, and refuses (401 login_required, the answer
+// the page turns into the ordinary form) when the request asked for the form
+// itself (prompt=login / select_account), when the session is older than the
+// request's max_age, or when there is no usable session. Otherwise the
+// pending login_session is consumed exactly as a credential login consumes
+// it, and the request completes through issueAuthorizationCode — assignment
+// gate, consent (the challenge, when required), code, cookie refresh — or,
+// for prompt=consent, goes straight to the consent challenge whatever is on
+// record.
+func (s *Service) handleLoginResume(c *gin.Context) {
+	var req struct {
+		LoginSession string `json:"login_session"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.LoginSession == "" {
+		c.JSON(400, gin.H{"error": ErrorInvalidRequest, "error_description": "login_session is required"})
+		return
+	}
+	if !isValidBase64URLToken(req.LoginSession) {
+		c.JSON(400, gin.H{"error": ErrorInvalidRequest, "error_description": "invalid login_session"})
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+
+	ctx := c.Request.Context()
+	paramsJSON, err := s.redis.Client.Get(ctx, "login_session:"+req.LoginSession).Result()
+	if err != nil {
+		c.JSON(400, gin.H{"error": ErrorInvalidRequest, "error_description": "invalid or expired login session"})
+		return
+	}
+	var oauthParams map[string]string
+	if err := json.Unmarshal([]byte(paramsJSON), &oauthParams); err != nil || oauthParams["client_id"] == "" {
+		c.JSON(500, gin.H{"error": ErrorServerError})
+		return
+	}
+	// Both were validated at /oauth/authorize; a stash that no longer parses
+	// is not one this handler wrote.
+	prompt, perr := parsePrompt(oauthParams["prompt"])
+	maxAge, maxAgeSet, merr := parseMaxAge(oauthParams["max_age"])
+	if perr != nil || merr != nil {
+		c.JSON(400, gin.H{"error": ErrorInvalidRequest, "error_description": "invalid login session"})
+		return
+	}
+
+	loginRequired := func(description string) {
+		c.JSON(401, gin.H{"error": ErrorLoginRequired, "error_description": description})
+	}
+	if prompt.Login || prompt.SelectAccount {
+		loginRequired("the client asked for an interactive login")
+		return
+	}
+	token, cerr := c.Cookie(ssoCookieName)
+	if cerr != nil || token == "" {
+		loginRequired("no authenticated browser session")
+		return
+	}
+	sess, usable, rerr := s.resolveBrowserSession(ctx, token)
+	if rerr != nil {
+		writeServerOrUnavailable(c, rerr)
+		return
+	}
+	if !usable {
+		s.clearBrowserSessionCookie(c)
+		loginRequired("no authenticated browser session")
+		return
+	}
+	if maxAgeSet && time.Since(sess.StartedAt) > maxAge {
+		loginRequired("authentication is older than max_age")
+		return
+	}
+
+	// From here the pending request is this session's: consume it, as
+	// handleLogin does, so it cannot be completed twice or by someone else.
+	s.redis.Client.Del(ctx, "login_session:"+req.LoginSession)
+	delete(oauthParams, resumeHintKey)
+	oauthParams["session_id"] = sess.ID
+
+	s.logAuditEvent(ctx, "authentication", "oauth", "sso_resume", "success",
+		sess.UserID, c.ClientIP(), oauthParams["client_id"], "client",
+		map[string]interface{}{"client_id": oauthParams["client_id"], "session_id": sess.ID, "prompt": oauthParams["prompt"]})
+
+	if prompt.Consent {
+		// The client asked for the consent screen to be shown again. The
+		// assignment gate still comes first, as at every other entry.
+		if !s.assignmentGateAllows(c, oauthParams["client_id"], sess.UserID) {
+			return
+		}
+		s.beginConsent(c, oauthParams, sess.UserID)
+		return
+	}
+	s.issueAuthorizationCode(c, oauthParams, sess.UserID)
 }
