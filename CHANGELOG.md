@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The chart refuses to install a placeholder.** `values-prod.yaml` ships
+  `edge.originVerify.value` as `REPLACE-WITH-FRONT-DOOR-PROFILE-GUID`, and
+  nothing could tell that string from a real profile GUID: `required` only
+  asks whether a value is empty. Measured on 2026-09-19, `helm template`
+  with `values-prod.yaml` plus `deployments/kubernetes/cells/eu-1.yaml`,
+  which is what `rollout-cell.yml` installs, rendered an Ingress whose
+  snippet compares `X-Azure-FDID` against the literal placeholder, so every
+  request arriving through the edge would have been answered 403, and the
+  render reported success. A new interlock (`templates/no-placeholders.yaml`,
+  `openidx.rejectPlaceholders`) walks every value, lists and subchart values
+  included, and fails the render on the first string that still carries
+  `REPLACE-WITH`, naming its path. The marker is the shape, so a placeholder
+  added anywhere later is refused too. Renders that never reach a cluster
+  (the lint job, the static chaos drill, the image check) override it on the
+  command line, never in a values file. The three cell files say the value
+  is theirs to supply. Verified by mutation: the shipped file and the
+  prod-plus-cell render are red; a placeholder inside a list is red and
+  named; the override, the default values and a look-alike lowercase string
+  are green; with the template emptied the shipped file renders again.
+- **`values-prod.yaml` says what it leaves off.** Scraping
+  (`monitoring.serviceMonitor`), alert delivery (`monitoring.alerting`) and
+  scheduled backups (`backup`) were off by inheritance from `values.yaml`
+  and the production file never mentioned them, so a production install
+  had alert rules that nothing scraped for, no route for anything that
+  fired, and no backup, with the only word of it in a file the operator
+  does not edit. They are now written out as `enabled: false` with the
+  fact each one needs before it can be turned on.
 - **The docs site carries the guides it used to leave in the repository.**
   Seventy-one of the hundred and seven documents under `docs/` never
   rendered on the published site, among them the MFA, passwordless and

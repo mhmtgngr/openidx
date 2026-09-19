@@ -120,8 +120,17 @@ jobs:
             --set secrets.encryptionKey=render-only-not-a-credential32b \
             > /tmp/render-default.yaml
 
+      # values-prod.yaml ships edge.originVerify.value as a REPLACE-WITH-
+      # placeholder and the chart refuses to render one (templates/
+      # no-placeholders.yaml): installed as shipped, the Ingress would compare
+      # X-Azure-FDID against the literal and 403 every edge request. This
+      # render never reaches a cluster, so it supplies the override here, on
+      # the command line and not in a values file.
       - name: Template (production values)
-        run: helm template openidx "$CHART" -f "$CHART/values-prod.yaml" > /tmp/render-prod.yaml
+        run: |
+          helm template openidx "$CHART" -f "$CHART/values-prod.yaml" \
+            --set edge.originVerify.value=render-only-placeholder-override \
+            > /tmp/render-prod.yaml
 
       # The cell shape (values-ci-cell.yaml over values-ci.yaml): pooler,
       # transaction-local scope, streaming replica, plane split and cell id in
@@ -1183,6 +1192,7 @@ jobs:
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
               --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set edge.originVerify.value=render-only-placeholder-override \
               $values \
             | python3 -c '
           import sys, yaml

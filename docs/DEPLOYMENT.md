@@ -159,6 +159,14 @@ Edit `deployments/kubernetes/helm/openidx/values-prod.yaml`:
 - Replace the placeholder hosts (`api.openidx.example.com`,
   `admin.openidx.example.com`) and `auditService.allowedOrigins`.
 - Set `externalSecrets.secretStoreRef.name` to your `ClusterSecretStore`.
+- Set `edge.originVerify.value` to your Front Door profile GUID
+  (`terraform output -raw origin_verification`). The file ships it as a
+  `REPLACE-WITH-` placeholder and the chart refuses to render while any value
+  still carries that marker: installed as shipped, the Ingress would compare
+  `X-Azure-FDID` against the literal and answer 403 to every edge request.
+- `monitoring.serviceMonitor`, `monitoring.alerting` and `backup` are written
+  out as `enabled: false` with the reason next to each; turn them on once the
+  prometheus-operator CRDs, an alert receiver and a backup destination exist.
 - Pin every `image.tag` to the release you are deploying (a `vX.Y.Z` tag that
   the image pipeline has published — never `latest` in prod).
 

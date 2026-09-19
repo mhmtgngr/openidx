@@ -266,3 +266,27 @@ edge:
   originVerify:
     header: "X-Azure-FDID"
     value: "REPLACE-WITH-FRONT-DOOR-PROFILE-GUID"
+
+# ----- Inherited OFF, on purpose: scrape, alert delivery, backups -----
+# values.yaml leaves these three off and this file did not mention them, so a
+# production install from this file alone had alert RULES (monitoring.enabled
+# renders the PrometheusRule) but nothing scraping the services those rules
+# query, no route for anything that did fire, and no scheduled backup -- and
+# the only place that said so was values.yaml. Each is off because it needs a
+# fact this file cannot know; they are written out here so the gap is visible
+# in the file an operator edits:
+#   monitoring.serviceMonitor.enabled -- needs the prometheus-operator CRDs
+#     (kube-prometheus-stack) in the cluster first; without them the install
+#     fails on an unknown kind. Set true once the operator is installed.
+#   monitoring.alerting.enabled -- needs a receiver: a webhook URL or a Slack
+#     webhook in a Secret (values.yaml, `alerting:`). A rule with no route
+#     fires into a UI nobody is watching.
+#   backup.enabled -- needs a destination: a PVC storage class or an S3
+#     bucket with credentials, and a restore drill (docs/disaster-recovery.md).
+monitoring:
+  serviceMonitor:
+    enabled: false
+  alerting:
+    enabled: false
+backup:
+  enabled: false
