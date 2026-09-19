@@ -208,7 +208,12 @@ paths:
             `<issuer>/login`) with a `login_session` query parameter. Every
             client gets this, public and confidential alike; the server used to
             render its own login form for public clients and no longer does. A
-            cookie that resolves to nothing is cleared on this response.
+            cookie that resolves to nothing is cleared on this response. When
+            the cookie named a live session that could not be carried straight
+            to a code because the login UI has a screen to show (consent
+            outstanding, or `prompt=consent`), the URL also carries `resume=1`
+            and the login UI first asks `POST /oauth/login/resume` to complete
+            the request from that session.
 
 
             **Request error** — the client's registered `redirect_uri`, with
@@ -943,6 +948,76 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/login/resume:
+    post:
+      tags: [Authorization]
+      summary: Complete a pending login from the browser session
+      description: >-
+        The login UI, opened by an authorize redirect that carried `resume=1`,
+        asks to complete the pending request from the `openidx_sso` browser
+        session instead of from credentials. The server resolves the cookie
+        again (a live, unrevoked, unexpired session of the request's tenant),
+        reads the pending request, and refuses with `401 login_required` when
+        the request asked for the login form itself (`prompt=login` or
+        `select_account`), when the session is older than the request's
+        `max_age`, or when there is no usable session (a stale cookie is
+        cleared). Otherwise the `login_session` is consumed and the request
+        completes exactly as after a credential login: the consent challenge
+        when the application requires consent (always for `prompt=consent`),
+        or `redirect_url` carrying the code. The person approves the
+        application without retyping a password.
+      operationId: loginResume
+      x-openidx-handler: internal/oauth.(*Service).handleLoginResume
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login_session]
+              properties:
+                login_session:
+                  type: string
+      responses:
+        '200':
+          description: >-
+            Completed from the browser session. Either `redirect_url` (the
+            client redirect_uri with `?code=`) or a consent challenge
+            (`consent_required`, `consent_session`, `client_name`, `scopes`)
+            to answer at `/oauth/consent`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect_url:
+                    type: string
+                    format: uri
+                  consent_required:
+                    type: boolean
+                  consent_session:
+                    type: string
+                  client_id:
+                    type: string
+                  client_name:
+                    type: string
+                  scopes:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: Missing, malformed, expired or already consumed login_session
+        '401':
+          description: >-
+            `login_required`: no usable browser session, the session is older
+            than the request's `max_age`, or the request asked for an
+            interactive login. The login UI shows its form.
         '403':
           $ref: '#/components/responses/Forbidden'
         '500':

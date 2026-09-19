@@ -428,7 +428,101 @@ describe('LoginPage', () => {
       expect(directRedirects, 'completeOIDCRedirect is called from finishAuth only').toHaveLength(1)
       const redirectReads = source.match(/\.redirect_url\b/g) ?? []
       expect(redirectReads, 'redirect_url is read inside finishAuth only').toHaveLength(2)
-      expect(source.match(/finishAuth\(/g) ?? [], 'seven completion paths plus the consent decision itself').toHaveLength(8)
+      expect(source.match(/finishAuth\(/g) ?? [], 'seven completion paths, the consent decision and the browser-session resume').toHaveLength(9)
+    })
+  })
+
+  // /oauth/authorize appends resume=1 when the browser holds a live session
+  // that could not be carried straight to a code because this page has a
+  // screen to show. The page then completes the pending request from that
+  // session instead of asking for a password; a refusal leaves the form.
+  describe('browser-session resume', () => {
+    const fetchMock = vi.fn()
+
+    const challenge = {
+      consent_required: true,
+      consent_session: 'consent-9',
+      client_id: 'crm',
+      client_name: 'Acme CRM',
+      scopes: ['openid'],
+    }
+
+    beforeEach(() => {
+      fetchMock.mockReset()
+      vi.stubGlobal('fetch', fetchMock)
+      mockLocation.href = 'http://localhost:5173/login'
+    })
+
+    afterEach(() => {
+      sessionStorage.clear()
+      vi.unstubAllGlobals()
+      window.location.search = ''
+    })
+
+    const jsonOnce = (body: unknown, ok = true) =>
+      fetchMock.mockImplementationOnce(() =>
+        Promise.resolve({ ok, status: ok ? 200 : 401, json: () => Promise.resolve(body) } as Response)
+      )
+
+    it('with the hint, completes from the session and renders the consent screen — no password', async () => {
+      window.location.search = '?login_session=ls-1&resume=1'
+      jsonOnce(challenge)
+      renderWithRouter(<LoginPage />)
+
+      await screen.findByRole('button', { name: /^allow$/i })
+      expect(screen.getByText(/Acme CRM/)).toBeInTheDocument()
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const [url, init] = fetchMock.mock.calls[0]
+      expect(String(url)).toContain('/oauth/login/resume')
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual({ login_session: 'ls-1' })
+      // The pending login_session is still the page's for the decision.
+      expect(sessionStorage.getItem('oidc_login_session')).toBe('ls-1')
+    })
+
+    it('with the hint, follows a redirect_url straight away', async () => {
+      window.location.search = '?login_session=ls-2&resume=1'
+      jsonOnce({ redirect_url: 'https://app.example.com/callback?code=sso' })
+      renderWithRouter(<LoginPage />)
+      await waitFor(() => expect(mockLocation.href).toBe('https://app.example.com/callback?code=sso'))
+    })
+
+    it('a 401 login_required leaves the form exactly as it is', async () => {
+      window.location.search = '?login_session=ls-3&resume=1'
+      // A refusal is never acted on, whatever its body says: an error
+      // response that happened to carry a redirect_url must not drive the
+      // browser anywhere.
+      jsonOnce(
+        {
+          error: 'login_required',
+          error_description: 'the client asked for an interactive login',
+          redirect_url: 'https://app.example.com/callback?error=must_not_be_followed',
+        },
+        false,
+      )
+      renderWithRouter(<LoginPage />)
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+      expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /^allow$/i })).not.toBeInTheDocument()
+      expect(screen.queryByText(/interactive login/i)).not.toBeInTheDocument()
+      expect(mockLocation.href).toBe('http://localhost:5173/login')
+    })
+
+    it('without the hint, nothing is asked of the server (control)', async () => {
+      window.location.search = '?login_session=ls-4'
+      renderWithRouter(<LoginPage />)
+      expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument()
+      await new Promise((r) => setTimeout(r, 20))
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('the hint is read from the URL, never from a stored login_session', async () => {
+      sessionStorage.setItem('oidc_login_session', 'ls-old')
+      window.location.search = '?resume=1'
+      renderWithRouter(<LoginPage />)
+      await new Promise((r) => setTimeout(r, 20))
+      expect(fetchMock).not.toHaveBeenCalled()
     })
   })
 })

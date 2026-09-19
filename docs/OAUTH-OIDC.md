@@ -152,9 +152,19 @@ client exactly as before, reads that cookie:
   resolves to nothing is cleared.
 - `prompt` (OIDC Core §3.1.2.1): `none` never shows UI and is answered at the
   `redirect_uri` with `login_required` (no usable session) or
-  `consent_required` (consent outstanding); `login` forces re-authentication;
-  `consent` and `select_account` need the login UI and take it. `none`
-  combined with another value, or an unknown value, is `invalid_request`.
+  `consent_required` (consent outstanding); `login` and `select_account`
+  force the login form; `consent` re-shows the consent screen without
+  re-authenticating (below). `none` combined with another value, or an
+  unknown value, is `invalid_request`.
+- A live session that still needs consent (or a `prompt=consent` request) is
+  sent to the login UI with `resume=1` on the URL. The login page then posts
+  the `login_session` to `POST /oauth/login/resume`, which resolves the
+  cookie again and completes the request from that session — the consent
+  challenge, then the code bound to the session — so the person approves the
+  application without retyping a password. The endpoint refuses with
+  `401 login_required` (and the page shows its form) when the request asked
+  for the form itself (`prompt=login`, `select_account`), when the session is
+  older than the request's `max_age`, or when there is no usable session.
 - `max_age` (seconds): a session authenticated longer ago than this
   re-authenticates. Malformed values are `invalid_request`.
 - `/oauth/logout` ends the browser session as well: the cookie's session is

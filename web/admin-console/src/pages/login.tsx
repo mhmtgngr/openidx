@@ -101,6 +101,13 @@ export function LoginPage() {
   const [consentChallenge, setConsentChallenge] = useState<ConsentChallenge | null>(null)
   const [consentSubmitting, setConsentSubmitting] = useState(false)
 
+  // Browser-session resume: /oauth/authorize appends resume=1 to this page's
+  // URL when the openidx_sso cookie named a live session that it could not
+  // carry straight to a code because this page has a screen to show (consent).
+  const [resumeHint, setResumeHint] = useState(false)
+  const [resuming, setResuming] = useState(false)
+  const resumeAttempted = useRef(false)
+
   // Concurrent session state
   const [concurrentLimitReached, setConcurrentLimitReached] = useState(false)
   const [activeSessions, setActiveSessions] = useState<any[]>([])
@@ -247,6 +254,11 @@ export function LoginPage() {
       sessionStorage.setItem('oidc_login_session', session)
       setLoginSession(session)
     }
+    // The hint is read only from the URL: it belongs to this redirect, not
+    // to the stored login_session a later visit may still carry.
+    if (fromUrl && urlParams.get('resume') === '1') {
+      setResumeHint(true)
+    }
     if (fromUrl) {
       // Clear the URL parameter without reloading (value now lives in storage).
       window.history.replaceState({}, '', '/login')
@@ -310,14 +322,14 @@ export function LoginPage() {
   // `url`, so clear the durable session marker and hand off to the client's
   // redirect_uri. Use this everywhere a redirect_url is returned so we never
   // leave a stale login_session behind to interfere with the next login.
-  const completeOIDCRedirect = (url: string) => {
+  const completeOIDCRedirect = useCallback((url: string) => {
     try {
       sessionStorage.removeItem('oidc_login_session')
     } catch {
       // sessionStorage may be unavailable (private mode); non-fatal.
     }
     window.location.href = url
-  }
+  }, [])
 
   // finishAuth is the one place a successful completion response is acted on.
   // Every path that ends an authentication (password, MFA verify, WebAuthn,
@@ -328,7 +340,7 @@ export function LoginPage() {
   // require_consent left this page silent: no error, no redirect, no screen,
   // and nothing anywhere posted to /oauth/consent. Returns true when the
   // response was handled.
-  const finishAuth = (data: AuthResult): boolean => {
+  const finishAuth = useCallback((data: AuthResult): boolean => {
     if (data.consent_required && data.consent_session) {
       setConsentChallenge({
         consent_session: data.consent_session,
@@ -343,7 +355,38 @@ export function LoginPage() {
       return true
     }
     return false
-  }
+  }, [completeOIDCRedirect])
+
+  // Resume from the browser session. With the hint present, the page asks the
+  // server to complete the pending request from the session the cookie names:
+  // the answer is the consent challenge or the redirect, exactly as after a
+  // credential login, and the person never retypes a password they typed
+  // minutes ago for another application. Anything else — 401 login_required
+  // (prompt=login, max_age exceeded, no usable session), a network failure —
+  // leaves the form exactly as it is: the server re-verifies everything and
+  // the hint is only a hint. One attempt per page load.
+  useEffect(() => {
+    if (!resumeHint || !loginSession || resumeAttempted.current) return
+    resumeAttempted.current = true
+    setResuming(true)
+    ;(async () => {
+      try {
+        const response = await fetch(`${baseURL}/oauth/login/resume`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ login_session: loginSession }),
+        })
+        const data = await response.json()
+        if (response.ok) {
+          finishAuth(data)
+        }
+      } catch {
+        // The form below is the fallback for every failure.
+      } finally {
+        setResuming(false)
+      }
+    })()
+  }, [resumeHint, loginSession, finishAuth])
 
   // submitConsent posts the user's decision. The stash behind consent_session
   // is one-time use server-side, so a refusal cannot be retried from here:
@@ -1528,6 +1571,12 @@ export function LoginPage() {
         </CardHeader>
 
         <CardContent className="space-y-6">
+          {resuming && (
+            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground" role="status">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>{t('login.resume.checking')}</span>
+            </div>
+          )}
           {error && (
             <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
               <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />

@@ -134,8 +134,17 @@ func (h *AuthorizeHandler) HandleAuthorizeRequest(c *gin.Context) {
 	// cookie was already being issued to these browsers and never read here.
 	// Same gates, same code table, same redirect shape as /oauth/authorize
 	// (browser_session.go); no new mint site.
-	if h.service.authorizeFromBrowserSession(c, h.oauthParams(req), prompt, maxAge, maxAgeSet) {
+	params := h.oauthParams(req)
+	if h.service.authorizeFromBrowserSession(c, params, prompt, maxAge, maxAgeSet) {
 		return
+	}
+	// As in handleAuthorize: the resume endpoint needs the request's prompt
+	// and max_age to decide what a browser session may complete.
+	if raw := c.Query("prompt"); raw != "" {
+		params["prompt"] = raw
+	}
+	if raw := c.Query("max_age"); raw != "" {
+		params["max_age"] = raw
 	}
 
 	// Store authorization request for later use
@@ -147,7 +156,7 @@ func (h *AuthorizeHandler) HandleAuthorizeRequest(c *gin.Context) {
 	}
 
 	// No usable browser session: the interactive login.
-	h.redirectToLogin(c, req, authSessionID)
+	h.redirectToLogin(c, params, authSessionID)
 }
 
 // oauthParams is the request in the map shape the login flow and the SSO
@@ -360,8 +369,11 @@ func (h *AuthorizeHandler) storeAuthorizationRequest(ctx context.Context, sessio
 // relative path /oauth/login, the server-rendered page that no longer exists.
 // The v2 hop therefore never completed for any client; it is repaired here
 // rather than left as a second broken path beside the one being deleted.
-func (h *AuthorizeHandler) redirectToLogin(c *gin.Context, req *AuthorizeRequest, sessionID string) {
-	paramsJSON, err := json.Marshal(h.oauthParams(req))
+//
+// params is the map the SSO fast path was given: it carries the resume hint
+// when a live session exists but the login page has a screen to show.
+func (h *AuthorizeHandler) redirectToLogin(c *gin.Context, params map[string]string, sessionID string) {
+	paramsJSON, err := json.Marshal(params)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "server_error"})
 		return
@@ -372,7 +384,7 @@ func (h *AuthorizeHandler) redirectToLogin(c *gin.Context, req *AuthorizeRequest
 		return
 	}
 
-	target := loginRedirectURL(h.service.loginURL(), sessionID)
+	target := loginRedirectURL(h.service.loginURL(), sessionID, params[resumeHintKey] == "1")
 	if target == "" {
 		c.JSON(500, gin.H{"error": "server_error", "error_description": "login URL is not configured"})
 		return

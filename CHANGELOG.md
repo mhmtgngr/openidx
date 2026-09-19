@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A browser session reaches the consent screen without a password:
+  `POST /oauth/login/resume`.** Single sign-on stopped one screen short. A
+  live `openidx_sso` session that reached an application still needing
+  consent, or a request with `prompt=consent`, was sent to the login page,
+  and the login page knew one way to the consent screen: a password. The
+  person retyped, minutes later, the password they had typed for another
+  application. `/oauth/authorize` (and `/oauth/authorize/v2`) now put
+  `resume=1` on the login URL when the cookie named a live session that
+  could not be carried straight to a code because the page has a screen to
+  show; the pending request's `prompt` and `max_age` travel in the
+  `login_session` stash. The login page, seeing the hint, posts the
+  `login_session` to `/oauth/login/resume`, which resolves the cookie again
+  (tenant-scoped, live, unrevoked), refuses with `401 login_required` when
+  the request asked for the form itself (`prompt=login`, `select_account`),
+  when the session is older than `max_age`, or when no usable session exists
+  (a stale cookie is cleared), and otherwise consumes the `login_session`
+  and completes through the same code issuance as a credential login:
+  assignment gate, consent challenge (always for `prompt=consent`), code
+  bound to the session, cookie refreshed. A 401 leaves the login form as it
+  was. Measured against a real PostgreSQL: the hint appears exactly when a
+  session can carry the user (never without a cookie, for a revoked
+  session, or for `prompt=login`/`select_account`); the resume answers the
+  consent challenge whose stash names the session's user, the ordinary
+  decision then mints a code bound to that session, and a second resume of
+  the consumed `login_session` is refused. Seven mutations red, no-op
+  control green.
 - **`/oauth/authorize` reads an existing browser session: single sign-on.**
   The docs have promised "users log in once and access all connected
   applications" since they were written, and nothing implemented it: every

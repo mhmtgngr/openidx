@@ -473,6 +473,9 @@ const tr: typeof en = {
       qrExpired: 'QR oturumunun süresi doldu. Lütfen tekrar deneyin.',
       consentFailed: 'Kararınız kaydedilemedi. Lütfen yeniden oturum açın.',
     },
+    resume: {
+      checking: 'Mevcut oturumunuz denetleniyor…',
+    },
     consent: {
       title: 'Uygulamayı yetkilendir',
       description: '{{client}} hesabınıza erişim istiyor.',
