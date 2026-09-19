@@ -88,6 +88,29 @@ jobs:
       - name: A detached database call must name its tenant
         run: bash scripts/check-detached-org-writes.sh --enforce
 
+  # A contribution rule nobody checks is not a rule. CONTRIBUTING.md asks for
+  # a Developer Certificate of Origin sign-off on every commit; this is the
+  # check. It runs on pull requests only, because the range it checks is the
+  # pull request's own commits; on a push to main there is no such range, and
+  # a skipped job is a pass for Required Checks.
+  dco:
+    name: Every commit is signed off
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The base and head commits must both be present to walk the range.
+          fetch-depth: 0
+      - name: Verify the checker can go red
+        run: bash scripts/check-dco.test.sh
+      - name: Every non-merge commit in this pull request carries a Signed-off-by
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/check-dco.sh "$BASE_SHA" "$HEAD_SHA"
+
   # CI jobs here used to go red on other people's outages -- a Docker Hub 502
   # on a base-image manifest, a reset connection to the chart CDN, a Docker Hub
   # auth timeout while BOOTING THE BUILDER, and cdn.cocoapods.org declining the
@@ -3077,6 +3100,7 @@ jobs:
     needs:
       - build-matrix
       - ci-resilience-guards
+      - dco
       - deadconfig
       - deadservice
       - detect-changes

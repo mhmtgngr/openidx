@@ -283,6 +283,7 @@ new buyer-tier features; the Apache-2.0 core is committed to staying Apache-2.0.
 - 📖 [Documentation](https://docs.openidx.io)
 - 💬 [Discord Community](https://discord.gg/openidx)
 - 🐛 [Issue Tracker](https://github.com/mhmtgngr/openidx/issues)
+- 🤝 [Support policy](SUPPORT.md) — where to ask, what to expect, what is not on offer
 - 📧 [Email Support](mailto:support@openidx.io)
 
 ---
