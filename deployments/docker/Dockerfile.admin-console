@@ -44,6 +44,9 @@ RUN npm ci && \
 
 # Copy source code
 COPY ${SRC_DIR}/ ./
+# The canonical OpenAPI specs. vite.config.ts serves and copies them from
+# ../../api/openapi, which from /app resolves to /api/openapi.
+COPY api/openapi/ /api/openapi/
 
 # Build arguments for production environment
 ARG VITE_API_URL=https://openidx.tdv.org
@@ -136,6 +139,9 @@ RUN npm install && \
 
 # Copy source code
 COPY ${SRC_DIR}/ ./
+# The canonical OpenAPI specs. vite.config.ts serves and copies them from
+# ../../api/openapi, which from /app resolves to /api/openapi.
+COPY api/openapi/ /api/openapi/
 
 EXPOSE 3000
 

@@ -7,8 +7,10 @@
  * red build which one was missed. `id` is also the i18n key under
  * `pages.apiDocs.specs`, so a spec with no label fails the catalog test.
  *
- * `file` is a path under `public/api-specs/`, which the build copies from
- * `api/openapi/`.
+ * `file` is a file name under the repository's `api/openapi/`. The vite
+ * plugin in vite.config.ts serves it at `/api-specs/<file>` in development
+ * and copies it into `dist/api-specs/` at build time; nothing is checked in
+ * twice. api-specs.test.ts holds this list and that directory to each other.
  */
 export const API_SPECS = [
   { id: 'identity', file: 'identity-service.yaml' },
