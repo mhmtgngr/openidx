@@ -95,6 +95,24 @@ test: add governance service unit tests
 chore: update Go dependencies
 ```
 
+## Developer Certificate of Origin
+
+Every commit must carry a `Signed-off-by` line. It certifies the
+[Developer Certificate of Origin](https://developercertificate.org/): that you
+wrote the change, or otherwise have the right to submit it under the project's
+Apache-2.0 licence. Git adds the line for you:
+
+```bash
+git commit -s
+```
+
+Forgot one? `git commit --amend -s` fixes the last commit and
+`git rebase --signoff main` fixes a branch. CI checks it: the
+`Every commit is signed off` job (`scripts/check-dco.sh`) walks every non-merge
+commit a pull request adds and fails on the first one without a sign-off. Merge
+commits need none. The sign-off is a statement, not a signature; no GPG key is
+involved.
+
 ## Code Style
 
 ### Go
@@ -145,9 +163,11 @@ When adding a new feature, include tests that cover:
 
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/openidx/openidx/issues) with the provided templates:
+Use [GitHub Issues](https://github.com/mhmtgngr/openidx/issues) with the provided templates:
 - **Bug Report** for defects
 - **Feature Request** for new functionality
+
+[SUPPORT.md](SUPPORT.md) says what to expect once an issue is open.
 
 ## Code of Conduct
 

@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **NOTICE, THIRD_PARTY_NOTICES.md, SUPPORT.md, and a Developer Certificate
+  of Origin that is checked.** The repository shipped an Apache-2.0 LICENSE
+  and nothing that named a single third-party licence. `NOTICE` now points
+  at `THIRD_PARTY_NOTICES.md`, which is generated from the Go module graph
+  by `scripts/check-third-party-notices.sh --write` (198 modules and
+  packages, 91 Apache-2.0, 63 MIT, 32 BSD-3-Clause, one MPL-2.0, one
+  BSL-1.0, two Unlicense) and checked by the same script in the License
+  Compliance job: a dependency added, removed or relicensed without
+  regenerating the file is a red job. Versions are left out so a bump does
+  not stale it. `SUPPORT.md` says where to ask, what to expect (best
+  effort, no service level, the 1.x line, Compose and the Helm chart) and
+  what is not on offer. `CONTRIBUTING.md` asks for `git commit -s`, and a
+  new CI job, `Every commit is signed off` (`scripts/check-dco.sh`), walks
+  every non-merge commit a pull request adds and fails on the first one
+  without a `Signed-off-by`; merge commits and commits merged in from the
+  base are not the branch's to sign. Both guards ship with self-tests that
+  drive them red: a stale, hand-edited or missing notices file, a tool that
+  reports no modules, an unsigned commit, a sign-off without an address.
+
 - **The chart refuses to install a placeholder.** `values-prod.yaml` ships
   `edge.originVerify.value` as `REPLACE-WITH-FRONT-DOOR-PROFILE-GUID`, and
   nothing could tell that string from a real profile GUID: `required` only
@@ -56,6 +75,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after; a stub naming a missing source turns the build red.
 
 ### Fixed
+
+- **The License Compliance job said what it intended, not what it did.**
+  Its npm half ran `license-reporter` without a subcommand, which printed
+  usage and wrote no file, behind `|| true`; its summary then wrote
+  "License reports generated for Go and NPM dependencies". The npm report
+  is now produced by `license-checker-rseidelsohn` (432 production
+  packages when run here), the Go steps no longer hide their exit code
+  behind `|| echo` (the job stays informational through
+  `continue-on-error`, but a failed step shows as one), `go-licenses` is
+  pinned to v1.6.0, and the summary reports each artifact's presence.
+  `CONTRIBUTING.md` sent bug reports to an issue tracker under an
+  organisation that does not host this repository.
 
 - **The console's API-docs page shows the API, not a stale copy of it.**
   `web/admin-console/public/api-specs/` held ten hand-written OpenAPI files

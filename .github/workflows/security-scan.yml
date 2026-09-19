@@ -606,17 +606,32 @@ jobs:
           go-version: '1.26'
 
       - name: Install go-licenses
-        run: go install github.com/google/go-licenses@latest
+        run: go install github.com/google/go-licenses@v1.6.0
+
+      - name: Verify the third-party notices guard can go red
+        run: bash scripts/check-third-party-notices.test.sh
+
+      # Gating, unlike the two informational steps below. NOTICE points at
+      # THIRD_PARTY_NOTICES.md and that file is generated from the module
+      # graph; a stale one is a NOTICE that names the wrong licences. It goes
+      # red when a dependency was added, removed or relicensed without
+      # regenerating the file (`bash scripts/check-third-party-notices.sh
+      # --write`). Bumping a version does not stale it.
+      - name: THIRD_PARTY_NOTICES.md matches the module graph
+        id: notices
+        run: bash scripts/check-third-party-notices.sh
 
       # Deliberately informational, unlike the scans above (decision D2 covers
       # Trivy, Gitleaks, Semgrep and npm-audit). go-licenses classifies by
       # heuristic and misreads vendored and dual-licensed modules often enough
       # that blocking on it would mean arguing with the tool, not fixing
       # licences. The report is published for a human review at release time.
+      # continue-on-error keeps the job green; the step itself is allowed to
+      # show red so a reader can see that it did (the old `|| echo` hid it).
       - name: Check Go licenses (informational)
         run: |
-          go-licenses check ./... --disallowed_types=forbidden,restricted || echo "License check completed with warnings"
-          go-licenses save ./... --save_path=./licenses-go || true
+          go-licenses check ./... --disallowed_types=forbidden,restricted
+          go-licenses save ./... --save_path=./licenses-go
         continue-on-error: true
 
       - name: Upload license report
@@ -631,12 +646,16 @@ jobs:
         with:
           node-version: '20'
 
+      # Measured on 2026-09-19: the previous tool here (license-reporter) was
+      # run without a subcommand, printed its usage, wrote no file, and the
+      # `|| true` made that a green step. license-checker-rseidelsohn writes
+      # the JSON the artifact step expects; the step stays informational, but
+      # a failure now shows as one.
       - name: Generate NPM license report
         working-directory: ./web/admin-console
         run: |
-          npm install -g license-reporter
-          npm ci || true
-          license-reporter --json > ../npm-licenses.json || true
+          npm ci
+          npx --yes license-checker-rseidelsohn --production --json --out ../npm-licenses.json
         continue-on-error: true
 
       - name: Upload npm license report
@@ -646,12 +665,29 @@ jobs:
           path: npm-licenses.json
           retention-days: 90
 
+      # The summary says what was produced, not what was intended. The old
+      # one said "License reports generated for Go and NPM dependencies" on a
+      # run where the npm report did not exist.
       - name: Generate license summary
         if: always()
+        env:
+          NOTICES_OUTCOME: ${{ steps.notices.outcome }}
         run: |
-          echo "### License Compliance Summary" >> $GITHUB_STEP_SUMMARY
-          echo '' >> $GITHUB_STEP_SUMMARY
-          echo 'License reports generated for Go and NPM dependencies.' >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### License Compliance Summary"
+            echo ''
+            echo "- THIRD_PARTY_NOTICES.md against the module graph: ${NOTICES_OUTCOME}"
+            if [ -d licenses-go ]; then
+              echo "- Go: $(find licenses-go -type f | wc -l) licence file(s) attached as artifact go-licenses"
+            else
+              echo "- Go: NO licence files were saved"
+            fi
+            if [ -s npm-licenses.json ]; then
+              echo "- npm: report attached as artifact npm-licenses"
+            else
+              echo "- npm: NO report was produced"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   security-summary:
     name: Security Scan Summary
