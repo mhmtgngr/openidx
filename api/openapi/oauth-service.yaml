@@ -914,6 +914,14 @@ paths:
     post:
       tags: [Authorization]
       summary: Authorize consent V 2
+      description: >-
+        Issues the code for a stored v2 authorization request as the
+        authenticated caller. `session_id` is optional and, when present, must
+        be a live session of the caller in this tenant: it is bound to the code
+        and the token endpoint reads `sid`, `amr` and `auth_time` from it, so
+        another user's session id — or the caller's own once revoked or
+        expired — is refused with `400 invalid_request`, never silently
+        dropped.
       operationId: authorizeConsentV2
       x-openidx-handler: internal/oauth.(*Service).handleAuthorizeConsentV2
       requestBody:

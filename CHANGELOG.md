@@ -149,6 +149,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The v2 consent POST binds only the caller's own live session.**
+  `POST /oauth/authorize/v2` accepts a client-supplied `session_id` "for
+  linkage" and bound it to the code unverified; the token endpoint then read
+  `sid`, `amr` and `auth_time` from whatever session row it named, scoped to
+  the tenant but not to the user. The access service trusts `amr` to decide
+  whether MFA happened (device auto-trust, enrollment sessions), so an
+  authenticated user who knew another user's session id could mint tokens
+  for themselves that carried the other user's `amr`, `sid` and `auth_time`.
+  This was the only place a client-supplied session id reached a code; the
+  login flows bind server-created sessions. The handler now requires the id
+  to be a live, unrevoked, unexpired session of the authenticated user in
+  the request's tenant and answers `400 invalid_request` otherwise — a
+  mismatch is a client bug or an attempt, and both should be visible rather
+  than silently dropped. Measured against a real PostgreSQL: another user's
+  session, the caller's revoked session, an unknown id and a malformed id
+  are all refused with nothing minted and no binding written; the caller's
+  live session binds as before and an omitted `session_id` is unchanged.
+  Writing that last test found a second defect in the same handler: after
+  minting it re-read the stored authorization request to build the redirect,
+  but the mint had just consumed (deleted) that request, so every successful
+  consent answered `500 server_error` — the endpoint's success path had
+  never completed. The redirect is now built from the request read before
+  the mint. Five mutations (ownership check removed, `user_id` filter
+  dropped from the query, liveness filter dropped, tenant filter dropped,
+  redirect built from the post-mint re-read) each turn a test red; a
+  comment-text control stays green. The tenant-filter mutation stayed green
+  on the first pass — no test exercised a session of the same user in
+  another tenant — and that branch now has one.
 - **A role-assignment review shows what the assignment grants.**
   `populateRoleAssignmentItems` was `return s.populateUserAccessItems(...)`
   under the comment "Same as user access for now", so the `role_assignment`

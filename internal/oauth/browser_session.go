@@ -205,6 +205,30 @@ func (s *Service) resolveBrowserSession(ctx context.Context, token string) (sess
 	return &browserSession{ID: sessionID, UserID: userID, StartedAt: startedAt}, true, nil
 }
 
+// sessionBelongsTo reports whether sessionID is a live (unrevoked, unexpired)
+// session of userID in the request's tenant. It is the check every path that
+// accepts a session id FROM THE CLIENT must make before binding that id to a
+// code or a token: the session row is where sid, amr and auth_time come from,
+// and a caller must not be able to borrow another user's. A malformed id, a
+// missing database or a missing tenant context all answer false — the caller
+// then refuses, never guesses.
+func (s *Service) sessionBelongsTo(ctx context.Context, sessionID, userID string) bool {
+	if sessionID == "" || userID == "" || !isValidSessionID(sessionID) || s.db == nil {
+		return false
+	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false
+	}
+	var one int
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT 1 FROM sessions
+		 WHERE id = $1 AND user_id = $2 AND org_id = $3
+		   AND COALESCE(revoked, false) = false AND expires_at > NOW()`,
+		sessionID, userID, org.ID).Scan(&one)
+	return err == nil
+}
+
 // setBrowserSessionCookie binds a fresh random token to sessionID in Redis and
 // sets it as the openidx_sso cookie. Called from the one code-issuance path
 // every login completion goes through, so every way of signing in produces a

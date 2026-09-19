@@ -3427,6 +3427,27 @@ func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
 		return
 	}
 
+	// session_id is the caller's word for which session this code belongs
+	// to, and everything downstream believed it: IssueAuthorizationCode binds
+	// it to the code (authcode_session), the token endpoint carries it into
+	// GenerateJWT and GenerateIDToken, and those read sid, amr and auth_time
+	// from THAT session row — scoped to the tenant, never to the user. So an
+	// authenticated user who knew another user's session id could mint
+	// tokens for themselves carrying the other user's amr (which the access
+	// service trusts to decide whether MFA happened), sid and auth_time. The
+	// only session a caller may bind is one of their own that is still live;
+	// anything else is refused out loud rather than silently dropped, because
+	// it is either a client bug or an attempt, and both should be visible.
+	if req.SessionID != "" && !s.sessionBelongsTo(c.Request.Context(), req.SessionID, userID) {
+		s.logger.Warn("consent v2: session_id is not a live session of the authenticated user",
+			zap.String("user_id", userID), zap.String("session_id", logsafe.Clean(req.SessionID)))
+		c.JSON(400, gin.H{
+			"error":             "invalid_request",
+			"error_description": "session_id is not a live session of the authenticated user",
+		})
+		return
+	}
+
 	// This handler learns client_id only from the stored auth session, and
 	// IssueAuthorizationCode below consumes (deletes) that session as part of
 	// minting. So the gate needs its own, separate, non-destructive read of the
@@ -3462,12 +3483,23 @@ func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
 		return
 	}
 
-	// Retrieve the stored request to build redirect
-	authReq, err := s.authorizeHandler.GetStoredAuthorizationRequest(c.Request.Context(), req.AuthSession)
-	if err != nil {
-		s.logger.Error("Failed to retrieve authorization request", zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error"})
-		return
+	// The redirect is built from the request read BEFORE the mint.
+	// IssueAuthorizationCode consumes the stored request (it deletes the
+	// auth_request key as part of minting), so the re-read that used to sit
+	// here found nothing and answered 500 on every successful mint: this
+	// endpoint's success path had never completed. The pre-fetch above is the
+	// same key, read moments earlier; only when that read itself failed (the
+	// transient case the gate comment describes) is the re-read attempted,
+	// which then fails exactly as it always has.
+	authReq := preReq
+	if authReq == nil {
+		var rerr error
+		authReq, rerr = s.authorizeHandler.GetStoredAuthorizationRequest(c.Request.Context(), req.AuthSession)
+		if rerr != nil {
+			s.logger.Error("Failed to retrieve authorization request", zap.Error(rerr))
+			c.JSON(500, gin.H{"error": "server_error"})
+			return
+		}
 	}
 
 	// Build redirect URI with authorization code
