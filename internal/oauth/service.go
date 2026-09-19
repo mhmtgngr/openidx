@@ -1886,6 +1886,28 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 		return
 	}
 
+	// prompt and max_age (OIDC Core §3.1.2.1) — parsed here, after the
+	// redirect_uri is known to be the client's, because a malformed value is
+	// the client's error to receive (§3.1.2.6, invalid_request).
+	prompt, perr := parsePrompt(c.Query("prompt"))
+	if perr != nil {
+		s.redirectAuthorizeError(c, oauthParams["redirect_uri"], oauthParams["state"], ErrorInvalidRequest, perr.Error())
+		return
+	}
+	maxAge, maxAgeSet, merr := parseMaxAge(c.Query("max_age"))
+	if merr != nil {
+		s.redirectAuthorizeError(c, oauthParams["redirect_uri"], oauthParams["state"], ErrorInvalidRequest, merr.Error())
+		return
+	}
+
+	// Single sign-on: a browser that already holds a live session for this
+	// tenant gets a code without a login page (browser_session.go). Everything
+	// short of that — including prompt=none, which must not show UI and so is
+	// answered at the redirect_uri — falls through to the login flow below.
+	if s.authorizeFromBrowserSession(c, oauthParams, prompt, maxAge, maxAgeSet) {
+		return
+	}
+
 	paramsJSON, _ := json.Marshal(oauthParams)
 	s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute)
 
@@ -2553,9 +2575,14 @@ func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]
 		return
 	}
 
-	// Store session_id alongside the auth code in Redis (5-minute TTL)
+	// Store session_id alongside the auth code in Redis (5-minute TTL), and
+	// give the browser a cookie that names this session so the next
+	// /oauth/authorize can skip the login page (browser_session.go). Every
+	// login completion — password, MFA, passwordless, social, consent — ends
+	// here, which is why the cookie is set here and nowhere else.
 	if sessionID := oauthParams["session_id"]; sessionID != "" {
 		s.redis.Client.Set(c.Request.Context(), "authcode_session:"+code, sessionID, 5*time.Minute)
+		s.setBrowserSessionCookie(c, sessionID)
 	}
 
 	c.JSON(200, authorizationCodeResponse(
@@ -4493,6 +4520,14 @@ func (s *Service) handleLogout(c *gin.Context) {
 				_ = s.MarkAccessTokenRevoked(c.Request.Context(), bearerToken, time.Unix(int64(expSec), 0))
 			}
 		}
+	}
+
+	// The browser session (SSO cookie) ends regardless of how — or whether —
+	// the caller identified the user: the cookie IS a credential for the
+	// next /oauth/authorize, and a logout that left it in place would sign
+	// the user straight back in.
+	if ended := s.endBrowserSession(c); ended != "" {
+		s.logger.Info("browser session ended at logout", zap.String("session_id", ended))
 	}
 
 	if userID != "" {

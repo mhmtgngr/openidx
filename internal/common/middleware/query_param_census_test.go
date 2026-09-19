@@ -88,6 +88,8 @@ var publicQueryParams = map[string]string{
 	"scope":                    "public: the permissions being requested",
 	"code_challenge":           "RFC 7636: the PKCE challenge is public; the VERIFIER is the secret and is POSTed",
 	"code_challenge_method":    "public: S256 or plain",
+	"prompt":                   "OIDC Core §3.1.2.1: none / login / consent / select_account — a UI preference, not a subject",
+	"max_age":                  "OIDC Core §3.1.2.1: a number of seconds the client will accept an authentication to be old",
 	"post_logout_redirect_uri": "public; registered per client",
 	"idp":                      "public: which identity provider to use",
 	"idp_hint":                 "public: the same, as a hint",

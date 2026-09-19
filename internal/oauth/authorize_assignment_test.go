@@ -70,6 +70,7 @@ func TestEveryMintSiteCallsAssignmentGate(t *testing.T) {
 		mintCall string
 	}{
 		{"service.go", "func (s *Service) issueAuthorizationCode(", "s.CreateAuthorizationCode("},
+		{"browser_session.go", "func (s *Service) authorizeFromBrowserSession(", "s.CreateAuthorizationCode("},
 		{"service.go", "func (s *Service) handleAuthorizeConsent(", "s.CreateAuthorizationCode("},
 		{"service.go", "func (s *Service) handleAuthorizeConsentV2(", "s.authorizeHandler.IssueAuthorizationCode("},
 		{"service.go", "func (s *Service) handleCallback(", "s.CreateAuthorizationCode("},
@@ -128,10 +129,11 @@ func TestEveryMintSiteCallsAssignmentGate(t *testing.T) {
 // surviving three review rounds the way the sixth (handleCallback) survived
 // two.
 var mintSiteDisposition = map[string]string{
-	"issueAuthorizationCode": "gated",
-	"handleAuthorizeConsent": "gated",
-	"handleCallback":         "gated",
-	"handleMagicLinkVerify":  "gated",
+	"issueAuthorizationCode":      "gated",
+	"authorizeFromBrowserSession": "gated",
+	"handleAuthorizeConsent":      "gated",
+	"handleCallback":              "gated",
+	"handleMagicLinkVerify":       "gated",
 
 	// AuthorizeHandler.IssueAuthorizationCode (authorize.go) takes a plain
 	// context.Context, not a *gin.Context — it has no request to attach a 403
