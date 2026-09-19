@@ -1,7 +1,7 @@
 # Getting Started with OpenIDX
 
 > **Just want to run OpenIDX?** Use the **[Quick Start in the repository
-> README](../README.md#quick-start)** — the Docker Compose path with
+> README](https://github.com/mhmtgngr/openidx/blob/main/README.md#quick-start)** — the Docker Compose path with
 > generated secrets is the one supported first run, and it is maintained
 > in exactly one place. This document is for **developers building from
 > source** (and for the first-time setup tasks below, which apply to
@@ -135,7 +135,7 @@ Open your browser:
 ## 🐳 Docker Compose (Full Stack)
 
 The full-stack compose path is the **[README Quick
-Start](../README.md#quick-start)** — clone, run
+Start](https://github.com/mhmtgngr/openidx/blob/main/README.md#quick-start)** — clone, run
 `./scripts/generate-secrets.sh` (compose refuses to start without the
 generated `.env`), then `docker compose -f
 deployments/docker/docker-compose.yml up -d`. It is not duplicated here
@@ -548,7 +548,7 @@ curl http://localhost:8001/metrics
 
 - **Documentation:** `/docs` folder
 - **Issues:** https://github.com/mhmtgngr/openidx/issues
-- **Architecture:** [Architecture](docs/guide/architecture.md) on the docs site
+- **Architecture:** [Architecture](https://github.com/mhmtgngr/openidx/blob/main/docs/docs/guide/architecture.md) on the docs site
 - **API Reference:** the OpenAPI specs in `api/openapi/`, browsable in the
   console under **Developer → API Docs**
 

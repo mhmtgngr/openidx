@@ -59,7 +59,12 @@ markdown_extensions:
       alternate_style: true
   - pymdownx.details
   - pymdownx.snippets:
-      base_path: docs/docs
+      # docs/docs for the site's own includes; docs/ so the Guides section
+      # below can include the source documents in place of copying them.
+      # check_paths makes a missing or renamed source a build failure rather
+      # than an empty page.
+      base_path: [docs/docs, docs]
+      check_paths: true
   - admonition
   - tables
   - attr_list
@@ -124,6 +129,32 @@ nav:
       - OAuth Service: reference/oauth.md
       - Middleware: reference/middleware.md
       - Database: reference/database.md
+
+  - Guides:
+      - Security:
+          - OpenIDX Threat Model: guides/THREAT-MODEL.md
+          - OpenIDX Production Hardening Checklist: guides/SECURITY-HARDENING.md
+          - OpenIDX Multi-Tenancy & the Tenant Trust Boundary: guides/SECURITY-TENANCY.md
+          - Compliance Control Mapping — SOC 2 & ISO/IEC 27001:2022: guides/COMPLIANCE-CONTROL-MAPPING.md
+      - Identity:
+          - OAuth 2.0 & OpenID Connect Provider - OpenIDX: guides/OAUTH-OIDC.md
+          - Token Exchange (RFC 8693) & Dynamic Client Registration (RFC 7591/7592): guides/TOKEN_EXCHANGE_AND_DCR.md
+          - OpenIDX MFA Implementation Guide: guides/MFA_IMPLEMENTATION_GUIDE.md
+          - Passwordless Authentication & Push MFA Implementation: guides/PASSWORDLESS_AND_PUSH_MFA_IMPLEMENTATION.md
+          - SSF/CAEP — Shared Signals with Ziti-Honored Termination: guides/SSF_CAEP.md
+      - Provisioning:
+          - SCIM 2.0 Provisioning - OpenIDX: guides/SCIM.md
+          - Outbound SCIM Provisioning: guides/OUTBOUND_SCIM.md
+          - HR-Driven Joiner/Mover/Leaver (JML): guides/HR_DRIVEN_JML.md
+      - Devices:
+          - EDR/MDM Device Posture Ingestion: guides/EDR_MDM_POSTURE.md
+      - Operations:
+          - OpenIDX Disaster Recovery Runbook: guides/disaster-recovery.md
+          - Releasing OpenIDX: guides/RELEASING.md
+          - OpenIDX Project Readiness — the User-Perspective Guide: guides/PROJECT-READINESS-GUIDE.md
+      - Users:
+          - Getting Started with OpenIDX: guides/GETTING-STARTED.md
+          - OpenIDX User Guide: guides/USER_GUIDE.md
 
   - Troubleshooting: troubleshooting.md
 
