@@ -89,10 +89,14 @@ test.describe('OAuth Client Registration', () => {
 
     await page.getByRole('button', { name: /register application/i }).click();
 
-    // Check all form fields
+    // Check all form fields. The redirect matcher is ANCHORED: the dialog also
+    // carries "Post-logout redirect URIs", which a loose /redirect uris/i
+    // matches too, and Playwright's strict mode fails a locator that resolves
+    // to more than one element. An unanchored label regex is a selector that
+    // silently depends on no sibling field ever being named similarly.
     await expect(page.getByLabel(/application name/i)).toBeVisible();
     await expect(page.getByLabel(/description/i)).toBeVisible();
-    await expect(page.getByLabel(/redirect uris/i)).toBeVisible();
+    await expect(page.getByLabel(/^Redirect URIs/i)).toBeVisible();
     await expect(page.getByLabel(/scopes/i)).toBeVisible();
     await expect(page.getByLabel(/require pkce/i)).toBeVisible();
   });
@@ -123,7 +127,7 @@ test.describe('OAuth Client Registration', () => {
 
     // Check that required fields are present
     await expect(page.getByLabel(/application name/i)).toBeVisible();
-    await expect(page.getByLabel(/redirect uris/i)).toBeVisible();
+    await expect(page.getByLabel(/^Redirect URIs/i)).toBeVisible();
   });
 
   test('should have cancel button in registration form', async ({ page }) => {
