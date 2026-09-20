@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **A scope is a whole scope, not a substring.** Five decisions asked whether a
+  grant carried a scope with `strings.Contains`, and two of them decide what a
+  client receives. Measured at the real token endpoint: a code granted the
+  scope `openidx` — the name of this product, so not a contrived value — was
+  answered with an **ID token**, although `openid` was never requested; and a
+  code granted `openid offline_access_reports` was answered with a **refresh
+  token**, although `offline_access` was never requested. The second hands a
+  long-lived credential to a client that did not ask for one. Any custom scope
+  that happens to contain either name as a substring did the same, in the
+  authorization-code grant, the refresh grant and the device-code flow alike.
+  RFC 6749 §3.3 makes the scope string a space-delimited list of whole scopes,
+  and all five decisions now go through the one splitter this package already
+  had. A census refuses the shape, so a sixth cannot appear. Six mutations red,
+  no-op control green.
 - **A granted scope now actually restricts what a token carries.** A token
   whose granted scope was the bare `openid` came back carrying `email` and
   `name`, and `GET /oauth/userinfo` presented with that same token answered

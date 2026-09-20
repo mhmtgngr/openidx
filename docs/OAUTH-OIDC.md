@@ -144,6 +144,12 @@ party cannot mistake "you did not ask" for "the user has no name". An empty
 `scope` grants none of them: reading it as "everything" would leave a client
 that omits the parameter better off than one that asks honestly.
 
+Scopes are matched as **whole scopes**, never as substrings. A grant carrying
+`openidx` does not carry `openid`, and one carrying `offline_access_reports`
+does not carry `offline_access`; the first decides whether an ID token is
+issued and the second whether a refresh token is. This applies to the
+authorization-code grant, the refresh grant and the device-code flow alike.
+
 `email_verified` carries three answers and only one of them is silent. Absent
 means the `email` scope was not granted; `false` means it was and the address
 is not verified; `true` means it was and the address is. Do not read an absent

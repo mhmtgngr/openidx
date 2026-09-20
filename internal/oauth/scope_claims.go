@@ -43,10 +43,26 @@ package oauth
 // made. It is named here so the omission is a recorded choice rather than an
 // oversight.
 
-// Scope names from OIDC Core §5.4 that this issuer honours.
+// The scope names this issuer makes decisions on.
+//
+// They are constants because a scope name repeated as a string literal at each
+// decision is a name nobody can rename, and because the decisions themselves
+// used to be spelled as SUBSTRING tests, which is the defect these replace:
+// `strings.Contains(scope, "openid")` is true of the scope `openidx` — the name
+// of this product — and `strings.Contains(scope, "offline_access")` is true of
+// any custom scope that merely ends in it. Measured at the real token endpoint:
+// a code granted `openidx` was answered with an ID token, and one granted
+// `openid offline_access_reports` was answered with a refresh token. Neither
+// grant had asked for what it received, and the second hands a long-lived
+// credential to a client that did not request offline access.
+//
+// scopeGrants below splits the string and compares whole scopes, which is what
+// RFC 6749 §3.3 means by a space-delimited list.
 const (
-	scopeProfile = "profile"
-	scopeEmail   = "email"
+	scopeProfile       = "profile"
+	scopeEmail         = "email"
+	scopeOpenID        = "openid"
+	scopeOfflineAccess = "offline_access"
 )
 
 // scopeGrants reports whether the granted scope carries the named scope. The

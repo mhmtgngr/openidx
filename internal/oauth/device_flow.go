@@ -404,12 +404,12 @@ func (s *Service) handleDeviceCodeGrant(c *gin.Context) {
 		ExpiresIn:   client.EffectiveAccessTokenLifetime(),
 		Scope:       rec.Scope,
 	}
-	if strings.Contains(rec.Scope, "openid") {
+	if scopeGrants(rec.Scope, scopeOpenID) {
 		if idToken, ierr := s.GenerateIDToken(ctx, claimedUser, clientID, "", rec.Scope, client.EffectiveAccessTokenLifetime(), ""); ierr == nil {
 			resp.IDToken = idToken
 		}
 	}
-	if client.AllowRefreshToken && strings.Contains(rec.Scope, "offline_access") {
+	if client.AllowRefreshToken && scopeGrants(rec.Scope, scopeOfflineAccess) {
 		refreshToken := GenerateRandomToken(32)
 		if err := s.CreateRefreshToken(ctx, &RefreshToken{
 			Token:     refreshToken,
