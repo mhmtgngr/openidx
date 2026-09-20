@@ -207,12 +207,20 @@ type TokenResponse struct {
 
 // UserInfo represents OIDC UserInfo response
 type UserInfo struct {
-	Sub               string `json:"sub"`
-	Name              string `json:"name,omitempty"`
-	GivenName         string `json:"given_name,omitempty"`
-	FamilyName        string `json:"family_name,omitempty"`
-	Email             string `json:"email,omitempty"`
-	EmailVerified     bool   `json:"email_verified,omitempty"`
+	Sub        string `json:"sub"`
+	Name       string `json:"name,omitempty"`
+	GivenName  string `json:"given_name,omitempty"`
+	FamilyName string `json:"family_name,omitempty"`
+	Email      string `json:"email,omitempty"`
+	// A *bool because three answers have to stay apart and only one of them
+	// may be silent: absent means the `email` scope was not granted, false
+	// means it was and the address is NOT verified, true means it was and the
+	// address is. As a plain bool with omitempty, false and absent were the
+	// same bytes on the wire — so "this address is unverified", which is the
+	// one answer a relying party must not miss before matching the identity
+	// onto an existing local account, was indistinguishable from "you did not
+	// ask".
+	EmailVerified     *bool  `json:"email_verified,omitempty"`
 	Picture           string `json:"picture,omitempty"`
 	PreferredUsername string `json:"preferred_username,omitempty"`
 }
@@ -1194,13 +1202,19 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 		return "", err
 	}
 
-	// Get user info for access token
+	// Get user info for access token. email_verified is read rather than
+	// assumed: this claim is the one a relying party uses to decide whether it
+	// may match this identity to an existing local account by address, so
+	// asserting true for an unverified address is an account-takeover
+	// primitive, not a cosmetic inaccuracy.
 	var email, firstName, lastName string
+	var emailVerified bool
 	if userID != "" {
 		_ = s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(email, ''), COALESCE(first_name, ''), COALESCE(last_name, '')
+			SELECT COALESCE(email, ''), COALESCE(first_name, ''), COALESCE(last_name, ''),
+			       COALESCE(email_verified, false)
 			FROM users WHERE id = $1 AND org_id = $2
-		`, userID, org.ID).Scan(&email, &firstName, &lastName)
+		`, userID, org.ID).Scan(&email, &firstName, &lastName, &emailVerified)
 	}
 
 	name := firstName
@@ -1271,19 +1285,31 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 	}
 
 	claims := jwt.MapClaims{
-		"sub":         userID,
-		"aud":         clientID,
-		"client_id":   clientID,
-		"scope":       scope,
-		"iss":         s.issuerForOrg(org),
-		"iat":         now.Unix(),
-		"exp":         now.Add(time.Duration(expiresIn) * time.Second).Unix(),
-		"email":       email,
-		"name":        name,
+		"sub":       userID,
+		"aud":       clientID,
+		"client_id": clientID,
+		"scope":     scope,
+		"iss":       s.issuerForOrg(org),
+		"iat":       now.Unix(),
+		"exp":       now.Add(time.Duration(expiresIn) * time.Second).Unix(),
+		// Authorization facts, not OIDC identity claims: see scope_claims.go
+		// for why these are deliberately not gated on a scope.
 		"roles":       roleNames,
 		"groups":      groupNames,
 		"permissions": permStrings,
 	}
+
+	// The end-user identity this token is allowed to carry (OIDC Core §5.4).
+	// `email` and `name` used to be written here unconditionally, so a token
+	// granted the bare `openid` scope carried both.
+	applyScopedClaims(claims, scope, profileClaims{
+		Name:              name,
+		GivenName:         firstName,
+		FamilyName:        lastName,
+		Email:             email,
+		EmailVerified:     emailVerified,
+		PreferredUsername: email,
+	})
 
 	// The cell this token belongs to, when this install is celled. On the
 	// ACCESS token only: cell.Guard reads the bearer a request presents, and an
@@ -1314,8 +1340,15 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 	return token.SignedString(signKey)
 }
 
-// GenerateIDToken generates an OIDC ID token
-func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce string, expiresIn int, sessionID ...string) (string, error) {
+// GenerateIDToken generates an OIDC ID token.
+//
+// scope is the scope actually GRANTED for this token, and it decides which
+// identity claims the token may carry (OIDC Core §5.4, and scope_claims.go for
+// the measurement that added this parameter). Before it existed this function
+// could not see the grant at all, so every ID token carried the end user's
+// email and full name no matter what the client had asked for or the user had
+// consented to.
+func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce, scope string, expiresIn int, sessionID ...string) (string, error) {
 	now := time.Now()
 
 	org, err := orgctx.From(ctx)
@@ -1323,11 +1356,15 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 		return "", err
 	}
 
-	// Get user info
+	// Get user info. email_verified is read rather than assumed, for the same
+	// reason as in GenerateJWT above.
 	var email, firstName, lastName string
+	var emailVerified bool
 	_ = s.db.Pool.QueryRow(ctx, `
-		SELECT email, first_name, last_name FROM users WHERE id = $1 AND org_id = $2
-	`, userID, org.ID).Scan(&email, &firstName, &lastName)
+		SELECT COALESCE(email, ''), COALESCE(first_name, ''), COALESCE(last_name, ''),
+		       COALESCE(email_verified, false)
+		FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&email, &firstName, &lastName, &emailVerified)
 
 	name := firstName
 	if lastName != "" {
@@ -1393,19 +1430,27 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 	claims := jwt.MapClaims{
 		// Pairwise when OIDCPairwiseSubjects is on (OIDC Core §8.1); the raw
 		// user id otherwise. UserInfo derives the same value so the two agree.
-		"sub":         s.subjectFor(userID, clientID),
-		"aud":         clientID,
-		"iss":         s.issuerForOrg(org),
-		"iat":         now.Unix(),
-		"exp":         now.Add(time.Duration(expiresIn) * time.Second).Unix(),
-		"email":       email,
-		"name":        name,
-		"given_name":  firstName,
-		"family_name": lastName,
+		"sub": s.subjectFor(userID, clientID),
+		"aud": clientID,
+		"iss": s.issuerForOrg(org),
+		"iat": now.Unix(),
+		"exp": now.Add(time.Duration(expiresIn) * time.Second).Unix(),
+		// Authorization facts, not OIDC identity claims: see scope_claims.go
+		// for why these are deliberately not gated on a scope.
 		"roles":       roleNames,
 		"groups":      groupNames,
 		"permissions": permStrings,
 	}
+
+	// The end-user identity this token is allowed to carry (OIDC Core §5.4).
+	applyScopedClaims(claims, scope, profileClaims{
+		Name:              name,
+		GivenName:         firstName,
+		FamilyName:        lastName,
+		Email:             email,
+		EmailVerified:     emailVerified,
+		PreferredUsername: email,
+	})
 
 	if nonce != "" {
 		claims["nonce"] = nonce
@@ -1464,7 +1509,7 @@ func (s *Service) GetUserInfo(ctx context.Context, userID string) (*UserInfo, er
 	return &UserInfo{
 		Sub:               userID,
 		Email:             email,
-		EmailVerified:     emailVerified,
+		EmailVerified:     &emailVerified,
 		Name:              name,
 		GivenName:         firstName,
 		FamilyName:        lastName,
@@ -1795,7 +1840,14 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		// it told every conforming SPA and native client that it had no usable
 		// authentication method here.
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic", "none"},
-		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "auth_time", "amr", "email", "email_verified", "name", "given_name", "family_name", "sid"},
+		// Every claim this issuer can put in a token, which is what OIDC
+		// Discovery §3 asks this field for. preferred_username, roles, groups
+		// and permissions were all emitted and none of them was listed — the
+		// same kind of gap as advertising a capability that does not exist,
+		// read from the other side: a relying party that trusts this list
+		// would not ask for a claim it is in fact given. The census in
+		// scope_claims_test.go keeps the list and the emitters together.
+		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "auth_time", "amr", "email", "email_verified", "name", "given_name", "family_name", "preferred_username", "sid", "roles", "groups", "permissions"},
 		CodeChallengeMethodsSupported:     []string{"S256"},
 		RevocationEndpoint:                base + "/oauth/revoke",
 		IntrospectionEndpoint:             base + "/oauth/introspect",
@@ -3695,7 +3747,7 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 
 	// Generate ID token if openid scope is requested
 	if strings.Contains(authCode.Scope, "openid") {
-		idToken, _ := s.GenerateIDToken(c.Request.Context(), authCode.UserID, clientID, authCode.Nonce, client.EffectiveAccessTokenLifetime(), sessionID)
+		idToken, _ := s.GenerateIDToken(c.Request.Context(), authCode.UserID, clientID, authCode.Nonce, authCode.Scope, client.EffectiveAccessTokenLifetime(), sessionID)
 		response.IDToken = idToken
 	}
 
@@ -4215,7 +4267,13 @@ func (s *Service) handleUserInfo(c *gin.Context) {
 	aud, _ := claims["aud"].(string)
 	userInfo.Sub = s.subjectFor(userID, aud)
 
-	c.JSON(200, userInfo)
+	// §5.4: the claims this endpoint returns are the ones the presented token's
+	// scope grants. The scope travels in the access token's own `scope` claim,
+	// which this endpoint used to ignore entirely — a token granted the bare
+	// `openid` scope was answered with the end user's email, full name and
+	// preferred username.
+	scope, _ := claims["scope"].(string)
+	c.JSON(200, scopedUserInfo(userInfo, scope))
 }
 
 // Client management handlers

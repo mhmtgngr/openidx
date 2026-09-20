@@ -459,7 +459,7 @@ func TestUserInfo(t *testing.T) {
 		GivenName:     "Test",
 		FamilyName:    "User",
 		Email:         "test@example.com",
-		EmailVerified: true,
+		EmailVerified: boolPtr(true),
 		Picture:       "https://example.com/avatar.jpg",
 	}
 
@@ -473,7 +473,8 @@ func TestUserInfo(t *testing.T) {
 	assert.Equal(t, userInfo.Sub, decoded.Sub)
 	assert.Equal(t, userInfo.Name, decoded.Name)
 	assert.Equal(t, userInfo.Email, decoded.Email)
-	assert.Equal(t, userInfo.EmailVerified, decoded.EmailVerified)
+	require.NotNil(t, decoded.EmailVerified)
+	assert.Equal(t, *userInfo.EmailVerified, *decoded.EmailVerified)
 }
 
 func TestOIDCDiscovery(t *testing.T) {

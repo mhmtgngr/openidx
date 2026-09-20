@@ -51,7 +51,7 @@ func TestOAuth_requireOrgContext(t *testing.T) {
 		assertNoOrg(t, err)
 	})
 	t.Run("GenerateIDToken", func(t *testing.T) {
-		_, err := s.GenerateIDToken(ctx, "u-1", "client-1", "nonce", 3600)
+		_, err := s.GenerateIDToken(ctx, "u-1", "client-1", "nonce", "openid", 3600)
 		assertNoOrg(t, err)
 	})
 }

@@ -458,6 +458,9 @@ paths:
     get:
       tags: [UserInfo]
       summary: Get user info (GET)
+      description: >-
+        Returns the claims the presented access token's own `scope` grants. A
+        token granted only `openid` is answered with `sub` and nothing else.
       operationId: getUserInfoGet
       responses:
         '200':
@@ -2430,17 +2433,37 @@ components:
 
     UserInfo:
       type: object
+      description: >-
+        The claims the PRESENTED ACCESS TOKEN'S SCOPE grants (OpenID Connect
+        Core §5.4), not everything the issuer knows. `sub` is always present.
+        `name`, `given_name`, `family_name` and `preferred_username` require the
+        `profile` scope; `email` and `email_verified` require `email`. A claim
+        whose scope was not granted is ABSENT rather than empty, so a relying
+        party cannot mistake "you did not ask" for "the user has no name".
+      required: [sub]
       properties:
         sub:
           type: string
         name:
           type: string
+        given_name:
+          type: string
+        family_name:
+          type: string
         email:
           type: string
         email_verified:
           type: boolean
+          description: >-
+            Three answers, and only one of them is silent: absent means the
+            `email` scope was not granted, false means it was and the address is
+            NOT verified, true means it was and the address is. Do not read an
+            absent value as false.
         preferred_username:
           type: string
+        picture:
+          type: string
+          format: uri
         roles:
           type: array
           items:
