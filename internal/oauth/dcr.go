@@ -48,6 +48,12 @@ type clientMetadata struct {
 	// backchannel_logout.go. Validated like redirect_uris: https, or http on
 	// loopback.
 	BackchannelLogoutURI string `json:"backchannel_logout_uri,omitempty"`
+
+	// PostLogoutRedirectURIs is the RP-Initiated Logout 1.0 registration:
+	// where this client may be sent after a logout. A registered list is
+	// matched exactly; registering nothing leaves the client on the origin
+	// rule derived from redirect_uris (post_logout_redirect.go).
+	PostLogoutRedirectURIs []string `json:"post_logout_redirect_uris,omitempty"`
 }
 
 // clientRegistrationResponse is the RFC 7591 registration response. It echoes
@@ -70,6 +76,7 @@ type clientRegistrationResponse struct {
 	TOSUri                  string   `json:"tos_uri,omitempty"`
 	PolicyURI               string   `json:"policy_uri,omitempty"`
 	BackchannelLogoutURI    string   `json:"backchannel_logout_uri,omitempty"`
+	PostLogoutRedirectURIs  []string `json:"post_logout_redirect_uris,omitempty"`
 }
 
 // dcrError writes an RFC 7591 §3.2.2 registration error.
@@ -221,6 +228,9 @@ func (s *Service) buildClientFromMetadata(md *clientMetadata) (*OAuthClient, err
 		}
 	}
 
+	if err := validatePostLogoutRedirectURIs(md.PostLogoutRedirectURIs); err != nil {
+		return nil, err
+	}
 	if err := validateBackChannelLogoutURI(md.BackchannelLogoutURI); err != nil {
 		return nil, &metadataError{"backchannel_logout_uri: " + err.Error()}
 	}
@@ -239,23 +249,24 @@ func (s *Service) buildClientFromMetadata(md *clientMetadata) (*OAuthClient, err
 	scopes := splitScope(md.Scope)
 
 	client := &OAuthClient{
-		ID:                   uuid.NewString(),
-		ClientID:             "oidc_" + randToken(16),
-		Name:                 firstNonEmptyStr(md.ClientName, "Dynamically Registered Client"),
-		Description:          "Registered via RFC 7591 Dynamic Client Registration",
-		Type:                 clientType,
-		RedirectURIs:         md.RedirectURIs,
-		GrantTypes:           grantTypes,
-		ResponseTypes:        responseTypes,
-		Scopes:               scopes,
-		LogoURI:              md.LogoURI,
-		PolicyURI:            md.PolicyURI,
-		TOSUri:               md.TOSUri,
-		BackChannelLogoutURI: strings.TrimSpace(md.BackchannelLogoutURI),
-		PKCERequired:         clientType == "public",
-		AllowRefreshToken:    contains(grantTypes, "refresh_token"),
-		AccessTokenLifetime:  3600,
-		RefreshTokenLifetime: 86400,
+		ID:                     uuid.NewString(),
+		ClientID:               "oidc_" + randToken(16),
+		Name:                   firstNonEmptyStr(md.ClientName, "Dynamically Registered Client"),
+		Description:            "Registered via RFC 7591 Dynamic Client Registration",
+		Type:                   clientType,
+		RedirectURIs:           md.RedirectURIs,
+		GrantTypes:             grantTypes,
+		ResponseTypes:          responseTypes,
+		Scopes:                 scopes,
+		LogoURI:                md.LogoURI,
+		PolicyURI:              md.PolicyURI,
+		TOSUri:                 md.TOSUri,
+		BackChannelLogoutURI:   strings.TrimSpace(md.BackchannelLogoutURI),
+		PostLogoutRedirectURIs: md.PostLogoutRedirectURIs,
+		PKCERequired:           clientType == "public",
+		AllowRefreshToken:      contains(grantTypes, "refresh_token"),
+		AccessTokenLifetime:    3600,
+		RefreshTokenLifetime:   86400,
 	}
 	if clientType == "confidential" {
 		client.ClientSecret = randToken(32)
@@ -284,6 +295,7 @@ func (s *Service) registrationResponse(c *gin.Context, client *OAuthClient, regT
 		TOSUri:                  client.TOSUri,
 		PolicyURI:               client.PolicyURI,
 		BackchannelLogoutURI:    client.BackChannelLogoutURI,
+		PostLogoutRedirectURIs:  client.PostLogoutRedirectURIs,
 	}
 	scheme := "https"
 	if c.Request.TLS == nil && strings.HasPrefix(c.Request.Host, "127.0.0.1") {

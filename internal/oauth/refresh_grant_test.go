@@ -77,6 +77,7 @@ CREATE TABLE oauth_clients (
     -- "a cap of zero seconds" stay distinguishable.
     refresh_token_max_lifetime INT,
     back_channel_logout_uri VARCHAR(500),
+  post_logout_redirect_uris JSONB,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     org_id                 UUID NOT NULL,

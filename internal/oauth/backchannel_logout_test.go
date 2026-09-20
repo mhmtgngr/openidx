@@ -129,6 +129,7 @@ func bclSetup(t *testing.T) (*Service, *database.PostgresDB, *outcomeBox) {
 			refresh_token_lifetime INTEGER DEFAULT 86400,
 			refresh_token_max_lifetime INTEGER,
 			back_channel_logout_uri VARCHAR(500),
+			post_logout_redirect_uris JSONB,
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW(),
 			org_id UUID NOT NULL,
