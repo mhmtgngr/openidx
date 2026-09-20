@@ -514,3 +514,43 @@ func ValidateBackChannelLogoutURI(value string) error {
 	}
 	return &ValidationError{Field: "back_channel_logout_uri", Message: "must be https (http only for localhost)", Value: value}
 }
+
+// MaxPostLogoutRedirectURIs bounds the registered post-logout list. It is not
+// a spec number; it is the same shape of bound the rest of the client model
+// carries, so a registration cannot turn into an unbounded row.
+const MaxPostLogoutRedirectURIs = 20
+
+// ValidatePostLogoutRedirectURIs checks an OpenID Connect RP-Initiated Logout
+// registration (post_logout_redirect_uris). An empty list is valid and means
+// "registered nothing", which the matcher reads as the origin fallback.
+//
+// An entry must be an absolute URI with a scheme and a host and must carry no
+// userinfo, because the logout matcher compares scheme, host, path, query and
+// fragment: a relative value or one with credentials in it could never match
+// anything the matcher is handed, and a registration that can never be matched
+// is better refused at registration than discovered at logout.
+//
+// It is shared by the OAuth client store, the dynamic registration endpoint
+// and the admin applications editor, so the three writers of
+// oauth_clients.post_logout_redirect_uris cannot drift — the same reason
+// ValidateBackChannelLogoutURI lives here.
+func ValidatePostLogoutRedirectURIs(uris []string) error {
+	if len(uris) > MaxPostLogoutRedirectURIs {
+		return &ValidationError{
+			Field:   "post_logout_redirect_uris",
+			Message: fmt.Sprintf("must not hold more than %d entries", MaxPostLogoutRedirectURIs),
+		}
+	}
+	for _, raw := range uris {
+		value := strings.TrimSpace(raw)
+		u, err := url.Parse(value)
+		if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil {
+			return &ValidationError{
+				Field:   "post_logout_redirect_uris",
+				Message: "must be absolute URIs with a scheme and host, and must not carry credentials",
+				Value:   value,
+			}
+		}
+	}
+	return nil
+}

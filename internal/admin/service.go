@@ -102,16 +102,107 @@ type Application struct {
 	// and "". The console's edit dialog showed a "Require PKCE" box for every
 	// application and sent pkce_required on save; nothing read it and nothing
 	// wrote it, so the box displayed a default and enforced nothing.
-	PKCERequired         *bool     `json:"pkce_required,omitempty"`
-	BackChannelLogoutURI *string   `json:"back_channel_logout_uri,omitempty"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
+	PKCERequired         *bool   `json:"pkce_required,omitempty"`
+	BackChannelLogoutURI *string `json:"back_channel_logout_uri,omitempty"`
+	// PostLogoutRedirectURIs mirrors oauth_clients.post_logout_redirect_uris:
+	// the OpenID Connect RP-Initiated Logout allowlist. A *[]string rather than
+	// a []string because three states have to stay apart and only two of them
+	// are "empty": nil means there is no OAuth client behind this tile, so the
+	// key is omitted and the console shows no field at all; a pointer to an
+	// empty slice means the client exists and has registered nothing, which is
+	// precisely the client still on the loose origin fallback and therefore the
+	// one an operator most needs to see the empty field for. A plain []string
+	// would collapse those two into the same omitted key and hide the field
+	// from exactly the applications that need it.
+	PostLogoutRedirectURIs *[]string `json:"post_logout_redirect_uris,omitempty"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 // ErrInvalidBackChannelLogoutURI is returned by UpdateApplication when the
 // back_channel_logout_uri in the payload is not empty, https, or http on
 // loopback; the handler answers 400 rather than 500 for it.
 var ErrInvalidBackChannelLogoutURI = errors.New("back_channel_logout_uri must be https (http only for localhost)")
+
+// ErrInvalidPostLogoutRedirectURIs is returned by UpdateApplication when an
+// entry in the payload's post_logout_redirect_uris could never be matched at
+// logout; the handler answers 400 rather than 500 for it. Registering a value
+// the matcher can never equal would leave the operator believing the tight
+// rule is in force while the logout still lands on the origin fallback.
+var ErrInvalidPostLogoutRedirectURIs = errors.New("post_logout_redirect_uris must be absolute URIs with a scheme and host")
+
+// decodePostLogoutRedirectURIs turns the joined oauth_clients column into the
+// three states the Application field carries. hasClient comes from whether the
+// LEFT JOIN found a row at all, because the column itself cannot tell the two
+// apart: a client that registered nothing is stored as SQL NULL (deliberately,
+// so that "registered nothing" and "registered an empty list" cannot diverge
+// in the database), and a tile with no client behind it reads NULL for the
+// same column. Without hasClient the read would report "registered nothing"
+// for a proxy-app tile that has no logout allowlist to speak of.
+// coercePostLogoutRedirectURIs reads the key out of a PUT body. The body
+// arrives as map[string]interface{}, so a JSON array lands as []interface{}
+// and only a direct caller inside the process hands over []string; both are
+// accepted, as they are for redirect_uris. The second return says whether the
+// key was PRESENT, which is a different question from whether the list is
+// empty: absent leaves the column alone, present-and-empty clears it.
+//
+// A present key whose value is neither an array nor null is reported as absent
+// rather than as an empty list, so a malformed payload cannot silently widen a
+// client back to the origin fallback.
+func coercePostLogoutRedirectURIs(updates map[string]interface{}) ([]string, bool) {
+	raw, ok := updates["post_logout_redirect_uris"]
+	if !ok {
+		return nil, false
+	}
+	switch v := raw.(type) {
+	case nil:
+		return []string{}, true
+	case []string:
+		return trimNonEmpty(v), true
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			str, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, str)
+		}
+		return trimNonEmpty(out), true
+	default:
+		return nil, false
+	}
+}
+
+// trimNonEmpty drops blank entries and surrounding whitespace. The console
+// sends one URI per textarea line, so a trailing newline would otherwise
+// register "" — an entry the matcher could never equal, which would be refused
+// and would make a perfectly ordinary edit fail.
+func trimNonEmpty(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		if v := strings.TrimSpace(raw); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func decodePostLogoutRedirectURIs(hasClient bool, raw []byte) *[]string {
+	if !hasClient {
+		return nil
+	}
+	uris := []string{}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &uris); err != nil {
+			// A row we cannot parse is reported as "registered nothing" rather
+			// than failing the whole listing: the matcher treats an unparseable
+			// value the same way, so the console shows what logout will do.
+			uris = []string{}
+		}
+	}
+	return &uris
+}
 
 // ApplicationSSOSettings represents SSO settings for an application
 type ApplicationSSOSettings struct {
@@ -766,7 +857,18 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		}
 	}
 
-	if len(setParts) == 0 && !hasPKCE && !hasBackChannel {
+	// The RP-Initiated Logout allowlist. Absent from the payload the column is
+	// left alone, so an edit of any other field can never widen a client back
+	// to the origin fallback by omission; present and empty clears it, which is
+	// how an operator deliberately goes back to the fallback.
+	postLogoutURIs, hasPostLogout := coercePostLogoutRedirectURIs(updates)
+	if hasPostLogout {
+		if err := validation.ValidatePostLogoutRedirectURIs(postLogoutURIs); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidPostLogoutRedirectURIs, err)
+		}
+	}
+
+	if len(setParts) == 0 && !hasPKCE && !hasBackChannel && !hasPostLogout {
 		return fmt.Errorf("no valid fields to update")
 	}
 
@@ -816,6 +918,18 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		ocArgs = append(ocArgs, backChannelURI)
 		ocN++
 	}
+	if hasPostLogout {
+		// An empty list is stored as SQL NULL, the same spelling the OAuth
+		// client store uses, so "registered nothing" has exactly one
+		// representation no matter which of the three writers wrote it.
+		var payload []byte
+		if len(postLogoutURIs) > 0 {
+			payload, _ = json.Marshal(postLogoutURIs)
+		}
+		ocSet = append(ocSet, fmt.Sprintf("post_logout_redirect_uris = $%d", ocN))
+		ocArgs = append(ocArgs, payload)
+		ocN++
+	}
 	if len(ocSet) > 0 {
 		var clientID string
 		if e := s.db.Pool.QueryRow(ctx,
@@ -851,7 +965,8 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 	query := `
 		SELECT a.id, a.client_id, a.name, COALESCE(a.description, ''), a.type, a.protocol,
 		       COALESCE(a.base_url, ''), a.redirect_uris, a.enabled, a.require_assignment,
-		       oc.pkce_required, oc.back_channel_logout_uri, a.created_at, a.updated_at
+		       oc.pkce_required, oc.back_channel_logout_uri, oc.client_id, oc.post_logout_redirect_uris,
+		       a.created_at, a.updated_at
 		FROM applications a
 		LEFT JOIN oauth_clients oc ON oc.client_id = a.client_id AND oc.org_id = a.org_id
 		WHERE a.org_id = $1
@@ -879,13 +994,17 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 	var apps []Application
 	for rows.Next() {
 		var app Application
+		var ocClientID *string
+		var postLogoutJSON []byte
 		if err := rows.Scan(
 			&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
 			&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.RequireAssignment,
-			&app.PKCERequired, &app.BackChannelLogoutURI, &app.CreatedAt, &app.UpdatedAt,
+			&app.PKCERequired, &app.BackChannelLogoutURI, &ocClientID, &postLogoutJSON,
+			&app.CreatedAt, &app.UpdatedAt,
 		); err != nil {
 			return nil, 0, err
 		}
+		app.PostLogoutRedirectURIs = decodePostLogoutRedirectURIs(ocClientID != nil, postLogoutJSON)
 		apps = append(apps, app)
 	}
 
@@ -1534,22 +1653,27 @@ func (s *Service) handleGetApplication(c *gin.Context) {
 	}
 	id := c.Param("id")
 	var app Application
+	var ocClientID *string
+	var postLogoutJSON []byte
 	err = s.db.Pool.QueryRow(c.Request.Context(), `
 		SELECT a.id, a.client_id, a.name, COALESCE(a.description, ''), a.type, a.protocol,
 		       COALESCE(a.base_url, ''), a.redirect_uris, a.enabled, a.require_assignment,
-		       oc.pkce_required, oc.back_channel_logout_uri, a.created_at, a.updated_at
+		       oc.pkce_required, oc.back_channel_logout_uri, oc.client_id, oc.post_logout_redirect_uris,
+		       a.created_at, a.updated_at
 		FROM applications a
 		LEFT JOIN oauth_clients oc ON oc.client_id = a.client_id AND oc.org_id = a.org_id
 		WHERE a.id = $1 AND a.org_id = $2
 	`, id, org.ID).Scan(
 		&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
 		&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.RequireAssignment,
-		&app.PKCERequired, &app.BackChannelLogoutURI, &app.CreatedAt, &app.UpdatedAt,
+		&app.PKCERequired, &app.BackChannelLogoutURI, &ocClientID, &postLogoutJSON,
+		&app.CreatedAt, &app.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "Application not found"})
 		return
 	}
+	app.PostLogoutRedirectURIs = decodePostLogoutRedirectURIs(ocClientID != nil, postLogoutJSON)
 	c.JSON(200, app)
 }
 func (s *Service) handleUpdateApplication(c *gin.Context) {
@@ -1563,6 +1687,10 @@ func (s *Service) handleUpdateApplication(c *gin.Context) {
 	if err := s.UpdateApplication(c.Request.Context(), id, updates); err != nil {
 		if errors.Is(err, ErrInvalidBackChannelLogoutURI) {
 			c.JSON(400, gin.H{"error": "invalid_request", "error_description": ErrInvalidBackChannelLogoutURI.Error()})
+			return
+		}
+		if errors.Is(err, ErrInvalidPostLogoutRedirectURIs) {
+			c.JSON(400, gin.H{"error": "invalid_request", "error_description": ErrInvalidPostLogoutRedirectURIs.Error()})
 			return
 		}
 		s.logger.Error("failed to update application", logsafe.String("id", id), zap.Error(err))

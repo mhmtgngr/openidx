@@ -33,32 +33,31 @@ package oauth
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
-)
 
-// maxPostLogoutRedirectURIs bounds the registered list. It is not a spec
-// number; it is the same shape of bound the rest of the client model carries,
-// so a registration cannot turn into an unbounded row.
-const maxPostLogoutRedirectURIs = 20
+	"github.com/openidx/openidx/internal/common/validation"
+)
 
 // ErrInvalidPostLogoutRedirectURI is returned when a registration carries a
 // value that could never be matched, which is better refused at registration
-// than discovered at logout.
+// than discovered at logout. It is the sentinel the store and the dynamic
+// registration endpoint answer 400 on; the detail of WHICH entry was refused
+// comes from the shared validator, which is the one place the rule is written.
 var ErrInvalidPostLogoutRedirectURI = errors.New(
 	"post_logout_redirect_uris entries must be absolute URIs with a scheme and host, and must not carry credentials")
 
 // validatePostLogoutRedirectURIs checks a registration. An empty list is
 // valid: it means "no registration", which the matcher reads as the fallback.
+//
+// The rule itself lives in internal/common/validation because there are three
+// writers of this column — the OAuth client store, dynamic registration, and
+// the admin applications editor — and a rule spelled once cannot drift between
+// them. What stays here is the sentinel error the OAuth paths match on.
 func validatePostLogoutRedirectURIs(uris []string) error {
-	if len(uris) > maxPostLogoutRedirectURIs {
-		return ErrInvalidPostLogoutRedirectURI
-	}
-	for _, raw := range uris {
-		u, err := url.Parse(strings.TrimSpace(raw))
-		if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil {
-			return ErrInvalidPostLogoutRedirectURI
-		}
+	if err := validation.ValidatePostLogoutRedirectURIs(uris); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidPostLogoutRedirectURI, err)
 	}
 	return nil
 }

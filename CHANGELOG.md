@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The post-logout allowlist can be registered from the console.** The
+  RP-Initiated Logout list added below was reachable only through dynamic
+  client registration and the OAuth client API. The applications editor —
+  the only interface the product ships for managing an application — had no
+  field for it, `PUT /api/v1/applications/{id}` refused the key outright
+  ("no valid fields to update"), and the application read never returned it.
+  So every console-managed installation stayed on the origin fallback for
+  good, while the OAuth service logged advice to "register
+  post_logout_redirect_uris to tighten it" — advice the shipped interface
+  could not take. Both dialogs now carry a **Post-logout redirect URIs** box,
+  one URI per line, and the admin API reads and writes the column on the
+  backing OAuth client. The read tells three states apart: a registered list,
+  an empty array for a client that registered nothing (the client still on
+  the loose rule, and the one that most needs the field shown), and an
+  omitted key for a tile with no OAuth client behind it. A key absent from
+  the payload leaves the registration alone, so renaming an application
+  cannot widen it back to the fallback by omission; an empty list clears it,
+  which is how an operator deliberately returns to the fallback. The rule
+  itself moved to `internal/common/validation` so its three writers — the
+  client store, dynamic registration and this editor — cannot drift. Measured
+  against a real PostgreSQL and in the console's own suite: write, clear,
+  leave-alone, blank-line trimming, refusal of an entry that could never be
+  matched, tenant scoping, and the three read states. Eight mutations red,
+  no-op control green.
 
 - **RP-Initiated Logout 1.0: `state` comes back, `client_id` identifies the
   relying party, and `post_logout_redirect_uris` is a registered list

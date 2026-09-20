@@ -54,6 +54,11 @@ interface Application {
   // pkce_required come from the backing OAuth client; a tile with no client
   // behind it has neither.
   back_channel_logout_uri?: string
+  // Where the browser may be sent after an RP-initiated logout. Present and
+  // empty means the backing OAuth client registered nothing and is therefore
+  // still matched by origin against its redirect URIs; absent means there is
+  // no OAuth client behind this tile at all.
+  post_logout_redirect_uris?: string[]
   // Opt-in OIDC gate: when true, only assigned users and groups can obtain a
   // token for this application. Edited in the Manage Access dialog.
   require_assignment?: boolean
@@ -92,6 +97,7 @@ export function ApplicationsPage() {
     scopes: 'openid,profile,email,offline_access',
     pkce_required: true,
     back_channel_logout_uri: '',
+    post_logout_redirect_uris: '',
   })
   const [regenerateModal, setRegenerateModal] = useState(false)
   const [regenerateApp, setRegenerateApp] = useState<Application | null>(null)
@@ -146,6 +152,7 @@ export function ApplicationsPage() {
         scopes: 'openid,profile,email,offline_access',
         pkce_required: true,
         back_channel_logout_uri: '',
+        post_logout_redirect_uris: '',
       })
     },
     onError: (error: Error) => {
@@ -237,6 +244,7 @@ export function ApplicationsPage() {
       scopes: 'openid,profile,email,offline_access',
       pkce_required: app.pkce_required ?? true,
       back_channel_logout_uri: app.back_channel_logout_uri || '',
+      post_logout_redirect_uris: app.post_logout_redirect_uris?.join('\n') || '',
     })
     setEditAppModal(true)
   }
@@ -306,6 +314,7 @@ export function ApplicationsPage() {
       scopes: formData.scopes.split(',').map(s => s.trim()),
       pkce_required: formData.pkce_required,
       back_channel_logout_uri: formData.back_channel_logout_uri.trim(),
+      post_logout_redirect_uris: formData.post_logout_redirect_uris.split('\n').filter(uri => uri.trim()),
       allow_refresh_token: true,
       access_token_lifetime: 3600,
       refresh_token_lifetime: 86400,
@@ -324,6 +333,7 @@ export function ApplicationsPage() {
           redirect_uris: formData.redirect_uris.split('\n').filter(uri => uri.trim()),
           pkce_required: formData.pkce_required,
           back_channel_logout_uri: formData.back_channel_logout_uri.trim(),
+          post_logout_redirect_uris: formData.post_logout_redirect_uris.split('\n').filter(uri => uri.trim()),
         },
       })
     }
@@ -641,6 +651,21 @@ export function ApplicationsPage() {
               </p>
             </div>
             <div className="space-y-2">
+              <Label htmlFor="post_logout_redirect_uris">{t('pages.applications.registerDialog.postLogoutLabel')}</Label>
+              <textarea
+                id="post_logout_redirect_uris"
+                name="post_logout_redirect_uris"
+                value={formData.post_logout_redirect_uris}
+                onChange={handleInputChange}
+                rows={3}
+                className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="https://example.com/signed-out"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('pages.applications.registerDialog.postLogoutHint')}
+              </p>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="scopes">{t('pages.applications.registerDialog.scopesLabel')}</Label>
               <Input
                 id="scopes"
@@ -749,6 +774,21 @@ export function ApplicationsPage() {
               />
               <p className="text-xs text-muted-foreground">
                 {t('pages.applications.registerDialog.backChannelLogoutHint')}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit_post_logout_redirect_uris">{t('pages.applications.registerDialog.postLogoutLabel')}</Label>
+              <textarea
+                id="edit_post_logout_redirect_uris"
+                name="post_logout_redirect_uris"
+                value={formData.post_logout_redirect_uris}
+                onChange={handleInputChange}
+                rows={3}
+                className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="https://example.com/signed-out"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('pages.applications.registerDialog.postLogoutHint')}
               </p>
             </div>
             <div className="flex items-center space-x-2">
