@@ -3746,13 +3746,13 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	}
 
 	// Generate ID token if openid scope is requested
-	if strings.Contains(authCode.Scope, "openid") {
+	if scopeGrants(authCode.Scope, scopeOpenID) {
 		idToken, _ := s.GenerateIDToken(c.Request.Context(), authCode.UserID, clientID, authCode.Nonce, authCode.Scope, client.EffectiveAccessTokenLifetime(), sessionID)
 		response.IDToken = idToken
 	}
 
 	// Generate refresh token if allowed
-	if client.AllowRefreshToken && strings.Contains(authCode.Scope, "offline_access") {
+	if client.AllowRefreshToken && scopeGrants(authCode.Scope, scopeOfflineAccess) {
 		refreshToken := GenerateRandomToken(32)
 		// A native client that is already enrolled names the device it runs on,
 		// so revoking that device can revoke this chain (v185). Checked against
@@ -3922,7 +3922,7 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 	// refresh_token long-term, and refresh-token theft has no detection
 	// surface. The integration suite's TestSessionManagement/refresh_access_token
 	// expects the rotated token in the response.
-	if client.AllowRefreshToken && strings.Contains(token.Scope, "offline_access") {
+	if client.AllowRefreshToken && scopeGrants(token.Scope, scopeOfflineAccess) {
 		// Claim the old token first. The UPDATE is conditional on it being
 		// unused, so of two concurrent refreshes with the same token exactly
 		// one proceeds; the loser falls through to the reuse path on its next
