@@ -68,28 +68,27 @@ var beltExempt = map[string]string{
 // handlers. Listed with what the table actually holds so the batches are easy
 // to cut.
 //
-// What is left is the DEFERRED half, and it is deferred on a product question
-// rather than on effort. Both groups need a decision this lint cannot make:
+// EMPTY. The last two groups were deferred on a product question rather than
+// on effort, and both questions have now been answered:
 //
-//   - the external identity links: may one external account link to a user in
-//     two tenants at once, and if so which tenant owns the link row?
+//   - (closed) the external identity links: may one external account link to
+//     a user in two tenants at once, and if so which tenant owns the link row?
+//     Decided 2026-09-20: a link belongs to the tenant of the identity
+//     provider it was made through -- identity_providers has carried org_id
+//     since v155, so provider_id already names one tenant, and the same
+//     external account links once in each organization, invisible across.
+//     v200 gives user_identity_links and social_account_links org_id,
+//     backfill and the belt.
 //   - (closed) the agent fleet: three separate comments in internal/access
 //     asserted that the fleet was deliberately install-wide, so an agent id
 //     named a device without naming a tenant, and v159 found that this left
 //     cross-tenant kiosk TARGETING open. Decided per-tenant on 2026-09-17;
 //     v197 gives the three tables org_id, backfill and the belt.
 //
-// Every table on this register that did NOT need such a decision has now been
-// scoped or dropped.
-var needsScoping = map[string]string{
-	// MFA and credentials — the most sensitive per-user rows in the product.
-	"user_identity_links":  "per-user external identity links; needs the one-account-two-tenants decision",
-	"social_account_links": "per-user social provider links; needs the one-account-two-tenants decision",
-
-	// The agent fleet (enrolled_agents, agent_posture_results,
-	// agent_enrollment_tokens) left this register with v197: the fleet is
-	// per-tenant, decided 2026-09-17.
-}
+// Every table that ever stood on this register has been scoped or dropped.
+// Leave it empty; a new per-user or per-org table gets org_id in the
+// migration that creates it, not a parking space here.
+var needsScoping = map[string]string{}
 
 // needsBelt: EMPTY, AND PINNED AT ZERO.
 //

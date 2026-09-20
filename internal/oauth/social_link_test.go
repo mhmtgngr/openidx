@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"testing"
 
 	"github.com/google/uuid"
@@ -30,8 +31,10 @@ func TestSocialAccountLinkingOwnership(t *testing.T) {
 	db, cleanup := ssfSetupTestDB(t)
 	defer cleanup()
 
-	ctx := context.Background()
 	orgID := uuid.New().String()
+	// The link is the tenant's (v200): every path resolves the organization
+	// from the context and names it in the SQL, so the context carries one.
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: orgID})
 
 	// Minimal schema: the columns and constraints this code actually relies on.
 	// Uniqueness on (provider_id, external_id) is what makes takeover detectable.
@@ -50,6 +53,7 @@ func TestSocialAccountLinkingOwnership(t *testing.T) {
 	mustExec(t, db, ctx, `
 		CREATE TABLE social_account_links (
 			id UUID PRIMARY KEY,
+			org_id UUID NOT NULL,
 			provider_id UUID NOT NULL REFERENCES identity_providers(id),
 			user_id UUID NOT NULL REFERENCES users(id),
 			external_id TEXT NOT NULL,
@@ -62,6 +66,7 @@ func TestSocialAccountLinkingOwnership(t *testing.T) {
 	mustExec(t, db, ctx, `
 		CREATE TABLE user_identity_links (
 			id UUID PRIMARY KEY,
+			org_id UUID NOT NULL,
 			user_id UUID NOT NULL REFERENCES users(id),
 			provider_id UUID NOT NULL REFERENCES identity_providers(id),
 			external_id TEXT NOT NULL,

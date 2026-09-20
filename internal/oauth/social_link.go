@@ -302,22 +302,40 @@ func (s *Service) handleSocialLinkCallback(c *gin.Context) {
 // surfaced as a conflict instead.
 var errLinkOwnedByAnotherUser = fmt.Errorf("external account already linked to another user")
 
+// errLinkHeldByAnotherTenant is returned when an upsert conflicts with a link
+// row that this tenant cannot see. Under FORCE RLS (v200) the ON CONFLICT
+// branch's tenant term is false for such a row, so PostgreSQL applies nothing
+// and reports INSERT 0 0 -- a write that silently did not happen. The provider
+// lookups are tenant-scoped, so no product path should reach this; if one
+// does, it fails here, loudly, rather than telling the caller a link exists.
+var errLinkHeldByAnotherTenant = fmt.Errorf("external account is linked in another tenant")
+
 // linkSocialAccountToUser records the verified external identity against the
 // local user. It writes both link tables: social_account_links is what the
 // login path consults, and user_identity_links is what the profile and admin
 // screens read. Returns whether a new link was created.
 func (s *Service) linkSocialAccountToUser(ctx context.Context, providerID, userID string, userInfo *SocialUserInfo) (bool, error) {
+	// The link is the tenant's (v200): it belongs to the organization whose
+	// provider authenticated the external account, which is the organization
+	// on this request. Both link tables carry org_id and FORCE RLS now, so the
+	// predicate below is what the database will enforce anyway -- it is here
+	// so the query reads as scoped and orgscope can see that it is.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
+
 	var ownerID string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT user_id FROM social_account_links WHERE provider_id = $1 AND external_id = $2",
-		providerID, userInfo.ID).Scan(&ownerID)
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT user_id FROM social_account_links WHERE provider_id = $1 AND external_id = $2 AND org_id = $3",
+		providerID, userInfo.ID, org.ID).Scan(&ownerID)
 	switch {
 	case err == nil && ownerID == userID:
 		// Already linked to this same user: refresh and report no-op.
-		if err := s.createSocialAccountLink(ctx, providerID, userID, userInfo); err != nil {
+		if err := s.createSocialAccountLink(ctx, org.ID, providerID, userID, userInfo); err != nil {
 			return false, err
 		}
-		if err := s.upsertIdentityLink(ctx, providerID, userID, userInfo); err != nil {
+		if err := s.upsertIdentityLink(ctx, org.ID, providerID, userID, userInfo); err != nil {
 			return false, err
 		}
 		return false, nil
@@ -328,16 +346,16 @@ func (s *Service) linkSocialAccountToUser(ctx context.Context, providerID, userI
 	// Not linked yet. The same guard applies to the identity-link table, which
 	// carries its own (provider_id, external_id) uniqueness.
 	err = s.db.Pool.QueryRow(ctx,
-		"SELECT user_id FROM user_identity_links WHERE provider_id = $1 AND external_id = $2",
-		providerID, userInfo.ID).Scan(&ownerID)
+		"SELECT user_id FROM user_identity_links WHERE provider_id = $1 AND external_id = $2 AND org_id = $3",
+		providerID, userInfo.ID, org.ID).Scan(&ownerID)
 	if err == nil && ownerID != userID {
 		return false, errLinkOwnedByAnotherUser
 	}
 
-	if err := s.createSocialAccountLink(ctx, providerID, userID, userInfo); err != nil {
+	if err := s.createSocialAccountLink(ctx, org.ID, providerID, userID, userInfo); err != nil {
 		return false, err
 	}
-	if err := s.upsertIdentityLink(ctx, providerID, userID, userInfo); err != nil {
+	if err := s.upsertIdentityLink(ctx, org.ID, providerID, userID, userInfo); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -347,7 +365,7 @@ func (s *Service) linkSocialAccountToUser(ctx context.Context, providerID, userI
 // "linked accounts" profile screen and the admin console read. Before this
 // existed nothing ever inserted into it, so those screens were permanently
 // empty even for users who had signed in through a provider.
-func (s *Service) upsertIdentityLink(ctx context.Context, providerID, userID string, userInfo *SocialUserInfo) error {
+func (s *Service) upsertIdentityLink(ctx context.Context, orgID, providerID, userID string, userInfo *SocialUserInfo) error {
 	profile, err := json.Marshal(map[string]string{
 		"display_name": userInfo.Name,
 		"provider":     userInfo.Provider,
@@ -366,11 +384,11 @@ func (s *Service) upsertIdentityLink(ctx context.Context, providerID, userID str
 		displayName = &n
 	}
 
-	_, err = s.db.Pool.Exec(ctx, `
+	tag, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO user_identity_links
-			(id, user_id, provider_id, external_id, external_email, external_username,
+			(id, org_id, user_id, provider_id, external_id, external_email, external_username,
 			 display_name, profile_data, is_primary, linked_at, last_used_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, NOW(), NOW())
+		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, $8, false, NOW(), NOW())
 		ON CONFLICT (provider_id, external_id) DO UPDATE SET
 			user_id = EXCLUDED.user_id,
 			external_email = EXCLUDED.external_email,
@@ -378,8 +396,14 @@ func (s *Service) upsertIdentityLink(ctx context.Context, providerID, userID str
 			display_name = EXCLUDED.display_name,
 			profile_data = EXCLUDED.profile_data,
 			last_used_at = NOW()
+		WHERE user_identity_links.org_id = EXCLUDED.org_id
 	`, uuid.New().String(), userID, providerID, userInfo.ID,
-		externalEmail, externalEmail, displayName, profile)
-
-	return err
+		externalEmail, externalEmail, displayName, profile, orgID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errLinkHeldByAnotherTenant
+	}
+	return nil
 }

@@ -481,10 +481,12 @@ Say these to a customer before they find them:
   encryption key still comes from `ENCRYPTION_KEY`.
 - **Three Redis roles need three instances**, which the bundled chart does
   not provide; managed caches do.
-- **Two product decisions are open**: may one external account link to a
-  user in two tenants (the last two tables outside the tenant belt), and
-  what the per-tenant enrolment quota is (the column to count on exists
-  since migration v197, the number does not).
+- **One product decision is open**: what the per-tenant enrolment quota is
+  (the column to count on exists since migration v197, the number does not).
+  The other, whether one external account may link to a user in two tenants,
+  was decided with v200: a link belongs to the tenant of the identity provider
+  it was made through, so the same account links once in each tenant and
+  every table in the product is now inside the tenant belt.
 - **Terraform** has an AWS root (EKS, RDS, ElastiCache, OpenZiti) and an
   Azure root (AKS, Flexible Server, Redis, Key Vault) under
   `deployments/terraform/`. Neither has been applied from this repository;

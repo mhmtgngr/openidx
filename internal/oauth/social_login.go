@@ -657,8 +657,8 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 	var existingUserID string
 	err = s.db.Pool.QueryRow(ctx, `
 		SELECT user_id FROM social_account_links
-		WHERE provider_id = $1 AND external_id = $2
-	`, providerID, userInfo.ID).Scan(&existingUserID)
+		WHERE provider_id = $1 AND external_id = $2 AND org_id = $3
+	`, providerID, userInfo.ID, org.ID).Scan(&existingUserID)
 
 	if err == nil {
 		// Already linked - update last login info and return
@@ -668,11 +668,11 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 			UPDATE social_account_links SET last_login_at = NOW(),
 				profile_data = jsonb_set(COALESCE(profile_data, '{}'::jsonb), '{display_name}', to_jsonb($3::text)),
 				email = $4
-			WHERE provider_id = $1 AND external_id = $2
-		`, providerID, userInfo.ID, userInfo.Name, userInfo.Email)
+			WHERE provider_id = $1 AND external_id = $2 AND org_id = $5
+		`, providerID, userInfo.ID, userInfo.Name, userInfo.Email, org.ID)
 
 		// Keep the profile-facing mirror in step with the login record.
-		if linkErr := s.upsertIdentityLink(ctx, providerID, existingUserID, userInfo); linkErr != nil {
+		if linkErr := s.upsertIdentityLink(ctx, org.ID, providerID, existingUserID, userInfo); linkErr != nil {
 			s.logger.Warn("Failed to refresh identity link on social login", zap.Error(linkErr))
 		}
 
@@ -732,13 +732,13 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 		"SELECT id FROM users WHERE email = $1 AND org_id = $2", userInfo.Email, org.ID).Scan(&userID)
 
 	// Create the social account link
-	if linkErr := s.createSocialAccountLink(ctx, providerID, userID, userInfo); linkErr != nil {
+	if linkErr := s.createSocialAccountLink(ctx, org.ID, providerID, userID, userInfo); linkErr != nil {
 		s.logger.Warn("Failed to create social account link after user creation", zap.Error(linkErr))
 	}
 	// Mirror it into user_identity_links, which is what the "linked accounts"
 	// profile screen and the admin console read. Without this the login path
 	// leaves those screens empty for users it just provisioned.
-	if linkErr := s.upsertIdentityLink(ctx, providerID, userID, userInfo); linkErr != nil {
+	if linkErr := s.upsertIdentityLink(ctx, org.ID, providerID, userID, userInfo); linkErr != nil {
 		s.logger.Warn("Failed to mirror identity link after user creation", zap.Error(linkErr))
 	}
 
@@ -752,17 +752,27 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 }
 
 // createSocialAccountLink inserts a social account link record
-func (s *Service) createSocialAccountLink(ctx context.Context, providerID, userID string, userInfo *SocialUserInfo) error {
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO social_account_links (id, provider_id, user_id, external_id, profile_data, email, last_login_at, linked_at)
-		VALUES ($1, $2, $3, $4, jsonb_build_object('display_name', $5::text), $6, NOW(), NOW())
+func (s *Service) createSocialAccountLink(ctx context.Context, orgID, providerID, userID string, userInfo *SocialUserInfo) error {
+	// The ON CONFLICT branch keeps the tenant term: a link row is only ever
+	// re-pointed within the organization that owns it. Under FORCE RLS the
+	// policy would refuse a cross-tenant update anyway; the WHERE says so in
+	// the SQL, where orgscope and the next reader can see it.
+	tag, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO social_account_links (id, org_id, provider_id, user_id, external_id, profile_data, email, last_login_at, linked_at)
+		VALUES ($1, $7, $2, $3, $4, jsonb_build_object('display_name', $5::text), $6, NOW(), NOW())
 		ON CONFLICT (provider_id, external_id) DO UPDATE SET
 			user_id = $3,
 			profile_data = jsonb_set(COALESCE(social_account_links.profile_data, '{}'::jsonb), '{display_name}', to_jsonb($5::text)),
 			email = $6, last_login_at = NOW()
-	`, uuid.New().String(), providerID, userID, userInfo.ID, userInfo.Name, userInfo.Email)
-
-	return err
+		WHERE social_account_links.org_id = $7
+	`, uuid.New().String(), providerID, userID, userInfo.ID, userInfo.Name, userInfo.Email, orgID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errLinkHeldByAnotherTenant
+	}
+	return nil
 }
 
 // --- URL derivation helpers ---
