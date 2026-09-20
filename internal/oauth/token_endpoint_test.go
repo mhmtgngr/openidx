@@ -26,6 +26,25 @@ func postForm(t *testing.T, h gin.HandlerFunc, form url.Values) *httptest.Respon
 	return w
 }
 
+// postFormAsClient drives a handler with a caller already authenticated, which
+// is the only way /oauth/revoke and /oauth/introspect are ever reached: both
+// are registered behind requireTokenEndpointClientAuth. The middleware is what
+// sets this key in production, and token_owner_test.go exercises that wiring
+// through the real middleware; here the point is the handler's own behaviour,
+// so the caller is named directly.
+func postFormAsClient(t *testing.T, h gin.HandlerFunc, form url.Values, clientID string) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	c.Request = req
+	c.Set(authenticatedClientKey, clientID)
+	h(c)
+	return w
+}
+
 // postFormAllowingPanic drives a handler and reports whether it panicked.
 //
 // The test service is built without a database on purpose (test_helper_test.go
@@ -150,16 +169,20 @@ func blacklisted(t *testing.T, ctx *TestOIDCContext, token string) bool {
 }
 
 // TestHandleRevokeBlacklistsOnlyTokensThisServiceIssued is the security-shaped
-// half of RFC 7009. The endpoint is unauthenticated by design and always
-// answers 200 (a 4xx would let a caller probe which tokens exist), so the only
-// thing standing between it and an attacker writing arbitrary Redis keys is
-// the signature check before the blacklist write.
+// half of RFC 7009. The endpoint always answers 200 (a 4xx would let a caller
+// probe which tokens exist), so the only thing standing between it and an
+// attacker writing arbitrary Redis keys is the signature check before the
+// blacklist write.
+//
+// The endpoint is NOT unauthenticated, as this comment used to say: it is
+// registered behind requireTokenEndpointClientAuth, and since token_owner.go
+// the caller must also own the token. These cases therefore name a caller.
 func TestHandleRevokeBlacklistsOnlyTokensThisServiceIssued(t *testing.T) {
 	ctx := NewTestOIDCContext(t)
 	defer ctx.Cleanup()
 
 	valid := signedAccessToken(t, ctx, time.Now().Add(time.Hour))
-	w := postForm(t, ctx.Service.handleRevoke, url.Values{"token": {valid}})
+	w := postFormAsClient(t, ctx.Service.handleRevoke, url.Values{"token": {valid}}, "revoker-client")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
@@ -173,7 +196,7 @@ func TestHandleRevokeBlacklistsOnlyTokensThisServiceIssued(t *testing.T) {
 	defer other.Cleanup()
 	forged := signedAccessToken(t, other, time.Now().Add(time.Hour))
 
-	w = postForm(t, ctx.Service.handleRevoke, url.Values{"token": {forged}})
+	w = postFormAsClient(t, ctx.Service.handleRevoke, url.Values{"token": {forged}}, "revoker-client")
 	if w.Code != http.StatusOK {
 		t.Fatalf("forged token status = %d, want 200 (RFC 7009 never confirms a token)", w.Code)
 	}
@@ -193,7 +216,7 @@ func TestHandleRevokeIgnoresGarbageAndExpiredTokens(t *testing.T) {
 		"alg none forged": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJhIn0.",
 	} {
 		t.Run(name, func(t *testing.T) {
-			w := postForm(t, ctx.Service.handleRevoke, url.Values{"token": {token}})
+			w := postFormAsClient(t, ctx.Service.handleRevoke, url.Values{"token": {token}}, "revoker-client")
 			if w.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", w.Code)
 			}
@@ -207,7 +230,7 @@ func TestHandleRevokeIgnoresGarbageAndExpiredTokens(t *testing.T) {
 	// and a blacklist entry with a negative TTL is a Redis error, not a
 	// control.
 	expired := signedAccessToken(t, ctx, time.Now().Add(-time.Minute))
-	w := postForm(t, ctx.Service.handleRevoke, url.Values{"token": {expired}})
+	w := postFormAsClient(t, ctx.Service.handleRevoke, url.Values{"token": {expired}}, "revoker-client")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expired status = %d, want 200", w.Code)
 	}
@@ -225,10 +248,10 @@ func TestHandleRevokeTreatsTheTypeHintAsAHint(t *testing.T) {
 	defer ctx.Cleanup()
 
 	token := signedAccessToken(t, ctx, time.Now().Add(time.Hour))
-	w := postForm(t, ctx.Service.handleRevoke, url.Values{
+	w := postFormAsClient(t, ctx.Service.handleRevoke, url.Values{
 		"token":           {token},
 		"token_type_hint": {"refresh_token"},
-	})
+	}, "revoker-client")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
@@ -238,10 +261,10 @@ func TestHandleRevokeTreatsTheTypeHintAsAHint(t *testing.T) {
 
 	// Any other hint value, including a bogus one, takes the access-token
 	// branch — that is the fail-safe direction.
-	w = postForm(t, ctx.Service.handleRevoke, url.Values{
+	w = postFormAsClient(t, ctx.Service.handleRevoke, url.Values{
 		"token":           {token},
 		"token_type_hint": {"nonsense"},
-	})
+	}, "revoker-client")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}

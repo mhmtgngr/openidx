@@ -62,6 +62,12 @@ func TestHandleIntrospectHonorsRevocation(t *testing.T) {
 		form := url.Values{"token": {signed}}
 		c.Request = httptest.NewRequest(http.MethodPost, "/oauth/introspect", strings.NewReader(form.Encode()))
 		c.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		// The caller is the client this token was issued to. /oauth/introspect
+		// is registered behind requireTokenEndpointClientAuth, which sets this
+		// key; since token_owner.go the handler also requires the caller to own
+		// the token, so a case about revocation has to name a caller or it
+		// would pass for the wrong reason.
+		c.Set(authenticatedClientKey, "test-client")
 		s.handleIntrospect(c)
 		require.Equal(t, http.StatusOK, w.Code)
 		var resp map[string]interface{}

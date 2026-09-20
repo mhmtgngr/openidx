@@ -831,6 +831,25 @@ func (s *Service) GetRefreshToken(ctx context.Context, token string) (*RefreshTo
 }
 
 // RevokeRefreshToken revokes a refresh token
+// revokeRefreshTokenForClient revokes a refresh token only if it was issued to
+// the given client. It is the RFC 7009 §2.1 ownership check for the refresh
+// path; RevokeRefreshToken below stays as the server's own unconditional
+// revocation, used by logout and by reuse detection, where the server is
+// acting on its own behalf rather than on a client's request.
+func (s *Service) revokeRefreshTokenForClient(ctx context.Context, token, clientID string) error {
+	if clientID == "" {
+		return nil
+	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx,
+		"UPDATE oauth_refresh_tokens SET revoked_at = NOW() WHERE token = $1 AND client_id = $2 AND org_id = $3 AND revoked_at IS NULL",
+		token, clientID, org.ID)
+	return err
+}
+
 func (s *Service) RevokeRefreshToken(ctx context.Context, token string) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -4061,6 +4080,10 @@ func (s *Service) requireTokenEndpointClientAuth() gin.HandlerFunc {
 				return
 			}
 		}
+		// Name the caller for the handlers behind this middleware. Proving who
+		// is calling and then not saying so is how introspection and revocation
+		// came to act for any client in the tenant; see token_owner.go.
+		c.Set(authenticatedClientKey, client.ClientID)
 		c.Next()
 	}
 }
@@ -4087,6 +4110,12 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 			WHERE token = $1 AND org_id = $2 AND expires_at > NOW()
 		`, token, org.ID).Scan(&userID, &clientID, &scope)
 		if err != nil {
+			c.JSON(200, gin.H{"active": false})
+			return
+		}
+		// RFC 7662 §2.2: a token the caller may not introspect is reported the
+		// same way as one that does not exist.
+		if !callerOwns(c, clientID) {
 			c.JSON(200, gin.H{"active": false})
 			return
 		}
@@ -4120,6 +4149,18 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 		c.JSON(200, gin.H{"active": false})
 		return
 	} else if revoked {
+		c.JSON(200, gin.H{"active": false})
+		return
+	}
+
+	// The same ownership rule as the refresh branch above. An access token
+	// names its client in `client_id`, and falls back to the audience for a
+	// token minted before that claim existed.
+	tokenClient, _ := claims["client_id"].(string)
+	if tokenClient == "" {
+		tokenClient, _ = claims["aud"].(string)
+	}
+	if !callerOwns(c, tokenClient) {
 		c.JSON(200, gin.H{"active": false})
 		return
 	}
@@ -4167,8 +4208,15 @@ func (s *Service) handleRevoke(c *gin.Context) {
 		parsed, err := jwt.Parse(token, s.verificationKeyfunc)
 		if err == nil && parsed != nil && parsed.Valid {
 			if claims, ok := parsed.Claims.(jwt.MapClaims); ok {
+				// RFC 7009 §2.1: the token must have been issued to the client
+				// making the request. Without this any registered client could
+				// sign another application's users out; see token_owner.go.
+				tokenClient, _ := claims["client_id"].(string)
+				if tokenClient == "" {
+					tokenClient, _ = claims["aud"].(string)
+				}
 				expSec, _ := claims["exp"].(float64)
-				if expSec > 0 {
+				if expSec > 0 && callerMayRevoke(c, tokenClient) {
 					_ = s.MarkAccessTokenRevoked(ctx, token, time.Unix(int64(expSec), 0))
 				}
 			}
@@ -4176,9 +4224,14 @@ func (s *Service) handleRevoke(c *gin.Context) {
 	}
 
 	// Always best-effort the refresh-token row too; RFC 7009 doesn't
-	// require the hint to be honored, and a no-op DELETE is cheap.
-	s.RevokeRefreshToken(ctx, token)
+	// require the hint to be honored, and a no-op update is cheap. The same
+	// ownership rule applies: the row names the client it was issued to.
+	s.revokeRefreshTokenForClient(ctx, token, authenticatedClientID(c))
 
+	// 200 either way, including for a token that is not the caller's. RFC 7009
+	// §2.2 already answers 200 for a token the server does not recognise, and
+	// answering differently here would tell a registered client which of the
+	// tenant's tokens exist.
 	c.JSON(200, gin.H{"status": "revoked"})
 }
 

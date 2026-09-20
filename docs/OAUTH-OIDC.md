@@ -167,6 +167,29 @@ Retrieve user information using an access token. The response carries exactly
 the claims that token's own scope grants, per the table above; a token granted
 only `openid` is answered with `sub` and nothing else.
 
+### Introspection and revocation are scoped to the caller
+
+`POST /oauth/introspect` and `POST /oauth/revoke` both require client
+authentication, and both answer only for tokens issued to the client that
+authenticated.
+
+- A token that is not yours introspects as `active: false`, exactly as a token
+  that does not exist does (RFC 7662 §2.2). The refusal carries no `sub`, no
+  `client_id` and no `scope`.
+- A token that is not yours is not revoked, and the endpoint still answers
+  `200` (RFC 7009 §2.1 requires the ownership check; §2.2 already answers 200
+  for an unrecognised token). Answering with an error instead would tell a
+  registered client which of the tenant's tokens exist.
+
+One asymmetry is deliberate: an access token that names no client at all is
+refused by introspection but can still be revoked, because failing toward "the
+credential still works" is the wrong direction for a kill switch.
+
+This closes the resource-server pattern, where a separate service introspects
+tokens issued to a front end. Re-opening it wants an explicit per-client
+permission rather than letting any authenticated client introspect anything in
+the tenant.
+
 ### Discovery
 Automatic service configuration via `.well-known/openid-configuration`
 

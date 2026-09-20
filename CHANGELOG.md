@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **Introspection and revocation now answer only for the caller's own tokens.**
+  Both endpoints already required client authentication, and neither looked at
+  which client had authenticated. Measured with two registered clients in one
+  tenant and a refresh token issued to the second: `POST /oauth/introspect`
+  from the **first** client answered `active: true` together with the second
+  client's id, the **end user's subject** and the granted scope, so one
+  application in a tenant could learn who was using another; and `POST
+  /oauth/revoke` from the first client **revoked the second's token**, which
+  RFC 7009 §2.1 requires be prevented in as many words. A token that is not
+  the caller's now gets the answer a token that does not exist gets:
+  `active: false` from introspection (RFC 7662 §2.2) and a 200 that does
+  nothing from revocation. An error was the other option and was not taken,
+  because it would distinguish "exists but is not yours" from "does not
+  exist" and hand a registered client an existence oracle over the tenant.
+  The two halves are different kinds of decision and the code says so: the
+  revocation check is a specification MUST with no legitimate caller on the
+  other side, while the introspection rule is a deliberate closed default that
+  also forecloses a separate resource server introspecting another client's
+  token — nothing in this tree does that, and re-opening it should mean an
+  explicit per-client permission rather than a return to "any authenticated
+  client may introspect anything". One asymmetry is deliberate: a token naming
+  no client at all is refused by introspection but still revocable, because
+  failing toward "it still works" is the wrong direction for a kill switch.
+  The server's own severing paths, logout and reuse detection among them, do
+  not go through these endpoints and are unchanged. Eight mutations red,
+  no-op control green.
 - **A scope is a whole scope, not a substring.** Five decisions asked whether a
   grant carried a scope with `strings.Contains`, and two of them decide what a
   client receives. Measured at the real token endpoint: a code granted the
