@@ -1810,6 +1810,8 @@ const en = {
         redirectsHint: 'Valid OAuth 2.0 redirect URIs for your application',
         backChannelLogoutLabel: 'Back-channel logout URI (optional)',
         backChannelLogoutHint: 'Where this application receives a logout token when a session it took part in ends. https only (http on localhost).',
+        postLogoutLabel: 'Post-logout redirect URIs (one per line)',
+        postLogoutHint: 'Where a browser may be sent after this application signs a user out. Each URI is matched exactly, path and query included. Leave empty and any page on the same host as a redirect URI is accepted instead.',
         scopesLabel: 'Scopes (comma-separated)',
         scopesHint: 'OAuth/OIDC scopes this client can request',
         pkce: 'Require PKCE (Recommended for mobile/SPA)',

@@ -101,6 +101,7 @@ describe('ApplicationsPage', () => {
       enabled: true,
       pkce_required: false,
       back_channel_logout_uri: 'https://grafana.example/bcl',
+      post_logout_redirect_uris: ['https://grafana.example/bye'],
       created_at: '2024-01-01T00:00:00Z',
       updated_at: '2024-01-01T00:00:00Z',
     }
@@ -141,6 +142,44 @@ describe('ApplicationsPage', () => {
         pkce_required: true,
         back_channel_logout_uri: 'https://grafana.example/bcl-v2',
       })
+    })
+
+    // The OAuth service falls back to matching a logout redirect by ORIGIN
+    // against the application's redirect URIs, and logs advice to register
+    // post_logout_redirect_uris instead. Until this field existed that advice
+    // could only be taken through dynamic client registration, so every
+    // console-managed installation stayed on the loose rule for good.
+    it("shows the application's registered post-logout URIs", async () => {
+      await openEditDialog()
+      const box = screen.getByLabelText(/post-logout redirect uris/i) as HTMLTextAreaElement
+      expect(box.value).toBe('https://grafana.example/bye')
+    })
+
+    it('saves the post-logout allowlist as a list, one entry per line', async () => {
+      const user = await openEditDialog()
+      const box = screen.getByLabelText(/post-logout redirect uris/i)
+      await user.clear(box)
+      await user.type(box, 'https://grafana.example/bye{enter}https://grafana.example/signed-out')
+      await user.click(screen.getByRole('button', { name: /update application/i }))
+
+      await waitFor(() => expect(api.put).toHaveBeenCalled())
+      const [, data] = vi.mocked(api.put).mock.calls[0]
+      expect(data).toMatchObject({
+        post_logout_redirect_uris: ['https://grafana.example/bye', 'https://grafana.example/signed-out'],
+      })
+    })
+
+    // Clearing the box is how an operator deliberately goes back to the origin
+    // fallback, so it has to travel as an empty list rather than as an omitted
+    // key: the server leaves the column alone when the key is absent.
+    it('sends an empty list when the box is cleared', async () => {
+      const user = await openEditDialog()
+      await user.clear(screen.getByLabelText(/post-logout redirect uris/i))
+      await user.click(screen.getByRole('button', { name: /update application/i }))
+
+      await waitFor(() => expect(api.put).toHaveBeenCalled())
+      const [, data] = vi.mocked(api.put).mock.calls[0]
+      expect((data as Record<string, unknown>).post_logout_redirect_uris).toEqual([])
     })
   })
 })

@@ -16,6 +16,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+
+	"github.com/openidx/openidx/internal/common/validation"
 )
 
 // OpenID Connect RP-Initiated Logout 1.0 §2, measured at the handler.
@@ -367,7 +369,7 @@ func TestValidatePostLogoutRedirectURIs(t *testing.T) {
 		})
 	}
 
-	long := make([]string, maxPostLogoutRedirectURIs+1)
+	long := make([]string, validation.MaxPostLogoutRedirectURIs+1)
 	for i := range long {
 		long[i] = "https://rp.example.test/x"
 	}

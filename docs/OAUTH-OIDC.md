@@ -206,7 +206,17 @@ implements OpenID Connect RP-Initiated Logout 1.0 §2.
   and nothing is appended when no state is sent.
 
 Register the list with `post_logout_redirect_uris` on
-`POST /api/v1/oauth/clients` (and `PUT …/{id}`) or at `POST /oauth/register`.
+`POST /api/v1/oauth/clients` (and `PUT …/{id}`), at `POST /oauth/register`, or
+from the admin console: Applications → the application's menu → Edit
+application → **Post-logout redirect URIs**, one per line. The same field is on
+the Register application dialog. The console sends it on every save, so an
+empty box is an empty list and returns that client to the origin fallback;
+saving any other field leaves the registration alone.
+
+An application's detail and list responses report the list as an empty array
+when the client has registered nothing and omit the key entirely when there is
+no OAuth client behind the tile at all, which is how the console knows whether
+to show the field.
 
 ### Back-channel logout
 When a session stops being live — `/oauth/logout` (with the cookie, an

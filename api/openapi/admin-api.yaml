@@ -7653,6 +7653,18 @@ components:
             From the backing OAuth client: where the relying party receives an
             OpenID Connect Back-Channel Logout 1.0 logout token when a session
             it took part in ends. Omitted for a tile with no OAuth client.
+        post_logout_redirect_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: >-
+            From the backing OAuth client: the OpenID Connect RP-Initiated
+            Logout 1.0 allowlist. An EMPTY ARRAY means the client exists and
+            has registered nothing, so a logout redirect is still matched by
+            origin against its redirect URIs; the key is omitted entirely only
+            for a tile with no OAuth client behind it. The two are different
+            answers and the console renders them differently.
         created_at:
           type: string
           format: date-time
@@ -7687,10 +7699,10 @@ components:
     ApplicationUpdate:
       type: object
       description: >-
-        Fields absent from the payload are left alone. `pkce_required` and
-        `back_channel_logout_uri` are written to the backing OAuth client
-        (the row the OAuth flow enforces), `redirect_uris`, `name` and
-        `description` to both.
+        Fields absent from the payload are left alone. `pkce_required`,
+        `back_channel_logout_uri` and `post_logout_redirect_uris` are written
+        to the backing OAuth client (the row the OAuth flow enforces),
+        `redirect_uris`, `name` and `description` to both.
       properties:
         name:
           type: string
@@ -7712,6 +7724,19 @@ components:
           description: >-
             Empty clears it. Must be https, or http on localhost; anything
             else is refused with 400 and nothing is written.
+        post_logout_redirect_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: >-
+            The RP-Initiated Logout allowlist. Absent leaves the registration
+            alone, so an edit of any other field cannot widen a client back to
+            the origin fallback by omission; an empty array clears it, which is
+            how an operator deliberately returns to that fallback. Blank
+            entries are dropped. An entry that is not an absolute URI with a
+            scheme and host could never be matched at logout and is refused
+            with 400, with nothing written.
 
     ApplicationSSOSettings:
       type: object

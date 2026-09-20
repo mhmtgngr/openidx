@@ -1801,6 +1801,8 @@ const tr: typeof en = {
         redirectsHint: "Uygulamanız için geçerli OAuth 2.0 yönlendirme URI'leri",
         backChannelLogoutLabel: "Back-channel logout URI'si (isteğe bağlı)",
         backChannelLogoutHint: 'Katıldığı bir oturum bittiğinde bu uygulamanın logout token alacağı adres. Yalnız https (localhost için http).',
+        postLogoutLabel: 'Çıkış sonrası yönlendirme adresleri (her satıra bir tane)',
+        postLogoutHint: 'Bu uygulama kullanıcıyı çıkardıktan sonra tarayıcının gönderilebileceği adresler. Her adres yol ve sorgu dahil tam eşleştirilir. Boş bırakılırsa yönlendirme adresleriyle aynı host üzerindeki her sayfa kabul edilir.',
         scopesLabel: 'Kapsamlar (virgülle ayrılmış)',
         scopesHint: 'Bu istemcinin isteyebileceği OAuth/OIDC kapsamları',
         pkce: 'PKCE Zorunlu (mobil/SPA için önerilir)',
