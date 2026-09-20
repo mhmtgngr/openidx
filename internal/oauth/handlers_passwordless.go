@@ -201,6 +201,17 @@ func (s *Service) handleNativeLoginInit(c *gin.Context) {
 		return
 	}
 
+	// The challenge is required above, unconditionally, because this endpoint
+	// exists for native public clients. What was missing is everything else
+	// about it: a code_challenge_method this server does not implement, or a
+	// challenge that is not a base64url string of the right length, was
+	// accepted here and only noticed (if at all) at the token endpoint. Same
+	// rule as every other authorization request — pkce_policy.go.
+	if perr := validatePKCERequest(client, req.CodeChallenge, method, s.isProduction()); perr != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": perr.Error()})
+		return
+	}
+
 	oauthParams := map[string]string{
 		"client_id":             req.ClientID,
 		"redirect_uri":          req.RedirectURI,

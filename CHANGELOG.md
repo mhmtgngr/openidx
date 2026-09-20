@@ -8,6 +8,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **PKCE is now enforced at the authorization endpoint every browser client
+  actually reaches.** `/oauth/authorize` is served by `handleAuthorize`, and
+  that handler enforced no part of RFC 7636: measured against the live
+  endpoint, a **public** client with no `code_challenge` at all was carried
+  straight to the login page, an unsupported `code_challenge_method` was
+  accepted, and a `code_challenge` that is not base64url was accepted. The
+  code minted at the end of such a flow carried an empty challenge, which
+  makes the token endpoint's `if authCode.CodeChallenge != ""` verification
+  vacuous — so the protection public clients depend on was, in practice,
+  optional for whoever omitted it. `/oauth/authorize/v2` did check the
+  public-client half, and is not the route the console, the reference compose
+  stack or the mobile fallback use. This is the third control to go missing
+  from this handler in the same shape, after scope and `response_type`.
+- **`pkce_required` now decides something.** The flag is stored on the client,
+  served by the admin API and editable in the console's Applications editor,
+  and no code read it: an operator who ticked the box for a confidential
+  client was told PKCE was required and it was required of nobody. A
+  confidential client marked `pkce_required` is now held to a challenge on
+  every authorization path. Confidential clients that are *not* marked are
+  unchanged, since turning it on for every existing registration would reject
+  the next request from clients that work today.
+  The rule itself moved to one place, `internal/oauth/pkce_policy.go`, and the
+  five request paths that accept a client-supplied `code_challenge` — the live
+  authorize endpoint, `/oauth/authorize/v2`, the `idp_hint` SSO hop, the
+  consent POST and the native login-init endpoint — all call it. An AST census
+  fails the build if a sixth appears that neither calls the rule nor records
+  why it is exempt. The console's "sign in with an external IdP" button built
+  its own authorize URL without a challenge and now mints and stores one like
+  the primary login button, so the code it comes back with is verified rather
+  than merely accepted. Ten mutations red, no-op control green.
+- **Introspection and revocation now answer only for the caller's own tokens.**
+  Both endpoints already required client authentication, and neither looked at
+  which client had authenticated. Measured with two registered clients in one
+  tenant and a refresh token issued to the second: `POST /oauth/introspect`
+  from the **first** client answered `active: true` together with the second
+  client's id, the **end user's subject** and the granted scope, so one
+  application in a tenant could learn who was using another; and `POST
+  /oauth/revoke` from the first client **revoked the second's token**, which
+  RFC 7009 §2.1 requires be prevented in as many words. A token that is not
+  the caller's now gets the answer a token that does not exist gets:
+  `active: false` from introspection (RFC 7662 §2.2) and a 200 that does
+  nothing from revocation. An error was the other option and was not taken,
+  because it would distinguish "exists but is not yours" from "does not
+  exist" and hand a registered client an existence oracle over the tenant.
+  The two halves are different kinds of decision and the code says so: the
+  revocation check is a specification MUST with no legitimate caller on the
+  other side, while the introspection rule is a deliberate closed default that
+  also forecloses a separate resource server introspecting another client's
+  token — nothing in this tree does that, and re-opening it should mean an
+  explicit per-client permission rather than a return to "any authenticated
+  client may introspect anything". One asymmetry is deliberate: a token naming
+  no client at all is refused by introspection but still revocable, because
+  failing toward "it still works" is the wrong direction for a kill switch.
+  The server's own severing paths, logout and reuse detection among them, do
+  not go through these endpoints and are unchanged. Eight mutations red,
+  no-op control green.
 - **A scope is a whole scope, not a substring.** Five decisions asked whether a
   grant carried a scope with `strings.Contains`, and two of them decide what a
   client receives. Measured at the real token endpoint: a code granted the

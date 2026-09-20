@@ -831,6 +831,25 @@ func (s *Service) GetRefreshToken(ctx context.Context, token string) (*RefreshTo
 }
 
 // RevokeRefreshToken revokes a refresh token
+// revokeRefreshTokenForClient revokes a refresh token only if it was issued to
+// the given client. It is the RFC 7009 §2.1 ownership check for the refresh
+// path; RevokeRefreshToken below stays as the server's own unconditional
+// revocation, used by logout and by reuse detection, where the server is
+// acting on its own behalf rather than on a client's request.
+func (s *Service) revokeRefreshTokenForClient(ctx context.Context, token, clientID string) error {
+	if clientID == "" {
+		return nil
+	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx,
+		"UPDATE oauth_refresh_tokens SET revoked_at = NOW() WHERE token = $1 AND client_id = $2 AND org_id = $3 AND revoked_at IS NULL",
+		token, clientID, org.ID)
+	return err
+}
+
 func (s *Service) RevokeRefreshToken(ctx context.Context, token string) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -1983,6 +2002,22 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	if !responseTypeAllowedForClient(client, oauthParams["response_type"]) {
 		s.redirectAuthorizeError(c, oauthParams["redirect_uri"], oauthParams["state"],
 			ErrorUnsupportedResponseType, "response_type is not registered for this client")
+		return
+	}
+
+	// PKCE (RFC 7636), the same shape and the third omission.
+	//
+	// This handler enforced no part of it. A public client could omit
+	// code_challenge and be carried to a login page; the code minted at the
+	// end carried an empty challenge, so the token endpoint's
+	// `if authCode.CodeChallenge != ""` check verified nothing. The operator
+	// switch (pkce_required) that the console offers was read by nobody.
+	// /oauth/authorize/v2 has checked the public-client half since it was
+	// written (authorize.go, validatePKCEParameters); both now call the same
+	// rule, in pkce_policy.go, so they cannot drift again.
+	if err := validatePKCERequest(client, oauthParams["code_challenge"], oauthParams["code_challenge_method"], s.isProduction()); err != nil {
+		s.redirectAuthorizeError(c, oauthParams["redirect_uri"], oauthParams["state"],
+			ErrorInvalidRequest, err.Error())
 		return
 	}
 
@@ -3151,6 +3186,19 @@ func (s *Service) handleSSOAuthorize(c *gin.Context, idpID string) {
 		"code_challenge_method": c.Query("code_challenge_method"),
 		"idp_id":                idp.ID.String(),
 	}
+	// PKCE, before the flow leaves for the external IdP. This path is reached
+	// from handleAuthorize with an idp_hint, BEFORE that handler fetches the
+	// client, so the rule is applied here against the client this request
+	// names. The refusal is a 400 and not a redirect: this handler has not
+	// validated redirect_uri against the client, and reporting an error to an
+	// unvalidated redirect_uri is an open redirect.
+	if ssoClient, cerr := s.GetClient(c.Request.Context(), c.Query("client_id")); cerr == nil {
+		if perr := validatePKCERequest(ssoClient, c.Query("code_challenge"), c.Query("code_challenge_method"), s.isProduction()); perr != nil {
+			c.JSON(400, gin.H{"error": "invalid_request", "error_description": perr.Error()})
+			return
+		}
+	}
+
 	paramsJSON, _ := json.Marshal(originalParams)
 	s.redis.Client.Set(c.Request.Context(), "sso_state:"+state, string(paramsJSON), 10*time.Minute)
 
@@ -3426,6 +3474,15 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 	}
 	if !validRedirect {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri not registered for client"})
+		return
+	}
+
+	// PKCE, by the same rule as /oauth/authorize. This endpoint takes the
+	// challenge from its own request body and carries it into the code it
+	// mints, so it is an authorization request in its own right, not a
+	// continuation of one that was already checked.
+	if err := validatePKCERequest(client, req.CodeChallenge, req.CodeChallengeMethod, s.isProduction()); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": err.Error()})
 		return
 	}
 
@@ -4061,6 +4118,10 @@ func (s *Service) requireTokenEndpointClientAuth() gin.HandlerFunc {
 				return
 			}
 		}
+		// Name the caller for the handlers behind this middleware. Proving who
+		// is calling and then not saying so is how introspection and revocation
+		// came to act for any client in the tenant; see token_owner.go.
+		c.Set(authenticatedClientKey, client.ClientID)
 		c.Next()
 	}
 }
@@ -4087,6 +4148,12 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 			WHERE token = $1 AND org_id = $2 AND expires_at > NOW()
 		`, token, org.ID).Scan(&userID, &clientID, &scope)
 		if err != nil {
+			c.JSON(200, gin.H{"active": false})
+			return
+		}
+		// RFC 7662 §2.2: a token the caller may not introspect is reported the
+		// same way as one that does not exist.
+		if !callerOwns(c, clientID) {
 			c.JSON(200, gin.H{"active": false})
 			return
 		}
@@ -4120,6 +4187,18 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 		c.JSON(200, gin.H{"active": false})
 		return
 	} else if revoked {
+		c.JSON(200, gin.H{"active": false})
+		return
+	}
+
+	// The same ownership rule as the refresh branch above. An access token
+	// names its client in `client_id`, and falls back to the audience for a
+	// token minted before that claim existed.
+	tokenClient, _ := claims["client_id"].(string)
+	if tokenClient == "" {
+		tokenClient, _ = claims["aud"].(string)
+	}
+	if !callerOwns(c, tokenClient) {
 		c.JSON(200, gin.H{"active": false})
 		return
 	}
@@ -4167,8 +4246,15 @@ func (s *Service) handleRevoke(c *gin.Context) {
 		parsed, err := jwt.Parse(token, s.verificationKeyfunc)
 		if err == nil && parsed != nil && parsed.Valid {
 			if claims, ok := parsed.Claims.(jwt.MapClaims); ok {
+				// RFC 7009 §2.1: the token must have been issued to the client
+				// making the request. Without this any registered client could
+				// sign another application's users out; see token_owner.go.
+				tokenClient, _ := claims["client_id"].(string)
+				if tokenClient == "" {
+					tokenClient, _ = claims["aud"].(string)
+				}
 				expSec, _ := claims["exp"].(float64)
-				if expSec > 0 {
+				if expSec > 0 && callerMayRevoke(c, tokenClient) {
 					_ = s.MarkAccessTokenRevoked(ctx, token, time.Unix(int64(expSec), 0))
 				}
 			}
@@ -4176,9 +4262,14 @@ func (s *Service) handleRevoke(c *gin.Context) {
 	}
 
 	// Always best-effort the refresh-token row too; RFC 7009 doesn't
-	// require the hint to be honored, and a no-op DELETE is cheap.
-	s.RevokeRefreshToken(ctx, token)
+	// require the hint to be honored, and a no-op update is cheap. The same
+	// ownership rule applies: the row names the client it was issued to.
+	s.revokeRefreshTokenForClient(ctx, token, authenticatedClientID(c))
 
+	// 200 either way, including for a token that is not the caller's. RFC 7009
+	// §2.2 already answers 200 for a token the server does not recognise, and
+	// answering differently here would tell a registered client which of the
+	// tenant's tokens exist.
 	c.JSON(200, gin.H{"status": "revoked"})
 }
 

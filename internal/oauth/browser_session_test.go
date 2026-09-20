@@ -38,6 +38,13 @@ func ssoAuthorize(t *testing.T, svc *Service, cookie string, extra url.Values) *
 		"response_type": {"code"},
 		"scope":         {"openid"},
 		"state":         {"st-1"},
+		// ssoTestClient is a public client, and /oauth/authorize now holds
+		// public clients to RFC 7636 (pkce_policy.go). These cases are about
+		// what the browser session does with a request, so they carry a valid
+		// challenge rather than exercising the refusal — the refusal has its
+		// own table in pkce_policy_test.go.
+		"code_challenge":        {testCodeChallenge},
+		"code_challenge_method": {"S256"},
 	}
 	for k, vs := range extra {
 		q[k] = vs

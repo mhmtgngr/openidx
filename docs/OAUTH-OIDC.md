@@ -167,6 +167,29 @@ Retrieve user information using an access token. The response carries exactly
 the claims that token's own scope grants, per the table above; a token granted
 only `openid` is answered with `sub` and nothing else.
 
+### Introspection and revocation are scoped to the caller
+
+`POST /oauth/introspect` and `POST /oauth/revoke` both require client
+authentication, and both answer only for tokens issued to the client that
+authenticated.
+
+- A token that is not yours introspects as `active: false`, exactly as a token
+  that does not exist does (RFC 7662 §2.2). The refusal carries no `sub`, no
+  `client_id` and no `scope`.
+- A token that is not yours is not revoked, and the endpoint still answers
+  `200` (RFC 7009 §2.1 requires the ownership check; §2.2 already answers 200
+  for an unrecognised token). Answering with an error instead would tell a
+  registered client which of the tenant's tokens exist.
+
+One asymmetry is deliberate: an access token that names no client at all is
+refused by introspection but can still be revoked, because failing toward "the
+credential still works" is the wrong direction for a kill switch.
+
+This closes the resource-server pattern, where a separate service introspects
+tokens issued to a front end. Re-opening it wants an explicit per-client
+permission rather than letting any authenticated client introspect anything in
+the tenant.
+
 ### Discovery
 Automatic service configuration via `.well-known/openid-configuration`
 
@@ -559,8 +582,24 @@ Opaque token stored in database:
 
 ### PKCE (Proof Key for Code Exchange)
 - Protects against authorization code interception
-- Recommended for all public clients
-- Uses SHA-256 code challenge
+- **Required of every public client**, on every authorization path, and of any
+  confidential client whose registration sets `pkce_required`
+- Uses SHA-256 code challenge; `plain` is refused outright in production and is
+  not advertised in discovery, which lists `S256` only
+
+One rule decides this (`internal/oauth/pkce_policy.go`) and every request path
+that accepts a client-supplied `code_challenge` calls it: `/oauth/authorize`,
+`/oauth/authorize/v2`, the `idp_hint` hop to an external IdP, the consent POST
+and the native login-init endpoint. A request that must carry a challenge and
+does not is refused at the authorization endpoint — reported to the client at
+its registered `redirect_uri` per RFC 6749 §4.1.2.1, not rendered for a user
+who cannot act on it — rather than being carried to a login page and failing
+after credentials have been spent.
+
+`pkce_required` is set by `POST /api/v1/oauth/clients` and `PUT …/{id}`, by
+`POST /oauth/register` (which sets it for every public registration), or from
+the console's application editor. Turning it on for a confidential client
+requires that client to use PKCE from the next authorization request onward.
 
 ### Token Signing
 - RSA-2048 key pair generated on startup
