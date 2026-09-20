@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Decided: the event bus is not a hard dependency.** Two open plan items
+  asked whether the audit indexer should move onto the outbox/NATS path with
+  `StartESReconciler` retired, and whether the SSF transmitter and the
+  cross-binary seams (`ssf_pending_events`, `backchannel_logout_pending`)
+  should become NATS consumers. Both stay PostgreSQL-backed: in the default
+  install `elasticsearch.enabled` is true and `nats.enabled` is false, so a
+  pure move would silently stop the Elasticsearch backfill, SSF delivery and
+  back-channel logout for every existing deployment, and the outbox is
+  single-consumer by construction. No "events" mode switch was added — a
+  switch to a mode that does not exist is the declared-but-nonexistent
+  capability this programme hunts. Measured: the code already agrees; the
+  reconciler starts only behind `if es != nil` and the three drainers start
+  unconditionally, with no reference to `NATSURL` in either binary. Two
+  starter guards now pin that shape: any condition naming the broker around
+  those calls fails the build. Six mutations red, no-op control green. The
+  event path returns, if it returns, as a measured optimisation gated on
+  `nats.enabled` — not as a default.
+
 ### Security
 - **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
   handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,

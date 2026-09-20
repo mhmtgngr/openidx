@@ -302,6 +302,12 @@ func main() {
 
 	// SSF/CAEP transmitter: drain the SET outbox and push signed security event
 	// tokens to subscribed receivers. Idle until a stream is configured.
+	//
+	// This and the two drainers below stay PostgreSQL-backed and UNCONDITIONAL
+	// (decided 2026-09-20). The plan's alternative -- these as consumers on the
+	// NATS path -- would deliver nothing in the default install, where no
+	// broker is configured. pg_backed_starters_test.go pins that no condition
+	// gates them.
 	oauthService.StartSSFPushWorker(ctx)
 	// The seam from the severing paths in other binaries: rows they wrote to
 	// ssf_pending_events become signed SETs here, where the key is. Same
