@@ -1420,5 +1420,12 @@ func allMigrations() []*Migration {
 			UpSQL:       postLogoutRedirectURIsUp,
 			DownSQL:     postLogoutRedirectURIsDown,
 		},
+		{
+			Version:     200,
+			Name:        "identity_links_per_tenant",
+			Description: "The external identity links are per-tenant: org_id + backfill + FORCE RLS on user_identity_links and social_account_links, the last two tables on orgscope's needsScoping register. Decided 2026-09-20: a link belongs to the tenant of the identity provider it was made through -- identity_providers has carried org_id since v155, so provider_id already names one tenant, and an external account held by people in two organizations links once in each, invisible across. Uniqueness stays (provider_id, external_id) for that reason; what is added is the belt. Both admin list handlers filtered the tenant on a LEFT JOIN (v155's shape: a decoration, not a predicate) and both DELETEs addressed a link by bare id; every query on both tables now names uil.org_id and the policy backs it. Backfill: the provider's organization, then the user's, then the oldest. No column DEFAULT.",
+			UpSQL:       identityLinksPerTenantUp,
+			DownSQL:     identityLinksPerTenantDown,
+		},
 	}
 }

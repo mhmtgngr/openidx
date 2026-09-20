@@ -110,8 +110,8 @@ func (s *Service) handleGetMyIdentityLinks(c *gin.Context) {
 			uil.external_id, uil.external_email, uil.external_username,
 			uil.display_name, uil.profile_data, uil.is_primary, uil.linked_at, uil.last_used_at
 		 FROM user_identity_links uil
-		 LEFT JOIN identity_providers ip ON uil.provider_id = ip.id AND ip.org_id = $2
-		 WHERE uil.user_id = $1 ORDER BY uil.linked_at`, userID, org.ID)
+		 LEFT JOIN identity_providers ip ON uil.provider_id = ip.id
+		 WHERE uil.user_id = $1 AND uil.org_id = $2 ORDER BY uil.linked_at`, userID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list identity links", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list identity links"})
@@ -157,9 +157,14 @@ func (s *Service) handleUnlinkMyIdentity(c *gin.Context) {
 		return
 	}
 	linkID := c.Param("linkId")
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unlink identity"})
+		return
+	}
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM user_identity_links WHERE id = $1 AND user_id = $2", linkID, userID)
+		"DELETE FROM user_identity_links WHERE id = $1 AND user_id = $2 AND org_id = $3", linkID, userID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to unlink identity", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unlink identity"})

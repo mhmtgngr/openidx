@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **The external identity links are per-tenant (v200), and orgscope's
+  needsScoping register is empty.** `user_identity_links` and
+  `social_account_links` were the last two tables in the product outside the
+  tenant belt, parked on a question the lint could not answer: may one
+  external account link to a user in two tenants at once, and which tenant
+  owns the row? Decided: a link belongs to the tenant of the identity provider
+  it was made through. `identity_providers` has carried `org_id` since v155,
+  so `provider_id` already names exactly one tenant, and a consultant with an
+  account in two organizations signs in through two different provider rows
+  and holds two links, one in each, neither visible from the other.
+  Uniqueness stays `(provider_id, external_id)` for the same reason; what is
+  added is the belt: `org_id NOT NULL` with a foreign key, an index, the
+  standard policy and FORCE ROW LEVEL SECURITY. Measured before the change:
+  both admin list handlers filtered the tenant on a `LEFT JOIN` (`... AND
+  ip.org_id = $2`), which keeps every row of the left table and filters
+  nothing, so a user's links were returned regardless of which tenant asked;
+  both DELETEs addressed a link by bare id. Nine queries across three packages
+  now carry the tenant on the link row itself, and a cross-tenant upsert that
+  PostgreSQL would have applied as a silent `INSERT 0 0` under RLS now fails
+  with a named error — no product path reaches it, since the provider lookup
+  is tenant-scoped, but a write that silently did not happen is the shape
+  this repository's `silentwrite` lint exists to refuse. Measured as the
+  unprivileged application role: a tenant sees only its own links on both
+  tables, cannot read, delete or forge another tenant's row, and the same
+  external subject links once in each tenant. Backfill: the provider's
+  organization, then the user's, then the oldest; no column DEFAULT. Ten
+  mutations red, no-op control green.
 - **PKCE is now enforced at the authorization endpoint every browser client
   actually reaches.** `/oauth/authorize` is served by `handleAuthorize`, and
   that handler enforced no part of RFC 7636: measured against the live
