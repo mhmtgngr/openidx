@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
+  handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,
+  the Android QR and the onboarding wizard's session — and none asked how
+  many the tenant had already minted, so a console credential that could
+  mint one could mint without limit. The plan left the number open as a
+  product decision after v197 made the table per-tenant; it is decided at
+  **100 an hour** (`AGENT_ENROLLMENT_QUOTA_PER_HOUR`,
+  `config.agentEnrollmentQuotaPerHour`): a tenant provisioning a fleet mints
+  one reusable token, not one per device, so 100 is far above any legitimate
+  rate and far below what an unlimited endpoint allows. The rule lives in
+  `internal/access/enrollment_quota.go`, every mint site calls it before its
+  INSERT, and an AST census fails the build if a fourth appears without it.
+  The (N+1)th request in a rolling hour is refused with `429` and a
+  `Retry-After` naming when the oldest in-window token ages out; the count is
+  the tenant's alone, and tokens older than the window do not count. `0`
+  turns the quota off, deliberately, and startup then reports it with the
+  other report-mode gates. Migration v201 indexes `(org_id, created_at)`,
+  which the count needs and v197's single-column index answered by scanning
+  the tenant's whole history. Measured against the full migrated schema at
+  all three doors. **One chart defect found by rendering, not by reading:**
+  `AGENT_ENROLLMENT_QUOTA_PER_HOUR: {{ … | default 100 }}` turned an
+  operator's explicit `0` back into `100`, because Helm's `default` treats
+  zero as empty — the "0 = off" promise was false until the template was
+  changed to fall back only on an absent value. Ten mutations red, no-op
+  control green.
 - **The external identity links are per-tenant (v200), and orgscope's
   needsScoping register is empty.** `user_identity_links` and
   `social_account_links` were the last two tables in the product outside the

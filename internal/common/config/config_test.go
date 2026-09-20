@@ -1463,6 +1463,7 @@ func TestReportModeGatesNamesEveryOpenControl(t *testing.T) {
 		"POSTURE_DEVICE_TRUST_GATE",
 		"ACCESS_API_REQUIRE_AUTH",
 		"ADMIN_API_REQUIRE_AUTH",
+		"AGENT_ENROLLMENT_QUOTA_PER_HOUR",
 	} {
 		found := false
 		for _, line := range open {
@@ -1489,6 +1490,9 @@ func TestReportModeGatesNamesEveryOpenControl(t *testing.T) {
 		PAMRequireZTNA:          "enforce",
 		AccessAPIRequireAuth:    true,
 		AdminAPIRequireAuth:     true,
+		// A literal Config carries no loader default, and a zero quota IS an
+		// open gate -- so the fully-enforcing install names one.
+		AgentEnrollmentQuotaPerHour: 100,
 	}
 	if got := full.ReportModeGates(); len(got) != 0 {
 		t.Errorf("a fully-enforcing install still reports open gates: %v", got)

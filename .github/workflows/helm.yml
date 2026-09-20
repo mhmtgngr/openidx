@@ -199,6 +199,28 @@ jobs:
           done
           echo "every service honours replicaCount 0"
 
+      # The enrolment quota's OFF value is zero, and Helm's `default` treats
+      # zero as empty: `{{ .Values.x | default 100 }}` renders an operator's
+      # explicit 0 as 100 and the "0 = off" promise in values.yaml is a lie.
+      # That is what the first render of this key did. Assert the three cases
+      # that matter: absent falls back, zero stays zero, a number is itself.
+      - name: An explicit zero enrolment quota renders as zero
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+          }
+          grep -q 'AGENT_ENROLLMENT_QUOTA_PER_HOUR: "100"' <<<"$(render)" \
+            || { echo "default quota did not render as 100"; exit 1; }
+          grep -q 'AGENT_ENROLLMENT_QUOTA_PER_HOUR: "0"' <<<"$(render --set config.agentEnrollmentQuotaPerHour=0)" \
+            || { echo "an explicit 0 did not render as 0 -- the off switch is broken"; exit 1; }
+          grep -q 'AGENT_ENROLLMENT_QUOTA_PER_HOUR: "7"' <<<"$(render --set config.agentEnrollmentQuotaPerHour=7)" \
+            || { echo "an explicit 7 did not render as 7"; exit 1; }
+          echo "the enrolment quota renders absent->100, 0->0, 7->7"
+
       # Origin cloaking (global-scale plan task 1.2): the ingress must refuse a
       # caller that does not carry the edge profile's own header. A network
       # allow-list is not enough on its own -- an Azure service tag admits

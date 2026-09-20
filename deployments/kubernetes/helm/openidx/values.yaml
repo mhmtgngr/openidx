@@ -112,6 +112,11 @@ config:
   botGate: "off"
   loginFailChallengeAfter: 5
   loginFailWindowSeconds: 900
+  # How many device-enrolment tokens one tenant may mint in a rolling hour,
+  # across the admin endpoint, the Android QR and the onboarding wizard. The
+  # next request is refused with 429 and a Retry-After. 0 turns the quota off
+  # (a lab), and startup then reports it as an open gate.
+  agentEnrollmentQuotaPerHour: 100
   # Externally reachable host of the access proxy — the host every temporary
   # vendor-access link is built from. Leave empty to inherit the API ingress
   # host (ingress.hosts[0].host). It must be a name the OUTSIDE party can

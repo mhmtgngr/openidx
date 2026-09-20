@@ -48,6 +48,14 @@ data:
   BOT_GATE: {{ .Values.config.botGate | default "off" | quote }}
   LOGIN_FAIL_CHALLENGE_AFTER: {{ .Values.config.loginFailChallengeAfter | default 5 | quote }}
   LOGIN_FAIL_WINDOW_SECONDS: {{ .Values.config.loginFailWindowSeconds | default 900 | quote }}
+  # Per-tenant device-enrolment quota (rolling hour, every mint site). 0 = off,
+  # reported as an open gate at startup. Shared because the count is per
+  # tenant, not per replica: every access-service pod must enforce one number.
+  # NOT `| default 100`: Helm's default treats 0 as empty and would silently
+  # turn an operator's explicit 0 back into 100, making the "0 = off" promise
+  # a lie. Only an ABSENT value falls back.
+  {{- $quota := .Values.config.agentEnrollmentQuotaPerHour }}
+  AGENT_ENROLLMENT_QUOTA_PER_HOUR: {{ if kindIs "invalid" $quota }}"100"{{ else }}{{ $quota | toString | quote }}{{ end }}
   # The PUBLIC half of Turnstile. It is here rather than in the secret store on
   # purpose: it is served to every browser the bot gate challenges, and the
   # login page cannot render the widget without it. The SECRET half stays in
