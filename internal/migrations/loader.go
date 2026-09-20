@@ -1413,5 +1413,12 @@ func allMigrations() []*Migration {
 			UpSQL:       backchannelLogoutPendingUp,
 			DownSQL:     backchannelLogoutPendingDown,
 		},
+		{
+			Version:     199,
+			Name:        "post_logout_redirect_uris",
+			Description: "Add oauth_clients.post_logout_redirect_uris: the list OpenID Connect RP-Initiated Logout 1.0 means by \"registered\". handleLogout already refuses an unregistered post_logout_redirect_uri (it used to be an open redirect from the IdP's own origin), but the client model had no list to check against, so the allowlist was derived from redirect_uris by comparing ORIGIN and ignoring the path -- postLogoutRedirectAllowed says so itself and ends with \"a first-class post_logout_redirect_uris column can tighten this to exact-match later\". Origin matching says yes to every path on the relying party's host: any open-redirector, any user-content page, any half-finished route is a legal destination for a browser the IdP hands back, and the RP that registered two paths got its whole site. THE COLUMN ENCODES A DECISION RATHER THAN HIDING IT: a client with a non-empty list is matched EXACTLY, and a client with an empty list keeps the origin derivation, because making exact-match unconditional would refuse the logout redirect of every client in every existing install on the upgrade that adds the column -- none of them has registered anything yet, and the default has to be installable. Registration is what tightens it, and the fallback logs the client so an operator can see who is still on the loose rule. JSONB like redirect_uris, which the store already marshals and the console already renders. Down drops the column: an install rolling back is one where the origin rule decides every logout redirect, which is where it already was.",
+			UpSQL:       postLogoutRedirectURIsUp,
+			DownSQL:     postLogoutRedirectURIsDown,
+		},
 	}
 }

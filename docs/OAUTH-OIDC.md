@@ -179,6 +179,35 @@ client exactly as before, reads that cookie:
   session row is where `sid`, `amr` and `auth_time` come from, so a caller
   must not be able to borrow another user's. No cookie is set on this path.
 
+### RP-initiated logout
+
+`GET|POST /oauth/logout` is the `end_session_endpoint` in discovery and
+implements OpenID Connect RP-Initiated Logout 1.0 §2.
+
+- `id_token_hint` — an ID token previously issued to the relying party. Its
+  signature is verified (an expired token is still accepted, as the spec
+  requires); its `sub` names the user whose sessions end and its `aud` names
+  the client.
+- `client_id` — the relying party asking. It is how an RP that no longer
+  holds the ID token still gets its registered landing page. When both it
+  and `id_token_hint` are sent and they disagree, the request is refused with
+  `400 invalid_request`: resolving it either way would let a caller aim one
+  client's session at a page registered by another.
+- `post_logout_redirect_uri` — followed only when it is registered for that
+  client. A client with a `post_logout_redirect_uris` list is matched
+  **exactly**, path and query included. A client with no list falls back to
+  the older rule, which accepts any path on the same scheme+host as one of
+  its `redirect_uris`; that fallback exists so an install that upgrades keeps
+  working, it is logged with the client id, and registering a list replaces
+  it. An unregistered or unverifiable target is refused with `400` — the
+  logout itself has already happened either way.
+- `state` — returned unchanged as the `state` query parameter on that
+  redirect. It is appended to whatever the registered value already carries,
+  and nothing is appended when no state is sent.
+
+Register the list with `post_logout_redirect_uris` on
+`POST /api/v1/oauth/clients` (and `PUT …/{id}`) or at `POST /oauth/register`.
+
 ### Back-channel logout
 When a session stops being live — `/oauth/logout` (with the cookie, an
 `id_token_hint` or a bearer), `/oauth/logout-all`, an SSF receiver acting on

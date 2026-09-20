@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **RP-Initiated Logout 1.0: `state` comes back, `client_id` identifies the
+  relying party, and `post_logout_redirect_uris` is a registered list
+  (migration v199).** Three gaps, all in `/oauth/logout` and all measured:
+  the handler never read `state`, so a relying party that uses it to tell its
+  own logout callback from a forged one could not — §2 makes returning it a
+  MUST; the caller's client was known only from the `id_token_hint`
+  audience, so the `client_id` the spec provides for a relying party that no
+  longer holds the ID token (expired, discarded at sign-out, never stored)
+  was ignored and its registered landing page refused; and "registered" was
+  derived from `redirect_uris` by comparing ORIGIN and ignoring the path, a
+  rule whose own comment asked to be tightened. Origin matching says yes to
+  every path on the relying party's host — an open redirector, a
+  user-content page, a half-finished route — so a client that registered two
+  callbacks got its whole site as logout destinations. Now: `state` is
+  appended to the destination (alongside a query the registered value
+  already carries, and nothing is appended when no state is sent);
+  `client_id` identifies the caller, and a `client_id` that disagrees with
+  the `id_token_hint` audience is refused with `400` rather than resolved in
+  either direction; and a client with a registered list is matched EXACTLY,
+  path and query included. **A client with no registered list keeps the
+  origin rule**, because unconditional exact-match would refuse the logout
+  redirect of every client in every existing install on the upgrade that
+  adds the column — the default has to stay installable, registration is
+  what tightens it, and each fallback logs the client so an operator can see
+  who is still on the loose rule. The field is first-class: stored on the
+  client, accepted and echoed at `POST /oauth/register`, and documented on
+  the OAuth clients API. Measured with httptest and a real PostgreSQL: the
+  state returns and rides alongside an existing query; a registered page is
+  followed and a sibling path on the same host is refused; a client that
+  registered nothing still reaches its page and still cannot be sent to
+  another host; a mismatched `client_id` is refused while a matching one
+  goes through; the store round-trips the list including clearing it; and
+  registration refuses an entry that could never be matched. Eleven
+  mutations red, no-op control green.
 - **A session ended by another binary is announced to its relying parties
   too (`backchannel_logout_pending`, migration v198).** Back-channel logout
   fired from oauth-service's one revocation funnel and nowhere else could:
@@ -70,7 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PostgreSQL and a real HTTP receiver: token shape and signature, one
   message per relying party per session, cookie-only logout, per-session
   announcements for a user-wide revocation, a failing relying party, tenant
-  scoping, store round-trip, DCR. Eleven mutations red, no-op control green.
+  scoping, store round-trip, DCR. Twelve mutations red, no-op control green.
 - **A browser session reaches the consent screen without a password:
   `POST /oauth/login/resume`.** Single sign-on stopped one screen short. A
   live `openidx_sso` session that reached an application still needing

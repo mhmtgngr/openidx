@@ -1198,8 +1198,50 @@ paths:
         Back-Channel Logout 1.0 logout token (`sid` = the session, `sub` as
         in its ID token) in the background; delivery is best-effort and
         never delays this response.
+
+
+        RP-Initiated Logout 1.0 §2: `post_logout_redirect_uri` is followed
+        only when it is registered for the client — exactly, against that
+        client's `post_logout_redirect_uris`, or, for a client that has
+        registered none, by origin against its `redirect_uris`. `state` is
+        returned on that redirect. `client_id` identifies the relying party
+        when no `id_token_hint` is sent, and must match the hint's audience
+        when both are present.
       operationId: logout
       x-openidx-handler: internal/oauth.(*Service).handleLogout
+      parameters:
+        - name: id_token_hint
+          in: query
+          required: false
+          schema: {type: string}
+          description: >-
+            An ID token previously issued to the relying party. Its signature
+            is verified (an expired token is still accepted, per the spec);
+            its `sub` names the user whose sessions end and its `aud` names
+            the client whose registered landing pages may be redirected to.
+        - name: post_logout_redirect_uri
+          in: query
+          required: false
+          schema: {type: string, format: uri}
+          description: >-
+            Where to send the browser once the logout has happened. Refused
+            with `400 invalid_request` when it is not registered for the
+            client; the logout itself has already taken effect either way.
+        - name: state
+          in: query
+          required: false
+          schema: {type: string}
+          description: >-
+            Opaque value returned unchanged as the `state` query parameter on
+            the redirect to `post_logout_redirect_uri`.
+        - name: client_id
+          in: query
+          required: false
+          schema: {type: string}
+          description: >-
+            The relying party asking for the logout. Required to get a
+            redirect when no `id_token_hint` is sent; refused with
+            `400 invalid_request` when both are sent and they disagree.
       responses:
         '200':
           description: Success
@@ -2439,6 +2481,17 @@ components:
             Where this relying party receives an OpenID Connect Back-Channel
             Logout 1.0 logout token when a session it took part in ends.
             Empty means it is not told. https, or http on localhost.
+        post_logout_redirect_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: >-
+            Where this relying party may be sent after an RP-initiated logout
+            (RP-Initiated Logout 1.0 §2). A registered list is matched
+            exactly, including path and query. Absent or empty leaves the
+            client on the origin rule derived from `redirect_uris`, which
+            accepts any path on the same host.
         enabled:
           type: boolean
         created_at:
@@ -2480,6 +2533,16 @@ components:
             Optional. The relying party's back-channel logout endpoint
             (OpenID Connect Back-Channel Logout 1.0). Also accepted as
             `backchannel_logout_uri` at `POST /oauth/register`.
+        post_logout_redirect_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: >-
+            Optional. Absolute URIs this client may be redirected to after an
+            RP-initiated logout; matched exactly. Also accepted under the same
+            name at `POST /oauth/register`. Registering none leaves the client
+            on the looser origin rule.
         enabled:
           type: boolean
           default: true

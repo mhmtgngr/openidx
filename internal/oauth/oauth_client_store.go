@@ -82,6 +82,9 @@ func (r *PostgresOAuthClientStore) GetByClientID(ctx context.Context, clientID s
 	var client OAuthClient
 	var clientSecret, description, logoURI, policyURI, tosURI, backChannelLogoutURI *string
 	var redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON []byte
+	// NULL means the client registered nothing, which is not the same as an
+	// empty list: postLogoutRedirectAllowed reads the difference (v199).
+	var postLogoutRedirectURIsJSON []byte
 	// NULL means uncapped, which is every browser client. Only the native
 	// clients — the ones whose refresh token sits at rest on a device someone
 	// can pick up — carry a family cap (v187).
@@ -92,14 +95,16 @@ func (r *PostgresOAuthClientStore) GetByClientID(ctx context.Context, clientID s
 		       redirect_uris, grant_types, response_types, scopes,
 		       logo_uri, policy_uri, tos_uri, pkce_required,
 		       allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
-		       refresh_token_max_lifetime, back_channel_logout_uri, created_at, updated_at
+		       refresh_token_max_lifetime, back_channel_logout_uri,
+		       post_logout_redirect_uris, created_at, updated_at
 		FROM oauth_clients WHERE client_id = $1 AND org_id = $2
 	`, clientID, org.ID).Scan(
 		&client.ID, &client.ClientID, &clientSecret, &client.Name, &description,
 		&client.Type, &redirectURIsJSON, &grantTypesJSON, &responseTypesJSON, &scopesJSON,
 		&logoURI, &policyURI, &tosURI, &client.PKCERequired,
 		&client.AllowRefreshToken, &client.AccessTokenLifetime, &client.RefreshTokenLifetime,
-		&refreshTokenMaxLifetime, &backChannelLogoutURI, &client.CreatedAt, &client.UpdatedAt,
+		&refreshTokenMaxLifetime, &backChannelLogoutURI,
+		&postLogoutRedirectURIsJSON, &client.CreatedAt, &client.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -133,6 +138,9 @@ func (r *PostgresOAuthClientStore) GetByClientID(ctx context.Context, clientID s
 	json.Unmarshal(grantTypesJSON, &client.GrantTypes)
 	json.Unmarshal(responseTypesJSON, &client.ResponseTypes)
 	json.Unmarshal(scopesJSON, &client.Scopes)
+	// A NULL column leaves the slice nil, which is what the logout path reads
+	// as "this client registered nothing" and falls back on (v199).
+	json.Unmarshal(postLogoutRedirectURIsJSON, &client.PostLogoutRedirectURIs)
 
 	return &client, nil
 }
@@ -216,6 +224,9 @@ func (r *PostgresOAuthClientStore) Create(ctx context.Context, client *OAuthClie
 	if err := validateBackChannelLogoutURI(client.BackChannelLogoutURI); err != nil {
 		return err
 	}
+	if err := validatePostLogoutRedirectURIs(client.PostLogoutRedirectURIs); err != nil {
+		return err
+	}
 	now := time.Now()
 	client.CreatedAt = now
 	client.UpdatedAt = now
@@ -230,6 +241,7 @@ func (r *PostgresOAuthClientStore) Create(ctx context.Context, client *OAuthClie
 	grantTypesJSON, _ := json.Marshal(client.GrantTypes)
 	responseTypesJSON, _ := json.Marshal(client.ResponseTypes)
 	scopesJSON, _ := json.Marshal(client.Scopes)
+	postLogoutRedirectURIsJSON := marshalPostLogoutRedirectURIs(client.PostLogoutRedirectURIs)
 
 	dbCtx, cancel := r.withTimeout(ctx)
 	defer cancel()
@@ -240,13 +252,15 @@ func (r *PostgresOAuthClientStore) Create(ctx context.Context, client *OAuthClie
 			redirect_uris, grant_types, response_types, scopes,
 			logo_uri, policy_uri, tos_uri, pkce_required,
 			allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
-			created_at, updated_at, org_id, back_channel_logout_uri
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NULLIF($21, ''))
+			created_at, updated_at, org_id, back_channel_logout_uri,
+			post_logout_redirect_uris
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NULLIF($21, ''), $22)
 	`, client.ID, client.ClientID, client.ClientSecret, client.Name, client.Description,
 		client.Type, redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON,
 		client.LogoURI, client.PolicyURI, client.TOSUri, client.PKCERequired,
 		client.AllowRefreshToken, client.AccessTokenLifetime, client.RefreshTokenLifetime,
-		client.CreatedAt, client.UpdatedAt, org.ID, strings.TrimSpace(client.BackChannelLogoutURI))
+		client.CreatedAt, client.UpdatedAt, org.ID, strings.TrimSpace(client.BackChannelLogoutURI),
+		postLogoutRedirectURIsJSON)
 	if err != nil {
 		return fmt.Errorf("create oauth client: %w", err)
 	}
@@ -261,6 +275,9 @@ func (r *PostgresOAuthClientStore) Update(ctx context.Context, clientID string, 
 	if err := validateBackChannelLogoutURI(client.BackChannelLogoutURI); err != nil {
 		return err
 	}
+	if err := validatePostLogoutRedirectURIs(client.PostLogoutRedirectURIs); err != nil {
+		return err
+	}
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
@@ -272,6 +289,7 @@ func (r *PostgresOAuthClientStore) Update(ctx context.Context, clientID string, 
 	grantTypesJSON, _ := json.Marshal(client.GrantTypes)
 	responseTypesJSON, _ := json.Marshal(client.ResponseTypes)
 	scopesJSON, _ := json.Marshal(client.Scopes)
+	postLogoutRedirectURIsJSON := marshalPostLogoutRedirectURIs(client.PostLogoutRedirectURIs)
 
 	dbCtx, cancel := r.withTimeout(ctx)
 	defer cancel()
@@ -288,12 +306,13 @@ func (r *PostgresOAuthClientStore) Update(ctx context.Context, clientID string, 
 		    response_types = $6, scopes = $7, pkce_required = $8,
 		    allow_refresh_token = $9, access_token_lifetime = $10,
 		    refresh_token_lifetime = $11, updated_at = $12,
-		    back_channel_logout_uri = NULLIF($14, '')
+		    back_channel_logout_uri = NULLIF($14, ''),
+		    post_logout_redirect_uris = $15
 		WHERE client_id = $1 AND org_id = $13
 	`, clientID, client.Name, client.Description, redirectURIsJSON, grantTypesJSON,
 		responseTypesJSON, scopesJSON, client.PKCERequired, client.AllowRefreshToken,
 		client.AccessTokenLifetime, client.RefreshTokenLifetime, now, org.ID,
-		strings.TrimSpace(client.BackChannelLogoutURI))
+		strings.TrimSpace(client.BackChannelLogoutURI), postLogoutRedirectURIsJSON)
 	if err != nil {
 		return fmt.Errorf("update oauth client: %w", err)
 	}

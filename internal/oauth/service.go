@@ -75,6 +75,12 @@ type OAuthClient struct {
 	// part of ends; empty means it is not told (backchannel_logout.go).
 	BackChannelLogoutURI string `json:"back_channel_logout_uri,omitempty"`
 
+	// PostLogoutRedirectURIs are the destinations this relying party may be
+	// sent to after an RP-initiated logout (RP-Initiated Logout 1.0 §2).
+	// A non-empty list is matched EXACTLY; an empty one falls back to the
+	// origin rule derived from RedirectURIs (postLogoutRedirectAllowed).
+	PostLogoutRedirectURIs []string `json:"post_logout_redirect_uris,omitempty"`
+
 	// RefreshTokenMaxLifetime caps the whole FAMILY, in seconds; 0 means
 	// uncapped. RefreshTokenLifetime limits how long one token may sit unused,
 	// and rotation restarts it, so on a client that refreshes hourly it bounds
@@ -4506,43 +4512,56 @@ func (s *Service) revokeAllUserRefreshTokens(ctx context.Context, userID string)
 
 // handleLogout handles POST/GET /oauth/logout — OIDC RP-initiated logout
 // postLogoutRedirectAllowed reports whether uri is a safe destination to send
-// the browser to after an RP-initiated logout.
+// the browser to after an RP-initiated logout, and by which of the two rules
+// (post_logout_redirect.go explains the pair and why both exist).
 //
 // SECURITY: handleLogout used to redirect to any caller-supplied
 // post_logout_redirect_uri with no validation at all — an open redirect from
 // the IdP's own origin (OIDC RP-Initiated Logout §2 requires the OP to verify
 // it against values registered for the client).
 //
-// The client model has no dedicated post_logout_redirect_uris list yet, so the
-// allowlist is derived from the client's registered redirect_uris by comparing
-// ORIGIN (scheme + host + port) rather than the full URI. Matching on origin
-// keeps legitimate deployments working — the post-logout landing page is very
-// often a different path on the same site than the OAuth callback — while
-// still refusing to send the user to an attacker-controlled domain. A
-// first-class post_logout_redirect_uris column can tighten this to exact-match
-// later.
-func (s *Service) postLogoutRedirectAllowed(ctx context.Context, clientID, uri string) bool {
+// The second return value is the rule that decided, for the log line: a
+// client still on the origin fallback is worth being able to find.
+func (s *Service) postLogoutRedirectAllowed(ctx context.Context, clientID, uri string) (bool, string) {
 	if clientID == "" || uri == "" {
-		return false
+		return false, "unidentified"
 	}
 	target, err := url.Parse(uri)
 	if err != nil || target.Scheme == "" || target.Host == "" {
-		return false
+		return false, "unparseable"
 	}
 	client, err := s.GetClient(ctx, clientID)
 	if err != nil || client == nil {
-		return false
+		return false, "unknown-client"
 	}
+
+	// A registered list is authoritative: it is what §2 means by registered,
+	// and nothing outside it is a destination however close it looks.
+	if len(client.PostLogoutRedirectURIs) > 0 {
+		for _, registered := range client.PostLogoutRedirectURIs {
+			ru, err := url.Parse(registered)
+			if err != nil {
+				continue
+			}
+			if samePostLogoutTarget(ru, target) {
+				return true, "registered"
+			}
+		}
+		return false, "registered"
+	}
+
+	// No registration: the pre-v199 origin rule, so an install that upgrades
+	// keeps working. Every allowed answer here is reported as a fallback.
 	for _, registered := range client.RedirectURIs {
 		ru, err := url.Parse(registered)
 		if err != nil {
 			continue
 		}
-		if strings.EqualFold(ru.Scheme, target.Scheme) && strings.EqualFold(ru.Host, target.Host) {
-			return true
+		if sameOrigin(ru, target) {
+			return true, "origin-fallback"
 		}
 	}
-	return false
+	return false, "origin-fallback"
 }
 
 // audienceClientID extracts the client_id from an ID token's `aud` claim,
@@ -4571,6 +4590,23 @@ func (s *Service) handleLogout(c *gin.Context) {
 	if postLogoutRedirectURI == "" {
 		postLogoutRedirectURI = c.PostForm("post_logout_redirect_uri")
 	}
+	// §2: "state ... OPTIONAL. Opaque value used by the RP to maintain state
+	// between the logout request and the callback". If it is sent, the OP
+	// MUST hand it back — a relying party that uses it to tell its own
+	// logout callback from a forged one cannot do that without it.
+	logoutState := c.Query("state")
+	if logoutState == "" {
+		logoutState = c.PostForm("state")
+	}
+	// §2: client_id identifies the RP, and is how an RP that no longer holds
+	// the ID token (expired, discarded at sign-out, never stored) still gets
+	// its registered landing page. It restricts the redirect to THAT client's
+	// own registered values, so naming someone else's client buys nothing but
+	// their landing page.
+	requestedClientID := c.Query("client_id")
+	if requestedClientID == "" {
+		requestedClientID = c.PostForm("client_id")
+	}
 
 	var userID string
 	var bearerToken string
@@ -4587,6 +4623,25 @@ func (s *Service) handleLogout(c *gin.Context) {
 			}
 			hintClientID = audienceClientID(hintClaims)
 		}
+	}
+
+	// §2: "If both client_id and id_token_hint are present, the OP MUST
+	// verify that the Client Identifier matches the one used when issuing the
+	// ID Token." A mismatch is a request that cannot be honoured as asked, so
+	// it is refused rather than resolved in either direction — silently
+	// preferring one would let a caller aim the ID token's session at a
+	// landing page registered by a different client.
+	if requestedClientID != "" && hintClientID != "" && requestedClientID != hintClientID {
+		s.logger.Warn("logout client_id does not match the id_token_hint audience",
+			logsafe.String("client_id", requestedClientID))
+		c.JSON(400, gin.H{
+			"error":             "invalid_request",
+			"error_description": "client_id does not match the client the id_token_hint was issued to",
+		})
+		return
+	}
+	if hintClientID == "" {
+		hintClientID = requestedClientID
 	}
 
 	// Also try Bearer token (and remember it so we can blacklist it).
@@ -4658,12 +4713,18 @@ func (s *Service) handleLogout(c *gin.Context) {
 	// id_token_hint. An unverifiable or unregistered target is refused (the
 	// logout itself has already happened) rather than followed.
 	if postLogoutRedirectURI != "" {
-		if s.postLogoutRedirectAllowed(c.Request.Context(), hintClientID, postLogoutRedirectURI) {
-			c.Redirect(302, postLogoutRedirectURI)
+		allowed, rule := s.postLogoutRedirectAllowed(c.Request.Context(), hintClientID, postLogoutRedirectURI)
+		if allowed {
+			if rule == "origin-fallback" {
+				s.logger.Info("post-logout redirect allowed by the origin fallback; register post_logout_redirect_uris to tighten it",
+					zap.String("client_id", logsafe.Clean(hintClientID)))
+			}
+			c.Redirect(302, withLogoutState(postLogoutRedirectURI, logoutState))
 			return
 		}
 		s.logger.Warn("refusing unregistered post_logout_redirect_uri",
-			zap.String("client_id", logsafe.Clean(hintClientID)))
+			zap.String("client_id", logsafe.Clean(hintClientID)),
+			zap.String("rule", rule))
 		c.JSON(400, gin.H{
 			"error":             "invalid_request",
 			"error_description": "post_logout_redirect_uri is not registered for the client identified by id_token_hint",
