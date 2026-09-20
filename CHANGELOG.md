@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **`oauth_clients.front_channel_logout_uri` is dropped (v202).** v63 added it
+  next to the back-channel logout URI. The back-channel column became a
+  feature — stored, registered, edited in the console, advertised in
+  discovery and delivered. The front-channel column did none of that: a
+  search of the whole tree finds it in exactly one place, the `ALTER TABLE`
+  that created it, and discovery never claimed
+  `frontchannel_logout_supported`, so this is a dead column rather than an
+  advertised lie. Every row has always held `NULL`; nothing is lost. A test
+  pins the premise — no non-test Go file outside the migrations may mention
+  the column — so a reader added later reconsiders the drop instead of
+  reading a column that is gone. Front-Channel Logout 1.0, if it is added,
+  arrives with its reader, writer, discovery claim and delivery in the
+  migration that adds the column back.
+
 ### Changed
 - **Decided: the event bus is not a hard dependency.** Two open plan items
   asked whether the audit indexer should move onto the outbox/NATS path with

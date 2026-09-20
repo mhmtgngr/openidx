@@ -1434,5 +1434,12 @@ func allMigrations() []*Migration {
 			UpSQL:       enrollmentQuotaIndexUp,
 			DownSQL:     enrollmentQuotaIndexDown,
 		},
+		{
+			Version:     202,
+			Name:        "drop_front_channel_logout_uri",
+			Description: "Drop oauth_clients.front_channel_logout_uri: added by v63 next to the back-channel URI, and unlike it never read, written, exposed by any API or console field, or advertised in discovery -- a search of the whole tree finds it only in the ALTER TABLE that created it. Every row has always held NULL, so nothing is lost. Same disposition as v151's guacamole_connection_pool. Front-Channel Logout 1.0, if added, arrives with a reader, a writer, a discovery claim and a delivery in the migration that adds the column back.",
+			UpSQL:       frontChannelLogoutColumnDropUp,
+			DownSQL:     frontChannelLogoutColumnDropDown,
+		},
 	}
 }
