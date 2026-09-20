@@ -8,8 +8,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-
-	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 // The per-tenant enrolment quota, in one place.
@@ -81,7 +79,7 @@ func (h *AgentAPIHandler) enrollmentQuotaExceeded(ctx context.Context, orgID str
 func (h *AgentAPIHandler) refuseIfEnrollmentQuotaExceeded(c *gin.Context, orgID string) bool {
 	retryAfter, exceeded, err := h.enrollmentQuotaExceeded(c.Request.Context(), orgID)
 	if err != nil {
-		h.logger.Error("enrollment quota: count failed", zap.Error(err), logsafe.String("org_id", orgID))
+		h.logger.Error("enrollment quota: count failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
 		return true
 	}
@@ -92,10 +90,10 @@ func (h *AgentAPIHandler) refuseIfEnrollmentQuotaExceeded(c *gin.Context, orgID 
 	if secs < 1 {
 		secs = 1
 	}
-	// logsafe: on the wizard's path the tenant id arrives from a token claim,
-	// which is caller-supplied bytes until it is proven id-shaped.
+	// The tenant id is deliberately not a field here: on the wizard's path it
+	// arrives from a token claim (caller-supplied bytes), and the request
+	// logger already stamps org_id on every line of this request.
 	h.logger.Warn("enrollment quota exceeded",
-		logsafe.String("org_id", orgID),
 		zap.Int("quota_per_hour", h.enrollmentQuotaPerHour()),
 		zap.Int("retry_after_seconds", secs))
 	c.Header("Retry-After", strconv.Itoa(secs))
