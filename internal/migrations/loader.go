@@ -1427,5 +1427,19 @@ func allMigrations() []*Migration {
 			UpSQL:       identityLinksPerTenantUp,
 			DownSQL:     identityLinksPerTenantDown,
 		},
+		{
+			Version:     201,
+			Name:        "enrollment_quota_index",
+			Description: "Index agent_enrollment_tokens (org_id, created_at) for the per-tenant enrolment quota. AGENT_ENROLLMENT_QUOTA_PER_HOUR (decided 2026-09-20, default 100, 0 = off and reported as an open gate) is enforced on every mint site -- the admin token endpoint, the Android QR and the onboarding wizard's session -- by counting the tenant's tokens created in the last rolling hour; the (N+1)th is refused with 429 and a Retry-After naming when the oldest in-window token ages out. v197's index on org_id alone answers that predicate by scanning every token the tenant ever minted; this one answers it by range. No data changes.",
+			UpSQL:       enrollmentQuotaIndexUp,
+			DownSQL:     enrollmentQuotaIndexDown,
+		},
+		{
+			Version:     202,
+			Name:        "drop_front_channel_logout_uri",
+			Description: "Drop oauth_clients.front_channel_logout_uri: added by v63 next to the back-channel URI, and unlike it never read, written, exposed by any API or console field, or advertised in discovery -- a search of the whole tree finds it only in the ALTER TABLE that created it. Every row has always held NULL, so nothing is lost. Same disposition as v151's guacamole_connection_pool. Front-Channel Logout 1.0, if added, arrives with a reader, a writer, a discovery claim and a delivery in the migration that adds the column back.",
+			UpSQL:       frontChannelLogoutColumnDropUp,
+			DownSQL:     frontChannelLogoutColumnDropDown,
+		},
 	}
 }

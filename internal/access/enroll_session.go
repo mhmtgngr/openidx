@@ -117,6 +117,9 @@ func (h *AgentAPIHandler) HandleCreateEnrollSession(c *gin.Context) {
 	tokenHash := sha256Hex(token)
 	expiresAt := time.Now().UTC().Add(h.enrollSessionTTL())
 
+	if h.refuseIfEnrollmentQuotaExceeded(c, orgID) {
+		return
+	}
 	if _, err := h.db.Pool.Exec(ctx, `
 		INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at, reusable, org_id)
 		VALUES ($1, $2, $3, $4, false, $5)

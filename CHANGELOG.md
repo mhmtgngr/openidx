@@ -7,7 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **`oauth_clients.front_channel_logout_uri` is dropped (v202).** v63 added it
+  next to the back-channel logout URI. The back-channel column became a
+  feature — stored, registered, edited in the console, advertised in
+  discovery and delivered. The front-channel column did none of that: a
+  search of the whole tree finds it in exactly one place, the `ALTER TABLE`
+  that created it, and discovery never claimed
+  `frontchannel_logout_supported`, so this is a dead column rather than an
+  advertised lie. Every row has always held `NULL`; nothing is lost. A test
+  pins the premise — no non-test Go file outside the migrations may mention
+  the column — so a reader added later reconsiders the drop instead of
+  reading a column that is gone. Front-Channel Logout 1.0, if it is added,
+  arrives with its reader, writer, discovery claim and delivery in the
+  migration that adds the column back.
+
+### Changed
+- **Decided: the event bus is not a hard dependency.** Two open plan items
+  asked whether the audit indexer should move onto the outbox/NATS path with
+  `StartESReconciler` retired, and whether the SSF transmitter and the
+  cross-binary seams (`ssf_pending_events`, `backchannel_logout_pending`)
+  should become NATS consumers. Both stay PostgreSQL-backed: in the default
+  install `elasticsearch.enabled` is true and `nats.enabled` is false, so a
+  pure move would silently stop the Elasticsearch backfill, SSF delivery and
+  back-channel logout for every existing deployment, and the outbox is
+  single-consumer by construction. No "events" mode switch was added — a
+  switch to a mode that does not exist is the declared-but-nonexistent
+  capability this programme hunts. Measured: the code already agrees; the
+  reconciler starts only behind `if es != nil` and the three drainers start
+  unconditionally, with no reference to `NATSURL` in either binary. Two
+  starter guards now pin that shape: any condition naming the broker around
+  those calls fails the build. Six mutations red, no-op control green. The
+  event path returns, if it returns, as a measured optimisation gated on
+  `nats.enabled` — not as a default.
+
 ### Security
+- **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
+  handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,
+  the Android QR and the onboarding wizard's session — and none asked how
+  many the tenant had already minted, so a console credential that could
+  mint one could mint without limit. The plan left the number open as a
+  product decision after v197 made the table per-tenant; it is decided at
+  **100 an hour** (`AGENT_ENROLLMENT_QUOTA_PER_HOUR`,
+  `config.agentEnrollmentQuotaPerHour`): a tenant provisioning a fleet mints
+  one reusable token, not one per device, so 100 is far above any legitimate
+  rate and far below what an unlimited endpoint allows. The rule lives in
+  `internal/access/enrollment_quota.go`, every mint site calls it before its
+  INSERT, and an AST census fails the build if a fourth appears without it.
+  The (N+1)th request in a rolling hour is refused with `429` and a
+  `Retry-After` naming when the oldest in-window token ages out; the count is
+  the tenant's alone, and tokens older than the window do not count. `0`
+  turns the quota off, deliberately, and startup then reports it with the
+  other report-mode gates. Migration v201 indexes `(org_id, created_at)`,
+  which the count needs and v197's single-column index answered by scanning
+  the tenant's whole history. Measured against the full migrated schema at
+  all three doors. **One chart defect found by rendering, not by reading:**
+  `AGENT_ENROLLMENT_QUOTA_PER_HOUR: {{ … | default 100 }}` turned an
+  operator's explicit `0` back into `100`, because Helm's `default` treats
+  zero as empty — the "0 = off" promise was false until the template was
+  changed to fall back only on an absent value. Ten mutations red, no-op
+  control green.
 - **The external identity links are per-tenant (v200), and orgscope's
   needsScoping register is empty.** `user_identity_links` and
   `social_account_links` were the last two tables in the product outside the

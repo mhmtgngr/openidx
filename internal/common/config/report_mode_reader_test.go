@@ -81,6 +81,8 @@ func TestStartupReportsTheCountEvenWhenFullyEnforcing(t *testing.T) {
 		PAMRequireZTNA:          "enforce",
 		AccessAPIRequireAuth:    true,
 		AdminAPIRequireAuth:     true,
+		// A zero quota is an open gate; a fully-enforcing install names one.
+		AgentEnrollmentQuotaPerHour: 100,
 	}
 	if err := ValidateProductionConfig(cfg, log); err != nil {
 		t.Fatalf("ValidateProductionConfig: %v", err)

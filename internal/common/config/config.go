@@ -349,6 +349,19 @@ type Config struct {
 	// EnrollSessionTTLMinutes is how long an enrollment session's short code / QR
 	// / deep-link remains valid. Default 15.
 	EnrollSessionTTLMinutes int `mapstructure:"enroll_session_ttl_minutes"`
+
+	// AgentEnrollmentQuotaPerHour is how many device-enrolment tokens one
+	// tenant may mint in a rolling hour, across every mint site (the admin
+	// token endpoint, the Android QR and the onboarding wizard's session).
+	// The (N+1)th request in the window is refused with 429 and a Retry-After
+	// naming when the oldest token in the window falls out of it. Decided
+	// 2026-09-20 at 100: a tenant provisioning a fleet mints ONE reusable
+	// token, not one per device, so 100 an hour is far above any legitimate
+	// rate and far below what a stolen console credential could do with an
+	// unlimited endpoint. 0 turns the quota OFF, deliberately, for a lab; it
+	// is then reported as an open gate at startup like the other report-mode
+	// controls. The column it counts on has been per-tenant since v197.
+	AgentEnrollmentQuotaPerHour int `mapstructure:"agent_enrollment_quota_per_hour"`
 	// AgentDownloadsDir is the directory of per-OS agent installers (msi/pkg/deb/
 	// rpm) served at /downloads/<file> and advertised by /downloads/agent-manifest.json.
 	AgentDownloadsDir string `mapstructure:"agent_downloads_dir"`
@@ -1060,6 +1073,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("device_autotrust_known_orgs", "")
 	v.SetDefault("device_autotrust_require_posture", false)
 	v.SetDefault("enroll_session_ttl_minutes", 15)
+	v.SetDefault("agent_enrollment_quota_per_hour", 100)
 	v.SetDefault("agent_downloads_dir", "deployments/downloads")
 	v.SetDefault("access_request_max_duration_hours", 90*24)
 	v.SetDefault("selfheal_state_dir", "/home/cmit/oidx-runtime/selfheal")
@@ -1353,6 +1367,7 @@ func bindEnvVars(v *viper.Viper) {
 		"device_autotrust_known_orgs":         "DEVICE_AUTOTRUST_KNOWN_ORGS",
 		"device_autotrust_require_posture":    "DEVICE_AUTOTRUST_REQUIRE_POSTURE",
 		"enroll_session_ttl_minutes":          "ENROLL_SESSION_TTL_MINUTES",
+		"agent_enrollment_quota_per_hour":     "AGENT_ENROLLMENT_QUOTA_PER_HOUR",
 		"agent_downloads_dir":                 "AGENT_DOWNLOADS_DIR",
 		"access_request_max_duration_hours":   "ACCESS_REQUEST_MAX_DURATION_HOURS",
 		"selfheal_state_dir":                  "SELFHEAL_STATE_DIR",
@@ -2058,6 +2073,9 @@ func (c *Config) ReportModeGates() []string {
 	}
 	if !strings.EqualFold(strings.TrimSpace(c.BotGate), "enforce") {
 		open = append(open, "BOT_GATE="+valueOrOff(c.BotGate)+" — a credential spray spread across many addresses is never asked to prove a human")
+	}
+	if c.AgentEnrollmentQuotaPerHour <= 0 {
+		open = append(open, "AGENT_ENROLLMENT_QUOTA_PER_HOUR=0 — a tenant may mint device-enrolment tokens without limit")
 	}
 	if !c.EnableOPAAuthz {
 		open = append(open, "ENABLE_OPA_AUTHZ=false — OPA is not in the request path")

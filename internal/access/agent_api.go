@@ -2123,6 +2123,9 @@ func (h *AgentAPIHandler) HandleGenerateToken(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 			return
 		}
+		if h.refuseIfEnrollmentQuotaExceeded(c, org.ID) {
+			return
+		}
 		err = h.db.Pool.QueryRow(ctx, `
 			INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at, reusable, org_id)
 			VALUES ($1, $2, $3, $4, $5, $6)
@@ -2212,6 +2215,9 @@ func (h *AgentAPIHandler) HandleGenerateQR(c *gin.Context) {
 		org, err := orgctx.From(ctx)
 		if err != nil {
 			c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+			return
+		}
+		if h.refuseIfEnrollmentQuotaExceeded(c, org.ID) {
 			return
 		}
 		err = h.db.Pool.QueryRow(ctx, `

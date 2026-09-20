@@ -252,6 +252,12 @@ func main() {
 			log.Warn("Failed to initialize ES index, search may not work", zap.Error(err))
 		}
 		// Backfill any audit event the fire-and-forget ES write missed.
+		//
+		// This stays the PostgreSQL-backed path (decided 2026-09-20). The
+		// plan's alternative -- the indexer on the outbox/NATS path and this
+		// reconciler retired -- would stop the backfill in the default
+		// install, where Elasticsearch is on and no broker is configured.
+		// Only `es != nil` may gate it; pg_backed_starters_test.go pins that.
 		var reconcilerLeader *goredis.Client
 		if redis != nil {
 			reconcilerLeader = redis.Client

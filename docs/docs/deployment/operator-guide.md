@@ -223,6 +223,7 @@ relies on, where it is enforced, and the one-line check.
 | Audit integrity | a hash chain over sealed rows, keyed by `AUDIT_CHAIN_SECRET` | edit a sealed row directly and the verify endpoint reports `intact: false` naming the event; restore it and the chain is whole |
 | Configuration is real | `tools/deadconfig`: every settable field is read by something, and every documented variable is bound | the merge-blocking register is empty |
 | Cell correctness | the issuer stamps `cell` into access tokens; every guarded service answers `421 Misdirected Request` with `X-OpenIDX-Cell` to a token for a tenant placed elsewhere | `openidx cell show <org>` names the tenant's cell; a token minted for it is served by that cell and refused by another |
+| Enrolment quota | `AGENT_ENROLLMENT_QUOTA_PER_HOUR` (`config.agentEnrollmentQuotaPerHour`, default 100) counted per tenant over a rolling hour at every mint site — the admin token endpoint, the Android QR and the onboarding wizard — before the INSERT; `0` turns it off and startup reports it as an open gate | mint the quota, then one more: `429` with `Retry-After`; a second tenant still mints |
 
 The invariant behind the table: the place a person sees a grant and the
 place the system enforces it use the same predicate. Anything visible in the
@@ -481,12 +482,14 @@ Say these to a customer before they find them:
   encryption key still comes from `ENCRYPTION_KEY`.
 - **Three Redis roles need three instances**, which the bundled chart does
   not provide; managed caches do.
-- **One product decision is open**: what the per-tenant enrolment quota is
-  (the column to count on exists since migration v197, the number does not).
-  The other, whether one external account may link to a user in two tenants,
-  was decided with v200: a link belongs to the tenant of the identity provider
-  it was made through, so the same account links once in each tenant and
-  every table in the product is now inside the tenant belt.
+- **The two product decisions the plan left open are both decided.** Whether
+  one external account may link to a user in two tenants: yes, once in each,
+  because a link belongs to the tenant of the identity provider it was made
+  through (v200), so every table in the product is now inside the tenant
+  belt. The per-tenant enrolment quota: 100 tokens an hour, counted on the
+  column v197 added, enforced at every mint site, `0` to turn it off. Neither
+  number has met load; the quota's value is a product judgement, recorded
+  with its reasoning in `internal/common/config/config.go`.
 - **Terraform** has an AWS root (EKS, RDS, ElastiCache, OpenZiti) and an
   Azure root (AKS, Flexible Server, Redis, Key Vault) under
   `deployments/terraform/`. Neither has been applied from this repository;
