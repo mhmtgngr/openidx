@@ -245,7 +245,7 @@ func BenchmarkGenerateIDToken(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, benchErr = svc.GenerateIDToken(ctx, userID, clientID, nonce, expiresIn)
+		_, benchErr = svc.GenerateIDToken(ctx, userID, clientID, nonce, "openid profile email", expiresIn)
 	}
 	if benchErr != nil {
 		b.Fatalf("%s errored on every iteration: %v", "svc.GenerateIDToken", benchErr)

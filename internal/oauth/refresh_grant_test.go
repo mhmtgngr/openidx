@@ -90,6 +90,10 @@ CREATE TABLE users (
     first_name TEXT,
     last_name  TEXT,
     enabled    BOOLEAN NOT NULL DEFAULT true,
+    -- Read by both token minters: email_verified is a claim, not an
+    -- assumption, so the query selects it and a fixture without the column
+    -- silently hands back an empty user.
+    email_verified BOOLEAN NOT NULL DEFAULT false,
     org_id     UUID NOT NULL
 );`
 
@@ -169,8 +173,8 @@ func (f *refreshGrantFixture) seedClient(t *testing.T, clientID, secret string, 
 func (f *refreshGrantFixture) seedUser(t *testing.T, userID string, enabled bool) {
 	t.Helper()
 	if _, err := f.db.Pool.Exec(f.ctx, `
-		INSERT INTO users (id, email, first_name, last_name, enabled, org_id)
-		VALUES ($1, 'grant@test.local', 'Grant', 'Tester', $2, $3)
+		INSERT INTO users (id, email, first_name, last_name, enabled, email_verified, org_id)
+		VALUES ($1, 'grant@test.local', 'Grant', 'Tester', $2, true, $3)
 		ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled`,
 		userID, enabled, grantOrg); err != nil {
 		t.Fatalf("seed user %s: %v", userID, err)

@@ -405,7 +405,7 @@ func (s *Service) handleDeviceCodeGrant(c *gin.Context) {
 		Scope:       rec.Scope,
 	}
 	if strings.Contains(rec.Scope, "openid") {
-		if idToken, ierr := s.GenerateIDToken(ctx, claimedUser, clientID, "", client.EffectiveAccessTokenLifetime(), ""); ierr == nil {
+		if idToken, ierr := s.GenerateIDToken(ctx, claimedUser, clientID, "", rec.Scope, client.EffectiveAccessTokenLifetime(), ""); ierr == nil {
 			resp.IDToken = idToken
 		}
 	}

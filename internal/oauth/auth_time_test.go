@@ -47,7 +47,7 @@ func authTimeSetup(t *testing.T) (*Service, context.Context) {
 // (the signature is not what these tests are about).
 func idTokenClaims(t *testing.T, svc *Service, ctx context.Context, userID string, sessionID ...string) jwt.MapClaims {
 	t.Helper()
-	tok, err := svc.GenerateIDToken(ctx, userID, "c", "n-1", 3600, sessionID...)
+	tok, err := svc.GenerateIDToken(ctx, userID, "c", "n-1", "openid profile email", 3600, sessionID...)
 	if err != nil {
 		t.Fatalf("GenerateIDToken: %v", err)
 	}

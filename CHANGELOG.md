@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **A granted scope now actually restricts what a token carries.** A token
+  whose granted scope was the bare `openid` came back carrying `email` and
+  `name`, and `GET /oauth/userinfo` presented with that same token answered
+  with `email`, `name`, `given_name`, `family_name` and `preferred_username`.
+  The scope was recorded, shown on the consent screen and written into the
+  token's own `scope` claim, and then read by nothing. The cause was
+  structural rather than a missed branch: of the three emitters of identity
+  claims, `GenerateIDToken` and `GetUserInfo` did not take a scope at all, so
+  the grant could not reach them even in principle, and `GenerateJWT` took one
+  only to copy it into a claim. Per OpenID Connect Core §5.4, `profile` now
+  carries `name`, `given_name`, `family_name` and `preferred_username`, and
+  `email` carries `email` and `email_verified`; a claim whose scope was not
+  granted is absent rather than empty, so a relying party cannot mistake "you
+  did not ask" for "the user has no name". An empty scope grants none of them,
+  because reading it as "everything" would leave a client that omits the
+  parameter better off than one that asks honestly.
+
+  `email_verified` is now read from the user record rather than asserted true,
+  and it carries three answers: absent (the `email` scope was not granted),
+  false (granted, address not verified) and true. As a plain bool with
+  `omitempty` the first two were the same bytes on the wire, which matters
+  because this claim is what a relying party uses to decide whether it may
+  match an identity onto an existing local account by address.
+
+  `roles`, `groups` and `permissions` are deliberately NOT gated: they are not
+  claims about the end user but the authorization facts the resource servers
+  read, and gating them on `profile` would silently turn authorization off for
+  a client that asked for `openid` alone. The discovery document's
+  `claims_supported` now lists them, along with `preferred_username`, all four
+  of which were emitted and none advertised.
+
+  **Behaviour change.** A client that requested only `openid`, or no scope at
+  all, and relied on receiving identity claims anyway must now ask for
+  `profile` and/or `email`. The token response's own `scope` field already
+  reports exactly what was granted.
+
+  Measured with a real PostgreSQL and httptest across all three emitters, the
+  token endpoint end to end, and the discovery document. Eleven mutations red,
+  no-op control green.
+
 ### Added
 - **The post-logout allowlist can be registered from the console.** The
   RP-Initiated Logout list added below was reachable only through dynamic

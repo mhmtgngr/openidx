@@ -115,9 +115,9 @@ Machine-to-machine authentication.
 ### ID Tokens
 JWT tokens containing user identity claims:
 - Subject (user ID)
-- Email
-- Name (given name, family name)
-- Email verification status
+- Email, when the `email` scope was granted (see below)
+- Name (given name, family name), when `profile` was granted
+- Email verification status, read from the user record rather than assumed
 - `sid`, `amr` and `auth_time` from the login session the code was bound to:
   the session id, the authentication methods it recorded (`pwd`, `mfa`, ...)
   and the moment it started. `auth_time` is the session's start, not the
@@ -127,8 +127,39 @@ JWT tokens containing user identity claims:
   credentials, a code issued with no session bound) none of the three is
   emitted rather than guessed.
 
+### What a scope actually buys
+
+The identity claims a token carries are decided by the scope the grant was
+given, in the ID token, the access token and at the UserInfo endpoint alike
+(OpenID Connect Core §5.4):
+
+| Scope | Claims |
+|---|---|
+| `openid` alone | `sub` and the protocol claims. No name, no address. |
+| `profile` | `name`, `given_name`, `family_name`, `preferred_username` |
+| `email` | `email`, `email_verified` |
+
+A claim whose scope was not granted is **absent**, not empty, so a relying
+party cannot mistake "you did not ask" for "the user has no name". An empty
+`scope` grants none of them: reading it as "everything" would leave a client
+that omits the parameter better off than one that asks honestly.
+
+`email_verified` carries three answers and only one of them is silent. Absent
+means the `email` scope was not granted; `false` means it was and the address
+is not verified; `true` means it was and the address is. Do not read an absent
+value as `false`. The value is read from the user record rather than asserted,
+because a relying party uses this claim to decide whether it may match the
+identity onto an existing local account by address.
+
+`roles`, `groups` and `permissions` are **not** gated on a scope. They are not
+claims about the end user but the authorization facts the resource servers
+behind this issuer read, and gating them on `profile` would silently turn
+authorization off for a client that asked for `openid` alone.
+
 ### UserInfo Endpoint
-Retrieve detailed user information using access token.
+Retrieve user information using an access token. The response carries exactly
+the claims that token's own scope grants, per the table above; a token granted
+only `openid` is answered with `sub` and nothing else.
 
 ### Discovery
 Automatic service configuration via `.well-known/openid-configuration`
