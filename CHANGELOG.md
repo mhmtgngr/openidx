@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **PKCE is now enforced at the authorization endpoint every browser client
+  actually reaches.** `/oauth/authorize` is served by `handleAuthorize`, and
+  that handler enforced no part of RFC 7636: measured against the live
+  endpoint, a **public** client with no `code_challenge` at all was carried
+  straight to the login page, an unsupported `code_challenge_method` was
+  accepted, and a `code_challenge` that is not base64url was accepted. The
+  code minted at the end of such a flow carried an empty challenge, which
+  makes the token endpoint's `if authCode.CodeChallenge != ""` verification
+  vacuous — so the protection public clients depend on was, in practice,
+  optional for whoever omitted it. `/oauth/authorize/v2` did check the
+  public-client half, and is not the route the console, the reference compose
+  stack or the mobile fallback use. This is the third control to go missing
+  from this handler in the same shape, after scope and `response_type`.
+- **`pkce_required` now decides something.** The flag is stored on the client,
+  served by the admin API and editable in the console's Applications editor,
+  and no code read it: an operator who ticked the box for a confidential
+  client was told PKCE was required and it was required of nobody. A
+  confidential client marked `pkce_required` is now held to a challenge on
+  every authorization path. Confidential clients that are *not* marked are
+  unchanged, since turning it on for every existing registration would reject
+  the next request from clients that work today.
+  The rule itself moved to one place, `internal/oauth/pkce_policy.go`, and the
+  five request paths that accept a client-supplied `code_challenge` — the live
+  authorize endpoint, `/oauth/authorize/v2`, the `idp_hint` SSO hop, the
+  consent POST and the native login-init endpoint — all call it. An AST census
+  fails the build if a sixth appears that neither calls the rule nor records
+  why it is exempt. The console's "sign in with an external IdP" button built
+  its own authorize URL without a challenge and now mints and stores one like
+  the primary login button, so the code it comes back with is verified rather
+  than merely accepted. Ten mutations red, no-op control green.
 - **Introspection and revocation now answer only for the caller's own tokens.**
   Both endpoints already required client authentication, and neither looked at
   which client had authenticated. Measured with two registered clients in one

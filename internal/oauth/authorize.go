@@ -299,44 +299,15 @@ func scopeAllowedForClient(client *OAuthClient, scope string) bool {
 
 // validatePKCEParameters validates PKCE parameters per RFC 7636
 func (h *AuthorizeHandler) validatePKCEParameters(client *OAuthClient, req *AuthorizeRequest) error {
-	// Public clients MUST use PKCE
-	if client.Type == "public" {
-		if req.CodeChallenge == "" {
-			return fmt.Errorf("code_challenge is required for public clients")
-		}
-	}
-
-	// Validate code challenge method if provided
-	if req.CodeChallenge != "" && req.CodeChallengeMethod != "" {
-		if req.CodeChallengeMethod != "S256" && req.CodeChallengeMethod != "plain" {
-			return fmt.Errorf("unsupported code_challenge_method: %s", req.CodeChallengeMethod)
-		}
-		// Reject "plain" in production: it offers no protection against code
-		// interception and is not advertised in discovery. Fail fast at authorize
-		// rather than only at the token endpoint. (The token endpoint keeps its
-		// own guard for defense in depth.)
-		if req.CodeChallengeMethod == "plain" && h.service.config != nil && h.service.config.IsProduction() {
-			return fmt.Errorf("code_challenge_method 'plain' is not allowed; use S256")
-		}
-	}
-
-	// Validate code challenge format
-	if req.CodeChallenge != "" {
-		// code_challenge must be base64url-encoded
-		_, err := base64.RawURLEncoding.DecodeString(req.CodeChallenge)
-		if err != nil {
-			return fmt.Errorf("invalid code_challenge format: must be base64url-encoded")
-		}
-
-		// Check length constraints per RFC 7636
-		// code_challenge length after decoding should be between 43 and 128 characters
-		decodedLen := len(req.CodeChallenge)
-		if decodedLen < 43 || decodedLen > 128 {
-			return fmt.Errorf("code_challenge length must be between 43 and 128 characters")
-		}
-	}
-
-	return nil
+	// The rule itself lives in pkce_policy.go, shared with /oauth/authorize
+	// (service.go, handleAuthorize) — which enforced no part of it while this
+	// spelling sat here, and with the consent, SSO and native-init paths.
+	//
+	// Two things changed when it moved: a confidential client the operator
+	// marked pkce_required is now held to the same requirement (this function
+	// read only client.Type and never the flag), and the "plain" and format
+	// checks apply on every path rather than only this one.
+	return validatePKCERequest(client, req.CodeChallenge, req.CodeChallengeMethod, h.service.isProduction())
 }
 
 // storeAuthorizationRequest stores the authorization request in Redis for later use

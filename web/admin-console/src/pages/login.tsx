@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Checkbox } from '../components/ui/checkbox'
-import { useAuth } from '../lib/auth'
+import { useAuth, generateCodeVerifier, generateCodeChallenge } from '../lib/auth'
 import { api, baseURL, IdentityProvider } from '../lib/api'
 import { getProviderIcon } from '../components/icons/social-providers'
 import { decodeCredentialRequestOptions, serializeAssertionResponse, type PublicKeyCredentialRequestOptionsJSON } from '../lib/webauthn'
@@ -416,10 +416,31 @@ export function LoginPage() {
     }
   }
 
-  const handleSSOLogin = (idp: IdentityProvider) => {
+  const handleSSOLogin = async (idp: IdentityProvider) => {
     setError('')
-    const redirectUrl = `${baseURL}/oauth/authorize?response_type=code&client_id=admin-console&redirect_uri=${window.location.origin}/login&scope=openid%20profile%20email&idp_hint=${idp.id}`
-    window.location.href = redirectUrl
+    // PKCE, the same as the primary login button in lib/auth.tsx. This URL was
+    // hand-built without a challenge, and the server accepted it because
+    // /oauth/authorize enforced no part of RFC 7636 — so the code this flow
+    // came back with had nothing to verify and the exchange below passed an
+    // empty code_verifier. admin-console is a public client; the server now
+    // requires a challenge from it on every path, this one included.
+    //
+    // The verifier goes to the same sessionStorage key the callback in
+    // lib/auth.tsx reads when it exchanges the code, which is what makes the
+    // round trip complete rather than merely start.
+    const codeVerifier = generateCodeVerifier()
+    const { challenge, method } = await generateCodeChallenge(codeVerifier)
+    sessionStorage.setItem('pkce_code_verifier', codeVerifier)
+
+    const authUrl = new URL(`${baseURL}/oauth/authorize`)
+    authUrl.searchParams.set('response_type', 'code')
+    authUrl.searchParams.set('client_id', 'admin-console')
+    authUrl.searchParams.set('redirect_uri', window.location.origin + '/login')
+    authUrl.searchParams.set('scope', 'openid profile email')
+    authUrl.searchParams.set('code_challenge', challenge)
+    authUrl.searchParams.set('code_challenge_method', method)
+    authUrl.searchParams.set('idp_hint', idp.id)
+    window.location.href = authUrl.toString()
   }
 
   const handleCredentialsSubmit = async (e: React.FormEvent) => {

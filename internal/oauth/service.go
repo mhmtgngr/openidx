@@ -2005,6 +2005,22 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 		return
 	}
 
+	// PKCE (RFC 7636), the same shape and the third omission.
+	//
+	// This handler enforced no part of it. A public client could omit
+	// code_challenge and be carried to a login page; the code minted at the
+	// end carried an empty challenge, so the token endpoint's
+	// `if authCode.CodeChallenge != ""` check verified nothing. The operator
+	// switch (pkce_required) that the console offers was read by nobody.
+	// /oauth/authorize/v2 has checked the public-client half since it was
+	// written (authorize.go, validatePKCEParameters); both now call the same
+	// rule, in pkce_policy.go, so they cannot drift again.
+	if err := validatePKCERequest(client, oauthParams["code_challenge"], oauthParams["code_challenge_method"], s.isProduction()); err != nil {
+		s.redirectAuthorizeError(c, oauthParams["redirect_uri"], oauthParams["state"],
+			ErrorInvalidRequest, err.Error())
+		return
+	}
+
 	// prompt and max_age (OIDC Core §3.1.2.1) — parsed here, after the
 	// redirect_uri is known to be the client's, because a malformed value is
 	// the client's error to receive (§3.1.2.6, invalid_request).
@@ -3170,6 +3186,19 @@ func (s *Service) handleSSOAuthorize(c *gin.Context, idpID string) {
 		"code_challenge_method": c.Query("code_challenge_method"),
 		"idp_id":                idp.ID.String(),
 	}
+	// PKCE, before the flow leaves for the external IdP. This path is reached
+	// from handleAuthorize with an idp_hint, BEFORE that handler fetches the
+	// client, so the rule is applied here against the client this request
+	// names. The refusal is a 400 and not a redirect: this handler has not
+	// validated redirect_uri against the client, and reporting an error to an
+	// unvalidated redirect_uri is an open redirect.
+	if ssoClient, cerr := s.GetClient(c.Request.Context(), c.Query("client_id")); cerr == nil {
+		if perr := validatePKCERequest(ssoClient, c.Query("code_challenge"), c.Query("code_challenge_method"), s.isProduction()); perr != nil {
+			c.JSON(400, gin.H{"error": "invalid_request", "error_description": perr.Error()})
+			return
+		}
+	}
+
 	paramsJSON, _ := json.Marshal(originalParams)
 	s.redis.Client.Set(c.Request.Context(), "sso_state:"+state, string(paramsJSON), 10*time.Minute)
 
@@ -3445,6 +3474,15 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 	}
 	if !validRedirect {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri not registered for client"})
+		return
+	}
+
+	// PKCE, by the same rule as /oauth/authorize. This endpoint takes the
+	// challenge from its own request body and carries it into the code it
+	// mints, so it is an authorization request in its own right, not a
+	// continuation of one that was already checked.
+	if err := validatePKCERequest(client, req.CodeChallenge, req.CodeChallengeMethod, s.isProduction()); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": err.Error()})
 		return
 	}
 

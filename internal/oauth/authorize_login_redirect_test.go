@@ -136,6 +136,13 @@ func TestHandleAuthorizeRedirectsEveryClientToTheOneLoginUI(t *testing.T) {
 				"client_id":     {tc.client.ClientID},
 				"redirect_uri":  {tc.redirectURI},
 				"response_type": {"code"},
+				// These cases are about WHERE a browser is sent to sign in.
+				// Most of them use a public client, which /oauth/authorize now
+				// holds to RFC 7636 (pkce_policy.go), so they carry a valid
+				// challenge — otherwise they would be answered by the PKCE
+				// refusal and stop measuring the login redirect at all.
+				"code_challenge":        {testCodeChallenge},
+				"code_challenge_method": {"S256"},
 			}
 			c.Request = httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil)
 			if tc.accept != "" {
