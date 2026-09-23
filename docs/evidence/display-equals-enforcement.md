@@ -38,7 +38,8 @@ one is not verified automatically yet; #957 tracks closing that.
 | App assignment at the Ziti dial, BrowZer routes | `TestZitiDialFollowsApplicationAssignment`: the Dial policy the reconciler writes, and the attributes the user sync builds | the unit job for `internal/access`, against a migrated Postgres and a fake controller |
 | App assignment at the Ziti dial, identity-mode routes | None. Under enforcement the access proxy loses its own dial on these routes (#984) | — |
 | ABAC policy | `TestEvaluateAgainstTheMigratedSchema` (the evaluator), `TestABACGateAtAuthorization` (the token endpoint), `TestABACGateAtTheProxy` (the proxy) | the unit jobs, against a migrated Postgres |
-| Role / group, Vault / PAM grant, Session, MFA policy, Device trust, JIT elevation | Partly; see below | — |
+| JIT elevation | `TestJITElevationEndsAtTheKillSwitch`: the grant listed by User Access 360 and counted by the portal, then the kill switch through its route, with another user's elevation left alone | the unit job for `internal/access`, against a migrated Postgres |
+| Role / group, Vault / PAM grant, Session, MFA policy, Device trust | Partly; see below | — |
 
 The ABAC tests cover all three states. In `enforce`, a deny policy refuses
 the subject it names with a 403 and records `access.abac.denied`. In
@@ -51,7 +52,13 @@ the upstream, or is left out of the Dial policy. With it off, the unassigned
 user gets through and the gap is recorded. Each negative half in this table
 was mutation-checked: removing the control turns it red.
 
-### What the other six rows have today
+The JIT test found a display defect on its first step (#988): on the migrated
+schema User Access 360 answered 500 for every user, and had since v1.35.0.
+The access map's own tests ran on tables they created by hand, where the
+failing query was valid. The tests in this table run on the schema the product
+migrates to for that reason.
+
+### What the other five rows have today
 
 Each of these rows has tests for its pieces, but none runs its "Verify by"
 end to end with both halves. The gap is what #957 still has to close:
@@ -74,11 +81,6 @@ end to end with both halves. The gap is what #957 still has to close:
 - **Device trust.** The `device-trusted` attribute is tested on both sides
   (`TestAssembleAttributesDeviceTrustedGated`, `TestDeviceTrustAttrs`). Nothing
   shows an untrusted device being refused the dial.
-- **JIT elevation.** Listing, counting and the kill switch are each tested
-  (`TestUserAccessMap_CrossPillar`, `TestGetAccessOverview_CrossPillar`,
-  `TestKillSwitch_SeversAllPillars`). No single test runs the documented
-  sequence, and the kill-switch test checks neither the request's `expired`
-  status nor the `pam_jit_grants_revoked` field.
 
 ## Runs
 
