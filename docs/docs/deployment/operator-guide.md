@@ -217,7 +217,7 @@ relies on, where it is enforced, and the one-line check.
 | Production configuration | `ValidateProduction()` at boot | a deliberately insecure setting refuses to start and names itself |
 | App assignment as a grant | `/oauth/authorize` and the access proxy, when `ACCESS_ASSIGNMENT_ENFORCE=true` | an unassigned user is refused at authorize; the assignment report shows no unintended `would_deny` rows before you flip it |
 | Session and token revocation | `revoked_session:*` markers in Redis at refresh and userinfo; every sever path (kill switch, leaver, review revoke) calls one revocation package | revoke a test session in the console; the refresh dies and `/oauth/introspect` reads `active: false` |
-| MFA policy | `IsMFARequired` in the OAuth login path | a policy user is challenged; an exempt user is not |
+| MFA policy | `IsMFARequired` in the OAuth login path | with a policy on, a user with a factor is challenged; with it off, or with no factor, they are not |
 | Device trust | posture verdict becomes the `device-trusted` overlay attribute the Tier-2 dial policies require; only the device's own credential may report its posture | an untrusted device is denied the dial; an anonymous `POST /agent/report` is 401 |
 | Privileged reveal | `allow_reveal` and the grant ACL in the governance handler, and the reveal lands in the audit trail naming who and what | an ungranted user, and an administrator on an entry with `allow_reveal=false`, are both refused |
 | Audit integrity | a hash chain over sealed rows, keyed by `AUDIT_CHAIN_SECRET` | edit a sealed row directly and the verify endpoint reports `intact: false` naming the event; restore it and the chain is whole |

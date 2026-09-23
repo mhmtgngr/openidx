@@ -2988,6 +2988,11 @@ const tr: typeof en = {
       },
       policies: {
         resourceName: 'MFA politikaları',
+        whatItDoes:
+          'Bir politika etkinken, ikinci faktör kaydı olan her kullanıcıdan girişte bu faktör istenir ve kayıtlı herhangi bir faktör yeterlidir. Hiç faktör kaydı olmayan kullanıcıdan istenmez.',
+        notEnforcedBadge: 'kayıtlı ayarlar uygulanmıyor',
+        notEnforcedBody:
+          'Bu politika zorunlu yöntemler, ek süre veya koşullarla kaydedilmiş. Bunların hiçbiri uygulanmıyor: faktörü olan her kullanıcı için kayıtlı herhangi bir faktör politikayı karşılar.',
         title: 'MFA Politikaları',
         create: 'Politika Oluştur',
         loading: 'Politikalar yükleniyor...',
@@ -2996,13 +3001,10 @@ const tr: typeof en = {
         table: {
           name: 'Ad',
           description: 'Açıklama',
-          methods: 'Zorunlu Yöntemler',
-          gracePeriod: 'Tanıma Süresi',
           priority: 'Öncelik',
           enabled: 'Etkin',
           actions: 'İşlemler',
         },
-        graceHours: '{{n}} sa',
         confirmDelete: {
           title: 'MFA Politikasını Sil',
           description:
@@ -3020,15 +3022,15 @@ const tr: typeof en = {
         },
       },
       dialog: {
+        whatItDoes:
+          'Politika, ikinci faktör kaydı olan her kullanıcıya uygulanır ve kayıtlı herhangi bir faktör yeterlidir. Belirli yöntemleri, ek süreyi veya koşulları zorunlu kılmak henüz desteklenmiyor.',
         editTitle: 'MFA Politikasını Düzenle',
         createTitle: 'MFA Politikası Oluştur',
         name: 'Politika Adı *',
-        namePlaceholder: 'örn. Tüm Kullanıcılar İçin TOTP Zorunlu',
+        namePlaceholder: 'örn. Herkes için ikinci faktör',
         description: 'Açıklama',
         descriptionPlaceholder: 'Bu politika neyi zorunlu kılıyor?',
         priority: 'Öncelik (düşük = önce)',
-        gracePeriod: 'Tanıma Süresi (saat)',
-        requiredMethods: 'Zorunlu Yöntemler',
         enabled: 'Etkin',
         saving: 'Kaydediliyor...',
         update: 'Politikayı Güncelle',
