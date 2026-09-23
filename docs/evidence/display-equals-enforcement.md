@@ -42,7 +42,8 @@ one is not verified automatically yet; #957 tracks closing that.
 | Vault / PAM grant at reveal | `TestPrivilegedCredentialRevealIsGranted`, both halves | the integration job |
 | Vault / PAM grant at connect | `TestPamConnectFollowsTheGrant`: for each user, the entry list beside the connect handler. It covers a user grant, a group grant, no grant, a lapsed grant and a view-only grant | the unit job for `internal/access`, against a migrated Postgres |
 | JIT elevation | `TestJITElevationEndsAtTheKillSwitch`: the grant listed by User Access 360 and counted by the portal, then the kill switch through its route, with another user's elevation left alone | the unit job for `internal/access`, against a migrated Postgres |
-| Session, MFA policy, Device trust | Partly; see below | — |
+| Device trust at the dial | `TestPostureDecidesWhoDialsTheAdminPlane`, with `POSTURE_DEVICE_TRUST_GATE=enforce` and the dark-service tiers on (both are off by default). A compliant posture report grants `#device-trusted` and the admin plane is dialable. A failing report removes it and the dial is denied, while Tier 1 stays. In `observe`, nothing changes | the unit job for `internal/access`, against a migrated Postgres and a fake controller |
+| Session, MFA policy | Covered in the PRs that fixed them; see below | — |
 
 The ABAC tests cover all three states. In `enforce`, a deny policy refuses
 the subject it names with a 403 and records `access.abac.denied`. In
@@ -66,10 +67,10 @@ The access map's own tests ran on tables they created by hand, where the
 failing query was valid. The tests in this table run on the schema the product
 migrates to for that reason.
 
-### What the other three rows have today
+### The two rows whose tests arrive with their fixes
 
-Each of these rows has tests for its pieces, but none runs its "Verify by"
-end to end with both halves. The gap is what #957 still has to close:
+Mapping these rows found a divergence in each, so each row's two-sided test
+ships in the PR that fixes it:
 
 - **Session.** Revoking through the product found **#992**. A session a user
   ended from their Sessions page (`identity.TerminateSession`) lost its row but
@@ -85,15 +86,12 @@ end to end with both halves. The gap is what #957 still has to close:
   the login path (`TestMFAPolicyRaisesTheLoginChallenge`): with a policy on, a
   user with a factor is challenged; with it off, or with no factor, they are
   not.
-- **Device trust.** The `device-trusted` attribute is tested on both sides
-  (`TestAssembleAttributesDeviceTrustedGated`, `TestDeviceTrustAttrs`). Nothing
-  shows an untrusted device being refused the dial.
 
 ## Runs
 
 | Date | Who | Rows verified | Divergence found | Output |
 |---|---|---|---|---|
-| | | | | |
+| 2026-09-23 | Automated: the tests named above, run against a migrated Postgres 16 in a development container, not against a deployed install | Every row. Session and MFA are covered in #993 and #991, and identity-mode dial routes in #987 | #984 (proxy dial, identity-mode routes), #988 (User Access 360 answered 500), #990 (MFA methods and grace shown, not enforced), #992 (an ended session kept refreshing). Also a view-only PAM grant is offered Connect | #982, #985, #987, #989, #991, #993 |
 
 ## Notes for whoever runs this next
 
