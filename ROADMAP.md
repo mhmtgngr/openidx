@@ -61,6 +61,7 @@ evidence.
 | 13 | Supply chain and CI hygiene | [#967](https://github.com/mhmtgngr/openidx/issues/967) |
 | 14 | A release policy for the v2.0 LTS | [#968](https://github.com/mhmtgngr/openidx/issues/968) |
 | 15 | Site configuration moved out of the product tree | [#977](https://github.com/mhmtgngr/openidx/issues/977) |
+| 16 | OPA authorization made deployable: the policy parses, ships in the chart and is tested | [#980](https://github.com/mhmtgngr/openidx/issues/980) |
 
 ### M2 — First organizations (starts once the lite install works; the launch waits for M1) · [#969](https://github.com/mhmtgngr/openidx/issues/969)
 
