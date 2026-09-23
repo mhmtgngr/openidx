@@ -67,6 +67,11 @@ spec:
             - "--server"
             - "--addr=0.0.0.0:8281"
             - "--log-level=info"
+            # A ConfigMap mount holds each file twice: once at the top and
+            # once in a hidden timestamped directory. OPA loads both unless
+            # told to skip hidden entries, then refuses to start on
+            # "multiple default rules".
+            - "--ignore=.*"
             - "/policies"
           ports:
             - name: http

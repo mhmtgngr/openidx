@@ -26,7 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The Helm chart ships the OPA policy** (#980). The OPA pods used to run
   empty unless an operator created a ConfigMap, so every decision was
   undefined. They now load the policy the chart carries, or the ConfigMap
-  `opa.policyConfigMap` names, and a new policy rolls the pods.
+  `opa.policyConfigMap` names, and a new policy rolls the pods. OPA runs with
+  `--ignore=.*`, in the chart and in `dev-kube/opa.yaml`. A ConfigMap mount
+  also holds each file in a hidden directory, and without the flag OPA loaded
+  the policy twice and would not start ("multiple default rules"). A test
+  fails any manifest that mounts a ConfigMap at `/policies` without it.
 - **Decided: the event bus is not a hard dependency.** Two open plan items
   asked whether the audit indexer should move onto the outbox/NATS path with
   `StartESReconciler` retired, and whether the SSF transmitter and the

@@ -495,3 +495,56 @@ func TestNoInertPolicyFilesInTheTree(t *testing.T) {
 			authzPackage, strings.Join(inert, "\n  "))
 	}
 }
+
+// Kubernetes mounts a ConfigMap as a directory that holds each file twice:
+// once at the top, as a link, and once inside a hidden timestamped directory
+// that a hidden ..data link points at. `opa run` loads every file under the path
+// it is given, hidden ones included, so a policy read from a ConfigMap mount is
+// loaded twice, and OPA refuses to start with "multiple default rules
+// data.openidx.authz.allow found". That is how the chart's OPA crash-looped on
+// kind the first time the chart gave it a policy. --ignore=.* skips the hidden
+// entries and keeps the file itself.
+func TestOPAServersReadingAConfigMapSkipItsHiddenEntries(t *testing.T) {
+	var checked, missing []string
+	skip := map[string]bool{".git": true, "node_modules": true, "dist": true, "bin": true}
+	err := filepath.Walk(repoRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			if skip[info.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if ext := filepath.Ext(path); ext != ".yaml" && ext != ".yml" {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		src := string(raw)
+		if !strings.Contains(src, "mountPath: /policies") || !strings.Contains(src, "configMap:") {
+			return nil
+		}
+		checked = append(checked, path)
+		if !strings.Contains(src, "--ignore=.*") {
+			missing = append(missing, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s for OPA deployments: %v", repoRoot, err)
+	}
+	if len(checked) < 2 {
+		t.Fatalf("found %d manifest(s) mounting a ConfigMap at /policies; the Helm chart and "+
+			"dev-kube both do, so this sweep is no longer finding them: %v", len(checked), checked)
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		t.Errorf("OPA reads /policies from a ConfigMap mount without --ignore=.* in:\n  %s\n\n"+
+			"It will load the policy twice, once from the mount's hidden directory, and "+
+			"refuse to start.", strings.Join(missing, "\n  "))
+	}
+}
