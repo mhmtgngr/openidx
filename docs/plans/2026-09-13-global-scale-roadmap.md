@@ -1,5 +1,11 @@
 # Küresel Ölçek Dönüşümü — Faz Takvimi ve Yol Haritası
 
+> **⚠️ DONDURULDU — 2026-09-23.** Bu program, proje sahibinin kararıyla ([ADR 0001](../adr/0001-product-focus-and-trusted-core.md))
+> **dondurulmuştur.** Buradaki fazlar, takvim ve açık maddeler şu an uygulanmıyor. Öncelikler
+> [ROADMAP.md](../../ROADMAP.md)'dedir: M1 "Güvenilir Çekirdek" (v2.0 LTS). **Yeniden başlatma
+> tetikleyicisi:** birden fazla bölgeye ihtiyaç duyan ilk müşteri ya da MSP. Belge, tasarım
+> referansı olarak korunur; yeni iş eklenmez.
+>
 > **Tasarım:** `docs/architecture/2026-09-13-global-scale-cell-architecture-and-ddos.md`
 > **Görev listesi:** `docs/plans/2026-09-13-global-scale-cell-architecture-plan.md`
 > (görev numaraları — 0.1, 2.1, 3.4 … — oradaki başlıklardır; bu belge onları takvime bağlar,
