@@ -76,6 +76,9 @@ func findAuthzPolicies(t *testing.T) []authzPolicy {
 		}
 		switch filepath.Ext(path) {
 		case ".rego":
+			if isPolicyTest(path) {
+				return nil
+			}
 			raw, err := os.ReadFile(path)
 			if err != nil {
 				return nil
@@ -370,6 +373,73 @@ func firstDifference(want, got string) string {
 	return "the two differ only in trailing whitespace"
 }
 
+// isPolicyTest reports whether path is a rego test file, by OPA's own naming
+// convention. A test file is neither a copy of the policy nor inert: CI runs it
+// with `opa test` against the policy it tests, and
+// TestEveryPolicyTestIsRunByCI below fails if one sits anywhere CI does not.
+func isPolicyTest(path string) bool {
+	return strings.HasSuffix(path, "_test.rego")
+}
+
+// ciWorkflow is the workflow whose opa-policy job runs `opa test`.
+const ciWorkflow = "../../../.github/workflows/ci.yml"
+
+// A test file is exempt from the two sweeps in this file only because CI
+// evaluates it. That exemption must not become a place to hide rego nothing
+// runs, so every test file's directory has to be named in the `opa test`
+// command of the CI workflow.
+func TestEveryPolicyTestIsRunByCI(t *testing.T) {
+	raw, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	var testLine string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, "opa test ") && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			testLine = line
+			break
+		}
+	}
+	if testLine == "" {
+		t.Fatalf("%s runs no `opa test`, so no rego test file is evaluated by anything", ciWorkflow)
+	}
+
+	var tests []string
+	skip := map[string]bool{".git": true, "node_modules": true, "dist": true, "bin": true}
+	err = filepath.Walk(repoRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			if skip[info.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if isPolicyTest(path) {
+			tests = append(tests, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s for policy tests: %v", repoRoot, err)
+	}
+	if len(tests) == 0 {
+		t.Fatal("found no *_test.rego file; the policy's tests have moved or gone, and this " +
+			"guard would pass over their absence")
+	}
+	for _, path := range tests {
+		dir, err := filepath.Rel(repoRoot, filepath.Dir(path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(testLine, filepath.ToSlash(dir)) {
+			t.Errorf("%s is not run by CI: the `opa test` command in %s does not name %s:\n  %s",
+				path, ciWorkflow, filepath.ToSlash(dir), strings.TrimSpace(testLine))
+		}
+	}
+}
+
 // A .rego file that is not an openidx.authz policy cannot affect any decision
 // this product makes, and saying so needs no judgement: nothing in the Go tree
 // reads rego from disk or compiles it in-process, and go.mod carries no
@@ -400,7 +470,7 @@ func TestNoInertPolicyFilesInTheTree(t *testing.T) {
 			}
 			return nil
 		}
-		if filepath.Ext(path) != ".rego" {
+		if filepath.Ext(path) != ".rego" || isPolicyTest(path) {
 			return nil
 		}
 		raw, err := os.ReadFile(path)

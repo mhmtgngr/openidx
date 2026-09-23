@@ -207,6 +207,19 @@ There is no `OPA_DEV_MODE`. When OPA is unreachable the middleware fails closed
 in production and open elsewhere, which is a property of `APP_ENV` rather than a
 switch of its own.
 
+The policy the services query is `deployments/docker/opa/policies/authz.rego`.
+The compose stack mounts it into the `opa` container. The Helm chart ships a
+copy that the OPA pods load, unless `opa.policyConfigMap` names a ConfigMap of
+your own. CI checks that the policy parses and runs its tests
+(`deployments/docker/opa/tests`), and the kind job asks the running OPA for a
+decision.
+
+To put OPA in the request path, set `ENABLE_OPA_AUTHZ=true` for admin-api,
+governance-service and provisioning-service, and make sure `OPA_URL` reaches
+the OPA server. From then on, OPA refuses any request the policy does not
+grant. Read the policy's role table first: a caller whose roles are not in it
+is refused.
+
 ### Multi-factor authentication
 
 | Variable | Type | Default | Description |

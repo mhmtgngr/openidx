@@ -551,6 +551,9 @@ opa:
   enabled: true
   replicas: 2
   image: openpolicyagent/opa:0.61.0   # pinned with the compose stack
+  # Empty serves the policy the chart ships (files/opa/authz.rego). Name a
+  # ConfigMap of your own to serve that instead; its keys become the files
+  # under /policies.
   policyConfigMap: ""
   resources:
     requests:

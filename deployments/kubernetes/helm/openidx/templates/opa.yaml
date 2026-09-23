@@ -1,10 +1,11 @@
 {{- if .Values.opa.enabled }}
+{{- $policyConfigMap := .Values.opa.policyConfigMap | default (printf "%s-opa-policy" (include "openidx.fullname" .)) }}
 # Open Policy Agent — the engine behind config.opaUrl. The Service is named
 # literally `opa` (not fullname-prefixed) so the default
 # OPA_URL=http://opa:8281 resolves without configuration, matching the
-# compose stack. Policies come from an operator-created ConfigMap
-# (values: opa.policyConfigMap); without one OPA runs empty and every
-# governance query evaluates to undefined.
+# compose stack. The policy is the one the chart ships (opa-policy.yaml), or
+# an operator's ConfigMap named by opa.policyConfigMap. OPA used to run empty
+# unless an operator created one, and every decision was undefined (#980).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,6 +30,12 @@ spec:
       labels:
         {{- include "openidx.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: opa
+      {{- if not .Values.opa.policyConfigMap }}
+      annotations:
+        # A new policy in the chart rolls the pods. OPA reads /policies once
+        # at start, so a ConfigMap update alone would change nothing.
+        checksum/opa-policy: {{ .Files.Get "files/opa/authz.rego" | sha256sum }}
+      {{- end }}
     spec:
       # The static chaos drill (scripts/k8s-chaos-drill.sh --static) demands
       # the same four always-on settings of every Deployment; this one was
@@ -60,9 +67,7 @@ spec:
             - "--server"
             - "--addr=0.0.0.0:8281"
             - "--log-level=info"
-            {{- if .Values.opa.policyConfigMap }}
             - "/policies"
-            {{- end }}
           ports:
             - name: http
               containerPort: 8281
@@ -83,18 +88,14 @@ spec:
             {{- toYaml .Values.opa.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          {{- if .Values.opa.policyConfigMap }}
           volumeMounts:
             - name: policies
               mountPath: /policies
               readOnly: true
-          {{- end }}
-      {{- if .Values.opa.policyConfigMap }}
       volumes:
         - name: policies
           configMap:
-            name: {{ .Values.opa.policyConfigMap }}
-      {{- end }}
+            name: {{ $policyConfigMap }}
 ---
 apiVersion: v1
 kind: Service

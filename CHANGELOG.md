@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration that adds the column back.
 
 ### Changed
+- **The Helm chart ships the OPA policy** (#980). The OPA pods used to run
+  empty unless an operator created a ConfigMap, so every decision was
+  undefined. They now load the policy the chart carries, or the ConfigMap
+  `opa.policyConfigMap` names, and a new policy rolls the pods.
 - **Decided: the event bus is not a hard dependency.** Two open plan items
   asked whether the audit indexer should move onto the outbox/NATS path with
   `StartESReconciler` retired, and whether the SSF transmitter and the
@@ -491,6 +495,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after; a stub naming a missing source turns the build red.
 
 ### Fixed
+
+- **The OPA policy did not parse** (#980). A brace left over from trimming the
+  role table made `authz.rego`, and its copy in `dev-kube/opa.yaml`, a parse
+  error. OPA therefore served no `openidx.authz` rules, and
+  `ENABLE_OPA_AUTHZ=true` would have refused every guarded request. It parses
+  now. CI checks it and runs tests that hold both halves of each rule.
+- **provisioning-service had no `OPA_URL` in compose.** It wires OPA like
+  admin-api and governance-service, so with OPA on it would have asked
+  `localhost:8281`, where nothing listens.
 
 - **The Applications editor's "Require PKCE" box displayed a default and
   enforced nothing; it and the back-channel logout URI now read from and

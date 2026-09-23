@@ -221,6 +221,35 @@ jobs:
             || { echo "an explicit 7 did not render as 7"; exit 1; }
           echo "the enrolment quota renders absent->100, 0->0, 7->7"
 
+      # #980: the chart used to ship no policy, so OPA ran empty and every
+      # decision was undefined. By default the OPA pods now serve the policy
+      # the chart carries; an operator's ConfigMap replaces it, and the
+      # chart's own is then not rendered.
+      - name: OPA serves the policy the chart ships, or the operator's
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+          }
+          cm=$(render --show-only templates/opa-policy.yaml)
+          grep -q 'name: openidx-opa-policy' <<<"$cm" || { echo "the chart renders no OPA policy ConfigMap"; exit 1; }
+          # [.] rather than a literal dot, so this line is not itself found by
+          # the policy sweep in internal/common/opa/policy_input_test.go.
+          grep -q '^    package openidx[.]authz$' <<<"$cm" || { echo "the OPA policy ConfigMap carries no openidx.authz policy"; exit 1; }
+          opa=$(render --show-only templates/opa.yaml)
+          grep -q 'name: openidx-opa-policy' <<<"$opa" || { echo "the OPA pods do not mount the chart's policy"; exit 1; }
+          grep -q '"/policies"' <<<"$opa" || { echo "OPA is not told to load /policies"; exit 1; }
+          grep -q 'checksum/opa-policy:' <<<"$opa" || { echo "a policy change would not roll the OPA pods"; exit 1; }
+          if render --set opa.policyConfigMap=site-policy --show-only templates/opa-policy.yaml >/dev/null 2>&1; then
+            echo "the chart's policy is rendered next to the operator's"; exit 1
+          fi
+          grep -q 'name: site-policy' <<<"$(render --set opa.policyConfigMap=site-policy --show-only templates/opa.yaml)" \
+            || { echo "the OPA pods do not mount the operator's policy"; exit 1; }
+          echo "OPA serves the chart's policy by default and the operator's when named"
+
       # Origin cloaking (global-scale plan task 1.2): the ingress must refuse a
       # caller that does not carry the edge profile's own header. A network
       # allow-list is not enough on its own -- an Azure service tag admits
@@ -1383,6 +1412,31 @@ jobs:
             sleep 2
           done
           echo "opa did not answer /health"; exit 1
+
+      # #980: serving is not deciding. Ask the running OPA the question the
+      # middleware asks, at the path it asks it, once for a caller the policy
+      # grants and once for one it does not. An empty OPA answers neither.
+      - name: OPA decides with the policy the chart ships
+        run: |
+          set -euo pipefail
+          kubectl -n "$NS" port-forward svc/opa 8281:8281 >/dev/null 2>&1 &
+          pf=$!
+          trap 'kill $pf 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8281/health >/dev/null 2>&1 && break
+            sleep 2
+          done
+          decide() {
+            curl -fsS -X POST http://127.0.0.1:8281/v1/data/openidx/authz \
+              -H 'Content-Type: application/json' \
+              -d "{\"input\":{\"user\":{\"id\":\"u-1\",\"roles\":[\"$1\"],\"authenticated\":true},\"method\":\"$2\",\"path\":\"/api/v1/users\",\"resource\":{\"type\":\"user\"}}}" \
+              | jq -r '.result.allow'
+          }
+          got=$(decide admin DELETE)
+          test "$got" = "true" || { echo "OPA refused an admin (allow=$got): the chart's policy is not loaded"; exit 1; }
+          got=$(decide user GET)
+          test "$got" = "false" || { echo "OPA granted a plain user an admin read (allow=$got)"; exit 1; }
+          echo "OPA grants an admin and refuses a plain user with the chart's policy"
 
       - name: The backup CronJob and NetworkPolicies exist
         run: |

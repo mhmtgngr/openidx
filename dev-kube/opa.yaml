@@ -212,7 +212,6 @@ data:
             "POST": "org-admin",
             "PUT": "org-admin",
             "DELETE": "org-admin"
-        },
         }
     }
 
