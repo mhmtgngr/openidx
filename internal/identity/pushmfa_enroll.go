@@ -18,6 +18,7 @@ package identity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -35,6 +36,10 @@ type PushEnrollmentTicket struct {
 	QRPayload       string `json:"qr_payload"`
 }
 
+// errPushEnrollNoIssuer is returned when there is no public issuer URL to put
+// in the enrollment QR.
+var errPushEnrollNoIssuer = errors.New("push enrollment needs OAUTH_ISSUER, the public URL phones call back to")
+
 // pushEnrollQRPayload is the JSON encoded into the QR the phone scans. The app
 // recognizes type "openidx-push-enroll", connects to api_base, and completes
 // enrollment with token. account is a human label for the confirmation screen.
@@ -49,6 +54,13 @@ type pushEnrollQRPayload struct {
 // StartPushEnrollment mints a single-use, short-lived enrollment ticket for the
 // authenticated user and returns the QR payload the authenticator app scans.
 func (s *Service) StartPushEnrollment(ctx context.Context, userID string) (*PushEnrollmentTicket, error) {
+	// The phone calls back to this deployment's public issuer. Without one there
+	// is nowhere safe to send it: a built-in fallback would hand the enrollment
+	// token and the account name to some other deployment. Checked first, so no
+	// ticket is minted for a QR that could never be used.
+	if s.cfg == nil || s.cfg.OAuthIssuer == "" {
+		return nil, errPushEnrollNoIssuer
+	}
 	if s.redis == nil {
 		return nil, fmt.Errorf("enrollment temporarily unavailable")
 	}
@@ -76,9 +88,6 @@ func (s *Service) StartPushEnrollment(ctx context.Context, userID string) (*Push
 	}
 
 	apiBase := s.cfg.OAuthIssuer
-	if apiBase == "" {
-		apiBase = "https://openidx.tdv.org"
-	}
 	payload, _ := json.Marshal(pushEnrollQRPayload{
 		Type:    "openidx-push-enroll",
 		APIBase: apiBase,

@@ -49,17 +49,18 @@ COPY ${SRC_DIR}/ ./
 COPY api/openapi/ /api/openapi/
 
 # Build arguments for production environment
-ARG VITE_API_URL=https://openidx.tdv.org
+# Empty = same-origin: the console calls the host it is served from.
+ARG VITE_API_URL=
 ARG VITE_KEYCLOAK_URL=
 ARG VITE_KEYCLOAK_REALM=
 ARG VITE_KEYCLOAK_CLIENT_ID=
 ARG VITE_AUTH_PROVIDER=openidx
-ARG VITE_OAUTH_URL=https://openidx.tdv.org
+ARG VITE_OAUTH_URL=
 ARG VITE_OAUTH_CLIENT_ID=admin-console
 ARG VITE_APP_NAME=OpenIDX
 ARG VITE_APP_ENV=production
 ARG VITE_PRIMARY_COLOR=#3b82f6
-ARG VITE_SUPPORT_EMAIL=support@tdv.org
+ARG VITE_SUPPORT_EMAIL=
 
 # Set as environment variables for build
 ENV VITE_API_URL=${VITE_API_URL} \

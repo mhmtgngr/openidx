@@ -145,7 +145,7 @@ func main() {
 	var (
 		srcDir   = flag.String("src", "web/admin-console/src", "admin console source directory")
 		probe    = flag.Bool("probe", false, "live-probe each GET endpoint and diff keys")
-		baseURL  = flag.String("base", "https://openidx.tdv.org", "base URL for live probing")
+		baseURL  = flag.String("base", "http://localhost:8088", "base URL for live probing")
 		tokenF   = flag.String("token-file", "/tmp/admintoken.txt", "file containing a bearer token")
 		insecure = flag.Bool("insecure", defaultInsecure,
 			"skip TLS verification when probing (for a self-signed local edge; off by default)")

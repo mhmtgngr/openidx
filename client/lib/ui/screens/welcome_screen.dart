@@ -25,7 +25,9 @@ class WelcomeScreen extends ConsumerStatefulWidget {
 
 class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
   final _serverController =
-      TextEditingController(text: 'https://openidx.tdv.org');
+      // Empty unless the build names a server:
+      //   flutter build ... --dart-define=OPENIDX_DEFAULT_SERVER=https://idp.example.com
+      TextEditingController(text: const String.fromEnvironment('OPENIDX_DEFAULT_SERVER'));
   bool _busy = false;
   String? _error;
   bool _showEnroll = false;
