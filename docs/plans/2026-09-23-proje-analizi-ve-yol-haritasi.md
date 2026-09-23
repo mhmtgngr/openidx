@@ -58,7 +58,7 @@ gösteriyor:
 | Sürümler | v1.0.0 (2026-05-22) → v1.36.0 (2026-09-18): 4 ayda 65 sürüm, bunların 43'ü Temmuz'da |
 | Kullanım sinyali | v1.36.0'ın tüm dosyaları 0 kez indirilmiş. 0 yıldız, 1 fork |
 | Go backend | Testler hariç yaklaşık 222 bin satır, ayrıca yaklaşık 173 bin satır test. 41 `internal` paketi, 8 servis, 202 veritabanı göçü |
-| Backend doğrulaması | `go build ./...` hatasız tamamlanıyor. Tam `go vet` ve birim test koşusunun sonuçları Ek A'da |
+| Backend doğrulaması | `go build` ve `go vet` temiz. `go test -short` sonucu: 110 paket geçti, 0 başarısız. Toplam 3.997 testin 3.316'sı geçti, 681'i atlandı (çoğu Postgres istiyor). Postgres ile koşulan 6 çekirdek pakette 1.715 test geçti, 0 başarısız. `govulncheck` 0 erişilebilir açık buldu. Çekirdek paketlerde kapsam veritabanısız %6–23, veritabanıyla %31–49 |
 | Web konsolu | React 19 ve strict TypeScript. 106 sayfa rotası, yaklaşık 94 bin satır (18,5 bini çeviri). 1.241 birim testi. 50 e2e senaryo dosyasından yalnızca 12'si CI'da koşuyor |
 | İstemciler | Flutter (6,5 bin satır Dart), Go ajanı (10,5 bin satır kod + 7,7 bin satır test), Kotlin Android ajanı (3,5 bin satır, **0 test**) |
 | CI | 15 workflow (8.472 satır). Go kodu değiştiren bir PR yaklaşık 82 iş çalıştırıyor. 37 kontrol betiği ve 19 Go aracı var |
@@ -90,6 +90,10 @@ gösteriyor:
    - Kontrol listeleri elle tutulmuyor, workflow dosyalarından türetiliyor.
    - Checksum dosyası ve Helm chart'ı cosign ile anahtarsız imzalanıyor.
    - Bir tehdit modeli ve uyum eşlemesi (SOC 2, ISO 27001, GDPR) var.
+   - Derleme, vet ve testler temiz; `govulncheck` erişilebilir açık bulmuyor.
+   - Göç zinciri geri alınıp yeniden uygulanabiliyor.
+   - Üretimde zayıf sırlarla, joker CORS ile ya da TLS'siz veritabanı/Redis
+     bağlantısıyla açılış reddediliyor.
 4. **Ürün sahada kullanılıyor.** Canlı bir kurumsal kurulum var ve sahada bulunan
    hatalar CI kapsamına geri besleniyor. Bu kurum, "ilk müşteri" (customer zero)
    olarak son derece değerli.
@@ -232,7 +236,41 @@ Aynı dosyada başka sorunlar da var:
 - **Sızan gerçek bir API anahtarı yakalanmaz.** gitleaks istisna listesindeki
   `^oidx_[0-9a-f]{64}$` kalıbı, gerçek API anahtarlarının biçimiyle birebir eşleşiyor.
 
-### R7 — Benimsenmeyi sağlayacak altyapı yok (Orta-yüksek)
+### R7 — Backend'de doğrulama boşlukları ve yapısal borç (Orta-yüksek)
+
+- **Güvenlik testlerinin bir kısmı CI'da hiç koşmuyor.** Veritabanı gerektiren 19
+  güvenlik testi, CI'daki elle yazılmış `-run` desenlerinin hiçbirine uymuyor.
+  Bunlar arasında şunlar var: rol veya grup kaldırıldığında token'ların geri alınması,
+  yetki yükseltmesinin süresinin dolması ve kimlik bağlantılarında kiracı izolasyonu.
+  Testler yerelde geçiyor ama CI onları hiç çalıştırmıyor.
+- **RLS atlatma mekanizması zayıf.** Kiracı izolasyonu, `app.bypass_rls` ayarı `on`
+  olduğunda devre dışı kalıyor. Uygulama rolüyle çalışan herhangi bir SQL bu ayarı
+  açabilir; dolayısıyla tek bir SQL enjeksiyonu tüm izolasyonu aşabilir. Ayrıca süper
+  kullanıcı bağlantısı RLS'i sessizce devre dışı bırakıyor ve servisler açılışta bunu
+  kontrol etmiyor.
+- **Göç (migration) çalıştırıcısı kırılgan.**
+  - Hangi göçlerin uygulanacağına kilidi almadan önce karar veriyor.
+  - Göçü ve kaydını ayrı işlemlerde yapıyor.
+  - Kilidi 15 dakika sonra başka bir süreç çalabiliyor.
+  - SQL'i satır satır bölüyor; 53 göç bu yüzden geçici çözüm yorumları taşıyor.
+  - İndeksleri eşzamanlı (`CONCURRENTLY`) kuramıyor, bu yüzden büyük tablolarda indeks
+    kurulumu yazmaları bloke ediyor.
+- **Ölü kod ve gösterişten ibaret yapılar.**
+  - Hiçbir binary'nin içe aktarmadığı 13 paket (6.775 satır) var; mevcut
+    `deadservice` denetimi bunları göremiyor.
+  - Canlı paketlerin içinde ayrıca 419 erişilemeyen fonksiyon var.
+  - AI ajan kaydının arkasında bir çalışma zamanı yok.
+  - Outbox tablosunu okuyan bir relay var ama tabloya yazan kimse yok.
+- **Kod yapısı ağırlaşıyor.**
+  - Servisler aynı 222 tablolu şemayı paylaşıyor ve birbirlerinin alan paketlerini
+    doğrudan içe aktarıyor; yani bu bir "dağıtık monolit".
+  - Tek süreçte çalışan bir "hepsi bir arada" mod yok.
+  - En büyük dosyalar: `internal/identity/service.go` 7.264 satır; `access.Service`
+    tipinin 523 metodu var.
+  - 169 handler dosyasının 121'inde satır içi SQL var ve tipli bir sorgu katmanı yok.
+  - Yanıtlar büyük ölçüde tipsiz: 3.295 `gin.H{}` kullanımı.
+
+### R8 — Benimsenmeyi sağlayacak altyapı yok (Orta-yüksek)
 
 - **Doküman sitesi hiç yayımlanmadı.** GitHub Pages kapalı.
 - **README'deki topluluk ve destek bağlantıları çalışmıyor.** `docs.openidx.io` yok,
@@ -250,7 +288,7 @@ Aynı dosyada başka sorunlar da var:
 - **Rakip ürünlerden geçiş aracı yok.** Keycloak, Okta, Entra ya da CyberArk'tan veri
   içe aktarılamıyor.
 
-### R8 — Bakım yükü ve tek kişiye bağımlılık (Orta)
+### R9 — Bakım yükü ve tek kişiye bağımlılık (Orta)
 
 - **Proje tek kişiye bağlı (bus factor = 1).** CODEOWNERS'ta tek bir kişi var.
   19–20 Eylül'de yalnızca iki günde 25 PR birleştirilmiş ve bunları inceleyen ikinci bir
@@ -321,7 +359,7 @@ insan tarafından onaylanmış bir cevabı olması demektir. Taslak öneri:
 | 4 | Kuruma özgü değerleri ürün kodundan çıkarın. Konsol varsayılan olarak kendi origin'ini kullansın. Site dosyaları ayrı ve özel bir dağıtım reposuna ya da bir overlay'e taşınsın | R5 | S–M |
 | 5 | Bekleyen PR'ları kapatın. Dependabot PR'larını birleştirin ya da kapatın ve Renovate'in gerçekten çalıştığını doğrulayın. #881 ile #824'e yanıt verin. Birleşmiş dalları temizleyin | Depo hijyeni ve katkıcılara saygı | S |
 | 6 | Tek sayfalık ürün tanımını (bölüm 5) onaylayın. Kök dizine İngilizce, tek sayfalık bir `ROADMAP.md` koyun ve işleri GitHub Issues ile Milestones'a taşıyın. Diğer plan belgelerini "tarihli kayıt" olarak işaretleyin | R4 | M |
-| 7 | Kök dizine bir `CLAUDE.md` / `AGENTS.md` dosyası olarak bir **AI çalışma anlaşması** yazın. Temel kuralları aşağıdaki listede | R2, R4, R8 | S |
+| 7 | Kök dizine bir `CLAUDE.md` / `AGENTS.md` dosyası olarak bir **AI çalışma anlaşması** yazın. Temel kuralları aşağıdaki listede | R2, R4, R9 | S |
 | 8 | Küresel ölçek programını resmî olarak dondurun. Planın başına şu notu ekleyin: "Donduruldu; yeniden başlatma tetikleyicisi: çok bölge isteyen ilk müşteri" | R3 | S |
 
 7. işteki AI çalışma anlaşmasının temel kuralları:
@@ -376,6 +414,16 @@ kriterlerinin tamamı sağlandığında biter:
      Deneysel) alır.
    - README, `SECURITY.md`, `CONTRIBUTING.md` ve `docs/PRODUCTION-READINESS.md`
      güncellenir.
+9. **Backend sağlamlığı.**
+   - Veritabanı gerektiren tüm testler CI'da koşar. Bunun için ilgili paketler, isim
+     desenleriyle seçilmek yerine bütün olarak çalıştırılır.
+   - Üretimde süper kullanıcı veya BYPASSRLS rolüyle açılış reddedilir.
+   - RLS atlatma, ayarlanabilir bir değişken yerine ayrı bir role ve bağlantı havuzuna
+     taşınır.
+   - Göç çalıştırıcısı düzeltilir: kilit alındıktan sonra uygulanmış göçler yeniden
+     okunur, göç ve kaydı tek işlemde yapılır ve Postgres advisory lock kullanılır.
+   - Kullanılmayan 13 paket ve ölü kod silinir. Ölü kod denetimi `go list -deps` ya da
+     x/tools `deadcode` üzerine kurulur.
 
 ### 6.3 M2 — İlk kurumlar (M1 ile kısmen paralel, 1–3 ay)
 
@@ -486,33 +534,44 @@ kriterlerinin tamamı sağlandığında biter:
     - Yük devretme test edilmiş olmalı.
 
     Orta ölçekli bir kurum için küresel hücre mimarisinden çok daha değerli.
-12. **Farklılaştırıcı bahis: AI ajanları için ayrıcalıklı erişim.** Kapsamı:
+12. **Kod yapısının sadeleştirilmesi.**
+    - Servisler için ortak bir başlangıç paketi çıkarın. Bugün her servisin
+      `main.go` dosyasının yaklaşık %46'sı birbirinin aynısı.
+    - gateway-service ile APISIX arasında bir seçim yapın.
+    - `internal/access` paketini ZTNA/Ziti, PAM, uzaktan destek ve cihaz duruşu
+      paketlerine bölün.
+    - Tipli sorgular (ör. sqlc) ve tipli yanıtlar benimseyin; OpenAPI tanımlarını
+      bunlardan üretin.
+    - İsteğe bağlı olarak tüm servisleri tek süreçte çalıştıran bir "hepsi bir arada"
+      mod ekleyin. Bu, hafif kurulumu çok kolaylaştırır.
+13. **Farklılaştırıcı bahis: AI ajanları için ayrıcalıklı erişim.** Kapsamı:
     - ajanlara kimlik vermek,
     - RFC 8693 ile yetki devri,
     - JIT onay, oturum kaydı ve kill switch,
     - MCP sunucularına OAuth 2.1 tabanlı yetkilendirme.
 
     Bu, 2026'nın en hızlı büyüyen kimlik alanı ve OpenIDX'in birleşik kontrol düzlemi
-    buna doğal olarak uyuyor. Dar bir kapsamla başlanmalı.
+    buna doğal olarak uyuyor. Dar bir kapsamla başlanmalı. Önce mevcut boşluk
+    kapanmalı: bugünkü AI ajan kaydının arkasında çalışan bir zorlama yok (R7).
 
 ### Daha sonra: talep geldikçe
 
-13. **Küresel hücre mimarisi ve çok bölge.** Çok bölge isteyen ilk müşteri ya da MSP ile
+14. **Küresel hücre mimarisi ve çok bölge.** Çok bölge isteyen ilk müşteri ya da MSP ile
     başlatılır; tasarım belgeleri hazır.
-14. **MSP özellikleri.** Kiracı başına overlay ayrımı, bir MSP yönetim konsolu, faturalama
+15. **MSP özellikleri.** Kiracı başına overlay ayrımı, bir MSP yönetim konsolu, faturalama
     ve kotalar.
-15. **Tehdit tespiti ve modern giriş.**
+16. **Tehdit tespiti ve modern giriş.**
     - Kimlik tehdidi tespiti ve müdahalesi (ITDR),
     - EDR/MDM duruş entegrasyonları,
     - passkey öncelikli giriş,
     - cihaza bağlı oturumlar.
-16. **Standartlar, müşteri çıktıkça.**
+17. **Standartlar, müşteri çıktıkça.**
     - AB müşterisi olursa OpenID4VP ve AB dijital kimlik cüzdanı; ayrıca OpenID
       Federation.
     - Açık bankacılık müşterisi olursa FAPI 2.0.
-17. **Yeni platformlar.** iOS istemcisi (#881 dış katkısı üzerinden) ve bir macOS ajan
+18. **Yeni platformlar.** iOS istemcisi (#881 dış katkısı üzerinden) ve bir macOS ajan
     paketi.
-18. **Sertifikasyonlar.** SOC 2, ISO 27001 ve FIPS 140-3. Bunlar ticari tüzel kişilik
+19. **Sertifikasyonlar.** SOC 2, ISO 27001 ve FIPS 140-3. Bunlar ticari tüzel kişilik
     kurulduktan ve yönetilen hizmet (SaaS) kararı verildikten sonra gündeme gelir.
 
 ---
@@ -586,9 +645,17 @@ kriterlerinin tamamı sağlandığında biter:
     koşulduklarında geçtiler.
   - `npm run build` başarılı.
 - **Go ajanı.** `go build`, `go vet` (Windows hedefi dahil) ve testler geçti.
-- **Backend.** `go build ./...` hatasız tamamlandı (Go 1.26.8). Tam `go vet` ve birim
-  test koşusu bu belgenin ilk sürümüne yetişmedi; sonuçlar ayrı bir commit'le
-  eklenecek.
+- **Backend (Go 1.26.8).**
+  - `go build ./...` ve `go vet ./...` bulgusuz tamamlandı.
+  - `go test -count=1 -short -cover ./...` sonucu: 110 paket geçti, 0 başarısız, 19
+    pakette test yok.
+  - Tek geçici Postgres 16 ve Redis 7 üzerinde koşulanlar:
+    - governance, audit, provisioning, oauth, identity ve access paketleri:
+      1.715 test geçti, 0 başarısız.
+    - RLS paketi (süper kullanıcı olmayan rolle): 32 test geçti.
+    - Göç zinciri v1 → v202 → 0 → v202 gidiş-dönüşü başarılı.
+  - `govulncheck` 0 erişilebilir açık buldu.
+  - x/tools `deadcode` 419 erişilemeyen fonksiyon buldu.
 - **GitHub verileri.** 2026-09-23'te GitHub API'den okundu.
   - v1.36.0 sürümündeki dosyaların indirme sayısı 0.
   - `main` üzerindeki son Documentation çalıştırmalarının hepsi `actions/deploy-pages`
