@@ -330,6 +330,10 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      # Enforcement switches (#956). The fallbacks keep an install whose .env
+      # predates them on today's behaviour; scripts/generate-secrets.sh writes
+      # the fresh-install values (assignment enforced, ABAC in observe).
+      - ABAC_ENFORCE=${ABAC_ENFORCE:-off}
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
@@ -582,6 +586,11 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      # Enforcement switches (#956). The fallbacks keep an install whose .env
+      # predates them on today's behaviour; scripts/generate-secrets.sh writes
+      # the fresh-install values (assignment enforced, ABAC in observe).
+      - ACCESS_ASSIGNMENT_ENFORCE=${ACCESS_ASSIGNMENT_ENFORCE:-false}
+      - ABAC_ENFORCE=${ABAC_ENFORCE:-off}
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
@@ -1279,6 +1288,11 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      # Enforcement switches (#956). The fallbacks keep an install whose .env
+      # predates them on today's behaviour; scripts/generate-secrets.sh writes
+      # the fresh-install values (assignment enforced, ABAC in observe).
+      - ACCESS_ASSIGNMENT_ENFORCE=${ACCESS_ASSIGNMENT_ENFORCE:-false}
+      - ABAC_ENFORCE=${ABAC_ENFORCE:-off}
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.

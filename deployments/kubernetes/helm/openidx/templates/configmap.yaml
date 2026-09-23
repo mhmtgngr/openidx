@@ -46,6 +46,14 @@ data:
   # Bot gate at the login door (global-scale plan task 1.4): off | observe |
   # enforce. Start in observe and read the bot_gate audit rows before enforce.
   BOT_GATE: {{ .Values.config.botGate | default "off" | quote }}
+  # Application assignment as a grant (#956): an unassigned user is refused at
+  # /oauth/authorize, the access proxy and the Ziti dial. true on a fresh
+  # install; an upgrade keeps what the running release has, and a release
+  # that predates this key stays report-only until the operator sets it.
+  ACCESS_ASSIGNMENT_ENFORCE: {{ include "openidx.installDefault" (dict "ctx" . "key" "ACCESS_ASSIGNMENT_ENFORCE" "value" .Values.config.accessAssignmentEnforce "install" "true" "upgrade" "false") | quote }}
+  # Attribute-based policies (#956): off | observe | enforce. A fresh install
+  # evaluates and audits in observe; an upgrade keeps its current mode.
+  ABAC_ENFORCE: {{ include "openidx.installDefault" (dict "ctx" . "key" "ABAC_ENFORCE" "value" .Values.config.abacEnforce "install" "observe" "upgrade" "off") | quote }}
   LOGIN_FAIL_CHALLENGE_AFTER: {{ .Values.config.loginFailChallengeAfter | default 5 | quote }}
   LOGIN_FAIL_WINDOW_SECONDS: {{ .Values.config.loginFailWindowSeconds | default 900 | quote }}
   # Per-tenant device-enrolment quota (rolling hour, every mint site). 0 = off,

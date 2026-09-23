@@ -221,6 +221,43 @@ jobs:
             || { echo "an explicit 7 did not render as 7"; exit 1; }
           echo "the enrolment quota renders absent->100, 0->0, 7->7"
 
+      # #956: a fresh install enforces application assignment and puts ABAC in
+      # observe, while an upgrade from a release that predates the two keys
+      # stays on the old report-only values, and an explicit value always wins.
+      # `helm template` sees no cluster, so a plain render is the fresh-install
+      # case and --is-upgrade the predates-the-keys case. The bundled
+      # datastores refuse an upgrade render without their passwords, hence the
+      # render-only values on that call. Keeping a running release's value is
+      # checked against a live cluster in the kind job.
+      - name: Enforcement defaults differ for an install and an upgrade
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+          }
+          upgrade() {
+            render --is-upgrade \
+              --set global.postgresql.auth.password=render-only-not-a-credential \
+              --set global.redis.password=render-only-not-a-credential "$@"
+          }
+          expect() { grep -q "$1" <<<"$2" || { echo "$3"; exit 1; }; }
+          r=$(render)
+          expect 'ACCESS_ASSIGNMENT_ENFORCE: "true"' "$r" "a fresh install does not enforce application assignment"
+          expect 'ABAC_ENFORCE: "observe"' "$r" "a fresh install does not put ABAC in observe"
+          r=$(upgrade)
+          expect 'ACCESS_ASSIGNMENT_ENFORCE: "false"' "$r" "an upgrade from a release without the key turned assignment enforcement on"
+          expect 'ABAC_ENFORCE: "off"' "$r" "an upgrade from a release without the key changed the ABAC mode"
+          r=$(render --set config.accessAssignmentEnforce=false --set config.abacEnforce=enforce)
+          expect 'ACCESS_ASSIGNMENT_ENFORCE: "false"' "$r" "an explicit false lost to the install default"
+          expect 'ABAC_ENFORCE: "enforce"' "$r" "an explicit enforce lost to the install default"
+          r=$(upgrade --set config.accessAssignmentEnforce=true --set config.abacEnforce=enforce)
+          expect 'ACCESS_ASSIGNMENT_ENFORCE: "true"' "$r" "an explicit true lost to the upgrade default"
+          expect 'ABAC_ENFORCE: "enforce"' "$r" "an explicit enforce lost to the upgrade default"
+          echo "enforcement defaults: install true/observe, upgrade false/off, explicit always wins"
+
       # Origin cloaking (global-scale plan task 1.2): the ingress must refuse a
       # caller that does not carry the edge profile's own header. A network
       # allow-list is not enough on its own -- an Azure service tag admits
@@ -1333,6 +1370,26 @@ jobs:
           succeeded=$(kubectl -n "$NS" get job "$RELEASE-migrate" -o jsonpath='{.status.succeeded}')
           test "${succeeded:-0}" -ge 1 || { echo "migrate Job did not succeed"; exit 1; }
           echo "migrate Job succeeded"
+
+      # #956: the fresh install above must have written the fresh-install
+      # enforcement values, and an upgrade must keep them. --dry-run=server
+      # renders against this live cluster, so the chart's lookup of its own
+      # ConfigMap runs for real, and nothing is applied.
+      - name: An upgrade keeps the running release's enforcement values
+        run: |
+          set -euo pipefail
+          live=$(kubectl -n "$NS" get configmap "$RELEASE-config" \
+            -o jsonpath='{.data.ACCESS_ASSIGNMENT_ENFORCE}/{.data.ABAC_ENFORCE}')
+          test "$live" = "true/observe" || { echo "the fresh install wrote $live, want true/observe"; exit 1; }
+          if ! rendered=$(helm upgrade "$RELEASE" "$CHART" --namespace "$NS" \
+              --values "$CHART/values-ci.yaml" --dry-run=server 2>/tmp/upgrade-dry-run.err); then
+            cat /tmp/upgrade-dry-run.err; exit 1
+          fi
+          grep -q 'ACCESS_ASSIGNMENT_ENFORCE: "true"' <<<"$rendered" \
+            || { echo "an upgrade dropped the assignment enforcement the running release has"; exit 1; }
+          grep -q 'ABAC_ENFORCE: "observe"' <<<"$rendered" \
+            || { echo "an upgrade changed the ABAC mode the running release has"; exit 1; }
+          echo "fresh install wrote true/observe, and an upgrade keeps them"
 
       - name: The schema actually landed
         run: |

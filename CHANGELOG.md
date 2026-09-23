@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration that adds the column back.
 
 ### Changed
+- **Fresh installs enforce application assignment and run ABAC in `observe`**
+  (#956). `scripts/generate-secrets.sh` and the Helm chart write these
+  values. An existing install keeps its values until the operator changes
+  them; the order to do that in is in the configuration reference.
+- **An `off`/`observe`/`enforce` setting with an unknown value now stops the
+  service at startup** and names the setting. Check the values of
+  `ABAC_ENFORCE`, `STEPUP_GATE`, `BOT_GATE`, `PAM_SESSION_RISK_GATE`,
+  `PAM_REQUIRE_ZTNA`, `POSTURE_DEVICE_TRUST_GATE`, `DEVICE_AUTOTRUST_MODE` and
+  `RATELIMIT_COST_MODE` before upgrading.
 - **Decided: the event bus is not a hard dependency.** Two open plan items
   asked whether the audit indexer should move onto the outbox/NATS path with
   `StartESReconciler` retired, and whether the SSF transmitter and the
@@ -491,6 +500,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after; a stub naming a missing source turns the build red.
 
 ### Fixed
+- **`PAM_SESSION_RISK_GATE` terminated sessions on "Off" or "OBSERVE".** It
+  compared the raw value, so any spelling other than exactly `off` or
+  `observe` enforced. It now reads the value the way every other gate does.
 
 - **The Applications editor's "Require PKCE" box displayed a default and
   enforced nothing; it and the back-channel logout URI now read from and
