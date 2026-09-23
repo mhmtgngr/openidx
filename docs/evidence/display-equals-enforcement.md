@@ -38,10 +38,11 @@ one is not verified automatically yet; #957 tracks closing that.
 | App assignment at the Ziti dial, BrowZer routes | `TestZitiDialFollowsApplicationAssignment`: the Dial policy the reconciler writes, and the attributes the user sync builds | the unit job for `internal/access`, against a migrated Postgres and a fake controller |
 | App assignment at the Ziti dial, identity-mode routes | None. Under enforcement the access proxy loses its own dial on these routes (#984) | — |
 | ABAC policy | `TestEvaluateAgainstTheMigratedSchema` (the evaluator), `TestABACGateAtAuthorization` (the token endpoint), `TestABACGateAtTheProxy` (the proxy) | the unit jobs, against a migrated Postgres |
+| Role at an admin route | `TestARealTokenOpensAnAdminRouteOnlyForAMember`. The issuer mints the token from `user_roles` and publishes its key at its JWKS. `middleware.Auth` verifies the token against that JWKS, and `RequireRoles` reads the claim. Covered: a member, a non-member, a lapsed time-bound role, a role removed before minting, and a forged token | the unit job for `internal/oauth`, against a migrated Postgres |
 | Vault / PAM grant at reveal | `TestPrivilegedCredentialRevealIsGranted`, both halves | the integration job |
 | Vault / PAM grant at connect | `TestPamConnectFollowsTheGrant`: for each user, the entry list beside the connect handler. It covers a user grant, a group grant, no grant, a lapsed grant and a view-only grant | the unit job for `internal/access`, against a migrated Postgres |
 | JIT elevation | `TestJITElevationEndsAtTheKillSwitch`: the grant listed by User Access 360 and counted by the portal, then the kill switch through its route, with another user's elevation left alone | the unit job for `internal/access`, against a migrated Postgres |
-| Role / group, Session, MFA policy, Device trust | Partly; see below | — |
+| Session, MFA policy, Device trust | Partly; see below | — |
 
 The ABAC tests cover all three states. In `enforce`, a deny policy refuses
 the subject it names with a 403 and records `access.abac.denied`. In
@@ -65,16 +66,11 @@ The access map's own tests ran on tables they created by hand, where the
 failing query was valid. The tests in this table run on the schema the product
 migrates to for that reason.
 
-### What the other four rows have today
+### What the other three rows have today
 
 Each of these rows has tests for its pieces, but none runs its "Verify by"
 end to end with both halves. The gap is what #957 still has to close:
 
-- **Role / group.** `TestAdminRouteGating`, `TestRequireAdminUnlessSelfService`
-  and `TestRequireAdmin` check both halves at the gate, with roles put straight
-  into the request context. No test logs in, gets a real token and probes an
-  admin route as a member and then as a non-member. `RequirePermission` is not
-  mounted in any test.
 - **Session.** Revoking through the product found **#992**. A session a user
   ended from their Sessions page (`identity.TerminateSession`) lost its row but
   not its refresh tokens, so the signed-out device went on refreshing. The fix
@@ -106,6 +102,10 @@ end to end with both halves. The gap is what #957 still has to close:
 - ABAC's row has three states, not two. Check the console's mode badge first —
   a deny that does not deny is correct behaviour in `observe`, and a defect in
   `enforce`.
+- A role removed from a user is missing from the next token they get. A token
+  minted before the removal still carries the role until it expires, unless
+  the path that removed it also cuts the user's tokens (see `TokenCarries` in
+  `internal/jitgrant`).
 - Session revocation has a latency floor: the marker is written synchronously,
   but a token already minted stays valid until its TTL. Verify the refresh
   path, not the access token.
