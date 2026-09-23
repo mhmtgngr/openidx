@@ -1604,6 +1604,47 @@ func validate(cfg *Config) error {
 	if cfg.Port < 1 || cfg.Port > 65535 {
 		return fmt.Errorf("port must be between 1 and 65535")
 	}
+	return validateTriStateSettings(cfg)
+}
+
+// triStateSettings lists every off|observe|enforce switch. Each gate's own
+// parser (abac.ParseMode, stepup.ParseMode, botgate.ParseMode, ...) reads a
+// value it does not recognise as off, so that a typo can never switch
+// enforcement on. That protects people from a lockout, but it also let
+// ABAC_ENFORCE=enfroce look like a working control while deciding nothing.
+// Refusing to start on such a value closes both doors: nothing enforces by
+// accident, and nothing reads as enforcing when it is not. The boolean
+// switches (ACCESS_ASSIGNMENT_ENFORCE, ENABLE_OPA_AUTHZ) need no entry here:
+// Load already refuses a value like "yes" or "enforce" for them.
+var triStateSettings = []struct {
+	env   string
+	value func(*Config) string
+}{
+	{"ABAC_ENFORCE", func(c *Config) string { return c.ABACEnforce }},
+	{"STEPUP_GATE", func(c *Config) string { return c.StepUpGate }},
+	{"BOT_GATE", func(c *Config) string { return c.BotGate }},
+	{"PAM_SESSION_RISK_GATE", func(c *Config) string { return c.PAMSessionRiskGate }},
+	{"PAM_REQUIRE_ZTNA", func(c *Config) string { return c.PAMRequireZTNA }},
+	{"POSTURE_DEVICE_TRUST_GATE", func(c *Config) string { return c.PostureDeviceTrustGate }},
+	{"DEVICE_AUTOTRUST_MODE", func(c *Config) string { return c.DeviceAutotrustMode }},
+	{"RATELIMIT_COST_MODE", func(c *Config) string { return c.RateLimitCostMode }},
+}
+
+// validateTriStateSettings accepts off, observe and enforce in any case and
+// with surrounding space, which is how every gate's parser reads them, and
+// accepts an empty value, which is the setting left unset and means off.
+func validateTriStateSettings(cfg *Config) error {
+	var bad []string
+	for _, s := range triStateSettings {
+		switch strings.ToLower(strings.TrimSpace(s.value(cfg))) {
+		case "", "off", "observe", "enforce":
+		default:
+			bad = append(bad, fmt.Sprintf("%s=%q", s.env, s.value(cfg)))
+		}
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("unrecognised value for %s: each must be off, observe or enforce", strings.Join(bad, ", "))
+	}
 	return nil
 }
 
