@@ -167,25 +167,26 @@ Test either without granting anything: `POST /policies/{id}/evaluate` and
 ## Delegated administration, and what its scope really does
 
 A delegation hands one person a named set of administrative permissions until
-a date. The scope you pick — Group, Role, Application or Organization — is
-validated against your organization when the delegation is created and kept in
-the audit trail.
+a date, within your organization.
 
-**Only an Organization scope narrows anything today.** The permission check
-compares resource and action, so a Group, Role or Application scope does not
-stop the delegated permissions applying wherever that permission is checked in
-your organization. The Organization scope *is* enforced, by the tenant
-predicate the delegation is read under.
+**A new delegation can only be scoped to the Organization.** That scope is
+enforced, by the tenant predicate the delegation is read under. Group, Role and
+Application scopes are refused when you create a delegation or edit one,
+because they were never enforced. The permission check compares resource and
+action only, so a narrower scope did not stop the delegated permissions
+applying wherever that permission is checked in your organization.
 
-The console says so on every affected row and in the create form rather than
-showing a scope badge that means more than it does. Until the narrowing scopes
-are enforced, **grant the smallest permission set** instead of relying on the
-scope to contain a large one.
+**Delegations created before this change keep their scope and still work.**
+They grant what they always granted: their permissions across the whole
+organization. The console marks each one "not enforced", and you can still edit
+its permissions, expiry and status. Check that each of those permission sets is
+one you would grant across the whole organization.
 
-Enforcing them needs the identity of the resource each request acts on, which
-the permission middleware does not have, and narrowing an existing delegation
-would silently revoke access someone is relying on — so it is a product
-decision rather than a bug fix, and it is recorded as one.
+Enforcing a narrower scope needs the identity of the resource each request acts
+on, which the permission middleware does not have. Narrowing an existing
+delegation would also silently revoke access someone relies on. Until
+scope-aware enforcement exists, refusing the narrower scopes keeps the console
+from offering a control it does not enforce (#956).
 
 ## What is API-only today
 

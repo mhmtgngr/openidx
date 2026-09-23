@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -153,5 +153,79 @@ describe('DelegationsPage', () => {
     expect(
       await screen.findByText(/delegate user id/i),
     ).toBeInTheDocument()
+  })
+
+  // #956: a Group, Role or Application scope was recorded and never enforced,
+  // so the API refuses them and the create form offers only the organization.
+  it('creates a delegation scoped to the organization, and offers no narrower scope', async () => {
+    const user = userEvent.setup()
+    render(<DelegationsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Bob Baxter')
+
+    await user.click(screen.getByRole('button', { name: /add delegation/i }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).queryByLabelText(/scope type/i)).not.toBeInTheDocument()
+    expect(within(dialog).queryByLabelText(/scope id/i)).not.toBeInTheDocument()
+    expect(within(dialog).getByText('Organization')).toBeInTheDocument()
+
+    await user.type(
+      within(dialog).getByLabelText(/delegate user id/i),
+      '00000000-0000-0000-0000-000000000002',
+    )
+    await user.type(within(dialog).getByLabelText(/permissions/i), 'users:read')
+    await user.click(within(dialog).getByRole('button', { name: /create delegation/i }))
+
+    expect(api.post).toHaveBeenCalledTimes(1)
+    const [path, body] = vi.mocked(api.post).mock.calls[0]
+    expect(path).toBe('/api/v1/delegations')
+    expect(body).toMatchObject({
+      delegate_id: '00000000-0000-0000-0000-000000000002',
+      scope_type: 'organization',
+      permissions: ['users:read'],
+    })
+    // The API fills in this organization's id.
+    expect(body).not.toHaveProperty('scope_id')
+  })
+
+  it('edits an existing group-scoped delegation without touching its scope', async () => {
+    const user = userEvent.setup()
+    render(<DelegationsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Bob Baxter')
+
+    const triggers = screen.getAllByRole('button').filter((b) => b.getAttribute('aria-haspopup') === 'menu')
+    await user.click(triggers[0])
+    await user.click(await screen.findByRole('menuitem', { name: /edit delegation/i }))
+    const dialog = await screen.findByRole('dialog')
+
+    // The row keeps its scope, and the form says it is not enforced.
+    expect(within(dialog).getByText('Engineering')).toBeInTheDocument()
+    expect(within(dialog).getByText('not enforced')).toBeInTheDocument()
+    expect(within(dialog).queryByLabelText(/scope type/i)).not.toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: /update delegation/i }))
+    expect(api.put).toHaveBeenCalledTimes(1)
+    const [path, body] = vi.mocked(api.put).mock.calls[0]
+    expect(path).toBe('/api/v1/delegations/del-1')
+    expect(body).toMatchObject({ permissions: ['users:read', 'groups:read'], enabled: true })
+    expect(body).not.toHaveProperty('scope_type')
+    expect(body).not.toHaveProperty('scope_id')
+  })
+
+  it('explains the unenforced scopes only when a listed delegation carries one', async () => {
+    render(<DelegationsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Bob Baxter')
+    expect(screen.getByText('Group, Role and Application scopes are not enforced.')).toBeInTheDocument()
+  })
+
+  it('shows no such explanation when every delegation is scoped to the organization', async () => {
+    vi.mocked(api.getWithHeaders).mockResolvedValue({
+      data: [
+        { ...enabledDelegation, scope_type: 'organization', scope_name: 'Acme' },
+      ] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
+      headers: { 'x-total-count': '1' },
+    })
+    render(<DelegationsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Bob Baxter')
+    expect(screen.queryByText('Group, Role and Application scopes are not enforced.')).not.toBeInTheDocument()
   })
 })
