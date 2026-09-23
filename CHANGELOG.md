@@ -492,6 +492,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A session a user ended from their Sessions page kept refreshing (#992).**
+  Ending a session from Profile → Sessions, or from the Sessions page
+  without the admin role, calls `DELETE /api/v1/identity/sessions/:id`.
+  That deleted the session row and nothing else. The refresh grant does not
+  read that row: it decides on the refresh token's own row and on the
+  `revoked_session:<id>` marker. So the signed-out device kept getting new
+  access tokens, and a new rotated refresh token with each one. The admin
+  path, password change, the kill switch and deprovisioning all published the
+  marker or removed the tokens; this path did neither.
+
+  Ending a session now revokes its refresh tokens in the database, which holds
+  with Redis down, and publishes the marker, and only then deletes the row. A
+  new test on the migrated schema covers four cases:
+  - a live session refreshes;
+  - an ended one does not;
+  - it still does not with Redis down;
+  - the user's other session keeps working.
+
+  Four mutations turn it red: no database revocation, no marker, neither, and
+  revoking every session's tokens.
+
 - **The Applications editor's "Require PKCE" box displayed a default and
   enforced nothing; it and the back-channel logout URI now read from and
   write to the backing OAuth client.** The console's edit dialog showed a
