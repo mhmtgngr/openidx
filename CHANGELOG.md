@@ -492,6 +492,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **With application assignment enforced, the access proxy could not dial an
+  identity-mode Ziti route that has an application behind it** (#984). The
+  Dial policy dropped `#access-proxy-clients` for the application's marker.
+  That cut the unassigned tunnelers enrolled with that attribute, and it also
+  cut the proxy, whose identity carries the same attribute. Every proxied
+  request to such an application failed, including an assigned user's. The
+  proxy is now named in that policy by id, so it keeps its dial and the
+  tunnelers stay cut.
+
 - **The Applications editor's "Require PKCE" box displayed a default and
   enforced nothing; it and the back-channel logout URI now read from and
   write to the backing OAuth client.** The console's edit dialog showed a
