@@ -1607,15 +1607,15 @@ func validate(cfg *Config) error {
 	return validateTriStateSettings(cfg)
 }
 
-// triStateSettings lists every off|observe|enforce switch. Each gate's own
-// parser (abac.ParseMode, stepup.ParseMode, botgate.ParseMode, ...) reads a
-// value it does not recognise as off, so that a typo can never switch
-// enforcement on. That protects people from a lockout, but it also let
-// ABAC_ENFORCE=enfroce look like a working control while deciding nothing.
-// Refusing to start on such a value closes both doors: nothing enforces by
-// accident, and nothing reads as enforcing when it is not. The boolean
-// switches (ACCESS_ASSIGNMENT_ENFORCE, ENABLE_OPA_AUTHZ) need no entry here:
-// Load already refuses a value like "yes" or "enforce" for them.
+// triStateSettings lists every off|observe|enforce switch. The gates' own
+// parsers disagreed about a value they did not recognise: most read it as off,
+// so ABAC_ENFORCE=enfroce looked like a working control while deciding
+// nothing; POSTURE_DEVICE_TRUST_GATE read it as enforce; and
+// PAM_SESSION_RISK_GATE compared the raw string, so "Off" terminated sessions.
+// Refusing to start on such a value gives all of them one rule: nothing
+// enforces by accident, and nothing reads as enforcing when it is not. The
+// boolean switches (ACCESS_ASSIGNMENT_ENFORCE, ENABLE_OPA_AUTHZ) need no entry
+// here: Load already refuses a value like "yes" or "enforce" for them.
 var triStateSettings = []struct {
 	env   string
 	value func(*Config) string
@@ -1631,8 +1631,8 @@ var triStateSettings = []struct {
 }
 
 // validateTriStateSettings accepts off, observe and enforce in any case and
-// with surrounding space, which is how every gate's parser reads them, and
-// accepts an empty value, which is the setting left unset and means off.
+// with surrounding space, and an empty value, which is the setting left unset
+// and means off. Every gate's parser normalises case and space the same way.
 func validateTriStateSettings(cfg *Config) error {
 	var bad []string
 	for _, s := range triStateSettings {
