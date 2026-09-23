@@ -38,8 +38,10 @@ one is not verified automatically yet; #957 tracks closing that.
 | App assignment at the Ziti dial, BrowZer routes | `TestZitiDialFollowsApplicationAssignment`: the Dial policy the reconciler writes, and the attributes the user sync builds | the unit job for `internal/access`, against a migrated Postgres and a fake controller |
 | App assignment at the Ziti dial, identity-mode routes | None. Under enforcement the access proxy loses its own dial on these routes (#984) | — |
 | ABAC policy | `TestEvaluateAgainstTheMigratedSchema` (the evaluator), `TestABACGateAtAuthorization` (the token endpoint), `TestABACGateAtTheProxy` (the proxy) | the unit jobs, against a migrated Postgres |
+| Vault / PAM grant at reveal | `TestPrivilegedCredentialRevealIsGranted`, both halves | the integration job |
+| Vault / PAM grant at connect | `TestPamConnectFollowsTheGrant`: for each user, the entry list beside the connect handler. It covers a user grant, a group grant, no grant, a lapsed grant and a view-only grant | the unit job for `internal/access`, against a migrated Postgres |
 | JIT elevation | `TestJITElevationEndsAtTheKillSwitch`: the grant listed by User Access 360 and counted by the portal, then the kill switch through its route, with another user's elevation left alone | the unit job for `internal/access`, against a migrated Postgres |
-| Role / group, Vault / PAM grant, Session, MFA policy, Device trust | Partly; see below | — |
+| Role / group, Session, MFA policy, Device trust | Partly; see below | — |
 
 The ABAC tests cover all three states. In `enforce`, a deny policy refuses
 the subject it names with a 403 and records `access.abac.denied`. In
@@ -52,13 +54,18 @@ the upstream, or is left out of the Dial policy. With it off, the unassigned
 user gets through and the gap is recorded. Each negative half in this table
 was mutation-checked: removing the control turns it red.
 
+The PAM test records one gap in the display. The entry list shows an entry held
+under any action, and the Connections page offers Connect on it. A view-only
+grant therefore shows a Connect button that answers 403. That is closed in the
+safe direction, but the button should follow the grant.
+
 The JIT test found a display defect on its first step (#988): on the migrated
 schema User Access 360 answered 500 for every user, and had since v1.35.0.
 The access map's own tests ran on tables they created by hand, where the
 failing query was valid. The tests in this table run on the schema the product
 migrates to for that reason.
 
-### What the other five rows have today
+### What the other four rows have today
 
 Each of these rows has tests for its pieces, but none runs its "Verify by"
 end to end with both halves. The gap is what #957 still has to close:
@@ -68,16 +75,20 @@ end to end with both halves. The gap is what #957 still has to close:
   into the request context. No test logs in, gets a real token and probes an
   admin route as a member and then as a non-member. `RequirePermission` is not
   mounted in any test.
-- **Vault / PAM grant.** `TestPrivilegedCredentialRevealIsGranted` (integration)
-  has both halves at reveal. At connect, only the predicate is tested
-  (`TestPamEntryAllowed_GroupGrant`); no connect handler is.
-- **Session.** `TestRefreshTokenGrant` refuses a refresh when the marker is
-  set, but it writes the marker by hand, and its success path has no session.
-  No test revokes a session through the product and then refreshes it.
-- **MFA policy.** `TestIsMFARequired` covers the evaluator, but its fixtures
-  use `factor_enrolled`, a condition `IsMFARequired` does not read (it reads
-  `groups`, `ip_ranges`, `time_windows` and `attributes`). So no test has a
-  policy that exempts anyone, and nothing drives the login path with one.
+- **Session.** Revoking through the product found **#992**. A session a user
+  ended from their Sessions page (`identity.TerminateSession`) lost its row but
+  not its refresh tokens, so the signed-out device went on refreshing. The fix
+  and the row's two-sided test (`TestAnEndedSessionCannotRefresh`) are in
+  #993.
+- **MFA policy.** Mapping this row found **#990**:
+  - the console showed required methods and a grace period that nothing
+    enforced;
+  - the API accepted only conditions no code reads.
+
+  #991 refuses what is not enforced. It also adds the row's two-sided test on
+  the login path (`TestMFAPolicyRaisesTheLoginChallenge`): with a policy on, a
+  user with a factor is challenged; with it off, or with no factor, they are
+  not.
 - **Device trust.** The `device-trusted` attribute is tested on both sides
   (`TestAssembleAttributesDeviceTrustedGated`, `TestDeviceTrustAttrs`). Nothing
   shows an untrusted device being refused the dial.
