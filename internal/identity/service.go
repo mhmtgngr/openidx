@@ -1150,10 +1150,49 @@ func (s *Service) GetUserSessions(ctx context.Context, userID string) ([]Session
 	return s.sessions.ListByUser(ctx, userID)
 }
 
-// TerminateSession terminates a specific session
+// TerminateSession terminates a specific session.
+//
+// The refresh grant does not read the sessions table. It decides on the
+// refresh token's own row and on the revoked_session:<id> marker, so deleting
+// the session alone left every device it was issued to refreshing, with a
+// fresh rotated token each time (#992). What the session can still mint is
+// ended first; if that cannot be written the session is not deleted, because a
+// session reported ended while its refresh tokens work is the defect itself.
 func (s *Service) TerminateSession(ctx context.Context, sessionID string) error {
 	s.logger.Info("Terminating session", zap.String("session_id", sessionID))
+	if err := s.revokeSessionRefreshTokens(ctx, sessionID); err != nil {
+		return err
+	}
 	return s.sessions.Terminate(ctx, sessionID)
+}
+
+// revokeSessionRefreshTokens revokes the refresh tokens bound to one session and
+// publishes its revoked_session marker. The revocation in the database is the
+// guarantee: it holds with Redis down or restarted. The marker is what every
+// other path that ends a session publishes, and the refresh grant checks it
+// before it reads the token.
+func (s *Service) revokeSessionRefreshTokens(ctx context.Context, sessionID string) error {
+	// No database (unit tests over a fake session repository): there are no
+	// refresh tokens to revoke. Same guard as deprovisionUser.
+	if s.db == nil || s.db.Pool == nil {
+		return nil
+	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db.Pool.Exec(ctx, `
+		UPDATE oauth_refresh_tokens SET revoked_at = NOW()
+		 WHERE session_id = $1 AND org_id = $2 AND revoked_at IS NULL`, sessionID, org.ID); err != nil {
+		return fmt.Errorf("revoke the session's refresh tokens: %w", err)
+	}
+	if rdb := s.redis.RevocationDB(); rdb != nil {
+		if err := rdb.Set(ctx, "revoked_session:"+sessionID, "1", revokedSessionTTL).Err(); err != nil {
+			s.logger.Warn("session ended; its revoked-session marker was not published, "+
+				"its refresh tokens are revoked in the database", logsafe.String("session_id", sessionID), zap.Error(err))
+		}
+	}
+	return nil
 }
 
 // ListGroups retrieves groups with pagination

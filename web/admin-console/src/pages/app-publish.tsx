@@ -963,7 +963,7 @@ export function AppPublishPage() {
               <Label htmlFor="public-host">{t('pages.appPublish.publishAppDialog.publicHost')}</Label>
               <Input
                 id="public-host"
-                placeholder="netgraph.apps.tdv.org"
+                placeholder="app.example.com"
                 value={publicHost}
                 onChange={(e) => setPublicHost(e.target.value)}
               />

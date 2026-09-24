@@ -43,6 +43,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Enforcing particular methods needs a decision first: what happens to a user
   who has none of them enrolled.
+- **The Helm chart ships the OPA policy** (#980). The OPA pods used to run
+  empty unless an operator created a ConfigMap, so every decision was
+  undefined. They now load the policy the chart carries, or the ConfigMap
+  `opa.policyConfigMap` names, and a new policy rolls the pods. OPA runs with
+  `--ignore=.*`, in the chart and in `dev-kube/opa.yaml`. A ConfigMap mount
+  also holds each file in a hidden directory, and without the flag OPA loaded
+  the policy twice and would not start ("multiple default rules"). A test
+  fails any manifest that mounts a ConfigMap at `/policies` without it.
+- **Fresh installs enforce application assignment and run ABAC in `observe`**
+  (#956). `scripts/generate-secrets.sh` and the Helm chart write these
+  values. An existing install keeps its values until the operator changes
+  them; the order to do that in is in the configuration reference.
+- **An `off`/`observe`/`enforce` setting with an unknown value now stops the
+  service at startup** and names the setting. Check the values of
+  `ABAC_ENFORCE`, `STEPUP_GATE`, `BOT_GATE`, `PAM_SESSION_RISK_GATE`,
+  `PAM_REQUIRE_ZTNA`, `POSTURE_DEVICE_TRUST_GATE`, `DEVICE_AUTOTRUST_MODE` and
+  `RATELIMIT_COST_MODE` before upgrading.
+- **A delegation can only be scoped to the organization** (#956). Group, Role
+  and Application scopes were stored and shown but never enforced, so the
+  delegated permissions applied across the whole organization. `POST` and `PUT
+  /api/v1/delegations` now refuse them with a 400, and the console no longer
+  offers them. `scope_id` may be left out for the organization scope. Existing
+  delegations keep their scope, keep working and stay editable.
 - **Decided: the event bus is not a hard dependency.** Two open plan items
   asked whether the audit indexer should move onto the outbox/NATS path with
   `StartESReconciler` retired, and whether the SSF transmitter and the
@@ -511,6 +534,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after; a stub naming a missing source turns the build red.
 
 ### Fixed
+- **`PAM_SESSION_RISK_GATE` terminated sessions on "Off" or "OBSERVE".** It
+  compared the raw value, so any spelling other than exactly `off` or
+  `observe` enforced. It now reads the value the way every other gate does.
+- **Editing a delegation wrote its scope unchecked.** `PUT
+  /api/v1/delegations/{id}` stored any `scope_type` and `scope_id` it was
+  sent, including another tenant's group or organization, or a scope type that
+  does not exist. A scope change must now leave the delegation scoped to the
+  caller's organization.
+
+- **With application assignment enforced, the access proxy could not dial an
+  identity-mode Ziti route that has an application behind it** (#984). The
+  Dial policy dropped `#access-proxy-clients` for the application's marker.
+  That cut the unassigned tunnelers enrolled with that attribute, and it also
+  cut the proxy, whose identity carries the same attribute. Every proxied
+  request to such an application failed, including an assigned user's. The
+  proxy is now named in that policy by id, so it keeps its dial and the
+  tunnelers stay cut.
+
+- **A session a user ended from their Sessions page kept refreshing (#992).**
+  Ending a session from Profile → Sessions, or from the Sessions page
+  without the admin role, calls `DELETE /api/v1/identity/sessions/:id`.
+  That deleted the session row and nothing else. The refresh grant does not
+  read that row: it decides on the refresh token's own row and on the
+  `revoked_session:<id>` marker. So the signed-out device kept getting new
+  access tokens, and a new rotated refresh token with each one. The admin
+  path, password change, the kill switch and deprovisioning all published the
+  marker or removed the tokens; this path did neither.
+
+  Ending a session now revokes its refresh tokens in the database, which holds
+  with Redis down, and publishes the marker, and only then deletes the row. A
+  new test on the migrated schema covers four cases:
+  - a live session refreshes;
+  - an ended one does not;
+  - it still does not with Redis down;
+  - the user's other session keeps working.
+
+  Four mutations turn it red: no database revocation, no marker, neither, and
+  revoking every session's tokens.
+
+- **User Access 360 answered 500 for every user from v1.35.0.** When the
+  access map's elevation list moved from `jit_grants` to `access_requests`, it
+  took `COALESCE(resource_name, resource_id)`. On the migrated schema
+  `resource_id` is a UUID and `resource_name` a VARCHAR, and Postgres refuses
+  that COALESCE when it plans the query, whatever the rows hold. So
+  `GET /api/v1/access/users/:id/access-map` failed for every user, elevated or
+  not. The access map's tests create their tables by hand and had declared the
+  column VARCHAR, so they stayed green. The query now casts the id to text, the
+  hand-written column is a UUID as in the product, and a new test builds the
+  map on the migrated schema. Removing the cast turns both tests red. Found
+  while writing the JIT row's end-to-end test for #957.
+
+- **The OPA policy did not parse** (#980). A brace left over from trimming the
+  role table made `authz.rego`, and its copy in `dev-kube/opa.yaml`, a parse
+  error. OPA therefore served no `openidx.authz` rules, and
+  `ENABLE_OPA_AUTHZ=true` would have refused every guarded request. It parses
+  now. CI checks it and runs tests that hold both halves of each rule.
+- **provisioning-service had no `OPA_URL` in compose.** It wires OPA like
+  admin-api and governance-service, so with OPA on it would have asked
+  `localhost:8281`, where nothing listens.
 
 - **The Applications editor's "Require PKCE" box displayed a default and
   enforced nothing; it and the back-channel logout URI now read from and

@@ -350,3 +350,37 @@ Called from templates/no-placeholders.yaml with (dict "v" .Values "path" "").
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+openidx.installDefault picks a setting whose right value differs between a
+fresh install and an upgrade (#956). In order of precedence:
+  1. the value the operator set (anything but empty);
+  2. on an upgrade, the value the running release already has in its
+     ConfigMap, so `helm upgrade` never changes behaviour on its own;
+  3. on a fresh install, the install value;
+  4. on an upgrade from a release that predates the key, the upgrade value,
+     which is the old behaviour.
+lookup sees no cluster under `helm template`, and so under GitOps tools that
+render with it: there a plain render gets the install value and --is-upgrade
+the upgrade value. Set the value explicitly when that matters.
+Usage: include "openidx.installDefault" (dict "ctx" $ "key" "ENV_NAME" "value" .Values.config.x "install" "on" "upgrade" "off")
+*/}}
+{{- define "openidx.installDefault" -}}
+{{- $set := toString .value -}}
+{{- if and (ne $set "") (ne $set "<nil>") -}}
+{{- $set -}}
+{{- else -}}
+{{- $cm := lookup "v1" "ConfigMap" .ctx.Release.Namespace (printf "%s-config" (include "openidx.fullname" .ctx)) -}}
+{{- $live := "" -}}
+{{- if and $cm (hasKey $cm "data") $cm.data -}}
+{{- $live = toString (index $cm.data .key | default "") -}}
+{{- end -}}
+{{- if .ctx.Release.IsInstall -}}
+{{- .install -}}
+{{- else if ne $live "" -}}
+{{- $live -}}
+{{- else -}}
+{{- .upgrade -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

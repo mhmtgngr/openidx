@@ -21,6 +21,7 @@ package access
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -84,7 +85,13 @@ func NewPAMSessionRiskScorer(svc *Service, interval time.Duration, gate string, 
 	if threshold <= 0 || threshold > 100 {
 		threshold = 80
 	}
-	if gate == "" {
+	// Normalise the way every other gate does. The scorer used to compare the
+	// raw string, so "Off", "OBSERVE" or " observe" were neither "off" nor
+	// "observe" and fell through to enforcement, terminating sessions.
+	switch g := strings.ToLower(strings.TrimSpace(gate)); g {
+	case "observe", "enforce":
+		gate = g
+	default:
 		gate = "off"
 	}
 	return &PAMSessionRiskScorer{

@@ -386,8 +386,11 @@ func (s *Service) collectPAMPillar(ctx context.Context, orgID, userID string, ou
 	// through access_requests all along. internal/jitgrant holds the one
 	// definition of an active elevation; the resource name is what the request
 	// recorded, which is the role/group/application the user was elevated to.
+	// resource_id is a UUID column and resource_name a VARCHAR, and COALESCE
+	// needs one type: without the cast Postgres refuses the query when it is
+	// planned, whatever the rows hold, so the map failed for every user.
 	rows, err = s.db.Pool.Query(ctx,
-		`SELECT id, COALESCE(resource_name, resource_id), expires_at
+		`SELECT id, COALESCE(resource_name, resource_id::text), expires_at
 		   FROM access_requests
 		  WHERE requester_id = $1 AND org_id = $2 AND `+jitgrant.ActiveForUserPredicate+`
 		  ORDER BY expires_at`, userID, orgID)

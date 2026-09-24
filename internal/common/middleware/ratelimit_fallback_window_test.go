@@ -16,6 +16,14 @@ import (
 // window the blip costs nothing, the tier is still enforced (from a per-replica
 // share), and a real outage still fails closed once the window is spent.
 func TestDistributedRateLimit_RedisBlipIsRiddenOutLocally(t *testing.T) {
+	// The five requests below must fall in one auth window: the local share is
+	// counted per window epoch, so a sequence that straddles a minute boundary
+	// splits across two buckets and never reaches the limit. On a loaded CI
+	// runner, with the Redis client retrying its dials, the sequence took over
+	// a second and crossed 21:41:59 -> 21:42:00, and the fourth login came back
+	// 200 instead of 429.
+	startInsideWindow(t, time.Minute, 15*time.Second)
+
 	s, client := setupExtendedTestRedis(t)
 	cfg := RateLimitConfig{
 		Requests: 100, Window: time.Minute,
@@ -111,6 +119,18 @@ func TestPerReplicaQuota(t *testing.T) {
 	assert.Equal(t, 2, perReplicaQuota(6, 3))
 	assert.Equal(t, 6, perReplicaQuota(6, 0), "no hint = whole limit")
 	assert.Equal(t, 1, perReplicaQuota(2, 10), "never zero: that would be fail-closed wearing a different name")
+}
+
+// startInsideWindow waits for the next window when fewer than need remain in
+// the current one. The limiter's window epoch is the wall clock divided by
+// the window (ratelimit.go), so a test that counts requests into one window
+// has to start far enough from its end to finish inside it.
+func startInsideWindow(t *testing.T, window, need time.Duration) {
+	t.Helper()
+	into := time.Duration(time.Now().UnixNano()) % window
+	if left := window - into; left < need {
+		time.Sleep(left + 100*time.Millisecond)
+	}
 }
 
 // doReqRec is doReq but returns the recorder so headers can be asserted.

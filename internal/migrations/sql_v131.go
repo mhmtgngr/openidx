@@ -10,8 +10,11 @@ package migrations
 // This seeds a public PKCE client for the playground. It is a public client
 // (no secret, PKCE required) — the playground runs in the browser and never
 // holds a secret. redirect_uris cover the origins the console's baseURL
-// resolves to: the SPA dev origin (:3000), the admin-api dev origin (:8005),
-// and the production site. The playground reconstructs redirect_uri from that
+// resolves to in development: the SPA dev origin (:3000) and the admin-api dev
+// origin (:8005). A deployment adds its own public callback URL to this client
+// from the console. An earlier version of this seed also registered one
+// specific production site on every install; installs migrated before that was
+// removed keep the row they already have (ON CONFLICT DO NOTHING). The playground reconstructs redirect_uri from that
 // same baseURL, so one of these must match exactly for /oauth/authorize to
 // accept it. Idempotent via ON CONFLICT (id) DO NOTHING.
 var seedPlaygroundClientUp = `-- Migration 131: seed the OAuth Playground public client.
@@ -20,7 +23,7 @@ INSERT INTO oauth_clients (id, client_id, client_secret, name, description, type
 	allow_refresh_token, access_token_lifetime, refresh_token_lifetime) VALUES
 ('80000000-0000-0000-0000-000000000006', 'playground-client', NULL,
  'OAuth Playground', 'Interactive OAuth 2.0 + PKCE playground client', 'public',
- '["http://localhost:3000/oauth/callback", "http://localhost:8005/oauth/callback", "https://openidx.tdv.org/oauth/callback"]'::jsonb,
+ '["http://localhost:3000/oauth/callback", "http://localhost:8005/oauth/callback"]'::jsonb,
  '["authorization_code", "refresh_token"]'::jsonb,
  '["code"]'::jsonb,
  '["openid", "profile", "email", "offline_access"]'::jsonb,

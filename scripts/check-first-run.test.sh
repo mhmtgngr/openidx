@@ -111,4 +111,14 @@ else
   echo "note: docker compose not installed; case 6 checked the files only"
 fi
 
+# --- 7. a fresh install gets enforcement ------------------------------------
+# #956: a new install enforces application assignment and evaluates ABAC in
+# observe mode. The compose fallbacks keep an older .env on today's behaviour,
+# so these generated lines are the only thing that turns enforcement on, and
+# losing them would silently ship every new install in report mode.
+grep -qx 'ACCESS_ASSIGNMENT_ENFORCE=true' "$TMP/a.env" \
+  || fail "7: the generated .env does not enforce application assignment"
+grep -qx 'ABAC_ENFORCE=observe' "$TMP/a.env" \
+  || fail "7: the generated .env does not put ABAC in observe"
+
 echo "FIRST_RUN_SELFTEST=OK"

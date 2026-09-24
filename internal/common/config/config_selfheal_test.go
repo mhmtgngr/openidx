@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The self-heal panel reads/writes state from SelfHealStateDir; if the env
 // binding is missing the admin-api silently uses the default and the panel
@@ -12,7 +15,7 @@ func TestSelfHealDirsEnvBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.SelfHealStateDir != "/home/cmit/oidx-runtime/selfheal" {
+	if cfg.SelfHealStateDir != defaultSelfHealStateDir() || !strings.HasSuffix(cfg.SelfHealStateDir, "/oidx-runtime/selfheal") {
 		t.Fatalf("default SelfHealStateDir = %q", cfg.SelfHealStateDir)
 	}
 	if cfg.SelfHealScriptsDir != "scripts/selfheal" {

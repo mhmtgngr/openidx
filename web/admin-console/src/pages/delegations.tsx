@@ -67,11 +67,14 @@ interface AdminDelegation {
   updated_at: string
 }
 
+// Every scope kind a stored delegation can carry, for the filter. Only an
+// Organization scope can be created or set any more (#956): the other three
+// were never enforced, and the API refuses them.
 const SCOPE_TYPES = ['group', 'role', 'application', 'organization']
 
-// delegate_id and scope_id are uuid columns server-side; a non-UUID value is
-// rejected with a 400 (previously a confusing 500). Validate on the client so
-// the operator gets an inline hint instead of a failed submit.
+// delegate_id is a uuid column server-side; a non-UUID value is rejected with
+// a 400 (previously a confusing 500). Validate on the client so the operator
+// gets an inline hint instead of a failed submit.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 function isUuid(value: string): boolean {
   return UUID_RE.test(value.trim())
@@ -100,16 +103,15 @@ export function DelegationsPage() {
 
   // Only an Organization scope narrows anything: the delegation read is scoped
   // by org_id, so that one is enforced by the tenant predicate. A Group, Role
-  // or Application scope is validated on create and then never consulted --
-  // RequirePermission compares resource and action only. The page says so
-  // rather than showing a scope badge that means less than it looks like.
+  // or Application scope was never consulted -- RequirePermission compares
+  // resource and action only -- so none can be created any more, and the rows
+  // that still carry one say so rather than showing a scope badge that means
+  // less than it looks like.
   const scopeIsEnforced = (scope: string) => scope === 'organization'
 
   const [formData, setFormData] = useState({
     delegate_id: '',
     delegated_by: '',
-    scope_type: 'group',
-    scope_id: '',
     permissions_text: '',
     enabled: true,
     expires_at: '',
@@ -188,8 +190,6 @@ export function DelegationsPage() {
     setFormData({
       delegate_id: '',
       delegated_by: '',
-      scope_type: 'group',
-      scope_id: '',
       permissions_text: '',
       enabled: true,
       expires_at: '',
@@ -206,8 +206,6 @@ export function DelegationsPage() {
     setFormData({
       delegate_id: d.delegate_id,
       delegated_by: d.delegated_by,
-      scope_type: d.scope_type,
-      scope_id: d.scope_id,
       permissions_text: d.permissions.join(', '),
       enabled: d.enabled,
       expires_at: d.expires_at ? d.expires_at.slice(0, 16) : '',
@@ -221,13 +219,8 @@ export function DelegationsPage() {
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const permissions = parsePermissions(formData.permissions_text)
     const payload: Record<string, unknown> = {
-      delegate_id: formData.delegate_id,
-      delegated_by: formData.delegated_by,
-      scope_type: formData.scope_type,
-      scope_id: formData.scope_id,
-      permissions,
+      permissions: parsePermissions(formData.permissions_text),
       enabled: formData.enabled,
     }
     if (formData.expires_at) {
@@ -235,13 +228,23 @@ export function DelegationsPage() {
     }
 
     if (addModal) {
-      createMutation.mutate(payload as Partial<AdminDelegation>)
+      // The scope is always this organization; the API fills in its id.
+      createMutation.mutate({
+        ...payload,
+        delegate_id: formData.delegate_id,
+        delegated_by: formData.delegated_by,
+        scope_type: 'organization',
+      } as Partial<AdminDelegation>)
     } else if (editModal && selectedDelegation) {
+      // An edit leaves the scope alone, so a delegation created with a
+      // Group, Role or Application scope keeps it and stays editable.
       updateMutation.mutate({ id: selectedDelegation.id, ...payload })
     }
   }
 
   const items = delegations || []
+  // Rows written before narrowing scopes were refused can still carry one.
+  const anyScopeNotEnforced = items.some((d) => !scopeIsEnforced(d.scope_type))
 
   return (
     <div className="space-y-6">
@@ -270,7 +273,7 @@ export function DelegationsPage() {
                   ))}
                 </SelectContent>
               </Select>
-              {!scopeIsEnforced(formData.scope_type) && (
+              {anyScopeNotEnforced && (
                 <p className="text-xs text-muted-foreground">
                   <span className="font-medium">{t('pages.delegations.scopeNotEnforcedTitle')}</span>{' '}
                   {t('pages.delegations.scopeNotEnforcedBody')}
@@ -466,38 +469,10 @@ export function DelegationsPage() {
                 placeholder={t('pages.delegations.form.delegatedByPlaceholder')}
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="scope_type">{t('pages.delegations.form.scopeType')}</Label>
-              <Select value={formData.scope_type} onValueChange={(v) => setFormData(prev => ({ ...prev, scope_type: v }))}>
-                <SelectTrigger id="scope_type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SCOPE_TYPES.map(scope => (
-                    <SelectItem key={scope} value={scope}>{scopeLabel(scope)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="scope_id">{t('pages.delegations.form.scopeId')}</Label>
-              <Input
-                id="scope_id"
-                value={formData.scope_id}
-                onChange={(e) => setFormData(prev => ({ ...prev, scope_id: e.target.value }))}
-                required
-                placeholder={t('pages.delegations.form.uuidPlaceholder')}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t(`pages.delegations.scopeIdHints.${formData.scope_type}`, {
-                  defaultValue: t('pages.delegations.scopeIdHints.fallback'),
-                })}
-              </p>
-              {formData.scope_id.trim() !== '' && !isUuid(formData.scope_id) && (
-                <p className="text-xs text-destructive">
-                  {t('pages.delegations.form.scopeIdInvalid', { scope: scopeLabel(formData.scope_type) })}
-                </p>
-              )}
+            <div className="space-y-1">
+              <p className="text-sm font-medium leading-none">{t('pages.delegations.form.scope')}</p>
+              <p className="text-sm">{scopeLabel('organization')}</p>
+              <p className="text-xs text-muted-foreground">{t('pages.delegations.form.scopeOrganizationOnly')}</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="permissions">{t('pages.delegations.form.permissions')}</Label>
@@ -532,7 +507,7 @@ export function DelegationsPage() {
               <Button type="button" variant="outline" onClick={() => setAddModal(false)} disabled={createMutation.isPending}>
                 {t('common.cancel')}
               </Button>
-              <Button type="submit" disabled={createMutation.isPending || !isUuid(formData.delegate_id) || !isUuid(formData.scope_id)}>
+              <Button type="submit" disabled={createMutation.isPending || !isUuid(formData.delegate_id)}>
                 {createMutation.isPending
                   ? t('pages.delegations.form.creating')
                   : t('pages.delegations.form.submitCreate')}
@@ -549,28 +524,24 @@ export function DelegationsPage() {
             <DialogTitle>{t('pages.delegations.form.editTitle')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleFormSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-scope_type">{t('pages.delegations.form.scopeTypeEdit')}</Label>
-              <Select value={formData.scope_type} onValueChange={(v) => setFormData(prev => ({ ...prev, scope_type: v }))}>
-                <SelectTrigger id="edit-scope_type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SCOPE_TYPES.map(scope => (
-                    <SelectItem key={scope} value={scope}>{scopeLabel(scope)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-scope_id">{t('pages.delegations.form.scopeIdEdit')}</Label>
-              <Input
-                id="edit-scope_id"
-                value={formData.scope_id}
-                onChange={(e) => setFormData(prev => ({ ...prev, scope_id: e.target.value }))}
-                placeholder={t('pages.delegations.form.scopeIdPlaceholder')}
-              />
-            </div>
+            {selectedDelegation && (
+              <div className="space-y-1">
+                <p className="text-sm font-medium leading-none">{t('pages.delegations.form.scope')}</p>
+                <p className="text-sm">
+                  <span>{scopeLabel(selectedDelegation.scope_type)}</span>
+                  {!scopeIsEnforced(selectedDelegation.scope_type) && (
+                    <>
+                      {' · '}
+                      <span>{selectedDelegation.scope_name || selectedDelegation.scope_id}</span>
+                      <Badge variant="outline" className="ml-1 text-xs">
+                        {t('pages.delegations.scopeNotEnforcedBadge')}
+                      </Badge>
+                    </>
+                  )}
+                </p>
+                <p className="text-xs text-muted-foreground">{t('pages.delegations.form.scopeFixed')}</p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="edit-permissions">{t('pages.delegations.form.permissions')}</Label>
               <Input

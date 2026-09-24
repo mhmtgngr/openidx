@@ -56,3 +56,28 @@ func TestRiskScorerGateDefaultsSafe(t *testing.T) {
 		t.Fatalf("interval must be positive, got %s", p.interval)
 	}
 }
+
+// The scorer used to compare the raw setting, so any spelling other than
+// exactly "off" or "observe" fell through to enforcement and terminated
+// sessions. It now reads the gate the way every other gate does.
+func TestPAMSessionRiskGateIsNormalised(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", "off"},
+		{"off", "off"},
+		{"Off", "off"},
+		{" OFF ", "off"},
+		{"observe", "observe"},
+		{" OBSERVE ", "observe"},
+		{"Observe", "observe"},
+		{"enforce", "enforce"},
+		{"Enforce", "enforce"},
+		// Unknown values never reach here in a running service, because config
+		// refuses them at startup; if one does, it must not enforce.
+		{"enfroce", "off"},
+	} {
+		p := NewPAMSessionRiskScorer(nil, 0, tc.in, 0, zap.NewNop())
+		if p.gate != tc.want {
+			t.Errorf("gate %q read as %q, want %q", tc.in, p.gate, tc.want)
+		}
+	}
+}

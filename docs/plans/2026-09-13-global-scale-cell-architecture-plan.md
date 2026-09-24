@@ -1,5 +1,11 @@
 # Küresel Ölçek Dönüşümü — Uygulama Planı
 
+> **⚠️ DONDURULDU — 2026-09-23.** Bu program, proje sahibinin kararıyla ([ADR 0001](../adr/0001-product-focus-and-trusted-core.md))
+> **dondurulmuştur.** Buradaki fazlar, takvim ve açık maddeler şu an uygulanmıyor. Öncelikler
+> [ROADMAP.md](../../ROADMAP.md)'dedir: M1 "Güvenilir Çekirdek" (v2.0 LTS). **Yeniden başlatma
+> tetikleyicisi:** birden fazla bölgeye ihtiyaç duyan ilk müşteri ya da MSP. Belge, tasarım
+> referansı olarak korunur; yeni iş eklenmez.
+>
 > **Tasarım:** `docs/architecture/2026-09-13-global-scale-cell-architecture-and-ddos.md`
 > (önce onu oku; bu plan oradan argüman alır, tekrar etmez).
 > **Takvim ve kilometre taşları:** `docs/plans/2026-09-13-global-scale-roadmap.md` (fazların haftalara, sprintlere ve karar noktalarına bağlanması).

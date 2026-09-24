@@ -99,20 +99,19 @@ func NewInfoCommand() *cobra.Command {
 
 			rows := [][]string{
 				{"Description", "Zero Trust Access Platform"},
-				{"Repository", "github.com/openidx/openidx"},
-				{"License", "MIT"},
-				{"Documentation", "docs.openidx.io"},
-				{"Go Version", "1.24+"},
-				{"Node Version", "18+"},
+				{"Repository", "github.com/mhmtgngr/openidx"},
+				{"License", "Apache-2.0"},
+				{"Documentation", "mhmtgngr.github.io/openidx"},
+				{"Go Version", "1.26+"},
+				{"Node Version", "20+"},
 			}
 
 			fmt.Print(FormatTable([]string{"Setting", "Value"}, rows))
 
 			fmt.Println("\n🔗 Links:")
-			info.Println("   Website:       https://openidx.io")
-			info.Println("   GitHub:        https://github.com/openidx/openidx")
-			info.Println("   Documentation: https://docs.openidx.io")
-			info.Println("   Community:     https://discord.gg/openidx")
+			info.Println("   GitHub:        https://github.com/mhmtgngr/openidx")
+			info.Println("   Documentation: https://mhmtgngr.github.io/openidx")
+			info.Println("   Community:     https://github.com/mhmtgngr/openidx/discussions")
 
 			fmt.Println("\n🙏 Acknowledgments:")
 			info.Println("   Built with Gin, React, and amazing open-source tools")

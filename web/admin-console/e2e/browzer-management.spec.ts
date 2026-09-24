@@ -264,7 +264,7 @@ test.describe('BrowZer Management - Domain Tab', () => {
     await page.goto('/browzer-management');
     await page.getByRole('tab', { name: /domain/i }).click();
 
-    await expect(page.getByPlaceholder('e.g. browzer.tdv.org')).toBeVisible();
+    await expect(page.getByPlaceholder('e.g. browzer.example.com')).toBeVisible();
   });
 
   test('should disable Save Domain button when input is empty', async ({ page }) => {
@@ -278,7 +278,7 @@ test.describe('BrowZer Management - Domain Tab', () => {
     await page.goto('/browzer-management');
     await page.getByRole('tab', { name: /domain/i }).click();
 
-    await page.getByPlaceholder('e.g. browzer.tdv.org').fill('browzer.newdomain.com');
+    await page.getByPlaceholder('e.g. browzer.example.com').fill('browzer.newdomain.com');
 
     await expect(page.getByRole('button', { name: /save domain/i })).toBeEnabled();
   });
@@ -305,7 +305,7 @@ test.describe('BrowZer Management - Domain Tab', () => {
     await page.goto('/browzer-management');
     await page.getByRole('tab', { name: /domain/i }).click();
 
-    await page.getByPlaceholder('e.g. browzer.tdv.org').fill('browzer.newdomain.com');
+    await page.getByPlaceholder('e.g. browzer.example.com').fill('browzer.newdomain.com');
     await page.getByRole('button', { name: /save domain/i }).click();
 
     await expect(page.locator('text=Domain changed').first()).toBeVisible();
@@ -325,7 +325,7 @@ test.describe('BrowZer Management - Domain Tab', () => {
     await page.goto('/browzer-management');
     await page.getByRole('tab', { name: /domain/i }).click();
 
-    await page.getByPlaceholder('e.g. browzer.tdv.org').fill('browzer.newdomain.com');
+    await page.getByPlaceholder('e.g. browzer.example.com').fill('browzer.newdomain.com');
     await page.getByRole('button', { name: /save domain/i }).click();
 
     await expect(page.locator('text=Domain change failed').first()).toBeVisible();

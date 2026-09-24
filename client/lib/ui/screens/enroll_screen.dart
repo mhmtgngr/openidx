@@ -20,9 +20,10 @@ class EnrollScreen extends ConsumerStatefulWidget {
 class _EnrollScreenState extends ConsumerState<EnrollScreen> {
   final _controller = TextEditingController();
   // The engine has no seeded server on a fresh install, so the user provides it.
-  // Defaulted to the public server; editable for other deployments.
   final _serverController =
-      TextEditingController(text: 'https://openidx.tdv.org');
+      // Empty unless the build names a server:
+      //   flutter build ... --dart-define=OPENIDX_DEFAULT_SERVER=https://idp.example.com
+      TextEditingController(text: const String.fromEnvironment('OPENIDX_DEFAULT_SERVER'));
   bool _busy = false;
   String? _error;
   StreamSubscription<OpenidxDeepLink>? _linkSub;

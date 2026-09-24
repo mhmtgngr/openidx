@@ -1071,6 +1071,31 @@ jobs:
             echo "== $t =="; bash "$t"
           done
 
+  # The policy OPA serves did not parse (#980), so ENABLE_OPA_AUTHZ=true would
+  # have refused every guarded request, and nothing ever ran it. This checks
+  # the policy and the chart's copy strictly, then runs the tests that hold
+  # both halves of each rule. The OPA version is the one the chart pins, which
+  # is the one the compose stack runs.
+  # internal/common/opa/policy_input_test.go fails if a *_test.rego file sits
+  # anywhere the `opa test` line below does not name.
+  opa-policy:
+    name: The OPA policy parses and its tests pass
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check and test the policy
+        run: |
+          set -euo pipefail
+          image=$(sed -n 's|^ *image: \(openpolicyagent/opa:[^ #]*\).*|\1|p' deployments/kubernetes/helm/openidx/values.yaml)
+          test -n "$image" || { echo "no OPA image pinned in the chart's values.yaml"; exit 1; }
+          opa() { docker run --rm -v "$PWD:/work:ro" -w /work "$image" "$@"; }
+          # One copy per call: two copies of the package in one load are a
+          # conflict, not a check.
+          opa check --strict deployments/docker/opa/policies deployments/docker/opa/tests
+          opa check --strict deployments/kubernetes/helm/openidx/files/opa
+          opa test -v deployments/docker/opa/policies deployments/docker/opa/tests
+
   # The fault matrix used to run only on a developer's machine, which is the
   # same defect the prose checker had: a gate nobody runs cannot fail, so the
   # pipeline's error handling could rot silently. It needs no Ziti, no network
@@ -3113,6 +3138,7 @@ jobs:
       - inertswitch
       - lint
       - no-internal-topology
+      - opa-policy
       - orgscope
       - posturevocab
       - rls-isolation

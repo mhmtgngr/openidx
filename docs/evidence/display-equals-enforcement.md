@@ -26,6 +26,24 @@ defect: either wire it or remove it.** That rule is what retired the ABAC page
 from decoration into the row above, and what removed the dashboard's
 "refresh" and "metrics" endpoints rather than faking them.
 
+## Automated checks
+
+A row's "Verify by", as tests that run in CI with both halves. A row without
+one is not verified automatically yet; #957 tracks closing that.
+
+| Grant | Tests | Where they run |
+|---|---|---|
+| App assignment at `/oauth/authorize` | `TestEnforcedAssignmentDeniesAndAudits`, `TestSSOSessionIsSubjectToTheAssignmentGate` | the integration job; the unit job for `internal/oauth` |
+| App assignment at the proxy and the Ziti dial | Not yet. Only pure-function tests exist (`TestProxyAssignmentDecision`, `TestDialIdentityRolesForRoute`) | — |
+| ABAC policy | `TestEvaluateAgainstTheMigratedSchema` (the evaluator), `TestABACGateAtAuthorization` (the token endpoint), `TestABACGateAtTheProxy` (the proxy) | the unit jobs, against a migrated Postgres |
+| Role / group, Vault / PAM grant, Session, MFA policy, Device trust, JIT elevation | Not mapped yet | — |
+
+The ABAC tests cover all three states. In `enforce`, a deny policy refuses
+the subject it names with a 403 and records `access.abac.denied`. In
+`observe`, that subject passes and `access.abac.would_deny` is recorded. A
+subject no policy names passes in every mode and leaves no record. Each
+negative half was mutation-checked: removing the control turns it red.
+
 ## Runs
 
 | Date | Who | Rows verified | Divergence found | Output |

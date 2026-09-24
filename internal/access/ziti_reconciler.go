@@ -529,6 +529,22 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	// under enforcement instead of, the blanket grant); the ForOrg variant is the
 	// mirror-writing path, so the row it upserts carries the route's org.
 	dialRoles := dialIdentityRoles(dialIdentity, d.ApplicationID, rec.assignmentEnforce)
+	// Under enforcement an identity-mode app route's Dial policy no longer names
+	// #access-proxy-clients. That removes the unassigned tunnelers enrolled
+	// with it, and also the access proxy's own identity, which is created with
+	// that attribute and which handleProxy dials Ziti routes through. The proxy
+	// checks assignment itself before it dials, so it is named by id: the
+	// tunnelers stay cut and the proxy keeps its dial (#984). If the identity
+	// cannot be found, the roles stay as they are, which cuts the proxy too;
+	// that is today's behaviour, and the warning says so.
+	if rec.assignmentEnforce && d.ApplicationID != "" && !isRouterHosted(d.EffectiveMode()) {
+		if proxyID := zm.FindIdentityIDByName(ctx, accessProxyIdentityName); proxyID != "" {
+			dialRoles = append(dialRoles, "@"+proxyID)
+		} else {
+			rec.logger.Warn("access-proxy identity not found; it cannot dial this service while assignment is enforced",
+				zap.String("svc", d.ServiceName))
+		}
+	}
 	if _, err := zm.EnsureServicePolicyForOrg(ctx, d.OrgID, "openidx-dial-"+d.ServiceName, "Dial",
 		[]string{svcRole}, dialRoles); err != nil {
 		rec.logger.Warn("dial policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
@@ -556,7 +572,9 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	return nil
 }
 
-// dialIdentityRoles decides who may dial a service.
+// dialIdentityRoles decides who may dial a service. For an identity-mode route
+// under enforcement, ensurePolicies adds the access proxy's own identity by id
+// (#984); this function decides only the role attributes.
 //
 // A route with no application behind it is unchanged — the blanket grant is the
 // only thing that can express "any enrolled client". For an app-backed route the
