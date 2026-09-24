@@ -330,6 +330,10 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      # Enforcement switches (#956). The fallbacks keep an install whose .env
+      # predates them on today's behaviour; scripts/generate-secrets.sh writes
+      # the fresh-install values (assignment enforced, ABAC in observe).
+      - ABAC_ENFORCE=${ABAC_ENFORCE:-off}
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
@@ -393,6 +397,9 @@ services:
       - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      # provisioning-service wires OPA like admin-api and governance-service,
+      # and without this it asked localhost:8281, where nothing listens (#980).
+      - OPA_URL=http://opa:8281
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
       - TRACING_ENABLED=${TRACING_ENABLED:-false}
@@ -582,6 +589,11 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      # Enforcement switches (#956). The fallbacks keep an install whose .env
+      # predates them on today's behaviour; scripts/generate-secrets.sh writes
+      # the fresh-install values (assignment enforced, ABAC in observe).
+      - ACCESS_ASSIGNMENT_ENFORCE=${ACCESS_ASSIGNMENT_ENFORCE:-false}
+      - ABAC_ENFORCE=${ABAC_ENFORCE:-off}
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
@@ -1279,6 +1291,11 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
+      # Enforcement switches (#956). The fallbacks keep an install whose .env
+      # predates them on today's behaviour; scripts/generate-secrets.sh writes
+      # the fresh-install values (assignment enforced, ABAC in observe).
+      - ACCESS_ASSIGNMENT_ENFORCE=${ACCESS_ASSIGNMENT_ENFORCE:-false}
+      - ABAC_ENFORCE=${ABAC_ENFORCE:-off}
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
@@ -1361,15 +1378,15 @@ services:
       network: host
       args:
         - SRC_DIR=.
-        - VITE_API_URL=http://openidx.tdv.org:8088
-        - VITE_OAUTH_URL=http://openidx.tdv.org:8006
+        - VITE_API_URL=${VITE_API_URL:-}
+        - VITE_OAUTH_URL=${VITE_OAUTH_URL:-}
         - VITE_OAUTH_CLIENT_ID=admin-console
         - VITE_AUTH_PROVIDER=openidx
     container_name: openidx-admin-console
     restart: unless-stopped
     environment:
-      - VITE_API_URL=http://openidx.tdv.org:8088
-      - VITE_OAUTH_URL=http://openidx.tdv.org:8006
+      - VITE_API_URL=${VITE_API_URL:-}
+      - VITE_OAUTH_URL=${VITE_OAUTH_URL:-}
       - VITE_OAUTH_CLIENT_ID=admin-console
       - VITE_AUTH_PROVIDER=openidx
     ports:

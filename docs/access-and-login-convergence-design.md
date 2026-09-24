@@ -235,6 +235,16 @@ unknown key is rejected with an error. Supported initially:
 Silently ignoring unknown keys is how this table became decorative; rejecting
 them is the fix.
 
+**Status (#990).** The allowlist shipped and its evaluator did not. Nothing
+reads these three keys. `evaluateMFAPolicy` reads a different set (`groups`,
+`ip_ranges`, `time_windows`, `attributes`), which the allowlist refused. So
+every policy applied to every user with an enrolled factor, whatever its
+conditions said. `required_methods` and `grace_period_hours` were not read
+either: the login path discards the policy it matched. The API now refuses all
+five, and a policy means one thing: challenge every user who has a factor
+enrolled. Conditions, methods and a grace period can come back together with
+the code that enforces them and a console that shows them.
+
 ### C.3 Precedence and the lockout guard
 
 An enabled policy can only **raise** the requirement. A matching policy means

@@ -12,6 +12,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '../components/ui/alert-dialog'
 import { useToast } from '../hooks/use-toast'
 import { api, UserProfile, MFASetupResponse, MFAEnableResponse } from '../lib/api'
+import { resolveOAuthURL } from '../lib/oauth-url'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 import { Checkbox } from '../components/ui/checkbox'
@@ -410,7 +411,7 @@ export function UserProfilePage() {
   const logoutAllMutation = useMutation({
     mutationFn: async () => {
       const token = localStorage.getItem('token')
-      const response = await fetch(`${import.meta.env.VITE_OAUTH_URL || 'http://localhost:8006'}/oauth/logout-all`, {
+      const response = await fetch(`${resolveOAuthURL()}/oauth/logout-all`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       })

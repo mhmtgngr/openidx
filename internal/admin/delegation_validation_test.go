@@ -28,9 +28,9 @@ func TestCreateDelegationValidation(t *testing.T) {
 		want int
 	}{
 		{"missing fields", `{}`, http.StatusBadRequest},
-		{"empty scope_id", `{"delegate_id":"` + validUUID + `","scope_type":"group","scope_id":""}`, http.StatusBadRequest},
-		{"non-uuid scope_id", `{"delegate_id":"` + validUUID + `","scope_type":"group","scope_id":"engineering-team"}`, http.StatusBadRequest},
-		{"non-uuid delegate_id", `{"delegate_id":"someuser","scope_type":"group","scope_id":"` + validUUID + `"}`, http.StatusBadRequest},
+		{"missing scope_type", `{"delegate_id":"` + validUUID + `"}`, http.StatusBadRequest},
+		{"non-uuid scope_id", `{"delegate_id":"` + validUUID + `","scope_type":"organization","scope_id":"engineering-team"}`, http.StatusBadRequest},
+		{"non-uuid delegate_id", `{"delegate_id":"someuser","scope_type":"organization","scope_id":"` + validUUID + `"}`, http.StatusBadRequest},
 		{"invalid scope_type", `{"delegate_id":"` + validUUID + `","scope_type":"planet","scope_id":"` + validUUID + `"}`, http.StatusBadRequest},
 		{"malformed json", `{`, http.StatusBadRequest},
 	}
@@ -48,6 +48,42 @@ func TestCreateDelegationValidation(t *testing.T) {
 			r.ServeHTTP(w, req)
 			if w.Code != tc.want {
 				t.Errorf("handleCreateDelegation[%s] = %d, want %d (body=%s)", tc.name, w.Code, tc.want, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestCreateDelegationRefusesNarrowingScopes is the handler half of the
+// delegation-scope decision (#956): a group, role or application scope is
+// refused with a 400 that says why, before the service is reached. Those
+// scopes were recorded and never enforced. The organization half and the edit
+// path run against Postgres in delegation_scope_test.go.
+func TestCreateDelegationRefusesNarrowingScopes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &Service{logger: zap.NewNop()}
+
+	validUUID := "00000000-0000-0000-0000-000000000001"
+
+	for _, scope := range []string{"group", "role", "application"} {
+		t.Run(scope, func(t *testing.T) {
+			r := gin.New()
+			r.POST("/delegations", func(c *gin.Context) {
+				c.Set("user_id", validUUID)
+				svc.handleCreateDelegation(c)
+			})
+			body := `{"delegate_id":"` + validUUID + `","scope_type":"` + scope + `","scope_id":"` + validUUID +
+				`","permissions":["users:read"]}`
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", "/delegations", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("a %s-scoped delegation got %d, want 400: the scope would narrow nothing, "+
+					"because RequirePermission compares resource and action only (body=%s)",
+					scope, w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), "not enforced") {
+				t.Fatalf("the refusal does not tell the administrator why: %s", w.Body.String())
 			}
 		})
 	}

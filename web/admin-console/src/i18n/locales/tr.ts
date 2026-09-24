@@ -2988,6 +2988,11 @@ const tr: typeof en = {
       },
       policies: {
         resourceName: 'MFA politikaları',
+        whatItDoes:
+          'Bir politika etkinken, ikinci faktör kaydı olan her kullanıcıdan girişte bu faktör istenir ve kayıtlı herhangi bir faktör yeterlidir. Hiç faktör kaydı olmayan kullanıcıdan istenmez.',
+        notEnforcedBadge: 'kayıtlı ayarlar uygulanmıyor',
+        notEnforcedBody:
+          'Bu politika zorunlu yöntemler, ek süre veya koşullarla kaydedilmiş. Bunların hiçbiri uygulanmıyor: faktörü olan her kullanıcı için kayıtlı herhangi bir faktör politikayı karşılar.',
         title: 'MFA Politikaları',
         create: 'Politika Oluştur',
         loading: 'Politikalar yükleniyor...',
@@ -2996,13 +3001,10 @@ const tr: typeof en = {
         table: {
           name: 'Ad',
           description: 'Açıklama',
-          methods: 'Zorunlu Yöntemler',
-          gracePeriod: 'Tanıma Süresi',
           priority: 'Öncelik',
           enabled: 'Etkin',
           actions: 'İşlemler',
         },
-        graceHours: '{{n}} sa',
         confirmDelete: {
           title: 'MFA Politikasını Sil',
           description:
@@ -3020,15 +3022,15 @@ const tr: typeof en = {
         },
       },
       dialog: {
+        whatItDoes:
+          'Politika, ikinci faktör kaydı olan her kullanıcıya uygulanır ve kayıtlı herhangi bir faktör yeterlidir. Belirli yöntemleri, ek süreyi veya koşulları zorunlu kılmak henüz desteklenmiyor.',
         editTitle: 'MFA Politikasını Düzenle',
         createTitle: 'MFA Politikası Oluştur',
         name: 'Politika Adı *',
-        namePlaceholder: 'örn. Tüm Kullanıcılar İçin TOTP Zorunlu',
+        namePlaceholder: 'örn. Herkes için ikinci faktör',
         description: 'Açıklama',
         descriptionPlaceholder: 'Bu politika neyi zorunlu kılıyor?',
         priority: 'Öncelik (düşük = önce)',
-        gracePeriod: 'Tanıma Süresi (saat)',
-        requiredMethods: 'Zorunlu Yöntemler',
         enabled: 'Etkin',
         saving: 'Kaydediliyor...',
         update: 'Politikayı Güncelle',
@@ -5381,7 +5383,7 @@ const tr: typeof en = {
         change: 'Alan Adını Değiştir',
         changeNote:
           'Alan adını değiştirmek proxy rotalarını ve OAuth yönlendirme URI\'lerini günceller, bootstrapper hedeflerini yeniden üretir. Özel bir sertifika yüklenmemişse yeni alan adı için kendinden imzalı yeni bir sertifika oluşturulur.',
-        placeholder: 'örn. browzer.tdv.org',
+        placeholder: 'örn. browzer.example.com',
         save: 'Alan Adını Kaydet',
         cascadeTitle: 'Önemli: Zincirleme Güncellemeler',
         cascade1: 'Tüm BrowZer proxy rotaları yeni alan adını kullanacak şekilde güncellenir',
@@ -7089,17 +7091,10 @@ const tr: typeof en = {
         application: 'Uygulama',
         organization: 'Kuruluş',
       },
-      scopeIdHints: {
-        group: 'Grup UUID’si — Gruplar sayfasından kopyalayın.',
-        role: 'Rol UUID’si — Roller sayfasından kopyalayın.',
-        application: 'Uygulama UUID’si — Uygulamalar sayfasından kopyalayın.',
-        organization: 'Kuruluş UUID’si — Kuruluşlar sayfasından kopyalayın.',
-        fallback: 'Kapsamlanan kaynağın UUID’si.',
-      },
       scopeNotEnforcedBadge: 'uygulanmıyor',
-      scopeNotEnforcedTitle: 'Daraltıcı kapsamlar kaydedilir, uygulanmaz',
+      scopeNotEnforcedTitle: 'Grup, Rol ve Uygulama kapsamları uygulanmaz.',
       scopeNotEnforcedBody:
-        'Grup, Rol veya Uygulama kapsamı bu kuruluşa karşı doğrulanır ve denetim kaydında tutulur; ancak izin denetimi yalnızca kaynak ve eylemi karşılaştırır — devredilen izinler, bu kuruluşta o izin nerede denetleniyorsa orada geçerlidir. Bugün yalnızca Kuruluş kapsamı gerçekten daraltır. Kapsama güvenmek yerine mümkün olan en küçük izin kümesini verin.',
+        'Bu yetki devirleri, bu kapsamlar reddedilmeye başlamadan önce oluşturuldu. İzin denetimi yalnızca kaynak ve eylemi karşılaştırır; bu yüzden kapsam ne derse desin, devredilen izinler bu kuruluşta o izin nerede denetleniyorsa orada geçerlidir. Her izin kümesinin, kuruluşun tamamında vereceğiniz bir küme olduğunu doğrulayın. Yeni yetki devirleri yalnızca kuruluş kapsamıyla oluşturulabilir.',
       resource: 'yetki devirleri',
       loading: 'Yetki devirleri yükleniyor...',
       emptyTitle: 'Yetki devri bulunamadı',
@@ -7137,12 +7132,10 @@ const tr: typeof en = {
           'Kullanıcı adı veya e-posta değil, kullanıcı UUID’si olmalıdır.',
         delegatedBy: 'Devreden (Kullanıcı Kimliği)',
         delegatedByPlaceholder: 'Geçerli kullanıcıyı kullanmak için boş bırakın',
-        scopeType: 'Kapsam Türü *',
-        scopeTypeEdit: 'Kapsam Türü',
-        scopeId: 'Kapsam Kimliği *',
-        scopeIdEdit: 'Kapsam Kimliği',
-        scopeIdPlaceholder: 'Kapsamlanan kaynağın UUID’si',
-        scopeIdInvalid: 'Ad değil, {{scope}} UUID’si olmalıdır.',
+        scope: 'Kapsam',
+        scopeOrganizationOnly:
+          'Devredilen izinler bu kuruluşun tamamında geçerlidir. Grup, Rol ve Uygulama kapsamları seçilemez, çünkü izin denetimi bunları henüz uygulamıyor.',
+        scopeFixed: 'Kapsam burada değiştirilemez.',
         permissions: 'İzinler (virgülle ayrılmış)',
         permissionsPlaceholder: 'users:read, users:write, groups:manage',
         permissionsHint: 'Biçim: kaynak:eylem, virgülle ayrılmış',

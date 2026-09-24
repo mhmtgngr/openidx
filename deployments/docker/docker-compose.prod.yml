@@ -313,6 +313,9 @@ services:
       - OAUTH_JWKS_URL=https://openidx.tdv.org/.well-known/jwks.json
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - OPENIDX_ENABLE_RATE_LIMIT=true
+      # provisioning-service wires OPA like admin-api and governance-service,
+      # and without this it asked localhost:8281, where nothing listens (#980).
+      - OPA_URL=http://opa:8281
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT:-jaeger:4317}
       - OTEL_SERVICE_NAME=provisioning-service
       - TRACING_ENABLED=${TRACING_ENABLED:-false}

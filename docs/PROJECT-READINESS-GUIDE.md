@@ -948,8 +948,9 @@ exactly — it is already written:
 4. ~~Delete the server-rendered login (plan Task 15).~~ Done in code (P6.1).
 5. Flip `ACCESS_ASSIGNMENT_ENFORCE=true`; verify an unassigned user can no
    longer dial, and the denial is audited.
-6. Create the first MFA policy (`{"factor_enrolled": true}`) and chase
-   enrollment via MFA Management stats.
+6. Create the first MFA policy (it takes no conditions: it challenges every
+   user who has a factor enrolled, #990) and chase enrollment via MFA
+   Management stats.
 
 The P1 tail items are **already shipped on this branch**: A2 (threat list
 → risk score), A3 (voice MFA fails closed instead of pretending), A4
@@ -2564,6 +2565,10 @@ class this whole program exists for.
    elsewhere, (b) become refusable at creation until scope-aware enforcement
    exists, or (c) get documented as organization-wide, which is what it has
    always been?
+
+   **Decided 2026-09-23 by the owner: (b)** (#956). The admin API refuses
+   those scopes on create and on edit. Existing rows keep theirs and are marked
+   "not enforced".
 
    Proven on Postgres 16 and Redis: two cases in `internal/common/middleware` —
    the enforcement point itself, running in CI where `ci.yml` attaches Postgres
@@ -6280,7 +6285,7 @@ For each grant type, the place a person *sees* it and the place the system
 | Role/group | Users/Groups pages | JWT `roles` claim, route checks | route probe as member vs non-member |
 | Vault/PAM grant | My Privileged Access, PAM pages | `pamEntryAllowed` at connect/reveal | connect as granted vs ungranted user |
 | Session | Sessions pages | Redis `revoked_session:*` at refresh/userinfo | revoke → refresh fails |
-| MFA policy | MFA Management | `IsMFARequired` in the OAuth login path | policy user is challenged; exempt user isn't |
+| MFA policy | MFA Management | `IsMFARequired` in the OAuth login path | with a policy on, a user with a factor is challenged; with it off, or with no factor, they aren't |
 | Device trust | My Devices, Access 360 | Ziti posture + `#device-trusted` attribute | untrusted device denied dial |
 
 Anything that appears in an admin UI without a row in this table is a
