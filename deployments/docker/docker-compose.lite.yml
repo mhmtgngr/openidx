@@ -1,0 +1,1095 @@
+# OpenIDX lite install: a working sign-in on a 4 GB machine.
+#
+# Start it with ./scripts/lite-up.sh. That writes the secrets (scripts/
+# generate-secrets.sh), runs this file, gives the seeded admin a random password
+# and prints the URL. docs/GETTING-STARTED.md#lite-install has the details. The
+# full stack, with every component on by default, is docker-compose.yml.
+#
+# WHAT RUNS. PostgreSQL, the three Redis roles, and the seven services the
+# console calls: identity, governance, provisioning, audit, admin-api, oauth
+# and access (the console's layout asks access-service for the Ziti status on
+# every page). The console's own nginx is the edge: it serves the SPA and sends
+# each API prefix to its service (nginx/admin-console.lite.conf), so the API is
+# same-origin and there is no APISIX or etcd. gateway-service is not here
+# because the console never calls it.
+#
+# WHAT IS OPTIONAL. Elasticsearch, Guacamole, OpenZiti and observability are
+# profiles. `./scripts/lite-up.sh --with <profile>` turns one on; it adds the
+# profile to COMPOSE_PROFILES in .env and sets the OPENIDX_* switch that points
+# the services at it. BrowZer, APISIX, OPA, mailpit and the demo apps stay in
+# the full stack.
+#
+# IMAGES. The published ones, all from one release: OPENIDX_VERSION (default
+# below). v1.37.0 is the first release whose console image calls its own
+# origin; the v1.36.0 console calls a fixed host and cannot work here. CI sets
+# OPENIDX_IMAGE_REGISTRY and OPENIDX_VERSION to images built from the commit
+# under test.
+#
+# PORTS. Only the console listens beyond 127.0.0.1 (OPENIDX_CONSOLE_PORT,
+# default 3000). PostgreSQL, the session Redis and the services' own ports are
+# published on 127.0.0.1 for debugging and for psql. The profiles' ports are too.
+#
+# MEMORY. Every container has a limit. The core stack's limits add up to
+# 2080 MiB:
+#
+#   postgres 512 | redis 128 + 64 + 64 | identity 192 | governance 128
+#   provisioning 128 | audit 160 | admin-api 192 | oauth 256 | access 192
+#   console 64
+#
+# migrate (256) and seed (64) run first and exit before the services start.
+# That leaves about 2 GiB of a 4 GiB machine for the kernel, dockerd,
+# containerd, one shim per container and the page cache. oauth-service gets
+# the most because each password check holds 19 MiB (Argon2id), so five
+# concurrent sign-ins need about 100 MiB on top of its idle 35 MiB. Each Go
+# service's GOMEMLIMIT is about three quarters of its limit, so the collector
+# works harder before the kernel has to kill it. The profiles add: elasticsearch
+# 1024, guacamole 768, ziti 384, observability 1216 (MiB).
+#
+# SECURITY. This is an evaluation install: APP_ENV=development, no TLS, rate
+# limiting off. ADMIN_API_REQUIRE_AUTH and ACCESS_API_REQUIRE_AUTH are on, so
+# development mode does not open the admin and access APIs to anonymous
+# callers. For production use the Helm chart (docs/DEPLOYMENT.md).
+
+name: openidx-lite
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  #---------------------------------------------------------------------------
+  # Data
+  #---------------------------------------------------------------------------
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # 7 services x DB_MAX_CONNS=5, plus migrate, seed and a psql of your own.
+    command: ["postgres", "-c", "max_connections=60"]
+    environment:
+      POSTGRES_DB: openidx
+      POSTGRES_USER: openidx
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/lite-up.sh}
+      OPENIDX_APP_PASSWORD: ${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/lite-up.sh}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./bootstrap.sql:/docker-entrypoint-initdb.d/00-bootstrap.sql:ro
+      - ./set-app-role-password.sh:/docker-entrypoint-initdb.d/zz-set-app-role-password.sh:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      # Over TCP: during first init the image runs a temporary server on the
+      # socket only, and a socket check would call it ready before the real
+      # server (and the init scripts) are done.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U openidx -d openidx"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *logging
+
+  # The three Redis roles of docker-compose.yml (session, rate-limit,
+  # revocation), each with a maxmemory under its container limit so a full
+  # instance refuses writes instead of being killed.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh} --maxmemory 96mb --maxmemory-policy noeviction
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *logging
+
+  redis-ratelimit:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh} --maxmemory 32mb --maxmemory-policy allkeys-lru --save ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *logging
+
+  redis-revocation:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh} --maxmemory 32mb --maxmemory-policy noeviction --appendonly yes
+    volumes:
+      - redis_revocation_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *logging
+
+  # Schema first (the Helm chart's migration Job runs the same command from
+  # the same image), then the seed rows migrations do not create.
+  migrate:
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/tools:${OPENIDX_VERSION:-v1.37.0}
+    entrypoint: ["/app/migrate"]
+    command: ["up"]
+    environment:
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/lite-up.sh}@postgres:5432/openidx?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *logging
+
+  # seed.sql, then the console's URL on the admin-console client: a lite install
+  # reached at http://<host>:3000 must accept that origin as a redirect URI,
+  # and migrations register only http://localhost:3000. Additive and idempotent.
+  seed:
+    image: postgres:16-alpine
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f /seed/seed.sql
+        psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -q -v console_url="$$CONSOLE_URL" <<'SQL'
+        SET app.bypass_rls = 'on';
+        UPDATE oauth_clients c
+           SET redirect_uris = (
+                 SELECT jsonb_agg(DISTINCT u)
+                   FROM jsonb_array_elements_text(
+                          COALESCE(c.redirect_uris, '[]'::jsonb)
+                          || jsonb_build_array(rtrim(:'console_url', '/') || '/login',
+                                               rtrim(:'console_url', '/') || '/callback')) AS u),
+               updated_at = now()
+         WHERE c.client_id = 'admin-console'
+           AND NOT (COALESCE(c.redirect_uris, '[]'::jsonb)
+                    @> jsonb_build_array(rtrim(:'console_url', '/') || '/login',
+                                         rtrim(:'console_url', '/') || '/callback'));
+        SQL
+    environment:
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/lite-up.sh}@postgres:5432/openidx?sslmode=disable
+      - CONSOLE_URL=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
+    volumes:
+      - ./seed.sql:/seed/seed.sql:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *logging
+
+  #---------------------------------------------------------------------------
+  # The services the console calls
+  #
+  # Every one: the application role (not the superuser), the default org for a
+  # single-tenant install, tokens issued for the console's origin
+  # (OAUTH_ISSUER) and verified against the oauth service's JWKS, 5 database
+  # connections at most, and a health check on its own /health.
+  #---------------------------------------------------------------------------
+
+  identity-service:
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/identity-service:${OPENIDX_VERSION:-v1.37.0}
+    restart: unless-stopped
+    environment:
+      - APP_ENV=development
+      - LOG_LEVEL=${OPENIDX_LOG_LEVEL:-info}
+      - GOMEMLIMIT=144MiB
+      - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/lite-up.sh}@postgres:5432/openidx?sslmode=disable
+      - DB_MAX_CONNS=5
+      - DB_MIN_CONNS=1
+      - RLS_MODE=session
+      - DEFAULT_ORG_FALLBACK=true
+      - DEFAULT_ORG_ID=00000000-0000-0000-0000-000000000010
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-revocation:6379
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/lite-up.sh}
+      - OAUTH_ISSUER=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - PUBLIC_BASE_URL=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OPENIDX_ENABLE_RATE_LIMIT=false
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-noreply@localhost}
+      - TRACING_ENABLED=${OPENIDX_TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=identity-service
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+    logging: *logging
+
+  governance-service:
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/governance-service:${OPENIDX_VERSION:-v1.37.0}
+    restart: unless-stopped
+    environment:
+      - APP_ENV=development
+      - LOG_LEVEL=${OPENIDX_LOG_LEVEL:-info}
+      - GOMEMLIMIT=96MiB
+      - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/lite-up.sh}@postgres:5432/openidx?sslmode=disable
+      - DB_MAX_CONNS=5
+      - DB_MIN_CONNS=1
+      - RLS_MODE=session
+      - DEFAULT_ORG_FALLBACK=true
+      - DEFAULT_ORG_ID=00000000-0000-0000-0000-000000000010
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-revocation:6379
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/lite-up.sh}
+      - OAUTH_ISSUER=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OPENIDX_ENABLE_RATE_LIMIT=false
+      # Fresh-install enforcement (#956), as scripts/generate-secrets.sh writes it.
+      - ABAC_ENFORCE=${ABAC_ENFORCE:-observe}
+      - TRACING_ENABLED=${OPENIDX_TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=governance-service
+    ports:
+      - "127.0.0.1:8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *logging
+
+  provisioning-service:
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/provisioning-service:${OPENIDX_VERSION:-v1.37.0}
+    restart: unless-stopped
+    environment:
+      - APP_ENV=development
+      - LOG_LEVEL=${OPENIDX_LOG_LEVEL:-info}
+      - GOMEMLIMIT=96MiB
+      - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/lite-up.sh}@postgres:5432/openidx?sslmode=disable
+      - DB_MAX_CONNS=5
+      - DB_MIN_CONNS=1
+      - RLS_MODE=session
+      - DEFAULT_ORG_FALLBACK=true
+      - DEFAULT_ORG_ID=00000000-0000-0000-0000-000000000010
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-revocation:6379
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/lite-up.sh}
+      - OAUTH_ISSUER=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OPENIDX_ENABLE_RATE_LIMIT=false
+      - TRACING_ENABLED=${OPENIDX_TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=provisioning-service
+    ports:
+      - "127.0.0.1:8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *logging
+
+  audit-service:
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/audit-service:${OPENIDX_VERSION:-v1.37.0}
+    restart: unless-stopped
+    environment:
+      - APP_ENV=development
+      - LOG_LEVEL=${OPENIDX_LOG_LEVEL:-info}
+      - GOMEMLIMIT=120MiB
+      - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/lite-up.sh}@postgres:5432/openidx?sslmode=disable
+      - DB_MAX_CONNS=5
+      - DB_MIN_CONNS=1
+      - RLS_MODE=session
+      - DEFAULT_ORG_FALLBACK=true
+      - DEFAULT_ORG_ID=00000000-0000-0000-0000-000000000010
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-revocation:6379
+      - OAUTH_ISSUER=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OPENIDX_ENABLE_RATE_LIMIT=false
+      # Empty keeps full-text search off; the elasticsearch profile sets it.
+      - ELASTICSEARCH_URL=${OPENIDX_ELASTICSEARCH_URL:-}
+      - OPENIDX_AUDIT_STREAM_ALLOWED_ORIGINS=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
+      # The HMAC key the audit hash chain seals events with.
+      - AUDIT_CHAIN_SECRET=${AUDIT_CHAIN_SECRET:?AUDIT_CHAIN_SECRET required - run scripts/lite-up.sh}
+      - AUDIT_CHAIN_INTERVAL=60s
+      - TRACING_ENABLED=${OPENIDX_TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=audit-service
+    ports:
+      - "127.0.0.1:8004:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+      # Only with the elasticsearch profile; the service starts without it.
+      elasticsearch:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 160M
+    logging: *logging
+
+  admin-api:
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/admin-api:${OPENIDX_VERSION:-v1.37.0}
+    restart: unless-stopped
+    environment:
+      - APP_ENV=development
+      # Development mode would serve the admin API to anonymous callers
+      # (SoftAuth). This install is reachable off-host, so require a token.
+      - ADMIN_API_REQUIRE_AUTH=true
+      - LOG_LEVEL=${OPENIDX_LOG_LEVEL:-info}
+      - GOMEMLIMIT=144MiB
+      - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/lite-up.sh}@postgres:5432/openidx?sslmode=disable
+      - DB_MAX_CONNS=5
+      - DB_MIN_CONNS=1
+      - RLS_MODE=session
+      - DEFAULT_ORG_FALLBACK=true
+      - DEFAULT_ORG_ID=00000000-0000-0000-0000-000000000010
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-revocation:6379
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/lite-up.sh}
+      - OAUTH_ISSUER=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - PUBLIC_BASE_URL=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OPENIDX_ENABLE_RATE_LIMIT=false
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-noreply@localhost}
+      - TRACING_ENABLED=${OPENIDX_TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=admin-api
+    ports:
+      - "127.0.0.1:8005:8005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+    logging: *logging
+
+  oauth-service:
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/oauth-service:${OPENIDX_VERSION:-v1.37.0}
+    restart: unless-stopped
+    environment:
+      - APP_ENV=development
+      - PORT=8006
+      - LOG_LEVEL=${OPENIDX_LOG_LEVEL:-info}
+      - GOMEMLIMIT=192MiB
+      - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/lite-up.sh}@postgres:5432/openidx?sslmode=disable
+      - DB_MAX_CONNS=5
+      - DB_MIN_CONNS=1
+      - RLS_MODE=session
+      - DEFAULT_ORG_FALLBACK=true
+      - DEFAULT_ORG_ID=00000000-0000-0000-0000-000000000010
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-revocation:6379
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/lite-up.sh}
+      # The console's origin is the issuer: the edge sends /oauth and
+      # /.well-known here, and the login page is <issuer>/login.
+      - OAUTH_ISSUER=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - OAUTH_LOGIN_URL=${OPENIDX_PUBLIC_URL:-http://localhost:3000}/login
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OPENIDX_ENABLE_RATE_LIMIT=false
+      # Fresh-install enforcement (#956), as scripts/generate-secrets.sh writes it.
+      - ACCESS_ASSIGNMENT_ENFORCE=${ACCESS_ASSIGNMENT_ENFORCE:-true}
+      - ABAC_ENFORCE=${ABAC_ENFORCE:-observe}
+      - TRACING_ENABLED=${OPENIDX_TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=oauth-service
+    ports:
+      - "127.0.0.1:8006:8006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *logging
+
+  access-service:
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/access-service:${OPENIDX_VERSION:-v1.37.0}
+    restart: unless-stopped
+    environment:
+      - APP_ENV=development
+      # As for admin-api: no anonymous callers on the access data API.
+      - ACCESS_API_REQUIRE_AUTH=true
+      - LOG_LEVEL=${OPENIDX_LOG_LEVEL:-info}
+      - GOMEMLIMIT=144MiB
+      - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/lite-up.sh}@postgres:5432/openidx?sslmode=disable
+      - DB_MAX_CONNS=5
+      - DB_MIN_CONNS=1
+      - RLS_MODE=session
+      - DEFAULT_ORG_FALLBACK=true
+      - DEFAULT_ORG_ID=00000000-0000-0000-0000-000000000010
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis:6379
+      - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-ratelimit:6379
+      - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-revocation:6379
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/lite-up.sh}
+      - ACCESS_SESSION_SECRET=${ACCESS_SESSION_SECRET:?ACCESS_SESSION_SECRET required - run scripts/lite-up.sh}
+      - ACCESS_PROXY_DOMAIN=localhost
+      - OAUTH_ISSUER=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - GOVERNANCE_URL=http://governance-service:8002
+      - AUDIT_URL=http://audit-service:8004
+      - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OPENIDX_ENABLE_RATE_LIMIT=false
+      - ACCESS_ASSIGNMENT_ENFORCE=${ACCESS_ASSIGNMENT_ENFORCE:-true}
+      - ABAC_ENFORCE=${ABAC_ENFORCE:-observe}
+      - CONTINUOUS_VERIFY_ENABLED=false
+      - BROWZER_ENABLED=false
+      # Off until the ziti profile turns it on (OPENIDX_ZITI_ENABLED=true).
+      - ZITI_ENABLED=${OPENIDX_ZITI_ENABLED:-false}
+      - ZITI_CTRL_URL=https://ziti-controller.localtest.me:1280
+      - ZITI_ADMIN_USER=admin
+      - ZITI_ADMIN_PASSWORD=${ZITI_PWD:?ZITI_PWD required - run scripts/lite-up.sh}
+      - ZITI_IDENTITY_DIR=/ziti
+      - ZITI_CONSOLE_URL=https://ziti-controller.localtest.me:11280/zac/
+      # Empty until the guacamole profile sets it; the browser reaches
+      # Guacamole through the console's /guacamole/ route.
+      - GUACAMOLE_URL=${OPENIDX_GUACAMOLE_URL:-}
+      - GUACAMOLE_PUBLIC_URL=${OPENIDX_PUBLIC_URL:-http://localhost:3000}/guacamole
+      - GUACAMOLE_ADMIN_USER=guacadmin
+      - GUACAMOLE_ADMIN_PASSWORD=${GUACAMOLE_ADMIN_PASSWORD:?GUACAMOLE_ADMIN_PASSWORD required - run scripts/lite-up.sh}
+      - TRACING_ENABLED=${OPENIDX_TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=access-service
+    volumes:
+      - ziti_access_proxy:/ziti
+    ports:
+      - "127.0.0.1:8007:8007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redis-ratelimit:
+        condition: service_healthy
+      redis-revocation:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+      oauth-service:
+        condition: service_healthy
+      # Only with their profiles.
+      guacamole:
+        condition: service_healthy
+        required: false
+      ziti-trust-init:
+        condition: service_completed_successfully
+        required: false
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8007/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+    logging: *logging
+
+  #---------------------------------------------------------------------------
+  # The console, and the edge in front of the services
+  #---------------------------------------------------------------------------
+
+  admin-console:
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/admin-console:${OPENIDX_VERSION:-v1.37.0}
+    restart: unless-stopped
+    volumes:
+      - ./nginx/admin-console.lite.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      # The one port meant to be reached from other machines.
+      - "${OPENIDX_CONSOLE_BIND:-0.0.0.0}:${OPENIDX_CONSOLE_PORT:-3000}:8080"
+    depends_on:
+      oauth-service:
+        condition: service_healthy
+      admin-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *logging
+
+  #---------------------------------------------------------------------------
+  # Profile: elasticsearch -- full-text audit search.
+  #   ./scripts/lite-up.sh --with elasticsearch
+  # (sets OPENIDX_ELASTICSEARCH_URL=http://elasticsearch:9200)
+  #---------------------------------------------------------------------------
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    profiles: ["elasticsearch"]
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "127.0.0.1:9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    logging: *logging
+
+  #---------------------------------------------------------------------------
+  # Profile: guacamole -- brokered SSH/RDP/VNC sessions for PAM.
+  #   ./scripts/lite-up.sh --with guacamole
+  # (sets OPENIDX_GUACAMOLE_URL=http://guacamole:8080/guacamole)
+  #---------------------------------------------------------------------------
+
+  # Creates the guacamole database and schema if they are missing, and gives
+  # guacadmin the generated GUACAMOLE_ADMIN_PASSWORD. The schema seeds
+  # guacadmin/guacadmin, and the console's /guacamole/ route would otherwise
+  # publish that account. Safe to run on every start.
+  guacamole-db-init:
+    image: postgres:16-alpine
+    profiles: ["guacamole"]
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        if ! psql "$$ADMIN_DATABASE_URL" -tAc "SELECT 1 FROM pg_database WHERE datname = 'guacamole'" | grep -q 1; then
+          psql "$$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE guacamole"
+        fi
+        if ! psql "$$GUACAMOLE_DATABASE_URL" -tAc "SELECT to_regclass('public.guacamole_user') IS NOT NULL" | grep -q t; then
+          psql "$$GUACAMOLE_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f /seed/guacamole-schema.sql
+        fi
+        psql "$$GUACAMOLE_DATABASE_URL" -v ON_ERROR_STOP=1 -q -v pw="$$GUACAMOLE_ADMIN_PASSWORD" <<'SQL'
+        UPDATE guacamole_user u
+           SET password_salt = s.salt,
+               password_hash = sha256(convert_to(:'pw' || upper(encode(s.salt, 'hex')), 'UTF8')),
+               password_date = now()
+          FROM guacamole_entity e,
+               (SELECT sha256(convert_to(gen_random_uuid()::text, 'UTF8')) AS salt) s
+         WHERE e.entity_id = u.entity_id AND e.name = 'guacadmin' AND e.type = 'USER';
+        SQL
+    environment:
+      - ADMIN_DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/lite-up.sh}@postgres:5432/openidx?sslmode=disable
+      - GUACAMOLE_DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/lite-up.sh}@postgres:5432/guacamole?sslmode=disable
+      - GUACAMOLE_ADMIN_PASSWORD=${GUACAMOLE_ADMIN_PASSWORD:?GUACAMOLE_ADMIN_PASSWORD required - run scripts/lite-up.sh}
+    volumes:
+      - ./init-guacamole.sql:/seed/guacamole-schema.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *logging
+
+  # Pinned to 1.6.0 for the reason docker-compose.yml gives (RemoteApp needs
+  # FreeRDP 2).
+  guacd:
+    image: guacamole/guacd:1.6.0
+    profiles: ["guacamole"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *logging
+
+  guacamole:
+    image: guacamole/guacamole:1.6.0
+    profiles: ["guacamole"]
+    restart: unless-stopped
+    environment:
+      - GUACD_HOSTNAME=guacd
+      - POSTGRESQL_HOSTNAME=postgres
+      - POSTGRESQL_DATABASE=guacamole
+      - POSTGRESQL_USER=openidx
+      - POSTGRESQL_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/lite-up.sh}
+      - POSTGRESQL_AUTO_CREATE_ACCOUNTS=true
+    ports:
+      - "127.0.0.1:8085:8080"
+    depends_on:
+      guacamole-db-init:
+        condition: service_completed_successfully
+      guacd:
+        condition: service_started
+    healthcheck:
+      # The web application answering, not just Tomcat's port: access-service
+      # signs in to it as soon as this reports healthy. bash only, because the
+      # image carries neither curl nor wget for certain.
+      test: ["CMD", "bash", "-c", 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /guacamole/ HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 && head -n 1 <&3 | grep -q " 200 "']
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *logging
+
+  #---------------------------------------------------------------------------
+  # Profile: ziti -- the OpenZiti controller and one edge router.
+  #   ./scripts/lite-up.sh --with ziti
+  # (sets OPENIDX_ZITI_ENABLED=true)
+  #
+  # The same controller, router and bootstrap jobs as docker-compose.yml, with
+  # the ports on 127.0.0.1. The advertised names are *.localtest.me, which
+  # resolve to 127.0.0.1, so clients on other machines cannot join this
+  # overlay; BrowZer is not included. Use it to see the Ziti pages work.
+  #---------------------------------------------------------------------------
+
+  ziti-controller:
+    # Pinned with the SDK; see docker-compose.yml.
+    image: openziti/ziti-controller:${ZITI_VERSION:-1.6.12}
+    profiles: ["ziti"]
+    restart: unless-stopped
+    environment:
+      - ZITI_BOOTSTRAP=true
+      - ZITI_BOOTSTRAP_CONSOLE=true
+      - ZITI_CTRL_ADVERTISED_ADDRESS=ziti-controller.localtest.me
+      - ZITI_CTRL_ADVERTISED_PORT=1280
+      - ZITI_PWD=${ZITI_PWD:?ZITI_PWD required - run scripts/lite-up.sh}
+      - PFXLOG_NO_JSON=true
+    volumes:
+      - ziti_controller_data:/home/ziggy
+      - ziti_controller_pki:/ziti-controller
+      - browzer_certs:/browzer-certs:ro
+    ports:
+      - "127.0.0.1:11280:1280"
+    healthcheck:
+      test: ["CMD", "ziti", "agent", "stats"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      default:
+        aliases:
+          - ziti-controller.localtest.me
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *logging
+
+  # The TLS certificate the router's config names (alt_server_certs), and the
+  # controller's CA, as in docker-compose.yml.
+  browzer-cert-init:
+    image: openziti/ziti-controller:${ZITI_VERSION:-1.6.12}
+    profiles: ["ziti"]
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        cat /ziti-pki/pki/root/certs/root.cert > /shared-certs/ziti-ca.pem
+        chmod 644 /shared-certs/ziti-ca.pem
+        if [ ! -f /shared-certs/browzer-tls.key ] || ! openssl x509 -in /shared-certs/browzer-tls.crt -noout -text 2>/dev/null | grep -q '\*.localtest.me'; then
+          openssl req -x509 -newkey rsa:2048 -keyout /shared-certs/browzer-tls.key \
+            -out /shared-certs/browzer-tls.crt -days 365 -nodes \
+            -subj "/CN=localtest.me" \
+            -addext "subjectAltName=DNS:*.localtest.me,DNS:localtest.me,DNS:localhost,IP:127.0.0.1"
+          chmod 644 /shared-certs/browzer-tls.key /shared-certs/browzer-tls.crt
+        fi
+        if [ -f /ziti-pki/config.yml ] && ! grep -q "alt_server_certs:" /ziti-pki/config.yml; then
+          sed -i 's|#alt_server_certs:|alt_server_certs:|; s|#  - server_cert:  ""|  - server_cert: "/browzer-certs/browzer-tls.crt"|; s|#    server_key:   ""|    server_key: "/browzer-certs/browzer-tls.key"|' /ziti-pki/config.yml
+        fi
+    volumes:
+      - ziti_controller_pki:/ziti-pki
+      - browzer_certs:/shared-certs
+    depends_on:
+      ziti-controller:
+        condition: service_healthy
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *logging
+
+  ziti-router-init:
+    image: openziti/ziti-controller:${ZITI_VERSION:-1.6.12}
+    profiles: ["ziti"]
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        TOKEN_FILE=/ziti-shared/router.jwt
+        if [ -s "$$TOKEN_FILE" ]; then
+          echo "Router JWT already exists"
+          exit 0
+        fi
+        ziti edge login ziti-controller.localtest.me:1280 -u admin -p "$${ZITI_PWD}" --yes
+        ziti edge create edge-router openidx-router --jwt-output-file "$$TOKEN_FILE" 2>/dev/null || true
+        if [ ! -s "$$TOKEN_FILE" ]; then
+          ROUTER_ID=$$(ziti edge list edge-routers 'name="openidx-router"' -j 2>/dev/null | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+          if [ -n "$$ROUTER_ID" ]; then
+            ziti edge delete edge-router "$$ROUTER_ID" 2>/dev/null || true
+            ziti edge create edge-router openidx-router --jwt-output-file "$$TOKEN_FILE"
+          fi
+        fi
+        [ -s "$$TOKEN_FILE" ] || { echo "could not obtain the router JWT"; exit 1; }
+        chmod 644 "$$TOKEN_FILE"
+    environment:
+      - ZITI_PWD=${ZITI_PWD:?ZITI_PWD required - run scripts/lite-up.sh}
+    volumes:
+      - ziti_router_shared:/ziti-shared
+    depends_on:
+      ziti-controller:
+        condition: service_healthy
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *logging
+
+  ziti-router:
+    image: openziti/ziti-router:${ZITI_VERSION:-1.6.12}
+    profiles: ["ziti"]
+    restart: unless-stopped
+    environment:
+      - ZITI_BOOTSTRAP=true
+      - ZITI_BOOTSTRAP_ENROLLMENT=true
+      - ZITI_CTRL_ADVERTISED_ADDRESS=ziti-controller.localtest.me
+      - ZITI_CTRL_ADVERTISED_PORT=1280
+      - ZITI_ROUTER_ADVERTISED_ADDRESS=ziti-router
+      - ZITI_ROUTER_PORT=3022
+      - ZITI_ENROLL_TOKEN=/ziti-shared/router.jwt
+    entrypoint: ["/bin/bash", "/openidx/entrypoint.bash"]
+    volumes:
+      - ./ziti-router/entrypoint.bash:/openidx/entrypoint.bash:ro
+      - ./ziti-router/config.yml:/etc/ziti/router-config.yml:ro
+      - ziti_router_data:/ziti-router
+      - ziti_router_shared:/ziti-shared:ro
+      - browzer_certs:/browzer-certs:ro
+    healthcheck:
+      test: ["CMD", "ziti", "agent", "stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      ziti-controller:
+        condition: service_healthy
+      ziti-router-init:
+        condition: service_completed_successfully
+      browzer-cert-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *logging
+
+  # The one thing docker-compose.yml leaves to the operator: access-service
+  # verifies the controller's TLS against /ziti/ca.pem and refuses to connect
+  # without it. Written from the controller's root CA and the certificate
+  # browzer-cert-init made, by the access-service image so the file belongs to
+  # its user.
+  ziti-trust-init:
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/access-service:${OPENIDX_VERSION:-v1.37.0}
+    profiles: ["ziti"]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        cat /ziti-pki/pki/root/certs/root.cert /browzer-certs/browzer-tls.crt > /ziti/ca.pem.new
+        chown openidx:openidx /ziti /ziti/ca.pem.new
+        chmod 644 /ziti/ca.pem.new
+        mv /ziti/ca.pem.new /ziti/ca.pem
+    volumes:
+      - ziti_controller_pki:/ziti-pki:ro
+      - browzer_certs:/browzer-certs:ro
+      - ziti_access_proxy:/ziti
+    depends_on:
+      browzer-cert-init:
+        condition: service_completed_successfully
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *logging
+
+  #---------------------------------------------------------------------------
+  # Profile: observability -- metrics, alerts, logs and traces.
+  #   ./scripts/lite-up.sh --with observability
+  # (sets OPENIDX_TRACING_ENABLED=true)
+  #
+  # The components of docker-compose.yml. Promtail reads the Docker socket to
+  # find containers, which is root-equivalent on this host: this profile is
+  # the only part of the lite install that mounts it.
+  #---------------------------------------------------------------------------
+
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+    volumes:
+      - ./prometheus/prometheus.lite.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - alertmanager
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    logging: *logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "127.0.0.1:9093:9093"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:10.3.1
+    profiles: ["observability"]
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD required - run scripts/lite-up.sh}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+    logging: *logging
+
+  loki:
+    image: grafana/loki:2.9.4
+    profiles: ["observability"]
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+    logging: *logging
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    profiles: ["observability"]
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      - loki
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *logging
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.54
+    profiles: ["observability"]
+    restart: unless-stopped
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      # In-memory storage grows with every trace; cap it.
+      - MEMORY_MAX_TRACES=20000
+    ports:
+      - "127.0.0.1:16686:16686"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *logging
+
+volumes:
+  postgres_data:
+  redis_data:
+  redis_revocation_data:
+  elasticsearch_data:
+  ziti_controller_data:
+  ziti_controller_pki:
+  ziti_router_data:
+  ziti_router_shared:
+  ziti_access_proxy:
+  browzer_certs:
+  prometheus_data:
+  grafana_data:
+  loki_data:

@@ -1,0 +1,45 @@
+# CI only: the runtime stage of the published service images, around a binary
+# built on the runner.
+#
+# The lite-install job has to test this commit's code, so it cannot pull the
+# release images. Compiling each service inside its own Dockerfile is `go build
+# -a` with no cache, eight times; on a two-core runner that is most of an hour.
+# `go build` on the runner, with the module and build caches setup-go restores,
+# is minutes. scripts/lite-ci-images.sh does that and then wraps each binary in
+# the same runtime the release images use: alpine 3.24, ca-certificates, tzdata,
+# wget for the health checks, and the unprivileged openidx user.
+#
+# Targets, each mirroring one release Dockerfile's final stage:
+#   service  Dockerfile.<service>          /app/service is the entrypoint
+#   access   Dockerfile.access-service     entrypoint-access.sh, and /ziti
+#   tools    Dockerfile.tools              /app/migrate
+#
+# The build context is the directory scripts/lite-ci-images.sh assembles:
+# bin/<binary> and entrypoint-access.sh.
+
+FROM alpine:3.24 AS runtime
+RUN apk add --no-cache ca-certificates tzdata wget && \
+    rm -rf /var/cache/apk/* && \
+    addgroup -S openidx && \
+    adduser -S openidx -G openidx
+WORKDIR /app
+
+FROM runtime AS service
+ARG SERVICE
+COPY bin/${SERVICE} /app/service
+USER openidx
+ENTRYPOINT ["/app/service"]
+
+FROM runtime AS access
+RUN mkdir -p /ziti /shared-config /shared-certs && \
+    chown -R openidx:openidx /ziti /shared-config /shared-certs
+COPY bin/access-service /app/service
+COPY entrypoint-access.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+USER openidx
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+FROM runtime AS tools
+COPY bin/migrate /app/migrate
+USER openidx
+CMD ["/app/migrate", "status"]

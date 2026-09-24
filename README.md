@@ -103,21 +103,50 @@ not as a multi-connector integration project.
 
 ## Quick Start
 
-### Prerequisites
-- Docker & Docker Compose
-- Go 1.26+ and Node.js 20+ (only for building from source)
-- kubectl + Helm (for Kubernetes deployment)
-- **Hardware floor**: the full stack is ~39 containers (Postgres,
-  Elasticsearch, OpenZiti, Guacamole, observability, 8 Go services…) —
-  plan on **≥ 8–10 GB RAM** and 4+ cores for a complete single-box install.
+### Lite install (the quick start)
 
-### Docker Compose (the supported quick start)
+A working sign-in on one machine with **4 GB of RAM and 2 CPUs**: PostgreSQL,
+Redis, the seven services the console uses, and the console. It needs Linux
+on x86-64 with Docker Engine and the Compose plugin 2.20 or later
+([install Docker](https://docs.docker.com/engine/install/)), and about 3 GB of
+disk.
 
 ```bash
-# Clone the repository
-git clone https://github.com/mhmtgngr/openidx.git
+git clone --depth 1 https://github.com/mhmtgngr/openidx.git
 cd openidx
+./scripts/lite-up.sh
+```
 
+The script writes a `.env` with random secrets, starts
+`deployments/docker/docker-compose.lite.yml`, waits until every service is
+healthy, gives the `admin` account a random password and prints it once,
+with the URL (http://localhost:3000). Run it again at any time: it keeps the
+secrets and the password.
+
+- **From another machine:** `ssh -L 3000:localhost:3000 you@host` and open
+  http://localhost:3000, or run `./scripts/lite-up.sh --url http://<host>:3000`.
+  Only the console's port listens beyond 127.0.0.1.
+- **Optional components**, one at a time, each with more memory:
+  `./scripts/lite-up.sh --with elasticsearch` (also `guacamole`, `ziti`,
+  `observability`).
+- **Stop:** `docker compose -f deployments/docker/docker-compose.lite.yml down`
+  (add `-v` to delete the data).
+
+The lite install pulls the published images of release v1.37.0 or later; the
+v1.36.0 console image calls a fixed host and cannot work in it. It is an
+evaluation install: no TLS, development mode. Details, the memory budget and
+the components are in
+[Getting Started → Lite install](docs/GETTING-STARTED.md#lite-install).
+
+### Full stack (advanced)
+
+Every component on one machine: about 39 containers (Postgres,
+Elasticsearch, OpenZiti, BrowZer, Guacamole, APISIX, observability, 8 Go
+services…). Plan on **8–10 GB of RAM** and 4+ cores. It builds the images
+from source and publishes its ports on all interfaces, so run it on a
+development machine, not an exposed host.
+
+```bash
 # Generate a .env with random secrets (compose refuses to start without them)
 ./scripts/generate-secrets.sh
 
@@ -136,6 +165,11 @@ identity and oauth services refuse to start while the default still works.
 For a production single-VM install, layer the hardened overlay:
 `-f deployments/docker/docker-compose.yml -f deployments/docker/docker-compose.prod.yml`
 (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
+
+### Building from source
+
+Go 1.26+ and Node.js 20+; see
+[Getting Started → Developer Setup](docs/GETTING-STARTED.md#-developer-setup-from-source).
 
 ### Local development (services on the host)
 

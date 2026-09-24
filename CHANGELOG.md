@@ -270,6 +270,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no-op control green.
 
 ### Added
+- **Lite install: sign in on a 4 GB machine (#961).** `./scripts/lite-up.sh`
+  starts `deployments/docker/docker-compose.lite.yml` (PostgreSQL, Redis, the
+  seven services the console calls, the production console as a same-origin
+  edge; published images, `OPENIDX_VERSION` default v1.37.0; memory limits
+  totalling 2080 MiB; only the console's port beyond 127.0.0.1), sets a random
+  admin password and prints it once. Elasticsearch, Guacamole, OpenZiti and
+  observability are `--with` profiles. The README quick start now uses it, and
+  the `lite-install` CI job runs it and signs in.
 - **The post-logout allowlist can be registered from the console.** The
   RP-Initiated Logout list added below was reachable only through dynamic
   client registration and the OAuth client API. The applications editor —

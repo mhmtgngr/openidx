@@ -19,6 +19,12 @@
 # Case 4 below is the one that keeps this from happening again on its own: it
 # derives the required-variable list FROM the compose file, so a `${VAR:?…}`
 # added later fails here instead of failing the operator.
+#
+# Cases 8-10 cover the quick start the README gives now, the lite install
+# (#961): the lite compose file resolves after the generator, and
+# scripts/lite-up.sh writes the secrets once, sets the admin password once and
+# prints no other secret. The lite-install CI job runs the same path on a real
+# stack.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
@@ -120,5 +126,132 @@ grep -qx 'ACCESS_ASSIGNMENT_ENFORCE=true' "$TMP/a.env" \
   || fail "7: the generated .env does not enforce application assignment"
 grep -qx 'ABAC_ENFORCE=observe' "$TMP/a.env" \
   || fail "7: the generated .env does not put ABAC in observe"
+
+# --- 8. the lite install's required variables are all generated -------------
+# The README's quick start is now scripts/lite-up.sh and the lite compose file;
+# case 4's rule, applied to that file.
+LITE_FILE="deployments/docker/docker-compose.lite.yml"
+missing=""
+# shellcheck disable=SC2016 # the characters tr deletes, not an expansion
+for v in $(grep -oE '\$\{[A-Z0-9_]+ *:?\?' "$LITE_FILE" \
+            | tr -d '${:?' | sort -u); do
+  grep -q "^${v}=" "$TMP/a.env" || missing="$missing $v"
+done
+[ -z "$missing" ] || fail "8: the lite file requires these, the generator does not write them:$missing"
+
+# --- 9. the lite file resolves, with and without every optional component ----
+if docker compose version >/dev/null 2>&1; then
+  for profiles in "" "elasticsearch,guacamole,ziti,observability"; do
+    if ! COMPOSE_PROFILES="$profiles" docker compose -f "$LITE_FILE" config -q 2>"$TMP/l.err"; then
+      echo "--- stderr ---"; head -5 "$TMP/l.err"
+      fail "9: 'docker compose -f $LITE_FILE config' failed with COMPOSE_PROFILES='$profiles'"
+    fi
+  done
+else
+  echo "note: docker compose not installed; case 9 did not run"
+fi
+
+# --- 10. scripts/lite-up.sh: secrets once, the admin password once, nothing leaked
+# The first-run script is exercised against a stand-in for the docker CLI, so
+# its own logic is checked here without a daemon: every container reports
+# healthy, and "psql" answers the way the database does -- the admin password
+# is replaced the first time and on --reset-admin-password, never otherwise.
+# The lite-install CI job runs the same script against a real stack.
+rm -f "$ROOT_ENV" "$COMPOSE_ENV"
+STUB="$TMP/stub"
+mkdir -p "$STUB/bin"
+cat > "$STUB/bin/docker" <<'STUBEOF'
+#!/usr/bin/env bash
+case "$1" in
+  info)
+    case "$*" in
+      *MemTotal*) echo 4102029312 ;;
+      *Architecture*) echo x86_64 ;;
+    esac
+    exit 0 ;;
+  volume) exit 1 ;;
+  inspect)
+    shift 3   # inspect -f FORMAT
+    for id in "$@"; do
+      case "$id" in
+        *migrate|*seed) echo "exited none 0 0 no" ;;
+        *) echo "running healthy 0 0 unless-stopped" ;;
+      esac
+    done
+    exit 0 ;;
+  compose)
+    case " $* " in
+      *" version "*) echo 2.29.1 ;;
+      *" config --services "*) printf 'postgres\nmigrate\nseed\noauth-service\n' ;;
+      *" ps "*) echo "cid-${*: -1}" ;;
+      *" exec "*)
+        sql="$(cat)"
+        bind="$(awk '$1 == "\\bind" {print $2, $3}' <<< "$sql" | tr -d "'")"
+        pw="${bind% *}"
+        force="${bind#* }"
+        [ -n "$pw" ] || { echo "stub: the SQL carries no bound password" >&2; exit 3; }
+        if [ ! -e "$STUB_STATE/pw" ] || [ "$force" = "true" ]; then
+          printf '%s' "$pw" > "$STUB_STATE/pw"
+          echo "admin-password-set"
+        fi ;;
+    esac
+    exit 0 ;;
+esac
+exit 0
+STUBEOF
+chmod +x "$STUB/bin/docker"
+lite_up() { PATH="$STUB/bin:$PATH" STUB_STATE="$STUB" bash scripts/lite-up.sh "$@"; }
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }  # GNU, then BSD
+
+lite_up >"$TMP/l1.out" 2>&1 || { tail -20 "$TMP/l1.out"; fail "10: lite-up.sh failed on a fresh checkout"; }
+[ -s "$ROOT_ENV" ] || fail "10: lite-up.sh wrote no .env"
+[ -e "$COMPOSE_ENV" ] || fail "10: lite-up.sh left compose without its .env"
+case "$(mode_of "$ROOT_ENV")" in
+  600) ;;
+  *) fail "10: .env holds every secret and must be readable by its owner only" ;;
+esac
+first_pw="$(cat "$STUB/pw" 2>/dev/null || true)"
+[ -n "$first_pw" ] || fail "10: the first run did not set the admin password"
+grep -qF -- "Password  $first_pw" "$TMP/l1.out" || fail "10: the first run did not print the new admin password"
+while IFS='=' read -r key value; do
+  case "$key" in *PASSWORD*|*SECRET*|*_KEY|*PWD) ;; *) continue ;; esac
+  [ "${#value}" -ge 8 ] || continue
+  if grep -qF -- "${value:0:8}" "$TMP/l1.out"; then
+    fail "10: lite-up.sh printed part of $key"
+  fi
+done < "$ROOT_ENV"
+
+cp "$ROOT_ENV" "$TMP/env.first"
+lite_up >"$TMP/l2.out" 2>&1 || fail "10: a second run failed"
+cmp -s "$ROOT_ENV" "$TMP/env.first" || fail "10: a second run changed .env"
+[ "$(cat "$STUB/pw")" = "$first_pw" ] || fail "10: a second run replaced the admin password"
+if grep -qF -- "$first_pw" "$TMP/l2.out"; then
+  fail "10: a second run printed the admin password again"
+fi
+
+lite_up --with elasticsearch >"$TMP/l3.out" 2>&1 || fail "10: --with elasticsearch failed"
+grep -qx 'COMPOSE_PROFILES=elasticsearch' "$ROOT_ENV" || fail "10: --with did not add the profile"
+grep -qx 'OPENIDX_ELASTICSEARCH_URL=http://elasticsearch:9200' "$ROOT_ENV" \
+  || fail "10: --with elasticsearch did not point audit-service at it"
+lite_up --without elasticsearch >"$TMP/l4.out" 2>&1 || fail "10: --without elasticsearch failed"
+grep -qx 'COMPOSE_PROFILES=' "$ROOT_ENV" || fail "10: --without did not remove the profile"
+grep -qx 'OPENIDX_ELASTICSEARCH_URL=' "$ROOT_ENV" || fail "10: --without left audit-service pointed at Elasticsearch"
+
+if lite_up --url http://idp.example.com/console >"$TMP/l5.out" 2>&1; then
+  fail "10: --url accepted a URL with a path; the console is served at the root of its origin"
+fi
+
+OPENIDX_ADMIN_PASSWORD_FILE="$TMP/admin.pw" lite_up --reset-admin-password >"$TMP/l6.out" 2>&1 \
+  || fail "10: --reset-admin-password failed"
+new_pw="$(cat "$STUB/pw")"
+[ "$new_pw" != "$first_pw" ] || fail "10: --reset-admin-password kept the old password"
+[ "$(tr -d '\n' < "$TMP/admin.pw")" = "$new_pw" ] || fail "10: OPENIDX_ADMIN_PASSWORD_FILE does not hold the new password"
+case "$(mode_of "$TMP/admin.pw")" in
+  600) ;;
+  *) fail "10: the admin password file must be readable by its owner only" ;;
+esac
+if grep -qF -- "$new_pw" "$TMP/l6.out"; then
+  fail "10: the password was printed although OPENIDX_ADMIN_PASSWORD_FILE was set"
+fi
 
 echo "FIRST_RUN_SELFTEST=OK"

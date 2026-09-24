@@ -19,6 +19,10 @@ A release is cut by pushing a `vX.Y.Z` git tag — everything else is automated.
    `bash scripts/check-version-sync.sh --enforce` is green — it holds the
    console, the Helm chart's `appVersion`, the Flutter client and the seven
    OpenAPI specs under `api/openapi/` to that number.
+5. The lite install pins the release it pulls: set the `OPENIDX_VERSION`
+   default in `deployments/docker/docker-compose.lite.yml` (every
+   `${OPENIDX_VERSION:-vX.Y.Z}`) and in `docs/GETTING-STARTED.md#lite-install`
+   to the tag you are about to push. No guard holds it yet.
 
 ## Cut the release
 
