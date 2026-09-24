@@ -361,6 +361,25 @@ func (s *Service) fanOutUserChange(ctx context.Context, orgID, localID, operatio
 	}
 }
 
+// fanOutGroupChange is fanOutUserChange for a group: it enqueues the group's
+// name and member ids for every enabled target that provisions groups.
+// Membership travels in the snapshot so the worker can send it; the snapshot
+// used to carry an empty member list, so a downstream group was created with
+// no members and never gained any.
+func (s *Service) fanOutGroupChange(ctx context.Context, orgID, groupID, operation, displayName string, memberIDs []string) {
+	snap := groupSnapshot{ID: groupID, DisplayName: displayName, MemberIDs: memberIDs}
+	n, err := s.EnqueueGroupOp(ctx, orgID, groupID, operation, snap)
+	if err != nil {
+		s.logger.Warn("outbound SCIM group fan-out failed (will be recovered by full sync)",
+			zap.String("op", operation), zap.String("group_id", logsafe.Clean(groupID)), zap.Error(err))
+		return
+	}
+	if n > 0 {
+		s.logger.Info("outbound SCIM group fan-out enqueued",
+			zap.String("op", operation), zap.String("group_id", logsafe.Clean(groupID)), zap.Int("targets", n))
+	}
+}
+
 // scimUserToSnapshot converts an inbound SCIM user into the outbox snapshot the
 // worker maps to a downstream SCIM resource.
 func scimUserToSnapshot(localID string, user *SCIMUser) userSnapshot {
@@ -423,7 +442,10 @@ func (s *Service) EnqueueFullSync(ctx context.Context, orgID string, target *Tar
             INSERT INTO scim_provisioning_queue
                 (org_id, target_id, resource_type, local_id, operation, payload)
             SELECT $1, $2, 'group', g.id, 'update',
-                   jsonb_build_object('id', g.id::text, 'display_name', g.name)
+                   jsonb_build_object('id', g.id::text, 'display_name', g.name,
+                       'member_ids', COALESCE((SELECT jsonb_agg(gm.user_id::text ORDER BY gm.user_id)
+                                                 FROM group_memberships gm
+                                                WHERE gm.group_id = g.id AND gm.org_id = g.org_id), '[]'::jsonb))
               FROM groups g
              WHERE g.org_id::text = $3`,
 			orgID, target.ID, orgID)
