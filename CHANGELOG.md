@@ -270,6 +270,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no-op control green.
 
 ### Added
+- **SAML interop and SCIM compliance tests in CI (#955).** The new SAML
+  interop workflow (`.github/workflows/saml-interop.yml`) runs the OpenIDX IdP
+  against SimpleSAMLphp 2.5.3.1 and Keycloak 26.7.4. Neither service provider
+  uses OpenIDX's SAML library. For each one, the suite runs SP-initiated SSO
+  with signed AuthnRequests, IdP-initiated SSO, and Single Logout in both
+  directions. It runs each flow twice: with a signed assertion in a signed
+  Response, and with an encrypted assertion in a signed Response. It then
+  sends each service provider forged Responses (unsigned, signed by an
+  untrusted key, for another audience, expired and, for SimpleSAMLphp,
+  replayed) and requires the SP to refuse every one. Go tests against a
+  migrated PostgreSQL cover the SAML messages the IdP receives. They check
+  that AuthnRequests and LogoutRequests are refused when unsigned where
+  signing is required, signed by the wrong key, altered after signing,
+  addressed to an unregistered ACS URL, stale or replayed. A SCIM compliance
+  test runs RFC 7643 and RFC 7644 cases against the real SCIM routes, and an
+  outbound test provisions users and groups to a mock SCIM target.
+  `docs/SAML.md` and `docs/SCIM.md` list the targets and the profiles tested.
+- **SAML IdP: assertion encryption, required AuthnRequest signing and
+  IdP-initiated SSO (migration v204).** A service provider with
+  `encryption_enabled` receives its assertion encrypted (AES-256-GCM, key
+  transport RSA-OAEP) to its `encryption_certificate`, or to its signing
+  certificate if none is set. If OpenIDX cannot encrypt, sign-on fails; it
+  never falls back to a plaintext assertion. Every Response and every
+  assertion is signed. `require_signed_authn_requests` makes the IdP refuse
+  unsigned AuthnRequests from that service provider; importing metadata with
+  `AuthnRequestsSigned="true"` sets it. Signatures on HTTP-Redirect requests
+  are now verified over the query string. `GET /saml/idp/sso/unsolicited`
+  starts IdP-initiated sign-on to a registered service provider.
+- **Outbound SCIM sends group members.** A group is provisioned with its
+  members, named by the ids the target issued for them. Group changes made
+  through inbound SCIM are now sent to targets.
+
 - **The post-logout allowlist can be registered from the console.** The
   RP-Initiated Logout list added below was reachable only through dynamic
   client registration and the OAuth client API. The applications editor —
@@ -556,6 +588,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after; a stub naming a missing source turns the build red.
 
 ### Fixed
+- **SAML: the IdP could not sign an assertion that carried attributes.** The
+  assertion did not declare the `xsi` prefix its attribute values use, so
+  signing failed and sign-on answered an error. The assertion now declares
+  every prefix it uses, and is signed as a copy so canonicalization cannot
+  remove a declaration from the sent XML.
+- **SAML: SP-initiated Single Logout and SP metadata import did not work.** The
+  parsers named namespace prefixes in their struct tags, which `encoding/xml`
+  never matches, so every LogoutRequest was refused as malformed and metadata
+  import found no ACS URL or certificate. Both now parse by namespace. A
+  LogoutRequest must be signed by the service provider, addressed to this
+  IdP, recent, and not seen before, and it ends only sessions recorded for
+  that service provider. LogoutResponses are signed and their status elements
+  are in the protocol namespace.
+- **SCIM server protocol conformance.** Responses use
+  `application/scim+json`. Errors use the RFC 7644 error envelope. A create
+  answers `201` with a `Location` header, a duplicate answers `409
+  uniqueness`, and an unknown or malformed id answers `404`. PATCH accepts
+  Entra's capitalized ops and string booleans, operations without a path,
+  `emails[type eq "work"].value` and `members[value eq "..."]`, and refuses
+  unsupported paths with `invalidPath` instead of answering `200`.
+  `externalId` is stored. `/ResourceTypes` is a `ListResponse`, paging
+  parameters are clamped, and `/ServiceProviderConfig` no longer claims
+  password change or sorting.
+
 - **The sign-in page could not take a backup or bypass code.** Its code field
   took six digits and dropped every other character. Backup codes are eight
   letters and digits, and an administrator's bypass codes are sixteen. The
