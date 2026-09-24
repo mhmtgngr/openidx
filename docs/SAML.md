@@ -164,10 +164,8 @@ every one:
 Before the forgeries, the SP must accept a genuine Response. Otherwise a
 refusal would prove nothing.
 
-Keycloak 26.7.4 is not tested for replay because it accepts the same
-unsolicited Response twice at a broker `/endpoint/clients/<name>` URL while
-the Response is valid. This is Keycloak's behavior, not OpenIDX's, and the
-SimpleSAMLphp run covers replay.
+Replay is a property of the SP, not of the IdP; the SimpleSAMLphp run
+covers it, and the Keycloak run has no replay case.
 
 ### Go tests run by the unit matrix
 

@@ -325,11 +325,8 @@ func TestKeycloakServiceProvider(t *testing.T) {
 		if !deliver(genuine()) {
 			t.Fatal("control: Keycloak refused a genuine Response, so a refusal below would prove nothing")
 		}
-		// No replay case here. Measured against Keycloak 26.7.4: its broker
-		// keeps no record of the assertions it has consumed at an
-		// /endpoint/clients/<name> URL, and accepts the same unsolicited
-		// Response again while it is valid. That is Keycloak's behaviour, not
-		// the IdP's; SimpleSAMLphp's run covers replay.
+		// No replay case here: replay is the SP's property, not the IdP's,
+		// and SimpleSAMLphp's run covers it.
 		for _, f := range h.forgeries(t) {
 			f := f
 			t.Run(f.name, func(t *testing.T) {
