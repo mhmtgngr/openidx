@@ -90,6 +90,19 @@ Report a vulnerability in a third-party dependency to that project, following
 its own policy. If OpenIDX is affected, please also tell us through the private
 report above so that we can track it.
 
+## Advisories
+
+The text of each advisory lives in
+[docs/security/advisories/](docs/security/advisories/), one file per advisory,
+named by a local ID such as `OPENIDX-2026-001`. The file gives the severity
+with its CVSS v3.1 vector, the affected and patched versions, workarounds, and
+how to check the fix.
+
+Each one is published as a GitHub security advisory when the release that
+carries its fix is available, as described under
+[What happens next](#what-happens-next). The file then records the GHSA ID,
+and the CVE where one applies.
+
 ## Receiving security updates
 
 - **Watch** the repository with **Custom → Security alerts** selected.

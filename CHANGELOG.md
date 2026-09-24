@@ -85,6 +85,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nats.enabled` — not as a default.
 
 ### Security
+- **OPENIDX-2026-001, High (CVSS 7.4): a session a user ended kept its refresh
+  tokens** ([advisory](docs/security/advisories/OPENIDX-2026-001.md),
+  [#992](https://github.com/mhmtgngr/openidx/issues/992)). Affects v1.1.0 to
+  v1.36.0; the fix is the #992 entry under Fixed. Sessions ended before the
+  upgrade keep their refresh tokens, and the advisory has the query that
+  revokes them.
+- **OPENIDX-2026-002, High (CVSS 7.4): MFA policies did not enforce their
+  required methods, grace period or conditions**
+  ([advisory](docs/security/advisories/OPENIDX-2026-002.md),
+  [#990](https://github.com/mhmtgngr/openidx/issues/990)). Affects v1.0.0 to
+  v1.36.0; the change is the #990 entry under Changed. A policy still accepts
+  any enrolled factor.
 - **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
   handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,
   the Android QR and the onboarding wizard's session — and none asked how

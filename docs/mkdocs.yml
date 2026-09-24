@@ -136,6 +136,9 @@ nav:
           - OpenIDX Production Hardening Checklist: guides/SECURITY-HARDENING.md
           - OpenIDX Multi-Tenancy & the Tenant Trust Boundary: guides/SECURITY-TENANCY.md
           - Compliance Control Mapping — SOC 2 & ISO/IEC 27001:2022: guides/COMPLIANCE-CONTROL-MAPPING.md
+          - Security Advisories:
+              - OPENIDX-2026-001 — Ending a session did not revoke its refresh tokens: guides/security/advisories/OPENIDX-2026-001.md
+              - OPENIDX-2026-002 — MFA policies did not enforce their methods: guides/security/advisories/OPENIDX-2026-002.md
       - Identity:
           - OAuth 2.0 & OpenID Connect Provider - OpenIDX: guides/OAUTH-OIDC.md
           - Token Exchange (RFC 8693) & Dynamic Client Registration (RFC 7591/7592): guides/TOKEN_EXCHANGE_AND_DCR.md
