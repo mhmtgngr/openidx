@@ -6,6 +6,8 @@ same predicate.** When they diverge, the console shows a control that decides
 nothing — which is worse than showing nothing, because someone will trust it.
 
 Verify whenever access machinery changes, and at least once per release.
+Every release runs the automated checks below on its own; see
+[Every release](#every-release).
 Each row's "Verify by" is a two-sided test on purpose: the positive half
 proves the grant works, the negative half proves it is a *grant* rather than
 decoration. Running only the positive half is how this class survives.
@@ -79,7 +81,47 @@ Mapping two more rows found divergences, fixed with the tests above:
   reads. #991 refuses what is not enforced, so a policy means what it does:
   every user with a factor is challenged.
 
+## Every release
+
+`.github/workflows/display-equals-enforcement.yml` runs on every release. It
+runs each test the table above names, one package at a time, against a
+migrated Postgres 16. A test that fails, skips or does not run fails the run.
+A skip counts as a failure because these tests skip when they have no
+database, and then they prove nothing.
+
+The report lands in two places:
+
+- on the GitHub release, as the asset `display-equals-enforcement-vX.Y.Z.md`;
+- on the workflow run, as its summary, and in the artifact
+  `display-equals-enforcement` with each package's `go test -v` log.
+
+The report gives the date, the ref, the commit, the runner and the Postgres
+version, and each test's result. The tests under `test/integration` need the
+whole stack, so the release run leaves them to the integration job, and the
+report says so.
+
+`.github/workflows/release.yml` starts the run on the tag once the release
+exists. It can also be started by hand from the Actions tab, on any branch,
+tag or commit.
+
+The table is the only list. The run reads the test names from it, so a test
+added to the table runs on the next release. A pull request that renames or
+removes a named test fails CI (`scripts/check-display-enforcement-tests.sh`)
+until the table changes with it.
+
+To run it yourself, point it at a scratch database. The tests drop and rebuild
+its public schema.
+
+```sh
+OPENIDX_TEST_DATABASE_URL=postgres://… scripts/run-display-enforcement-tests.sh /tmp/evidence
+```
+
 ## Runs
+
+This table records runs by hand against a deployed install. The per-release
+runs are not copied here: each release carries its own report. The first row
+predates the per-release run. It is the automated checks, run by hand in a
+development container.
 
 | Date | Who | Rows verified | Divergence found | Output |
 |---|---|---|---|---|

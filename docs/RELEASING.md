@@ -95,6 +95,12 @@ input.
   `openidx-agent-ios-vX.Y.Z-unsigned.ipa` to the Release. The `-debugsigned`
   suffix and the `-unsigned` name say exactly what they say; the workflow's
   header explains both.
+- **`display-equals-enforcement.yml`** — runs the tests that
+  `docs/evidence/display-equals-enforcement.md` names against Postgres 16 and
+  attaches `display-equals-enforcement-vX.Y.Z.md` to the Release. A test that
+  fails, skips or does not run turns the run red. `release.yml` starts it on
+  the tag once the Release exists, on both paths: a Release published under
+  `GITHUB_TOKEN` starts no workflow by itself.
 
 ## Rolling out to cells (off by default)
 
@@ -136,6 +142,8 @@ wave's shape: order, gate, atomic upgrade, environment, identity check.
 - A deployed service reports the version: `GET /health` → `"version":"vX.Y.Z"`.
 - The Release carries the APK and the IPA (on the dispatch path, from the
   `client-mobile-release.yml` run the release started).
+- The Release carries `display-equals-enforcement-vX.Y.Z.md`, and its last
+  line says **Passed**.
 
 ### Verifying downloaded binaries (consumers)
 

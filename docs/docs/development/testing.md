@@ -110,3 +110,4 @@ Tests run automatically in GitHub Actions:
 - **Go CI** (`.github/workflows/ci.yml`) — build, lint, test with race detector + coverage, govulncheck
 - **Frontend CI** (`.github/workflows/ci-web.yml`) — lint, type check, build, test
 - **CodeQL** (`.github/workflows/codeql.yml`) — static security analysis for Go and TypeScript
+- **Display = enforcement** (`.github/workflows/display-equals-enforcement.yml`) — on every release, the tests `docs/evidence/display-equals-enforcement.md` names, against Postgres 16; the report is attached to the release

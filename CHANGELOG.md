@@ -248,6 +248,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no-op control green.
 
 ### Added
+- **Every release runs the display = enforcement table and carries the report
+  (#957).** `docs/evidence/display-equals-enforcement.md` asks for its table to
+  be verified at least once per release, and nothing ran it per release. A new
+  workflow, `display-equals-enforcement.yml`, runs every test the table's
+  "Automated checks" rows name, one package at a time, against a migrated
+  Postgres 16. Any test that fails, skips or does not run fails the run. A skip
+  counts as a failure because these tests skip without a database, and `go
+  test` then says ok. Measured: pointed at an unreachable database, all three
+  packages reported ok while all 13 tests skipped. The report gives the date,
+  ref, commit, runner, Postgres version and each test's result. It goes on the
+  run page, into a run artifact with the test logs, and onto the release as
+  `display-equals-enforcement-vX.Y.Z.md`. The tests under `test/integration`
+  stay with the integration job, and the report says so. `release.yml` starts
+  the run on the tag. The Release is published under `GITHUB_TOKEN`, which
+  starts no workflow, so a `release: published` trigger alone would never
+  fire. The table is the only list: `scripts/check-display-enforcement-tests.sh`
+  reads it on every pull request and fails when a named test is missing,
+  defined twice, or out of the release run's reach. A renamed test therefore
+  breaks its pull request, not the release. The guard and the run's reading of
+  `go test -v` both ship with self-tests that drive them red.
+
 - **The post-logout allowlist can be registered from the console.** The
   RP-Initiated Logout list added below was reachable only through dynamic
   client registration and the OAuth client API. The applications editor —
