@@ -1361,15 +1361,15 @@ services:
       network: host
       args:
         - SRC_DIR=.
-        - VITE_API_URL=http://openidx.tdv.org:8088
-        - VITE_OAUTH_URL=http://openidx.tdv.org:8006
+        - VITE_API_URL=${VITE_API_URL:-}
+        - VITE_OAUTH_URL=${VITE_OAUTH_URL:-}
         - VITE_OAUTH_CLIENT_ID=admin-console
         - VITE_AUTH_PROVIDER=openidx
     container_name: openidx-admin-console
     restart: unless-stopped
     environment:
-      - VITE_API_URL=http://openidx.tdv.org:8088
-      - VITE_OAUTH_URL=http://openidx.tdv.org:8006
+      - VITE_API_URL=${VITE_API_URL:-}
+      - VITE_OAUTH_URL=${VITE_OAUTH_URL:-}
       - VITE_OAUTH_CLIENT_ID=admin-console
       - VITE_AUTH_PROVIDER=openidx
     ports:

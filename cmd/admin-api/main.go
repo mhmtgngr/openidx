@@ -52,11 +52,9 @@ var (
 // @title OpenIDX Admin API
 // @version 1.0
 // @description Admin API for OpenIDX Identity Platform
-// @termsOfService https://openidx.io/terms
 
 // @contact.name API Support
-// @contact.url https://openidx.io/support
-// @contact.email support@openidx.io
+// @contact.url https://github.com/mhmtgngr/openidx/blob/main/SUPPORT.md
 
 // @license.name Apache 2.0
 // @license.url http://www.apache.org/licenses/LICENSE-2.0.html

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -1034,6 +1036,16 @@ func Load(serviceName string) (*Config, error) {
 	return &cfg, nil
 }
 
+// defaultSelfHealStateDir is oidx-runtime/selfheal under the home directory of
+// the user the service runs as, so the default follows whoever runs it rather
+// than naming one machine's account. SELFHEAL_STATE_DIR overrides it.
+func defaultSelfHealStateDir() string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, "oidx-runtime", "selfheal")
+	}
+	return filepath.Join(os.TempDir(), "oidx-runtime", "selfheal")
+}
+
 func setDefaults(v *viper.Viper, serviceName string) {
 	// Service defaults
 	v.SetDefault("environment", "development")
@@ -1076,7 +1088,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("agent_enrollment_quota_per_hour", 100)
 	v.SetDefault("agent_downloads_dir", "deployments/downloads")
 	v.SetDefault("access_request_max_duration_hours", 90*24)
-	v.SetDefault("selfheal_state_dir", "/home/cmit/oidx-runtime/selfheal")
+	v.SetDefault("selfheal_state_dir", defaultSelfHealStateDir())
 	v.SetDefault("selfheal_scripts_dir", "scripts/selfheal")
 	v.SetDefault("pam_session_risk_gate", "off")
 	v.SetDefault("pam_require_ztna", "off")
