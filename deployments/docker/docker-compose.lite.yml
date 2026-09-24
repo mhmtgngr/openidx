@@ -1003,7 +1003,7 @@ services:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
     volumes:
-      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/alertmanager.lite.yml:/etc/alertmanager/alertmanager.yml:ro
     ports:
       - "127.0.0.1:9093:9093"
     deploy:

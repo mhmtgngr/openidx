@@ -195,7 +195,9 @@ components. Guacamole's `guacadmin` gets the generated
 `GUACAMOLE_ADMIN_PASSWORD`, not the schema's default. The Ziti profile
 advertises `*.localtest.me`, which resolves to 127.0.0.1, so clients on other
 machines cannot join it, and BrowZer is not included. Promtail reads the
-Docker socket, which is root-equivalent on the host.
+Docker socket, which is root-equivalent on the host. Alertmanager shows alerts
+(127.0.0.1:9093, and in Grafana) but delivers none: to send them somewhere,
+add a receiver to `deployments/docker/alertmanager/alertmanager.lite.yml`.
 
 **Reaching it from another machine.** The admin-console OAuth client accepts
 only the console URLs it has registered, and `http://localhost:3000` is the
