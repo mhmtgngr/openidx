@@ -117,8 +117,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   required methods, grace period or conditions**
   ([advisory](docs/security/advisories/OPENIDX-2026-002.md),
   [#990](https://github.com/mhmtgngr/openidx/issues/990)). Affects v1.0.0 to
-  v1.36.0; the change is the #990 entry under Changed. A policy still accepts
-  any enrolled factor.
+  v1.36.0; the change is the #990 entry under Changed. A policy's required
+  methods are now enforced, with a grace period. Upgrading clears the stored
+  methods, so set them again.
 - **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
   handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,
   the Android QR and the onboarding wizard's session — and none asked how
