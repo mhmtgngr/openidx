@@ -488,6 +488,14 @@ const en = {
       approve: 'Allow',
       deny: 'Deny',
     },
+    enrollmentDue: {
+      title: 'Add a sign-in method',
+      due: 'Your organization requires {{methods}} to sign in. Add one before {{deadline}}: after that, you will not be able to sign in without it.',
+      overdue:
+        'Your organization requires {{methods}} to sign in, and the time to add one has passed. You can sign in with a bypass code from an administrator; add one of these methods now, before the code runs out.',
+      where: 'You can add it from your account\'s security settings once you are signed in.',
+      continue: 'Continue',
+    },
     mfa: {
       chooseTitle: 'Choose Verification Method',
       chooseSubtitle: 'Select how you want to verify your identity',
@@ -524,6 +532,16 @@ const en = {
         waiting: 'Waiting for approval...',
         waitingHint: 'Open the notification on your device and approve the sign-in request.',
         send: 'Send Push Notification',
+      },
+      backup: {
+        label: 'Backup Code',
+        hint: 'Use one of your saved backup codes',
+        prompt: 'Enter one of your backup codes',
+      },
+      bypass: {
+        label: 'Bypass Code',
+        hint: 'Use the code an administrator gave you',
+        prompt: 'Enter the bypass code an administrator gave you',
       },
       trustBrowser: 'Trust this browser',
       trustBrowserHint: 'Skip verification on this device for the next 30 days.',
@@ -2996,10 +3014,13 @@ const en = {
       policies: {
         resourceName: 'MFA policies',
         whatItDoes:
-          'While a policy is enabled, every user who has a second factor enrolled is asked for it at sign-in, and any enrolled factor satisfies it. A user with no factor enrolled is not asked.',
-        notEnforcedBadge: 'stored settings not enforced',
+          'While a policy is enabled, it applies to every user who signs in with a password. With no required methods, a user who has a second factor enrolled is asked for it, and any enrolled factor satisfies it. With required methods, only those do, and a user who has none of them gets the grace period to add one. The enabled policy with the lowest priority number decides.',
+        notEnforcedBadge: 'stored conditions not enforced',
         notEnforcedBody:
-          'This policy was saved with required methods, a grace period or conditions. None of them is enforced: any enrolled factor satisfies the policy, for every user who has one.',
+          'This policy was saved with conditions, such as groups or client IDs. They are not enforced: the policy applies to every user who signs in with a password.',
+        anyFactor: 'Any enrolled factor',
+        graceHours: '{{n}} h',
+        noGrace: 'None',
         title: 'MFA Policies',
         create: 'Create Policy',
         loading: 'Loading policies...',
@@ -3008,6 +3029,8 @@ const en = {
         table: {
           name: 'Name',
           description: 'Description',
+          methods: 'Required methods',
+          gracePeriod: 'Grace period',
           priority: 'Priority',
           enabled: 'Enabled',
           actions: 'Actions',
@@ -3030,7 +3053,19 @@ const en = {
       },
       dialog: {
         whatItDoes:
-          'The policy applies to every user who has a second factor enrolled, and any enrolled factor satisfies it. Requiring particular methods, a grace period or conditions is not supported yet.',
+          'A policy applies to every user who signs in with a password. Conditions, such as groups, are not supported yet.',
+        requiredMethods: 'Required methods',
+        anyFactorHelp:
+          'None checked: a user who has a second factor enrolled is asked for it, and any enrolled factor satisfies the policy. A user with no factor is not asked.',
+        requiredMethodsHelp:
+          'Sign-in asks for one of the checked methods, and no other factor satisfies the policy. A remembered browser does not skip it. A bypass code from an administrator still works, as the way back in.',
+        gracePeriod: 'Grace period (hours)',
+        gracePeriodHelp:
+          'A user who has none of the required methods gets this long, from their first sign-in under the policy, to add one. Until then they sign in as before and are told the deadline. After it, sign-in is refused unless they have a bypass code. 0 refuses them at once.',
+        gracePeriodNeedsMethods: 'A grace period is the time to add a required method, so it needs at least one.',
+        gracePeriodInvalid: 'Enter a whole number of hours from 0 to {{max}}.',
+        methodsChangedWarning:
+          'Changing the required methods starts every user\'s grace period again.',
         editTitle: 'Edit MFA Policy',
         createTitle: 'Create MFA Policy',
         name: 'Policy Name *',

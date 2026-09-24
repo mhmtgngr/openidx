@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { Switch } from '../components/ui/switch'
 import { Label } from '../components/ui/label'
+import { Checkbox } from '../components/ui/checkbox'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 import { ConfirmAction } from '../components/confirm-action'
@@ -51,24 +52,35 @@ interface UserMFAStatus {
   webauthn_enabled: boolean
 }
 
-// A policy's only effect is to challenge, at login, every user who has a second
-// factor enrolled (#990). Nothing enforces required methods, a grace period or
-// conditions, so the form no longer offers them and the API refuses them.
+// What a policy does at password sign-in (evaluateMFA). With no required
+// methods, every user who has a second factor enrolled is challenged, and any
+// enrolled factor satisfies it. With required methods, only those do; a user
+// who has none of them gets the grace period, from their first sign-in under
+// the policy, to add one, and is refused after it unless they have a bypass
+// code. Conditions are not enforced, so the form does not offer them (#990).
 const emptyPolicy: Partial<MFAPolicy> = {
   name: '',
   description: '',
   enabled: true,
   priority: 100,
+  required_methods: [],
+  grace_period_hours: 0,
 }
 
-// storesUnenforcedSettings reports a policy written before #990 that still
-// stores settings nothing enforces, so the table can say so.
-function storesUnenforcedSettings(p: Pick<MFAPolicy, 'conditions' | 'required_methods' | 'grace_period_hours'>): boolean {
-  return (
-    (p.required_methods?.length ?? 0) > 0 ||
-    (p.grace_period_hours ?? 0) !== 0 ||
-    Object.keys(p.conditions ?? {}).length > 0
-  )
+// The methods a policy can require, in the order the form lists them.
+const policyMethods = ['totp', 'webauthn', 'push', 'sms', 'email']
+
+// The API's bound on the grace period: 30 days.
+const maxGraceHours = 720
+
+// storesUnenforcedConditions reports a policy written before #990 that still
+// stores conditions, which nothing enforces, so the table can say so.
+function storesUnenforcedConditions(p: Pick<MFAPolicy, 'conditions'>): boolean {
+  return Object.keys(p.conditions ?? {}).length > 0
+}
+
+function sameMethods(a: string[] = [], b: string[] = []): boolean {
+  return a.length === b.length && a.every((m) => b.includes(m))
 }
 
 export default function MFAManagement() {
@@ -184,16 +196,38 @@ export default function MFAManagement() {
 
   const openEditPolicy = (policy: MFAPolicy) => {
     setSelectedPolicy(policy)
-    // Only what the form edits is sent back, so a stored setting that nothing
-    // enforces is left as it is rather than re-submitted.
+    // Only what the form edits is sent back, so stored conditions, which
+    // nothing enforces, are left as they are rather than re-submitted.
     setFormData({
       name: policy.name,
       description: policy.description,
       enabled: policy.enabled,
       priority: policy.priority,
+      required_methods: [...(policy.required_methods ?? [])],
+      grace_period_hours: policy.grace_period_hours ?? 0,
     })
     setPolicyDialogOpen(true)
   }
+
+  // A grace period is the time to add a required method, so a policy with none
+  // has none: unchecking the last method clears it.
+  const toggleMethod = (method: string, checked: boolean) => {
+    const current = formData.required_methods || []
+    const updated = checked
+      ? policyMethods.filter((m) => m === method || current.includes(m))
+      : current.filter((m) => m !== method)
+    setFormData({
+      ...formData,
+      required_methods: updated,
+      grace_period_hours: updated.length === 0 ? 0 : formData.grace_period_hours,
+    })
+  }
+
+  const hasMethods = (formData.required_methods?.length ?? 0) > 0
+  const graceHours = formData.grace_period_hours ?? 0
+  const graceInvalid = !Number.isInteger(graceHours) || graceHours < 0 || graceHours > maxGraceHours
+  const methodsChanged =
+    selectedPolicy !== null && !sameMethods(selectedPolicy.required_methods, formData.required_methods)
 
 
   const handleSavePolicy = () => {
@@ -354,6 +388,8 @@ export default function MFAManagement() {
                         <TableRow>
                           <TableHead>{t('pages.mfaManagement.policies.table.name')}</TableHead>
                           <TableHead>{t('pages.mfaManagement.policies.table.description')}</TableHead>
+                          <TableHead>{t('pages.mfaManagement.policies.table.methods')}</TableHead>
+                          <TableHead>{t('pages.mfaManagement.policies.table.gracePeriod')}</TableHead>
                           <TableHead>{t('pages.mfaManagement.policies.table.priority')}</TableHead>
                           <TableHead>{t('pages.mfaManagement.policies.table.enabled')}</TableHead>
                           <TableHead className="w-[100px]">{t('pages.mfaManagement.policies.table.actions')}</TableHead>
@@ -364,7 +400,7 @@ export default function MFAManagement() {
                           <TableRow key={policy.id}>
                             <TableCell className="font-medium">
                               {policy.name}
-                              {storesUnenforcedSettings(policy) && (
+                              {storesUnenforcedConditions(policy) && (
                                 <Badge
                                   variant="outline"
                                   className="ml-2 text-xs"
@@ -376,6 +412,28 @@ export default function MFAManagement() {
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                               {policy.description}
+                            </TableCell>
+                            <TableCell>
+                              {(policy.required_methods?.length ?? 0) > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {policy.required_methods.map((method) => (
+                                    <Badge key={method} variant="outline">
+                                      {methodLabels[method] || method}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-sm text-muted-foreground">
+                                  {t('pages.mfaManagement.policies.anyFactor')}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {(policy.required_methods?.length ?? 0) > 0
+                                ? policy.grace_period_hours > 0
+                                  ? t('pages.mfaManagement.policies.graceHours', { n: policy.grace_period_hours })
+                                  : t('pages.mfaManagement.policies.noGrace')
+                                : ''}
                             </TableCell>
                             <TableCell>
                               <span className="text-xs font-mono bg-muted px-2 py-1 rounded">
@@ -595,8 +653,56 @@ export default function MFAManagement() {
                 onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
               />
             </div>
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">{t('pages.mfaManagement.dialog.requiredMethods')}</legend>
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                {policyMethods.map((method) => (
+                  <div key={method} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`mfa-policy-method-${method}`}
+                      checked={(formData.required_methods || []).includes(method)}
+                      onCheckedChange={(checked) => toggleMethod(method, checked === true)}
+                    />
+                    <label htmlFor={`mfa-policy-method-${method}`} className="text-sm">
+                      {methodLabels[method]}
+                    </label>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {hasMethods
+                  ? t('pages.mfaManagement.dialog.requiredMethodsHelp')
+                  : t('pages.mfaManagement.dialog.anyFactorHelp')}
+              </p>
+            </fieldset>
+            <div className="space-y-2">
+              <Label htmlFor="mfa-management-grace-period">{t('pages.mfaManagement.dialog.gracePeriod')}</Label>
+              <Input id="mfa-management-grace-period"
+                type="number"
+                min={0}
+                max={maxGraceHours}
+                step={1}
+                disabled={!hasMethods}
+                aria-invalid={hasMethods && graceInvalid}
+                aria-describedby="mfa-management-grace-period-help"
+                value={graceHours}
+                onChange={(e) => setFormData({ ...formData, grace_period_hours: Number(e.target.value) })}
+              />
+              <p id="mfa-management-grace-period-help" className="text-xs text-muted-foreground">
+                {hasMethods && graceInvalid
+                  ? t('pages.mfaManagement.dialog.gracePeriodInvalid', { max: maxGraceHours })
+                  : hasMethods
+                    ? t('pages.mfaManagement.dialog.gracePeriodHelp')
+                    : t('pages.mfaManagement.dialog.gracePeriodNeedsMethods')}
+              </p>
+              {methodsChanged && hasMethods && (
+                <p className="text-xs font-medium text-amber-700">
+                  {t('pages.mfaManagement.dialog.methodsChangedWarning')}
+                </p>
+              )}
+            </div>
             <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.dialog.whatItDoes')}</p>
-            {selectedPolicy && storesUnenforcedSettings(selectedPolicy) && (
+            {selectedPolicy && storesUnenforcedConditions(selectedPolicy) && (
               <p className="text-xs text-muted-foreground">
                 <span className="font-medium">{t('pages.mfaManagement.policies.notEnforcedBadge')}:</span>{' '}
                 {t('pages.mfaManagement.policies.notEnforcedBody')}
@@ -617,7 +723,12 @@ export default function MFAManagement() {
             </Button>
             <Button
               onClick={handleSavePolicy}
-              disabled={!formData.name || createPolicyMutation.isPending || updatePolicyMutation.isPending}
+              disabled={
+                !formData.name ||
+                (hasMethods && graceInvalid) ||
+                createPolicyMutation.isPending ||
+                updatePolicyMutation.isPending
+              }
             >
               {createPolicyMutation.isPending || updatePolicyMutation.isPending
                 ? t('pages.mfaManagement.dialog.saving')

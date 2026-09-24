@@ -33,9 +33,20 @@ interface ConsentChallenge {
   scopes: string[]
 }
 
+// EnrollmentDue is the notice an MFA policy that requires particular methods
+// attaches to a sign-in by a user who has none of them (evaluateMFA): which
+// methods, and by when; or, when overdue, that the time has passed and a
+// bypass code let them in to add one.
+interface EnrollmentDue {
+  methods: string[]
+  deadline: string
+  overdue?: boolean
+}
+
 // AuthResult is the completion shape shared by every authentication path.
 interface AuthResult {
   redirect_url?: string
+  mfa_enrollment_due?: EnrollmentDue
   consent_required?: boolean
   consent_session?: string
   client_id?: string
@@ -73,6 +84,12 @@ export function LoginPage() {
   const [mfaMethodSelectionStep, setMfaMethodSelectionStep] = useState(false)
   const [otpSent, setOtpSent] = useState(false)
   const mfaInputRef = useRef<HTMLInputElement>(null)
+
+  // An MFA policy's notice that a required method is due (or overdue): shown on
+  // the MFA screens, and on its own screen before the redirect that completes
+  // the sign-in, because a user who is not challenged sees no other screen.
+  const [enrollmentDue, setEnrollmentDue] = useState<EnrollmentDue | null>(null)
+  const [pendingRedirect, setPendingRedirect] = useState<{ url: string; due: EnrollmentDue } | null>(null)
 
   // WebAuthn state
   const [webauthnLoading, setWebauthnLoading] = useState(false)
@@ -351,6 +368,10 @@ export function LoginPage() {
       return true
     }
     if (data.redirect_url) {
+      if (data.mfa_enrollment_due) {
+        setPendingRedirect({ url: data.redirect_url, due: data.mfa_enrollment_due })
+        return true
+      }
       completeOIDCRedirect(data.redirect_url)
       return true
     }
@@ -502,6 +523,7 @@ export function LoginPage() {
         setMfaSession(data.mfa_session)
         setMfaCode('')
         setError('')
+        setEnrollmentDue(data.mfa_enrollment_due ?? null)
         // Offer "trust this browser" only when the server says this browser
         // isn't trusted yet; the choice is sent with the verification below.
         setCanTrustBrowser(!!data.can_trust_browser)
@@ -796,6 +818,7 @@ export function LoginPage() {
     setError('')
     setTrustBrowserChoice(false)
     setCanTrustBrowser(false)
+    setEnrollmentDue(null)
   }
 
   const handleForceLogin = async (terminateSessionId: string) => {
@@ -830,10 +853,33 @@ export function LoginPage() {
         return { method: 'webauthn', label: t('login.mfa.webauthn.label'), icon: <KeyRound className="h-5 w-5" /> }
       case 'push':
         return { method: 'push', label: t('login.mfa.push.label'), icon: <Bell className="h-5 w-5" /> }
+      case 'backup':
+        return { method: 'backup', label: t('login.mfa.backup.label'), icon: <KeyRound className="h-5 w-5" /> }
+      case 'bypass':
+        return { method: 'bypass', label: t('login.mfa.bypass.label'), icon: <Shield className="h-5 w-5" /> }
       default:
         return { method, label: method.toUpperCase(), icon: <Shield className="h-5 w-5" /> }
     }
   }
+
+  const enrollmentNotice = (due: EnrollmentDue): string => {
+    const methods = due.methods.map((m) => getMfaMethodInfo(m).label).join(', ')
+    if (due.overdue) return t('login.enrollmentDue.overdue', { methods })
+    const deadline = new Date(due.deadline)
+    return t('login.enrollmentDue.due', {
+      methods,
+      deadline: Number.isNaN(deadline.getTime())
+        ? due.deadline
+        : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(deadline),
+    })
+  }
+
+  const enrollmentBanner = enrollmentDue && (
+    <div role="status" className="flex items-start gap-2 p-3 mb-4 bg-amber-50 border border-amber-200 rounded-md">
+      <AlertCircle className="h-4 w-4 text-amber-700 flex-shrink-0 mt-0.5" />
+      <p className="text-sm text-amber-800">{enrollmentNotice(enrollmentDue)}</p>
+    </div>
+  )
 
   const handlePasskeyLogin = async () => {
     if (!loginSession) return
@@ -971,7 +1017,37 @@ export function LoginPage() {
     }
   }
 
-  // Show MFA method selection
+  // The policy notice, before the redirect that completes the sign-in.
+  if (pendingRedirect) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <div className="absolute top-4 right-4">
+          <LanguageSwitcher />
+        </div>
+        <Card className="w-full max-w-md shadow-xl">
+          <CardHeader className="text-center space-y-4">
+            <div className="flex justify-center">
+              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-lg">
+                <Shield className="h-9 w-9 text-white" />
+              </div>
+            </div>
+            <CardTitle className="text-2xl font-bold">{t('login.enrollmentDue.title')}</CardTitle>
+          </CardHeader>
+
+          <CardContent className="space-y-4">
+            <p className="text-sm">{enrollmentNotice(pendingRedirect.due)}</p>
+            <p className="text-sm text-muted-foreground">{t('login.enrollmentDue.where')}</p>
+            <Button type="button" className="w-full" onClick={() => completeOIDCRedirect(pendingRedirect.url)}>
+              {t('login.enrollmentDue.continue')}
+            </Button>
+          </CardContent>
+
+          <AuthCardFooter />
+        </Card>
+      </div>
+    )
+  }
+
   // Consent screen: rendered from the challenge, whichever path produced it.
   if (consentChallenge) {
     return (
@@ -1071,6 +1147,7 @@ export function LoginPage() {
                 <p className="text-sm text-red-600">{error}</p>
               </div>
             )}
+            {enrollmentBanner}
 
             {mfaMethods.map((method) => {
               const info = getMfaMethodInfo(method)
@@ -1093,6 +1170,8 @@ export function LoginPage() {
                         {method === 'email' && t('login.mfa.email.hint')}
                         {method === 'webauthn' && t('login.mfa.webauthn.hint')}
                         {method === 'push' && t('login.mfa.push.hint')}
+                        {method === 'backup' && t('login.mfa.backup.hint')}
+                        {method === 'bypass' && t('login.mfa.bypass.hint')}
                       </p>
                     </div>
                   </div>
@@ -1122,6 +1201,9 @@ export function LoginPage() {
     const methodInfo = getMfaMethodInfo(selectedMfaMethod || 'totp')
     const isWebAuthn = selectedMfaMethod === 'webauthn'
     const isPush = selectedMfaMethod === 'push'
+    // Backup codes (8 characters) and an administrator's bypass codes (16) are
+    // letters and digits, not a 6-digit one-time code.
+    const isRecoveryCode = selectedMfaMethod === 'backup' || selectedMfaMethod === 'bypass'
 
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
@@ -1149,6 +1231,8 @@ export function LoginPage() {
                 {selectedMfaMethod === 'email' && (otpSent ? t('login.mfa.email.promptSent') : t('login.mfa.email.promptSending'))}
                 {isWebAuthn && t('login.mfa.webauthn.prompt')}
                 {isPush && t('login.mfa.push.prompt')}
+                {selectedMfaMethod === 'backup' && t('login.mfa.backup.prompt')}
+                {selectedMfaMethod === 'bypass' && t('login.mfa.bypass.prompt')}
                 {!selectedMfaMethod && t('login.mfa.totp.prompt')}
               </CardDescription>
             </div>
@@ -1161,6 +1245,7 @@ export function LoginPage() {
                 <p className="text-sm text-red-600">{error}</p>
               </div>
             )}
+            {enrollmentBanner}
 
             {/* Trust this browser: sent WITH the verification below, which is
                 what actually records the trust server-side (and lets adaptive
@@ -1266,15 +1351,22 @@ export function LoginPage() {
                     ref={mfaInputRef}
                     id="mfa-code"
                     type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    maxLength={6}
-                    placeholder="000000"
+                    inputMode={isRecoveryCode ? 'text' : 'numeric'}
+                    pattern={isRecoveryCode ? undefined : '[0-9]*'}
+                    maxLength={isRecoveryCode ? 32 : 6}
+                    placeholder={isRecoveryCode ? '' : '000000'}
+                    autoComplete={isRecoveryCode ? 'off' : 'one-time-code'}
                     value={mfaCode}
-                    onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                    onChange={(e) =>
+                      setMfaCode(isRecoveryCode ? e.target.value.trim() : e.target.value.replace(/\D/g, ''))
+                    }
                     required
                     autoFocus
-                    className="text-center text-2xl tracking-widest font-mono"
+                    className={
+                      isRecoveryCode
+                        ? 'text-center text-lg tracking-wider font-mono'
+                        : 'text-center text-2xl tracking-widest font-mono'
+                    }
                   />
                 </div>
 
@@ -1294,7 +1386,7 @@ export function LoginPage() {
                   type="submit"
                   className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                   size="lg"
-                  disabled={isSubmitting || mfaCode.length !== 6}
+                  disabled={isSubmitting || (isRecoveryCode ? mfaCode.length < 8 : mfaCode.length !== 6)}
                 >
                   {isSubmitting ? (
                     <span className="flex items-center gap-2">

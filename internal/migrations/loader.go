@@ -1441,5 +1441,12 @@ func allMigrations() []*Migration {
 			UpSQL:       frontChannelLogoutColumnDropUp,
 			DownSQL:     frontChannelLogoutColumnDropDown,
 		},
+		{
+			Version:     203,
+			Name:        "mfa_policy_grace",
+			Description: "Create mfa_policy_grace: when each user's grace period under an MFA policy began. A policy may again require particular methods (#990 follow-up); a user with none of them enrolled gets the policy's grace period to add one, counted from the first sign-in at which the policy found them without one. Per user, because one deadline per policy would give a user created after it no window at all. The deadline is started_at + grace_period_hours, computed at sign-in, so raising the grace period extends every running window. Rows cascade with their policy and their user, and the admin API deletes a policy's rows when its method list changes. Forced org-scoped RLS. The same migration clears required_methods and grace_period_hours on existing policies and makes the grace default 0: until now nothing read either (#990), policies created before #991 may still store them with the old 24-hour default, and enforcing them on upgrade would start windows nobody chose and refuse sign-ins a day later. Down drops the table and restores the default; the cleared values were never enforced and are not restored.",
+			UpSQL:       mfaPolicyGraceUp,
+			DownSQL:     mfaPolicyGraceDown,
+		},
 	}
 }
