@@ -233,7 +233,12 @@ openidx/
 
 ## Status & Roadmap
 
-The core platform is built and self-hostable today. Shipped and working:
+The core platform is built and self-hostable today. The capabilities below
+are implemented. They are **not yet externally verified**: there has been no
+penetration test and no OpenID Foundation conformance run so far. Several
+enforcement controls also ship **off by default** (assignment enforcement,
+ABAC, OPA authorization). A per-feature maturity matrix (GA / Beta /
+Experimental) will replace this list in milestone M1.
 
 - [x] OAuth 2.0 / OIDC provider (PKCE, refresh rotation, token exchange, JWKS rotation)
 - [x] SAML 2.0 IdP with standards-compliant XML-DSig signing
@@ -246,10 +251,12 @@ The core platform is built and self-hostable today. Shipped and working:
 - [x] OpenZiti ZTNA plane — dark services, BrowZer clientless access, endpoint agents
 - [x] Multi-tenancy (FORCE RLS), tamper-evident audit, backups, observability
 
-Near-term focus areas: outbound SCIM provisioning to SaaS apps, HR-driven
-joiner/mover/leaver, Ziti fabric-event ingestion into the audit pipeline,
-per-org overlay scoping for MSP/multi-tenant deployments, and the agent-identity
-substrate (dynamic client registration, MCP gateway).
+**Current focus: milestone M1, "Trusted Core" (v2.0 LTS).** M1 adds no new
+features. It covers secure defaults, conformance and interop testing in CI, an
+independent penetration test, a lite install that runs in 15 minutes on 4 GB
+of RAM, releases that pin what actually runs, and an honest maturity matrix.
+[ROADMAP.md](ROADMAP.md) has the product definition, the milestones and what
+is deliberately on hold.
 
 ## Contributing
 
@@ -280,11 +287,11 @@ new buyer-tier features; the Apache-2.0 core is committed to staying Apache-2.0.
 
 ## Support
 
-- 📖 [Documentation](https://docs.openidx.io)
-- 💬 [Discord Community](https://discord.gg/openidx)
-- 🐛 [Issue Tracker](https://github.com/mhmtgngr/openidx/issues)
-- 🤝 [Support policy](SUPPORT.md) — where to ask, what to expect, what is not on offer
-- 📧 [Email Support](mailto:support@openidx.io)
+- 📖 [Documentation site](https://mhmtgngr.github.io/openidx); the sources are in [docs/](docs/README.md)
+- 💬 [GitHub Discussions](https://github.com/mhmtgngr/openidx/discussions) for questions and ideas
+- 🐛 [Issue Tracker](https://github.com/mhmtgngr/openidx/issues) for bugs and feature requests
+- 🔒 Security vulnerabilities: report them privately, as described in [SECURITY.md](SECURITY.md). Never use a public issue
+- 🤝 [Support policy](SUPPORT.md): where to ask, what to expect, and what is not on offer
 
 ---
 

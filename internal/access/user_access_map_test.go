@@ -100,7 +100,7 @@ var crossPillarSchema = []string{
 		id UUID PRIMARY KEY, user_id UUID, org_id UUID, status VARCHAR(32))`,
 	`CREATE TABLE IF NOT EXISTS access_requests (
 		id UUID PRIMARY KEY, requester_id UUID, org_id UUID,
-		resource_type VARCHAR(50), resource_id VARCHAR(255), resource_name VARCHAR(255),
+		resource_type VARCHAR(50), resource_id UUID, resource_name VARCHAR(255),
 		status VARCHAR(50), expires_at TIMESTAMPTZ,
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 	`CREATE TABLE IF NOT EXISTS vault_secrets (

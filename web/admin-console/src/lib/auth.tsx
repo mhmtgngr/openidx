@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { setAuthInitializing, setAuthExpiredHandler } from './api'
+import { resolveOAuthURL } from './oauth-url'
 import { SessionExpiredDialog } from '../components/session-expired-dialog'
 
 interface User {
@@ -24,7 +25,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-export const OAUTH_URL = import.meta.env.VITE_OAUTH_URL || 'http://localhost:8006'
+export const OAUTH_URL = resolveOAuthURL()
 export const OAUTH_CLIENT_ID = import.meta.env.VITE_OAUTH_CLIENT_ID || 'admin-console'
 
 // Helper to parse JWT token

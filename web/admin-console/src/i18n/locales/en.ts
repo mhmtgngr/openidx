@@ -5397,7 +5397,7 @@ const en = {
         change: 'Change Domain',
         changeNote:
           'Changing the domain will update proxy routes, OAuth redirect URIs, and regenerate bootstrapper targets. If no custom certificate is uploaded, a new self-signed cert will be generated for the new domain.',
-        placeholder: 'e.g. browzer.tdv.org',
+        placeholder: 'e.g. browzer.example.com',
         save: 'Save Domain',
         cascadeTitle: 'Important: Cascading Updates',
         cascade1: 'All BrowZer proxy routes will be updated to use the new domain',
