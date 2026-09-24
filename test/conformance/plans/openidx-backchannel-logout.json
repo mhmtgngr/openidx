@@ -1,0 +1,61 @@
+{
+  "alias": "openidx-backchannel",
+  "description": "OpenIDX nightly: Back-Channel Logout OP, static client",
+  "server": {
+    "discoveryUrl": "@@OP_ISSUER@@/.well-known/openid-configuration"
+  },
+  "client": {
+    "client_id": "@@CLIENT_ID@@",
+    "client_secret": "@@CLIENT_SECRET@@"
+  },
+  "options": {
+    "browsercontrol_css_enable": false
+  },
+  "browser": [
+    {
+      "comment": "Every authorization request: sign in on the test login page, or approve consent when OpenIDX resumes an existing browser session, then wait for the suite's callback page. The sign-in waits for #ready, as in openidx-rp-logout.json.",
+      "match": "@@OP_ISSUER@@/oauth/authorize*",
+      "tasks": [
+        {
+          "task": "Approve consent (session resumed)",
+          "optional": true,
+          "match": "@@OP_ISSUER@@/login?*resume=1*",
+          "commands": [
+            ["wait", "id", "approve", 10],
+            ["click", "id", "approve"],
+            ["wait", "contains", "@@SUITE_URL@@/test/a/", 10]
+          ]
+        },
+        {
+          "task": "Login",
+          "optional": true,
+          "match": "@@OP_ISSUER@@/login?*",
+          "commands": [
+            ["wait", "id", "ready", 10],
+            ["text", "id", "username", "@@USERNAME@@"],
+            ["text", "id", "password", "@@PASSWORD@@"],
+            ["click", "id", "signin"],
+            ["wait", "contains", "@@SUITE_URL@@/test/a/", 15]
+          ]
+        },
+        {
+          "task": "Verify Complete",
+          "match": "@@SUITE_URL@@/test/a/*/callback*",
+          "commands": [
+            ["wait", "id", "submission_complete", 10]
+          ]
+        }
+      ]
+    },
+    {
+      "comment": "The end_session_endpoint redirects to the registered post_logout_redirect_uri; the logout token arrives separately, at the backchannel_logout_uri, from oauth-service itself.",
+      "match": "@@OP_ISSUER@@/oauth/logout*",
+      "tasks": [
+        {
+          "task": "Verify Complete",
+          "match": "@@SUITE_URL@@/test/a/*/post_logout_redirect*"
+        }
+      ]
+    }
+  ]
+}

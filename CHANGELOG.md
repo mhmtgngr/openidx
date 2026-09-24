@@ -270,6 +270,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no-op control green.
 
 ### Added
+- **The OpenID Foundation conformance suite runs nightly (#958).**
+  `.github/workflows/oidc-conformance.yml` starts an OpenIDX stack the way the
+  smoke job does, puts it behind an HTTPS front at `https://op.openidx.test`,
+  and runs four certification plans through the suite's own runner: Basic OP,
+  Config OP, RP-Initiated Logout OP and Back-Channel Logout OP, with static
+  clients registered through the admin API. The suite release is pinned by
+  tag, commit and image digest (`test/conformance/suite.env`,
+  `test/conformance/compose.yml`). The results go to the run summary and an
+  artifact with the run's generated secrets removed; on `main` a failing run
+  opens or updates one tracking issue and a passing run closes it. Exceptions
+  need a dated entry in `test/conformance/waivers/`; only the three scope
+  modules OpenIDX does not offer (address, phone, all) are waived.
+  `docs/OAUTH-OIDC.md` lists the profiles, marked "not yet run" until the
+  first nightly run, and the deviations the code and one rehearsal outside CI
+  point to: the authorization endpoint refuses POST, the `request` parameter
+  is ignored rather than refused, and token responses lack
+  `Cache-Control: no-store`, among warnings. Formal certification is not
+  claimed and remains an owner decision.
 - **The post-logout allowlist can be registered from the console.** The
   RP-Initiated Logout list added below was reachable only through dynamic
   client registration and the OAuth client API. The applications editor —
