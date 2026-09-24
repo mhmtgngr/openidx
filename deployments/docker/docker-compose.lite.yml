@@ -257,8 +257,11 @@ services:
         condition: service_healthy
       seed:
         condition: service_completed_successfully
+    # The services register /health for GET only, and GNU wget's --spider
+    # sends HEAD, which answers 404; so every service health check here is a
+    # GET with the body thrown away.
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8001/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8001/health"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -309,7 +312,7 @@ services:
       seed:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8002/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8002/health"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -358,7 +361,7 @@ services:
       seed:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8003/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8003/health"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -412,7 +415,7 @@ services:
         condition: service_healthy
         required: false
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8004/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8004/health"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -470,7 +473,7 @@ services:
       seed:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8005/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8005/health"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -526,7 +529,7 @@ services:
       seed:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8006/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8006/health"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -609,7 +612,7 @@ services:
         condition: service_completed_successfully
         required: false
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8007/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8007/health"]
       interval: 10s
       timeout: 5s
       retries: 6
