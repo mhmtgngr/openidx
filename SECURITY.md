@@ -158,8 +158,17 @@ For security reviewers and auditors:
   maps SOC 2 and ISO/IEC 27001:2022 criteria to OpenIDX capabilities, with
   evidence pointers. It also covers the project's own SDLC controls for
   vendor-risk reviews.
+- **[docs/security/asvs-l2.md](./docs/security/asvs-l2.md)** is the
+  project's own assessment against OWASP ASVS 4.0.3 Level 2, requirement by
+  requirement. It is not independent. Gaps that are vulnerabilities are
+  marked "reported privately" there and handled as this page describes.
 - OpenIDX has **not** yet had an independent penetration test or a
   third-party audit, and it has not run the OpenID Foundation conformance
-  suite. These are planned; see [ROADMAP.md](ROADMAP.md).
+  suite. These are planned; see [ROADMAP.md](ROADMAP.md). The scope for the
+  penetration test is
+  [docs/security/pentest-scope.md](./docs/security/pentest-scope.md).
+- The [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/mhmtgngr/openidx)
+  checks the repository's supply-chain practices every week
+  (`.github/workflows/scorecard.yml`).
 
 Thank you for helping keep OpenIDX secure.

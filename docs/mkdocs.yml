@@ -136,6 +136,8 @@ nav:
           - OpenIDX Production Hardening Checklist: guides/SECURITY-HARDENING.md
           - OpenIDX Multi-Tenancy & the Tenant Trust Boundary: guides/SECURITY-TENANCY.md
           - Compliance Control Mapping — SOC 2 & ISO/IEC 27001:2022: guides/COMPLIANCE-CONTROL-MAPPING.md
+          - OWASP ASVS 4.0.3 Level 2 self-assessment: guides/security/asvs-l2.md
+          - Penetration test scope: guides/security/pentest-scope.md
       - Identity:
           - OAuth 2.0 & OpenID Connect Provider - OpenIDX: guides/OAUTH-OIDC.md
           - Token Exchange (RFC 8693) & Dynamic Client Registration (RFC 7591/7592): guides/TOKEN_EXCHANGE_AND_DCR.md
