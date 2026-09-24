@@ -12,7 +12,7 @@ Pod::Spec.new do |s|
   s.version          = '0.1.0'
   s.summary          = 'OpenIDX Go engine gomobile bridge for Flutter (iOS).'
   s.description      = 'Bridges Dart to the OpenIDX engine (agent/mobile) via Engine.xcframework.'
-  s.homepage         = 'https://github.com/openidx/openidx'
+  s.homepage         = 'https://github.com/mhmtgngr/openidx'
   s.license          = { :type => 'Apache-2.0' }
   s.author           = { 'OpenIDX' => 'engineering@openidx.example' }
   s.source           = { :path => '.' }

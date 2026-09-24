@@ -5381,7 +5381,7 @@ const tr: typeof en = {
         change: 'Alan Adını Değiştir',
         changeNote:
           'Alan adını değiştirmek proxy rotalarını ve OAuth yönlendirme URI\'lerini günceller, bootstrapper hedeflerini yeniden üretir. Özel bir sertifika yüklenmemişse yeni alan adı için kendinden imzalı yeni bir sertifika oluşturulur.',
-        placeholder: 'örn. browzer.tdv.org',
+        placeholder: 'örn. browzer.example.com',
         save: 'Alan Adını Kaydet',
         cascadeTitle: 'Önemli: Zincirleme Güncellemeler',
         cascade1: 'Tüm BrowZer proxy rotaları yeni alan adını kullanacak şekilde güncellenir',

@@ -501,6 +501,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proxy is now named in that policy by id, so it keeps its dial and the
   tunnelers stay cut.
 
+- **A session a user ended from their Sessions page kept refreshing (#992).**
+  Ending a session from Profile → Sessions, or from the Sessions page
+  without the admin role, calls `DELETE /api/v1/identity/sessions/:id`.
+  That deleted the session row and nothing else. The refresh grant does not
+  read that row: it decides on the refresh token's own row and on the
+  `revoked_session:<id>` marker. So the signed-out device kept getting new
+  access tokens, and a new rotated refresh token with each one. The admin
+  path, password change, the kill switch and deprovisioning all published the
+  marker or removed the tokens; this path did neither.
+
+  Ending a session now revokes its refresh tokens in the database, which holds
+  with Redis down, and publishes the marker, and only then deletes the row. A
+  new test on the migrated schema covers four cases:
+  - a live session refreshes;
+  - an ended one does not;
+  - it still does not with Redis down;
+  - the user's other session keeps working.
+
+  Four mutations turn it red: no database revocation, no marker, neither, and
+  revoking every session's tokens.
+
+- **User Access 360 answered 500 for every user from v1.35.0.** When the
+  access map's elevation list moved from `jit_grants` to `access_requests`, it
+  took `COALESCE(resource_name, resource_id)`. On the migrated schema
+  `resource_id` is a UUID and `resource_name` a VARCHAR, and Postgres refuses
+  that COALESCE when it plans the query, whatever the rows hold. So
+  `GET /api/v1/access/users/:id/access-map` failed for every user, elevated or
+  not. The access map's tests create their tables by hand and had declared the
+  column VARCHAR, so they stayed green. The query now casts the id to text, the
+  hand-written column is a UUID as in the product, and a new test builds the
+  map on the migrated schema. Removing the cast turns both tests red. Found
+  while writing the JIT row's end-to-end test for #957.
+
 - **The Applications editor's "Require PKCE" box displayed a default and
   enforced nothing; it and the back-channel logout URI now read from and
   write to the backing OAuth client.** The console's edit dialog showed a

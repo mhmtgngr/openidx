@@ -1,6 +1,6 @@
 [Unit]
 Description=OpenIDX Endpoint Agent
-Documentation=https://github.com/openidx/openidx
+Documentation=https://github.com/mhmtgngr/openidx
 After=network-online.target
 Wants=network-online.target
 

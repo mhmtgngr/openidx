@@ -69,25 +69,24 @@ bearer token with --token or OPENIDX_TOKEN.`,
 		SilenceErrors: true,
 	}
 
-	root.PersistentFlags().String("server", envOr("OPENIDX_SERVER", "https://openidx.tdv.org"),
+	root.PersistentFlags().String("server", os.Getenv("OPENIDX_SERVER"),
 		"OpenIDX access-service base URL (env OPENIDX_SERVER)")
 	root.PersistentFlags().String("token", os.Getenv("OPENIDX_TOKEN"),
 		"OpenIDX bearer token (env OPENIDX_TOKEN)")
 	root.PersistentFlags().Bool("insecure", false, "skip TLS verification (dev only)")
 
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if server, _ := cmd.Flags().GetString("server"); strings.TrimSpace(server) == "" {
+			return fmt.Errorf("no server: set --server or OPENIDX_SERVER to your OpenIDX access-service URL")
+		}
+		return nil
+	}
 	root.AddCommand(newSSHCommand(), newCACommand())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
-}
-
-func envOr(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
 }
 
 // ---- ssh subcommand ----

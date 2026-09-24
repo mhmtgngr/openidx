@@ -14,8 +14,8 @@ go build -o bin/openidx ./cmd/openidx
 
 ```bash
 make install-cli
-# or
-go install github.com/openidx/openidx/cmd/openidx@latest
+# or, from the repository root
+go install ./cmd/openidx
 ```
 
 ### Shell Completion

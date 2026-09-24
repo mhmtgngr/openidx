@@ -541,7 +541,7 @@ func loadConfigFromFile(path string) (Config, error) {
 func defaultConfig() Config {
 	domain := os.Getenv("DOMAIN")
 	if domain == "" {
-		domain = "openidx.tdv.org"
+		domain = "localhost"
 	}
 
 	return Config{
