@@ -175,8 +175,8 @@ Both are off by default, and mounting them changes nothing until they are sized.
 
 Each of these decides whether a control that is *displayed* is also *enforced*.
 `ValidateProduction` reports the ones still in report mode at startup, and the
-ops cockpit shows them, so a GA install cannot pass the production gate without
-seeing which gates are open.
+ops cockpit shows them, so a production install cannot pass the production
+gate without seeing which gates are open.
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|

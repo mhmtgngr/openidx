@@ -445,17 +445,21 @@ Key metrics to track:
 ## Support
 
 For SCIM integration support:
-- 📖 Documentation: https://docs.openidx.io/scim
-- 💬 Community: https://community.openidx.io
-- 🐛 Issues: https://github.com/openidx/openidx/issues
-- 📧 Email: support@openidx.io
+- 💬 Questions: [GitHub Discussions](https://github.com/mhmtgngr/openidx/discussions)
+- 🐛 Bugs: [GitHub Issues](https://github.com/mhmtgngr/openidx/issues)
+- What to expect: [SUPPORT.md](https://github.com/mhmtgngr/openidx/blob/main/SUPPORT.md)
 
-## Standards Compliance
+## Standards implemented
 
-OpenIDX implements:
-- ✅ RFC 7643 - SCIM Core Schema
-- ✅ RFC 7644 - SCIM Protocol
-- ✅ RFC 7642 - SCIM Requirements
+OpenIDX implements these specifications. No SCIM compliance test has been
+run against it yet ([#955](https://github.com/mhmtgngr/openidx/issues/955)),
+so it claims no compliance with them; the
+[maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity) has
+the current level.
+
+- RFC 7643 - SCIM Core Schema
+- RFC 7644 - SCIM Protocol
+- RFC 7642 - SCIM Requirements
 
 ---
 

@@ -1,5 +1,11 @@
 # OpenIDX v2.0 Multi-tenancy Design
 
+> **⚠️ Historical design (2026-06-11).** Multi-tenancy has since shipped, and
+> differently in places. Where this document says OpenIDX "today" is
+> single-tenant, it describes June 2026. The current description is
+> [SECURITY-TENANCY.md](./SECURITY-TENANCY.md), and its maturity is in the
+> [README](../README.md#feature-maturity).
+
 **Status:** Draft. Approved at architectural level 2026-06-11.
 **Supersedes when shipped:** `docs/SECURITY-TENANCY.md` (single-tenant
 trust boundary statement).

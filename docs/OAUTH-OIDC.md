@@ -10,7 +10,7 @@
 
 ✅ **Single Sign-On (SSO)** - Users log in once and access all connected applications
 ✅ **Secure Delegation** - Apps access resources without exposing passwords
-✅ **Standard Protocol** - Works with any OAuth 2.0/OIDC compliant application
+✅ **Standard Protocol** - OAuth 2.0 and OIDC, so standard client libraries can integrate; interoperability has not yet been verified by a conformance run ([#958](https://github.com/mhmtgngr/openidx/issues/958))
 ✅ **Identity Provider** - Become the central authentication authority
 ✅ **Cost Savings** - Replace Auth0, Okta, or Azure AD with OpenIDX
 
@@ -36,6 +36,14 @@ Allow partners and vendors to access your systems securely:
 
 ### 5. Single Sign-On with External Providers
 Enable users to sign in with their existing accounts from other identity providers (IdPs).
+
+> **Experimental.** Google, GitHub and Microsoft sign-in call those providers'
+> fixed endpoints. Any other OIDC provider is called at Keycloak's endpoint
+> paths (`<issuer>/protocol/openid-connect/...`), not through discovery, so a
+> provider that does not serve those paths does not work. A SAML provider can
+> be configured, but OpenIDX is not a SAML service provider, and nothing signs
+> a user in through it. The sign-in round trip has no automated test. See the
+> [maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity).
 
 **Use Case:**
 - Allow users to "Login with Google"
@@ -852,15 +860,21 @@ export LOG_LEVEL=debug
 | Custom Branding | ✅ | ✅ | ✅ | Limited |
 | Unlimited Clients | ✅ | Limited | Limited | Limited |
 
-## Standards Compliance
+## Standards implemented
 
-OpenIDX OAuth/OIDC implements:
-- ✅ [RFC 6749](https://tools.ietf.org/html/rfc6749) - OAuth 2.0 Framework
-- ✅ [RFC 7636](https://tools.ietf.org/html/rfc7636) - PKCE
-- ✅ [RFC 7519](https://tools.ietf.org/html/rfc7519) - JSON Web Token (JWT)
-- ✅ [RFC 7517](https://tools.ietf.org/html/rfc7517) - JSON Web Key (JWK)
-- ✅ [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
-- ✅ [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
+OpenIDX OAuth/OIDC implements these specifications. It has not yet been run
+against the OpenID Foundation conformance suite
+([#958](https://github.com/mhmtgngr/openidx/issues/958)), so it claims no
+conformance to them; the
+[maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity) has
+the current level.
+
+- [RFC 6749](https://tools.ietf.org/html/rfc6749) - OAuth 2.0 Framework
+- [RFC 7636](https://tools.ietf.org/html/rfc7636) - PKCE
+- [RFC 7519](https://tools.ietf.org/html/rfc7519) - JSON Web Token (JWT)
+- [RFC 7517](https://tools.ietf.org/html/rfc7517) - JSON Web Key (JWK)
+- [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
+- [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
 
 ---
 

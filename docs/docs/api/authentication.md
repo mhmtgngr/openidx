@@ -4,7 +4,10 @@ OpenIDX provides multiple authentication mechanisms depending on your use case: 
 
 ## OAuth 2.0 / OpenID Connect
 
-OpenIDX is a fully compliant OAuth 2.0 Authorization Server and OpenID Connect Provider.
+OpenIDX is an OAuth 2.0 authorization server and OpenID Connect provider. It
+has not yet been run against the OpenID Foundation conformance suite
+([#958](https://github.com/mhmtgngr/openidx/issues/958)), so it claims no
+conformance.
 
 ### Authorization Code Flow with PKCE
 
@@ -149,48 +152,17 @@ Response:
 
 ## SAML 2.0
 
-OpenIDX can act as both a SAML Service Provider (SP) and Identity Provider (IdP).
-
-### Service Provider Mode
-
-Use an external IdP (like Azure AD, Okta) to authenticate users.
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant App
-    participant OpenIDX as OpenIDX (SP)
-    participant IdP
-
-    User->>App: Click "Login with SAML"
-    App->>OpenIDX: Initiate SAML request
-    OpenIDX->>IdP: SAML AuthnRequest
-    IdP->>User: Redirect to IdP login
-    User->>IdP: Enter credentials
-    IdP->>OpenIDX: SAML Response (assertion)
-    OpenIDX->>App: Create local session + redirect
-```
-
-#### SAML Metadata
-
-```xml
-<?xml version="1.0"?>
-<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"
-                  entityID="https://openidx.example.com">
-  <SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
-    <SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
-                        Location="https://openidx.example.com/saml/slo"/>
-    <NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified</NameIDFormat>
-    <AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
-                              Location="https://openidx.example.com/saml/acs"
-                              index="0"/>
-  </SPSSODescriptor>
-</EntityDescriptor>
-```
+OpenIDX is a SAML identity provider (IdP). It is not a SAML service provider:
+it has no endpoint that accepts a SAML response from an external IdP. A SAML
+provider can be added on the console's Identity Providers page, but nothing
+signs a user in through it; the
+[maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity) lists
+external identity providers as Experimental.
 
 ### Identity Provider Mode
 
-Allow other applications to use OpenIDX as their SAML IdP.
+Allow other applications to use OpenIDX as their SAML IdP. The protocol
+endpoints are `/saml/idp/metadata`, `/saml/idp/sso` and `/saml/idp/slo`.
 
 Configure via the Admin Console under **Applications > SAML Applications**.
 

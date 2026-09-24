@@ -9,11 +9,12 @@ SSF/CAEP with native network termination.
 
 !!! info "API-only today"
 
-    Stream management ships as a **documented API**, not a console screen — a
-    ratified post-GA decision, recorded so nobody goes hunting for a page that
-    is not there. Everything below is served, routed and tested (including
-    tenant isolation); the only missing piece is the admin UI. Subscribe a
-    receiver with a POST:
+    Stream management ships as a **documented API**, not a console screen.
+    The screen comes later, by a ratified decision
+    ([ROADMAP.md](https://github.com/mhmtgngr/openidx/blob/main/ROADMAP.md#later-when-there-is-demand)),
+    recorded so nobody goes hunting for a page that is not there. Everything
+    below is served, routed and tested (including tenant isolation); the only
+    missing piece is the admin UI. Subscribe a receiver with a POST:
 
     ```bash
     curl -X POST https://oauth.openidx.example.com/ssf/streams \

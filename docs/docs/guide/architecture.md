@@ -42,7 +42,7 @@ graph TB
         PG[(PostgreSQL<br/>FORCE row-level security)]
         RD[(Redis)]
         ES[(Elasticsearch<br/>optional)]
-        OPA[OPA]
+        OPA[OPA<br/>off by default]
     end
 
     AdminUI --> APISIX
@@ -64,9 +64,9 @@ graph TB
 
 | Service | Port | Responsibility |
 |---|---|---|
-| **Identity** | 8001 | Users, groups, roles, sessions, MFA (TOTP, WebAuthn/passkeys, push, hardware tokens), federation (OIDC/SAML), passwordless, account lifecycle & deprovisioning |
-| **Governance** | 8002 | Access reviews & certification campaigns, ABAC policies via OPA, SoD (fail-closed), risk/time-bound assignments, approval workflows |
-| **Provisioning** | 8003 | SCIM 2.0 users & groups, provisioning rules, directory sync (LDAP / AD / Azure AD) |
+| **Identity** | 8001 | Users, groups, roles, sessions, MFA (TOTP, WebAuthn/passkeys, push; an inventory of OATH hardware tokens that sign-in does not accept yet), federation with external identity providers (Experimental), passwordless, account lifecycle & deprovisioning |
+| **Governance** | 8002 | Access reviews & certification campaigns, ABAC policies (evaluated by `internal/abac` at the token endpoint and the access proxy), SoD (fail-closed), risk/time-bound assignments, approval workflows. OPA authorization is optional and off by default |
+| **Provisioning** | 8003 | SCIM 2.0 users & groups, provisioning rules, directory sync (LDAP / AD; Azure AD is Experimental) |
 | **Audit** | 8004 | Unified audit events, sealed into a per-tenant HMAC hash chain and checkable at `GET /api/v1/audit/chain/verify` (needs `AUDIT_CHAIN_SECRET`); real-time streaming, Elasticsearch indexing, SOC 2 / ISO 27001 / GDPR reports, SIEM forwarding |
 | **Admin API** | 8005 | Aggregated admin surface behind the console: dashboards, settings, applications, API keys, webhooks, notifications |
 | **OAuth/OIDC** | 8006 | The IdP: authorization code + PKCE, client credentials, refresh rotation with replay detection, token exchange, revocation, JWKS rotation, step-up, SAML 2.0 IdP with Single Logout |

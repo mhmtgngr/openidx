@@ -12,10 +12,12 @@ OpenIDX already ships a SCIM 2.0 **server** (be provisioned *into*, in
 
 !!! info "API-only today"
 
-    This ships as a **documented API**, not a console screen — a ratified
-    post-GA decision, recorded so nobody goes hunting for a page that is not
-    there. Everything below is served, routed, worker-backed and tested; the
-    only missing piece is the admin UI. Create a target with a POST:
+    This ships as a **documented API**, not a console screen. The screen
+    comes later, by a ratified decision
+    ([ROADMAP.md](https://github.com/mhmtgngr/openidx/blob/main/ROADMAP.md#later-when-there-is-demand)),
+    recorded so nobody goes hunting for a page that is not there. Everything
+    below is served, routed, worker-backed and tested; the only missing piece
+    is the admin UI. Create a target with a POST:
 
     ```bash
     curl -X POST https://openidx.example.com/api/v1/provisioning/targets \
