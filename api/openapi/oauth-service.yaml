@@ -2196,6 +2196,48 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /saml/idp/sso/unsolicited:
+    get:
+      tags: [SAML]
+      summary: IdP-initiated (unsolicited) single sign-on to a registered service provider
+      description: |
+        Issues a signed SAML Response with no InResponseTo to the ACS URL
+        registered for the service provider, and to no other URL. A caller who
+        is not signed in is sent to the login page first.
+      operationId: idPInitiatedSSO
+      x-openidx-handler: internal/oauth.(*Service).handleIdPInitiatedSSO
+      security: []
+      parameters:
+        - name: sp_entity_id
+          in: query
+          required: true
+          description: Entity ID of a registered, enabled service provider
+          schema:
+            type: string
+        - name: RelayState
+          in: query
+          required: false
+          description: Passed through to the service provider unchanged
+          schema:
+            type: string
+      responses:
+        '200':
+          description: An HTML form that posts the SAML Response to the service provider's ACS URL
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Not signed in; redirect to the login page
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /ssf/events:
     post:
       tags: [SSF / CAEP]
