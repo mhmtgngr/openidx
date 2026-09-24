@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/ai"
@@ -3644,6 +3645,36 @@ func (s *Service) handleUpdateEntitlementMetadata(c *gin.Context) {
 
 // ── Admin Delegation service methods ──────────────────────────────────────────
 
+// errDelegationScope marks a delegation scope the admin API will not write.
+// The handlers answer it with a 400 and the error's text.
+var errDelegationScope = errors.New("delegation scope refused")
+
+// checkDelegationScopeType refuses every scope type a delegation may not be
+// given. Only the organization scope can be granted.
+//
+// A group, role or application scope used to be accepted, checked against the
+// organization and shown on the console, and then never consulted:
+// RequirePermission compares resource and action only, so the delegated
+// permissions applied across the whole organization whatever the scope said
+// (see resolveDelegations in internal/common/middleware). Enforcing a narrower
+// scope needs the identity of the resource each request acts on, which the
+// permission check does not have. Until it does, no delegation can be created
+// with such a scope or moved into one. Delegations that already have one are
+// left as they are, because changing what they grant would silently revoke
+// access someone relies on. The owner chose this in #956 (option (b) of the
+// readiness guide's P5.3b question).
+func checkDelegationScopeType(scopeType string) error {
+	switch scopeType {
+	case "organization":
+		return nil
+	case "group", "role", "application":
+		return fmt.Errorf("%w: %s scopes are not enforced yet, so a delegation can only be scoped to the organization",
+			errDelegationScope, scopeType)
+	default:
+		return fmt.Errorf("%w: unknown scope type %q", errDelegationScope, scopeType)
+	}
+}
+
 // CreateDelegation creates a new admin delegation.
 //
 // Every party to the row is checked against the caller's organization first.
@@ -3658,6 +3689,11 @@ func (s *Service) CreateDelegation(ctx context.Context, d *AdminDelegation) erro
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return fmt.Errorf("organization context required to create a delegation: %w", err)
+	}
+	// The organization scope has exactly one valid id, the caller's own, so a
+	// request may leave it out.
+	if d.ScopeType == "organization" && d.ScopeID == "" {
+		d.ScopeID = org.ID
 	}
 	if err := s.delegationPartiesInOrg(ctx, org.ID, d); err != nil {
 		return err
@@ -3684,12 +3720,20 @@ func (s *Service) CreateDelegation(ctx context.Context, d *AdminDelegation) erro
 	return nil
 }
 
-// delegationPartiesInOrg refuses a delegation whose delegate, grantor or scope
-// belongs to another organization. The scope check mirrors the CASE in
-// ListDelegations, which already resolves scope names org-scoped -- so before
-// v152 an out-of-org scope produced a delegation the console displayed with a
-// blank scope name and the enforcement point honoured anyway.
+// delegationPartiesInOrg refuses a delegation whose delegate or grantor
+// belongs to another organization, or whose scope is anything but this
+// organization. Before v152 an out-of-org scope produced a delegation the
+// console displayed with a blank scope name and the enforcement point honoured
+// anyway.
 func (s *Service) delegationPartiesInOrg(ctx context.Context, orgID string, d *AdminDelegation) error {
+	// The scope first: it needs no query.
+	if err := checkDelegationScopeType(d.ScopeType); err != nil {
+		return err
+	}
+	if d.ScopeID != orgID {
+		return fmt.Errorf("%w: an organization-scoped delegation must name this organization", errDelegationScope)
+	}
+
 	var ok bool
 	if err := s.db.Pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND org_id = $2)`,
@@ -3708,30 +3752,6 @@ func (s *Service) delegationPartiesInOrg(ctx context.Context, orgID string, d *A
 		if !ok {
 			return fmt.Errorf("the granting administrator is not a member of this organization")
 		}
-	}
-
-	var scopeQuery string
-	switch d.ScopeType {
-	case "group":
-		scopeQuery = `SELECT EXISTS(SELECT 1 FROM groups WHERE id = $1 AND org_id = $2)`
-	case "role":
-		scopeQuery = `SELECT EXISTS(SELECT 1 FROM roles WHERE id = $1 AND org_id = $2)`
-	case "application":
-		scopeQuery = `SELECT EXISTS(SELECT 1 FROM applications WHERE id = $1 AND org_id = $2)`
-	case "organization":
-		// An organization-scoped delegation may only name the caller's own.
-		if d.ScopeID != orgID {
-			return fmt.Errorf("an organization-scoped delegation must name this organization")
-		}
-		return nil
-	default:
-		return fmt.Errorf("unknown delegation scope type %q", d.ScopeType)
-	}
-	if err := s.db.Pool.QueryRow(ctx, scopeQuery, d.ScopeID, orgID).Scan(&ok); err != nil {
-		return fmt.Errorf("failed to verify the delegation scope: %w", err)
-	}
-	if !ok {
-		return fmt.Errorf("the %s named as the delegation scope is not in this organization", d.ScopeType)
 	}
 	return nil
 }
@@ -3906,15 +3926,52 @@ func (s *Service) UpdateDelegation(ctx context.Context, id string, updates map[s
 	args := []interface{}{}
 	argCount := 1
 
-	if scopeType, ok := updates["scope_type"].(string); ok {
-		setParts = append(setParts, fmt.Sprintf("scope_type = $%d", argCount))
-		args = append(args, scopeType)
-		argCount++
-	}
-	if scopeID, ok := updates["scope_id"].(string); ok {
-		setParts = append(setParts, fmt.Sprintf("scope_id = $%d", argCount))
-		args = append(args, scopeID)
-		argCount++
+	// The scope used to be written as it arrived, unchecked, so a PUT could
+	// name another tenant's group or organization, or move a delegation into a
+	// scope nothing enforces. A client that sends the whole row back may keep
+	// the scope the delegation already has, even a group, role or application
+	// scope from before those were refused. Any other change must leave the
+	// delegation scoped to this organization (checkDelegationScopeType).
+	newType, hasType := updates["scope_type"].(string)
+	newID, hasID := updates["scope_id"].(string)
+	scopeUnchanged := false
+	if hasType || hasID {
+		var curType, curID string
+		err := s.db.Pool.QueryRow(ctx,
+			`SELECT scope_type, scope_id::text FROM admin_delegations WHERE id = $1 AND org_id = $2`,
+			id, org.ID).Scan(&curType, &curID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("delegation not found")
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read the delegation's scope: %w", err)
+		}
+		if !hasType {
+			newType = curType
+		}
+		if !hasID {
+			newID = curID
+			if newType != curType {
+				newID = "" // a new scope type does not inherit the old scope's id
+			}
+		}
+		// As on create, the organization scope may leave its one valid id out.
+		if newType == "organization" && newID == "" {
+			newID = org.ID
+		}
+		scopeUnchanged = newType == curType && newID == curID
+		if !scopeUnchanged {
+			if err := checkDelegationScopeType(newType); err != nil {
+				return err
+			}
+			if newID != org.ID {
+				return fmt.Errorf("%w: an organization-scoped delegation must name this organization", errDelegationScope)
+			}
+			setParts = append(setParts,
+				fmt.Sprintf("scope_type = $%d", argCount), fmt.Sprintf("scope_id = $%d", argCount+1))
+			args = append(args, newType, newID)
+			argCount += 2
+		}
 	}
 	if permsRaw, ok := updates["permissions"]; ok {
 		var perms []string
@@ -3950,6 +4007,11 @@ func (s *Service) UpdateDelegation(ctx context.Context, id string, updates map[s
 	}
 
 	if len(setParts) == 0 {
+		if scopeUnchanged {
+			// Only the scope the delegation already has came back, and the
+			// read above found the row in this organization: nothing to write.
+			return nil
+		}
 		return fmt.Errorf("no valid fields to update")
 	}
 
@@ -4029,25 +4091,29 @@ func (s *Service) handleCreateDelegation(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	if d.DelegateID == "" || d.ScopeType == "" || d.ScopeID == "" {
-		c.JSON(400, gin.H{"error": "delegate_id, scope_type, and scope_id are required"})
+	if d.DelegateID == "" || d.ScopeType == "" {
+		c.JSON(400, gin.H{"error": "delegate_id and scope_type are required"})
 		return
 	}
 	// delegate_id and scope_id are uuid columns; reject non-UUID input with a 400
 	// instead of letting Postgres raise an invalid-uuid error that surfaces as a
-	// confusing 500. (scope_id for scope_type=organization is still a uuid.)
+	// confusing 500.
 	if _, err := uuid.Parse(d.DelegateID); err != nil {
 		c.JSON(400, gin.H{"error": "delegate_id must be a valid user ID"})
 		return
 	}
-	if _, err := uuid.Parse(d.ScopeID); err != nil {
-		c.JSON(400, gin.H{"error": "scope_id must be a valid ID for the selected scope"})
+	// Only the organization scope can be granted (checkDelegationScopeType).
+	if err := checkDelegationScopeType(d.ScopeType); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	validScopeTypes := map[string]bool{"group": true, "role": true, "application": true, "organization": true}
-	if !validScopeTypes[d.ScopeType] {
-		c.JSON(400, gin.H{"error": "scope_type must be group, role, application, or organization"})
-		return
+	// The organization scope may leave scope_id out: CreateDelegation fills
+	// in the caller's organization.
+	if d.ScopeID != "" {
+		if _, err := uuid.Parse(d.ScopeID); err != nil {
+			c.JSON(400, gin.H{"error": "scope_id must be a valid ID for the selected scope"})
+			return
+		}
 	}
 	// Set delegated_by from the authenticated user if available
 	if userID, exists := c.Get("user_id"); exists {
@@ -4064,6 +4130,10 @@ func (s *Service) handleCreateDelegation(c *gin.Context) {
 	}
 
 	if err := s.CreateDelegation(c.Request.Context(), &d); err != nil {
+		if errors.Is(err, errDelegationScope) {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
 		s.logger.Error("failed to create delegation", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -4090,6 +4160,10 @@ func (s *Service) handleUpdateDelegation(c *gin.Context) {
 	}
 
 	if err := s.UpdateDelegation(c.Request.Context(), id, updates); err != nil {
+		if errors.Is(err, errDelegationScope) {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			c.JSON(404, gin.H{"error": "Delegation not found"})
 			return

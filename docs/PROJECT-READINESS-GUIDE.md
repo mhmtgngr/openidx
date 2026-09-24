@@ -2565,6 +2565,10 @@ class this whole program exists for.
    exists, or (c) get documented as organization-wide, which is what it has
    always been?
 
+   **Decided 2026-09-23 by the owner: (b)** (#956). The admin API refuses
+   those scopes on create and on edit. Existing rows keep theirs and are marked
+   "not enforced".
+
    Proven on Postgres 16 and Redis: two cases in `internal/common/middleware` —
    the enforcement point itself, running in CI where `ci.yml` attaches Postgres
    and Redis to the unit matrix — plus six in `internal/admin`. Both middleware

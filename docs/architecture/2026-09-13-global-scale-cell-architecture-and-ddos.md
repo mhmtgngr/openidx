@@ -1,5 +1,11 @@
 # OpenIDX Küresel Ölçek Mimarisi — Hücre Modeli, Servis Düzlemleri ve DDoS Dayanıklılığı
 
+> **⚠️ DONDURULDU — 2026-09-23.** Bu program, proje sahibinin kararıyla ([ADR 0001](../adr/0001-product-focus-and-trusted-core.md))
+> **dondurulmuştur.** Buradaki fazlar, takvim ve açık maddeler şu an uygulanmıyor. Öncelikler
+> [ROADMAP.md](../../ROADMAP.md)'dedir: M1 "Güvenilir Çekirdek" (v2.0 LTS). **Yeniden başlatma
+> tetikleyicisi:** birden fazla bölgeye ihtiyaç duyan ilk müşteri ya da MSP. Belge, tasarım
+> referansı olarak korunur; yeni iş eklenmez.
+>
 > **Tarih:** 2026-09-13 · **Sürüm tabanı:** v1.35.0 (`VERSION`), 8 Go servisi, 187 migrasyon
 > **Soru:** *"Proje tüm dünyaya açılacak ve çok kullanıcıya hizmet edecek. Tasarımı buna göre
 > gözden geçir; mikroservise dönüş yapılmalı. Ağır DDoS altında yanıt dönen bir sistem

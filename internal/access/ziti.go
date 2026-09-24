@@ -963,6 +963,11 @@ func (zm *ZitiManager) ensureServiceEdgeRouterPolicy() {
 	}
 }
 
+// accessProxyIdentityName is the controller-side name of the identity the
+// access proxy dials Ziti services with. The reconciler names it by id in an
+// identity-mode route's Dial policy under assignment enforcement (#984).
+const accessProxyIdentityName = "access-proxy"
+
 func (zm *ZitiManager) ensureAccessProxyIdentity() error {
 	identityFile := filepath.Join(zm.cfg.ZitiIdentityDir, "access-proxy.json")
 
@@ -974,7 +979,7 @@ func (zm *ZitiManager) ensureAccessProxyIdentity() error {
 
 	// Check if identity exists in controller
 	respData, statusCode, err := zm.mgmtRequest("GET",
-		"/edge/management/v1/identities?filter=name=\"access-proxy\"", nil)
+		"/edge/management/v1/identities?filter=name=\""+accessProxyIdentityName+"\"", nil)
 	if err != nil {
 		return err
 	}
@@ -997,7 +1002,7 @@ func (zm *ZitiManager) ensureAccessProxyIdentity() error {
 	// Create the identity
 	zm.logger.Info("Creating access-proxy identity...")
 	createBody, _ := json.Marshal(map[string]interface{}{
-		"name":           "access-proxy",
+		"name":           accessProxyIdentityName,
 		"type":           "Device",
 		"isAdmin":        false,
 		"roleAttributes": []string{"access-proxy-clients"},

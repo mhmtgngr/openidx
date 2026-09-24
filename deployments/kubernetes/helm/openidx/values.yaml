@@ -110,6 +110,15 @@ config:
   # one. It is a backstop behind the edge's routing decision, not the routing.
   cellId: ""
   botGate: "off"
+  # Application assignment as a grant (#956). Empty means true on a fresh
+  # install and unchanged on upgrade. Set true or false to decide it
+  # explicitly, which you must do when the chart is rendered with
+  # `helm template` (a GitOps tool, for example), because that cannot see
+  # the running release.
+  accessAssignmentEnforce: ""
+  # ABAC mode (#956): off | observe | enforce. Empty means observe on a fresh
+  # install and unchanged on upgrade.
+  abacEnforce: ""
   loginFailChallengeAfter: 5
   loginFailWindowSeconds: 900
   # How many device-enrolment tokens one tenant may mint in a rolling hour,

@@ -5397,7 +5397,7 @@ const en = {
         change: 'Change Domain',
         changeNote:
           'Changing the domain will update proxy routes, OAuth redirect URIs, and regenerate bootstrapper targets. If no custom certificate is uploaded, a new self-signed cert will be generated for the new domain.',
-        placeholder: 'e.g. browzer.tdv.org',
+        placeholder: 'e.g. browzer.example.com',
         save: 'Save Domain',
         cascadeTitle: 'Important: Cascading Updates',
         cascade1: 'All BrowZer proxy routes will be updated to use the new domain',
@@ -7150,24 +7150,15 @@ const en = {
         application: 'Application',
         organization: 'Organization',
       },
-      // Where the operator finds the UUID for each scope type, so the
-      // "Scope ID" field is not a mystery box.
-      scopeIdHints: {
-        group: 'Group UUID — copy it from the Groups page.',
-        role: 'Role UUID — copy it from the Roles page.',
-        application: 'Application UUID — copy it from the Applications page.',
-        organization: 'Organization UUID — copy it from the Organizations page.',
-        fallback: 'UUID of the scoped resource.',
-      },
-      // The scope is recorded, validated against this organization, and shown
-      // in the audit trail -- but the permission check compares resource and
-      // action only, so a group/role/application scope does not narrow where
-      // the delegated permissions apply. Saying so on the page is the whole
-      // point: a control that displays without enforcing is a lie.
+      // The permission check compares resource and action only, so a
+      // group/role/application scope never narrowed where the delegated
+      // permissions apply. None can be created any more (#956); the rows that
+      // still carry one say so, because a control that displays without
+      // enforcing is a lie.
       scopeNotEnforcedBadge: 'not enforced',
-      scopeNotEnforcedTitle: 'Narrowing scopes are recorded, not enforced',
+      scopeNotEnforcedTitle: 'Group, Role and Application scopes are not enforced.',
       scopeNotEnforcedBody:
-        'A Group, Role or Application scope is validated against this organization and kept in the audit trail, but the permission check compares resource and action only — the delegated permissions apply wherever that permission is checked in this organization. Only an Organization scope actually narrows anything today. Grant the smallest permission set rather than relying on the scope.',
+        'These delegations were created before such scopes were refused. The permission check compares resource and action only, so their permissions apply wherever that permission is checked in this organization, whatever the scope says. Check that each permission set is one you would grant across the whole organization. New delegations can only be scoped to the organization.',
       resource: 'delegations',
       loading: 'Loading delegations...',
       emptyTitle: 'No delegations found',
@@ -7205,12 +7196,10 @@ const en = {
         delegateIdInvalid: 'Must be a user UUID, not a username or email.',
         delegatedBy: 'Delegated By (User ID)',
         delegatedByPlaceholder: 'Leave empty to use current user',
-        scopeType: 'Scope Type *',
-        scopeTypeEdit: 'Scope Type',
-        scopeId: 'Scope ID *',
-        scopeIdEdit: 'Scope ID',
-        scopeIdPlaceholder: 'UUID of the scoped resource',
-        scopeIdInvalid: 'Must be a {{scope}} UUID, not a name.',
+        scope: 'Scope',
+        scopeOrganizationOnly:
+          'The delegated permissions apply across this organization. Group, Role and Application scopes cannot be chosen, because the permission check does not enforce them yet.',
+        scopeFixed: 'The scope cannot be changed here.',
         permissions: 'Permissions (comma-separated)',
         // Format example, deliberately not translated.
         permissionsPlaceholder: 'users:read, users:write, groups:manage',
