@@ -483,6 +483,14 @@ const tr: typeof en = {
       approve: 'İzin ver',
       deny: 'Reddet',
     },
+    enrollmentDue: {
+      title: 'Bir oturum açma yöntemi ekleyin',
+      due: 'Kuruluşunuz oturum açmak için {{methods}} yöntemlerinden birini zorunlu kılıyor. {{deadline}} tarihinden önce birini ekleyin: bu tarihten sonra onsuz oturum açamazsınız.',
+      overdue:
+        'Kuruluşunuz oturum açmak için {{methods}} yöntemlerinden birini zorunlu kılıyor ve birini eklemek için tanınan süre doldu. Yöneticinin verdiği atlama koduyla oturum açabilirsiniz; kodun süresi dolmadan bu yöntemlerden birini hemen ekleyin.',
+      where: 'Oturum açtıktan sonra hesabınızın güvenlik ayarlarından ekleyebilirsiniz.',
+      continue: 'Devam',
+    },
     mfa: {
       chooseTitle: 'Doğrulama Yöntemini Seçin',
       chooseSubtitle: 'Kimliğinizi nasıl doğrulamak istediğinizi seçin',
@@ -519,6 +527,16 @@ const tr: typeof en = {
         waiting: 'Onay bekleniyor...',
         waitingHint: 'Cihazınızdaki bildirimi açın ve oturum açma isteğini onaylayın.',
         send: 'Anlık Bildirim Gönder',
+      },
+      backup: {
+        label: 'Yedek Kod',
+        hint: 'Kaydettiğiniz yedek kodlardan birini kullanın',
+        prompt: 'Yedek kodlarınızdan birini girin',
+      },
+      bypass: {
+        label: 'Atlama Kodu',
+        hint: 'Yöneticinin size verdiği kodu kullanın',
+        prompt: 'Yöneticinin size verdiği atlama kodunu girin',
       },
       trustBrowser: 'Bu tarayıcıya güven',
       trustBrowserHint: 'Önümüzdeki 30 gün boyunca bu cihazda doğrulamayı atla.',
@@ -2989,10 +3007,13 @@ const tr: typeof en = {
       policies: {
         resourceName: 'MFA politikaları',
         whatItDoes:
-          'Bir politika etkinken, ikinci faktör kaydı olan her kullanıcıdan girişte bu faktör istenir ve kayıtlı herhangi bir faktör yeterlidir. Hiç faktör kaydı olmayan kullanıcıdan istenmez.',
-        notEnforcedBadge: 'kayıtlı ayarlar uygulanmıyor',
+          'Bir politika etkinken, parolayla giriş yapan her kullanıcıya uygulanır. Zorunlu yöntem seçilmemişse, ikinci faktör kaydı olan kullanıcıdan bu faktör istenir ve kayıtlı herhangi bir faktör yeterlidir. Zorunlu yöntemler seçilmişse yalnızca onlar yeterlidir ve bunlardan hiçbiri olmayan kullanıcıya birini eklemesi için ek süre tanınır. Öncelik numarası en düşük etkin politika karar verir.',
+        notEnforcedBadge: 'kayıtlı koşullar uygulanmıyor',
         notEnforcedBody:
-          'Bu politika zorunlu yöntemler, ek süre veya koşullarla kaydedilmiş. Bunların hiçbiri uygulanmıyor: faktörü olan her kullanıcı için kayıtlı herhangi bir faktör politikayı karşılar.',
+          'Bu politika gruplar veya istemci kimlikleri gibi koşullarla kaydedilmiş. Koşullar uygulanmıyor: politika parolayla giriş yapan her kullanıcıya uygulanır.',
+        anyFactor: 'Kayıtlı herhangi bir faktör',
+        graceHours: '{{n}} sa',
+        noGrace: 'Yok',
         title: 'MFA Politikaları',
         create: 'Politika Oluştur',
         loading: 'Politikalar yükleniyor...',
@@ -3001,6 +3022,8 @@ const tr: typeof en = {
         table: {
           name: 'Ad',
           description: 'Açıklama',
+          methods: 'Zorunlu yöntemler',
+          gracePeriod: 'Ek süre',
           priority: 'Öncelik',
           enabled: 'Etkin',
           actions: 'İşlemler',
@@ -3023,7 +3046,18 @@ const tr: typeof en = {
       },
       dialog: {
         whatItDoes:
-          'Politika, ikinci faktör kaydı olan her kullanıcıya uygulanır ve kayıtlı herhangi bir faktör yeterlidir. Belirli yöntemleri, ek süreyi veya koşulları zorunlu kılmak henüz desteklenmiyor.',
+          'Politika, parolayla giriş yapan her kullanıcıya uygulanır. Gruplar gibi koşullar henüz desteklenmiyor.',
+        requiredMethods: 'Zorunlu yöntemler',
+        anyFactorHelp:
+          'Hiçbiri seçili değil: ikinci faktör kaydı olan kullanıcıdan bu faktör istenir ve kayıtlı herhangi bir faktör politikayı karşılar. Faktörü olmayan kullanıcıdan istenmez.',
+        requiredMethodsHelp:
+          'Girişte seçili yöntemlerden biri istenir ve başka hiçbir faktör politikayı karşılamaz. Hatırlanan tarayıcı bu adımı atlatmaz. Yöneticinin verdiği atlama kodu, geri dönüş yolu olarak yine çalışır.',
+        gracePeriod: 'Ek süre (saat)',
+        gracePeriodHelp:
+          'Zorunlu yöntemlerden hiçbiri olmayan kullanıcıya, politika altındaki ilk girişinden itibaren birini eklemesi için bu kadar süre tanınır. Bu süre boyunca eskisi gibi giriş yapar ve son tarih kendisine bildirilir. Süre dolunca atlama kodu yoksa giriş reddedilir. 0 girilirse hemen reddedilir.',
+        gracePeriodNeedsMethods: 'Ek süre, zorunlu bir yöntemi eklemek için tanınan süredir; bu yüzden en az bir yöntem gerekir.',
+        gracePeriodInvalid: '0 ile {{max}} arasında tam sayı olarak saat girin.',
+        methodsChangedWarning: 'Zorunlu yöntemleri değiştirmek her kullanıcının ek süresini yeniden başlatır.',
         editTitle: 'MFA Politikasını Düzenle',
         createTitle: 'MFA Politikası Oluştur',
         name: 'Politika Adı *',

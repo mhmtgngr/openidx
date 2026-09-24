@@ -16,7 +16,7 @@ decoration. Running only the positive half is how this class survives.
 | Role / group | Users, Groups | JWT `roles` claim, route checks | probe an admin route as a member, then as a non-member |
 | Vault / PAM grant | My Privileged Access, PAM pages | `pamEntryAllowed` at connect and at reveal | connect as a granted user, then as an ungranted one |
 | Session | Sessions pages | The refresh grant checks the refresh token's own row (`revoked_at`) and the Redis `revoked_session:*` marker. Userinfo checks the per-token blacklist and the per-user cutoff instead (`internal/revocation`) | revoke, then refresh — the refresh must fail |
-| MFA policy | MFA Management | `IsMFARequired` in the OAuth login path. A policy has no conditions, methods or grace period (#990): it challenges every user with a factor | with a policy on, a user with a factor is challenged; with it off, or with no factor, they are not (`TestMFAPolicyRaisesTheLoginChallenge`) |
+| MFA policy | MFA Management (required methods, grace period) and the sign-in page (the deadline notice) | `IsMFARequired` and `evaluateMFA` in the OAuth password login, and `mfa_policy_grace`. A policy with required methods accepts only those; a user with none of them signs in until their grace period ends, then only with a bypass code. With no methods it challenges every user with a factor. Conditions are refused (#990) | with a policy that requires TOTP, a user with TOTP and email OTP is offered TOTP alone; a user with only email OTP signs in inside the grace period, is told the deadline, and is refused after it. With the policy off, or with no methods, any factor satisfies it, and a user with no factor is not challenged |
 | Device trust | My Devices, Access 360 | Ziti posture + the `#device-trusted` attribute | an untrusted device is denied the dial |
 | **ABAC policy** | ABAC Policies (with its mode badge) | `internal/abac` at both PEPs — the token endpoint and the access proxy | in `observe`, a deny policy records `abac.would_deny` and still issues; in `enforce`, the same policy returns 403 and audits `abac.denied` |
 | **JIT elevation** | User Access 360, portal dashboard ("active JIT grants") | `internal/jitgrant` over `access_requests` — the expiry sweep, the kill switch, the lifecycle sweep, deprovisioning | grant a time-boxed role, confirm it is listed and counted, then press the kill switch: the role must be gone, the request `expired`, and `pam_jit_grants_revoked` must be **1** rather than 0 |
@@ -45,6 +45,7 @@ one is not verified automatically yet; #957 tracks closing that.
 | Device trust at the dial | `TestPostureDecidesWhoDialsTheAdminPlane`, with `POSTURE_DEVICE_TRUST_GATE=enforce` and the dark-service tiers on (both are off by default). A compliant posture report grants `#device-trusted` and the admin plane is dialable. A failing report removes it and the dial is denied, while Tier 1 stays. In `observe`, nothing changes | the unit job for `internal/access`, against a migrated Postgres and a fake controller |
 | Session | `TestAnEndedSessionCannotRefresh`: a session is created the way login creates it and ended the way the Sessions page ends it (`identity.TerminateSession`). Its refresh then fails, with Redis up and with Redis down. The user's other session keeps refreshing | the unit job for `internal/oauth`, against a migrated Postgres and an in-memory Redis |
 | MFA policy | `TestMFAPolicyRaisesTheLoginChallenge`: with a policy on, a user whose only factor is email OTP is challenged at login. With it off, or for a user with no factor, they are not | the unit job for `internal/oauth`, against a migrated Postgres |
+| MFA policy, required methods and grace | `TestMFAPolicyRequiredMethodsAtTheLoginDecision`: the offered methods with and without the policy's methods, a remembered browser, the grace window's start, its end with and without a bypass code, a longer grace period reopening it, 0 hours, and the order policies are tried in. `TestMFAPolicyGraceAtTheLoginEndpoint`: the same through `POST /oauth/login`, with the audit rows. `TestMFAPolicyHandlersEnforceTheRules`: what the admin API accepts, and that only a new method set restarts the windows | the unit jobs for `internal/oauth` and `internal/admin`, against a migrated Postgres and an in-memory Redis |
 
 The ABAC tests cover all three states. In `enforce`, a deny policy refuses
 the subject it names with a 403 and records `access.abac.denied`. In
@@ -76,8 +77,9 @@ Mapping two more rows found divergences, fixed with the tests above:
   refresh tokens and publishes the marker (#993).
 - **MFA policy (#990).** The console showed required methods and a grace
   period that nothing enforced, and the API accepted only conditions no code
-  reads. #991 refuses what is not enforced, so a policy means what it does:
-  every user with a factor is challenged.
+  reads. #991 refused what was not enforced. The methods and the grace period
+  are now enforced at the password login, and the console offers them again;
+  conditions are still refused.
 
 ## Runs
 

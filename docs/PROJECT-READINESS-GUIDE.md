@@ -948,9 +948,12 @@ exactly — it is already written:
 4. ~~Delete the server-rendered login (plan Task 15).~~ Done in code (P6.1).
 5. Flip `ACCESS_ASSIGNMENT_ENFORCE=true`; verify an unassigned user can no
    longer dial, and the denial is audited.
-6. Create the first MFA policy (it takes no conditions: it challenges every
-   user who has a factor enrolled, #990) and chase enrollment via MFA
-   Management stats.
+6. Create the first MFA policy and chase enrollment via MFA Management
+   stats. It takes no conditions (#990). With no required methods it
+   challenges every user who has a factor enrolled. With required methods,
+   a user who has none of them gets the grace period to add one and is
+   refused after it unless an administrator gives them a bypass code, so set
+   a grace period long enough to chase enrollment first.
 
 The P1 tail items are **already shipped on this branch**: A2 (threat list
 → risk score), A3 (voice MFA fails closed instead of pretending), A4
@@ -6285,7 +6288,7 @@ For each grant type, the place a person *sees* it and the place the system
 | Role/group | Users/Groups pages | JWT `roles` claim, route checks | route probe as member vs non-member |
 | Vault/PAM grant | My Privileged Access, PAM pages | `pamEntryAllowed` at connect/reveal | connect as granted vs ungranted user |
 | Session | Sessions pages | Redis `revoked_session:*` at refresh/userinfo | revoke → refresh fails |
-| MFA policy | MFA Management | `IsMFARequired` in the OAuth login path | with a policy on, a user with a factor is challenged; with it off, or with no factor, they aren't |
+| MFA policy | MFA Management | `IsMFARequired` and `evaluateMFA` in the OAuth login path | with a policy on, a user with a factor is challenged; with it off, or with no factor, they aren't. With required methods, only those are offered, and a user without one is refused after the grace period |
 | Device trust | My Devices, Access 360 | Ziti posture + `#device-trusted` attribute | untrusted device denied dial |
 
 Anything that appears in an admin UI without a row in this table is a

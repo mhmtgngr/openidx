@@ -2408,6 +2408,18 @@ func (s *Service) handleLogin(c *gin.Context) {
 	// which was deleted precisely so the two could never disagree about
 	// whether a second factor is required. See mfa_policy.go.
 	ev := s.evaluateMFA(c.Request.Context(), user, clientIP, userAgent, fingerprint, location, deviceTrusted, riskScore, riskFactors)
+	if ev.GraceBegan {
+		s.auditMFAGrace(c.Request.Context(), user.ID, clientIP, "mfa_grace_started", "success", ev)
+	}
+	// A user with none of the methods a policy requires is told by when to add
+	// one. The notice rides in the OAuth parameters so that it reaches whichever
+	// response completes this login: the one below, or the one after the second
+	// factor, consent or a concurrent-session prompt (issueAuthorizationCode).
+	if ev.EnrollmentDue != nil {
+		if due, err := json.Marshal(ev.EnrollmentDue); err == nil {
+			oauthParams[paramMFAEnrollmentDue] = string(due)
+		}
+	}
 	availableMFAMethods := ev.Methods
 	mfaEnabled := ev.Enabled
 	browserTrusted := ev.BrowserTrusted
@@ -2433,7 +2445,7 @@ func (s *Service) handleLogin(c *gin.Context) {
 
 		riskLevel := ev.RiskLevel
 
-		c.JSON(200, gin.H{
+		body := gin.H{
 			"mfa_required":      true,
 			"mfa_session":       mfaSession,
 			"mfa_methods":       availableMFAMethods,
@@ -2442,6 +2454,24 @@ func (s *Service) handleLogin(c *gin.Context) {
 			"risk_factors":      riskFactors,
 			"device_trusted":    deviceTrusted,
 			"can_trust_browser": !browserTrusted,
+		}
+		if ev.EnrollmentDue != nil {
+			body["mfa_enrollment_due"] = ev.EnrollmentDue
+		}
+		c.JSON(200, body)
+		return
+	}
+
+	// The grace period to add a method the policy requires is over, and the
+	// user has no bypass code to sign in with while they add one.
+	if ev.EnrollmentRequired {
+		s.auditMFAGrace(c.Request.Context(), user.ID, clientIP, "mfa_enrollment_required", "failure", ev)
+		c.JSON(403, gin.H{
+			"error": "mfa_enrollment_required",
+			"error_description": "Your organization requires one of these sign-in methods: " +
+				strings.Join(ev.RequiredMethods, ", ") + ". The time to add one has passed. " +
+				"Ask an administrator for a bypass code, sign in with it, and add one.",
+			"required_methods": ev.RequiredMethods,
 		})
 		return
 	}
@@ -2739,10 +2769,32 @@ func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]
 		s.setBrowserSessionCookie(c, sessionID)
 	}
 
-	c.JSON(200, authorizationCodeResponse(
+	body := authorizationCodeResponse(
 		authorizationRedirectURL(oauthParams["redirect_uri"], code, oauthParams["state"]),
 		c.GetString(ctxTrustedBrowserID),
-	))
+	)
+	if due := oauthParams[paramMFAEnrollmentDue]; due != "" && json.Valid([]byte(due)) {
+		body["mfa_enrollment_due"] = json.RawMessage(due)
+	}
+	c.JSON(200, body)
+}
+
+// paramMFAEnrollmentDue is the OAuth parameter that carries a policy's
+// "add a required method by" notice from the password step to the response
+// that completes the login (evaluateMFA, mfaEnrollmentDue).
+const paramMFAEnrollmentDue = "mfa_enrollment_due"
+
+// auditMFAGrace records a grace-period event under an MFA policy: its start,
+// and a sign-in refused because it is over. logAuditEvent reads the tenant
+// from ctx and writes in the background, so it is called with the request's
+// context directly.
+func (s *Service) auditMFAGrace(ctx context.Context, userID, clientIP, action, outcome string, ev mfaEvaluation) {
+	details := map[string]interface{}{"required_methods": ev.RequiredMethods}
+	if ev.EnrollmentDue != nil {
+		details["deadline"] = ev.EnrollmentDue.Deadline
+	}
+	s.logAuditEvent(ctx, "authentication", "security", action, outcome,
+		userID, clientIP, userID, "user", details)
 }
 
 // ctxTrustedBrowserID carries the id of a browser that was trusted earlier in

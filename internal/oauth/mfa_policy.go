@@ -2,6 +2,8 @@ package oauth
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -39,6 +41,18 @@ type mfaEvaluation struct {
 	// PolicyRequired reports that an admin-authored mfa_policies row matched this
 	// login. It can only ever ADD to the challenge decision, never remove from it.
 	PolicyRequired bool
+	// RequiredMethods are the methods the matched policy requires. Empty when no
+	// policy matched, or when the one that did accepts any enrolled factor.
+	RequiredMethods []string
+	// EnrollmentDue is set while the user has none of RequiredMethods: inside the
+	// policy's grace period, or after it when they sign in with a bypass code.
+	// The login response carries it so the sign-in page can tell them.
+	EnrollmentDue *mfaEnrollmentDue
+	// GraceBegan reports that this login started the user's grace period.
+	GraceBegan bool
+	// EnrollmentRequired means the grace period is over and the user has neither
+	// a required method nor a bypass code: the login must be refused.
+	EnrollmentRequired bool
 	// Challenge is the final answer: this login must be completed with a second
 	// factor before an authorization code may be issued.
 	Challenge   bool
@@ -94,6 +108,9 @@ func (s *Service) evaluateMFA(
 		ev.Methods = append(ev.Methods, "email")
 		ev.Enabled = true
 	}
+	// The primary factors the user has, before the risk filter below narrows
+	// what this challenge offers. A policy asks what the user HAS.
+	enrolled := append([]string(nil), ev.Methods...)
 	// Supplemental factors — offered alongside a primary one, never on their own.
 	if n, _ := s.identityService.GetBackupCodeCount(ctx, user.ID); n > 0 {
 		ev.Methods = append(ev.Methods, "backup")
@@ -166,20 +183,167 @@ func (s *Service) evaluateMFA(
 	// policy matched") is deliberate: this evaluator ORs the policy in, it
 	// never uses it to skip a challenge the risk engine or TOTP already
 	// require, so a DB hiccup here just reproduces today's pre-policy
-	// behaviour instead of locking someone out. Skipped entirely when
-	// challengeRequired would discard the result anyway (no enrolled factor,
-	// or a trusted browser standing in for one) — s.identityService and user
-	// are already guaranteed non-nil by the early return above.
-	if ev.Enabled && !ev.SkipMFA {
-		if required, _, err := s.identityService.IsMFARequired(ctx, user.ID, clientIP); err != nil {
-			s.logger.Warn("MFA policy evaluation failed, treating as not required", zap.Error(err))
-		} else {
-			ev.PolicyRequired = required
-		}
+	// behaviour instead of locking someone out. It is asked on every login,
+	// with or without an enrolled factor, because a policy that requires
+	// particular methods has something to say to a user who has none.
+	var policy *identity.MFAPolicy
+	if required, matched, err := s.identityService.IsMFARequired(ctx, user.ID, clientIP); err != nil {
+		s.logger.Warn("MFA policy evaluation failed, treating as not required", zap.Error(err))
+	} else if required {
+		policy = matched
 	}
 
-	ev.Challenge = challengeRequired(ev.Enabled, ev.SkipMFA, ev.RequireMFA, totpEnabled, ev.PolicyRequired)
+	requiredMethods := policyRequiredMethods(policy)
+	if policy == nil || len(requiredMethods) == 0 {
+		// Any enrolled factor satisfies the policy. It counts only for a user
+		// who has one, and a remembered browser stands in for it, exactly as
+		// for the risk engine's own verdict.
+		ev.PolicyRequired = policy != nil && ev.Enabled && !ev.SkipMFA
+		ev.Challenge = challengeRequired(ev.Enabled, ev.SkipMFA, ev.RequireMFA, totpEnabled, ev.PolicyRequired)
+		return ev
+	}
+
+	ev.PolicyRequired = true
+	ev.RequiredMethods = requiredMethods
+	if offered := requiredMethodsOffered(ev.Methods, enrolled, requiredMethods); len(offered) > 0 {
+		// The user has a required method: the challenge offers those, plus an
+		// administrator's bypass code, and nothing else. Not SMS under a policy
+		// that names WebAuthn, and not a remembered browser either: the product
+		// does not record which factor a browser was remembered with.
+		ev.Methods = offered
+		ev.SkipMFA = false
+		ev.Challenge = true
+		return ev
+	}
+
+	// The user has none of the required methods: the policy's grace period,
+	// counted from the first sign-in that found them without one. If that
+	// start cannot be read or recorded, the window is treated as opening now,
+	// so a database error never ends a window early; the start is recorded on
+	// a later sign-in.
+	now := time.Now()
+	start, began, err := s.identityService.MFAGraceStart(ctx, policy.ID, user.ID)
+	if err != nil {
+		s.logger.Warn("MFA grace period unavailable, treating it as starting now",
+			zap.String("policy_id", policy.ID), zap.Error(err))
+		start, began = now, false
+	}
+	// A policy with no grace period records the start too, so that raising
+	// the period later counts from the same first sign-in; but no period
+	// began.
+	ev.GraceBegan = began && policy.GracePeriodHours > 0
+	deadline := start.Add(time.Duration(policy.GracePeriodHours) * time.Hour)
+	switch outcome := graceOutcome(now, deadline, policy.GracePeriodHours, hasMethod(ev.Methods, "bypass")); outcome {
+	case graceOpen:
+		// Meanwhile the user signs in as under a policy that accepts any factor:
+		// a user with a factor is challenged with the factors they have.
+		ev.EnrollmentDue = &mfaEnrollmentDue{Methods: requiredMethods, Deadline: deadline}
+		ev.PolicyRequired = ev.Enabled && !ev.SkipMFA
+		ev.Challenge = challengeRequired(ev.Enabled, ev.SkipMFA, ev.RequireMFA, totpEnabled, ev.PolicyRequired)
+	case graceOverWithBypass:
+		// The administrator's bypass code is the way back in, so that the user
+		// can add a required method.
+		ev.EnrollmentDue = &mfaEnrollmentDue{Methods: requiredMethods, Deadline: deadline, Overdue: true}
+		ev.Methods = []string{"bypass"}
+		ev.SkipMFA = false
+		ev.Challenge = true
+	default:
+		ev.EnrollmentRequired = true
+		ev.Challenge = false
+	}
 	return ev
+}
+
+// mfaEnrollmentDue tells a user signing in that their organization requires a
+// method they have not added: by when (Deadline), or, when Overdue, that the
+// time has passed and a bypass code let them in to add one.
+type mfaEnrollmentDue struct {
+	Methods  []string  `json:"methods"`
+	Deadline time.Time `json:"deadline"`
+	Overdue  bool      `json:"overdue,omitempty"`
+}
+
+// mfaPolicyMethods are the methods a policy can require: the primary factors
+// evaluateMFA offers. Backup and bypass codes are recovery, not a method a
+// policy can ask for.
+var mfaPolicyMethods = map[string]bool{"totp": true, "webauthn": true, "push": true, "sms": true, "email": true}
+
+// policyRequiredMethods returns the matched policy's required methods,
+// lower-cased, de-duplicated and limited to the methods above. The admin API
+// accepts no others, so the filter only matters for a row written by hand.
+func policyRequiredMethods(policy *identity.MFAPolicy) []string {
+	if policy == nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range policy.RequiredMethods {
+		m = strings.ToLower(strings.TrimSpace(m))
+		if mfaPolicyMethods[m] && !seen[m] {
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// requiredMethodsOffered is what a challenge under a method-requiring policy
+// offers a user who has at least one of the methods: the required methods among
+// those this challenge would offer (risk-filtered, FastPass-ordered), and when
+// the risk filter left none of them, the required methods among those the user
+// has. An active bypass code is added, being the administrator's recovery path.
+// Empty means the user has none of the required methods.
+func requiredMethodsOffered(offerable, enrolled, required []string) []string {
+	offered := intersectMethods(offerable, required)
+	if len(offered) == 0 {
+		offered = intersectMethods(enrolled, required)
+	}
+	if len(offered) > 0 && hasMethod(offerable, "bypass") {
+		offered = append(offered, "bypass")
+	}
+	return offered
+}
+
+func intersectMethods(methods, allowed []string) []string {
+	var out []string
+	for _, m := range methods {
+		if hasMethod(allowed, m) && !hasMethod(out, m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func hasMethod(methods []string, method string) bool {
+	for _, m := range methods {
+		if m == method {
+			return true
+		}
+	}
+	return false
+}
+
+type graceState int
+
+const (
+	graceOpen graceState = iota
+	graceOverWithBypass
+	graceOver
+)
+
+// graceOutcome is the rule for a user with none of a policy's required methods.
+// Until the deadline they sign in as before. After it, only an administrator's
+// bypass code lets them in, and the login is refused without one. A grace
+// period of 0 hours has no "until" at all, whichever way this host's clock and
+// the database's disagree about the moment the start was recorded.
+func graceOutcome(now, deadline time.Time, graceHours int, hasBypass bool) graceState {
+	if graceHours > 0 && now.Before(deadline) {
+		return graceOpen
+	}
+	if hasBypass {
+		return graceOverWithBypass
+	}
+	return graceOver
 }
 
 // challengeRequired is the single rule deciding whether a password login must be
