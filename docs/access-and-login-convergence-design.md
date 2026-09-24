@@ -250,8 +250,8 @@ first sign-in under the policy (`mfa_policy_grace`, v203), and is refused
 after it unless they have a bypass code. The login response carries the
 deadline so the sign-in page can show it. Policies are tried in the order the
 console lists them. Conditions are still refused: they come back with the code
-that enforces them and a console that shows them. Passkey, QR, social and
-magic-link sign-ins do not consult a policy.
+that enforces them and a console that shows them. A policy governs sign-in
+with a password.
 
 ### C.3 Precedence and the lockout guard
 

@@ -53,8 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     must be 0 to 720 hours. Anything else answers 400.
   - **Console:** the method checkboxes and the grace field are back, with what
     each does, and the table lists both. The toggle sends only `enabled`.
-  - **Scope:** a policy governs password sign-in. Passkey, QR, social and
-    magic-link sign-ins do not consult it, as before this release.
+  - **Scope:** a policy governs sign-in with a password, as before this
+    release.
   - **Tests:** each rule has two sides, at the login decision, at
     `POST /oauth/login` and in the admin API, against a migrated Postgres.
 
