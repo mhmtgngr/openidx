@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math/big"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -98,18 +99,64 @@ func (k *samlKeyStore) GetKeyPair() (*rsa.PrivateKey, []byte, error) {
 	return k.priv, k.certDER, nil
 }
 
+// samlSigningContext returns a goxmldsig signing context over the active
+// signing key and the certificate published for it. Read once per message:
+// the certificate and the key must be the same key even if a rotation lands
+// between two signatures of one response.
+func (s *Service) samlSigningContext() (*dsig.SigningContext, error) {
+	priv := s.activePrivateKey()
+	if priv == nil {
+		return nil, fmt.Errorf("no SAML signing key configured")
+	}
+	certDER, err := samlCertificate(s.issuer, priv)
+	if err != nil {
+		return nil, err
+	}
+	return &dsig.SigningContext{
+		Hash:          crypto.SHA256,
+		KeyStore:      &samlKeyStore{priv: priv, certDER: certDER},
+		IdAttribute:   "ID",
+		Prefix:        "ds",
+		Canonicalizer: dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(""),
+	}, nil
+}
+
+// signEnvelopedInPlace signs el with an enveloped signature and inserts the
+// <ds:Signature> where the SAML schema puts it: directly after the element's
+// <Issuer>, or first when there is none. goxmldsig's SignEnveloped appends the
+// signature as the LAST child, which schema-validating service providers
+// refuse. The digest does not depend on the position, because the
+// enveloped-signature transform removes the signature before digesting.
+//
+// The signature is computed over a COPY. goxmldsig's exclusive
+// canonicalization rewrites the element it digests in place, and exclusive
+// canonicalization drops every namespace declaration that no element or
+// attribute name uses -- including xmlns:xs, which only the xsi:type VALUE
+// "xs:string" refers to. Signing el itself therefore sent assertions whose
+// attribute types named an undeclared prefix. The digest of the copy is the
+// digest of el, because canonicalization depends on the infoset and el
+// declares every prefix it uses itself.
+func signEnvelopedInPlace(ctx *dsig.SigningContext, el *etree.Element) error {
+	sig, err := ctx.ConstructSignature(el.Copy(), true)
+	if err != nil {
+		return err
+	}
+	idx := 0
+	for _, child := range el.ChildElements() {
+		if child.Tag == "Issuer" {
+			idx = child.Index() + 1
+			break
+		}
+	}
+	el.InsertChildAt(idx, sig)
+	return nil
+}
+
 // signAssertionEnveloped parses the response XML, signs the <saml:Assertion>
 // element in place with a compliant enveloped RSA-SHA256 signature, and returns
 // the re-serialized document.
 func (s *Service) signAssertionEnveloped(responseXML []byte) (string, error) {
-	priv := s.activePrivateKey()
-	if priv == nil {
-		return "", fmt.Errorf("no SAML signing key configured")
-	}
-
-	// Read once: the certificate and the signing key must be the same key even
-	// if a rotation lands between the two lines.
-	certDER, err := samlCertificate(s.issuer, priv)
+	ctx, err := s.samlSigningContext()
 	if err != nil {
 		return "", err
 	}
@@ -123,37 +170,9 @@ func (s *Service) signAssertionEnveloped(responseXML []byte) (string, error) {
 	if assertion == nil {
 		return "", fmt.Errorf("no Assertion element found to sign")
 	}
-
-	ctx := &dsig.SigningContext{
-		Hash:          crypto.SHA256,
-		KeyStore:      &samlKeyStore{priv: priv, certDER: certDER},
-		IdAttribute:   "ID",
-		Prefix:        "ds",
-		Canonicalizer: dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList(""),
-	}
-
-	signed, err := ctx.SignEnveloped(assertion)
-	if err != nil {
+	if err := signEnvelopedInPlace(ctx, assertion); err != nil {
 		return "", fmt.Errorf("sign assertion: %w", err)
 	}
-
-	// Replace the unsigned assertion with the signed one in the document tree,
-	// preserving its position (an Assertion must follow Issuer/Status in a
-	// Response). goxmldsig returns a signed copy, so swap it in at the same index.
-	parent := assertion.Parent()
-	if parent == nil {
-		// Assertion is the root; emit it directly.
-		out := etree.NewDocument()
-		out.SetRoot(signed)
-		str, serr := out.WriteToString()
-		if serr != nil {
-			return "", serr
-		}
-		return str, nil
-	}
-	idx := assertion.Index()
-	parent.RemoveChildAt(idx)
-	parent.InsertChildAt(idx, signed)
 
 	str, err := doc.WriteToString()
 	if err != nil {
@@ -188,61 +207,139 @@ func (s *Service) samlSigningCertBase64() (string, error) {
 	return base64.StdEncoding.EncodeToString(certDER), nil
 }
 
-// verifySAMLSignature validates an enveloped XML-DSig signature on inbound SAML
-// (e.g. an SP's signed AuthnRequest or LogoutRequest) against the SP's registered
-// X.509 certificate (base64 DER, as stored from SP metadata).
-func verifySAMLSignature(signedXML []byte, spCertBase64 string) error {
-	if spCertBase64 == "" {
-		return fmt.Errorf("no SP certificate on file to verify signature")
+// parseSAMLCertificate decodes a certificate as it is stored from service
+// provider metadata: base64 DER, with or without PEM armor and whitespace.
+func parseSAMLCertificate(stored string) (*x509.Certificate, error) {
+	if strings.TrimSpace(stored) == "" {
+		return nil, fmt.Errorf("no certificate on file")
 	}
-	certDER, err := base64.StdEncoding.DecodeString(normalizeBase64Cert(spCertBase64))
+	der, err := base64.StdEncoding.DecodeString(normalizeBase64Cert(stored))
 	if err != nil {
-		return fmt.Errorf("decode SP certificate: %w", err)
+		return nil, fmt.Errorf("decode certificate: %w", err)
 	}
-	cert, err := x509.ParseCertificate(certDER)
+	cert, err := x509.ParseCertificate(der)
 	if err != nil {
-		return fmt.Errorf("parse SP certificate: %w", err)
+		return nil, fmt.Errorf("parse certificate: %w", err)
 	}
+	return cert, nil
+}
 
-	doc := etree.NewDocument()
-	if err := doc.ReadFromBytes(signedXML); err != nil {
-		return fmt.Errorf("parse inbound SAML: %w", err)
+// verifyEnvelopedRootSignature verifies the enveloped XML-DSig signature that
+// covers root itself (a signed AuthnRequest or LogoutRequest) against cert.
+//
+// Two things about it are deliberate. The ROOT is what is verified, because the
+// root is what the handler reads: a signature over some nested element proves
+// nothing about the values the IdP acts on. And any KeyInfo the message carries
+// is removed first, so the only key that can make it verify is the one
+// registered for the service provider; a message that names its own
+// certificate does not get to choose who it is trusted as.
+func verifyEnvelopedRootSignature(root *etree.Element, cert *x509.Certificate) error {
+	if root == nil {
+		return fmt.Errorf("empty message")
 	}
-
+	el := root.Copy()
+	for _, sig := range el.ChildElements() {
+		if sig.Tag != "Signature" || sig.NamespaceURI() != XMLDSigNamespace {
+			continue
+		}
+		for _, child := range sig.ChildElements() {
+			if child.Tag == "KeyInfo" {
+				sig.RemoveChild(child)
+			}
+		}
+	}
 	ctx := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
 		Roots: []*x509.Certificate{cert},
 	})
 	ctx.IdAttribute = "ID"
-
-	// The signature may sit on the root (signed AuthnRequest) or on a nested
-	// element (a signed Assertion inside a Response). Validate the element that
-	// directly carries the <Signature> child.
-	target := findSignedElement(doc.Root())
-	if target == nil {
-		return fmt.Errorf("no signature element found in inbound SAML")
-	}
-
-	if _, err := ctx.Validate(target); err != nil {
-		return fmt.Errorf("SAML signature validation failed: %w", err)
+	if _, err := ctx.Validate(el); err != nil {
+		return fmt.Errorf("signature validation failed: %w", err)
 	}
 	return nil
 }
 
-// findSignedElement returns the first element that has a direct <Signature>
-// child (the element an enveloped signature covers).
-func findSignedElement(el *etree.Element) *etree.Element {
-	if el == nil {
-		return nil
+// hasEnvelopedSignature reports whether root carries an XML-DSig <Signature>
+// as a direct child, by element and namespace rather than by searching the
+// text for "<ds:Signature" (which a signature under any other prefix defeats).
+func hasEnvelopedSignature(root *etree.Element) bool {
+	if root == nil {
+		return false
 	}
-	for _, child := range el.ChildElements() {
-		if child.Tag == "Signature" {
-			return el
+	for _, child := range root.ChildElements() {
+		if child.Tag == "Signature" && child.NamespaceURI() == XMLDSigNamespace {
+			return true
 		}
 	}
-	for _, child := range el.ChildElements() {
-		if found := findSignedElement(child); found != nil {
-			return found
+	return false
+}
+
+// redirectSignatureAlgorithms maps the SigAlg URIs of the HTTP-Redirect binding
+// to the x509 algorithm that checks them. It is the set the POST binding
+// accepts: goxmldsig verifies embedded signatures through the same
+// Certificate.CheckSignature, which still accepts RSA-SHA1. Anything else is
+// refused by name.
+var redirectSignatureAlgorithms = map[string]x509.SignatureAlgorithm{
+	"http://www.w3.org/2000/09/xmldsig#rsa-sha1":        x509.SHA1WithRSA,
+	"http://www.w3.org/2001/04/xmldsig-more#rsa-sha256": x509.SHA256WithRSA,
+	"http://www.w3.org/2001/04/xmldsig-more#rsa-sha384": x509.SHA384WithRSA,
+	"http://www.w3.org/2001/04/xmldsig-more#rsa-sha512": x509.SHA512WithRSA,
+}
+
+// verifyRedirectBindingSignature verifies the detached signature of an
+// HTTP-Redirect binding message (SAML Bindings 3.4.4.1). The signed octets are
+// the message, RelayState and SigAlg parameters exactly as they appear in the
+// received query string, in that order: re-encoding them would change the
+// bytes and reject every correctly signed message from a sender that encodes
+// differently.
+func verifyRedirectBindingSignature(rawQuery, messageParam string, cert *x509.Certificate) error {
+	raw := map[string]string{}
+	for _, part := range strings.Split(rawQuery, "&") {
+		key, value, _ := strings.Cut(part, "=")
+		switch key {
+		case messageParam, "RelayState", "SigAlg", "Signature":
+			if _, dup := raw[key]; dup {
+				return fmt.Errorf("parameter %s appears more than once", key)
+			}
+			raw[key] = value
 		}
+	}
+	msg, ok := raw[messageParam]
+	if !ok {
+		return fmt.Errorf("no %s parameter", messageParam)
+	}
+	sigAlgRaw, ok := raw["SigAlg"]
+	if !ok {
+		return fmt.Errorf("signature without SigAlg")
+	}
+	sigAlg, err := url.QueryUnescape(sigAlgRaw)
+	if err != nil {
+		return fmt.Errorf("decode SigAlg: %w", err)
+	}
+	algo, known := redirectSignatureAlgorithms[sigAlg]
+	if !known {
+		return fmt.Errorf("unsupported signature algorithm %q", sigAlg)
+	}
+	sigRaw, err := url.QueryUnescape(raw["Signature"])
+	if err != nil {
+		return fmt.Errorf("decode Signature: %w", err)
+	}
+	signature, err := base64.StdEncoding.DecodeString(sigRaw)
+	if err != nil {
+		return fmt.Errorf("decode Signature: %w", err)
+	}
+
+	signed := messageParam + "=" + msg
+	if relay, ok := raw["RelayState"]; ok {
+		signed += "&RelayState=" + relay
+	}
+	signed += "&SigAlg=" + sigAlgRaw
+
+	if err := cert.CheckSignature(algo, []byte(signed), signature); err != nil {
+		return fmt.Errorf("signature validation failed: %w", err)
+	}
+	now := time.Now()
+	if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+		return fmt.Errorf("certificate is not valid at this time")
 	}
 	return nil
 }

@@ -1448,5 +1448,12 @@ func allMigrations() []*Migration {
 			UpSQL:       mfaPolicyGraceUp,
 			DownSQL:     mfaPolicyGraceDown,
 		},
+		{
+			Version:     204,
+			Name:        "saml_sp_signing_and_encryption",
+			Description: "Add saml_service_providers.encryption_certificate and require_signed_authn_requests. The IdP encrypts assertions to encryption_certificate when encryption_enabled is set (NULL means use certificate, for a service provider with one key pair); certificate stays the signing certificate requests are verified against. Many service providers publish one certificate for both uses and some publish two, so one column cannot serve both. require_signed_authn_requests makes the IdP refuse an AuthnRequest that carries no signature verifying against certificate; it is set from AuthnRequestsSigned in the service provider's metadata and defaults to false, which is what every existing registration does today. Down drops both columns.",
+			UpSQL:       samlSPSigningAndEncryptionUp,
+			DownSQL:     samlSPSigningAndEncryptionDown,
+		},
 	}
 }

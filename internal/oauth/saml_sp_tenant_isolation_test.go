@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS saml_service_providers (
 	attribute_mappings JSONB DEFAULT '{}',
 	want_assertions_signed BOOLEAN DEFAULT true,
 	encryption_enabled BOOLEAN DEFAULT false,
+	encryption_certificate TEXT,
+	require_signed_authn_requests BOOLEAN NOT NULL DEFAULT false,
 	enabled BOOLEAN DEFAULT true,
 	created_at TIMESTAMPTZ DEFAULT NOW(),
 	updated_at TIMESTAMPTZ DEFAULT NOW(),
