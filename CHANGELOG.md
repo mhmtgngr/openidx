@@ -556,6 +556,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after; a stub naming a missing source turns the build red.
 
 ### Fixed
+- **Distributed tracing works again.** With `TRACING_ENABLED=true`, every
+  service logged "Failed to initialize tracing: … conflicting Schema URL"
+  and ran untraced: `internal/common/tracing` pinned the semconv 1.24.0
+  schema on its resource, and the OpenTelemetry SDK's default resource now
+  carries 1.43.0, which `resource.Merge` refuses. The service attributes are
+  now schemaless, so they merge with whatever schema the SDK carries. The
+  test that accepted a "Schema URL" error as a normal outcome now requires
+  `Init` to succeed; against a real Jaeger 1.54, a span sent through `Init`
+  appears under its service name, and none did before.
 - **The sign-in page could not take a backup or bypass code.** Its code field
   took six digits and dropped every other character. Backup codes are eight
   letters and digits, and an administrator's bypass codes are sixteen. The
