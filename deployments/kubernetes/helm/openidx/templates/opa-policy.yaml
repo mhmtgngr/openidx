@@ -1,0 +1,20 @@
+{{- if and .Values.opa.enabled (not .Values.opa.policyConfigMap) }}
+# The authorization policy the OPA pods serve (#980). Before this, the chart
+# shipped none: OPA ran empty unless an operator created a ConfigMap, so every
+# decision was undefined and ENABLE_OPA_AUTHZ=true refused every guarded
+# request. files/opa/authz.rego is a copy of
+# deployments/docker/opa/policies/authz.rego, because Helm cannot read outside
+# the chart; TestEveryAuthzPolicyIsTheSamePolicy in
+# internal/common/opa/policy_input_test.go fails if the two drift.
+# Set opa.policyConfigMap to serve your own policy instead.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openidx.fullname" . }}-opa-policy
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: opa
+data:
+  authz.rego: |
+{{ .Files.Get "files/opa/authz.rego" | indent 4 }}
+{{- end }}

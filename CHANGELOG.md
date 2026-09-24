@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration that adds the column back.
 
 ### Changed
+- **The Helm chart ships the OPA policy** (#980). The OPA pods used to run
+  empty unless an operator created a ConfigMap, so every decision was
+  undefined. They now load the policy the chart carries, or the ConfigMap
+  `opa.policyConfigMap` names, and a new policy rolls the pods. OPA runs with
+  `--ignore=.*`, in the chart and in `dev-kube/opa.yaml`. A ConfigMap mount
+  also holds each file in a hidden directory, and without the flag OPA loaded
+  the policy twice and would not start ("multiple default rules"). A test
+  fails any manifest that mounts a ConfigMap at `/policies` without it.
 - **Fresh installs enforce application assignment and run ABAC in `observe`**
   (#956). `scripts/generate-secrets.sh` and the Helm chart write these
   values. An existing install keeps its values until the operator changes
@@ -556,6 +564,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hand-written column is a UUID as in the product, and a new test builds the
   map on the migrated schema. Removing the cast turns both tests red. Found
   while writing the JIT row's end-to-end test for #957.
+
+- **The OPA policy did not parse** (#980). A brace left over from trimming the
+  role table made `authz.rego`, and its copy in `dev-kube/opa.yaml`, a parse
+  error. OPA therefore served no `openidx.authz` rules, and
+  `ENABLE_OPA_AUTHZ=true` would have refused every guarded request. It parses
+  now. CI checks it and runs tests that hold both halves of each rule.
+- **provisioning-service had no `OPA_URL` in compose.** It wires OPA like
+  admin-api and governance-service, so with OPA on it would have asked
+  `localhost:8281`, where nothing listens.
 
 - **The Applications editor's "Require PKCE" box displayed a default and
   enforced nothing; it and the back-channel logout URI now read from and

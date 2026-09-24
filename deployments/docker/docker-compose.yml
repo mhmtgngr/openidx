@@ -397,6 +397,9 @@ services:
       - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      # provisioning-service wires OPA like admin-api and governance-service,
+      # and without this it asked localhost:8281, where nothing listens (#980).
+      - OPA_URL=http://opa:8281
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
       - TRACING_ENABLED=${TRACING_ENABLED:-false}

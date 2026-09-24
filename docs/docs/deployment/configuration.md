@@ -182,7 +182,7 @@ seeing which gates are open.
 |----------|------|---------|-------------|
 | `ACCESS_ASSIGNMENT_ENFORCE` | bool | `false`; fresh installs `true` | Deny an unassigned user at `/oauth/authorize`, at the access proxy and at the Ziti dial, rather than logging the decision. `scripts/generate-secrets.sh` and the Helm chart set it to `true` on a fresh install; an existing install keeps its value (see [Turning the gates on for an existing install](#turning-the-gates-on-for-an-existing-install)). |
 | `ABAC_ENFORCE` | string | `off`; fresh installs `observe` | `off`, `observe` or `enforce` for attribute-based policies at `/oauth/authorize` and the access proxy. Fresh installs start in `observe`, which audits every would-be denial and refuses no one. |
-| `ENABLE_OPA_AUTHZ` | bool | `false` | Put OPA in the request path. Fail-closed in production. **Leave it off for now:** the shipped policy does not parse and the Helm chart ships none, so every guarded request would be refused ([#980](https://github.com/mhmtgngr/openidx/issues/980)). |
+| `ENABLE_OPA_AUTHZ` | bool | `false` | Put OPA in the request path. Fail-closed in production. Off by default; the policy parses, ships in the Helm chart and is tested in CI. Read the [OPA section](#opa) before turning it on: a caller whose roles are not in its role table is refused. |
 | `PAM_SESSION_RISK_GATE` | string | `off` | `off`, `observe` or `enforce` for the PAM session risk score. |
 | `PAM_SESSION_RISK_THRESHOLD` | int | `70` | Score at or above which the gate bites. |
 | `PAM_SSH_REQUIRE_HOST_KEY` | bool | `false` | Refuse an SSH session to a host whose key is not pinned. |
@@ -239,6 +239,19 @@ redeploy does not decide them for you.
 There is no `OPA_DEV_MODE`. When OPA is unreachable the middleware fails closed
 in production and open elsewhere, which is a property of `APP_ENV` rather than a
 switch of its own.
+
+The policy the services query is `deployments/docker/opa/policies/authz.rego`.
+The compose stack mounts it into the `opa` container. The Helm chart ships a
+copy that the OPA pods load, unless `opa.policyConfigMap` names a ConfigMap of
+your own. CI checks that the policy parses and runs its tests
+(`deployments/docker/opa/tests`), and the kind job asks the running OPA for a
+decision.
+
+To put OPA in the request path, set `ENABLE_OPA_AUTHZ=true` for admin-api,
+governance-service and provisioning-service, and make sure `OPA_URL` reaches
+the OPA server. From then on, OPA refuses any request the policy does not
+grant. Read the policy's role table first: a caller whose roles are not in it
+is refused.
 
 ### Multi-factor authentication
 
