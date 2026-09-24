@@ -107,6 +107,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nats.enabled` — not as a default.
 
 ### Security
+- **A sign-in link no longer skips the second factor.** A magic link proves
+  the mailbox, which is one factor, and its redirect cannot ask for a second.
+  It issued an authorization code to whoever it was sent to, including a user
+  with a second factor enrolled and a user an MFA policy covers. It now signs
+  in only a user whom the password login would let in without a second factor,
+  because it asks the password login's own decision (`evaluateMFA`). Anyone
+  else goes back to the login page, for the same pending request, with the
+  reason: a second factor is needed, or a policy's grace period is over. The
+  link is spent either way, and the refusal is audited (`magic_link_login`,
+  failure). The login page now shows why a sign-in link was sent back; it used
+  to ignore the reason.
 - **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
   handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,
   the Android QR and the onboarding wizard's session — and none asked how
