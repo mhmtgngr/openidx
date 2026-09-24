@@ -240,10 +240,18 @@ reads these three keys. `evaluateMFAPolicy` reads a different set (`groups`,
 `ip_ranges`, `time_windows`, `attributes`), which the allowlist refused. So
 every policy applied to every user with an enrolled factor, whatever its
 conditions said. `required_methods` and `grace_period_hours` were not read
-either: the login path discards the policy it matched. The API now refuses all
-five, and a policy means one thing: challenge every user who has a factor
-enrolled. Conditions, methods and a grace period can come back together with
-the code that enforces them and a console that shows them.
+either: the login path discarded the policy it matched. #991 refused all five.
+
+**Required methods and the grace period are now enforced** at the password
+login (`evaluateMFA`). A policy that requires methods offers only those, plus
+an administrator's bypass code, and a remembered browser does not skip it. A
+user with none of them gets the grace period, counted per user from their
+first sign-in under the policy (`mfa_policy_grace`, v203), and is refused
+after it unless they have a bypass code. The login response carries the
+deadline so the sign-in page can show it. Policies are tried in the order the
+console lists them. Conditions are still refused: they come back with the code
+that enforces them and a console that shows them. Passkey, QR, social and
+magic-link sign-ins do not consult a policy.
 
 ### C.3 Precedence and the lockout guard
 

@@ -2655,7 +2655,12 @@ func (s *Service) GetPushDevices(ctx context.Context, userID string) ([]PushMFAD
 	return s.GetPushMFADevices(ctx, userID)
 }
 
-// IsMFARequired checks if MFA is required for a user based on policies
+// IsMFARequired reports whether an enabled MFA policy applies to this login,
+// and returns the policy that does. Policies are tried in the order the
+// console lists them, lowest priority number first, then by name, so the
+// policy an administrator sees first is the one that decides. Since a policy
+// can require particular methods, which policy matched is observable, and it
+// has to be the one the console puts first.
 func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP string) (bool, *MFAPolicy, error) {
 	s.logger.Debug("Checking MFA requirements", zap.String("user_id", userID), zap.String("client_ip", clientIP))
 
@@ -2670,7 +2675,7 @@ func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP str
 		       created_at, updated_at
 		FROM mfa_policies
 		WHERE enabled = true AND org_id = $1
-		ORDER BY priority DESC
+		ORDER BY priority, name
 	`, org.ID)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to query MFA policies: %w", err)
@@ -2693,7 +2698,7 @@ func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP str
 		policies = append(policies, policy)
 	}
 
-	// Evaluate each policy in priority order
+	// Evaluate each policy in the order the console lists them
 	for _, policy := range policies {
 		required, err := s.evaluateMFAPolicy(ctx, userID, clientIP, &policy)
 		if err != nil {
