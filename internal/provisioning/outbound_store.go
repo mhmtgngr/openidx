@@ -366,17 +366,21 @@ func (s *Service) fanOutUserChange(ctx context.Context, orgID, localID, operatio
 // Membership travels in the snapshot so the worker can send it; the snapshot
 // used to carry an empty member list, so a downstream group was created with
 // no members and never gained any.
+//
+// The group id is deliberately not a log field: on the update and delete paths
+// it is the SCIM request's path segment, caller-supplied bytes, and the request
+// logger already records that path on the request's own line.
 func (s *Service) fanOutGroupChange(ctx context.Context, orgID, groupID, operation, displayName string, memberIDs []string) {
 	snap := groupSnapshot{ID: groupID, DisplayName: displayName, MemberIDs: memberIDs}
 	n, err := s.EnqueueGroupOp(ctx, orgID, groupID, operation, snap)
 	if err != nil {
 		s.logger.Warn("outbound SCIM group fan-out failed (will be recovered by full sync)",
-			zap.String("op", operation), zap.String("group_id", logsafe.Clean(groupID)), zap.Error(err))
+			zap.String("op", operation), zap.Error(err))
 		return
 	}
 	if n > 0 {
 		s.logger.Info("outbound SCIM group fan-out enqueued",
-			zap.String("op", operation), zap.String("group_id", logsafe.Clean(groupID)), zap.Int("targets", n))
+			zap.String("op", operation), zap.Int("targets", n))
 	}
 }
 

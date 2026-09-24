@@ -98,7 +98,13 @@ func encryptAssertionElement(assertion *etree.Element, cert *x509.Certificate) (
 	// 128-bit tag follows it, which is exactly nonce || Seal(...).
 	cipherValue := append(append([]byte{}, nonce...), gcm.Seal(nil, nonce, plaintext, nil)...)
 
-	wrappedKey, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, pub, key, nil)
+	// SHA-1 here is the algorithm, not a choice: the key transport is
+	// xmlenc#rsa-oaep-mgf1p, which fixes MGF1 to SHA-1 and takes SHA-1 as its
+	// OAEP digest (the DigestMethod below), and EncryptOAEP uses one hash for
+	// both. OAEP does not rely on the digest's collision resistance, the
+	// property SHA-1 lost. Another digest would be another algorithm, and SPs
+	// that implement only this one could no longer decrypt.
+	wrappedKey, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, pub, key, nil) // nosemgrep: go.lang.security.audit.crypto.use_of_weak_crypto.use-of-sha1
 	if err != nil {
 		return nil, fmt.Errorf("encrypt content key: %w", err)
 	}

@@ -152,35 +152,6 @@ func signEnvelopedInPlace(ctx *dsig.SigningContext, el *etree.Element) error {
 	return nil
 }
 
-// signAssertionEnveloped parses the response XML, signs the <saml:Assertion>
-// element in place with a compliant enveloped RSA-SHA256 signature, and returns
-// the re-serialized document.
-func (s *Service) signAssertionEnveloped(responseXML []byte) (string, error) {
-	ctx, err := s.samlSigningContext()
-	if err != nil {
-		return "", err
-	}
-
-	doc := etree.NewDocument()
-	if err := doc.ReadFromBytes(responseXML); err != nil {
-		return "", fmt.Errorf("parse SAML response: %w", err)
-	}
-
-	assertion := findAssertionElement(doc.Root())
-	if assertion == nil {
-		return "", fmt.Errorf("no Assertion element found to sign")
-	}
-	if err := signEnvelopedInPlace(ctx, assertion); err != nil {
-		return "", fmt.Errorf("sign assertion: %w", err)
-	}
-
-	str, err := doc.WriteToString()
-	if err != nil {
-		return "", fmt.Errorf("serialize signed response: %w", err)
-	}
-	return str, nil
-}
-
 // findAssertionElement locates the first saml:Assertion element in the tree.
 func findAssertionElement(el *etree.Element) *etree.Element {
 	if el == nil {
@@ -291,6 +262,10 @@ var redirectSignatureAlgorithms = map[string]x509.SignatureAlgorithm{
 // received query string, in that order: re-encoding them would change the
 // bytes and reject every correctly signed message from a sender that encodes
 // differently.
+//
+// The errors name what is wrong without quoting the query: they end up in the
+// log through the handler's zap.Error, and every byte of rawQuery is the
+// caller's.
 func verifyRedirectBindingSignature(rawQuery, messageParam string, cert *x509.Certificate) error {
 	raw := map[string]string{}
 	for _, part := range strings.Split(rawQuery, "&") {
@@ -298,7 +273,7 @@ func verifyRedirectBindingSignature(rawQuery, messageParam string, cert *x509.Ce
 		switch key {
 		case messageParam, "RelayState", "SigAlg", "Signature":
 			if _, dup := raw[key]; dup {
-				return fmt.Errorf("parameter %s appears more than once", key)
+				return fmt.Errorf("a signed parameter appears more than once")
 			}
 			raw[key] = value
 		}
@@ -313,19 +288,19 @@ func verifyRedirectBindingSignature(rawQuery, messageParam string, cert *x509.Ce
 	}
 	sigAlg, err := url.QueryUnescape(sigAlgRaw)
 	if err != nil {
-		return fmt.Errorf("decode SigAlg: %w", err)
+		return fmt.Errorf("the SigAlg parameter is not URL-encoded")
 	}
 	algo, known := redirectSignatureAlgorithms[sigAlg]
 	if !known {
-		return fmt.Errorf("unsupported signature algorithm %q", sigAlg)
+		return fmt.Errorf("unsupported signature algorithm")
 	}
 	sigRaw, err := url.QueryUnescape(raw["Signature"])
 	if err != nil {
-		return fmt.Errorf("decode Signature: %w", err)
+		return fmt.Errorf("the Signature parameter is not URL-encoded")
 	}
 	signature, err := base64.StdEncoding.DecodeString(sigRaw)
 	if err != nil {
-		return fmt.Errorf("decode Signature: %w", err)
+		return fmt.Errorf("the Signature parameter is not base64")
 	}
 
 	signed := messageParam + "=" + msg

@@ -317,24 +317,26 @@ func (s *Service) isOwnSLOEndpoint(c *gin.Context, destination string) bool {
 
 // checkLogoutRequestFreshness refuses a LogoutRequest that was issued too long
 // ago, claims to be issued in the future, or is past its own NotOnOrAfter.
+// The errors say which test failed and do not quote the timestamps: both are
+// the sender's text, and the error reaches the log through zap.Error.
 func checkLogoutRequestFreshness(issueInstant, notOnOrAfter string, now time.Time) error {
 	issued, err := time.Parse(time.RFC3339, strings.TrimSpace(issueInstant))
 	if err != nil {
-		return fmt.Errorf("IssueInstant %q is not a dateTime", issueInstant)
+		return fmt.Errorf("IssueInstant is not a dateTime")
 	}
 	if issued.After(now.Add(samlMessageClockSkew)) {
-		return fmt.Errorf("issued in the future (%s)", issued.Format(time.RFC3339))
+		return fmt.Errorf("IssueInstant is in the future")
 	}
 	if now.Sub(issued) > samlLogoutRequestMaxAge+samlMessageClockSkew {
-		return fmt.Errorf("issued at %s, older than %s", issued.Format(time.RFC3339), samlLogoutRequestMaxAge)
+		return fmt.Errorf("IssueInstant is older than %s", samlLogoutRequestMaxAge)
 	}
 	if strings.TrimSpace(notOnOrAfter) != "" {
 		limit, err := time.Parse(time.RFC3339, strings.TrimSpace(notOnOrAfter))
 		if err != nil {
-			return fmt.Errorf("NotOnOrAfter %q is not a dateTime", notOnOrAfter)
+			return fmt.Errorf("NotOnOrAfter is not a dateTime")
 		}
 		if !now.Before(limit.Add(samlMessageClockSkew)) {
-			return fmt.Errorf("past its NotOnOrAfter (%s)", limit.Format(time.RFC3339))
+			return fmt.Errorf("past its NotOnOrAfter")
 		}
 	}
 	return nil

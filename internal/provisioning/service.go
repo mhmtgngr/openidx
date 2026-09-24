@@ -844,16 +844,22 @@ func (s *Service) DeleteSCIMUser(ctx context.Context, userID string) error {
 
 // ListSCIMUsers lists users via SCIM
 func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filter string) (*SCIMListResponse, error) {
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	// Translate the SCIM filter (e.g. userName eq "x") into a parameterized
 	// predicate. A nil predicate means no filter; errUnsupportedFilter is
 	// surfaced to the handler as 400 invalidFilter rather than silently
 	// returning an unfiltered page (which would break IdP dedup/existence).
 	pred, err := parseSCIMFilter(filter, scimUserFilterAttrs)
+	if err != nil {
+		return nil, err
+	}
+	return s.listSCIMUsers(ctx, startIndex, count, pred)
+}
+
+// listSCIMUsers is ListSCIMUsers with the filter already parsed. The handler
+// parses it itself and answers a bad one with 400, so the errors this returns
+// -- the ones that reach the log -- never carry the caller's filter text.
+func (s *Service) listSCIMUsers(ctx context.Context, startIndex, count int, pred *scimFilterPredicate) (*SCIMListResponse, error) {
+	org, err := orgctx.From(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1304,19 +1310,19 @@ func (s *Service) groupMembers(ctx context.Context, groupID, orgID string) ([]st
 
 // ListSCIMGroups lists groups via SCIM, with their members.
 func (s *Service) ListSCIMGroups(ctx context.Context, startIndex, count int, filter string) (*SCIMListResponse, error) {
-	return s.listSCIMGroups(ctx, startIndex, count, filter, true)
+	pred, err := parseSCIMFilter(filter, scimGroupFilterAttrs)
+	if err != nil {
+		return nil, err
+	}
+	return s.listSCIMGroups(ctx, startIndex, count, pred, true)
 }
 
 // listSCIMGroups lists groups; withMembers false is excludedAttributes=members,
 // which Microsoft Entra sends so a large group's membership is not paged
-// through the list endpoint.
-func (s *Service) listSCIMGroups(ctx context.Context, startIndex, count int, filter string, withMembers bool) (*SCIMListResponse, error) {
+// through the list endpoint. The filter arrives parsed, for the reason
+// listSCIMUsers gives.
+func (s *Service) listSCIMGroups(ctx context.Context, startIndex, count int, pred *scimFilterPredicate, withMembers bool) (*SCIMListResponse, error) {
 	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	pred, err := parseSCIMFilter(filter, scimGroupFilterAttrs)
 	if err != nil {
 		return nil, err
 	}

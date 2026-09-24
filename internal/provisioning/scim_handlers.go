@@ -4,10 +4,15 @@ package provisioning
 // CreateSCIMUser, UpdateSCIMGroup and the rest -- hold the persistence; these
 // hold the protocol: status codes, the error envelope, Location, and what a
 // PATCH means.
+//
+// The failure log lines below carry the error and no resource id. The id is
+// the request's path segment, which the request logger already records, and a
+// caller-supplied value does not become safe to log by being cleaned. For the
+// same reason the list handlers parse the filter themselves: the error they
+// log comes from the query alone and never quotes the caller's filter.
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -16,8 +21,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-
-	"github.com/openidx/openidx/internal/common/logsafe"
 )
 
 const (
@@ -101,12 +104,16 @@ func (s *Service) handleListUsers(c *gin.Context) {
 	if !ok {
 		return
 	}
-	resp, err := s.ListSCIMUsers(c.Request.Context(), startIndex, count, c.Query("filter"))
+	// The filter is parsed here, apart from the query, so a filter this server
+	// cannot honour is answered 400 and its text never reaches the error that
+	// is logged below.
+	pred, err := parseSCIMFilter(c.Query("filter"), scimUserFilterAttrs)
 	if err != nil {
-		if errors.Is(err, errUnsupportedFilter) {
-			scimError(c, http.StatusBadRequest, scimTypeInvalidFilter, err.Error())
-			return
-		}
+		scimError(c, http.StatusBadRequest, scimTypeInvalidFilter, err.Error())
+		return
+	}
+	resp, err := s.listSCIMUsers(c.Request.Context(), startIndex, count, pred)
+	if err != nil {
 		s.logger.Error("failed to list SCIM users", zap.Error(err))
 		scimError(c, http.StatusInternalServerError, "", "Failed to list users")
 		return
@@ -125,7 +132,7 @@ func (s *Service) handleListUsers(c *gin.Context) {
 func (s *Service) respondUser(c *gin.Context, status int, id string) {
 	user, err := s.GetSCIMUser(c.Request.Context(), id)
 	if err != nil {
-		s.logger.Error("failed to read back a SCIM user", logsafe.String("id", id), zap.Error(err))
+		s.logger.Error("failed to read back a SCIM user", zap.Error(err))
 		scimError(c, http.StatusInternalServerError, "", "Failed to read the user")
 		return
 	}
@@ -191,7 +198,7 @@ func (s *Service) handleGetUser(c *gin.Context) {
 			scimError(c, http.StatusNotFound, "", "User not found")
 			return
 		}
-		s.logger.Error("failed to get SCIM user", logsafe.String("id", id), zap.Error(err))
+		s.logger.Error("failed to get SCIM user", zap.Error(err))
 		scimError(c, http.StatusInternalServerError, "", "Failed to get user")
 		return
 	}
@@ -211,7 +218,7 @@ func (s *Service) existingUser(c *gin.Context, id string) (*SCIMUser, bool) {
 			scimError(c, http.StatusNotFound, "", "User not found")
 			return nil, false
 		}
-		s.logger.Error("failed to get SCIM user", logsafe.String("id", id), zap.Error(err))
+		s.logger.Error("failed to get SCIM user", zap.Error(err))
 		scimError(c, http.StatusInternalServerError, "", "Failed to get user")
 		return nil, false
 	}
@@ -224,7 +231,7 @@ func (s *Service) updateAndRespondUser(c *gin.Context, id string, user *SCIMUser
 			scimError(c, http.StatusConflict, scimTypeUniqueness, "userName or email is already in use")
 			return
 		}
-		s.logger.Error("failed to update SCIM user", logsafe.String("id", id), zap.Error(err))
+		s.logger.Error("failed to update SCIM user", zap.Error(err))
 		scimError(c, http.StatusInternalServerError, "", "Failed to update user")
 		return
 	}
@@ -283,7 +290,7 @@ func (s *Service) handleDeleteUser(c *gin.Context) {
 	}
 	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
 	if err := s.DeleteSCIMUser(ctx, id); err != nil {
-		s.logger.Error("failed to delete SCIM user", logsafe.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete SCIM user", zap.Error(err))
 		scimError(c, http.StatusInternalServerError, "", "Failed to delete user")
 		return
 	}
@@ -653,12 +660,14 @@ func (s *Service) handleListGroups(c *gin.Context) {
 			withMembers = false
 		}
 	}
-	resp, err := s.listSCIMGroups(c.Request.Context(), startIndex, count, c.Query("filter"), withMembers)
+	// Parsed apart from the query, as in handleListUsers.
+	pred, err := parseSCIMFilter(c.Query("filter"), scimGroupFilterAttrs)
 	if err != nil {
-		if errors.Is(err, errUnsupportedFilter) {
-			scimError(c, http.StatusBadRequest, scimTypeInvalidFilter, err.Error())
-			return
-		}
+		scimError(c, http.StatusBadRequest, scimTypeInvalidFilter, err.Error())
+		return
+	}
+	resp, err := s.listSCIMGroups(c.Request.Context(), startIndex, count, pred, withMembers)
+	if err != nil {
 		s.logger.Error("failed to list SCIM groups", zap.Error(err))
 		scimError(c, http.StatusInternalServerError, "", "Failed to list groups")
 		return
@@ -674,7 +683,7 @@ func (s *Service) handleListGroups(c *gin.Context) {
 func (s *Service) respondGroup(c *gin.Context, status int, id string) {
 	group, err := s.GetSCIMGroup(c.Request.Context(), id)
 	if err != nil {
-		s.logger.Error("failed to read back a SCIM group", logsafe.String("id", id), zap.Error(err))
+		s.logger.Error("failed to read back a SCIM group", zap.Error(err))
 		scimError(c, http.StatusInternalServerError, "", "Failed to read the group")
 		return
 	}
@@ -723,7 +732,7 @@ func (s *Service) existingGroup(c *gin.Context, id string) (*SCIMGroup, bool) {
 			scimError(c, http.StatusNotFound, "", "Group not found")
 			return nil, false
 		}
-		s.logger.Error("failed to get SCIM group", logsafe.String("id", id), zap.Error(err))
+		s.logger.Error("failed to get SCIM group", zap.Error(err))
 		scimError(c, http.StatusInternalServerError, "", "Failed to get group")
 		return nil, false
 	}
@@ -746,7 +755,7 @@ func (s *Service) updateAndRespondGroup(c *gin.Context, id string, group *SCIMGr
 			scimError(c, http.StatusConflict, scimTypeUniqueness, "a group with this displayName already exists")
 			return
 		}
-		s.logger.Error("failed to update SCIM group", logsafe.String("id", id), zap.Error(err))
+		s.logger.Error("failed to update SCIM group", zap.Error(err))
 		scimError(c, http.StatusInternalServerError, "", "Failed to update group")
 		return
 	}
@@ -832,7 +841,7 @@ func (s *Service) handleDeleteGroup(c *gin.Context) {
 	}
 	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
 	if err := s.DeleteSCIMGroup(ctx, id); err != nil {
-		s.logger.Error("failed to delete SCIM group", logsafe.String("id", id), zap.Error(err))
+		s.logger.Error("failed to delete SCIM group", zap.Error(err))
 		scimError(c, http.StatusInternalServerError, "", "Failed to delete group")
 		return
 	}
