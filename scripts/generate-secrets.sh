@@ -152,6 +152,17 @@ GUACAMOLE_ADMIN_PASSWORD=${GUACAMOLE_ADMIN_PASSWORD}
 GUACAMOLE_ZITI_ADMIN_PASSWORD=${GUACAMOLE_ZITI_ADMIN_PASSWORD}
 PAM_GUAC_DB_PASSWORD=${PAM_GUAC_DB_PASSWORD}
 
+# ----- Access enforcement (fresh-install defaults, #956) -----
+# An application assignment is a grant: an unassigned user is refused at
+# /oauth/authorize, the access proxy and the Ziti dial. A fresh install has
+# nothing to lose by this; an existing install reviews the assignment report
+# before turning it on (docs/docs/deployment/configuration.md).
+ACCESS_ASSIGNMENT_ENFORCE=true
+# Attribute-based policies are evaluated and every would-be denial is
+# audited, but nothing is refused yet. Move to enforce once the audit shows
+# whom a policy would stop.
+ABAC_ENFORCE=observe
+
 # ----- SMTP (optional) -----
 SMTP_HOST=
 SMTP_PORT=587

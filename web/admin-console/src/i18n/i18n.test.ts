@@ -482,13 +482,9 @@ describe('i18n', () => {
       ...['pending', 'in_progress', 'completed', 'failed', 'rejected'].map(
         (k) => `pages.lifecycleWorkflows.executionStatuses.${k}`,
       ),
-      // delegations: the delegation API's scope kinds, plus the per-kind hint
-      // that tells the operator where to find that scope's UUID.
+      // delegations: every scope kind a stored delegation can carry.
       ...['group', 'role', 'application', 'organization'].map(
         (k) => `pages.delegations.scopeTypes.${k}`,
-      ),
-      ...['group', 'role', 'application', 'organization', 'fallback'].map(
-        (k) => `pages.delegations.scopeIdHints.${k}`,
       ),
       // api-explorer: the services the catalog endpoint groups endpoints by.
       ...['identity', 'oauth', 'governance', 'audit', 'admin', 'provisioning'].map(
@@ -860,18 +856,13 @@ describe('i18n', () => {
     ).toBe('1 (%3)')
   })
 
-  it('falls back to the capitalized scope type and the generic scope hint', async () => {
+  it('falls back to the capitalized scope type', async () => {
     // A scope kind the delegation API adds later reads as itself in the filter,
-    // the badge and both forms, and its Scope ID field still gets a hint.
+    // the badge and the edit form.
     await setLanguage('en')
     expect(
       i18n.t('pages.delegations.scopeTypes.tenant', { defaultValue: 'Tenant' }),
     ).toBe('Tenant')
-    expect(
-      i18n.t('pages.delegations.scopeIdHints.tenant', {
-        defaultValue: i18n.t('pages.delegations.scopeIdHints.fallback'),
-      }),
-    ).toBe('UUID of the scoped resource.')
   })
 
   it('pluralizes the relations-doctor scan result in both languages', async () => {

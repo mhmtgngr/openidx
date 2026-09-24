@@ -560,14 +560,19 @@ func PermissionResolver(db permissionQuerier, redisClient *redis.Client) gin.Han
 // an operator is relying on. Both make it a product decision, not a scoping
 // one.
 //
-// What is NOT deferred is saying so. The delegations page marks every
-// group/role/application scope "not enforced" and explains it in the create
-// form (web/admin-console/src/pages/delegations.tsx, pinned by two tests), the
-// PAM/governance docs say it, and the readiness guide's P5.3b section carries
-// the reasoning. An `organization` scope IS enforced — by the org_id predicate
-// on the query above — and is marked differently for that reason. A control
-// that displays without enforcing is a lie; one that displays and says it does
-// not enforce is a fact an admin can plan around.
+// The decision (#956): until scope-aware enforcement exists, the admin API
+// refuses to create a group/role/application-scoped delegation or to move one
+// into such a scope (checkDelegationScopeType in internal/admin). Only rows
+// written before that still carry a narrowing scope, and they keep granting
+// organization-wide, as they always did.
+//
+// What is NOT deferred is saying so. The delegations page marks those rows
+// "not enforced" and says why (web/admin-console/src/pages/delegations.tsx,
+// pinned by its tests), the governance docs say it, and the readiness guide's
+// P5.3b section carries the reasoning. An `organization` scope IS enforced —
+// by the org_id predicate on the query above — and is marked differently for
+// that reason. A control that displays without enforcing is a lie; one that
+// displays and says it does not enforce is a fact an admin can plan around.
 func resolveDelegations(ctx context.Context, db permissionQuerier, userID, orgID string) []PermissionEntry {
 	rows, err := db.Query(ctx, `
 		SELECT permissions, scope_type, scope_id::text

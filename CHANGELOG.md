@@ -23,6 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration that adds the column back.
 
 ### Changed
+- **Fresh installs enforce application assignment and run ABAC in `observe`**
+  (#956). `scripts/generate-secrets.sh` and the Helm chart write these
+  values. An existing install keeps its values until the operator changes
+  them; the order to do that in is in the configuration reference.
+- **An `off`/`observe`/`enforce` setting with an unknown value now stops the
+  service at startup** and names the setting. Check the values of
+  `ABAC_ENFORCE`, `STEPUP_GATE`, `BOT_GATE`, `PAM_SESSION_RISK_GATE`,
+  `PAM_REQUIRE_ZTNA`, `POSTURE_DEVICE_TRUST_GATE`, `DEVICE_AUTOTRUST_MODE` and
+  `RATELIMIT_COST_MODE` before upgrading.
+- **A delegation can only be scoped to the organization** (#956). Group, Role
+  and Application scopes were stored and shown but never enforced, so the
+  delegated permissions applied across the whole organization. `POST` and `PUT
+  /api/v1/delegations` now refuse them with a 400, and the console no longer
+  offers them. `scope_id` may be left out for the organization scope. Existing
+  delegations keep their scope, keep working and stay editable.
 - **Decided: the event bus is not a hard dependency.** Two open plan items
   asked whether the audit indexer should move onto the outbox/NATS path with
   `StartESReconciler` retired, and whether the SSF transmitter and the
@@ -491,6 +506,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after; a stub naming a missing source turns the build red.
 
 ### Fixed
+- **`PAM_SESSION_RISK_GATE` terminated sessions on "Off" or "OBSERVE".** It
+  compared the raw value, so any spelling other than exactly `off` or
+  `observe` enforced. It now reads the value the way every other gate does.
+- **Editing a delegation wrote its scope unchecked.** `PUT
+  /api/v1/delegations/{id}` stored any `scope_type` and `scope_id` it was
+  sent, including another tenant's group or organization, or a scope type that
+  does not exist. A scope change must now leave the delegation scoped to the
+  caller's organization.
 
 - **With application assignment enforced, the access proxy could not dial an
   identity-mode Ziti route that has an application behind it** (#984). The
