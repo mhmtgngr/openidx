@@ -18,7 +18,7 @@ decoration. Running only the positive half is how this class survives.
 | Session | Sessions pages | The refresh grant checks the refresh token's own row (`revoked_at`) and the Redis `revoked_session:*` marker. Userinfo checks the per-token blacklist and the per-user cutoff instead (`internal/revocation`) | revoke, then refresh — the refresh must fail |
 | MFA policy | MFA Management | `IsMFARequired` in the OAuth login path. A policy has no conditions, methods or grace period (#990): it challenges every user with a factor | with a policy on, a user with a factor is challenged; with it off, or with no factor, they are not (`TestMFAPolicyRaisesTheLoginChallenge`) |
 | Device trust | My Devices, Access 360 | Ziti posture + the `#device-trusted` attribute | an untrusted device is denied the dial |
-| **ABAC policy** | ABAC Policies (with its mode badge) | `internal/abac` at both PEPs — the token endpoint and the access proxy | in `observe`, a deny policy records `abac.would_deny` and still issues; in `enforce`, the same policy returns 403 and audits `abac.denied` |
+| **ABAC policy** | ABAC Policies (with its mode badge) | `internal/abac` at both PEPs — the token endpoint and the access proxy | in `observe`, a deny policy records `access.abac.would_deny` and still issues; in `enforce`, the same policy returns 403 and audits `access.abac.denied` |
 | **JIT elevation** | User Access 360, portal dashboard ("active JIT grants") | `internal/jitgrant` over `access_requests` — the expiry sweep, the kill switch, the lifecycle sweep, deprovisioning | grant a time-boxed role, confirm it is listed and counted, then press the kill switch: the role must be gone, the request `expired`, and `pam_jit_grants_revoked` must be **1** rather than 0 |
 
 **Anything that appears in an admin UI without a row in this table is a
@@ -91,7 +91,9 @@ Mapping two more rows found divergences, fixed with the tests above:
   the expected case; a *revocation* that does not is the finding.
 - ABAC's row has three states, not two. Check the console's mode badge first —
   a deny that does not deny is correct behaviour in `observe`, and a defect in
-  `enforce`.
+  `enforce`. A fresh install is in `observe` and stays there until an operator
+  sets `enforce` (decided in #956), so on a new install the badge reads
+  `observe`.
 - A role removed from a user is missing from the next token they get. A token
   minted before the removal still carries the role until it expires, unless
   the path that removed it also cuts the user's tokens (see `TokenCarries` in
