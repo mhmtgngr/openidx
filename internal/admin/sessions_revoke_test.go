@@ -60,7 +60,9 @@ func TestPublishSessionRevocationsWritesMarkers(t *testing.T) {
 // TestPublishSessionRevocationsReportsFailures: the whole defect being fixed
 // was a revoke that reported success while enforcement never heard about it.
 // So when the marker write fails, the caller must get a warning to surface —
-// a clean response would recreate the original bug one layer down.
+// a clean response would recreate the original bug one layer down. The
+// callers revoke the sessions' refresh tokens in the database before this
+// runs, and the warning says so: that is where the operator stands.
 func TestPublishSessionRevocationsReportsFailures(t *testing.T) {
 	mini := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mini.Addr(), MaxRetries: -1})
@@ -78,7 +80,7 @@ func TestPublishSessionRevocationsReportsFailures(t *testing.T) {
 	}
 	for _, w := range warnings {
 		if !strings.Contains(w, "refresh tokens") {
-			t.Errorf("warning %q does not say what the operator is exposed to", w)
+			t.Errorf("warning %q does not say where the sessions' refresh tokens stand", w)
 		}
 	}
 }

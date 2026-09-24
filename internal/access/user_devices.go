@@ -483,6 +483,17 @@ func (s *Service) revokeDeviceTokens(ctx context.Context, orgID, agentID string,
 		ids = append(ids, id)
 	}
 
+	// Every other chain those sessions hold goes too, since the sessions end
+	// below. A refresh token issued on one of them to another client -- an
+	// application the same browser session signed into -- names no agent, so
+	// the statement above did not reach it, and with only the marker behind
+	// it, it went on refreshing whenever Redis was down or came back empty.
+	if n, err := sessionend.RevokeRefreshTokens(ctx, s.db.Pool, orgID, ids); err != nil {
+		warn("revoke_session_refresh_tokens", err)
+	} else {
+		res.RefreshTokensRevoked += n
+	}
+
 	// The marker is what the refresh grant honours, so publish it before the
 	// row update: if the process dies between the two, a stopped session is
 	// better than a session that still refreshes.

@@ -216,7 +216,7 @@ func TestAuthAndSessions_requireOrgContext(t *testing.T) {
 		assertNoOrgContext(t, s.TerminateSession(ctx, "sess-1"))
 	})
 	t.Run("RevokeUserSessionsOnPasswordChange", func(t *testing.T) {
-		assertNoOrgContext(t, s.RevokeUserSessionsOnPasswordChange(ctx, "u-1"))
+		assertNoOrgContext(t, s.RevokeUserSessionsOnPasswordChange(ctx, "u-1", ""))
 	})
 }
 
@@ -231,7 +231,7 @@ func TestPasswords_requireOrgContext(t *testing.T) {
 		assertNoOrgContext(t, s.SetPassword(ctx, "u-1", strongPw))
 	})
 	t.Run("UpdatePassword", func(t *testing.T) {
-		assertNoOrgContext(t, s.UpdatePassword(ctx, "u-1", strongPw))
+		assertNoOrgContext(t, s.UpdatePassword(ctx, "u-1", strongPw, ""))
 	})
 	t.Run("CheckPasswordExpiry", func(t *testing.T) {
 		_, err := s.CheckPasswordExpiry(ctx, "u-1")

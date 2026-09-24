@@ -32,6 +32,18 @@
 // party twice. A session no client ever reached (no login client, no refresh
 // token) is not captured: there is nobody to tell.
 //
+// AND WHAT THE SESSION CAN STILL MINT. Telling the relying parties stops
+// nothing. The refresh grant decides on the refresh token's own row
+// (revoked_at) and on the revoked_session:<id> marker in Redis, and reads
+// neither the sessions table nor this package's. A path that ends a session
+// and leaves the refresh tokens bound to it leaves every device they were
+// issued to minting access tokens: at once if it wrote no marker, from the
+// moment the marker expires if it wrote one, and whenever Redis is down or
+// comes back empty. RevokeRefreshTokens and RevokeUserRefreshTokens revoke the
+// rows themselves, which holds with Redis in any state; the marker stays as
+// the second line, and the only one that covers a refresh already in flight
+// when the rows are revoked.
+//
 // This package imports no service and no signing code, so every severing path
 // in the tree can import it without a cycle.
 package sessionend
@@ -41,6 +53,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -119,4 +132,58 @@ func ForSessions(ctx context.Context, exec Execer, orgID string, sessionIDs []st
 		return fmt.Errorf("sessionend: capture sessions: %w", err)
 	}
 	return nil
+}
+
+// RevokeRefreshTokens revokes, in orgID, every refresh token bound to one of
+// sessionIDs, and reports how many it revoked. Call it when those sessions
+// end, before the statement that ends them or in the same transaction.
+//
+// An id that is not a UUID is skipped rather than refused: session_id is a
+// uuid column, so no refresh token can be bound to one, and a caller handed
+// such an id from a request has nothing here to revoke.
+func RevokeRefreshTokens(ctx context.Context, exec Execer, orgID string, sessionIDs []string) (int64, error) {
+	if orgID == "" {
+		return 0, ErrNoTenant
+	}
+	ids := make([]string, 0, len(sessionIDs))
+	for _, id := range sessionIDs {
+		if _, err := uuid.Parse(id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	tag, err := exec.Exec(ctx, `
+		UPDATE oauth_refresh_tokens SET revoked_at = NOW()
+		 WHERE org_id = $1 AND session_id = ANY($2::text[]::uuid[]) AND revoked_at IS NULL`,
+		orgID, ids)
+	if err != nil {
+		return 0, fmt.Errorf("sessionend: revoke the sessions' refresh tokens: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// RevokeUserRefreshTokens revokes every refresh token userID holds in orgID,
+// whichever session it is bound to and whether it is bound to one at all: a
+// token issued by the device authorization grant carries no session, and is a
+// signed-in device all the same. keepSessionID, when it is not empty, names
+// the one session whose tokens are left alone: a user who changes their own
+// password keeps the session they changed it from.
+func RevokeUserRefreshTokens(ctx context.Context, exec Execer, orgID, userID, keepSessionID string) (int64, error) {
+	if orgID == "" {
+		return 0, ErrNoTenant
+	}
+	if userID == "" {
+		return 0, ErrNoSubject
+	}
+	tag, err := exec.Exec(ctx, `
+		UPDATE oauth_refresh_tokens SET revoked_at = NOW()
+		 WHERE org_id = $1 AND user_id = $2 AND revoked_at IS NULL
+		   AND ($3::text = '' OR session_id IS NULL OR session_id::text <> $3::text)`,
+		orgID, userID, keepSessionID)
+	if err != nil {
+		return 0, fmt.Errorf("sessionend: revoke the user's refresh tokens: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }

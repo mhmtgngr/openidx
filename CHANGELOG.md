@@ -107,6 +107,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nats.enabled` — not as a default.
 
 ### Security
+- **Every path that ends a session now revokes its refresh tokens.** The
+  refresh grant decides on the refresh token's own row and on the
+  `revoked_session:<id>` marker in Redis. It does not read the sessions
+  table. #993 fixed this for the Sessions page. These paths still ended
+  sessions and left the refresh tokens bound to them usable:
+  - **Password change and reset.** None of them ended a session: a user
+    changing their own password, the forgotten-password link, an
+    administrator setting a password, and an administrator resetting a
+    directory account. Now a user's own change ends every other session of
+    theirs and keeps the one it was made from. A reset ends every session.
+    The refresh tokens are revoked in the transaction that writes the
+    password, or right after the directory accepts it. The user's
+    outstanding access tokens are cut at userinfo and introspection. That
+    cutoff is per user, so it also covers the access token of the session
+    that made the change; that client gets a new one on its next refresh.
+  - **The lifecycle action `revoke_sessions`** deleted the session rows and
+    nothing else. It now ends each session the way the Sessions page does,
+    and revokes every refresh token the user holds.
+  - **Sessions that oauth-service ends:** the expiry and inactivity sweeps,
+    concurrent-session eviction, force-login and sign-out with the browser
+    cookie. The marker they wrote lives 25 hours, and after it expired their
+    refresh tokens worked again. The tokens are now revoked.
+  - **A replayed refresh token** revoked its own family. The session's other
+    token chains were blocked for 24 hours and then worked again. They are
+    now revoked too.
+  - **Revoke session and revoke all in the console, and the kill switch,**
+    relied on the Redis marker alone, and breach containment wrote no
+    marker. The device revoke relied on it for the other token chains of the
+    sessions it ended. All of them now revoke the refresh tokens in the
+    database, which holds with Redis down or restarted. The kill switch
+    reports the count as `iam_refresh_tokens_revoked`.
+
+  Tests on the migrated schema end sessions through each of these paths and
+  then present the refresh tokens at the token endpoint. The ended sessions
+  are refused, with Redis down where a path used to depend on it, and an
+  unrelated session keeps refreshing. A census in `internal/common/sessionend`
+  fails when a function that ends sessions leaves their refresh tokens
+  usable, unless it is registered with a reason.
 - **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
   handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,
   the Android QR and the onboarding wizard's session — and none asked how

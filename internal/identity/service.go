@@ -28,6 +28,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"go.uber.org/zap"
@@ -461,6 +462,11 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 		}
 		if name, ok := claims["name"].(string); ok {
 			c.Set("name", name)
+		}
+		// The session the token was minted on. A password change reads it to
+		// keep that session and end the caller's others.
+		if sid, ok := claims["sid"].(string); ok && sid != "" {
+			c.Set("session_id", sid)
 		}
 
 		// Roles, groups AND THE MINTING CELL, through the one binder every other
@@ -1181,18 +1187,43 @@ func (s *Service) revokeSessionRefreshTokens(ctx context.Context, sessionID stri
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.Pool.Exec(ctx, `
-		UPDATE oauth_refresh_tokens SET revoked_at = NOW()
-		 WHERE session_id = $1 AND org_id = $2 AND revoked_at IS NULL`, sessionID, org.ID); err != nil {
+	if _, err := sessionend.RevokeRefreshTokens(ctx, s.db.Pool, org.ID, []string{sessionID}); err != nil {
 		return fmt.Errorf("revoke the session's refresh tokens: %w", err)
 	}
+	s.publishSessionEnded(ctx, sessionID)
+	return nil
+}
+
+// publishSessionEnded writes the revoked_session:<id> marker for a session
+// whose refresh tokens are already revoked in the database. Best-effort: the
+// rows are the guarantee, and a Redis that is down must not undo a session end
+// that has happened.
+func (s *Service) publishSessionEnded(ctx context.Context, sessionID string) {
 	if rdb := s.redis.RevocationDB(); rdb != nil {
 		if err := rdb.Set(ctx, "revoked_session:"+sessionID, "1", revokedSessionTTL).Err(); err != nil {
 			s.logger.Warn("session ended; its revoked-session marker was not published, "+
 				"its refresh tokens are revoked in the database", logsafe.String("session_id", sessionID), zap.Error(err))
 		}
 	}
-	return nil
+}
+
+// sessionIDsOfUser lists every session row a user has in orgID, live or not.
+func (s *Service) sessionIDsOfUser(ctx context.Context, orgID, userID string) ([]string, error) {
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id::text FROM sessions WHERE user_id = $1 AND org_id = $2`, userID, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list the user's sessions: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("list the user's sessions: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // ListGroups retrieves groups with pagination
@@ -1645,48 +1676,132 @@ func (s *Service) CountActiveSessions(ctx context.Context, userID string) (int, 
 	return s.sessions.CountActive(ctx, userID)
 }
 
-// RevokeUserSessionsOnPasswordChange revokes all sessions and refresh tokens for a user on password change
-func (s *Service) RevokeUserSessionsOnPasswordChange(ctx context.Context, userID string) error {
-	s.logger.Info("Revoking all sessions on password change", zap.String("user_id", userID))
+// passwordChangeRevokeReason is what a session a password change ended says in
+// sessions.revoke_reason, which the console's session list shows.
+const passwordChangeRevokeReason = "password_changed"
 
+// RevokeUserSessionsOnPasswordChange ends a user's sessions after their
+// password changed somewhere this service does not write it: in the directory,
+// for an LDAP or Active Directory account. Every session ends, or every one
+// but keepSessionID when it is not empty. The paths that write the password
+// here end the sessions in the transaction that writes it (writePassword,
+// handleResetPassword); this runs the same statements in a transaction of its
+// own.
+//
+// It used to have no caller, and it ended the session making the change along
+// with the rest.
+func (s *Service) RevokeUserSessionsOnPasswordChange(ctx context.Context, userID, keepSessionID string) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
+	}
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// The user must be this tenant's. The statements below are scoped to it
+	// and would match nothing for another tenant's user, but the access-token
+	// cutoff that follows the commit is keyed by user id alone.
+	var one int
+	if err := tx.QueryRow(ctx,
+		`SELECT 1 FROM users WHERE id = $1 AND org_id = $2`, userID, org.ID).Scan(&one); err != nil {
+		return fmt.Errorf("user is not in this organization: %w", err)
+	}
+	ended, err := endSessionsOnPasswordChange(ctx, tx, org.ID, userID, keepSessionID)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	s.afterPasswordChangeEndedSessions(ctx, userID, ended)
+	return nil
+}
+
+// endSessionsOnPasswordChange ends a user's sessions inside tx, the transaction
+// that records the new password: every one of them, or every one but
+// keepSessionID. It returns the sessions it ended, whose markers the caller
+// publishes once tx has committed.
+//
+// The refresh grant does not read the sessions table. It decides on the
+// refresh token's own row and on the revoked_session:<id> marker, so what ends
+// a session here is revoking its refresh tokens; the row is marked so the
+// Sessions pages and single sign-on stop offering it. The revocation covers
+// every refresh token of the user but the kept session's, including the ones
+// bound to no session, which the device authorization grant issues, and the
+// ones bound to a session that ended earlier: a credential minted under the
+// old password is not the user's to keep once it has changed.
+func endSessionsOnPasswordChange(ctx context.Context, tx pgx.Tx, orgID, userID, keepSessionID string) ([]string, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id::text FROM sessions
+		 WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)
+		   AND id::text <> $3`, userID, orgID, keepSessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list the sessions to end: %w", err)
+	}
+	var ended []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("list the sessions to end: %w", err)
+		}
+		ended = append(ended, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list the sessions to end: %w", err)
 	}
 
 	// The relying parties these sessions reached are told through
 	// backchannel_logout_pending (internal/common/sessionend), captured
 	// before the rows are revoked.
-	if err := sessionend.ForUser(ctx, s.db.Pool, org.ID, userID); err != nil {
-		s.logger.Error("password changed, but the sessions' relying parties will not be told",
-			logsafe.String("user_id", userID), zap.Error(err))
+	if err := sessionend.ForSessions(ctx, tx, orgID, ended); err != nil {
+		return nil, err
 	}
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id FROM sessions
-		WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)
-	`, userID, org.ID)
-	if err != nil {
-		return err
+	if _, err := sessionend.RevokeUserRefreshTokens(ctx, tx, orgID, userID, keepSessionID); err != nil {
+		return nil, err
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var sessionID string
-		if err := rows.Scan(&sessionID); err != nil {
-			continue
+	if len(ended) > 0 {
+		if _, err := tx.Exec(ctx, `
+			UPDATE sessions SET revoked = true, revoked_at = NOW(), revoke_reason = $3
+			 WHERE org_id = $1 AND id::text = ANY($2)`, orgID, ended, passwordChangeRevokeReason); err != nil {
+			return nil, fmt.Errorf("mark the sessions revoked: %w", err)
 		}
-		if _, err := s.db.Pool.Exec(ctx, `UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE id = $1 AND org_id = $2`, sessionID, org.ID); err != nil {
-			return fmt.Errorf("failed to revoke session %s: %w", sessionID, err)
+	}
+	return ended, nil
+}
+
+// afterPasswordChangeEndedSessions runs once the password change has
+// committed: it publishes the marker of every session the change ended and
+// cuts the user's outstanding access tokens.
+//
+// The cutoff is per user. /oauth/userinfo and /oauth/introspect honour the
+// per-user cutoff and the per-token blacklist and nothing per session, so
+// there is no way to cut the other sessions' access tokens and leave the kept
+// session's standing. The kept session's client gets a new one on its next
+// refresh, which its refresh token still allows; the identity and admin APIs
+// the console calls do not read the cutoff at all. Leaving the other devices'
+// access tokens answering for the rest of their lifetime would be the larger
+// harm.
+//
+// Best-effort, like every sever path's Redis writes: the password has changed
+// and the refresh tokens are revoked in the database, and a Redis that is down
+// must not turn that into a failure.
+func (s *Service) afterPasswordChangeEndedSessions(ctx context.Context, userID string, ended []string) {
+	for _, id := range ended {
+		s.publishSessionEnded(ctx, id)
+	}
+	if rdb := s.redis.RevocationDB(); rdb != nil {
+		if err := revocation.RevokeUserTokens(ctx, rdb, userID); err != nil {
+			s.logger.Error("password changed, but the user's outstanding access tokens were not revoked",
+				logsafe.String("user_id", userID), zap.Error(err))
 		}
-		s.redis.RevocationDB().Set(ctx, "revoked_session:"+sessionID, "1", 25*time.Hour)
 	}
-
-	// Also delete all refresh tokens
-	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1 AND org_id = $2`, userID, org.ID); err != nil {
-		return fmt.Errorf("failed to delete refresh tokens: %w", err)
-	}
-
-	return nil
+	s.logger.Info("password change ended sessions",
+		logsafe.String("user_id", userID), zap.Int("sessions_ended", len(ended)))
 }
 
 // RecordFailedLogin records a failed login attempt for account lockout.
@@ -1881,38 +1996,64 @@ func (s *Service) ValidatePasswordPolicy(password string) error {
 	return errors.New(strings.Join(violations, "; "))
 }
 
-// UpdatePassword updates a user's password and enforces policy
-func (s *Service) UpdatePassword(ctx context.Context, userID string, newPassword string) error {
+// UpdatePassword is a user changing their own password. It enforces the
+// policy, and it ends every other session the user holds: keepSessionID, the
+// session the change was made from, is the one that survives. An empty
+// keepSessionID keeps none.
+func (s *Service) UpdatePassword(ctx context.Context, userID, newPassword, keepSessionID string) error {
 	s.logger.Info("Updating password", zap.String("user_id", userID))
 
-	if err := s.ValidatePasswordPolicy(newPassword); err != nil {
+	ended, changed, err := s.writePassword(ctx, userID, newPassword, keepSessionID)
+	if err != nil || !changed {
 		return err
 	}
+	s.logAuditEvent(ctx, "identity", "security", "user.password_changed", "success",
+		actorIDFromContext(ctx), userID, "user", map[string]interface{}{"sessions_ended": len(ended)})
+	return nil
+}
 
+// writePassword enforces the policy, stores the new hash and, in the same
+// transaction, ends the sessions the change ends (endSessionsOnPasswordChange):
+// either both happen or neither does. It reports changed=false, and ends
+// nothing, when no user with that id exists in the caller's organization.
+func (s *Service) writePassword(ctx context.Context, userID, password, keepSessionID string) (ended []string, changed bool, err error) {
+	if err := s.ValidatePasswordPolicy(password); err != nil {
+		return nil, false, err
+	}
 	org, err := orgctx.From(ctx)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
-
-	hashedPassword, err := pwhash.Hash(newPassword)
+	hash, err := pwhash.Hash(password)
 	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
+		return nil, false, fmt.Errorf("failed to hash password: %w", err)
 	}
 
-	now := time.Now()
-	_, err = s.db.Pool.Exec(ctx, `
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE users
 		SET password_hash = $2, password_changed_at = $3, password_must_change = false
 		WHERE id = $1 AND org_id = $4
-	`, userID, hashedPassword, now, org.ID)
-
-	if err == nil {
-		actorID := actorIDFromContext(ctx)
-		s.logAuditEvent(ctx, "identity", "security", "user.password_changed", "success",
-			actorID, userID, "user", nil)
+	`, userID, hash, time.Now(), org.ID)
+	if err != nil {
+		return nil, false, err
 	}
-
-	return err
+	if tag.RowsAffected() == 0 {
+		return nil, false, nil
+	}
+	if ended, err = endSessionsOnPasswordChange(ctx, tx, org.ID, userID, keepSessionID); err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, fmt.Errorf("commit: %w", err)
+	}
+	s.afterPasswordChangeEndedSessions(ctx, userID, ended)
+	return ended, true, nil
 }
 
 // CheckPasswordExpiry checks if a user's password has expired
@@ -2142,47 +2283,31 @@ func (s *Service) onFailedLogin(ctx context.Context, userID, username, reason st
 		})
 }
 
-// SetPassword sets a new password for a user (hashes and stores)
+// SetPassword sets a user's password on an administrator's authority, the
+// set-password route. It enforces the policy, and it ends every session the
+// user holds: a password is set for someone because theirs is lost or no
+// longer trusted, and a session opened under it is not trusted either. A user
+// changing their own password goes through UpdatePassword, which keeps the
+// session the change was made from.
 func (s *Service) SetPassword(ctx context.Context, userID string, password string) error {
 	s.logger.Info("Setting password", zap.String("user_id", userID))
 
-	// Validate password policy
-	if err := s.ValidatePasswordPolicy(password); err != nil {
+	ended, changed, err := s.writePassword(ctx, userID, password, "")
+	if err != nil || !changed {
 		return err
 	}
 
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	// Hash password
-	hash, err := pwhash.Hash(password)
-	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
-	}
-
-	now := time.Now()
-	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE users
-		SET password_hash = $2, password_changed_at = $3, password_must_change = false
-		WHERE id = $1 AND org_id = $4
-	`, userID, hash, now, org.ID)
-	if err != nil {
-		return err
-	}
-
-	// SetPassword is the administrative path (reset, admin-set, invitation
-	// accept) as opposed to a user changing their own password, which audits
-	// itself as user.password_changed. The distinction matters: a password set
-	// by someone other than the account holder is the classic takeover step.
+	// SetPassword is the administrative path, as opposed to a user changing
+	// their own password, which audits itself as user.password_changed. The
+	// distinction matters: a password set by someone other than the account
+	// holder is the classic takeover step.
 	actor := actorIDFromContext(ctx)
 	outcomeAction := "user.password_set_by_admin"
 	if actor == userID {
 		outcomeAction = "user.password_changed"
 	}
 	s.logAuditEvent(ctx, "identity", "security", outcomeAction, "success",
-		actor, userID, "user", nil)
+		actor, userID, "user", map[string]interface{}{"sessions_ended": len(ended)})
 	return nil
 }
 
@@ -5053,6 +5178,10 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 		return
 	}
 
+	// The session the request's token was minted on survives the change;
+	// every other session of the user ends with the old password.
+	keepSessionID := c.GetString("session_id")
+
 	if source != nil && (*source == "ldap" || *source == "active_directory") && directoryID != nil && s.directoryService != nil {
 		// LDAP/AD user — change password via directory
 		if err := s.directoryService.ChangePassword(ctx, *directoryID, username, req.CurrentPassword, req.NewPassword); err != nil {
@@ -5060,18 +5189,26 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		// Update password_changed_at in local DB (but NOT the hash — password stays in directory)
-		//
 		// The directory has already accepted the new password, and that cannot
 		// be undone from here, so this is the one place a failed write must not
 		// turn into a failed request: answering 500 would send the person back
 		// to a form that wants the OLD password, which no longer works. What it
-		// must not do either is answer a bare success, because
-		// password_must_change is still true and the next sign-in will ask them
-		// to change a password they just changed, again, with no way out.
-		//
-		// So: the truth, both halves of it, and an error in the log for whoever
-		// has to clear the flag.
+		// must not do either is answer a bare success when a half did not
+		// happen. So: the truth, every half of it, and an error in the log.
+		var warnings []string
+
+		// The other sessions end whether or not the record below is written:
+		// the old password is gone either way.
+		if err := s.RevokeUserSessionsOnPasswordChange(ctx, userID, keepSessionID); err != nil {
+			s.logger.Error("directory password changed, but the user's other sessions were not ended",
+				logsafe.String("user_id", userID), zap.Error(err))
+			warnings = append(warnings, "Your other sessions could not be signed out; sign them out from your Sessions page, or contact your administrator.")
+		}
+
+		// Update password_changed_at in local DB (but NOT the hash — password
+		// stays in directory). If this fails, password_must_change is still
+		// true and the next sign-in will ask them to change a password they
+		// just changed, again, with no way out.
 		if _, err := s.db.Pool.Exec(ctx,
 			`UPDATE users SET password_changed_at = NOW(), password_must_change = false WHERE id = $1 AND org_id = $2`,
 			userID, org.ID,
@@ -5079,9 +5216,12 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 			s.logger.Error("directory password changed but the local record was not updated; "+
 				"password_must_change is still set and the user will be prompted again",
 				logsafe.String("user_id", userID), zap.Error(err))
+			warnings = append([]string{"Your account record could not be updated, so you may be asked to change it again at your next sign-in — contact your administrator if that happens."}, warnings...)
+		}
+		if len(warnings) > 0 {
 			c.JSON(200, gin.H{
 				"status":  "password changed",
-				"warning": "Your password was changed. Your account record could not be updated, so you may be asked to change it again at your next sign-in — contact your administrator if that happens.",
+				"warning": "Your password was changed. " + strings.Join(warnings, " "),
 			})
 			return
 		}
@@ -5100,8 +5240,9 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 		return
 	}
 
-	// Set new password
-	if err := s.SetPassword(ctx, userID, req.NewPassword); err != nil {
+	// Set the new password, and end the user's other sessions in the same
+	// transaction.
+	if err := s.UpdatePassword(ctx, userID, req.NewPassword, keepSessionID); err != nil {
 		s.logger.Error("failed to set password", zap.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -5511,15 +5652,27 @@ func (s *Service) handleResetPassword(c *gin.Context) {
 		return
 	}
 
+	// A reset is made because the password is lost or no longer trusted, so
+	// every session it opened ends, in this same transaction: no session is
+	// kept, because the person resetting is not signed in.
+	ended, err := endSessionsOnPasswordChange(ctx, tx, org.ID, userID, "")
+	if err != nil {
+		s.logger.Error("password reset refused: the user's sessions could not be ended",
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
+		c.JSON(500, gin.H{"error": "Failed to reset password"})
+		return
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		s.logger.Error("failed to commit password reset",
 			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
 		c.JSON(500, gin.H{"error": "Failed to update password"})
 		return
 	}
+	s.afterPasswordChangeEndedSessions(ctx, userID, ended)
 
 	s.logAuditEvent(ctx, "identity", "security", "user.password_reset", "success",
-		userID, userID, "user", nil)
+		userID, userID, "user", map[string]interface{}{"sessions_ended": len(ended)})
 
 	c.JSON(200, gin.H{"message": "Password has been reset successfully"})
 }
@@ -5574,6 +5727,17 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 			return
 		}
 
+		// The directory holds the new password now, and every session the old
+		// one opened ends with it. Ended before the flag below is written, and
+		// whether or not that write succeeds: the old password is gone either
+		// way.
+		sessionsErr := s.RevokeUserSessionsOnPasswordChange(ctx, userID, "")
+		if sessionsErr != nil {
+			s.logger.Error("directory password reset, but the user's sessions were not ended",
+				zap.String("admin_id", fmt.Sprintf("%v", adminID)),
+				logsafe.String("target_user_id", userID), zap.Error(sessionsErr))
+		}
+
 		// Mark password_must_change so user is prompted at next login.
 		//
 		// This is the whole point of an admin-issued temporary password: it is
@@ -5584,7 +5748,8 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 		// to say the rotation was never armed.
 		//
 		// The directory password is already reset and cannot be put back, so
-		// the answer names the half that worked and the half that did not.
+		// the answer names the half that worked and the halves that did not.
+		const sessionsNotEnded = "This user's existing sessions could not be ended and are still signed in — end them from the Sessions page."
 		if _, err := s.db.Pool.Exec(ctx,
 			`UPDATE users SET password_must_change = true, password_changed_at = NOW() WHERE id = $1 AND org_id = $2`,
 			userID, org.ID,
@@ -5593,8 +5758,16 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 				"the temporary password will not be forced to change",
 				zap.String("admin_id", fmt.Sprintf("%v", adminID)),
 				logsafe.String("target_user_id", userID), zap.Error(err))
+			msg := "The directory password was reset, but this user could not be marked as needing to change it. The temporary password will NOT expire at first sign-in — reset it again, or set the requirement by hand."
+			if sessionsErr != nil {
+				msg += " " + sessionsNotEnded
+			}
+			c.JSON(500, gin.H{"error": msg, "source": *source})
+			return
+		}
+		if sessionsErr != nil {
 			c.JSON(500, gin.H{
-				"error":  "The directory password was reset, but this user could not be marked as needing to change it. The temporary password will NOT expire at first sign-in — reset it again, or set the requirement by hand.",
+				"error":  "The directory password was reset. " + sessionsNotEnded,
 				"source": *source,
 			})
 			return
@@ -6897,20 +7070,35 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 		return nil
 
 	case "revoke_sessions":
-		// Captured before the DELETE: the relying parties the sessions
-		// reached are told through backchannel_logout_pending.
-		if serr := sessionend.ForUser(ctx, s.db.Pool, org.ID, userID); serr != nil {
-			s.logger.Error("lifecycle revoke_sessions: the sessions' relying parties will not be told",
-				logsafe.String("user_id", userID), zap.Error(serr))
-		}
-		if _, err := s.db.Pool.Exec(ctx,
-			"DELETE FROM sessions WHERE user_id = $1 AND org_id = $2",
-			userID, org.ID); err != nil {
+		// "revoke_sessions" as an action means what an operator reads it to
+		// mean: every device the user is signed in on stops. This used to
+		// delete the session rows and nothing else, and say that deleting them
+		// ended the refresh path. It did not: the refresh grant reads the
+		// refresh token's own row and the revoked_session:<id> marker, never
+		// the sessions table, so every device kept refreshing.
+		//
+		// First every refresh token the user holds, in one statement: those
+		// bound to the sessions below, and those bound to none, which the
+		// device authorization grant issues. If that cannot be written nothing
+		// has ended, and the action fails.
+		if _, err := sessionend.RevokeUserRefreshTokens(ctx, s.db.Pool, org.ID, userID, ""); err != nil {
 			return err
 		}
-		// "revoke_sessions" as an action means what an operator reads it to
-		// mean. Deleting the session rows ends the refresh path; the access
-		// token in the browser is a separate credential and survives it.
+		// Then each session the way the Sessions page ends one
+		// (TerminateSession): its marker published, its relying parties
+		// captured for back-channel logout, its row deleted.
+		sessionIDs, err := s.sessionIDsOfUser(ctx, org.ID, userID)
+		if err != nil {
+			return err
+		}
+		for _, id := range sessionIDs {
+			if err := s.TerminateSession(ctx, id); err != nil {
+				return err
+			}
+		}
+		// The access token in the browser is a separate credential and
+		// survives all of that; userinfo and introspection read the per-user
+		// cutoff.
 		if rerr := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); rerr != nil {
 			s.logger.Error("lifecycle revoked the sessions, but the outstanding access tokens were not revoked",
 				logsafe.String("user_id", userID), zap.Error(rerr))

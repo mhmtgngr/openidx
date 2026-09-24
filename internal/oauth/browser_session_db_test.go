@@ -43,6 +43,17 @@ func ssoSetupDB(t *testing.T) (*Service, *database.PostgresDB) {
 			revoked_at TIMESTAMPTZ,
 			auth_methods TEXT[]
 		)`,
+		// Logout ends the cookie's session by revoking the refresh tokens
+		// bound to it before the row.
+		`CREATE TABLE oauth_refresh_tokens (
+			token VARCHAR(500) PRIMARY KEY,
+			client_id VARCHAR(255) NOT NULL,
+			user_id UUID NOT NULL,
+			session_id UUID,
+			expires_at TIMESTAMPTZ NOT NULL,
+			revoked_at TIMESTAMPTZ,
+			org_id UUID NOT NULL
+		)`,
 		`CREATE TABLE oauth_authorization_codes (
 			code VARCHAR(255) PRIMARY KEY,
 			client_id VARCHAR(255) NOT NULL,

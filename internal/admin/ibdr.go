@@ -167,6 +167,12 @@ type ibdrService struct {
 	// Nil in a bare construction, so containment still runs; the census in
 	// internal/revocation is what keeps that from becoming the default.
 	revoke func(ctx context.Context, userID, why string)
+
+	// publishSessionsEnded writes the revoked_session markers of the sessions
+	// revokeUserSessions ends, for the same reason revoke is a function: the
+	// admin Service owns the Redis client. Nil in a bare construction; the
+	// refresh tokens are revoked in the database either way.
+	publishSessionsEnded func(ctx context.Context, sessionIDs []string) []string
 }
 
 // DetectBreachAttempt analyzes an authentication attempt for breach indicators
@@ -707,6 +713,13 @@ func (s *ibdrService) recordEnhancedMonitoring(ctx context.Context, incident *Br
 //
 // Revoking zero sessions is not a failure — a user with nothing live has
 // nothing to revoke — so only a query error is reported.
+//
+// Marking the rows revoked is not what stops a session. The refresh grant
+// reads the refresh token's own row and the revoked_session marker, never the
+// sessions table, and this used to write neither: a contained account's
+// devices went on refreshing, on a partial quarantine that leaves the account
+// enabled. The refresh tokens are revoked first, then the rows, then the
+// markers are published.
 func (s *ibdrService) revokeUserSessions(ctx context.Context, userIDs []string) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -720,10 +733,34 @@ func (s *ibdrService) revokeUserSessions(ctx context.Context, userIDs []string) 
 		if err := sessionend.ForUser(ctx, s.db.Pool, org.ID, userID); err != nil {
 			return fmt.Errorf("capture sessions for back-channel logout for user %s: %w", logsafe.Clean(userID), err)
 		}
-		if _, err := s.db.Pool.Exec(ctx, `
-			UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE user_id = $1 AND org_id = $2
-		`, userID, org.ID); err != nil {
+		// Every refresh token the user holds, bound to a session or not.
+		if _, err := sessionend.RevokeUserRefreshTokens(ctx, s.db.Pool, org.ID, userID, ""); err != nil {
+			return fmt.Errorf("revoke refresh tokens for user %s: %w", logsafe.Clean(userID), err)
+		}
+		rows, err := s.db.Pool.Query(ctx, `
+			UPDATE sessions SET revoked = true, revoked_at = NOW()
+			 WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)
+			RETURNING id::text
+		`, userID, org.ID)
+		if err != nil {
 			return fmt.Errorf("revoke sessions for user %s: %w", logsafe.Clean(userID), err)
+		}
+		var ended []string
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				ended = append(ended, id)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("revoke sessions for user %s: %w", logsafe.Clean(userID), err)
+		}
+		if s.publishSessionsEnded != nil {
+			for _, w := range s.publishSessionsEnded(ctx, ended) {
+				s.logger.Warn("containment: a revoked-session marker was not published",
+					zap.String("user_id", logsafe.Clean(userID)), zap.String("detail", w))
+			}
 		}
 	}
 	return nil
@@ -807,7 +844,8 @@ func (s *Service) handleIBDRDetectBreach(c *gin.Context) {
 		AutoQuarantineThreshold: 0.7,
 		AutoContainment:         true,
 	}
-	service := &ibdrService{db: s.db, logger: s.logger, config: config, revoke: s.revokeAfterSever}
+	service := &ibdrService{db: s.db, logger: s.logger, config: config, revoke: s.revokeAfterSever,
+		publishSessionsEnded: s.publishSessionRevocations}
 
 	incident, err := service.DetectBreachAttempt(ctx, req.UserID, req.IPAddress, req.UserAgent, req.SessionID)
 	if err != nil {
@@ -885,7 +923,8 @@ func (s *Service) handleIBDRAlerts(c *gin.Context) {
 
 	includeAcked := c.DefaultQuery("include_acknowledged", "false") == "true"
 
-	service := &ibdrService{db: s.db, logger: s.logger, config: &IBDRConfig{}, revoke: s.revokeAfterSever}
+	service := &ibdrService{db: s.db, logger: s.logger, config: &IBDRConfig{}, revoke: s.revokeAfterSever,
+		publishSessionsEnded: s.publishSessionRevocations}
 	alerts, err := service.GetBreachAlerts(ctx, includeAcked)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get alerts"})
@@ -902,7 +941,8 @@ func (s *Service) handleIBDRTriggerResponse(c *gin.Context) {
 	ctx := c.Request.Context()
 	incidentID := c.Param("id")
 
-	service := &ibdrService{db: s.db, logger: s.logger, config: &IBDRConfig{}, revoke: s.revokeAfterSever}
+	service := &ibdrService{db: s.db, logger: s.logger, config: &IBDRConfig{}, revoke: s.revokeAfterSever,
+		publishSessionsEnded: s.publishSessionRevocations}
 	err := service.TriggerIncidentResponse(ctx, incidentID, c.GetString("user_id"), false)
 	if err != nil {
 		s.logger.Error("failed to trigger incident response", zap.Error(err))

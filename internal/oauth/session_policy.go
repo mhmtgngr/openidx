@@ -118,8 +118,24 @@ func (s *Service) getEffectiveSessionPolicy(ctx context.Context, clientID string
 	return policy
 }
 
-// revokeSessionWithRedis marks a session as revoked in both DB and Redis
+// revokeSessionWithRedis ends one session: the refresh tokens bound to it are
+// revoked, the row is marked revoked, the revoked_session marker is published
+// and the relying parties the session reached are told. The expiry and
+// inactivity sweeps, the concurrent-session eviction, force-login,
+// /oauth/logout, logout-all and the SSF receiver all end sessions here.
 func (s *Service) revokeSessionWithRedis(ctx context.Context, sessionID string) error {
+	// What the session can still mint ends first, in the database. This used
+	// to mark the row and write the marker, and leave the refresh tokens as
+	// they were. The refresh grant does not read the row, and the marker
+	// lives 25 hours, so a device that came back after a day refreshed as if
+	// the session had never ended; a native client keeps its refresh token
+	// for 14 to 30 days. If the tokens cannot be revoked the row is left
+	// live, so the sweep that called this tries again on its next tick
+	// rather than recording an end that did not happen.
+	if _, err := s.revokeSessionRefreshTokens(ctx, sessionID); err != nil {
+		return err
+	}
+
 	// Mark in database
 	_, err := s.db.Pool.Exec(ctx,
 		//orgscope:ignore revokes by globally-unique session id; reachable from the cross-org background session sweep
@@ -129,7 +145,10 @@ func (s *Service) revokeSessionWithRedis(ctx context.Context, sessionID string) 
 		return err
 	}
 
-	// Add to Redis revocation set (TTL = 25 hours to cover absolute timeout + buffer)
+	// Add to Redis revocation set (TTL = 25 hours to cover absolute timeout +
+	// buffer). The rows above are what hold after it expires; while it lives
+	// it also stops a refresh that was already in flight when they were
+	// revoked.
 	s.redis.RevocationDB().Set(ctx, "revoked_session:"+sessionID, "1", 25*time.Hour)
 
 	s.logger.Info("Session revoked", zap.String("session_id", sessionID))
@@ -138,4 +157,20 @@ func (s *Service) revokeSessionWithRedis(ctx context.Context, sessionID string) 
 	// this is the one place a session stops being live (backchannel_logout.go).
 	s.notifyBackchannelLogout(sessionID)
 	return nil
+}
+
+// revokeSessionRefreshTokens revokes, in the database, every refresh token
+// bound to sessionID, and reports how many. Keyed by the globally-unique
+// session id alone, like the row update in revokeSessionWithRedis, because the
+// sweeps that end sessions run across every organization with no tenant on the
+// context. A request's context still carries its tenant's scope.
+func (s *Service) revokeSessionRefreshTokens(ctx context.Context, sessionID string) (int64, error) {
+	tag, err := s.db.Pool.Exec(ctx,
+		//orgscope:ignore revokes by globally-unique session id; reachable from the cross-org background session sweep
+		`UPDATE oauth_refresh_tokens SET revoked_at = NOW() WHERE session_id = $1 AND revoked_at IS NULL`,
+		sessionID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }

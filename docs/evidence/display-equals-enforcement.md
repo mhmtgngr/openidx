@@ -43,7 +43,7 @@ one is not verified automatically yet; #957 tracks closing that.
 | Vault / PAM grant at connect | `TestPamConnectFollowsTheGrant`: for each user, the entry list beside the connect handler. It covers a user grant, a group grant, no grant, a lapsed grant and a view-only grant | the unit job for `internal/access`, against a migrated Postgres |
 | JIT elevation | `TestJITElevationEndsAtTheKillSwitch`: the grant listed by User Access 360 and counted by the portal, then the kill switch through its route, with another user's elevation left alone | the unit job for `internal/access`, against a migrated Postgres |
 | Device trust at the dial | `TestPostureDecidesWhoDialsTheAdminPlane`, with `POSTURE_DEVICE_TRUST_GATE=enforce` and the dark-service tiers on (both are off by default). A compliant posture report grants `#device-trusted` and the admin plane is dialable. A failing report removes it and the dial is denied, while Tier 1 stays. In `observe`, nothing changes | the unit job for `internal/access`, against a migrated Postgres and a fake controller |
-| Session | `TestAnEndedSessionCannotRefresh`: a session is created the way login creates it and ended the way the Sessions page ends it (`identity.TerminateSession`). Its refresh then fails, with Redis up and with Redis down. The user's other session keeps refreshing | the unit job for `internal/oauth`, against a migrated Postgres and an in-memory Redis |
+| Session | `TestAnEndedSessionCannotRefresh`: a session is created the way login creates it and ended the way the Sessions page ends it (`identity.TerminateSession`). Its refresh then fails, with Redis up and with Redis down. The user's other session keeps refreshing. The same test for every other path that ends a session: `TestAPasswordChangeEndsEveryOtherSession` (the session the change was made from keeps refreshing), `TestAPasswordResetEndsEverySession`, `TestLifecycleRevokeSessionsEndsTheRefreshPath`, `TestASessionOAuthEndedStaysEndedAfterItsMarkerExpires` (the sweeps, eviction, force-login and sign-out, once the 25-hour marker has expired), `TestARefreshReplayEndsEveryChainOfItsSession`, `TestAnAdministratorEndingSessionsStopsTheirRefresh` (revoke, revoke all, breach containment, the kill switch, the device revoke) and `TestRiskRemediationRevokingSessionsStopsTheirRefresh` | the unit job for `internal/oauth`, against a migrated Postgres and an in-memory Redis |
 | MFA policy | `TestMFAPolicyRaisesTheLoginChallenge`: with a policy on, a user whose only factor is email OTP is challenged at login. With it off, or for a user with no factor, they are not | the unit job for `internal/oauth`, against a migrated Postgres |
 | MFA policy, required methods and grace | `TestMFAPolicyRequiredMethodsAtTheLoginDecision`: the offered methods with and without the policy's methods, a remembered browser, the grace window's start, its end with and without a bypass code, a longer grace period reopening it, 0 hours, and the order policies are tried in. `TestMFAPolicyGraceAtTheLoginEndpoint`: the same through `POST /oauth/login`, with the audit rows. `TestMFAPolicyHandlersEnforceTheRules`: what the admin API accepts, and that only a new method set restarts the windows | the unit jobs for `internal/oauth` and `internal/admin`, against a migrated Postgres and an in-memory Redis |
 
@@ -74,7 +74,12 @@ Mapping two more rows found divergences, fixed with the tests above:
 - **Session (#992).** A session a user ended from their Sessions page
   (`identity.TerminateSession`) lost its row but not its refresh tokens, so the
   signed-out device went on refreshing. Ending a session now revokes its
-  refresh tokens and publishes the marker (#993).
+  refresh tokens and publishes the marker (#993). The same defect was then
+  found on the password change and reset paths, the lifecycle action,
+  oauth-service's own session ends, refresh-token replay, and the console,
+  breach-containment, kill-switch and device-revoke paths. Each now revokes
+  the refresh tokens in the database, and a census in
+  `internal/common/sessionend` fails on a new path that does not.
 - **MFA policy (#990).** The console showed required methods and a grace
   period that nothing enforced, and the API accepted only conditions no code
   reads. #991 refused what was not enforced. The methods and the grace period

@@ -891,12 +891,25 @@ func (s *Service) handleRefreshTokenReuse(ctx context.Context, token *RefreshTok
 		}
 	}
 
-	// The session behind the chain is as compromised as the tokens.
-	if token.SessionID != "" && s.redis != nil {
-		if err := s.redis.RevocationDB().Set(ctx,
-			"revoked_session:"+token.SessionID, "refresh_reuse", 24*time.Hour).Err(); err != nil {
-			s.logger.Error("refresh reuse: failed to revoke session",
-				zap.String("session_id", token.SessionID), zap.Error(err))
+	// The session behind the chain is as compromised as the tokens: every
+	// chain bound to it is revoked, not only the family replayed above -- a
+	// second application the same browser session signed into holds one. The
+	// marker below lives 24 hours; those chains used to be refused for that
+	// long and then refresh again.
+	var sessionRevoked int64
+	if token.SessionID != "" {
+		n, err := s.revokeSessionRefreshTokens(ctx, token.SessionID)
+		if err != nil {
+			s.logger.Error("refresh reuse: failed to revoke the session's refresh tokens",
+				zap.String("session_id", logsafe.Clean(token.SessionID)), zap.Error(err))
+		}
+		sessionRevoked = n
+		if s.redis != nil {
+			if err := s.redis.RevocationDB().Set(ctx,
+				"revoked_session:"+token.SessionID, "refresh_reuse", 24*time.Hour).Err(); err != nil {
+				s.logger.Error("refresh reuse: failed to revoke session",
+					zap.String("session_id", token.SessionID), zap.Error(err))
+			}
 		}
 	}
 
@@ -906,6 +919,7 @@ func (s *Service) handleRefreshTokenReuse(ctx context.Context, token *RefreshTok
 		zap.String("family_id", logsafe.Clean(token.FamilyID)),
 		zap.String("session_id", logsafe.Clean(token.SessionID)),
 		zap.Int64("tokens_revoked", revoked),
+		zap.Int64("session_tokens_revoked", sessionRevoked),
 		zap.Timep("rotated_at", token.UsedAt))
 
 	if s.webhookService != nil {

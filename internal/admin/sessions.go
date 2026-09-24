@@ -28,14 +28,14 @@ import (
 // until they expire on their own.
 const revokedSessionMarkerTTL = 30 * 24 * time.Hour
 
-// publishSessionRevocations writes the Redis markers that make a revocation
-// take effect. The sessions table row is the durable record, but the
-// oauth-service enforces against "revoked_session:<id>" in Redis — a
-// revocation that skips the marker looks revoked in the console while the
-// user's refresh token keeps minting access tokens. Returns one warning per
-// marker that could not be published; callers surface them instead of
-// reporting a clean revoke (nothing is reported severed unless the write
-// succeeded).
+// publishSessionRevocations writes the revoked_session:<id> markers for
+// sessions whose refresh tokens the caller has already revoked in the
+// database. The oauth-service's refresh grant reads the token's own row and
+// this marker, never the sessions table. The row revocation is what holds
+// with Redis down or restarted; the marker is the second line, and the one
+// that stops a refresh already in flight when the rows were revoked. Returns
+// one warning per marker that could not be published; callers surface them
+// instead of reporting a clean revoke.
 func (s *Service) publishSessionRevocations(ctx context.Context, sessionIDs []string) []string {
 	if len(sessionIDs) == 0 {
 		return nil
@@ -43,14 +43,14 @@ func (s *Service) publishSessionRevocations(ctx context.Context, sessionIDs []st
 	if s.redis == nil || s.redis.Client == nil {
 		s.logger.Warn("session revocation markers not published: redis unavailable",
 			zap.Int("sessions", len(sessionIDs)))
-		return []string{"revocation markers not published (redis unavailable): existing refresh tokens remain usable until they expire"}
+		return []string{"revocation markers not published (redis unavailable); the sessions' refresh tokens are revoked in the database"}
 	}
 	var warnings []string
 	for _, id := range sessionIDs {
 		if err := s.redis.RevocationDB().Set(ctx, "revoked_session:"+id, "1", revokedSessionMarkerTTL).Err(); err != nil {
 			s.logger.Warn("failed to publish revoked-session marker",
 				zap.String("session_id", logsafe.Clean(id)), zap.Error(err))
-			warnings = append(warnings, "revocation marker not published for session "+id+": its refresh tokens remain usable until they expire")
+			warnings = append(warnings, "revocation marker not published for session "+id+"; its refresh tokens are revoked in the database")
 		}
 	}
 	return warnings
@@ -207,6 +207,16 @@ func (s *Service) handleAdminRevokeSession(c *gin.Context) {
 	if err := sessionend.ForSession(ctx, s.db.Pool, org.ID, sessionID); err != nil {
 		s.logger.Error("revoking a session whose relying parties will not be told", zap.Error(err), zap.String("session_id", logsafe.Clean(sessionID)))
 	}
+	// What the session can still mint ends first, in the database. The
+	// refresh grant does not read the row updated below; it reads the token's
+	// own row and the marker, and the marker alone left the session
+	// refreshing whenever Redis was down or came back empty. If the tokens
+	// cannot be revoked, the session is not reported revoked.
+	if _, err := sessionend.RevokeRefreshTokens(ctx, s.db.Pool, org.ID, []string{sessionID}); err != nil {
+		s.logger.Error("Failed to revoke the session's refresh tokens", zap.Error(err), zap.String("session_id", logsafe.Clean(sessionID)))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke session"})
+		return
+	}
 	result, err := s.db.Pool.Exec(ctx, `
 		UPDATE sessions SET revoked = true, revoked_at = NOW(), revoked_by = $1, revoke_reason = $2
 		WHERE id = $3 AND org_id = $4
@@ -262,6 +272,16 @@ func (s *Service) handleAdminRevokeAllUserSessions(c *gin.Context) {
 	if err := sessionend.ForUser(ctx, s.db.Pool, org.ID, userID); err != nil {
 		s.logger.Error("revoking sessions whose relying parties will not be told", zap.Error(err), zap.String("user_id", logsafe.Clean(userID)))
 	}
+	// Every refresh token the user holds ends first, in the database: those
+	// bound to the sessions below, those bound to sessions that ended
+	// earlier, and those bound to none, which the device authorization grant
+	// issues. See handleAdminRevokeSession for why the rows below and the
+	// markers are not enough.
+	if _, err := sessionend.RevokeUserRefreshTokens(ctx, s.db.Pool, org.ID, userID, ""); err != nil {
+		s.logger.Error("Failed to revoke the user's refresh tokens", zap.Error(err), zap.String("user_id", logsafe.Clean(userID)))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke user sessions"})
+		return
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		UPDATE sessions SET revoked = true, revoked_at = NOW(), revoked_by = $1, revoke_reason = $2
 		WHERE user_id = $3 AND (revoked IS NULL OR revoked = false) AND org_id = $4
@@ -287,7 +307,7 @@ func (s *Service) handleAdminRevokeAllUserSessions(c *gin.Context) {
 		// The UPDATE itself committed; what failed is reading back the ids, so
 		// some markers may be missing. Say so rather than reporting clean.
 		s.logger.Warn("revoked-session id read-back incomplete", zap.Error(rowsErr), zap.String("user_id", logsafe.Clean(userID)))
-		warnings = append(warnings, "some revoked sessions could not be read back; their refresh tokens may remain usable until they expire")
+		warnings = append(warnings, "some revoked sessions could not be read back, so not every revocation marker was published; the user's refresh tokens are revoked in the database")
 	}
 
 	count := int64(len(sessionIDs))
