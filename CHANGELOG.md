@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration that adds the column back.
 
 ### Changed
+- **The README gives each feature a maturity level (#963).** A matrix
+  replaces the checklist that marked every capability shipped. Each feature
+  is GA, Beta or Experimental, with the reason and the evidence, and no
+  feature is GA yet, because nothing has been verified externally.
+  `docs/MATURITY.md` defines the levels. The readiness guide and the
+  global-scale plans move to `docs/archive/`, and the stale
+  `docs/PRODUCTION-READINESS.md` and `docs/PROJECT-STATUS.md` are deleted.
+  `CONTRIBUTING.md` names Go 1.26, sends pull requests to `main`, and lists
+  the required checks.
 - **MFA policies enforce what they show (#990).** The login path used to
   discard the policy it matched, so a policy that listed WebAuthn was
   satisfied by SMS or email OTP, and nothing read the grace period. The API
