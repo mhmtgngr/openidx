@@ -15,7 +15,7 @@ decoration. Running only the positive half is how this class survives.
 | App assignment | My Apps & Network, Access 360 | `internal/appaccess` via the proxy, `/oauth/authorize`, Ziti dial policy | assignment report empty; dial as an assigned user, then as an unassigned one |
 | Role / group | Users, Groups | JWT `roles` claim, route checks | probe an admin route as a member, then as a non-member |
 | Vault / PAM grant | My Privileged Access, PAM pages | `pamEntryAllowed` at connect and at reveal | connect as a granted user, then as an ungranted one |
-| Session | Sessions pages | Redis `revoked_session:*` at the refresh grant; userinfo checks the per-token blacklist and the per-user cutoff instead (`internal/revocation`) | revoke, then refresh — the refresh must fail |
+| Session | Sessions pages | The refresh grant checks the refresh token's own row (`revoked_at`) and the Redis `revoked_session:*` marker. Userinfo checks the per-token blacklist and the per-user cutoff instead (`internal/revocation`) | revoke, then refresh — the refresh must fail |
 | MFA policy | MFA Management | `IsMFARequired` in the OAuth login path. A policy has no conditions, methods or grace period (#990): it challenges every user with a factor | with a policy on, a user with a factor is challenged; with it off, or with no factor, they are not (`TestMFAPolicyRaisesTheLoginChallenge`) |
 | Device trust | My Devices, Access 360 | Ziti posture + the `#device-trusted` attribute | an untrusted device is denied the dial |
 | **ABAC policy** | ABAC Policies (with its mode badge) | `internal/abac` at both PEPs — the token endpoint and the access proxy | in `observe`, a deny policy records `abac.would_deny` and still issues; in `enforce`, the same policy returns 403 and audits `abac.denied` |
@@ -36,14 +36,15 @@ one is not verified automatically yet; #957 tracks closing that.
 | App assignment at `/oauth/authorize` | `TestEnforcedAssignmentDeniesAndAudits`, `TestSSOSessionIsSubjectToTheAssignmentGate` | the integration job; the unit job for `internal/oauth` |
 | App assignment at the proxy | `TestProxyEnforcesApplicationAssignment`, through `handleProxy` with a session and a real upstream | the unit job for `internal/access`, against a migrated Postgres |
 | App assignment at the Ziti dial, BrowZer routes | `TestZitiDialFollowsApplicationAssignment`: the Dial policy the reconciler writes, and the attributes the user sync builds | the unit job for `internal/access`, against a migrated Postgres and a fake controller |
-| App assignment at the Ziti dial, identity-mode routes | None. Under enforcement the access proxy loses its own dial on these routes (#984) | — |
+| App assignment at the Ziti dial, identity-mode routes | `TestZitiDialKeepsTheAccessProxyOnIdentityModeRoutes`: under enforcement the Dial policy keeps the access proxy, named by id, while unassigned tunnelers are cut (#984) | the unit job for `internal/access`, against a migrated Postgres and a fake controller |
 | ABAC policy | `TestEvaluateAgainstTheMigratedSchema` (the evaluator), `TestABACGateAtAuthorization` (the token endpoint), `TestABACGateAtTheProxy` (the proxy) | the unit jobs, against a migrated Postgres |
 | Role at an admin route | `TestARealTokenOpensAnAdminRouteOnlyForAMember`. The issuer mints the token from `user_roles` and publishes its key at its JWKS. `middleware.Auth` verifies the token against that JWKS, and `RequireRoles` reads the claim. Covered: a member, a non-member, a lapsed time-bound role, a role removed before minting, and a forged token | the unit job for `internal/oauth`, against a migrated Postgres |
 | Vault / PAM grant at reveal | `TestPrivilegedCredentialRevealIsGranted`, both halves | the integration job |
 | Vault / PAM grant at connect | `TestPamConnectFollowsTheGrant`: for each user, the entry list beside the connect handler. It covers a user grant, a group grant, no grant, a lapsed grant and a view-only grant | the unit job for `internal/access`, against a migrated Postgres |
 | JIT elevation | `TestJITElevationEndsAtTheKillSwitch`: the grant listed by User Access 360 and counted by the portal, then the kill switch through its route, with another user's elevation left alone | the unit job for `internal/access`, against a migrated Postgres |
 | Device trust at the dial | `TestPostureDecidesWhoDialsTheAdminPlane`, with `POSTURE_DEVICE_TRUST_GATE=enforce` and the dark-service tiers on (both are off by default). A compliant posture report grants `#device-trusted` and the admin plane is dialable. A failing report removes it and the dial is denied, while Tier 1 stays. In `observe`, nothing changes | the unit job for `internal/access`, against a migrated Postgres and a fake controller |
-| Session, MFA policy | Covered in the PRs that fixed them; see below | — |
+| Session | `TestAnEndedSessionCannotRefresh`: a session is created the way login creates it and ended the way the Sessions page ends it (`identity.TerminateSession`). Its refresh then fails, with Redis up and with Redis down. The user's other session keeps refreshing | the unit job for `internal/oauth`, against a migrated Postgres and an in-memory Redis |
+| MFA policy | `TestMFAPolicyRaisesTheLoginChallenge`: with a policy on, a user whose only factor is email OTP is challenged at login. With it off, or for a user with no factor, they are not | the unit job for `internal/oauth`, against a migrated Postgres |
 
 The ABAC tests cover all three states. In `enforce`, a deny policy refuses
 the subject it names with a 403 and records `access.abac.denied`. In
@@ -67,25 +68,16 @@ The access map's own tests ran on tables they created by hand, where the
 failing query was valid. The tests in this table run on the schema the product
 migrates to for that reason.
 
-### The two rows whose tests arrive with their fixes
+Mapping two more rows found divergences, fixed with the tests above:
 
-Mapping these rows found a divergence in each, so each row's two-sided test
-ships in the PR that fixes it:
-
-- **Session.** Revoking through the product found **#992**. A session a user
-  ended from their Sessions page (`identity.TerminateSession`) lost its row but
-  not its refresh tokens, so the signed-out device went on refreshing. The fix
-  and the row's two-sided test (`TestAnEndedSessionCannotRefresh`) are in
-  #993.
-- **MFA policy.** Mapping this row found **#990**:
-  - the console showed required methods and a grace period that nothing
-    enforced;
-  - the API accepted only conditions no code reads.
-
-  #991 refuses what is not enforced. It also adds the row's two-sided test on
-  the login path (`TestMFAPolicyRaisesTheLoginChallenge`): with a policy on, a
-  user with a factor is challenged; with it off, or with no factor, they are
-  not.
+- **Session (#992).** A session a user ended from their Sessions page
+  (`identity.TerminateSession`) lost its row but not its refresh tokens, so the
+  signed-out device went on refreshing. Ending a session now revokes its
+  refresh tokens and publishes the marker (#993).
+- **MFA policy (#990).** The console showed required methods and a grace
+  period that nothing enforced, and the API accepted only conditions no code
+  reads. #991 refuses what is not enforced, so a policy means what it does:
+  every user with a factor is challenged.
 
 ## Runs
 
