@@ -214,7 +214,7 @@ services (8001–8007) are published on 127.0.0.1 for debugging.
 **What it is not.** It runs `APP_ENV=development` with no TLS and rate
 limiting off. `ADMIN_API_REQUIRE_AUTH` and `ACCESS_API_REQUIRE_AUTH` are on,
 so the admin and access APIs refuse anonymous callers even so. For
-production use the Helm chart ([DEPLOYMENT.md](./DEPLOYMENT.md)).
+production use the Helm chart (`docs/DEPLOYMENT.md`).
 
 **Check it.** `OPENIDX_ADMIN_PASSWORD_FILE=<file with the password>
 scripts/lite-smoke.sh` signs in the way the console does and checks the
