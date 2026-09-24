@@ -1,3 +1,5 @@
+> **Archived record, 2026-09-01 to 2026-09-24.** It is not maintained. The current state of each feature is the [maturity matrix](../../README.md#feature-maturity), and the priorities are in [ROADMAP.md](../../ROADMAP.md).
+
 # OpenIDX Project Readiness — the User-Perspective Guide
 
 **Date:** 2026-09-01 (audited at commit `c98082a` on `main`; updated the
@@ -6,8 +8,8 @@ P1 A-defect tail done (A2/A3/A4, plus the post-audit A5: SMS/email OTP
 fail closed, OTP and OAuth authorization codes out of the logs, the
 `SMS_PROVIDER`-typo mock fallback removed), P2 done in full** (docs site, quickstart
 fold + banners, PAM guide **and the full `/pam/*` OpenAPI spec**, auditor
-artifacts: [threat model](./THREAT-MODEL.md) and
-[control mapping](./COMPLIANCE-CONTROL-MAPPING.md), doc-tree separation
+artifacts: [threat model](../THREAT-MODEL.md) and
+[control mapping](../COMPLIANCE-CONTROL-MAPPING.md), doc-tree separation
 via [docs/README.md](https://github.com/mhmtgngr/openidx/blob/main/docs/README.md)), **P3.2–3.5 done** (Helm chart
 finished *and published per release* — migration hook Job, real OPA,
 ServiceMonitor, backup CronJob, Keycloak/APISIX ghosts removed, chart
@@ -35,7 +37,7 @@ proves each Definition-of-Done item.
 **Question this document answers:** *Is OpenIDX fully functional and well defined end to end, as experienced by the people who use it — and what are the next steps and controls to get it there?*
 
 This is the product-and-user-side companion to
-[PRODUCTION-READINESS.md](https://github.com/mhmtgngr/openidx/blob/main/docs/PRODUCTION-READINESS.md) (the deploy-side view,
+[PRODUCTION-READINESS.md](https://github.com/mhmtgngr/openidx/blob/586db11fd0171b82e1fc41726f8cf5546ea74f6d/docs/PRODUCTION-READINESS.md) (the deploy-side view,
 last refreshed 2026-06-08). It was produced by a fresh full-repo audit:
 backend (all `cmd/` + `internal/`), frontend (all apps), deployment assets,
 and all 122 docs, with the headline findings re-verified against the code.
@@ -1009,10 +1011,10 @@ policy. This is the moment the IAM/PAM/ZTNA confusion structurally ends.
    (operator-side):* the `contractcheck -probe` live diff against a
    running deployment.
 4. ✅ **Auditor artifacts shipped** — *on this branch*:
-   [THREAT-MODEL.md](./THREAT-MODEL.md) (trust boundaries, per-component
+   [THREAT-MODEL.md](../THREAT-MODEL.md) (trust boundaries, per-component
    STRIDE with code evidence — overlay, broker, recordings, vault, audit
    chain — plus the residual-risk register R1–R8) and
-   [COMPLIANCE-CONTROL-MAPPING.md](./COMPLIANCE-CONTROL-MAPPING.md)
+   [COMPLIANCE-CONTROL-MAPPING.md](../COMPLIANCE-CONTROL-MAPPING.md)
    (SOC 2 CC-series + ISO 27001:2022 Annex A → capability → evidence,
    with honest Provided/Configurable/Shared/Operator statuses and the
    §5-checklists-as-evidence-generator workflow). Linked from SECURITY.md.
@@ -1057,7 +1059,7 @@ all four pillars, deploy, log in, and find PAM.
    digest with the same workflow-identity pin as the binaries
    (packaging + dependency build verified locally end-to-end); README,
    the site's installation/kubernetes pages and
-   [RELEASING.md](./RELEASING.md) document install-from-registry and
+   [RELEASING.md](../RELEASING.md) document install-from-registry and
    verification — replacing the site's phantom `charts.openidx.org`
    instructions.
 3. ✅ **WebAuthn challenges moved to Redis with TTL** — shipped on this
@@ -1066,7 +1068,7 @@ all four pillars, deploy, log in, and find PAM.
 4. ✅ **Release artifacts signed** — `release.yml` now generates
    `SHA256SUMS` over all eight binaries and signs it with keyless cosign
    (GitHub OIDC → Sigstore; `id-token: write`, no stored key); the
-   release body and [RELEASING.md](./RELEASING.md) carry the
+   release body and [RELEASING.md](../RELEASING.md) carry the
    `cosign verify-blob` + `sha256sum -c` verification recipe with the
    workflow-identity pin.
 5. Dependabot/Renovate: ✅ **deduplicated** — `.github/dependabot.yml`
@@ -6265,7 +6267,7 @@ Access model (the §1 spine):
 - [ ] Access review revoke on a test grant propagates (portal, proxy,
       overlay) within the sweep interval.
 
-Platform (see [SECURITY-HARDENING.md](./SECURITY-HARDENING.md) for the
+Platform (see [SECURITY-HARDENING.md](../SECURITY-HARDENING.md) for the
 full config-gate list — it is the enforced source of truth):
 
 - [ ] All services green on `/health` + `/ready`; Prometheus scraping all
@@ -6392,7 +6394,7 @@ action on a live deployment or a later phase in this programme.
 ### 6.2 The final audit (2026-09-06)
 
 The programme's last act was to re-run every check on one tree and write down
-what came back: [`docs/evidence/final-audit.md`](evidence/final-audit.md). The
+what came back: [`docs/evidence/final-audit.md`](../evidence/final-audit.md). The
 build, the vet, 77 Go test packages, 1,181 console tests, the orgscope gate,
 and 55 guard self-tests and enforcement runs, all green on `dec5b493`; the
 CodeQL results check green with it.
@@ -6413,6 +6415,6 @@ This document follows the repo's convention: it cites the file that settles
 each claim, so it can be re-verified. If you fix something listed here,
 update or strike the entry in the same PR — a gap list that is not
 re-checked becomes a rumour (see the §6 preamble of
-[PRODUCTION-READINESS.md](https://github.com/mhmtgngr/openidx/blob/main/docs/PRODUCTION-READINESS.md), which learned this
+[PRODUCTION-READINESS.md](https://github.com/mhmtgngr/openidx/blob/586db11fd0171b82e1fc41726f8cf5546ea74f6d/docs/PRODUCTION-READINESS.md), which learned this
 the hard way). If this document and the code disagree, the code is right
 and this file has rotted: fix the file.

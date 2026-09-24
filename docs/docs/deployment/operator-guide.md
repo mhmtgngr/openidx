@@ -5,14 +5,17 @@ OpenIDX deployment honest. It condenses the deployment reference, the
 hardening checklist, the readiness programme's controls and the global-scale
 plan into what an operator has to know, in the order an operator meets it.
 Every claim names the file or job that settles it, so it can be re-checked;
-where a thing is not proven, this page says so instead of implying it.
+where a thing is not proven, this page says so instead of implying it. How
+mature each feature is, and why, is in the
+[maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity).
 
-It is not the history. The six-thousand-line
-[`PROJECT-READINESS-GUIDE.md`](https://github.com/mhmtgngr/openidx/blob/main/docs/PROJECT-READINESS-GUIDE.md)
+It is not the history. The six-thousand-line readiness guide, now archived
+([`docs/archive/PROJECT-READINESS-GUIDE.md`](https://github.com/mhmtgngr/openidx/blob/main/docs/archive/PROJECT-READINESS-GUIDE.md)),
 records how each control came to be and what it found on the way; the
-[global-scale plan](https://github.com/mhmtgngr/openidx/blob/main/docs/plans/2026-09-13-global-scale-cell-architecture-plan.md)
-records what is open and why. Read those when you need the reasoning. Read
-this when you need to run the thing.
+archived
+[global-scale plan](https://github.com/mhmtgngr/openidx/blob/main/docs/archive/2026-09-13-global-scale-cell-architecture-plan.md)
+records what was open at scale and why, until the programme was frozen. Read
+those when you need the reasoning. Read this when you need to run the thing.
 
 ---
 
@@ -44,7 +47,9 @@ while everything else is down. The chart can pin each plane to its own
 Postgres role with its own query budget (§7), and split identity into two
 Deployments so shedding ADMIN buys something.
 
-Around them: OPA (governance fails closed while it has no policies),
+Around them: OPA (consulted only when `ENABLE_OPA_AUTHZ=true`, which is off
+by default and not ready to turn on yet, see
+[#980](https://github.com/mhmtgngr/openidx/issues/980)),
 PostgreSQL, Redis (three roles, §7), Elasticsearch or OpenSearch for audit
 search, and optionally the OpenZiti fabric (controller, routers, BrowZer)
 that lets an internal application be published with no inbound firewall
@@ -471,6 +476,13 @@ More in [Troubleshooting](../troubleshooting.md).
 
 Say these to a customer before they find them:
 
+- **Nothing has been verified externally.** No penetration test, no OpenID
+  Connect conformance run and no SAML or SCIM interop run has happened yet;
+  M1 adds them ([#959](https://github.com/mhmtgngr/openidx/issues/959),
+  [#958](https://github.com/mhmtgngr/openidx/issues/958),
+  [#955](https://github.com/mhmtgngr/openidx/issues/955)). No feature is GA
+  in the [maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity)
+  until they have.
 - **No cell has run with traffic.** Every switch in §7 works together on
   kind; load, failover timing and the canary bake between waves are
   unmeasured. The k6 game day, the chaos drill's live half and the
@@ -509,8 +521,9 @@ Say these to a customer before they find them:
 | Recovery procedures | [`disaster-recovery.md`](https://github.com/mhmtgngr/openidx/blob/main/docs/disaster-recovery.md) |
 | Under a volumetric attack | [`runbooks/ddos-under-attack.md`](https://github.com/mhmtgngr/openidx/blob/main/docs/runbooks/ddos-under-attack.md) |
 | Taking services dark behind the overlay | [`GOING_DARK_RUNBOOK.md`](https://github.com/mhmtgngr/openidx/blob/main/docs/GOING_DARK_RUNBOOK.md) |
-| Why each control exists and what it found | [`PROJECT-READINESS-GUIDE.md`](https://github.com/mhmtgngr/openidx/blob/main/docs/PROJECT-READINESS-GUIDE.md) |
-| What is still open at scale, and why | [the global-scale plan](https://github.com/mhmtgngr/openidx/blob/main/docs/plans/2026-09-13-global-scale-cell-architecture-plan.md) |
+| How mature each feature is, and the evidence | [the maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity) |
+| Why each control exists and what it found | [the archived readiness guide](https://github.com/mhmtgngr/openidx/blob/main/docs/archive/PROJECT-READINESS-GUIDE.md) |
+| What was open at scale when that programme was frozen | [the archived global-scale plan](https://github.com/mhmtgngr/openidx/blob/main/docs/archive/2026-09-13-global-scale-cell-architecture-plan.md) |
 
 If this page and the code disagree, the code is right and this page has
 rotted: fix the page in the same change.

@@ -8,7 +8,7 @@ records the analysis behind this version (in Turkish).
 [ADR 0001](docs/adr/0001-product-focus-and-trusted-core.md) records the
 decision.
 
-*Last updated: 2026-09-23.*
+*Last updated: 2026-09-24.*
 
 ## What OpenIDX is
 
@@ -110,7 +110,7 @@ scope, an ADR.
 
 | What | Why | Restart trigger |
 |---|---|---|
-| Global-scale cell architecture and DDoS programme (`docs/plans/2026-09-13-*`) | The one real deployment runs on a single VM; the scale targets are years ahead of demand | The first customer or MSP that needs more than one region |
+| Global-scale cell architecture and DDoS programme (`docs/archive/2026-09-13-*`) | The one real deployment runs on a single VM; the scale targets are years ahead of demand | The first customer or MSP that needs more than one region |
 | New pillars: WASM app virtualization, Windows app delivery | They widen scope before the core is verified | M1 exits and a design partner asks |
 | Separate Kotlin Android agent (`agent-android/`) | It duplicates the Flutter app and has no tests | A customer needs Android Enterprise device-owner mode |
 

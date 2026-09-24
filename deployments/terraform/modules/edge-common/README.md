@@ -1,6 +1,6 @@
 # Edge provider modules — one interface, three providers
 
-Global-scale plan task 1.1 (`docs/plans/2026-09-13-global-scale-cell-architecture-plan.md`),
+Global-scale plan task 1.1 (`docs/archive/2026-09-13-global-scale-cell-architecture-plan.md`),
 design ADR-3: L3/L4 and volumetric L7 DDoS is **bought** from an anycast edge, never
 built. The provider is decision **K1** in the roadmap; until it is taken, all three
 modules exist so the choice costs a `module "edge" { source = ... }` line and not a

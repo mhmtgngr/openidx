@@ -92,9 +92,10 @@ data:
   # input.resource.owner (never populated), and data.roles (a data document
   # nothing loads into this OPA). With `default allow = false` above them, that
   # policy denied every request -- so turning ENABLE_OPA_AUTHZ on against this
-  # deployment, which is exactly how the rollout in docs/PROJECT-READINESS-GUIDE.md
-  # says to start, would have 403ed admin-api, governance and provisioning
-  # wholesale. It was inert only because nothing here sets that flag.
+  # deployment, which is exactly how the rollout in the readiness guide
+  # (docs/archive/PROJECT-READINESS-GUIDE.md) said to start, would have 403ed
+  # admin-api, governance and provisioning wholesale. It was inert only because
+  # nothing here sets that flag.
   #
   # internal/common/opa/policy_input_test.go now checks every openidx.authz
   # policy in the repository against what internal/common/opa.Input marshals,

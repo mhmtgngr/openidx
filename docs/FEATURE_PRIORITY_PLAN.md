@@ -4,8 +4,8 @@
 > "must implement" feature below shipped long ago. An earlier revision of
 > this banner pointed at `ULTIMATE_PRODUCT_PLAN.md` and
 > `MARKET_GAP_ANALYSIS_2026.md`, documents that were never committed. The
-> current, code-verified roadmap and gap register is
-> **[PROJECT-READINESS-GUIDE.md](./PROJECT-READINESS-GUIDE.md)**.
+> current roadmap is **[ROADMAP.md](../ROADMAP.md)**, and the state of each
+> feature is the **[maturity matrix](../README.md#feature-maturity)**.
 
 > **⚠️ Status note (2026-05-20): much of this plan is already implemented.**
 > This was an early competitor-analysis wishlist. As of now, the "critical"
@@ -20,9 +20,9 @@
 >   (`internal/provisioning`, `internal/directory`, provisioning rules).
 >
 > Treat the items below as historical context, not an active backlog. The
-> current near-term priorities are in `docs/PROJECT-STATUS.md` (stabilize +
-> make deployable), not net-new IAM features. Re-derive any real feature-gap
-> analysis against the live code before using this list.
+> current near-term priorities are in [ROADMAP.md](../ROADMAP.md), not
+> net-new IAM features. Re-derive any real feature-gap analysis against the
+> live code before using this list.
 
 ## Quick Summary
 
