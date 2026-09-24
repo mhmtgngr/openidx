@@ -2995,6 +2995,11 @@ const en = {
       },
       policies: {
         resourceName: 'MFA policies',
+        whatItDoes:
+          'While a policy is enabled, every user who has a second factor enrolled is asked for it at sign-in, and any enrolled factor satisfies it. A user with no factor enrolled is not asked.',
+        notEnforcedBadge: 'stored settings not enforced',
+        notEnforcedBody:
+          'This policy was saved with required methods, a grace period or conditions. None of them is enforced: any enrolled factor satisfies the policy, for every user who has one.',
         title: 'MFA Policies',
         create: 'Create Policy',
         loading: 'Loading policies...',
@@ -3003,13 +3008,10 @@ const en = {
         table: {
           name: 'Name',
           description: 'Description',
-          methods: 'Required Methods',
-          gracePeriod: 'Grace Period',
           priority: 'Priority',
           enabled: 'Enabled',
           actions: 'Actions',
         },
-        graceHours: '{{n}}h',
         confirmDelete: {
           title: 'Delete MFA Policy',
           description:
@@ -3027,15 +3029,15 @@ const en = {
         },
       },
       dialog: {
+        whatItDoes:
+          'The policy applies to every user who has a second factor enrolled, and any enrolled factor satisfies it. Requiring particular methods, a grace period or conditions is not supported yet.',
         editTitle: 'Edit MFA Policy',
         createTitle: 'Create MFA Policy',
         name: 'Policy Name *',
-        namePlaceholder: 'e.g., Enforce TOTP for All Users',
+        namePlaceholder: 'e.g., Second factor for everyone',
         description: 'Description',
         descriptionPlaceholder: 'What does this policy enforce?',
         priority: 'Priority (lower = first)',
-        gracePeriod: 'Grace Period (hours)',
-        requiredMethods: 'Required Methods',
         enabled: 'Enabled',
         saving: 'Saving...',
         update: 'Update Policy',

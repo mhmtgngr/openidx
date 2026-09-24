@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -141,5 +141,92 @@ describe('MFAManagementPage', () => {
 
     await user.click(screen.getByRole('tab', { name: /mfa policies/i }))
     expect(await screen.findByText('No MFA policies configured')).toBeInTheDocument()
+  })
+
+  // #990: nothing enforces required methods, a grace period or conditions, so
+  // the page no longer offers or lists them as if it did.
+  describe('what a policy enforces', () => {
+    const plain = {
+      ...policy,
+      id: 'pol-2',
+      name: 'Second factor for everyone',
+      conditions: {},
+      required_methods: [],
+      grace_period_hours: 0,
+    }
+    const withPolicies = (policies: unknown[]) =>
+      vi.mocked(api.get).mockImplementation((url: string) => {
+        if (url.includes('/policies')) {
+          return Promise.resolve({ policies, total: policies.length, page: 1, page_size: 20 }) as ReturnType<typeof api.get>
+        }
+        return routeGet(url) as ReturnType<typeof api.get>
+      })
+    const openPoliciesTab = async (user: ReturnType<typeof userEvent.setup>) => {
+      render(<MFAManagementPage />, { wrapper: createWrapper() })
+      await screen.findByText('MFA Management')
+      await user.click(screen.getByRole('tab', { name: /mfa policies/i }))
+    }
+
+    it('says what a policy does, and lists no methods or grace period', async () => {
+      const user = userEvent.setup()
+      withPolicies([policy, plain])
+      await openPoliciesTab(user)
+      expect(await screen.findByText(/every user who has a second factor enrolled is asked for it/i)).toBeInTheDocument()
+      expect(screen.queryByRole('columnheader', { name: /required methods/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('columnheader', { name: /grace period/i })).not.toBeInTheDocument()
+    })
+
+    it('flags a policy that stores settings nothing enforces, and only that one', async () => {
+      const user = userEvent.setup()
+      withPolicies([policy, plain])
+      await openPoliciesTab(user)
+      await screen.findByText('Second factor for everyone')
+      expect(screen.getAllByText('stored settings not enforced')).toHaveLength(1)
+      const flagged = screen.getByText('Admin role — TOTP required').closest('tr')
+      expect(flagged).toHaveTextContent('stored settings not enforced')
+    })
+
+    it('toggles a policy by sending only enabled', async () => {
+      const user = userEvent.setup()
+      withPolicies([policy])
+      await openPoliciesTab(user)
+      await user.click(await screen.findByRole('switch', { name: /enable policy admin role/i }))
+      expect(api.put).toHaveBeenCalledWith('/api/v1/mfa/policies/pol-1', { enabled: false })
+    })
+
+    it('creates a policy without methods, a grace period or conditions', async () => {
+      const user = userEvent.setup()
+      withPolicies([])
+      await openPoliciesTab(user)
+      await user.click(await screen.findByRole('button', { name: /create policy/i }))
+      expect(screen.queryByText('WebAuthn', { selector: 'label' })).not.toBeInTheDocument()
+      expect(screen.queryByLabelText(/grace period/i)).not.toBeInTheDocument()
+      await user.type(screen.getByPlaceholderText(/second factor for everyone/i), 'Everyone')
+      const dialog = screen.getByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: /^create policy$/i }))
+      expect(api.post).toHaveBeenCalledWith('/api/v1/mfa/policies', {
+        name: 'Everyone',
+        description: '',
+        enabled: true,
+        priority: 100,
+      })
+    })
+
+    it('saves an edited policy without re-sending what it stores', async () => {
+      const user = userEvent.setup()
+      withPolicies([policy])
+      await openPoliciesTab(user)
+      const row = (await screen.findByText('Admin role — TOTP required')).closest('tr') as HTMLElement
+      await user.click(within(row).getAllByRole('button')[0])
+      const dialog = await screen.findByRole('dialog')
+      expect(within(dialog).getByText(/none of them is enforced/i)).toBeInTheDocument()
+      await user.click(within(dialog).getByRole('button', { name: /update policy/i }))
+      expect(api.put).toHaveBeenCalledWith('/api/v1/mfa/policies/pol-1', {
+        name: policy.name,
+        description: policy.description,
+        enabled: true,
+        priority: 100,
+      })
+    })
   })
 })

@@ -2,12 +2,14 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -197,7 +199,7 @@ func (s *Service) handleCreateMFAPolicy(c *gin.Context) {
 		return
 	}
 
-	if err := validateMFAConditions(req.Conditions); err != nil {
+	if err := checkNewMFAPolicy(req.Conditions, req.RequiredMethods, req.GracePeriodHours); err != nil {
 		respondError(c, nil, apperrors.BadRequest(err.Error()))
 		return
 	}
@@ -284,8 +286,20 @@ func (s *Service) handleUpdateMFAPolicy(c *gin.Context) {
 		return
 	}
 
-	if req.Conditions != nil {
-		if err := validateMFAConditions(*req.Conditions); err != nil {
+	if req.Conditions != nil || req.RequiredMethods != nil || req.GracePeriodHours != nil {
+		var stored storedMFAPolicySettings
+		err := s.db.Pool.QueryRow(c.Request.Context(),
+			`SELECT conditions, required_methods, grace_period_hours FROM mfa_policies WHERE id = $1 AND org_id = $2`,
+			id, org.ID).Scan(&stored.conditions, &stored.requiredMethods, &stored.graceHours)
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(c, nil, apperrors.NotFound("MFA policy"))
+			return
+		}
+		if err != nil {
+			respondError(c, s.logger, apperrors.Internal("Failed to read MFA policy", err))
+			return
+		}
+		if err := checkMFAPolicyUpdate(stored, req.Conditions, req.RequiredMethods, req.GracePeriodHours); err != nil {
 			respondError(c, nil, apperrors.BadRequest(err.Error()))
 			return
 		}

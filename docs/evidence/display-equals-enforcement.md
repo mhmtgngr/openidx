@@ -16,7 +16,7 @@ decoration. Running only the positive half is how this class survives.
 | Role / group | Users, Groups | JWT `roles` claim, route checks | probe an admin route as a member, then as a non-member |
 | Vault / PAM grant | My Privileged Access, PAM pages | `pamEntryAllowed` at connect and at reveal | connect as a granted user, then as an ungranted one |
 | Session | Sessions pages | Redis `revoked_session:*` at refresh and userinfo | revoke, then refresh — the refresh must fail |
-| MFA policy | MFA Management | `IsMFARequired` in the OAuth login path | a policy user is challenged; an exempt user is not |
+| MFA policy | MFA Management | `IsMFARequired` in the OAuth login path. A policy has no conditions, methods or grace period (#990): it challenges every user with a factor | with a policy on, a user with a factor is challenged; with it off, or with no factor, they are not (`TestMFAPolicyRaisesTheLoginChallenge`) |
 | Device trust | My Devices, Access 360 | Ziti posture + the `#device-trusted` attribute | an untrusted device is denied the dial |
 | **ABAC policy** | ABAC Policies (with its mode badge) | `internal/abac` at both PEPs — the token endpoint and the access proxy | in `observe`, a deny policy records `abac.would_deny` and still issues; in `enforce`, the same policy returns 403 and audits `abac.denied` |
 | **JIT elevation** | User Access 360, portal dashboard ("active JIT grants") | `internal/jitgrant` over `access_requests` — the expiry sweep, the kill switch, the lifecycle sweep, deprovisioning | grant a time-boxed role, confirm it is listed and counted, then press the kill switch: the role must be gone, the request `expired`, and `pam_jit_grants_revoked` must be **1** rather than 0 |

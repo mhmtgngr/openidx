@@ -23,6 +23,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration that adds the column back.
 
 ### Changed
+- **MFA policies no longer offer required methods, a grace period or
+  conditions. Nothing enforced any of them (#990).** The login path discards
+  the policy it matched, so a policy that listed WebAuthn was satisfied by SMS
+  or email OTP. The grace period was read by nothing. The API accepted three
+  conditions (`factor_enrolled`, `min_risk_score`, `client_ids`) that no code
+  reads, and refused the four the evaluator reads. So every policy applied to
+  every user with an enrolled factor. A policy now means exactly that.
+  - **API:** creating a policy with methods, a grace period or any condition
+    answers 400.
+  - **Updates:** an update may clear those fields, or send back the stored
+    values, so older policies can still be renamed and toggled.
+  - **Console:** the method checkboxes and the grace field are gone, the page
+    says what a policy does, older policies that store such settings are
+    flagged, and the toggle sends only `enabled`.
+  - **Tests:** a new test on the login path shows both halves. With the policy
+    on, a user whose only factor is email OTP is challenged; with it off, or
+    for a user with no factor, not.
+
+  Enforcing particular methods needs a decision first: what happens to a user
+  who has none of them enrolled.
 - **The Helm chart ships the OPA policy** (#980). The OPA pods used to run
   empty unless an operator created a ConfigMap, so every decision was
   undefined. They now load the policy the chart carries, or the ConfigMap

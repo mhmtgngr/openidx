@@ -11,7 +11,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { Switch } from '../components/ui/switch'
 import { Label } from '../components/ui/label'
-import { Checkbox } from '../components/ui/checkbox'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 import { ConfirmAction } from '../components/confirm-action'
@@ -52,14 +51,24 @@ interface UserMFAStatus {
   webauthn_enabled: boolean
 }
 
+// A policy's only effect is to challenge, at login, every user who has a second
+// factor enrolled (#990). Nothing enforces required methods, a grace period or
+// conditions, so the form no longer offers them and the API refuses them.
 const emptyPolicy: Partial<MFAPolicy> = {
   name: '',
   description: '',
   enabled: true,
   priority: 100,
-  conditions: {},
-  required_methods: [],
-  grace_period_hours: 24,
+}
+
+// storesUnenforcedSettings reports a policy written before #990 that still
+// stores settings nothing enforces, so the table can say so.
+function storesUnenforcedSettings(p: Pick<MFAPolicy, 'conditions' | 'required_methods' | 'grace_period_hours'>): boolean {
+  return (
+    (p.required_methods?.length ?? 0) > 0 ||
+    (p.grace_period_hours ?? 0) !== 0 ||
+    Object.keys(p.conditions ?? {}).length > 0
+  )
 }
 
 export default function MFAManagement() {
@@ -175,14 +184,13 @@ export default function MFAManagement() {
 
   const openEditPolicy = (policy: MFAPolicy) => {
     setSelectedPolicy(policy)
+    // Only what the form edits is sent back, so a stored setting that nothing
+    // enforces is left as it is rather than re-submitted.
     setFormData({
       name: policy.name,
       description: policy.description,
       enabled: policy.enabled,
       priority: policy.priority,
-      conditions: policy.conditions,
-      required_methods: [...policy.required_methods],
-      grace_period_hours: policy.grace_period_hours,
     })
     setPolicyDialogOpen(true)
   }
@@ -194,14 +202,6 @@ export default function MFAManagement() {
     } else {
       createPolicyMutation.mutate(formData)
     }
-  }
-
-  const toggleMethod = (method: string, checked: boolean) => {
-    const current = formData.required_methods || []
-    const updated = checked
-      ? [...current, method]
-      : current.filter((m) => m !== method)
-    setFormData({ ...formData, required_methods: updated })
   }
 
   return (
@@ -332,6 +332,7 @@ export default function MFAManagement() {
               </Button>
             </div>
             <CardContent className="pt-6">
+              <p className="mb-4 text-sm text-muted-foreground">{t('pages.mfaManagement.policies.whatItDoes')}</p>
               {policiesLoading ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <LoadingSpinner size="lg" />
@@ -353,8 +354,6 @@ export default function MFAManagement() {
                         <TableRow>
                           <TableHead>{t('pages.mfaManagement.policies.table.name')}</TableHead>
                           <TableHead>{t('pages.mfaManagement.policies.table.description')}</TableHead>
-                          <TableHead>{t('pages.mfaManagement.policies.table.methods')}</TableHead>
-                          <TableHead>{t('pages.mfaManagement.policies.table.gracePeriod')}</TableHead>
                           <TableHead>{t('pages.mfaManagement.policies.table.priority')}</TableHead>
                           <TableHead>{t('pages.mfaManagement.policies.table.enabled')}</TableHead>
                           <TableHead className="w-[100px]">{t('pages.mfaManagement.policies.table.actions')}</TableHead>
@@ -363,20 +362,21 @@ export default function MFAManagement() {
                       <TableBody>
                         {policies.map((policy) => (
                           <TableRow key={policy.id}>
-                            <TableCell className="font-medium">{policy.name}</TableCell>
+                            <TableCell className="font-medium">
+                              {policy.name}
+                              {storesUnenforcedSettings(policy) && (
+                                <Badge
+                                  variant="outline"
+                                  className="ml-2 text-xs"
+                                  title={t('pages.mfaManagement.policies.notEnforcedBody')}
+                                >
+                                  {t('pages.mfaManagement.policies.notEnforcedBadge')}
+                                </Badge>
+                              )}
+                            </TableCell>
                             <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                               {policy.description}
                             </TableCell>
-                            <TableCell>
-                              <div className="flex flex-wrap gap-1">
-                                {policy.required_methods.map((method) => (
-                                  <Badge key={method} variant="outline">
-                                    {methodLabels[method] || method}
-                                  </Badge>
-                                ))}
-                              </div>
-                            </TableCell>
-                            <TableCell>{t('pages.mfaManagement.policies.graceHours', { n: policy.grace_period_hours })}</TableCell>
                             <TableCell>
                               <span className="text-xs font-mono bg-muted px-2 py-1 rounded">
                                 #{policy.priority}
@@ -388,7 +388,7 @@ export default function MFAManagement() {
                                 onCheckedChange={(checked) => {
                                   updatePolicyMutation.mutate({
                                     id: policy.id,
-                                    data: { ...policy, enabled: checked },
+                                    data: { enabled: checked },
                                   })
                                 }}
                               />
@@ -587,41 +587,21 @@ export default function MFAManagement() {
                 placeholder={t('pages.mfaManagement.dialog.descriptionPlaceholder')}
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="mfa-management-priority">{t('pages.mfaManagement.dialog.priority')}</Label>
-                <Input id="mfa-management-priority"
-                  type="number"
-                  value={formData.priority ?? 100}
-                  onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="mfa-management-grace-period">{t('pages.mfaManagement.dialog.gracePeriod')}</Label>
-                <Input id="mfa-management-grace-period"
-                  type="number"
-                  value={formData.grace_period_hours ?? 24}
-                  onChange={(e) => setFormData({ ...formData, grace_period_hours: parseInt(e.target.value) || 0 })}
-                />
-              </div>
-            </div>
             <div className="space-y-2">
-              <Label>{t('pages.mfaManagement.dialog.requiredMethods')}</Label>
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                {Object.entries(methodLabels).map(([method, label]) => (
-                  <div key={method} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`method-${method}`}
-                      checked={(formData.required_methods || []).includes(method)}
-                      onCheckedChange={(checked) => toggleMethod(method, checked === true)}
-                    />
-                    <label htmlFor={`method-${method}`} className="text-sm">
-                      {label}
-                    </label>
-                  </div>
-                ))}
-              </div>
+              <Label htmlFor="mfa-management-priority">{t('pages.mfaManagement.dialog.priority')}</Label>
+              <Input id="mfa-management-priority"
+                type="number"
+                value={formData.priority ?? 100}
+                onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
+              />
             </div>
+            <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.dialog.whatItDoes')}</p>
+            {selectedPolicy && storesUnenforcedSettings(selectedPolicy) && (
+              <p className="text-xs text-muted-foreground">
+                <span className="font-medium">{t('pages.mfaManagement.policies.notEnforcedBadge')}:</span>{' '}
+                {t('pages.mfaManagement.policies.notEnforcedBody')}
+              </p>
+            )}
             <div className="flex items-center space-x-2">
               <Switch
                 id="policy-enabled"
