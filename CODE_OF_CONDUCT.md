@@ -42,7 +42,9 @@ an individual is officially representing the community in public spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainers at **conduct@openidx.io**.
+reported privately to the project maintainer, using the email address on the
+maintainer's GitHub profile ([@mhmtgngr](https://github.com/mhmtgngr)). Please
+do not report conduct issues in public issues or discussions.
 
 All complaints will be reviewed and investigated promptly and fairly. All
 community leaders are obligated to respect the privacy and security of the

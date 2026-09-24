@@ -110,9 +110,9 @@ func GetProjectInfo() map[string]string {
 	return map[string]string{
 		"name":        "OpenIDX",
 		"description": "Zero Trust Access Platform",
-		"repository":  "https://github.com/openidx/openidx",
-		"license":     "MIT",
-		"docs":        "https://docs.openidx.io",
+		"repository":  "https://github.com/mhmtgngr/openidx",
+		"license":     "Apache-2.0",
+		"docs":        "https://mhmtgngr.github.io/openidx",
 	}
 }
 

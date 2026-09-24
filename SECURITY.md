@@ -1,128 +1,109 @@
 # Security Policy
 
-## Supported Versions
+OpenIDX is maintained by a very small team (see [SUPPORT.md](SUPPORT.md)).
+This page says how to report a vulnerability, what happens next, and what is
+not on offer, so that nobody sends a report to a channel that does not exist.
 
-OpenIDX follows semantic versioning. Security updates are provided for the following versions:
+## Supported versions
 
-| Version | Supported          |
-|---------|--------------------|
-| 1.x.x   | :white_check_mark: |
-| 0.x.x   | :x:                |
+| Version | Supported |
+|---------|-----------|
+| Latest 1.x release | :white_check_mark: |
+| Older 1.x releases | :x: upgrade to the latest release |
+| 0.x | :x: |
 
-Security patches are released for the current major version (1.x). Previous major versions (0.x) are no longer supported.
+Security fixes ship in the next release of the current line. They are not
+backported to earlier 1.x releases. A long-term-support line is planned; see
+[ROADMAP.md](ROADMAP.md).
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-The OpenIDX team takes security vulnerabilities seriously. We appreciate your efforts to responsibly disclose your findings.
+**Do not open a public issue, discussion or pull request for a security
+vulnerability.**
 
-### How to Report
+Report it privately through GitHub:
 
-**Do NOT** open a public GitHub issue for security vulnerabilities.
+**[Report a vulnerability](https://github.com/mhmtgngr/openidx/security/advisories/new)**
+(the "Report a vulnerability" button on the repository's **Security** tab).
 
-Instead, please send an email to:
+This creates a private advisory that only you and the maintainers can see. We
+use it to discuss the report, work on the fix, request a CVE and publish the
+advisory. If the link does not work for you, open a public issue titled
+"Security contact request". Put no details in it, and a maintainer will reach
+out privately.
 
-- **Email**: `security@openidx.io`
-- **PGP Key**: Available at `https://openidx.io/security/pgp-key.txt`
+There is no security email address and no PGP key. Earlier versions of this
+file listed addresses at `openidx.io`. That domain is not ours, and nothing
+sent there reaches us.
 
-### What to Include
+### What to include
 
-To help us respond effectively, please include:
+1. A description of the vulnerability and its impact.
+2. Steps to reproduce, and a proof of concept if it is safe to share.
+3. The affected version (`VERSION`, or the image tag) and deployment path
+   (Docker Compose or the Helm chart).
+4. Whether you have shared it with anyone else.
 
-1. **Description**: A clear description of the vulnerability
-2. **Steps to Reproduce**: Detailed steps to reproduce the issue
-3. **Impact**: The potential impact of the vulnerability
-4. **Proof of Concept**: A working exploit or demonstration (if safe to share)
-5. **Affected Versions**: Which versions are affected (if known)
+## What happens next
 
-### Response Timeline
+Handling is best effort. There is no service-level agreement.
 
-Our team commits to the following response times:
+- **Acknowledgement:** we aim to acknowledge a report within 7 days.
+- **Assessment:** we confirm the issue, rate it with CVSS v3.1, and tell you
+  what we plan to do.
+- **Fix and release:** the fix ships in a release. The advisory, and a CVE
+  where one applies, is published when that release is available.
+- **Disclosure:** coordinated. We ask for up to 90 days from the report to a
+  public disclosure, or less if a fix is released sooner. If we cannot meet
+  that, we will say so in the advisory thread.
+- **Credit:** reporters are credited in the advisory and the release notes,
+  unless they prefer not to be.
 
-| Severity Level | Initial Response | Resolution Target |
-|----------------|------------------|-------------------|
-| Critical       | 24 hours         | 48 hours          |
-| High           | 48 hours         | 1 week            |
-| Medium         | 72 hours         | 2 weeks           |
-| Low            | 1 week           | Next release      |
+There is **no bug bounty** and no paid reward for reports.
 
-### Disclosure Process
+### Safe harbor
 
-1. **Receipt**: We will acknowledge receipt of your report within the timelines above
-2. **Validation**: Our security team will validate and investigate the vulnerability
-3. **Resolution**: We will develop a fix and coordinate a release date with you
-4. **Disclosure**: We will publicly disclose the vulnerability after a fix is released
+We will not pursue legal action against security research carried out in
+good faith that:
 
-We aim to coordinate public disclosure within 90 days of the initial report, or sooner if a fix is ready.
+- follows this reporting process,
+- tests only against your own installation, or accounts you have explicit
+  permission to use,
+- does not access, modify or delete data that is not your own,
+- does not degrade the performance or availability of anyone's service, and
+- keeps the details private until the advisory is published.
 
-### Safe Harbor
+### Severity
 
-OpenIDX pledges not to pursue legal action against security researchers who:
+We use CVSS v3.1:
 
-- Follow our responsible disclosure process
-- Limit testing to their own accounts or accounts with explicit permission
-- Do not access, modify, or delete data that is not their own
-- Do not degrade system performance or availability
-- Share details of the vulnerability only with our team
+| Score | Severity | Typical example |
+|-------|----------|-----------------|
+| 9.0–10.0 | Critical | Remote code execution; a bypass of authentication or of the tenant boundary |
+| 7.0–8.9 | High | Privilege escalation; access to another user's data |
+| 4.0–6.9 | Medium | Limited impact, or requires user interaction |
+| 0.1–3.9 | Low | Minimal impact, or hard to exploit |
 
-We will not pursue legal action if you act in good faith and comply with these guidelines.
+### Vulnerabilities in dependencies
 
-### Bounty Program
+Report a vulnerability in a third-party dependency to that project, following
+its own policy. If OpenIDX is affected, please also tell us through the private
+report above so that we can track it.
 
-OpenIDX offers a bounty program for qualifying vulnerability reports:
+## Receiving security updates
 
-| Severity | Bounty Range |
-|----------|--------------|
-| Critical | $500 - $1,000 |
-| High     | $200 - $500   |
-| Medium   | $50 - $200    |
-| Low      | $25 - $50     |
+- **Watch** the repository with **Custom → Security alerts** selected.
+- Published advisories are listed at
+  [github.com/mhmtgngr/openidx/security/advisories](https://github.com/mhmtgngr/openidx/security/advisories).
+- Every release lists its fixes in [CHANGELOG.md](CHANGELOG.md).
 
-**Bounty Eligibility**:
-- First report of a vulnerability
-- Vulnerability must be reproducible
-- Report must follow the disclosure process
-- Vulnerability must not have been previously reported
+There is no security mailing list and no social-media channel.
 
-Bounties are paid at our discretion and are subject to change without notice.
-
-### Security Best Practices for Testing
-
-When investigating potential vulnerabilities:
-
-1. **Never** test on production systems without explicit permission
-2. **Never** access another user's account or data
-3. **Never** attempt to degrade system performance
-4. **Always** use test environments when possible
-5. **Document** your findings thoroughly
-
-### Severity Classification
-
-We use the CVSS v3.1 scoring system for classification:
-
-| Score | Severity | Description |
-|-------|----------|-------------|
-| 9.0-10.0 | Critical | Remote code execution, full system compromise |
-| 7.0-8.9 | High | Privilege escalation, data breach |
-| 4.0-6.9 | Medium | Limited impact, requires user interaction |
-| 0.1-3.9 | Low | Minimal impact, difficult to exploit |
-
-### Security Features
-
-OpenIDX includes the following security features:
-
-- **Zero Trust Architecture**: All access requests are verified
-- **Multi-Factor Authentication**: Support for TOTP, WebAuthn, and more
-- **Role-Based Access Control**: Granular permissions management
-- **Audit Logging**: Comprehensive logging of all security events
-- **Encryption**: Data at rest and in transit encryption
-- **Security Headers**: CSP, HSTS, and other security headers
-- **Regular Updates**: Automated dependency updates and security patches
-
-### Trust Model (multi-tenant, enforced at the database)
+## Trust model (multi-tenant, enforced at the database)
 
 > Earlier revisions of this section said OpenIDX was single-tenant and that
-> multi-tenant isolation was not implemented. **That is no longer true** —
-> the tenant boundary landed in v1.6–v1.8 and this section previously
+> multi-tenant isolation was not implemented. **That is no longer true**.
+> The tenant boundary landed in v1.6–v1.8. This section previously
 > contradicted [docs/SECURITY-TENANCY.md](./docs/SECURITY-TENANCY.md), which
 > is the authoritative trust-boundary document.
 
@@ -132,90 +113,53 @@ code alone.
 
 - Every tenant-owned table carries an `org_id` and is protected by
   **FORCE row-level security**. The tenant is stamped onto each pooled
-  connection at checkout (`internal/common/database/rls.go`) and resolved
-  per request from the subdomain, JWT, or `X-Org-ID` header. Access is
+  connection at checkout (`internal/common/database/rls.go`). It is resolved
+  per request from the subdomain, the JWT, or the `X-Org-ID` header. Access is
   **fail-closed**: no tenant context yields zero rows.
 - A merge-blocking CI linter (`tools/orgscope`) fails the build on any
-  tenant-table query missing an `org_id` predicate; legitimate install-wide
+  tenant-table query missing an `org_id` predicate. Legitimate install-wide
   paths carry an audited `//orgscope:ignore` annotation.
 - Within an organization, users holding an **`admin`** role can read and
-  manage that organization's users, roles, groups, and configuration; RLS
+  manage that organization's users, roles, groups, and configuration. RLS
   confines them to their own org. `super_admin` is platform-scoped. Treat
   both as fully privileged within their scope and grant them sparingly.
-- The administrative API (everything under `/api/v1/identity` except the
-  caller's own `/users/me/*` and MFA self-service paths) requires an admin
-  role; ordinary authenticated users can only manage their own account.
-- Single-org deployments remain fully supported — they are simply a
+- The administrative API requires an admin role. This covers everything
+  under `/api/v1/identity` except the caller's own `/users/me/*` and MFA
+  self-service paths. Ordinary authenticated users can only manage their own
+  account.
+- Single-org deployments remain fully supported. They are simply a
   one-tenant instance of the same model.
 
 See [docs/SECURITY-TENANCY.md](./docs/SECURITY-TENANCY.md) for the policy
 SQL shape, known limitations (a small set of documented non-org-scoped
 tables), and deployment topologies.
 
-### Receiving Security Updates
+## Security best practices for deployment
 
-To receive security notifications:
+The production hardening checklist lives in
+**[docs/SECURITY-HARDENING.md](./docs/SECURITY-HARDENING.md)**. That file is
+grounded in the code: every required item maps to a check in
+`Config.ValidateProduction()`, which the service runs as a blocking startup
+gate. Keeping the checklist and the validator in sync is part of the PR
+checklist for any new gate.
 
-1. **Watch the Repository**: Enable "Custom" -> "Include security alerts"
-2. **Subscribe to Announcements**: Join `security-announce@openidx.io`
-3. **Follow on Social Media**: `@openidx_project` on Twitter
-
-### Security Team
-
-The OpenIDX security team can be reached at:
-
-- **General Security**: `security@openidx.io`
-- **PGP Key**: `https://openidx.io/security/pgp-key.txt`
-
-For general inquiries, please contact `hello@openidx.io`.
-
-### Related Resources
-
-- [Security Advisories](https://github.com/openidx/openidx/security/advisories)
-- [Security Policy](https://github.com/openidx/openidx/blob/main/SECURITY.md)
-- [Contributing Guidelines](https://github.com/openidx/openidx/blob/main/CONTRIBUTING.md)
-- [Code of Conduct](https://github.com/openidx/openidx/blob/main/CODE_OF_CONDUCT.md)
-
-### Third-Party Disclosures
-
-If you discover a vulnerability in a third-party dependency used by OpenIDX:
-
-1. Report directly to the project maintainer following their security policy
-2. CC `security@openidx.io` so we can track the issue
-3. We will work with the upstream project to ensure a timely resolution
-
-### License
-
-By submitting a vulnerability report, you agree that your disclosure may be used by OpenIDX for security purposes, subject to our privacy policy and any applicable agreements.
-
----
-
-## Security Best Practices for Deployment
-
-The production hardening checklist now lives in
-**[docs/SECURITY-HARDENING.md](./docs/SECURITY-HARDENING.md)**. That
-file is grounded in the code — every required item maps to a check in
-`Config.ValidateProduction()`, which the service runs as a blocking
-startup gate. Keeping the checklist and the validator in sync is part
-of the PR checklist for any new gate.
-
-The trust boundary (multi-tenant, FORCE row-level security at the
-database) is documented in
-**[docs/SECURITY-TENANCY.md](./docs/SECURITY-TENANCY.md)**. Read it
-before deploying OpenIDX in a setting where two unrelated
-organizations share one installation.
+The trust boundary is documented in
+**[docs/SECURITY-TENANCY.md](./docs/SECURITY-TENANCY.md)**. Read it before
+deploying OpenIDX in a setting where two unrelated organizations share one
+installation.
 
 For security reviewers and auditors:
 
-- **[docs/THREAT-MODEL.md](./docs/THREAT-MODEL.md)** — the full platform
+- **[docs/THREAT-MODEL.md](./docs/THREAT-MODEL.md)** is the full platform
   threat model: trust boundaries, per-component STRIDE analysis (overlay,
   PAM broker, recordings, credential vault, audit chain), and the honest
-  residual-risk / operator-obligation list.
+  residual-risk and operator-obligation list.
 - **[docs/COMPLIANCE-CONTROL-MAPPING.md](./docs/COMPLIANCE-CONTROL-MAPPING.md)**
-  — SOC 2 and ISO/IEC 27001:2022 criteria mapped to OpenIDX capabilities
-  with evidence pointers, plus the project's own SDLC controls for
+  maps SOC 2 and ISO/IEC 27001:2022 criteria to OpenIDX capabilities, with
+  evidence pointers. It also covers the project's own SDLC controls for
   vendor-risk reviews.
+- OpenIDX has **not** yet had an independent penetration test or a
+  third-party audit, and it has not run the OpenID Foundation conformance
+  suite. These are planned; see [ROADMAP.md](ROADMAP.md).
 
----
-
-Thank you for helping keep OpenIDX secure!
+Thank you for helping keep OpenIDX secure.

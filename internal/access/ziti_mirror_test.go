@@ -40,6 +40,15 @@ type fakeController struct {
 
 	nextID int
 	calls  int
+
+	// identities answers the name-filter lookup FindIdentityIDByName sends.
+	identities []fakeIdentity
+}
+
+// fakeIdentity is one controller identity, as the name-filter lookup returns it.
+type fakeIdentity struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 func (f *fakeController) handler() http.HandlerFunc {
@@ -68,6 +77,17 @@ func (f *fakeController) handler() http.HandlerFunc {
 
 		case strings.HasSuffix(r.URL.Path, "/services") && r.Method == http.MethodGet:
 			f.writePage(w, r, servicesAsAny(f.services))
+
+		case strings.HasSuffix(r.URL.Path, "/identities") && r.Method == http.MethodGet:
+			match := []fakeIdentity{}
+			if name := filterName(r.URL.Query().Get("filter")); name != "" {
+				for _, id := range f.identities {
+					if id.Name == name {
+						match = append(match, id)
+					}
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"data": match})
 
 		case strings.HasSuffix(r.URL.Path, "/service-policies") && r.Method == http.MethodPost:
 			var body ZitiServicePolicyInfo
