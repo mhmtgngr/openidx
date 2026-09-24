@@ -6,8 +6,8 @@ This guide covers setting up a full development environment for OpenIDX, includi
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| Go | 1.22+ | Backend development |
-| Node.js | 18+ | Frontend development |
+| Go | 1.26 (`go.mod` pins the `go1.26.8` toolchain) | Backend development |
+| Node.js | 20 | Frontend development |
 | npm | 9+ | Package management |
 | Docker | 24+ | Container runtime |
 | Docker Compose | 2.20+ | Local infrastructure |
@@ -22,12 +22,12 @@ This guide covers setting up a full development environment for OpenIDX, includi
 
 ```bash
 # Go
-wget https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+wget https://go.dev/dl/go1.26.8.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.26.8.linux-amd64.tar.gz
 export PATH=$PATH:/usr/local/go/bin
 
 # Node.js
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
 # Docker
@@ -327,7 +327,7 @@ Workspace settings (`.vscode/settings.json`):
 ### GoLand / IntelliJ IDEA
 
 1. Open the project directory
-2. Go to Settings → Go → GOROOT → Select Go 1.22+
+2. Go to Settings → Go → GOROOT → Select Go 1.26
 3. Enable "Go Modules integration"
 4. Settings → Editor → Code Style → Go → Import "Run goimports on save"
 
