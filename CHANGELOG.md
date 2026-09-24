@@ -571,8 +571,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read that row: it decides on the refresh token's own row and on the
   `revoked_session:<id>` marker. So the signed-out device kept getting new
   access tokens, and a new rotated refresh token with each one. The admin
-  path, password change, the kill switch and deprovisioning all published the
-  marker or removed the tokens; this path did neither.
+  path, the kill switch and deprovisioning all published the marker or
+  removed the tokens; this path did neither.
 
   Ending a session now revokes its refresh tokens in the database, which holds
   with Redis down, and publishes the marker, and only then deletes the row. A
