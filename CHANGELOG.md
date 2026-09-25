@@ -313,6 +313,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defined twice, or out of the release run's reach. A renamed test therefore
   breaks its pull request, not the release. The guard and the run's reading of
   `go test -v` both ship with self-tests that drive them red.
+- **A security baseline for the independent review (#959).** An OpenSSF
+  Scorecard workflow (`.github/workflows/scorecard.yml`) runs on every push to
+  `main` and weekly, uploads its findings to code scanning, and publishes the
+  result that the new README badge shows. `docs/security/pentest-scope.md` is the scope to send to penetration-test
+  vendors, with the steps to apply for the OpenSSF Best Practices badge.
 - **The post-logout allowlist can be registered from the console.** The
   RP-Initiated Logout list added below was reachable only through dynamic
   client registration and the OAuth client API. The applications editor —

@@ -5,6 +5,10 @@
 </p>
 
 <p align="center">
+  <a href="https://scorecard.dev/viewer/?uri=github.com/mhmtgngr/openidx"><img src="https://api.scorecard.dev/projects/github.com/mhmtgngr/openidx/badge" alt="OpenSSF Scorecard"></a>
+</p>
+
+<p align="center">
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#architecture">Architecture</a> •
@@ -263,6 +267,7 @@ openidx/
 - [How IAM ⇄ PAM ⇄ Ziti Interrelate](docs/IAM_PAM_ZITI_INTERRELATION.md)
 - [Zero Trust Network: Easy Ziti Deployment](docs/ZITI_EASY_DEPLOYMENT.md)
 - [Security Hardening Checklist](docs/SECURITY-HARDENING.md) and [Tenancy Trust Boundary](docs/SECURITY-TENANCY.md)
+- The [penetration test scope](docs/security/pentest-scope.md)
 - [API Reference](docs/api/README.md)
 
 ## Status & Roadmap
