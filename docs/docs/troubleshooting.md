@@ -143,4 +143,4 @@ npm install
 ## Getting Help
 
 - [GitHub Issues](https://github.com/mhmtgngr/openidx/issues) — bug reports and feature requests
-- [Security Issues](https://github.com/mhmtgngr/openidx/blob/main/SECURITY.md) — report via security@openidx.io
+- [Security Issues](https://github.com/mhmtgngr/openidx/blob/main/SECURITY.md) — report privately through GitHub's [Report a vulnerability](https://github.com/mhmtgngr/openidx/security/advisories/new), never in a public issue

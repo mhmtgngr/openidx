@@ -116,6 +116,8 @@ func TestListSCIMGroups_Filter(t *testing.T) {
 			id UUID PRIMARY KEY, name VARCHAR(255), description TEXT,
 			external_id VARCHAR(255), org_id UUID NOT NULL,
 			created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now());
+		CREATE TABLE users (id UUID PRIMARY KEY, username VARCHAR(255), org_id UUID NOT NULL);
+		CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID NOT NULL);
 	`); err != nil {
 		t.Fatalf("schema: %v", err)
 	}

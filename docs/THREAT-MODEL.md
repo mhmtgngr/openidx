@@ -7,16 +7,16 @@
 > audit pipeline, and the endpoint agents. Every mitigation cited here points
 > at code or CI that exists on this commit; nothing below is aspirational.
 > If you find a claim the code no longer backs, that is a bug in this
-> document — fix the document or the code, never let them disagree
-> (the same contract as
-> [PROJECT-READINESS-GUIDE.md §7](./PROJECT-READINESS-GUIDE.md)).
+> document — fix the document or the code, never let them disagree.
 >
 > Companion documents: [SECURITY-TENANCY.md](./SECURITY-TENANCY.md) (the
 > tenant boundary in depth), [SECURITY-HARDENING.md](./SECURITY-HARDENING.md)
 > (the enforced production config gates),
 > [COMPLIANCE-CONTROL-MAPPING.md](./COMPLIANCE-CONTROL-MAPPING.md)
-> (SOC 2 / ISO 27001 mapping), and the readiness guide's §5 recurring
-> controls.
+> (SOC 2 / ISO 27001 mapping), and the recurring controls in
+> [`docs/evidence/`](https://github.com/mhmtgngr/openidx/tree/main/docs/evidence).
+> Nothing here has been verified externally yet: no penetration test has
+> been run ([#959](https://github.com/mhmtgngr/openidx/issues/959)).
 
 ---
 
@@ -97,7 +97,7 @@ predicate) → *enforcement* (proxy route / Ziti dial policy / PAM grant) →
 *session control* (revocation markers, kill switch) → *audit* (HMAC-chained
 events). The platform invariant is **display == enforcement**: any access a
 UI shows must be the access the enforcement points grant
-(readiness guide §5.3).
+([display = enforcement](https://github.com/mhmtgngr/openidx/blob/main/docs/evidence/display-equals-enforcement.md)).
 
 ## 2. Assets
 
@@ -238,7 +238,7 @@ Ziti identity: policies limit what it can dial, and the kill switch severs it.
 | Tampering | Vulnerable or malicious dependency | `govulncheck` (symbol-level, **blocking**), Trivy, Dependabot/Renovate; `security-scan.yml`'s aggregate gate no longer carries `continue-on-error` |
 | Tampering | Injected code defect | CodeQL (blocking), Semgrep, merge-blocking Required Checks (build, full tests, integration, orgscope) |
 | Info disclosure | Committed secrets | Gitleaks in CI (non-blocking for license reasons — documented); `.env.production` templates use `:?` required-var syntax so compose refuses to start with unset secrets |
-| Tampering | Image substitution | Images built in CI with provenance/SBOM attestation; binary signing is a P3 roadmap item (readiness guide §4) |
+| Tampering | Image substitution | Images built in CI with provenance/SBOM attestation; the release checksums and the Helm chart are signed with keyless cosign; the images are not signed yet ([#960](https://github.com/mhmtgngr/openidx/issues/960)) |
 
 ## 5. Residual risks and operator obligations
 
@@ -249,9 +249,9 @@ Honesty section — what the platform does **not** absorb for you:
 | R1 | Vault/recording KEKs in env vars where OpenBao isn't configured | Configure the OpenBao KEK source, or protect env via your orchestrator's secret store; rotate KEKs on the keyring schedule |
 | R2 | Access tokens outlive revocation by up to 1 h (markers bite at refresh) | Use the kill switch during incidents; keep the 1 h TTL (don't extend it) |
 | R3 | guacd handles decrypted RDP/VNC/SSH inside its segment | Network-isolate guacd; only the access service may reach it; never expose it publicly |
-| R4 | `ACCESS_ASSIGNMENT_ENFORCE` defaults off until the convergence rollout is executed | Run the rollout (assignment report → assign → enforce) — `docs/plans/2026-08-30-access-and-login-convergence.md` |
+| R4 | `ACCESS_ASSIGNMENT_ENFORCE` is on for a fresh install, but an install from before [#956](https://github.com/mhmtgngr/openidx/issues/956) keeps its own value, which defaults off | Run the rollout (assignment report → assign → enforce) — `docs/plans/2026-08-30-access-and-login-convergence.md` |
 | R5 | Redis compromise exposes session/challenge state and could suppress revocation markers | Run Redis with auth + TLS, private network only; watch the revocation-warning path |
-| R6 | RLS is the tenant wall; a DB superuser can disable it | Restrict superuser access, encrypt DB storage and backups, alert on policy changes |
+| R6 | RLS is the tenant wall; a DB superuser can disable it, and so can SQL running as the application role, by setting `app.bypass_rls` ([#964](https://github.com/mhmtgngr/openidx/issues/964)) | Restrict superuser access, encrypt DB storage and backups, alert on policy changes |
 | R7 | DB backups are not encrypted by OpenIDX itself | Encrypt backups at the storage layer; drill restores (`make dr-game-day`) |
 | R8 | JWT signing key age is not tracked in code | Rotate ≤ 90 days per operational control §5.2 |
 
@@ -264,7 +264,8 @@ patched; time is roughly synchronized (TOTP, token expiry).
 Re-check this document whenever: a new service or listener appears; a new
 secret class is stored; an enforcement point is added or a flag default
 flips (especially R4); or a §5 residual is engineered away. The recurring
-verification lives in the readiness guide §5 controls — this file explains
-*why* those controls exist; the guide §5 says *when to run them*; the
-[control mapping](./COMPLIANCE-CONTROL-MAPPING.md) says *which audit
-criteria they satisfy*.
+verification lives in the controls under
+[`docs/evidence/`](https://github.com/mhmtgngr/openidx/tree/main/docs/evidence)
+— this file explains *why* those controls exist; those files say *when to
+run them*; the [control mapping](./COMPLIANCE-CONTROL-MAPPING.md) says
+*which audit criteria they satisfy*.

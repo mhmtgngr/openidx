@@ -61,14 +61,7 @@ func Init(ctx context.Context, cfg Config, log *zap.Logger) (func(context.Contex
 		return nil, fmt.Errorf("failed to create OTLP exporter: %w", err)
 	}
 
-	res, err := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName(cfg.ServiceName),
-			semconv.DeploymentEnvironment(cfg.Environment),
-		),
-	)
+	res, err := newResource(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
@@ -90,4 +83,25 @@ func Init(ctx context.Context, cfg Config, log *zap.Logger) (func(context.Contex
 		zap.String("service", cfg.ServiceName))
 
 	return tp.Shutdown, nil
+}
+
+// newResource describes the service to the tracing backend: the SDK's default
+// resource (telemetry.sdk.*, host and process attributes) plus service.name and
+// deployment.environment.
+//
+// The service attributes are schemaless on purpose. resource.Merge refuses two
+// resources whose schema URLs differ, and resource.Default() carries the schema
+// of whichever semconv version the SDK was built with, which moves on every SDK
+// upgrade. Pinning this package's semconv schema made Init fail with
+// "conflicting Schema URL" as soon as the SDK moved past it, and every service
+// logged a warning and ran untraced. A schemaless resource merges with any
+// schema, and the attribute keys are the same.
+func newResource(cfg Config) (*resource.Resource, error) {
+	return resource.Merge(
+		resource.Default(),
+		resource.NewSchemaless(
+			semconv.ServiceName(cfg.ServiceName),
+			semconv.DeploymentEnvironment(cfg.Environment),
+		),
+	)
 }

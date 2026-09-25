@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<!--
+  The login page for the OpenID conformance run, and for nothing else.
+
+  OpenIDX has one login UI, the admin console (web/admin-console/src/pages/
+  login.tsx). The conformance suite cannot drive it: the suite's scripted
+  browser is HtmlUnit, whose JavaScript engine does not run ES module scripts,
+  and the console is a Vite bundle loaded as <script type="module">. So this
+  page stands in for it. It makes the same calls the console's page makes, in
+  the same order, and nothing more:
+
+    POST /oauth/login          {username, password, login_session}
+    POST /oauth/login/resume   {login_session}         when the URL has resume=1
+    POST /oauth/consent        {consent_session, approve}
+
+  and it follows the redirect_url each of them answers with. The protocol
+  behaviour under test (authorize, token, userinfo, logout, discovery, keys)
+  is OpenIDX's own; only the page a person would type into is replaced.
+
+  It is written in ES5 with XMLHttpRequest, because that is what HtmlUnit
+  runs reliably. Elements the browser automation waits for (#approve, #ready)
+  are created only when they can be used, because HtmlUnit waits for an
+  element to exist, not for it to be visible.
+
+  #ready appears as soon as the page has loaded; the logout plans wait for it
+  before signing in. It used to be delayed 1.2 seconds, because a logout
+  revoked every access token of the user minted in the same whole second and
+  the suite starts the next module inside that second. Revocation is precise
+  to the microsecond since #1006, so no delay is needed.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>OpenIDX sign-in (conformance test page)</title>
+</head>
+<body>
+<h1>OpenIDX sign-in (conformance test page)</h1>
+<p id="status" role="status"></p>
+<form id="login-form" action="#" onsubmit="return false;">
+  <p><label for="username">Username</label>
+  <input id="username" name="username" type="text" autocomplete="username"></p>
+  <p><label for="password">Password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password"></p>
+  <p><button id="signin" type="button">Sign in</button></p>
+</form>
+<div id="consent"></div>
+<script>
+(function () {
+  'use strict';
+
+  function queryParam(name) {
+    var query = window.location.search.replace(/^\?/, '').split('&');
+    for (var i = 0; i < query.length; i++) {
+      var pair = query[i].split('=');
+      if (decodeURIComponent(pair[0]) === name) {
+        return pair.length > 1 ? decodeURIComponent(pair.slice(1).join('=').replace(/\+/g, ' ')) : '';
+      }
+    }
+    return '';
+  }
+
+  var loginSession = queryParam('login_session');
+  var resume = queryParam('resume') === '1';
+  var statusEl = document.getElementById('status');
+  var form = document.getElementById('login-form');
+  var consentEl = document.getElementById('consent');
+  var busy = false;
+
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
+
+  function post(path, body, done) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', path, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) {
+        return;
+      }
+      var data = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch (e) {
+        data = null;
+      }
+      done(xhr.status, data);
+    };
+    xhr.send(JSON.stringify(body));
+  }
+
+  function describe(status, data) {
+    if (data && data.error_description) {
+      return data.error + ': ' + data.error_description;
+    }
+    if (data && data.error) {
+      return data.error;
+    }
+    return 'HTTP ' + status;
+  }
+
+  // What every step answers with: a redirect to follow, a consent challenge to
+  // show, or something this page does not handle, which it says in words.
+  function follow(status, data) {
+    busy = false;
+    if (status === 200 && data && data.redirect_url) {
+      setStatus('Signed in. Returning to the application.');
+      window.location.href = data.redirect_url;
+      return;
+    }
+    if (status === 200 && data && data.consent_required && data.consent_session) {
+      showConsent(data);
+      return;
+    }
+    if (status === 200 && data && data.mfa_required) {
+      setStatus('This account needs a second factor, which this test page does not implement.');
+      return;
+    }
+    if (status === 200 && data && data.concurrent_limit_reached) {
+      setStatus('The concurrent session limit was reached, which this test page does not handle.');
+      return;
+    }
+    setStatus('Sign-in failed: ' + describe(status, data));
+  }
+
+  function showConsent(data) {
+    form.style.display = 'none';
+    var scopes = data.scopes && data.scopes.join ? data.scopes.join(' ') : '';
+    var text = document.createElement('p');
+    text.id = 'consent-text';
+    text.textContent = (data.client_name || data.client_id || 'The application') +
+      ' asks for: ' + scopes;
+    var approve = document.createElement('button');
+    approve.id = 'approve';
+    approve.type = 'button';
+    approve.textContent = 'Approve';
+    var deny = document.createElement('button');
+    deny.id = 'deny';
+    deny.type = 'button';
+    deny.textContent = 'Deny';
+    consentEl.appendChild(text);
+    consentEl.appendChild(approve);
+    consentEl.appendChild(deny);
+    setStatus('Consent required.');
+
+    function decide(yes) {
+      if (busy) {
+        return;
+      }
+      busy = true;
+      post('/oauth/consent', { consent_session: data.consent_session, approve: yes }, follow);
+    }
+    approve.addEventListener('click', function () { decide(true); });
+    deny.addEventListener('click', function () { decide(false); });
+  }
+
+  document.getElementById('signin').addEventListener('click', function () {
+    if (busy) {
+      return;
+    }
+    busy = true;
+    setStatus('Signing in.');
+    post('/oauth/login', {
+      username: document.getElementById('username').value,
+      password: document.getElementById('password').value,
+      login_session: loginSession
+    }, follow);
+  });
+
+  var ready = document.createElement('span');
+  ready.id = 'ready';
+  document.body.appendChild(ready);
+
+  if (!loginSession) {
+    setStatus('No login_session in the URL: open this page from /oauth/authorize.');
+    return;
+  }
+
+  // The same rule as the console's page: with resume=1, first ask the server
+  // to complete the request from the browser session. Anything but a success
+  // leaves the form in place.
+  if (resume) {
+    busy = true;
+    form.style.display = 'none';
+    setStatus('Resuming the browser session.');
+    post('/oauth/login/resume', { login_session: loginSession }, function (status, data) {
+      if (status === 200) {
+        follow(status, data);
+        return;
+      }
+      busy = false;
+      form.style.display = '';
+      setStatus('Please sign in (' + describe(status, data) + ').');
+    });
+  }
+})();
+</script>
+</body>
+</html>

@@ -12,10 +12,12 @@ OpenIDX already ships a SCIM 2.0 **server** (be provisioned *into*, in
 
 !!! info "API-only today"
 
-    This ships as a **documented API**, not a console screen — a ratified
-    post-GA decision, recorded so nobody goes hunting for a page that is not
-    there. Everything below is served, routed, worker-backed and tested; the
-    only missing piece is the admin UI. Create a target with a POST:
+    This ships as a **documented API**, not a console screen. The screen
+    comes later, by a ratified decision
+    ([ROADMAP.md](https://github.com/mhmtgngr/openidx/blob/main/ROADMAP.md#later-when-there-is-demand)),
+    recorded so nobody goes hunting for a page that is not there. Everything
+    below is served, routed, worker-backed and tested; the only missing piece
+    is the admin UI. Create a target with a POST:
 
     ```bash
     curl -X POST https://openidx.example.com/api/v1/provisioning/targets \
@@ -76,6 +78,22 @@ Components:
   errors (`400/401/403/409/422`) dead-letter immediately.
 - **Deprovision policy.** Per target: `deactivate` (PATCH `active=false`,
   reversible, default) or `delete` (DELETE, irreversible).
+- **Group membership.** A group is sent with its members. Each member is sent
+  as the user's id at the target, taken from `scim_provisioning_records`, so
+  the target receives ids it issued. A member not yet provisioned to the
+  target is left out, and the group is sent again when its membership changes.
+  Creating, replacing, patching or deleting a group through inbound SCIM
+  enqueues the group for every target with `provision_groups` set.
+
+## Tests
+
+`TestSCIMOutboundProvisionsToATarget` in
+`internal/provisioning/scim_compliance_testdb_test.go` runs the fan-out and the
+worker against a migrated PostgreSQL and an `httptest` SCIM target that records
+what it receives. It checks that a user is created, updated and deactivated at
+the target, that a group is created with the target's ids for its members and
+updated when its membership changes, and that deleting the group deletes it at
+the target.
 
 ## Admin API
 

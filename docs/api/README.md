@@ -173,9 +173,9 @@ All API responses follow a standard format:
 ## Support
 
 For questions or issues with the API documentation:
-- Open an issue on [GitHub](https://github.com/openidx/openidx/issues)
+- Open an issue on [GitHub](https://github.com/mhmtgngr/openidx/issues)
 - See the main [OpenIDX Documentation](../)
 
 ## License
 
-Apache License 2.0 - See [LICENSE](../../../LICENSE) for details.
+Apache License 2.0 - See [LICENSE](../../LICENSE) for details.

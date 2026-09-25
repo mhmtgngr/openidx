@@ -25,11 +25,17 @@ them straight.
 
 ## Feature highlights
 
+Each feature's maturity (GA, Beta or Experimental), the reason and the
+evidence are in the
+[maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity). No
+feature is GA yet, because no penetration test or conformance run has been
+done.
+
 - **OAuth 2.0 / OpenID Connect provider** — authorization code + PKCE, client credentials, refresh rotation, token exchange, JWKS rotation
 - **SAML 2.0 IdP** — XML-DSig signing, SP metadata, Single Logout
-- **MFA** — TOTP, WebAuthn/passkeys, push, hardware tokens; passwordless & magic-link
+- **MFA** — TOTP, WebAuthn/passkeys (including FIDO2 security keys), push, SMS and email codes; passwordless & magic-link
 - **Adaptive authentication** — risk-scored logins (device, location, IP threat list) with step-up MFA
-- **Directory sync & SCIM 2.0** — LDAP / Active Directory / Azure AD, users and groups
+- **Directory sync & SCIM 2.0** — LDAP / Active Directory, users and groups (Azure AD sync is Experimental)
 - **Governance** — access reviews, certification campaigns, approval workflows, fail-closed SoD, JIT elevation
 - **Privileged access** — envelope-encrypted vault with rotation, brokered & recorded SSH/RDP/VNC, in-browser SSH, legal holds
 - **Zero-trust network** — identity-driven dark services over OpenZiti, BrowZer clientless access, posture checks, cross-pillar kill switch
@@ -45,7 +51,7 @@ network plane:
 | Service | Port | Responsibility |
 |---------|------|----------------|
 | Identity Service | 8001 | Users, groups, sessions, MFA, federation, passwordless |
-| Governance Service | 8002 | Access reviews, ABAC/OPA policies, certifications |
+| Governance Service | 8002 | Access reviews, ABAC policies, certifications (OPA authorization is optional and off by default) |
 | Provisioning Service | 8003 | SCIM 2.0, provisioning rules |
 | Audit Service | 8004 | Unified audit events, streaming, compliance reports |
 | Admin API | 8005 | Aggregated admin surface behind the console |

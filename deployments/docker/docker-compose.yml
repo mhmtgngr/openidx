@@ -1371,13 +1371,18 @@ services:
   # Admin Console - React Frontend
   #---------------------------------------------------------------------------
   
+  # The production stage (nginx on :8080, which the port mapping and health
+  # check below expect), built from the repository root: the Dockerfile copies
+  # api/openapi/ and the nginx config from outside web/admin-console, so a
+  # web/admin-console context cannot build it. With no target, compose built
+  # the last stage, the Vite dev server on :3000.
   admin-console:
     build:
-      context: ../../web/admin-console
-      dockerfile: ../../deployments/docker/Dockerfile.admin-console
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.admin-console
+      target: production
       network: host
       args:
-        - SRC_DIR=.
         - VITE_API_URL=${VITE_API_URL:-}
         - VITE_OAUTH_URL=${VITE_OAUTH_URL:-}
         - VITE_OAUTH_CLIENT_ID=admin-console

@@ -175,13 +175,13 @@ Both are off by default, and mounting them changes nothing until they are sized.
 
 Each of these decides whether a control that is *displayed* is also *enforced*.
 `ValidateProduction` reports the ones still in report mode at startup, and the
-ops cockpit shows them, so a GA install cannot pass the production gate without
-seeing which gates are open.
+ops cockpit shows them, so a production install cannot pass the production
+gate without seeing which gates are open.
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `ACCESS_ASSIGNMENT_ENFORCE` | bool | `false`; fresh installs `true` | Deny an unassigned user at `/oauth/authorize`, at the access proxy and at the Ziti dial, rather than logging the decision. `scripts/generate-secrets.sh` and the Helm chart set it to `true` on a fresh install; an existing install keeps its value (see [Turning the gates on for an existing install](#turning-the-gates-on-for-an-existing-install)). |
-| `ABAC_ENFORCE` | string | `off`; fresh installs `observe` | `off`, `observe` or `enforce` for attribute-based policies at `/oauth/authorize` and the access proxy. Fresh installs start in `observe`, which audits every would-be denial and refuses no one. |
+| `ABAC_ENFORCE` | string | `off`; fresh installs `observe` | `off`, `observe` or `enforce` for attribute-based policies at `/oauth/authorize` and the access proxy. Fresh installs start in `observe`, which audits every would-be denial and refuses no one, and they stay there: no install is switched to `enforce` for you (decided in [#956](https://github.com/mhmtgngr/openidx/issues/956)). You turn it on after reviewing the `access.abac.would_deny` records (step 2 of [Turning the gates on for an existing install](#turning-the-gates-on-for-an-existing-install)). |
 | `ENABLE_OPA_AUTHZ` | bool | `false` | Put OPA in the request path. Fail-closed in production. Off by default; the policy parses, ships in the Helm chart and is tested in CI. Read the [OPA section](#opa) before turning it on: a caller whose roles are not in its role table is refused. |
 | `PAM_SESSION_RISK_GATE` | string | `off` | `off`, `observe` or `enforce` for the PAM session risk score. |
 | `PAM_SESSION_RISK_THRESHOLD` | int | `70` | Score at or above which the gate bites. |
@@ -205,7 +205,10 @@ startup after the upgrade until the value is corrected.
 #### Turning the gates on for an existing install
 
 A fresh install gets assignment enforcement and ABAC in `observe` from its
-generated `.env` or from the Helm chart. An existing install keeps what it has:
+generated `.env` or from the Helm chart. ABAC stays in `observe` until you
+move it: it is not switched to `enforce` by default (decided in
+[#956](https://github.com/mhmtgngr/openidx/issues/956)), so a fresh install
+still takes the last part of step 2. An existing install keeps what it has:
 the compose file falls back to `false` and `off` when `.env` does not set them,
 and a Helm upgrade keeps the value the running release already has. Turn the
 gates on in this order, one at a time:
@@ -220,8 +223,12 @@ gates on in this order, one at a time:
    the people assigned to it, including the administrator who published it.
 2. **ABAC.** Set `ABAC_ENFORCE=observe` for oauth-service, access-service and
    governance-service, or `config.abacEnforce: observe` in Helm. Read the
-   `abac.would_deny` audit events until they name only the people a policy is
-   meant to stop, and then set `enforce`.
+   `access.abac.would_deny` records on the Unified Audit page, or from
+   `GET /api/v1/access/audit/unified?event_type=access.abac.would_deny`. Each
+   names the user, the application and the policy that would have refused
+   them. When they name only the people a policy is meant to stop, set
+   `enforce` the same way and restart those services. From then on a refusal
+   is recorded as `access.abac.denied`.
 3. **OPA.** Not yet; see [#980](https://github.com/mhmtgngr/openidx/issues/980).
 
 With Helm, a render made by `helm template` cannot see the running release, and

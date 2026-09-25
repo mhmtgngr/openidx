@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -349,17 +350,12 @@ func (s *Service) StoreSAMLMetadata(ctx context.Context, spID string, metadataXM
 		return fmt.Errorf("failed to parse SP metadata: %w", err)
 	}
 
-	// Extract ACS URLs
-	var acsURL string
-	if len(spMetadata.SPSSODescriptor.AssertionConsumerServices) > 0 {
-		acsURL = spMetadata.SPSSODescriptor.AssertionConsumerServices[0].Location
-	}
-
-	// Extract certificate if available
-	var certificate string
-	if len(spMetadata.SPSSODescriptor.KeyDescriptors) > 0 {
-		certificate = spMetadata.SPSSODescriptor.KeyDescriptors[0].KeyInfo.X509Data.X509Certificate
-	}
+	// Extract the ACS URL and the certificates. The signing certificate is the
+	// one requests are verified against, so it is taken from a key the
+	// metadata offers for signing -- never from an encryption-only key, which
+	// is what the first KeyDescriptor used to be taken as whatever its use.
+	acsURL := spMetadata.PostACSURL()
+	certificate, encryptionCertificate := spMetadata.Certificates()
 
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -367,7 +363,7 @@ func (s *Service) StoreSAMLMetadata(ctx context.Context, spID string, metadataXM
 	}
 
 	// Update the SP record with the metadata info. This rewrites entity_id, the
-	// ACS URL and the certificate from a document fetched over the network, so
+	// ACS URL and the certificates from a document fetched over the network, so
 	// a bare id here let a refresh triggered in one tenant repoint another
 	// tenant's assertions.
 	_, err = s.db.Pool.Exec(ctx, `
@@ -376,41 +372,122 @@ func (s *Service) StoreSAMLMetadata(ctx context.Context, spID string, metadataXM
 		    acs_url = COALESCE($2, acs_url),
 		    certificate = COALESCE($3, certificate),
 		    metadata_xml = $4,
+		    encryption_certificate = $5,
+		    require_signed_authn_requests = require_signed_authn_requests OR $6,
 		    updated_at = NOW()
-		WHERE id = $5 AND org_id = $6
-	`, spMetadata.EntityID, acsURL, certificate, metadataXML, spID, org.ID)
+		WHERE id = $7 AND org_id = $8
+	`, spMetadata.EntityID, nullIfBlank(acsURL), nullIfBlank(certificate), metadataXML,
+		nullIfBlank(encryptionCertificate), spMetadata.SPSSODescriptor.AuthnRequestsSigned, spID, org.ID)
 
 	return err
 }
 
-// SPMetadata represents a parsed SAML SP Metadata XML structure
+// SPMetadata is a service provider's SAML metadata document, parsed.
+//
+// These types are for PARSING, so their tags name the namespace URI, not a
+// prefix. encoding/xml matches a tag like "md:EntityDescriptor" against the
+// element's local name, which is never "md:EntityDescriptor", so the earlier
+// prefixed tags could not parse any real metadata document: every import by
+// URL or by pasted XML failed with "expected element type
+// <md:EntityDescriptor> but have <EntityDescriptor>". The IdP's own metadata
+// types above keep their prefixes, because they are only ever marshalled.
 type SPMetadata struct {
-	XMLName         xml.Name          `xml:"md:EntityDescriptor"`
-	XMLNS           string            `xml:"xmlns:md,attr"`
-	EntityID        string            `xml:"entityID,attr"`
-	SPSSODescriptor SPSSODescriptor   `xml:"md:SPSSODescriptor"`
-	Organization    *IdPOrganization  `xml:"md:Organization,omitempty"`
-	ContactPerson   *IdPContactPerson `xml:"md:ContactPerson,omitempty"`
+	XMLName         xml.Name        `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntityDescriptor"`
+	EntityID        string          `xml:"entityID,attr"`
+	SPSSODescriptor SPSSODescriptor `xml:"urn:oasis:names:tc:SAML:2.0:metadata SPSSODescriptor"`
 }
 
 // SPSSODescriptor describes the SP's SSO capabilities
 type SPSSODescriptor struct {
-	XMLNS                      string                       `xml:"xmlns:md,attr"`
 	AuthnRequestsSigned        bool                         `xml:"AuthnRequestsSigned,attr"`
 	WantAssertionsSigned       bool                         `xml:"WantAssertionsSigned,attr"`
 	ProtocolSupportEnumeration string                       `xml:"protocolSupportEnumeration,attr"`
-	KeyDescriptors             []IdPKeyDescriptor           `xml:"md:KeyDescriptor"`
-	NameIDFormats              []IdPNameIDFormat            `xml:"md:NameIDFormat"`
-	AssertionConsumerServices  []SPAssertionConsumerService `xml:"md:AssertionConsumerService"`
-	SingleLogoutServices       []IdPSingleLogoutService     `xml:"md:SingleLogoutService,omitempty"`
+	KeyDescriptors             []SPKeyDescriptor            `xml:"urn:oasis:names:tc:SAML:2.0:metadata KeyDescriptor"`
+	NameIDFormats              []string                     `xml:"urn:oasis:names:tc:SAML:2.0:metadata NameIDFormat"`
+	AssertionConsumerServices  []SPAssertionConsumerService `xml:"urn:oasis:names:tc:SAML:2.0:metadata AssertionConsumerService"`
+	SingleLogoutServices       []SPSingleLogoutService      `xml:"urn:oasis:names:tc:SAML:2.0:metadata SingleLogoutService"`
+}
+
+// SPKeyDescriptor is a key in service provider metadata. An empty Use means
+// the key serves both signing and encryption.
+type SPKeyDescriptor struct {
+	Use             string `xml:"use,attr"`
+	X509Certificate string `xml:"http://www.w3.org/2000/09/xmldsig# KeyInfo>X509Data>X509Certificate"`
 }
 
 // SPAssertionConsumerService describes the SP's ACS endpoint
 type SPAssertionConsumerService struct {
-	XMLName  xml.Name `xml:"md:AssertionConsumerService"`
-	Binding  string   `xml:"Binding,attr"`
-	Location string   `xml:"Location,attr"`
-	Index    int      `xml:"index,attr"`
+	Binding  string `xml:"Binding,attr"`
+	Location string `xml:"Location,attr"`
+	Index    int    `xml:"index,attr"`
+}
+
+// SPSingleLogoutService describes the SP's SLO endpoint
+type SPSingleLogoutService struct {
+	Binding  string `xml:"Binding,attr"`
+	Location string `xml:"Location,attr"`
+}
+
+// Certificates returns the service provider's signing and encryption
+// certificates. A KeyDescriptor without use serves both, and one with
+// use="encryption" only encryption; the signing certificate is the one the IdP
+// verifies requests against, so an encryption-only key must never land there.
+// encryption is empty when the service provider publishes no key specifically
+// for encryption, which means "encrypt to the signing certificate".
+func (md *SPMetadata) Certificates() (signing, encryption string) {
+	for _, kd := range md.SPSSODescriptor.KeyDescriptors {
+		cert := strings.Join(strings.Fields(kd.X509Certificate), "")
+		if cert == "" {
+			continue
+		}
+		switch kd.Use {
+		case "signing":
+			if signing == "" {
+				signing = cert
+			}
+		case "encryption":
+			if encryption == "" {
+				encryption = cert
+			}
+		case "":
+			if signing == "" {
+				signing = cert
+			}
+		}
+	}
+	if encryption == signing {
+		encryption = ""
+	}
+	return signing, encryption
+}
+
+// PostACSURL returns the service provider's HTTP-POST AssertionConsumerService
+// (the only binding this IdP answers with), falling back to the first one.
+func (md *SPMetadata) PostACSURL() string {
+	for _, acs := range md.SPSSODescriptor.AssertionConsumerServices {
+		if acs.Binding == SAMLBindingHTTPPost && acs.Location != "" {
+			return acs.Location
+		}
+	}
+	if len(md.SPSSODescriptor.AssertionConsumerServices) > 0 {
+		return md.SPSSODescriptor.AssertionConsumerServices[0].Location
+	}
+	return ""
+}
+
+// RedirectSLOURL returns the service provider's HTTP-Redirect
+// SingleLogoutService (the binding this IdP sends LogoutRequests and
+// LogoutResponses with), falling back to the first one.
+func (md *SPMetadata) RedirectSLOURL() string {
+	for _, slo := range md.SPSSODescriptor.SingleLogoutServices {
+		if slo.Binding == SAMLBindingHTTPRedirect && slo.Location != "" {
+			return slo.Location
+		}
+	}
+	if len(md.SPSSODescriptor.SingleLogoutServices) > 0 {
+		return md.SPSSODescriptor.SingleLogoutServices[0].Location
+	}
+	return ""
 }
 
 // FetchSAMLMetadata fetches and parses metadata from a remote URL

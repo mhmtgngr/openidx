@@ -80,4 +80,5 @@ site — the ones most worth reading:
 - [How network access works](https://github.com/mhmtgngr/openidx/blob/main/docs/how-network-access-works.md) — UI concepts mapped to Ziti objects, with a diagnostic chain
 - [Security & tenancy trust boundary](https://github.com/mhmtgngr/openidx/blob/main/docs/SECURITY-TENANCY.md) — the FORCE row-level-security model
 - [Production hardening checklist](https://github.com/mhmtgngr/openidx/blob/main/docs/SECURITY-HARDENING.md) — grounded in the startup validator
-- [Project readiness guide](https://github.com/mhmtgngr/openidx/blob/main/docs/PROJECT-READINESS-GUIDE.md) — the honest state of the platform, next steps, and recurring controls
+- [Feature maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity) — each feature's level (GA, Beta or Experimental), the reason and the evidence
+- [Roadmap](https://github.com/mhmtgngr/openidx/blob/main/ROADMAP.md) — priorities, milestones, and what is on hold; the recurring controls are in the [operator guide](../deployment/operator-guide.md#11-the-recurring-controls)

@@ -110,55 +110,57 @@ func TestInit_Disabled(t *testing.T) {
 	assert.NoError(t, err, "No-op shutdown should not error")
 }
 
-// TestInit_Enabled verifies tracer initialization with OTLP exporter
+// TestInit_Enabled verifies that enabled tracing initialises. The OTLP gRPC
+// client connects lazily, so an endpoint nothing listens on is not an error
+// here; an error means tracing is off in every service that calls Init, which
+// only logs a warning and carries on. This test used to accept a "Schema URL"
+// error as a normal outcome, and that is exactly how every service ran
+// untraced without anything noticing.
 func TestInit_Enabled(t *testing.T) {
 	log := zaptest.NewLogger(t)
 	ctx := context.Background()
 
-	// This test uses a real OTLP exporter which will fail to connect,
-	// but we can still test the initialization logic
+	prev := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+
 	cfg := Config{
 		Enabled:     true,
-		Endpoint:    "localhost:9999", // Non-existent endpoint
+		Endpoint:    "localhost:9999", // nothing listens here
 		ServiceName: "test-service",
 		Environment: "test",
 		SampleRate:  1.0,
 	}
 
-	// Note: This will fail because there's no OTLP collector running
-	// or because of resource schema conflicts in test environment
 	shutdown, err := Init(ctx, cfg, log)
+	require.NoError(t, err, "enabled tracing must initialise")
+	require.NotNil(t, shutdown)
 
-	// With a non-existent endpoint, we expect an error
-	// Common errors: OTLP connection failure or resource schema conflicts
-	if err != nil {
-		errMsg := err.Error()
-		// Accept various error types that can occur in test environment
-		hasOTLPError := containsString(errMsg, "failed to create OTLP") ||
-			containsString(errMsg, "connection")
-		hasResourceError := containsString(errMsg, "Schema URL") ||
-			containsString(errMsg, "resource")
+	_, isSDK := otel.GetTracerProvider().(*sdktrace.TracerProvider)
+	assert.True(t, isSDK, "Init must install the SDK tracer provider, not leave the no-op one")
 
-		assert.True(t, hasOTLPError || hasResourceError,
-			"Expected OTLP or resource error, got: %s", errMsg)
-	} else {
-		assert.NotNil(t, shutdown)
-	}
+	shutdownCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_ = shutdown(shutdownCtx) // nothing was recorded, so nothing to flush
 }
 
-// Helper function to check if string contains substring (case-insensitive)
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr ||
-		len(s) > len(substr) && containsSubstringHelper(s, substr))
-}
+// TestNewResource_NamesTheService checks what the tracing backend is told:
+// the service and environment, on top of the SDK's own default attributes.
+func TestNewResource_NamesTheService(t *testing.T) {
+	res, err := newResource(Config{ServiceName: "oauth-service", Environment: "development"})
+	require.NoError(t, err)
 
-func containsSubstringHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+	attrs := res.Set()
+	name, ok := attrs.Value("service.name")
+	require.True(t, ok, "service.name must be set")
+	assert.Equal(t, "oauth-service", name.AsString())
+
+	env, ok := attrs.Value("deployment.environment")
+	require.True(t, ok, "deployment.environment must be set")
+	assert.Equal(t, "development", env.AsString())
+
+	lang, ok := attrs.Value("telemetry.sdk.language")
+	require.True(t, ok, "the SDK's default attributes must still be merged in")
+	assert.Equal(t, "go", lang.AsString())
 }
 
 // TestConfigFromEnv verifies configuration loading from environment variables

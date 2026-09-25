@@ -28,7 +28,9 @@ The new implementation provides:
 - **Error Handling**: Structured error responses with proper HTTP status codes
 - **Enhanced Logging**: Structured logging with audit trails and performance tracking
 
-All features are production-ready with comprehensive test coverage.
+Each helper has unit tests next to it; see [Testing](#testing). How mature
+each product feature is, and why, is in the
+[README's maturity matrix](README.md#feature-maturity).
 
 ---
 
@@ -937,5 +939,3 @@ All code includes:
 - ✅ Benchmark tests
 - ✅ Usage examples
 - ✅ Complete documentation
-
-Start using these features in your services today for production-ready code!

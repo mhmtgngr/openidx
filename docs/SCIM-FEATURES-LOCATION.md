@@ -280,7 +280,7 @@ Searching by name prefix (`name.givenName sw "John"`) is **not** supported:
 ✅ **Seamless Integration:** SCIM users appear in the UI just like regular users
 ✅ **Bi-Directional Sync:** Changes in UI propagate to SCIM, changes via SCIM API appear in UI
 ✅ **No Separate Interface:** SCIM features are integrated into existing Users/Groups pages
-✅ **Standards Compliant:** Full SCIM 2.0 RFC compliance (RFC 7643, 7644)
+✅ **Standards:** Implements SCIM 2.0 (RFC 7643, 7644). No compliance test has been run yet ([#955](https://github.com/mhmtgngr/openidx/issues/955))
 
 ## Where to Find More Information
 

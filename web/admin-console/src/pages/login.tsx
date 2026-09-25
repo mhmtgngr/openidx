@@ -43,6 +43,16 @@ interface EnrollmentDue {
   overdue?: boolean
 }
 
+// linkErrors maps the reasons a sign-in link is sent back to this page with
+// (handleMagicLinkVerify) to what the page says.
+const linkErrors: Record<string, string> = {
+  mfa_required: 'login.errors.linkNeedsSecondFactor',
+  mfa_enrollment_required: 'login.errors.linkNeedsEnrollment',
+  high_risk_login: 'login.errors.linkRefusedRisk',
+  invalid_magic_link: 'login.errors.linkInvalid',
+  session_expired: 'login.errors.linkSessionExpired',
+}
+
 // AuthResult is the completion shape shared by every authentication path.
 interface AuthResult {
   redirect_url?: string
@@ -276,11 +286,19 @@ export function LoginPage() {
     if (fromUrl && urlParams.get('resume') === '1') {
       setResumeHint(true)
     }
-    if (fromUrl) {
-      // Clear the URL parameter without reloading (value now lives in storage).
+    // A sign-in link (GET /oauth/magic-link-verify) comes back here when it
+    // cannot finish the sign-in, and says why in ?error=.
+    const linkError = linkErrors[urlParams.get('error') ?? '']
+    if (linkError) {
+      setError(t(linkError))
+    }
+    if (fromUrl || linkError) {
+      // Clear the URL parameters without reloading (the session now lives in storage).
       window.history.replaceState({}, '', '/login')
     }
-  }, [])
+    // t is stable for a language; a switch re-runs this on a URL already
+    // cleared, which only re-reads the stored login_session.
+  }, [t])
 
   // If already authenticated, redirect to dashboard — UNLESS there is a pending
   // OIDC authorization (login_session). The server's /oauth/authorize always

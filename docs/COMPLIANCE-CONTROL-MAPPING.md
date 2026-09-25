@@ -14,9 +14,9 @@
 >
 > Companions: [THREAT-MODEL.md](./THREAT-MODEL.md) (why these mechanisms
 > exist), [SECURITY-HARDENING.md](./SECURITY-HARDENING.md) (the enforced
-> production gates), [PROJECT-READINESS-GUIDE.md §5](./PROJECT-READINESS-GUIDE.md)
-> (the recurring control checklists that *generate* much of the evidence
-> below).
+> production gates), and the recurring control checklists in
+> [`docs/evidence/`](https://github.com/mhmtgngr/openidx/tree/main/docs/evidence)
+> that *generate* much of the evidence below.
 
 ## Two lenses
 
@@ -28,9 +28,9 @@
    would ask about.
 
 Evidence pointer conventions: `code:` a path in this repo; `ops:` a
-recurring checklist item in the readiness guide §5 (run it, keep the
-output — that output is the audit evidence); `doc:` a document; `ci:` a
-workflow under `.github/workflows/`.
+recurring checklist item in `docs/evidence/` (run it, keep the output —
+that output is the audit evidence); `doc:` a document; `ci:` a workflow
+under `.github/workflows/`.
 
 ---
 
@@ -108,14 +108,14 @@ vendor questionnaire about OpenIDX as a supplier:
 | Tenant boundary regression | `tools/orgscope` linter — any tenant-table query without an org predicate fails the build | Blocking | ci: Required Checks |
 | Tests | Unit + integration (`test-integration`) + race detector across ~130 test files, testcontainers for real Postgres | Blocking | ci: `ci.yml` |
 | Reviewability | All changes via PR against Required Checks; audit-relevant fixes land with tests that pin the behavior (e.g. revocation markers, step-up window, default-admin gate) | Blocking | repo history |
-| Build provenance | Images built in CI with provenance + SBOM attestation; **binary signing is roadmap** (readiness guide P3) | Partial | ci: `docker.yml`, `release.yml` |
-| Vulnerability disclosure | Security policy with response SLAs, safe harbor, bounty | — | doc: `SECURITY.md` |
+| Build provenance | Images built in CI with provenance + SBOM attestation; the release checksums and the Helm chart are signed with keyless cosign; **the images are not signed yet** ([#960](https://github.com/mhmtgngr/openidx/issues/960)) | Partial | ci: `docker.yml`, `release.yml` |
+| Vulnerability disclosure | Security policy: private reporting through GitHub, coordinated disclosure, safe harbor; an aim to acknowledge within 7 days, no SLA and no bounty | — | doc: `SECURITY.md` |
 
 ---
 
 ## 4. Producing evidence for an audit
 
-The readiness guide §5 checklists are designed to *be* the evidence
+The checklists in `docs/evidence/` are designed to *be* the evidence
 generator. For an audit period:
 
 1. Run §5.1 (release gates) per release and archive the CI run links.
@@ -130,7 +130,7 @@ generator. For an audit period:
 
 Re-verify a row whenever the capability behind it changes; the
 [THREAT-MODEL.md](./THREAT-MODEL.md) change-triggers (§6) apply here too.
-A row whose evidence pointer dangles is a defect — same contract as the
-readiness guide §7. When OpenIDX gains a capability that upgrades a
+A row whose evidence pointer dangles is a defect. When OpenIDX gains a
+capability that upgrades a
 **Shared**/**Configurable** row to **Provided** (e.g. signed binaries), flip
 the row in the same PR.

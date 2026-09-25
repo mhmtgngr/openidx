@@ -10,7 +10,7 @@
 
 ✅ **Single Sign-On (SSO)** - Users log in once and access all connected applications
 ✅ **Secure Delegation** - Apps access resources without exposing passwords
-✅ **Standard Protocol** - Works with any OAuth 2.0/OIDC compliant application
+✅ **Standard Protocol** - OAuth 2.0 and OIDC, so standard client libraries can integrate; interoperability has not yet been verified by a conformance run ([#958](https://github.com/mhmtgngr/openidx/issues/958))
 ✅ **Identity Provider** - Become the central authentication authority
 ✅ **Cost Savings** - Replace Auth0, Okta, or Azure AD with OpenIDX
 
@@ -36,6 +36,14 @@ Allow partners and vendors to access your systems securely:
 
 ### 5. Single Sign-On with External Providers
 Enable users to sign in with their existing accounts from other identity providers (IdPs).
+
+> **Experimental.** Google, GitHub and Microsoft sign-in call those providers'
+> fixed endpoints. Any other OIDC provider is called at Keycloak's endpoint
+> paths (`<issuer>/protocol/openid-connect/...`), not through discovery, so a
+> provider that does not serve those paths does not work. A SAML provider can
+> be configured, but OpenIDX is not a SAML service provider, and nothing signs
+> a user in through it. The sign-in round trip has no automated test. See the
+> [maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity).
 
 **Use Case:**
 - Allow users to "Login with Google"
@@ -950,15 +958,184 @@ export LOG_LEVEL=debug
 | Custom Branding | ✅ | ✅ | ✅ | Limited |
 | Unlimited Clients | ✅ | Limited | Limited | Limited |
 
-## Standards Compliance
+## Standards implemented
 
-OpenIDX OAuth/OIDC implements:
-- ✅ [RFC 6749](https://tools.ietf.org/html/rfc6749) - OAuth 2.0 Framework
-- ✅ [RFC 7636](https://tools.ietf.org/html/rfc7636) - PKCE
-- ✅ [RFC 7519](https://tools.ietf.org/html/rfc7519) - JSON Web Token (JWT)
-- ✅ [RFC 7517](https://tools.ietf.org/html/rfc7517) - JSON Web Key (JWK)
-- ✅ [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
-- ✅ [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
+OpenIDX OAuth/OIDC implements these specifications. It has not yet been run
+against the OpenID Foundation conformance suite
+([#958](https://github.com/mhmtgngr/openidx/issues/958)), so it claims no
+conformance to them; the
+[maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity) has
+the current level.
+
+- [RFC 6749](https://tools.ietf.org/html/rfc6749) - OAuth 2.0 Framework
+- [RFC 7636](https://tools.ietf.org/html/rfc7636) - PKCE
+- [RFC 7519](https://tools.ietf.org/html/rfc7519) - JSON Web Token (JWT)
+- [RFC 7517](https://tools.ietf.org/html/rfc7517) - JSON Web Key (JWK)
+- [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
+- [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
+
+The list above names the specifications the code implements. How closely it
+follows them is measured by the conformance run below.
+
+## Conformance testing (OpenID Foundation suite)
+
+`.github/workflows/oidc-conformance.yml` runs the OpenID Foundation's
+conformance suite against an OpenIDX stack started in CI, every night and on
+demand (issue #958). The suite is the open-source, self-hosted one at
+gitlab.com/openid/conformance-suite, pinned to one release in
+`test/conformance/suite.env` (its images by digest in
+`test/conformance/compose.yml`, its runner scripts by commit).
+
+### Profiles
+
+| Profile | Suite test plan | Variants | Result |
+|---------|-----------------|----------|--------|
+| Basic OP | `oidcc-basic-certification-test-plan` | discovery, static client | Not yet run |
+| Config OP | `oidcc-config-certification-test-plan` | discovery, static client | Not yet run |
+| RP-Initiated Logout OP | `oidcc-rp-initiated-logout-certification-test-plan` | `response_type=code`, static client | Not yet run |
+| Back-Channel Logout OP | `oidcc-backchannel-rp-initiated-logout-certification-test-plan` | `response_type=code`, static client | Not yet run |
+
+"Not yet run" means no nightly run has reported yet; this table is updated
+from the first one. The plan list is `test/conformance/plans.txt`.
+
+Other profiles are not run: Implicit, Hybrid and Form Post (OpenIDX
+implements only `response_type=code`), Dynamic OP (dynamic registration is
+off unless an operator enables it), Front-Channel Logout, Session Management,
+3rd Party-Initiated Login and FAPI 2.0. A profile is added when a customer
+needs it, together with whatever OpenIDX must implement for it.
+
+Formal OpenID certification (the Foundation's paid, published
+self-certification) is an owner decision and has not been taken. Nothing here
+claims certification.
+
+### How the run is set up
+
+- **The stack.** Postgres and Redis as service containers, the eight services
+  built with `go build` and started as processes, as in `ci.yml`'s smoke job.
+  `APP_ENV=development`, like the smoke job.
+- **HTTPS.** The suite requires every endpoint in the discovery document to be
+  https, so the issuer is `https://op.openidx.test`, served by an nginx front
+  (`test/conformance/edge/nginx.conf`) that proxies to oauth-service. Each run
+  makes a throwaway CA and one certificate for the front and for the suite
+  (`test/conformance/gen-certs.sh`); oauth-service trusts that CA so it can
+  deliver back-channel logout tokens to the suite.
+- **The login page.** The suite drives logins with HtmlUnit, which does not
+  run the admin console's ES module bundle. The front therefore serves
+  `test/conformance/edge/login.html` at `/login`: a page that makes the calls
+  the console's login page makes (`/oauth/login`, `/oauth/login/resume`,
+  `/oauth/consent`) and follows the redirect they answer with. The protocol
+  endpoints under test are OpenIDX's own; the login UI itself is not tested
+  by this run.
+- **Clients and users.** `test/conformance/setup_openidx.py` signs in as the
+  seeded first-run administrator and, through the admin APIs, creates one end
+  user per plan (the logout plans end every session of their user) and the
+  static clients each plan needs, with the redirect, post-logout and
+  back-channel URIs the suite expects. Passwords and client secrets are
+  generated per run, masked in the job log and removed from the uploaded
+  results (`test/conformance/redact.py`).
+- **Running and reporting.** `test/conformance/run-plans.sh` runs the plans,
+  one module at a time, through the suite's own runner, `run-test-plan.py` in its scripts directory;
+  its exit code decides whether the job is red. `test/conformance/summarize.py`
+  writes the per-module table to the run's summary, and the results and logs
+  are uploaded as the `oidc-conformance-results` artifact. On `main`, a failing
+  run opens or updates one issue titled "OIDC conformance: the nightly run is
+  failing", and the first passing run closes it.
+
+### Waivers
+
+A failure, warning or skip passes the run only when a dated entry in
+`test/conformance/waivers/expected-failures.json` or
+`test/conformance/waivers/expected-skips.json` covers it. The files use the
+suite runner's own format plus two fields: `waived-on` (the date) and
+`tracking` (the issue that owns the exception). An entry that no longer
+matches anything fails the run too, so the list cannot go stale quietly.
+
+| Waived | Module | Kind | Reason |
+|--------|--------|------|--------|
+| 2026-09-24 | `oidcc-scope-address` | skip | OpenIDX does not offer the `address` scope; it is not in `scopes_supported`, so the suite skips the module. |
+| 2026-09-24 | `oidcc-scope-phone` | skip | The same, for the `phone` scope. |
+| 2026-09-24 | `oidcc-scope-all` | skip | Asks for `address` and `phone` among others. |
+
+No failure or warning is waived. Each deviation below is either fixed or
+waived by a later, dated change.
+
+### Known deviations
+
+These come from reading the code and from rehearsals of the four plans on
+2026-09-24 and 2026-09-25, run outside CI with the pinned suite release. No
+nightly run has confirmed them yet.
+
+Fixed in #1006, which the first nightly needs; before it, each failed a module:
+
+- **The authorization endpoint accepts POST.** OpenID Connect Core §3.1.2.1
+  requires GET and POST; a form-encoded `POST /oauth/authorize` is now handled
+  like the same GET (`oidcc-ensure-post-request-succeeds`).
+- **The `request` parameter is refused, not ignored.** OpenIDX does not support
+  request objects: discovery says `request_parameter_supported: false`, and a
+  `request` or `request_uri` is answered with `request_not_supported` /
+  `request_uri_not_supported` at the redirect URI. The module then skips, which
+  the profile allows, and `expected-skips.json` waives it
+  (`oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported`).
+- **Token responses carry `Cache-Control: no-store`**, as RFC 6749 §5.1
+  requires of every response that contains a token (`oidcc-refresh-token`).
+
+Expected to raise a warning:
+
+- ID tokens carry `roles`, `groups` and `permissions` whatever the scope, and
+  `email` and `email_verified` when `email` is granted (`oidcc-server`,
+  `oidcc-scope-email`, `oidcc-alternate-happy-flow`). The first is a recorded
+  design choice (see "What a scope actually buys").
+- The `profile` scope returns `name`, `given_name`, `family_name` and
+  `preferred_username`, not the other standard profile claims
+  (`oidcc-scope-profile`).
+- The `claims` request parameter is ignored (`oidcc-claims-essential`), and no
+  `acr` claim is returned when `acr_values` is sent
+  (`oidcc-ensure-request-with-acr-values-succeeds`).
+- UserInfo accepts the access token only in the `Authorization` header
+  (`oidcc-userinfo-post-body`).
+- An access token issued for a code is not revoked when the code is replayed
+  (`oidcc-codereuse-30seconds`; RFC 6749 says SHOULD).
+
+Found by the first rehearsal and fixed in #1006: a logout that names the user
+(an `id_token_hint`) revoked every access token of that user minted up to and
+including the second of the logout, because `internal/revocation` compared
+whole seconds. The suite starts the next module inside that second, so its
+first token was refused at UserInfo, and a person who signed out and back in
+within one second met the same refusal. The cutoff is now precise to the
+microsecond, and the logout plans no longer wait before signing in.
+
+Modules that end with a screenshot for a human to review (for example the
+error page for an unregistered `redirect_uri`, or the logged-out page) pass
+the run; the screenshot is in the exported logs.
+
+### Running it locally
+
+Needs Docker with Compose, Go and Python 3, and ports 443 and 8443 free on
+127.0.0.1.
+
+1. Map the two host names to this machine:
+   `echo "127.0.0.1 op.openidx.test localhost.emobix.co.uk" | sudo tee -a /etc/hosts`.
+2. Make the TLS material:
+   `bash test/conformance/gen-certs.sh /tmp/conformance-tls`.
+3. Start Postgres and Redis, migrate, and start the services with the
+   environment of the `conformance` job in the workflow, including
+   `SSL_CERT_FILE=/tmp/conformance-tls/ca-bundle.pem`.
+4. Start the suite and the front:
+   `CONFORMANCE_TLS_DIR=/tmp/conformance-tls docker compose -f test/conformance/compose.yml up -d`.
+   The suite's UI is then at `https://localhost.emobix.co.uk:8443`.
+5. Clone the suite at the tag and commit in `test/conformance/suite.env`, and
+   install `test/conformance/requirements.txt` into a virtualenv.
+6. `python3 test/conformance/setup_openidx.py --out /tmp/conformance-plans`
+7. `PYTHON=<virtualenv>/bin/python bash test/conformance/run-plans.sh <suite clone> /tmp/conformance-plans /tmp/conformance-results`
+8. `python3 test/conformance/summarize.py --out /tmp/conformance-results --cafile /tmp/conformance-tls/ca.crt`
+
+To run one module, pass the runner a plan with a module list, for example
+`oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]:oidcc-server`.
+
+To move to a new suite release, change the tag and commit in `suite.env` and
+both image references in `compose.yml` in one change; the workflow refuses a
+mismatch. A new release can add or tighten checks, so read its notes before
+reading a changed result as a change in OpenIDX.
 
 ---
 

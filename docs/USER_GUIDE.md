@@ -575,6 +575,6 @@ docker ps --format "table {{.Names}}\t{{.Status}}"
 
 ## Support
 
-- GitHub Issues: https://github.com/openidx/openidx/issues
-- Documentation: https://docs.openidx.io
+- GitHub Issues: https://github.com/mhmtgngr/openidx/issues
+- Documentation: https://mhmtgngr.github.io/openidx
 

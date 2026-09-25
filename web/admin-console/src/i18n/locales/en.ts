@@ -477,6 +477,13 @@ const en = {
       qrCreateFailed: 'Failed to create QR login session.',
       qrExpired: 'QR session expired. Please try again.',
       consentFailed: 'Your decision could not be recorded. Please sign in again.',
+      linkNeedsSecondFactor:
+        'Your account needs a second factor, and a sign-in link cannot ask for one. Sign in with your password.',
+      linkNeedsEnrollment:
+        'Your organization requires a sign-in method you have not added, and the time to add one has passed. Sign in with your password and a bypass code from an administrator.',
+      linkRefusedRisk: 'This sign-in link cannot be used from here. Sign in with your password.',
+      linkInvalid: 'This sign-in link is invalid, expired or already used. Request a new one.',
+      linkSessionExpired: 'This sign-in request has expired. Start again from the application.',
     },
     resume: {
       checking: 'Checking your existing session…',

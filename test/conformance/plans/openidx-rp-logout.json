@@ -1,0 +1,70 @@
+{
+  "alias": "openidx-rp-logout",
+  "description": "OpenIDX nightly: RP-Initiated Logout OP, static client",
+  "server": {
+    "discoveryUrl": "@@OP_ISSUER@@/.well-known/openid-configuration"
+  },
+  "client": {
+    "client_id": "@@CLIENT_ID@@",
+    "client_secret": "@@CLIENT_SECRET@@"
+  },
+  "options": {
+    "browsercontrol_css_enable": false
+  },
+  "browser": [
+    {
+      "comment": "Every authorization request: sign in on the test login page, or approve consent when OpenIDX resumes an existing browser session, then wait for the suite's callback page. The sign-in waits for #ready, which the page adds once it has loaded (see login.html).",
+      "match": "@@OP_ISSUER@@/oauth/authorize*",
+      "tasks": [
+        {
+          "task": "Approve consent (session resumed)",
+          "optional": true,
+          "match": "@@OP_ISSUER@@/login?*resume=1*",
+          "commands": [
+            ["wait", "id", "approve", 10],
+            ["click", "id", "approve"],
+            ["wait", "contains", "@@SUITE_URL@@/test/a/", 10]
+          ]
+        },
+        {
+          "task": "Login",
+          "optional": true,
+          "match": "@@OP_ISSUER@@/login?*",
+          "commands": [
+            ["wait", "id", "ready", 10],
+            ["text", "id", "username", "@@USERNAME@@"],
+            ["text", "id", "password", "@@PASSWORD@@"],
+            ["click", "id", "signin"],
+            ["wait", "contains", "@@SUITE_URL@@/test/a/", 15]
+          ]
+        },
+        {
+          "task": "Verify Complete",
+          "match": "@@SUITE_URL@@/test/a/*/callback*",
+          "commands": [
+            ["wait", "id", "submission_complete", 10]
+          ]
+        }
+      ]
+    },
+    {
+      "comment": "Every visit to the end_session_endpoint. OpenIDX either redirects to the registered post_logout_redirect_uri, or answers in place: 400 invalid_request for a request it will not redirect, 200 {\"status\":\"logged_out\"} for one with nowhere to go. The in-place answer fills the screenshot placeholder the negative modules create; the suite itself fails any module OpenIDX redirects when it must not.",
+      "match": "@@OP_ISSUER@@/oauth/logout*",
+      "tasks": [
+        {
+          "task": "Error or logged-out page",
+          "optional": true,
+          "match": "@@OP_ISSUER@@/oauth/logout*",
+          "commands": [
+            ["wait", "xpath", "//*", 10, "invalid_request|logged_out", "update-image-placeholder-optional"]
+          ]
+        },
+        {
+          "task": "Verify Complete",
+          "optional": true,
+          "match": "@@SUITE_URL@@/test/a/*/post_logout_redirect*"
+        }
+      ]
+    }
+  ]
+}
