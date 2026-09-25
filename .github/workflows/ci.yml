@@ -1171,6 +1171,8 @@ jobs:
       skip_ci: ${{ steps.changes.outputs.skip_ci }}
       go_changed: ${{ steps.changes.outputs.go_changed }}
       frontend_changed: ${{ steps.changes.outputs.frontend_changed }}
+      lite_changed: ${{ steps.changes.outputs.lite_changed }}
+      lite_files_changed: ${{ steps.changes.outputs.lite_files_changed }}
     steps:
       # fetch-depth: 0 is REQUIRED — the change detection below diffs two
       # arbitrary commits, and the default shallow (depth-1) checkout
@@ -1201,6 +1203,8 @@ jobs:
             echo "skip_ci=false" >> "$GITHUB_OUTPUT"
             echo "go_changed=true" >> "$GITHUB_OUTPUT"
             echo "frontend_changed=true" >> "$GITHUB_OUTPUT"
+            echo "lite_changed=true" >> "$GITHUB_OUTPUT"
+            echo "lite_files_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -1228,6 +1232,22 @@ jobs:
             echo "frontend_changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # The files that make up the lite install itself: its compose file
+          # and the configs, scripts and images it uses, and this workflow.
+          LITE_FILES='^deployments/docker/|^deployments/ci/lite/|^scripts/(lite-|generate-secrets\.sh|ci-retry\.sh)|^\.github/workflows/ci\.yml$'
+          if echo "$CHANGED_FILES" | grep -qE "$LITE_FILES"; then
+            echo "lite_files_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "lite_files_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          # ...and anything the lite install runs: those files, the Go code
+          # and the console.
+          if echo "$CHANGED_FILES" | grep -qE "$LITE_FILES"'|\.(go|mod|sum)$|^web/'; then
+            echo "lite_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "lite_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
   # Build matrix for different Go versions
@@ -2902,6 +2922,216 @@ jobs:
             echo "::group::$f"; tail -60 "$f"; echo "::endgroup::"
           done
 
+  # The lite install (#961): the README's quick start, run for real.
+  #
+  # deployments/docker/docker-compose.lite.yml is where the README now sends a
+  # new operator: PostgreSQL, Redis, the seven services the console calls and
+  # the console, in about 2 GiB of container limits. Nothing in CI had ever run
+  # `compose up`, so this job does. Then it signs in the way the console does
+  # and checks what the README promises (scripts/lite-smoke.sh): the seeded
+  # password is gone, the API is same-origin, every service refuses an
+  # anonymous caller, only the console's port is published beyond 127.0.0.1,
+  # and every container has a memory limit inside the budget.
+  #
+  # IMAGES. The lite file pins the published release images, which hold the
+  # last release's code. A pull request has to be tested on its own code, so
+  # scripts/lite-ci-images.sh builds every image the file names from this
+  # checkout and OPENIDX_IMAGE_REGISTRY/OPENIDX_VERSION point the file at
+  # them. Everything else -- the compose file, scripts/lite-up.sh, the console's
+  # edge config -- is exactly what a user runs. What this cannot show is that
+  # the pinned release's images exist and pull: that is docker.yml's
+  # release-tag job, and the manual 4 GB check in docs/GETTING-STARTED.md.
+  #
+  # MEMORY. The runner has more memory than the 4 GB the install is sized for,
+  # so the budget is checked on the containers' limits, which the kernel
+  # enforces, and `docker stats` prints what each container actually used.
+  lite-install:
+    name: The lite install comes up and signs in
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.lite_changed == 'true'
+    timeout-minutes: 40
+    env:
+      OPENIDX_IMAGE_REGISTRY: openidx-ci
+      OPENIDX_VERSION: ci
+      OPENIDX_ADMIN_PASSWORD_FILE: /tmp/lite-admin-password
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build the lite images from this commit
+        run: bash scripts/lite-ci-images.sh "$OPENIDX_IMAGE_REGISTRY" "$OPENIDX_VERSION"
+
+      - name: First run, as the README has it
+        run: |
+          set -euo pipefail
+          start=$SECONDS
+          ./scripts/lite-up.sh | tee /tmp/lite-up-1.log
+          echo "lite-up.sh took $((SECONDS - start))s"
+          test -s "$OPENIDX_ADMIN_PASSWORD_FILE"
+          grep -q "Password  written to $OPENIDX_ADMIN_PASSWORD_FILE" /tmp/lite-up-1.log
+
+      # Every secret in .env and the admin password: no 8-character prefix of
+      # any of them may appear in what lite-up.sh printed. generate-secrets.sh
+      # prints such prefixes itself, which is why lite-up.sh silences it.
+      - name: The first run printed no secret
+        run: |
+          set -euo pipefail
+          leaked=0
+          while IFS='=' read -r key value; do
+            case "$key" in *PASSWORD*|*SECRET*|*_KEY|*PWD) ;; *) continue ;; esac
+            [ "${#value}" -ge 8 ] || continue
+            if grep -qF -- "${value:0:8}" /tmp/lite-up-1.log; then
+              echo "::error::lite-up.sh printed part of $key"
+              leaked=1
+            fi
+          done < .env
+          if grep -qF -- "$(cut -c1-8 "$OPENIDX_ADMIN_PASSWORD_FILE")" /tmp/lite-up-1.log; then
+            echo "::error::lite-up.sh printed the admin password although OPENIDX_ADMIN_PASSWORD_FILE was set"
+            leaked=1
+          fi
+          exit "$leaked"
+
+      - name: Sign in the console's way, and check the promises
+        run: bash scripts/lite-smoke.sh
+
+      - name: A second run keeps the secrets and the admin password
+        run: |
+          set -euo pipefail
+          sha256sum .env > /tmp/env.sha256
+          cp "$OPENIDX_ADMIN_PASSWORD_FILE" /tmp/lite-admin-password.first
+          ./scripts/lite-up.sh | tee /tmp/lite-up-2.log
+          sha256sum -c /tmp/env.sha256
+          cmp "$OPENIDX_ADMIN_PASSWORD_FILE" /tmp/lite-admin-password.first
+          grep -q 'the one set on an earlier run' /tmp/lite-up-2.log
+          bash scripts/lite-smoke.sh
+
+      # The case of a VM reached by its address: the redirect URI the seed job
+      # registers, and tokens issued for that origin.
+      - name: A console reached at another address signs in after --url
+        run: |
+          set -euo pipefail
+          ./scripts/lite-up.sh --url http://127.0.0.1:3000 | tee /tmp/lite-up-3.log
+          bash scripts/lite-smoke.sh http://127.0.0.1:3000
+
+      - name: Container state and logs
+        if: always()
+        run: |
+          docker compose -f deployments/docker/docker-compose.lite.yml ps -a || true
+          docker compose -f deployments/docker/docker-compose.lite.yml logs --no-color --tail 80 || true
+
+  # The lite install's optional components, switched on one at a time with the
+  # command the docs give (lite-up.sh --with <profile>), each checked for the
+  # thing it is for, and then all switched off again.
+  #
+  # status-check: informational — the profiles pull about 3 GB of third-party images (Elasticsearch, Guacamole, OpenZiti, Prometheus, Grafana, Loki, Jaeger) and wait on their start-up; a red run says a profile needs work and must not block a merge of the core install
+  lite-profiles:
+    name: The lite install's optional components start
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.lite_files_changed == 'true'
+    timeout-minutes: 50
+    env:
+      OPENIDX_IMAGE_REGISTRY: openidx-ci
+      OPENIDX_VERSION: ci
+      OPENIDX_ADMIN_PASSWORD_FILE: /tmp/lite-admin-password
+      LITE_SMOKE_TOKEN_OUT: /tmp/lite-admin-token
+      COMPOSE_LITE: deployments/docker/docker-compose.lite.yml
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build the lite images from this commit
+        run: bash scripts/lite-ci-images.sh "$OPENIDX_IMAGE_REGISTRY" "$OPENIDX_VERSION"
+
+      - name: The core install
+        run: ./scripts/lite-up.sh
+
+      - name: elasticsearch -- audit search is backed by it
+        env:
+          LITE_BUDGET_MIB: "3328"
+        run: |
+          set -euo pipefail
+          ./scripts/lite-up.sh --with elasticsearch
+          bash scripts/lite-smoke.sh
+          curl -fsS http://127.0.0.1:8004/health | jq -e '.components.elasticsearch.status == "up"'
+
+      - name: guacamole -- served through the console, and only with the generated admin password
+        env:
+          LITE_BUDGET_MIB: "4096"
+        run: |
+          set -euo pipefail
+          ./scripts/lite-up.sh --with guacamole
+          bash scripts/lite-smoke.sh
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/guacamole/)"
+          [ "$code" = "200" ] || { echo "::error::/guacamole/ through the console answered $code"; exit 1; }
+          token_status() {
+            curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3000/guacamole/api/tokens \
+              --data-urlencode username=guacadmin --data-urlencode "password=$1"
+          }
+          [ "$(token_status guacadmin)" != "200" ] || { echo "::error::guacadmin/guacadmin still signs in"; exit 1; }
+          pw="$(sed -n 's/^GUACAMOLE_ADMIN_PASSWORD=//p' .env)"
+          [ "$(token_status "$pw")" = "200" ] || { echo "::error::guacadmin does not sign in with GUACAMOLE_ADMIN_PASSWORD"; exit 1; }
+
+      - name: ziti -- access-service reaches the controller
+        env:
+          LITE_BUDGET_MIB: "4480"
+        run: |
+          set -euo pipefail
+          ./scripts/lite-up.sh --with ziti
+          bash scripts/lite-smoke.sh
+          curl -fsS -H "Authorization: Bearer $(cat "$LITE_SMOKE_TOKEN_OUT")" \
+            http://127.0.0.1:3000/api/v1/access/ziti/status \
+            | jq -e '.enabled == true and .controller_reachable == true'
+
+      - name: observability -- every service is scraped and traced
+        env:
+          LITE_BUDGET_MIB: "5696"
+        run: |
+          set -euo pipefail
+          ./scripts/lite-up.sh --with observability
+          bash scripts/lite-smoke.sh
+          curl -fsS http://127.0.0.1:3001/api/health | jq -e '.database == "ok"'
+          # The first scrape and the first trace batch take a few seconds.
+          down=unknown
+          traced=false
+          for _ in $(seq 1 24); do
+            down="$(curl -fsS http://127.0.0.1:9090/api/v1/targets | jq '[.data.activeTargets[] | select(.health != "up")] | length' || echo unknown)"
+            traced="$(curl -fsS http://127.0.0.1:16686/api/services | jq '(.data // []) | any(. == "oauth-service")' || echo false)"
+            if [ "$down" = "0" ] && [ "$traced" = "true" ]; then
+              break
+            fi
+            sleep 5
+          done
+          echo "scrape targets not up: $down; oauth-service traced: $traced"
+          if [ "$down" != "0" ] || [ "$traced" != "true" ]; then
+            exit 1
+          fi
+
+      - name: Switched off again, the core is back inside its budget
+        run: |
+          set -euo pipefail
+          ./scripts/lite-up.sh --without elasticsearch --without guacamole --without ziti --without observability
+          bash scripts/lite-smoke.sh
+
+      - name: Container state and logs
+        if: always()
+        run: |
+          docker compose -f "$COMPOSE_LITE" ps -a || true
+          docker compose -f "$COMPOSE_LITE" logs --no-color --tail 60 || true
+
   # The Playwright suite, against a real stack.
   #
   # It had never run anywhere: no workflow invoked it, and it could not have
@@ -3137,6 +3367,7 @@ jobs:
       - inerttests
       - inertswitch
       - lint
+      - lite-install
       - no-internal-topology
       - opa-policy
       - orgscope

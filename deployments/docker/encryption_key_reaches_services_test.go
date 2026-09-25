@@ -28,7 +28,7 @@ func TestEveryServiceThatDecryptsIsGivenTheKey(t *testing.T) {
 		t.Fatal("no package reads Config.EncryptionKey; the scan found nothing and every check below would pass vacuously")
 	}
 
-	for _, composeFile := range []string{"docker-compose.yml", "docker-compose.prod.yml"} {
+	for _, composeFile := range []string{"docker-compose.yml", "docker-compose.prod.yml", "docker-compose.lite.yml"} {
 		t.Run(composeFile, func(t *testing.T) {
 			body, err := os.ReadFile(filepath.Join(root, "deployments", "docker", composeFile))
 			if err != nil {
