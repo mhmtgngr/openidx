@@ -19,6 +19,10 @@ A release is cut by pushing a `vX.Y.Z` git tag — everything else is automated.
    `bash scripts/check-version-sync.sh --enforce` is green — it holds the
    console, the Helm chart's `appVersion`, the Flutter client and the seven
    OpenAPI specs under `api/openapi/` to that number.
+5. The lite install pins the release it pulls: set the `OPENIDX_VERSION`
+   default in `deployments/docker/docker-compose.lite.yml` (every
+   `${OPENIDX_VERSION:-vX.Y.Z}`) and in `docs/GETTING-STARTED.md#lite-install`
+   to the tag you are about to push. No guard holds it yet.
 
 ## Cut the release
 
@@ -95,6 +99,12 @@ input.
   `openidx-agent-ios-vX.Y.Z-unsigned.ipa` to the Release. The `-debugsigned`
   suffix and the `-unsigned` name say exactly what they say; the workflow's
   header explains both.
+- **`display-equals-enforcement.yml`** — runs the tests that
+  `docs/evidence/display-equals-enforcement.md` names against Postgres 16 and
+  attaches `display-equals-enforcement-vX.Y.Z.md` to the Release. A test that
+  fails, skips or does not run turns the run red. `release.yml` starts it on
+  the tag once the Release exists, on both paths: a Release published under
+  `GITHUB_TOKEN` starts no workflow by itself.
 
 ## Rolling out to cells (off by default)
 
@@ -136,6 +146,8 @@ wave's shape: order, gate, atomic upgrade, environment, identity check.
 - A deployed service reports the version: `GET /health` → `"version":"vX.Y.Z"`.
 - The Release carries the APK and the IPA (on the dispatch path, from the
   `client-mobile-release.yml` run the release started).
+- The Release carries `display-equals-enforcement-vX.Y.Z.md`, and its last
+  line says **Passed**.
 
 ### Verifying downloaded binaries (consumers)
 
