@@ -77,6 +77,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#956). `scripts/generate-secrets.sh` and the Helm chart write these
   values. An existing install keeps its values until the operator changes
   them; the order to do that in is in the configuration reference.
+- **Decided: a fresh install keeps ABAC in `observe`** (#956). It is not
+  switched to `enforce` by default. An operator turns enforcement on after
+  reviewing the `access.abac.would_deny` audit records; the configuration
+  reference has the steps.
 - **An `off`/`observe`/`enforce` setting with an unknown value now stops the
   service at startup** and names the setting. Check the values of
   `ABAC_ENFORCE`, `STEPUP_GATE`, `BOT_GATE`, `PAM_SESSION_RISK_GATE`,

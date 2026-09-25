@@ -269,9 +269,11 @@ openidx/
 
 The core platform is built and self-hostable today. The capabilities below
 are implemented. They are **not yet externally verified**: there has been no
-penetration test and no OpenID Foundation conformance run so far. Several
-enforcement controls also ship **off by default** (assignment enforcement,
-ABAC, OPA authorization). A per-feature maturity matrix (GA / Beta /
+penetration test and no OpenID Foundation conformance run so far. Not every
+enforcement control is on by default: a fresh install enforces application
+assignment, runs ABAC in **observe** (it records whom a policy would refuse
+and refuses no one until the operator turns on `enforce`), and ships with OPA
+authorization **off**. A per-feature maturity matrix (GA / Beta /
 Experimental) will replace this list in milestone M1.
 
 - [x] OAuth 2.0 / OIDC provider (PKCE, refresh rotation, token exchange, JWKS rotation)
