@@ -979,11 +979,11 @@ func TestNginxEdgeCacheZoneIsReal(t *testing.T) {
 }
 
 // TestSPAEntryDocumentIsNeverCached pins the other half of task 1.3 across the
-// three nginx configs that serve the console: hashed assets immutable for a
-// year, index.html no-cache, and — because add_header does not merge — the
-// security headers repeated inside the index.html location.
+// nginx configs that serve the console: hashed assets immutable for a year,
+// index.html no-cache, and — because add_header does not merge — the security
+// headers repeated inside the index.html location.
 func TestSPAEntryDocumentIsNeverCached(t *testing.T) {
-	for _, f := range []string{"nginx/admin-console.conf", "oidx-nginx/nginx.conf", "../../web/admin-console/nginx.conf"} {
+	for _, f := range []string{"nginx/admin-console.conf", "nginx/admin-console.lite.conf", "oidx-nginx/nginx.conf", "../../web/admin-console/nginx.conf"} {
 		raw, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)

@@ -40,6 +40,7 @@ front door; this directory is the full depth behind it.
 | [THREAT-MODEL.md](./THREAT-MODEL.md) | Trust boundaries, per-component STRIDE, residual risks R1–R8 |
 | [COMPLIANCE-CONTROL-MAPPING.md](./COMPLIANCE-CONTROL-MAPPING.md) | SOC 2 / ISO 27001:2022 → capability → evidence |
 | [OPENBAO_KEK.md](./OPENBAO_KEK.md) | Vault KEKs from OpenBao instead of env |
+| [security/pentest-scope.md](./security/pentest-scope.md) | Scope for the independent penetration test, and the steps to apply for the OpenSSF Best Practices badge |
 
 ## Concepts & architecture (product docs)
 

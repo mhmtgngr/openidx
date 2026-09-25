@@ -71,6 +71,39 @@ GET /scim/v2/ResourceTypes
 GET /scim/v2/Schemas
 ```
 
+`/ServiceProviderConfig` states only what the server does:
+
+| Feature | Supported |
+| --- | --- |
+| `patch` | yes |
+| `filter` | yes, `maxResults` 200 (see [Filtering](#filtering)) |
+| `bulk` | no |
+| `sort` | no (`sortBy` is ignored) |
+| `etag` | no (no `ETag` header, no `meta.version`, `If-Match` is not checked) |
+| `changePassword` | no (a `password` attribute is not read) |
+| authentication | OAuth 2.0 bearer token issued by OpenIDX |
+
+`/ResourceTypes` answers a `ListResponse` of the User and Group resource types,
+and `/ResourceTypes/User` and `/ResourceTypes/Group` answer one each.
+
+### Protocol behavior
+
+- Every response has the media type `application/scim+json`. Requests may use
+  `application/scim+json` or `application/json`.
+- `POST` answers `201 Created` with a `Location` header and the stored
+  resource. `meta.location` is the same URI.
+- `DELETE` answers `204 No Content` with no body.
+- An unknown id, or an id that is not a UUID, answers `404` for every method.
+- A `userName`, email or group `displayName` already in use answers
+  `409` with `scimType` `uniqueness`.
+- A body that is not JSON answers `400` with `scimType` `invalidSyntax`.
+- `externalId` is stored for Users and Groups and returned as sent.
+- A user created without `active` is active. A `PUT` without `active` keeps the
+  current value.
+- A group `PUT` without `members` removes every member. A group `PATCH` changes
+  members only when one of its operations names `members`.
+- `GET /Groups?excludedAttributes=members` lists groups without their members.
+
 ### User Management
 
 ```bash
@@ -236,7 +269,25 @@ DELETE /scim/v2/Groups/{id}
 
 ## PATCH Operations
 
-SCIM supports three PATCH operations:
+SCIM supports three PATCH operations. The `op` value is not case-sensitive, so
+`Replace` (as Microsoft Entra ID sends it) works. An operation without a
+`path` applies its `value` object attribute by attribute.
+
+The paths this server supports are:
+
+| Resource | Paths |
+| --- | --- |
+| Users | `active`, `userName`, `displayName`, `externalId`, `name`, `name.givenName`, `name.familyName`, `emails`, `emails[type eq "work"].value` (any type) |
+| Groups | `displayName`, `externalId`, `members`, `members[value eq "<id>"]` (remove only) |
+
+`active` accepts a JSON boolean or the strings `"True"` and `"False"`, which
+Microsoft Entra ID sends. Any other path answers `400` with `scimType`
+`invalidPath`. A value of the wrong type answers `400` with `invalidValue`,
+and a `remove` without a path answers `400` with `noTarget`. The server
+does not answer `200` to a change it did not make.
+
+The operations in one request apply in order. If any operation is refused, the
+request changes nothing, including the operations before the refused one.
 
 ### 1. Add
 Adds a new value to an attribute.
@@ -285,8 +336,12 @@ Removes an attribute value.
 GET /scim/v2/Users?startIndex=1&count=50
 ```
 
-- `startIndex`: 1-based index of the first result (default: 1)
-- `count`: Maximum number of results to return (default: 100)
+- `startIndex`: 1-based index of the first result (default: 1). A value
+  below 1 is treated as 1.
+- `count`: Maximum number of results to return (default: 100, at most 200). A
+  negative value is treated as 0, which returns only `totalResults`.
+
+A value that is not an integer answers `400` with `scimType` `invalidValue`.
 
 ### Filtering
 
@@ -342,14 +397,17 @@ SCIM uses standard HTTP status codes and error responses:
 }
 ```
 
-Common SCIM error types:
-- `invalidFilter` - The filter syntax is invalid
-- `invalidPath` - The PATCH path is invalid
-- `invalidValue` - The value is invalid
-- `invalidVers` - The API version is not supported
-- `mutability` - The attribute is read-only
-- `tooMany` - Too many results
-- `uniqueness` - Value must be unique
+The SCIM error types this server answers with:
+- `invalidFilter` - the filter is not one the server supports (400)
+- `invalidPath` - the PATCH path is not one the server supports (400)
+- `invalidValue` - a value is missing or of the wrong type (400)
+- `invalidSyntax` - the request body is not a SCIM resource (400)
+- `noTarget` - a PATCH `remove` has no path (400)
+- `uniqueness` - `userName`, email or group `displayName` is already in use (409)
+
+`404` and `500` responses carry the same envelope without a `scimType`. A
+`401` from the bearer-token check is a plain JSON `{"error": "..."}` object,
+not a SCIM error envelope.
 
 ## Integration Examples
 
@@ -391,37 +449,33 @@ Common SCIM error types:
 
 ## Testing
 
-Run the included test script:
+### Compliance tests
 
-```bash
-# Make sure provisioning service is running
-./test-scim.sh
-```
+`internal/provisioning/scim_compliance_testdb_test.go` tests the SCIM server
+against RFC 7643 and RFC 7644. It runs the real routes, including the
+bearer-token middleware, against a migrated PostgreSQL, and runs in the
+`internal/provisioning` job of the unit test matrix. The requests use the
+shapes Microsoft Entra ID and Okta send.
 
-This script will:
-1. Test service discovery endpoints
-2. Create SCIM users and groups
-3. Update users with PUT and PATCH
-4. Add users to groups
-5. List users and groups with pagination
-6. Delete users and groups
+| Test | What it checks |
+| --- | --- |
+| `TestSCIMServerDiscoveryIsRFC7644` | `/ServiceProviderConfig` claims only what the server does; `/ResourceTypes` and `/Schemas` are RFC 7644 §4 responses; a request with no token, or a token signed by another key, is refused |
+| `TestSCIMServerUsersAreRFC7644` | create (201, `Location`, the stored representation), read, replace, delete (204, then 404); 404 for unknown ids; 409 `uniqueness`; 400 for bodies it cannot store; every PATCH form in the table above, including Entra's string booleans and refusals with `invalidPath`, `invalidValue` and `noTarget` |
+| `TestSCIMServerFilteringAndPagination` | each supported filter matches exactly the right users; an unsupported filter is `invalidFilter`; paging visits every user exactly once; `startIndex` and `count` are clamped as RFC 7644 §3.4.2.4 says |
+| `TestSCIMServerGroupsAreRFC7644` | group create with members, read, list, filter, member add, remove by value and by `members[value eq "..."]`, replace, and delete; deleting a user removes it from its groups; no `ETag` or `meta.version` is sent, because none is claimed |
+| `TestSCIMOutboundProvisionsToATarget` | outbound provisioning to a mock target; see [Outbound SCIM Provisioning](OUTBOUND_SCIM.md#tests) |
 
-## Performance
+### Interoperability
 
-OpenIDX SCIM 2.0 implementation is optimized for:
-- ⚡ High throughput: 1000+ operations/second
-- 📊 Efficient pagination: Handles millions of users
-- 🔄 Batch operations: Process multiple changes at once
-- 💾 Caching: Redis-backed response caching
+These tests reproduce the request shapes of Microsoft Entra ID and Okta. They
+are not a certification run against either service, and CI does not use a live
+identity provider.
 
 ## Security
 
-SCIM endpoints support:
-- 🔐 OAuth 2.0 Bearer Tokens
-- 🔒 TLS/HTTPS only
-- 🛡️ Rate limiting
-- 📝 Audit logging
-- 🔑 API key authentication
+- SCIM endpoints require an OAuth 2.0 bearer token issued by OpenIDX.
+- Requests are scoped to the caller's tenant.
+- Serve SCIM over TLS only.
 
 ## Best Practices
 
@@ -452,10 +506,12 @@ For SCIM integration support:
 
 ## Standards Compliance
 
-OpenIDX implements:
-- ✅ RFC 7643 - SCIM Core Schema
-- ✅ RFC 7644 - SCIM Protocol
-- ✅ RFC 7642 - SCIM Requirements
+OpenIDX implements the parts of RFC 7643 (SCIM Core Schema) and RFC 7644
+(SCIM Protocol) described on this page: the User and Group resources, the
+discovery endpoints, create, read, replace, PATCH and delete, `eq` filtering on
+the attributes listed under [Filtering](#filtering), and pagination. It does
+not implement bulk operations, sorting, ETags, `/Me`, or password change. The
+compliance tests above check each supported part.
 
 ---
 
