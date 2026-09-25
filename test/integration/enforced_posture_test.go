@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The Definition of Done's posture (docs/PROJECT-READINESS-GUIDE.md §6.2):
+// The Definition of Done's posture (docs/archive/PROJECT-READINESS-GUIDE.md §6.2):
 // ACCESS_ASSIGNMENT_ENFORCE=true and the server-rendered login deleted.
 //
 // Neither had ever been exercised. Before this file, `grep -rn

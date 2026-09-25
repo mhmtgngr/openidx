@@ -140,8 +140,8 @@ nav:
       - Identity:
           - OAuth 2.0 & OpenID Connect Provider - OpenIDX: guides/OAUTH-OIDC.md
           - Token Exchange (RFC 8693) & Dynamic Client Registration (RFC 7591/7592): guides/TOKEN_EXCHANGE_AND_DCR.md
+          - SAML 2.0 Identity Provider - OpenIDX: guides/SAML.md
           - OpenIDX MFA Implementation Guide: guides/MFA_IMPLEMENTATION_GUIDE.md
-          - Passwordless Authentication & Push MFA Implementation: guides/PASSWORDLESS_AND_PUSH_MFA_IMPLEMENTATION.md
           - SSF/CAEP — Shared Signals with Ziti-Honored Termination: guides/SSF_CAEP.md
       - Provisioning:
           - SCIM 2.0 Provisioning - OpenIDX: guides/SCIM.md
@@ -152,7 +152,6 @@ nav:
       - Operations:
           - OpenIDX Disaster Recovery Runbook: guides/disaster-recovery.md
           - Releasing OpenIDX: guides/RELEASING.md
-          - OpenIDX Project Readiness — the User-Perspective Guide: guides/PROJECT-READINESS-GUIDE.md
       - Users:
           - Getting Started with OpenIDX: guides/GETTING-STARTED.md
           - OpenIDX User Guide: guides/USER_GUIDE.md

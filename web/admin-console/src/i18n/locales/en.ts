@@ -5814,7 +5814,6 @@ const en = {
           prompt_user: 'Ask User to Choose',
         },
         bindToIp: 'Bind sessions to IP address',
-        forceLogout: 'Force logout on password change',
       },
       geo: {
         title: 'Country-Based Access Control',

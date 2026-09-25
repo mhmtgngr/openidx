@@ -5,6 +5,7 @@ import (
 	"compress/flate"
 	"context"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/beevik/etree"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -54,6 +56,8 @@ const (
 	SAMLAssertionNamespace = "urn:oasis:names:tc:SAML:2.0:assertion"
 	SAMLMetadataNamespace  = "urn:oasis:names:tc:SAML:2.0:metadata"
 	XMLDSigNamespace       = "http://www.w3.org/2000/09/xmldsig#"
+	XMLSchemaNamespace     = "http://www.w3.org/2001/XMLSchema"
+	XMLSchemaInstanceNS    = "http://www.w3.org/2001/XMLSchema-instance"
 )
 
 // AuthnRequest represents an incoming SAML Authentication Request from an SP
@@ -116,6 +120,10 @@ type SAMLResponseBuilder struct {
 	nameIDFormat  string
 	attributes    []SAMLAttribute
 	signAssertion bool
+	signResponse  bool
+	// encryptTo, when set, is the certificate the signed assertion is
+	// encrypted to (EncryptedAssertion).
+	encryptTo *x509.Certificate
 }
 
 // SAMLAttribute represents an attribute in the assertion
@@ -129,17 +137,28 @@ type SAMLAttribute struct {
 func (s *Service) NewSAMLResponseBuilder() *SAMLResponseBuilder {
 	now := time.Now().UTC()
 	return &SAMLResponseBuilder{
-		idp:           s,
-		responseID:    "_" + uuid.New().String(),
-		assertionID:   "_" + uuid.New().String(),
-		issueInstant:  now,
-		notBefore:     now.Add(-5 * time.Minute), // Allow for clock skew
-		notOnOrAfter:  now.Add(5 * time.Minute),  // Short validity window
-		authnInstant:  now,
-		sessionIndex:  "_" + uuid.New().String(),
-		nameIDFormat:  NameIDFormatEmail,
+		idp:          s,
+		responseID:   "_" + uuid.New().String(),
+		assertionID:  "_" + uuid.New().String(),
+		issueInstant: now,
+		notBefore:    now.Add(-5 * time.Minute), // Allow for clock skew
+		notOnOrAfter: now.Add(5 * time.Minute),  // Short validity window
+		authnInstant: now,
+		sessionIndex: "_" + uuid.New().String(),
+		nameIDFormat: NameIDFormatEmail,
+		// Both signatures, always. The assertion signature is what a service
+		// provider that asks for signed assertions checks; the Response
+		// signature is what SAML2Int requires ([SDP-IDP30]) and what covers an
+		// encrypted assertion's ciphertext. Every SAML stack accepts both.
 		signAssertion: true,
+		signResponse:  true,
 	}
+}
+
+// SetEncryptionCertificate makes Build encrypt the signed assertion to cert.
+func (b *SAMLResponseBuilder) SetEncryptionCertificate(cert *x509.Certificate) *SAMLResponseBuilder {
+	b.encryptTo = cert
+	return b
 }
 
 // SetRequest sets the request details from an incoming AuthnRequest
@@ -180,10 +199,18 @@ func (b *SAMLResponseBuilder) SetSessionIndex(sessionIndex string) *SAMLResponse
 	return b
 }
 
-// Build creates the signed SAML Response
+// Build creates the signed SAML Response: the assertion is signed, then
+// encrypted when the service provider asked for encryption, and then the
+// Response around it is signed, so the Response signature covers what is
+// actually sent.
 func (b *SAMLResponseBuilder) Build() (string, error) {
 	if b.issuer == "" {
 		b.issuer = b.idp.issuer
+	}
+	if !b.signAssertion && !b.signResponse {
+		// Nothing a service provider could verify would be left. Refuse here
+		// rather than hand one a response it must reject, or worse, accept.
+		return "", fmt.Errorf("refusing to build a SAML response with no signature")
 	}
 
 	// Build attribute statement
@@ -208,6 +235,8 @@ func (b *SAMLResponseBuilder) Build() (string, error) {
 		},
 		Assertion: IdPAssertion{
 			XMLNS:        SAMLAssertionNamespace,
+			XMLNSXS:      XMLSchemaNamespace,
+			XMLNSXSI:     XMLSchemaInstanceNS,
 			ID:           b.assertionID,
 			Version:      "2.0",
 			IssueInstant: b.issueInstant.Format(time.RFC3339),
@@ -251,18 +280,47 @@ func (b *SAMLResponseBuilder) Build() (string, error) {
 		return "", fmt.Errorf("failed to marshal SAML response: %w", err)
 	}
 
-	responseXML := xml.Header + string(xmlData)
-
-	// Sign the assertion if required
-	if b.signAssertion {
-		signedXML, err := b.idp.signSAMLAssertion([]byte(responseXML), b.assertionID)
-		if err != nil {
-			return "", fmt.Errorf("failed to sign SAML assertion: %w", err)
-		}
-		responseXML = signedXML
+	doc := etree.NewDocument()
+	if err := doc.ReadFromString(xml.Header + string(xmlData)); err != nil {
+		return "", fmt.Errorf("failed to parse SAML response: %w", err)
+	}
+	root := doc.Root()
+	assertion := findAssertionElement(root)
+	if assertion == nil {
+		return "", fmt.Errorf("SAML response has no assertion")
 	}
 
-	return responseXML, nil
+	// One signing context for the whole message: both signatures and the
+	// certificate they name come from the same key, even across a rotation.
+	ctx, err := b.idp.samlSigningContext()
+	if err != nil {
+		return "", fmt.Errorf("failed to sign SAML response: %w", err)
+	}
+	if b.signAssertion {
+		if err := signEnvelopedInPlace(ctx, assertion); err != nil {
+			return "", fmt.Errorf("failed to sign SAML assertion: %w", err)
+		}
+	}
+	if b.encryptTo != nil {
+		encrypted, err := encryptAssertionElement(assertion, b.encryptTo)
+		if err != nil {
+			return "", fmt.Errorf("failed to encrypt SAML assertion: %w", err)
+		}
+		idx := assertion.Index()
+		root.RemoveChildAt(idx)
+		root.InsertChildAt(idx, encrypted)
+	}
+	if b.signResponse {
+		if err := signEnvelopedInPlace(ctx, root); err != nil {
+			return "", fmt.Errorf("failed to sign SAML response: %w", err)
+		}
+	}
+
+	out, err := doc.WriteToString()
+	if err != nil {
+		return "", fmt.Errorf("failed to serialize SAML response: %w", err)
+	}
+	return out, nil
 }
 
 // buildAttributeStatement creates the attribute statement from the configured attributes
@@ -298,31 +356,24 @@ func (b *SAMLResponseBuilder) buildAttributeStatement() IdPAttributeStatement {
 // handleIdPSSO processes SP-initiated SSO requests
 // This is the main SAML IdP SSO endpoint
 func (s *Service) handleIdPSSO(c *gin.Context) {
-	// Extract SAMLRequest from query or form
-	samlRequest := c.Query("SAMLRequest")
-	if samlRequest == "" {
-		samlRequest = c.PostForm("SAMLRequest")
-	}
-
-	relayState := c.Query("RelayState")
-	if relayState == "" {
-		relayState = c.PostForm("RelayState")
-	}
-
-	if samlRequest == "" {
+	ctx := c.Request.Context()
+	msg, err := readSAMLInbound(c, "SAMLRequest")
+	if errors.Is(err, errSAMLMessageMissing) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing SAMLRequest parameter"})
 		return
 	}
-
-	// Decode and parse AuthnRequest
-	authnReq, rawAuthnXML, err := s.decodeAndParseAuthnRequest(samlRequest)
+	var authnReq *AuthnRequest
+	if err == nil {
+		authnReq, err = parseAuthnRequestXML(msg.xml)
+	}
 	if err != nil {
 		s.logger.Error("Failed to decode AuthnRequest", zap.Error(err))
-		s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
+		s.logAuditEvent(ctx, "authentication", "saml_idp", "sso", "failure",
 			"", c.ClientIP(), "", "service_provider", map[string]interface{}{"reason": "invalid_authn_request"})
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid SAMLRequest", "details": err.Error()})
 		return
 	}
+	relayState := msg.relayState
 
 	s.logger.Info("Received SAML AuthnRequest",
 		zap.String("request_id", authnReq.ID),
@@ -331,43 +382,48 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 	)
 
 	// Look up the Service Provider
-	sp, err := s.getSAMLServiceProviderByEntityID(c.Request.Context(), authnReq.Issuer)
+	sp, err := s.getSAMLServiceProviderByEntityID(ctx, authnReq.Issuer)
 	if err != nil {
 		s.logger.Error("Unknown service provider",
 			zap.String("entity_id", authnReq.Issuer),
 			zap.Error(err),
 		)
-		s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
+		s.logAuditEvent(ctx, "authentication", "saml_idp", "sso", "failure",
 			"", c.ClientIP(), authnReq.Issuer, "service_provider", map[string]interface{}{"reason": "unknown_service_provider", "entity_id": authnReq.Issuer})
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown service provider"})
 		return
 	}
 
 	if !sp.Enabled {
-		s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
+		s.logAuditEvent(ctx, "authentication", "saml_idp", "sso", "failure",
 			"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "sp_disabled", "sp_entity_id": sp.EntityID})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Service provider is disabled"})
 		return
 	}
 
-	// If the AuthnRequest carries an embedded signature, verify it against the
-	// SP's registered certificate and reject on failure. (A signed request whose
-	// signature we cannot validate must never be trusted.)
-	if authnRequestIsSigned(rawAuthnXML) {
-		if sp.Certificate == "" {
-			s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
-				"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "signed_request_no_sp_cert", "sp_entity_id": sp.EntityID})
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Signed request but no SP certificate on file"})
-			return
-		}
-		if verr := verifySAMLSignature(rawAuthnXML, sp.Certificate); verr != nil {
-			s.logger.Warn("AuthnRequest signature verification failed",
-				zap.String("sp_entity_id", sp.EntityID), zap.Error(verr))
-			s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
-				"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "authn_request_signature_invalid", "sp_entity_id": sp.EntityID})
-			c.JSON(http.StatusBadRequest, gin.H{"error": "AuthnRequest signature verification failed"})
-			return
-		}
+	// Every signature the request carries -- the query signature of the
+	// redirect binding, or an enveloped signature in the XML -- must verify
+	// against the SP's registered certificate. A signed request whose
+	// signature we cannot validate must never be trusted.
+	signed, verr := verifyInboundSignature(msg, sp)
+	if verr != nil {
+		s.logger.Warn("AuthnRequest signature verification failed",
+			zap.String("sp_entity_id", sp.EntityID), zap.Error(verr))
+		s.logAuditEvent(ctx, "authentication", "saml_idp", "sso", "failure",
+			"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "authn_request_signature_invalid", "sp_entity_id": sp.EntityID})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "AuthnRequest signature verification failed"})
+		return
+	}
+	// An SP registered as signing its requests (AuthnRequestsSigned in its
+	// metadata, or set by an administrator) must sign every one. An unsigned
+	// request in its name is exactly what a forged one looks like.
+	if sp.RequireSignedAuthnRequests && signed != messageSigned {
+		s.logger.Warn("Unsigned AuthnRequest from a service provider that must sign",
+			zap.String("sp_entity_id", sp.EntityID))
+		s.logAuditEvent(ctx, "authentication", "saml_idp", "sso", "failure",
+			"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "authn_request_unsigned", "sp_entity_id": sp.EntityID})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "AuthnRequest must be signed"})
+		return
 	}
 
 	// Verify ACS URL matches what's registered
@@ -376,10 +432,58 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 			zap.String("request_acs", authnReq.AssertionConsumerServiceURL),
 			zap.String("registered_acs", sp.ACSURL),
 		)
-		s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
+		s.logAuditEvent(ctx, "authentication", "saml_idp", "sso", "failure",
 			"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "acs_url_mismatch", "sp_entity_id": sp.EntityID, "requested_acs": authnReq.AssertionConsumerServiceURL})
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ACS URL"})
 		return
+	}
+
+	s.completeSAMLSSO(c, sp, authnReq, relayState)
+}
+
+// handleIdPInitiatedSSO is IdP-initiated ("unsolicited") single sign-on:
+//
+//	GET /saml/idp/sso/unsolicited?sp_entity_id=<SP entity ID>&RelayState=<optional>
+//
+// There is no AuthnRequest, so there is nothing to answer: the Response
+// carries no InResponseTo, which is how a service provider tells an
+// unsolicited response from a solicited one. It goes to the ACS URL registered
+// for the service provider and nowhere else, and RelayState is passed through
+// for the service provider to interpret, as SAML Bindings 3.4.3 says.
+func (s *Service) handleIdPInitiatedSSO(c *gin.Context) {
+	ctx := c.Request.Context()
+	entityID := c.Query("sp_entity_id")
+	if entityID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing sp_entity_id parameter"})
+		return
+	}
+	sp, err := s.getSAMLServiceProviderByEntityID(ctx, entityID)
+	if err != nil {
+		s.logAuditEvent(ctx, "authentication", "saml_idp", "sso_unsolicited", "failure",
+			"", c.ClientIP(), entityID, "service_provider", map[string]interface{}{"reason": "unknown_service_provider", "entity_id": entityID})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Unknown service provider"})
+		return
+	}
+	if !sp.Enabled {
+		s.logAuditEvent(ctx, "authentication", "saml_idp", "sso_unsolicited", "failure",
+			"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "sp_disabled", "sp_entity_id": sp.EntityID})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Service provider is disabled"})
+		return
+	}
+	// An empty ID is what makes the Response unsolicited: InResponseTo is
+	// omitted from the Response and from SubjectConfirmationData alike.
+	s.completeSAMLSSO(c, sp, &AuthnRequest{Issuer: sp.EntityID}, c.Query("RelayState"))
+}
+
+// completeSAMLSSO issues the Response for an authenticated user, or sends an
+// unauthenticated one to the login page. Both SSO entry points end here, so
+// the two cannot drift in how a user is authenticated, what the assertion
+// carries, or how the session is recorded for Single Logout.
+func (s *Service) completeSAMLSSO(c *gin.Context, sp *SAMLServiceProvider, authnReq *AuthnRequest, relayState string) {
+	ctx := c.Request.Context()
+	action := "sso"
+	if authnReq.ID == "" {
+		action = "sso_unsolicited"
 	}
 
 	// Check user authentication
@@ -389,7 +493,7 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 		ssoSession := generateRandomToken(32)
 		ssoData := map[string]interface{}{
 			"sp_id":          sp.ID,
-			"entity_id":      authnReq.Issuer,
+			"entity_id":      sp.EntityID,
 			"request_id":     authnReq.ID,
 			"acs_url":        sp.ACSURL,
 			"relay_state":    relayState,
@@ -397,7 +501,7 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 		}
 		ssoDataJSON, _ := json.Marshal(ssoData)
 
-		s.redis.Client.Set(c.Request.Context(),
+		s.redis.Client.Set(ctx,
 			"saml_idp_sso:"+ssoSession,
 			string(ssoDataJSON),
 			10*time.Minute,
@@ -418,7 +522,7 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 	samlResponse, nameID, nameIDFormat, err := s.buildSAMLResponseForUser(user, sp, authnReq)
 	if err != nil {
 		s.logger.Error("Failed to build SAML Response", zap.Error(err))
-		s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
+		s.logAuditEvent(ctx, "authentication", "saml_idp", action, "failure",
 			user.ID, c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "response_build_failed", "sp_entity_id": sp.EntityID})
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to build SAML Response"})
 		return
@@ -426,7 +530,7 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 
 	// Record the SAML session so SP-initiated SLO can locate it by SessionIndex
 	// (and NameID-based lookup). Failure here degrades SLO but must not fail SSO.
-	if err := s.recordSAMLSession(c.Request.Context(), user.ID, sp.ID, sp.EntityID, sessionIndex, nameID, nameIDFormat); err != nil {
+	if err := s.recordSAMLSession(ctx, user.ID, sp.ID, sp.EntityID, sessionIndex, nameID, nameIDFormat); err != nil {
 		s.logger.Warn("Failed to record SAML session for SLO",
 			zap.String("user_id", user.ID),
 			zap.String("sp_entity_id", sp.EntityID),
@@ -435,9 +539,9 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 
 	// Log the successful SSO in background with timeout
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s.logAuditEvent(ctx, "authentication", "saml_idp", "sso", "success",
+		s.logAuditEvent(bg, "authentication", "saml_idp", action, "success",
 			user.ID, c.ClientIP(), sp.EntityID, "service_provider",
 			map[string]interface{}{
 				"sp_entity_id":  sp.EntityID,
@@ -451,46 +555,27 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 	s.sendSAMLResponseToSP(c, sp.ACSURL, samlResponse, relayState)
 }
 
-// decodeAndParseAuthnRequest decodes and validates a SAML AuthnRequest. It also
-// returns the raw decoded XML so the caller can verify an embedded signature
-// against the service provider's registered certificate.
-func (s *Service) decodeAndParseAuthnRequest(encodedRequest string) (*AuthnRequest, []byte, error) {
-	// Try deflate + base64
-	decoded, err := inflateAndDecode(encodedRequest)
-	if err != nil {
-		// Fall back to plain base64
-		decoded, err = base64.StdEncoding.DecodeString(encodedRequest)
-		if err != nil {
-			return nil, nil, fmt.Errorf("%w: failed to decode request", ErrInvalidAuthnRequest)
-		}
-	}
-
+// parseAuthnRequestXML parses and validates a decoded SAML AuthnRequest.
+func parseAuthnRequestXML(decoded []byte) (*AuthnRequest, error) {
 	var req AuthnRequest
 	if err := xml.Unmarshal(decoded, &req); err != nil {
-		return nil, nil, fmt.Errorf("%w: failed to parse request XML", ErrInvalidAuthnRequest)
+		return nil, fmt.Errorf("%w: failed to parse request XML", ErrInvalidAuthnRequest)
 	}
 
 	// Validate version
 	if req.Version != "2.0" {
-		return nil, nil, fmt.Errorf("%w: unsupported SAML version: %s", ErrInvalidAuthnRequest, req.Version)
+		return nil, fmt.Errorf("%w: unsupported SAML version: %s", ErrInvalidAuthnRequest, req.Version)
 	}
 
 	// Validate required fields
 	if req.ID == "" {
-		return nil, nil, fmt.Errorf("%w: missing ID", ErrInvalidAuthnRequest)
+		return nil, fmt.Errorf("%w: missing ID", ErrInvalidAuthnRequest)
 	}
 	if req.Issuer == "" {
-		return nil, nil, fmt.Errorf("%w: missing Issuer", ErrInvalidAuthnRequest)
+		return nil, fmt.Errorf("%w: missing Issuer", ErrInvalidAuthnRequest)
 	}
 
-	return &req, decoded, nil
-}
-
-// authnRequestIsSigned reports whether the decoded AuthnRequest XML carries an
-// embedded XML-DSig signature element.
-func authnRequestIsSigned(rawXML []byte) bool {
-	return strings.Contains(string(rawXML), "<ds:Signature") ||
-		strings.Contains(string(rawXML), "<Signature")
+	return &req, nil
 }
 
 // authenticateIdPUser checks if the user is authenticated and returns user info
@@ -717,6 +802,16 @@ func (s *Service) buildSAMLResponseForUser(user *SAMLUser, sp *SAMLServiceProvid
 	if user.SessionIndex != "" {
 		builder.SetSessionIndex(user.SessionIndex)
 	}
+	if sp.EncryptionEnabled {
+		// Fail closed: an SP that asked for encrypted assertions must never
+		// receive a plaintext one because its certificate could not be read.
+		cert, cerr := sp.assertionEncryptionCert()
+		if cerr != nil {
+			err = cerr
+			return
+		}
+		builder.SetEncryptionCertificate(cert)
+	}
 
 	samlResponse, err = builder.Build()
 	return
@@ -843,16 +938,6 @@ func (s *Service) sendSAMLResponseToSP(c *gin.Context, acsURL, samlResponse, rel
 	c.String(http.StatusOK, htmlContent)
 }
 
-// signSAMLAssertion signs the <saml:Assertion> within the response using a
-// standards-compliant enveloped XML-DSig signature (exclusive c14n, RSA-SHA256)
-// over a real X.509 certificate. See saml_signing.go for the implementation;
-// assertionID is retained for signature-reference parity but the element's own
-// ID attribute is what goxmldsig references.
-func (s *Service) signSAMLAssertion(xmlData []byte, assertionID string) (string, error) {
-	_ = assertionID
-	return s.signAssertionEnveloped(xmlData)
-}
-
 // generateRandomToken generates a cryptographically random token
 func generateRandomToken(length int) string {
 	b := make([]byte, length)
@@ -942,10 +1027,17 @@ type IdPStatusCode struct {
 	Value   string   `xml:"Value,attr"`
 }
 
-// IdPAssertion represents a SAML Assertion
+// IdPAssertion represents a SAML Assertion. It declares every namespace prefix
+// it uses itself -- saml, and xs and xsi for the attribute value types -- so
+// that it is well-formed on its own: it is canonicalized on its own when it is
+// signed, and decrypted and parsed on its own when it is encrypted. The xsi
+// declaration used to be missing, so every assertion that carried an
+// attribute failed to sign.
 type IdPAssertion struct {
 	XMLName            xml.Name              `xml:"saml:Assertion"`
 	XMLNS              string                `xml:"xmlns:saml,attr"`
+	XMLNSXS            string                `xml:"xmlns:xs,attr"`
+	XMLNSXSI           string                `xml:"xmlns:xsi,attr"`
 	ID                 string                `xml:"ID,attr"`
 	Version            string                `xml:"Version,attr"`
 	IssueInstant       string                `xml:"IssueInstant,attr"`
@@ -1181,6 +1273,9 @@ func (s *Service) RegisterSAMLIdPRoutes(router *gin.Engine, mgmtAuth gin.Handler
 		// Single Sign-On endpoint - receives AuthnRequest from SPs
 		idp.GET("/sso", s.handleIdPSSO)
 		idp.POST("/sso", s.handleIdPSSO)
+
+		// IdP-initiated (unsolicited) Single Sign-On to a registered SP
+		idp.GET("/sso/unsolicited", s.handleIdPInitiatedSSO)
 
 		// Single Logout endpoint - receives LogoutRequest from SPs
 		idp.GET("/slo", s.handleIdPSLO)

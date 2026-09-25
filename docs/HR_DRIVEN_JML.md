@@ -12,7 +12,9 @@ reuses the existing directory integration, scheduler, and sync-log machinery.
 !!! info "API-only today"
 
     The console's directory form offers `active_directory`, `azure_ad` and
-    `ldap`; the HRIS types are **API-only** — a ratified post-GA decision,
+    `ldap`; the HRIS types are **API-only**. The console screen comes later,
+    by a ratified decision
+    ([ROADMAP.md](https://github.com/mhmtgngr/openidx/blob/main/ROADMAP.md#later-when-there-is-demand)),
     recorded so nobody concludes the feature is missing. The connector,
     scheduler and sync log below are all live. Create one with a POST:
 

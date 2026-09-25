@@ -41,32 +41,16 @@ skip docs/access-and-login-convergence-design.md  the convergence design; Task 1
 skip docs/OPENIDX_ZITI_ARCHITECTURE.md the dark-platform architecture doc, citing its own superseded specs
 skip docs/mobile-mfa-and-ziti-posture-access.md   bannered: the API contracts are current, the mobile/src paths are historical
 skip docs/mobile-openziti-integration-guide.md    bannered: the API contracts are current, the mobile/src paths are historical
-skip docs/PROJECT-STATUS.md            bannered as superseded
 skip docs/FEATURE_PRIORITY_PLAN.md     bannered as superseded
 
 # ---------------------------------------------------------------------------
 # Live documents naming something on purpose: a tree that was deleted (and the
 # deletion is the point), or a path that only exists at build or run time.
 # ---------------------------------------------------------------------------
-allow mobile/                          deleted in favour of client/ (Flutter); the readiness guide records the decision
-allow mobile/package-lock.json         same
+allow mobile/                          deleted in favour of client/ (Flutter); the archived readiness guide records the decision
 allow frontend/                        the standalone e2e harness, folded into web/admin-console/e2e
 allow web/admin-console/keycloak-theme      deleted; OpenIDX is its own IdP and renders its own login
-allow web/admin-console/keycloak-theme/     same, cited with a trailing slash
-allow .github/workflows/mobile-eas-build.yml  deleted with the Expo tree
-allow .github/dependabot.yml           removed in favour of renovate; the guide records why
 allow .github/codeql/codeql-config.yml deleted by the final audit: its paths-ignore excluded nothing, because a Go database is whatever the build compiled -- three live documents cite it to explain that, and this waiver fails the day someone adds it back
-allow internal/feature/                deleted: 780 lines, 13 routes, no importer
-allow internal/feature/flag.go         same, cited for its silent memory-store fallback
-allow internal/oauth/store.go          deleted: 539 lines, no non-test caller, broken token-family revocation
-allow api/openapi/organization-service.yaml  deleted: folded into admin-api.yaml, the spec of the binary that serves it
-allow client/lib/api/auth.dart         deleted: a third login pipeline with throwing stubs and no importer
-allow api/mfa.ts                       console-relative (web/admin-console/src/api/mfa.ts); deleted with the MFA hook
-allow api/mfa                          same, cited without the extension
-allow docs/mobile-developer-guide-simple.md  renamed; the guide records the rename
-allow docs/mobile/firebase-fcm-setup.md      replaced by docs/mobile/push-mfa-delivery.md
-allow docs/site                        the mkdocs build output directory; gitignored, so it is absent in a clean checkout and present after a local `mkdocs build` -- the guard reads git, not the filesystem, when deciding whether a waived path came back
-allow docs/README                      a .gitignore pattern, not a file reference
 allow docs/api-reference               a branch-name example in CONTRIBUTING.md, not a path
 allow docs/api/CNAME                   a file the reader creates to serve the API docs on their own domain
 allow deployments/downloads            the AGENT_DOWNLOADS_DIR default; created at runtime, not committed
@@ -74,5 +58,4 @@ allow deployments/android/openidx-agent.apk  a CI build output, attached to the 
 allow client/plugins/openidx_engine/android/libs/engine.aar        a gomobile build output
 allow client/plugins/openidx_engine/ios/Frameworks/Engine.xcframework  a gomobile build output
 allow docs/superpowers/specs/2026-05-15-android-client-design.md   never committed here; agent-android/README.md says so where it used to link it
-allow agent/internal/posture           never existed; the readiness guide names it as one of the two bad citations this guard's first run caught
 

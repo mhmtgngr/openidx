@@ -78,6 +78,34 @@ CREATE TABLE email_verification_tokens (
     used_at    TIMESTAMPTZ,
     org_id     UUID        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- A reset ends the user's sessions in the transaction that writes the
+-- password, so it reads and writes these too.
+CREATE TABLE sessions (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       UUID         NOT NULL,
+    client_id     VARCHAR(255) NOT NULL DEFAULT '',
+    expires_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW() + interval '1 hour',
+    revoked       BOOLEAN      DEFAULT false,
+    revoked_at    TIMESTAMPTZ,
+    revoke_reason VARCHAR(255),
+    org_id        UUID         NOT NULL
+);
+CREATE TABLE oauth_refresh_tokens (
+    token      VARCHAR(500) PRIMARY KEY,
+    client_id  VARCHAR(255) NOT NULL,
+    user_id    UUID         NOT NULL,
+    session_id UUID,
+    expires_at TIMESTAMPTZ  NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    org_id     UUID         NOT NULL
+);
+CREATE TABLE backchannel_logout_pending (
+    id         BIGSERIAL PRIMARY KEY,
+    org_id     UUID   NOT NULL,
+    session_id UUID   NOT NULL,
+    user_id    UUID   NOT NULL,
+    client_ids TEXT[] NOT NULL
 );`
 
 // newAuthTestService builds a service over a throwaway Postgres carrying the

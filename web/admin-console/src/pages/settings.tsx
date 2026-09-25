@@ -38,7 +38,6 @@ interface Settings {
     remember_me_duration: number
     reauth_interval: number
     bind_session_to_ip: boolean
-    force_logout_on_password_change: boolean
     max_concurrent_sessions: number
     concurrent_session_strategy: string
   }
@@ -596,15 +595,6 @@ export function SettingsPage() {
                         className="rounded"
                       />
                       <span className="text-sm font-medium">{t('pages.settings.sessionPolicies.bindToIp')}</span>
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={formData.security.force_logout_on_password_change ?? true}
-                        onChange={(e) => updateSecurity('force_logout_on_password_change', e.target.checked)}
-                        className="rounded"
-                      />
-                      <span className="text-sm font-medium">{t('pages.settings.sessionPolicies.forceLogout')}</span>
                     </label>
                   </div>
                 </CardContent>

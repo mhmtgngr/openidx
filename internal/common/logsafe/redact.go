@@ -42,6 +42,8 @@ var DefaultSensitiveFieldNames = []string{
 	"relaystate",
 	"assertion", // RFC 7521 JWT/SAML bearer assertion
 	"client_assertion",
+	"request",     // an OIDC request object (a JWT); it carries state and nonce, redacted above
+	"request_uri", // a reference to one, which for a pushed request (RFC 9126) is a short-lived handle
 }
 
 // SensitiveWords are matched against the WORDS of a field name -- the parts

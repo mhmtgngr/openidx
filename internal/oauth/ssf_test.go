@@ -185,7 +185,7 @@ func TestSSFReceiveAppliesSessionRevoked(t *testing.T) {
         -- table this product does not have anywhere: the DELETE behind a CAEP
         -- event failed on a missing relation, its error was discarded, and both
         -- of these tests passed while proving nothing about refresh tokens.
-        CREATE TABLE oauth_refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), token TEXT, user_id UUID, org_id UUID);
+        CREATE TABLE oauth_refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), token TEXT, user_id UUID, session_id UUID, revoked_at TIMESTAMPTZ, org_id UUID);
         CREATE TABLE ssf_received_events (jti VARCHAR(255), org_id UUID NOT NULL, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (org_id, jti));`)
 
 	orgID := "00000000-0000-0000-0000-0000000000aa"
@@ -360,7 +360,7 @@ func TestSSFReceiveDedup(t *testing.T) {
         -- table this product does not have anywhere: the DELETE behind a CAEP
         -- event failed on a missing relation, its error was discarded, and both
         -- of these tests passed while proving nothing about refresh tokens.
-        CREATE TABLE oauth_refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), token TEXT, user_id UUID, org_id UUID);
+        CREATE TABLE oauth_refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), token TEXT, user_id UUID, session_id UUID, revoked_at TIMESTAMPTZ, org_id UUID);
         CREATE TABLE ssf_received_events (jti VARCHAR(255), org_id UUID NOT NULL, issuer TEXT, event_type TEXT, subject TEXT, outcome VARCHAR(16) NOT NULL DEFAULT 'applied', detail TEXT, received_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (org_id, jti));`)
 	orgID := "00000000-0000-0000-0000-0000000000bb"
 	var userID string
@@ -416,7 +416,7 @@ func TestSSFReplayCheckThatCannotRunRefusesTheEvent(t *testing.T) {
         -- table this product does not have anywhere: the DELETE behind a CAEP
         -- event failed on a missing relation, its error was discarded, and both
         -- of these tests passed while proving nothing about refresh tokens.
-        CREATE TABLE oauth_refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), token TEXT, user_id UUID, org_id UUID);`)
+        CREATE TABLE oauth_refresh_tokens (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), token TEXT, user_id UUID, session_id UUID, revoked_at TIMESTAMPTZ, org_id UUID);`)
 	// ssf_received_events is deliberately NOT created: the replay check cannot
 	// run, which is the condition this test is about.
 	orgID := "00000000-0000-0000-0000-0000000000bc"

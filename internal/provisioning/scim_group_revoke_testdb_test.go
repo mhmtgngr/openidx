@@ -64,7 +64,7 @@ func scimGroupFixture(t *testing.T, db *database.PostgresDB, ctx context.Context
 	t.Helper()
 	_, err := db.Pool.Exec(ctx, `
 		CREATE TABLE groups (
-			id UUID PRIMARY KEY, name VARCHAR(255), description TEXT,
+			id UUID PRIMARY KEY, name VARCHAR(255), description TEXT, external_id VARCHAR(255),
 			org_id UUID NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
 		CREATE TABLE group_memberships (
 			user_id UUID NOT NULL,

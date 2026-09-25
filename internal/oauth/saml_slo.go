@@ -8,7 +8,9 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,26 +36,57 @@ const (
 	SAMLLogoutStatusVersionMismatch = "urn:oasis:names:tc:SAML:2.0:status:VersionMismatch"
 )
 
-// LogoutRequest represents a SAML LogoutRequest
+// How long an inbound LogoutRequest is good for. A LogoutRequest travels
+// through the browser straight from the SP to here, so it is seconds old when
+// it arrives; the bound is what makes a captured one useless later, and the
+// replay record below only has to last as long as a request can be accepted.
+const (
+	samlMessageClockSkew       = 3 * time.Minute
+	samlLogoutRequestMaxAge    = 5 * time.Minute
+	samlLogoutReplayRedisTTL   = samlLogoutRequestMaxAge + 2*samlMessageClockSkew
+	samlLogoutReplayRedisGroup = "saml_logout_request_seen:"
+)
+
+// LogoutRequest is the SAML LogoutRequest this IdP SENDS. The prefixed tags
+// are for marshalling only; inboundLogoutRequest below parses what SPs send.
+// Child order follows the schema: Issuer, NameID, SessionIndex.
 type LogoutRequest struct {
-	XMLName        xml.Name      `xml:"samlp:LogoutRequest"`
-	XMLNS          string        `xml:"xmlns:samlp,attr"`
-	XMLNSSAML      string        `xml:"xmlns:saml,attr"`
-	ID             string        `xml:"ID,attr"`
-	Version        string        `xml:"Version,attr"`
-	IssueInstant   string        `xml:"IssueInstant,attr"`
-	Destination    string        `xml:"Destination,attr,omitempty"`
-	Issuer         string        `xml:"saml:Issuer"`
-	NotOnOrAfter   string        `xml:"NotOnOrAfter,attr,omitempty"`
-	SessionIndex   string        `xml:"SessionIndex,omitempty"`
-	NameID         *LogoutNameID `xml:"saml:NameID,omitempty"`
-	SessionIndexes []string      `xml:"saml:SessionIndex,omitempty"`
+	XMLName      xml.Name      `xml:"samlp:LogoutRequest"`
+	XMLNS        string        `xml:"xmlns:samlp,attr"`
+	XMLNSSAML    string        `xml:"xmlns:saml,attr"`
+	ID           string        `xml:"ID,attr"`
+	Version      string        `xml:"Version,attr"`
+	IssueInstant string        `xml:"IssueInstant,attr"`
+	Destination  string        `xml:"Destination,attr,omitempty"`
+	NotOnOrAfter string        `xml:"NotOnOrAfter,attr,omitempty"`
+	Issuer       string        `xml:"saml:Issuer"`
+	NameID       *LogoutNameID `xml:"saml:NameID,omitempty"`
+	SessionIndex string        `xml:"samlp:SessionIndex,omitempty"`
 }
 
 // LogoutNameID represents the NameID in a LogoutRequest
 type LogoutNameID struct {
 	Format string `xml:"Format,attr,omitempty"`
 	Value  string `xml:",chardata"`
+}
+
+// inboundLogoutRequest parses a LogoutRequest a service provider SENDS.
+//
+// Its tags name namespace URIs. encoding/xml matches a tag such as
+// "samlp:LogoutRequest" against an element's local name, which is never
+// "samlp:LogoutRequest", so parsing with the marshalling struct above refused
+// every LogoutRequest any SP has ever sent, and SP-initiated Single Logout
+// always answered "Invalid LogoutRequest format".
+type inboundLogoutRequest struct {
+	XMLName        xml.Name      `xml:"urn:oasis:names:tc:SAML:2.0:protocol LogoutRequest"`
+	ID             string        `xml:"ID,attr"`
+	Version        string        `xml:"Version,attr"`
+	IssueInstant   string        `xml:"IssueInstant,attr"`
+	Destination    string        `xml:"Destination,attr"`
+	NotOnOrAfter   string        `xml:"NotOnOrAfter,attr"`
+	Issuer         string        `xml:"urn:oasis:names:tc:SAML:2.0:assertion Issuer"`
+	NameID         *LogoutNameID `xml:"urn:oasis:names:tc:SAML:2.0:assertion NameID"`
+	SessionIndexes []string      `xml:"urn:oasis:names:tc:SAML:2.0:protocol SessionIndex"`
 }
 
 // LogoutResponse represents a SAML LogoutResponse
@@ -64,16 +97,18 @@ type LogoutResponse struct {
 	ID           string               `xml:"ID,attr"`
 	Version      string               `xml:"Version,attr"`
 	IssueInstant string               `xml:"IssueInstant,attr"`
-	Destination  string               `xml:"Destination,attr"`
+	Destination  string               `xml:"Destination,attr,omitempty"`
 	InResponseTo string               `xml:"InResponseTo,attr,omitempty"`
 	Issuer       string               `xml:"saml:Issuer"`
 	Status       LogoutResponseStatus `xml:"samlp:Status"`
 }
 
-// LogoutResponseStatus represents the status in a LogoutResponse
+// LogoutResponseStatus represents the status in a LogoutResponse. The child
+// elements are in the protocol namespace; unprefixed, they were in no
+// namespace at all, and an SP looking for samlp:StatusCode found none.
 type LogoutResponseStatus struct {
-	StatusCode    LogoutStatusCode     `xml:"StatusCode"`
-	StatusMessage *LogoutStatusMessage `xml:"StatusMessage,omitempty"`
+	StatusCode    LogoutStatusCode     `xml:"samlp:StatusCode"`
+	StatusMessage *LogoutStatusMessage `xml:"samlp:StatusMessage,omitempty"`
 }
 
 // LogoutStatusCode represents the status code
@@ -115,25 +150,23 @@ type LogoutSession struct {
 // Supports both SP-initiated and IdP-initiated SLO
 // GET/POST /saml/idp/slo
 func (s *Service) handleIdPSLO(c *gin.Context) {
-	var samlRequest string
-	var binding string
-
-	if c.Request.Method == "POST" {
-		samlRequest = c.PostForm("SAMLRequest")
-		binding = SAMLBindingHTTPPost
-	} else {
-		samlRequest = c.Query("SAMLRequest")
-		binding = SAMLBindingHTTPRedirect
-	}
-
-	relayState := c.Query("RelayState")
-	if relayState == "" {
-		relayState = c.PostForm("RelayState")
-	}
-
 	// If there's a SAMLRequest, it's an SP-initiated logout
-	if samlRequest != "" {
-		s.handleSPInitiatedSLO(c, samlRequest, relayState, binding)
+	msg, err := readSAMLInbound(c, "SAMLRequest")
+	if err == nil {
+		s.handleSPInitiatedSLO(c, msg)
+		return
+	}
+	if !errors.Is(err, errSAMLMessageMissing) {
+		s.logger.Warn("Failed to decode SLO request", zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid SAMLRequest encoding"})
+		return
+	}
+
+	// A LogoutResponse is an SP answering a logout this IdP started. The
+	// dispatch goes over the back channel and reads the answer there, so one
+	// arriving through the browser has nothing left to complete: say so.
+	if c.Query("SAMLResponse") != "" || c.PostForm("SAMLResponse") != "" {
+		s.showLogoutConfirmationPage(c, 0)
 		return
 	}
 
@@ -147,23 +180,24 @@ func (s *Service) handleIdPSLO(c *gin.Context) {
 	c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid SLO request"})
 }
 
-// handleSPInitiatedSLO handles SP-initiated Single Logout
-func (s *Service) handleSPInitiatedSLO(c *gin.Context, samlRequest, relayState, binding string) {
-	// Decode the LogoutRequest
-	decoded, err := inflateAndDecode(samlRequest)
-	if err != nil {
-		decoded, err = base64Decode(samlRequest)
-		if err != nil {
-			s.logger.Error("Failed to decode SLO request", zap.Error(err))
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid SAMLRequest encoding"})
-			return
-		}
-	}
+// handleSPInitiatedSLO handles SP-initiated Single Logout.
+//
+// A LogoutRequest ends sessions, so before it is acted on it has to be shown
+// to come from the service provider it names, to be addressed here, to be
+// recent and to be seen for the first time. SAML Profiles 4.4.4.1 requires the
+// requester to authenticate its LogoutRequest; over the browser bindings that
+// means a signature, so one without a signature that verifies against the
+// SP's registered certificate is refused, whichever binding carried it.
+func (s *Service) handleSPInitiatedSLO(c *gin.Context, msg *samlInbound) {
+	ctx := c.Request.Context()
 
-	// Parse LogoutRequest
-	var logoutReq LogoutRequest
-	if err := xml.Unmarshal(decoded, &logoutReq); err != nil {
-		s.logger.Error("Failed to parse LogoutRequest", zap.Error(err))
+	var logoutReq inboundLogoutRequest
+	if err := xml.Unmarshal(msg.xml, &logoutReq); err != nil {
+		s.logger.Warn("Failed to parse LogoutRequest", zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid LogoutRequest format"})
+		return
+	}
+	if logoutReq.ID == "" || logoutReq.Issuer == "" || logoutReq.Version != "2.0" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid LogoutRequest format"})
 		return
 	}
@@ -173,54 +207,201 @@ func (s *Service) handleSPInitiatedSLO(c *gin.Context, samlRequest, relayState, 
 		zap.String("issuer", logoutReq.Issuer),
 	)
 
-	// Look up the SP
-	sp, err := s.getSAMLServiceProviderByEntityID(c.Request.Context(), logoutReq.Issuer)
+	refuse := func(sp *SAMLServiceProvider, status int, reason, message string) {
+		entityID := logoutReq.Issuer
+		if sp != nil {
+			entityID = sp.EntityID
+		}
+		s.logAuditEvent(ctx, "authentication", "saml_idp", "slo_sp_initiated", "failure",
+			"", c.ClientIP(), entityID, "service_provider",
+			map[string]interface{}{"reason": reason, "sp_entity_id": entityID, "request_id": logoutReq.ID})
+		c.JSON(status, gin.H{"error": message})
+	}
+
+	sp, err := s.getSAMLServiceProviderByEntityID(ctx, logoutReq.Issuer)
 	if err != nil {
-		s.logger.Error("Unknown SP in SLO request", zap.String("issuer", logoutReq.Issuer))
-		s.sendSAMLLogoutResponse(c, "", "", logoutReq.ID, SAMLLogoutStatusResponder, "Unknown service provider", sp)
+		refuse(nil, http.StatusBadRequest, "unknown_service_provider", "Unknown service provider")
+		return
+	}
+	if !sp.Enabled {
+		refuse(sp, http.StatusForbidden, "sp_disabled", "Service provider is disabled")
 		return
 	}
 
-	// Extract user identifier
-	userID := ""
+	state, verr := verifyInboundSignature(msg, sp)
+	if verr != nil {
+		s.logger.Warn("LogoutRequest signature verification failed",
+			zap.String("sp_entity_id", sp.EntityID), zap.Error(verr))
+		refuse(sp, http.StatusBadRequest, "logout_request_signature_invalid", "LogoutRequest signature verification failed")
+		return
+	}
+	if state != messageSigned {
+		refuse(sp, http.StatusBadRequest, "logout_request_unsigned", "LogoutRequest must be signed")
+		return
+	}
+
+	if logoutReq.Destination != "" && !s.isOwnSLOEndpoint(c, logoutReq.Destination) {
+		refuse(sp, http.StatusBadRequest, "logout_request_wrong_destination", "LogoutRequest is addressed to another endpoint")
+		return
+	}
+
+	if ferr := checkLogoutRequestFreshness(logoutReq.IssueInstant, logoutReq.NotOnOrAfter, time.Now()); ferr != nil {
+		s.logger.Warn("Stale LogoutRequest", zap.String("sp_entity_id", sp.EntityID), zap.Error(ferr))
+		refuse(sp, http.StatusBadRequest, "logout_request_expired", "LogoutRequest has expired")
+		return
+	}
+
+	// Last, so a request refused for any reason above does not use up its ID.
+	if rerr := s.claimLogoutRequestID(ctx, sp.EntityID, logoutReq.ID); rerr != nil {
+		if errors.Is(rerr, errSAMLMessageReplayed) {
+			refuse(sp, http.StatusBadRequest, "logout_request_replayed", "LogoutRequest has already been processed")
+			return
+		}
+		s.logger.Error("Could not record the LogoutRequest ID; refusing rather than accept a possible replay", zap.Error(rerr))
+		refuse(sp, http.StatusServiceUnavailable, "replay_store_unavailable", "Logout is temporarily unavailable")
+		return
+	}
+
 	nameID := ""
 	if logoutReq.NameID != nil {
-		nameID = logoutReq.NameID.Value
-		// Look up user by email/nameID
-		userID, _ = s.findUserByNameID(c.Request.Context(), nameID)
-	} else if logoutReq.SessionIndex != "" {
-		// Look up by session index
-		userID, nameID, _ = s.findUserBySessionIndex(c.Request.Context(), logoutReq.SessionIndex, logoutReq.Issuer)
+		nameID = strings.TrimSpace(logoutReq.NameID.Value)
 	}
-
-	if userID == "" {
-		s.logger.Warn("User not found in SLO request", zap.String("name_id", nameID))
-		s.sendSAMLLogoutResponse(c, sp.SLOURL, sp.EntityID, logoutReq.ID, SAMLLogoutStatusRequester, "User not found", sp)
+	if nameID == "" && len(logoutReq.SessionIndexes) == 0 {
+		s.sendSAMLLogoutResponse(c, sp, logoutReq.ID, SAMLLogoutStatusRequester, "The LogoutRequest names no subject", msg.relayState)
 		return
 	}
 
-	// Perform logout
-	if err := s.performUserLogout(c.Request.Context(), userID, logoutReq.Issuer); err != nil {
-		s.logger.Error("Failed to perform logout", zap.Error(err), zap.String("user_id", userID))
-		s.sendSAMLLogoutResponse(c, sp.SLOURL, sp.EntityID, logoutReq.ID, SAMLLogoutStatusResponder, "Logout failed", sp)
+	subjects, err := s.findLogoutSubjects(ctx, sp.EntityID, nameID, logoutReq.SessionIndexes)
+	if err != nil {
+		s.logger.Error("Failed to resolve the sessions a LogoutRequest names", zap.Error(err))
+		s.sendSAMLLogoutResponse(c, sp, logoutReq.ID, SAMLLogoutStatusResponder, "Logout failed", msg.relayState)
 		return
 	}
 
-	// Log the SLO event in background with timeout
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		s.logAuditEvent(ctx, "authentication", "saml_idp", "slo_sp_initiated", "success",
-			userID, c.ClientIP(), sp.EntityID, "service_provider",
-			map[string]interface{}{
-				"sp_entity_id": sp.EntityID,
-				"sp_name":      sp.Name,
-				"request_id":   logoutReq.ID,
-			})
-	}()
+	// No matching session is not an error: the principal has no session with
+	// this SP here, which is the state a logout asks for.
+	for _, subject := range subjects {
+		subjectCtx := orgctx.With(ctx, orgctx.Org{ID: subject.orgID})
+		if err := s.performUserLogout(subjectCtx, subject.userID, sp.EntityID); err != nil {
+			s.logger.Error("Failed to perform logout", zap.Error(err), zap.String("user_id", subject.userID))
+			s.sendSAMLLogoutResponse(c, sp, logoutReq.ID, SAMLLogoutStatusResponder, "Logout failed", msg.relayState)
+			return
+		}
+		userID := subject.userID
+		go func() {
+			bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s.logAuditEvent(orgctx.With(bg, orgctx.Org{ID: subject.orgID}), "authentication", "saml_idp", "slo_sp_initiated", "success",
+				userID, c.ClientIP(), sp.EntityID, "service_provider",
+				map[string]interface{}{
+					"sp_entity_id": sp.EntityID,
+					"sp_name":      sp.Name,
+					"request_id":   logoutReq.ID,
+				})
+		}()
+	}
 
-	// Send success response
-	s.sendSAMLLogoutResponse(c, sp.SLOURL, sp.EntityID, logoutReq.ID, SAMLLogoutStatusSuccess, "", sp)
+	s.sendSAMLLogoutResponse(c, sp, logoutReq.ID, SAMLLogoutStatusSuccess, "", msg.relayState)
+}
+
+// isOwnSLOEndpoint reports whether destination is this IdP's Single Logout
+// endpoint, as published in its metadata for this host or under its issuer.
+func (s *Service) isOwnSLOEndpoint(c *gin.Context, destination string) bool {
+	for _, base := range []string{s.getBaseURL(c), s.issuer} {
+		if base != "" && destination == strings.TrimRight(base, "/")+"/saml/idp/slo" {
+			return true
+		}
+	}
+	return false
+}
+
+// checkLogoutRequestFreshness refuses a LogoutRequest that was issued too long
+// ago, claims to be issued in the future, or is past its own NotOnOrAfter.
+// The errors say which test failed and do not quote the timestamps: both are
+// the sender's text, and the error reaches the log through zap.Error.
+func checkLogoutRequestFreshness(issueInstant, notOnOrAfter string, now time.Time) error {
+	issued, err := time.Parse(time.RFC3339, strings.TrimSpace(issueInstant))
+	if err != nil {
+		return fmt.Errorf("IssueInstant is not a dateTime")
+	}
+	if issued.After(now.Add(samlMessageClockSkew)) {
+		return fmt.Errorf("IssueInstant is in the future")
+	}
+	if now.Sub(issued) > samlLogoutRequestMaxAge+samlMessageClockSkew {
+		return fmt.Errorf("IssueInstant is older than %s", samlLogoutRequestMaxAge)
+	}
+	if strings.TrimSpace(notOnOrAfter) != "" {
+		limit, err := time.Parse(time.RFC3339, strings.TrimSpace(notOnOrAfter))
+		if err != nil {
+			return fmt.Errorf("NotOnOrAfter is not a dateTime")
+		}
+		if !now.Before(limit.Add(samlMessageClockSkew)) {
+			return fmt.Errorf("past its NotOnOrAfter")
+		}
+	}
+	return nil
+}
+
+// errSAMLMessageReplayed reports a LogoutRequest ID already processed.
+var errSAMLMessageReplayed = errors.New("SAML message already processed")
+
+// claimLogoutRequestID records that the LogoutRequest ID from this SP has been
+// acted on, and fails if it already was. The record outlives the freshness
+// window, so a request cannot be replayed while it would still be accepted.
+func (s *Service) claimLogoutRequestID(ctx context.Context, spEntityID, requestID string) error {
+	if s.redis == nil || s.redis.Client == nil {
+		return fmt.Errorf("no replay store configured")
+	}
+	sum := sha256.Sum256([]byte(spEntityID + "\x00" + requestID))
+	fresh, err := s.redis.Client.SetNX(ctx, samlLogoutReplayRedisGroup+hex.EncodeToString(sum[:]), "1", samlLogoutReplayRedisTTL).Result()
+	if err != nil {
+		return err
+	}
+	if !fresh {
+		return errSAMLMessageReplayed
+	}
+	return nil
+}
+
+// logoutSubject is a user a LogoutRequest names, with the tenant the session
+// was recorded under.
+type logoutSubject struct {
+	userID string
+	orgID  string
+}
+
+// findLogoutSubjects resolves the users whose sessions with spEntityID a
+// verified LogoutRequest names. The request may name SessionIndexes, a NameID,
+// or both; what it names must be a session this IdP recorded for this SP when
+// it issued the assertion, so an SP can only end sessions it was part of.
+//
+// PRE-TENANT-RESOLUTION, like the entity-id lookup in saml_sp.go: an inbound
+// LogoutRequest names a session and an SP, and the session this finds is what
+// identifies the user and, through the user, the tenant.
+func (s *Service) findLogoutSubjects(ctx context.Context, spEntityID, nameID string, sessionIndexes []string) ([]logoutSubject, error) {
+	if sessionIndexes == nil {
+		sessionIndexes = []string{}
+	}
+	//orgscope:ignore pre-tenant-resolution lookup: an inbound SAML LogoutRequest names only a session index or NameID and an SP entity id, and this is the query that resolves which user (and so which org) it belongs to
+	rows, err := s.db.Pool.Query(orgctx.WithBypassRLS(ctx), `
+		SELECT DISTINCT user_id::text, org_id::text FROM saml_sessions
+		 WHERE sp_entity_id = $1
+		   AND (cardinality($2::text[]) = 0 OR session_index = ANY($2::text[]))
+		   AND ($3 = '' OR name_id = $3)
+	`, spEntityID, sessionIndexes, nameID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []logoutSubject
+	for rows.Next() {
+		var subject logoutSubject
+		if err := rows.Scan(&subject.userID, &subject.orgID); err != nil {
+			return nil, err
+		}
+		out = append(out, subject)
+	}
+	return out, rows.Err()
 }
 
 // handleIdPInitiatedSLO handles IdP-initiated Single Logout
@@ -257,47 +438,29 @@ func (s *Service) handleIdPInitiatedSLO(c *gin.Context, sessionToken string, tar
 	// Send logout requests to all SPs (or targeted SP)
 	s.sendLogoutToSPs(c, sessions)
 
+	// The SAML sessions just dispatched are over; their records would only
+	// make a later logout notify an SP about a session it no longer has.
+	s.forgetSAMLSessions(c.Request.Context(), sessions)
+
 	// Show logout confirmation page
 	s.showLogoutConfirmationPage(c, len(sessions))
 }
 
-// findUserByNameID finds a user by their NameID (email or persistent ID)
-func (s *Service) findUserByNameID(ctx context.Context, nameID string) (string, error) {
+// forgetSAMLSessions deletes the records of SAML sessions that have ended.
+// Best-effort: a record left behind costs one LogoutRequest to an SP that no
+// longer knows the session, never a live session.
+func (s *Service) forgetSAMLSessions(ctx context.Context, sessions []SAMLSession) {
 	org, err := orgctx.From(ctx)
 	if err != nil {
-		return "", err
+		return
 	}
-
-	// Try email first
-	var userID string
-	err = s.db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE email = $1 AND org_id = $2", nameID, org.ID).Scan(&userID)
-	if err == nil {
-		return userID, nil
+	for _, session := range sessions {
+		if _, err := s.db.Pool.Exec(ctx,
+			"DELETE FROM saml_sessions WHERE id = $1 AND org_id = $2", session.ID, org.ID); err != nil {
+			s.logger.Warn("Failed to delete an ended SAML session record",
+				zap.String("sp_entity_id", session.SPEntityID), zap.Error(err))
+		}
 	}
-
-	// Try external_user_id
-	err = s.db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE external_user_id = $1 AND org_id = $2", nameID, org.ID).Scan(&userID)
-	if err == nil {
-		return userID, nil
-	}
-
-	return "", fmt.Errorf("user not found")
-}
-
-// findUserBySessionIndex finds a user by their SAML session index
-func (s *Service) findUserBySessionIndex(ctx context.Context, sessionIndex, spEntityID string) (string, string, error) {
-	// PRE-TENANT-RESOLUTION, like the entity-id lookup in saml_sp.go: an
-	// incoming LogoutRequest names a session index and an SP entity id, and the
-	// session this finds is what identifies the user -- and through the user,
-	// the tenant. UNIQUE(user_id, sp_entity_id, session_index) keeps the answer
-	// unambiguous.
-	var userID, nameID string
-	//orgscope:ignore pre-tenant-resolution lookup: an inbound SAML LogoutRequest names only a session index and SP entity id, and this is the query that resolves which user (and so which org) it belongs to
-	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), `
-		SELECT user_id, name_id FROM saml_sessions
-		WHERE session_index = $1 AND sp_entity_id = $2
-	`, sessionIndex, spEntityID).Scan(&userID, &nameID)
-	return userID, nameID, err
 }
 
 // performUserLogout performs the actual logout for a user
@@ -335,8 +498,11 @@ func (s *Service) performUserLogout(ctx context.Context, userID, spEntityID stri
 	return nil
 }
 
-// sendSAMLLogoutResponse sends a LogoutResponse to the SP
-func (s *Service) sendSAMLLogoutResponse(c *gin.Context, sloURL, spEntityID, inResponseTo, statusCode, statusMessage string, sp *SAMLServiceProvider) {
+// sendSAMLLogoutResponse answers a LogoutRequest from sp. It goes back to the
+// SP's Single Logout URL over the HTTP-Redirect binding, signed (SAML
+// Bindings 3.4.4.1) because an SP that validates logout messages refuses an
+// unsigned one, with the RelayState the request carried.
+func (s *Service) sendSAMLLogoutResponse(c *gin.Context, sp *SAMLServiceProvider, inResponseTo, statusCode, statusMessage, relayState string) {
 	now := time.Now().UTC()
 	response := LogoutResponse{
 		XMLNS:        SAMLProtocolNamespace,
@@ -344,7 +510,7 @@ func (s *Service) sendSAMLLogoutResponse(c *gin.Context, sloURL, spEntityID, inR
 		ID:           "_" + uuid.New().String(),
 		Version:      "2.0",
 		IssueInstant: now.Format(time.RFC3339),
-		Destination:  sloURL,
+		Destination:  sp.SLOURL,
 		InResponseTo: inResponseTo,
 		Issuer:       s.issuer,
 		Status: LogoutResponseStatus{
@@ -365,30 +531,40 @@ func (s *Service) sendSAMLLogoutResponse(c *gin.Context, sloURL, spEntityID, inR
 		return
 	}
 
-	// If SP has an SLO URL, send the response there
-	if sloURL != "" {
-		// Encode and redirect
-		encoded, err := deflateAndEncode(responseXML)
-		if err != nil {
-			s.logger.Error("Failed to encode LogoutResponse", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode LogoutResponse"})
-			return
-		}
-
-		redirectURL := sloURL
-		if strings.Contains(redirectURL, "?") {
-			redirectURL += "&"
-		} else {
-			redirectURL += "?"
-		}
-		redirectURL += "SAMLResponse=" + encoded
-		c.Redirect(http.StatusFound, redirectURL)
+	// No SLO URL - return the response directly
+	if sp.SLOURL == "" {
+		c.Header("Content-Type", "application/xml")
+		c.String(http.StatusOK, xml.Header+string(responseXML))
 		return
 	}
 
-	// No SLO URL - return the response directly
-	c.Header("Content-Type", "application/xml")
-	c.String(http.StatusOK, xml.Header+string(responseXML))
+	encoded, err := deflateAndEncode(responseXML)
+	if err != nil {
+		s.logger.Error("Failed to encode LogoutResponse", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode LogoutResponse"})
+		return
+	}
+
+	// The signature covers exactly the encoded query as sent, in this
+	// parameter order -- re-encoding or reordering breaks verification.
+	query := "SAMLResponse=" + url.QueryEscape(encoded)
+	if relayState != "" {
+		query += "&RelayState=" + url.QueryEscape(relayState)
+	}
+	query += "&SigAlg=" + url.QueryEscape(samlRedirectSigAlg)
+	sig, err := s.signRedirectBinding(query)
+	if err != nil {
+		s.logger.Error("Failed to sign LogoutResponse", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to sign LogoutResponse"})
+		return
+	}
+	query += "&Signature=" + url.QueryEscape(sig)
+
+	sep := "?"
+	if strings.Contains(sp.SLOURL, "?") {
+		sep = "&"
+	}
+	c.Redirect(http.StatusFound, sp.SLOURL+sep+query)
 }
 
 // getSAMLSessionsForUser retrieves all active SAML sessions for a user
@@ -532,7 +708,10 @@ func (s *Service) sendLogoutRequestToSP(ctx context.Context, logoutReq LogoutReq
 		return
 	}
 
-	client := s.outboundHTTPClient("saml-slo", 10*time.Second)
+	// Not following redirects: the SP's answer to a redirect-binding
+	// LogoutRequest is a redirect carrying its LogoutResponse, meant for a
+	// browser, and it is the answer -- a 3xx here is a delivered logout.
+	client := s.outboundHTTPClientNoRedirect("saml-slo", 10*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		s.logger.Warn("SAML LogoutRequest delivery failed — the SP session may outlive the IdP session",

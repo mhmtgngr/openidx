@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
     first_name VARCHAR(255), last_name VARCHAR(255),
     enabled BOOLEAN DEFAULT true, email_verified BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
-    org_id UUID, manager_id UUID);
+    org_id UUID, manager_id UUID, external_id VARCHAR(255));
 CREATE TABLE IF NOT EXISTS scim_users (
     id UUID PRIMARY KEY, external_id VARCHAR(255), username VARCHAR(255),
     data JSONB NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),

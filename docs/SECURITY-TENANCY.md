@@ -99,10 +99,16 @@ it does not cross one.
 
 ## Known follow-ups
 
-Tenant data isolation is enforced as described above. Some cross-cutting
-concerns are still being tightened tenant-by-tenant and are tracked in the
-readiness guide ([`docs/PROJECT-READINESS-GUIDE.md`](./PROJECT-READINESS-GUIDE.md);
-an earlier revision pointed at a gap register that was never committed):
+Tenant data isolation is enforced as described above, with one known gap:
+the application's own database role can set `app.bypass_rls`, so a single
+SQL injection could lift the row-level-security boundary
+([#964](https://github.com/mhmtgngr/openidx/issues/964) moves the bypass to a
+dedicated role). Some cross-cutting concerns are still being tightened
+tenant by tenant. Their priority is set in
+[ROADMAP.md](https://github.com/mhmtgngr/openidx/blob/main/ROADMAP.md); the
+archived readiness guide
+([`docs/archive/PROJECT-READINESS-GUIDE.md`](https://github.com/mhmtgngr/openidx/blob/main/docs/archive/PROJECT-READINESS-GUIDE.md))
+records how they were found:
 
 - **Per-org signing keys.** OAuth/OIDC token signing currently uses one key set
   per install; per-tenant signing keys are a future enhancement.

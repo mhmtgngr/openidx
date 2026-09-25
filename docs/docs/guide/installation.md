@@ -15,8 +15,8 @@ Install OpenIDX on your system or infrastructure.
 
 ### Software Requirements
 
-- **Go**: 1.25+ (for development)
-- **Node.js**: 18+ (for Admin Console)
+- **Go**: 1.26 (for development; `go.mod` pins the `go1.26.8` toolchain)
+- **Node.js**: 20 (for the admin console)
 - **Docker**: 24.0+ (for containerized deployment)
 - **PostgreSQL**: 16+
 - **Redis**: 7+

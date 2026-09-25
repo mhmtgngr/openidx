@@ -7,9 +7,9 @@
 > cannot be checked against anything. Its file paths are the ones the plan
 > proposed, not the ones the tree has.
 >
-> The current, code-verified roadmap and gap register is
-> **[PROJECT-READINESS-GUIDE.md](./PROJECT-READINESS-GUIDE.md)**. Read this
-> one only for how the work was partitioned.
+> The current roadmap is **[ROADMAP.md](../ROADMAP.md)**, and the state of
+> each feature is the **[maturity matrix](../README.md#feature-maturity)**.
+> Read this one only for how the work was partitioned.
 >
 > **What it was.** The execution plan that turned those gaps into workstreams
 > that could be picked up in parallel — grouped by package ownership to avoid

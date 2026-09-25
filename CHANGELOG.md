@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration that adds the column back.
 
 ### Changed
+- **The README gives each feature a maturity level (#963).** A matrix
+  replaces the checklist that marked every capability shipped. Each feature
+  is GA, Beta or Experimental, with the reason and the evidence, and no
+  feature is GA yet, because nothing has been verified externally.
+  `docs/MATURITY.md` defines the levels. The readiness guide and the
+  global-scale plans move to `docs/archive/`, and the stale
+  `docs/PRODUCTION-READINESS.md` and `docs/PROJECT-STATUS.md` are deleted.
+  `CONTRIBUTING.md` names Go 1.26, sends pull requests to `main`, and lists
+  the required checks.
 - **MFA policies enforce what they show (#990).** The login path used to
   discard the policy it matched, so a policy that listed WebAuthn was
   satisfied by SMS or email OTP, and nothing read the grace period. The API
@@ -122,6 +131,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   link is spent either way, and the refusal is audited (`magic_link_login`,
   failure). The login page now shows why a sign-in link was sent back; it used
   to ignore the reason.
+- **An ended session's refresh tokens stop working.** The refresh grant
+  decided on the refresh token's own row and on the `revoked_session:<id>`
+  marker in Redis, and did not read the sessions table. #993 fixed this for
+  the Sessions page. These paths still ended sessions and left the refresh
+  tokens bound to them usable:
+  - **Password change and reset.** None of them ended a session: a user
+    changing their own password, the forgotten-password link, an
+    administrator setting a password, and an administrator resetting a
+    directory account. Now a user's own change ends every other session of
+    theirs and keeps the one it was made from. A reset ends every session,
+    including when an administrator sets their own password through the
+    set-password route. The refresh tokens are revoked in the transaction
+    that writes the password, or right after the directory accepts it. The
+    user's outstanding access tokens are cut at userinfo and introspection.
+    That cutoff is per user, so it also covers the access token of the
+    session that made the change; that client gets a new one on its next
+    refresh. The Security tab's "Force logout on password change" switch is
+    removed: nothing read it, and a change or reset now always ends
+    sessions. A stored settings document that still holds the key loads and
+    saves as before. The per-application column
+    `application_sso_settings.force_logout_on_password_change` (v63), which
+    nothing reads or writes, stays until a later migration drops it.
+  - **The lifecycle action `revoke_sessions`** deleted the session rows and
+    nothing else. It now ends each session the way the Sessions page does,
+    and revokes every refresh token the user holds.
+  - **Sessions that oauth-service ends:** the expiry and inactivity sweeps,
+    concurrent-session eviction, force-login and sign-out with the browser
+    cookie. The marker they wrote lives 25 hours, and after it expired their
+    refresh tokens worked again. The tokens are now revoked.
+  - **A replayed refresh token** revoked its own family. The session's other
+    token chains were blocked for 24 hours and then worked again. They are
+    now revoked too.
+  - **Revoke session and revoke all in the console, and the kill switch,**
+    relied on the Redis marker alone, and breach containment wrote no
+    marker. The device revoke relied on it for the other token chains of the
+    sessions it ended. All of them now revoke the refresh tokens in the
+    database, which holds with Redis down or restarted. The kill switch
+    reports the count as `iam_refresh_tokens_revoked`.
+
+  **The refresh grant now also reads the session.** A refresh token bound to
+  a session is refused (`invalid_grant`, `session_revoked`), and revoked,
+  unless that session's row exists in the token's organization, is not
+  revoked and has not expired. This covers sessions ended before this
+  release, whose tokens no path revoked and whose markers have expired, so
+  no migration is needed for them. It also covers a session past its
+  expiry that the sweep has not reached yet. If the session cannot be read,
+  the grant mints nothing. Tokens bound to no session, which the device
+  authorization grant issues, are unaffected.
+
+  **A refresh keeps its session alive again, and the absolute timeout is
+  enforced.** The refresh grant recorded session activity with a context
+  that carried no organization, which the update refused. So `last_seen_at`
+  never moved, and the inactivity sweep ended sessions that were in use,
+  counting from sign-in. The activity update also moves a session's expiry
+  forward, so once it works that expiry no longer bounds a session's life.
+  The Security tab's absolute timeout (24 hours unless set) was shown and
+  read by nothing. The sweep now ends a session that long after sign-in,
+  however active it is. The sweep applies the Security tab's timeouts; the
+  per-application idle and absolute timeouts are not applied by it, as
+  before.
+
+  **`POST /oauth/force-login` ends only a session of the user signing in.**
+  It ended the session it was given before reading the pending sign-in,
+  so anyone who knew a session's id could end that session. It now reads the
+  pending sign-in first and ends the named session only if it is a live
+  session of that user in the same organization. Otherwise it answers
+  `400` and ends nothing.
+
+  **Upgrade:** a session ended by the idle or absolute timeout now takes
+  its refresh tokens with it, for good. Before, a client refused during the
+  25 hours after a timeout could refresh again once the marker expired.
+  Native clients that stay offline longer than the idle timeout now sign in
+  again. To allow longer offline access, raise the idle and absolute
+  timeouts on the Security tab. The idle timeout counts from the last
+  refresh, so it should be longer than the access-token lifetime of any
+  client that refreshes only when its token runs out: the default idle
+  timeout (30 minutes) is shorter than the default access-token lifetime
+  (one hour). Sessions ended before the upgrade are refused from the first
+  request.
+
+  **Known and not fixed here:** a disabled account's refresh tokens are
+  refused while it is disabled (the grant checks that the user is active),
+  but their rows are not revoked. If the account is enabled again, tokens
+  bound to no session work again, and so do tokens of sessions the disable
+  path left live. Closing that needs a migration, which will follow once
+  the pending v204 lands.
+
+  Tests on the migrated schema end sessions through each of these paths and
+  then present the refresh tokens at the token endpoint. The ended sessions
+  are refused, and their rows revoked, with Redis down where a path used to
+  depend on it. An unrelated session keeps refreshing. A census in
+  `internal/common/sessionend` fails when a function that ends sessions
+  leaves their refresh tokens usable, unless it is registered with a reason.
 - **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
   handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,
   the Android QR and the onboarding wizard's session — and none asked how
@@ -318,6 +420,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `main` and weekly, uploads its findings to code scanning, and publishes the
   result that the new README badge shows. `docs/security/pentest-scope.md` is the scope to send to penetration-test
   vendors, with the steps to apply for the OpenSSF Best Practices badge.
+- **SAML interop and SCIM compliance tests in CI (#955).** The new SAML
+  interop workflow (`.github/workflows/saml-interop.yml`) runs the OpenIDX IdP
+  against SimpleSAMLphp 2.5.3.1 and Keycloak 26.7.4. Neither service provider
+  uses OpenIDX's SAML library. For each one, the suite runs SP-initiated SSO
+  with signed AuthnRequests, IdP-initiated SSO, and Single Logout in both
+  directions. It runs each flow twice: with a signed assertion in a signed
+  Response, and with an encrypted assertion in a signed Response. It then
+  sends each service provider forged Responses (unsigned, signed by an
+  untrusted key, for another audience, expired and, for SimpleSAMLphp,
+  replayed) and requires the SP to refuse every one. Go tests against a
+  migrated PostgreSQL cover the SAML messages the IdP receives. They check
+  that AuthnRequests and LogoutRequests are refused when unsigned where
+  signing is required, signed by the wrong key, altered after signing,
+  addressed to an unregistered ACS URL, stale or replayed. A SCIM compliance
+  test runs RFC 7643 and RFC 7644 cases against the real SCIM routes, and an
+  outbound test provisions users and groups to a mock SCIM target.
+  `docs/SAML.md` and `docs/SCIM.md` list the targets and the profiles tested.
+- **SAML IdP: assertion encryption, required AuthnRequest signing and
+  IdP-initiated SSO (migration v204).** A service provider with
+  `encryption_enabled` receives its assertion encrypted (AES-256-GCM, key
+  transport RSA-OAEP) to its `encryption_certificate`, or to its signing
+  certificate if none is set. If OpenIDX cannot encrypt, sign-on fails; it
+  never falls back to a plaintext assertion. Every Response and every
+  assertion is signed. `require_signed_authn_requests` makes the IdP refuse
+  unsigned AuthnRequests from that service provider; importing metadata with
+  `AuthnRequestsSigned="true"` sets it. Signatures on HTTP-Redirect requests
+  are now verified over the query string. `GET /saml/idp/sso/unsolicited`
+  starts IdP-initiated sign-on to a registered service provider.
+- **Outbound SCIM sends group members.** A group is provisioned with its
+  members, named by the ids the target issued for them. Group changes made
+  through inbound SCIM are now sent to targets.
+- **The OpenID Foundation conformance suite runs nightly (#958).**
+  `.github/workflows/oidc-conformance.yml` starts an OpenIDX stack the way the
+  smoke job does, puts it behind an HTTPS front at `https://op.openidx.test`,
+  and runs four certification plans through the suite's own runner: Basic OP,
+  Config OP, RP-Initiated Logout OP and Back-Channel Logout OP, with static
+  clients registered through the admin API. The suite release is pinned by
+  tag, commit and image digest (`test/conformance/suite.env`,
+  `test/conformance/compose.yml`). The results go to the run summary and an
+  artifact with the run's generated secrets removed; on `main` a failing run
+  opens or updates one tracking issue and a passing run closes it. Exceptions
+  need a dated entry in `test/conformance/waivers/`; only the three scope
+  modules OpenIDX does not offer (address, phone, all) are waived.
+  `docs/OAUTH-OIDC.md` lists the profiles, marked "not yet run" until the
+  first nightly run, and the deviations the code and one rehearsal outside CI
+  point to: the authorization endpoint refuses POST, the `request` parameter
+  is ignored rather than refused, and token responses lack
+  `Cache-Control: no-store`, among warnings. Formal certification is not
+  claimed and remains an owner decision.
 - **The post-logout allowlist can be registered from the console.** The
   RP-Initiated Logout list added below was reachable only through dynamic
   client registration and the OAuth client API. The applications editor —
@@ -613,6 +764,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test that accepted a "Schema URL" error as a normal outcome now requires
   `Init` to succeed; against a real Jaeger 1.54, a span sent through `Init`
   appears under its service name, and none did before.
+- **SAML: the IdP could not sign an assertion that carried attributes.** The
+  assertion did not declare the `xsi` prefix its attribute values use, so
+  signing failed and sign-on answered an error. The assertion now declares
+  every prefix it uses, and is signed as a copy so canonicalization cannot
+  remove a declaration from the sent XML.
+- **SAML: SP-initiated Single Logout and SP metadata import did not work.** The
+  parsers named namespace prefixes in their struct tags, which `encoding/xml`
+  never matches, so every LogoutRequest was refused as malformed and metadata
+  import found no ACS URL or certificate. Both now parse by namespace. A
+  LogoutRequest must be signed by the service provider, addressed to this
+  IdP, recent, and not seen before, and it ends only sessions recorded for
+  that service provider. LogoutResponses are signed and their status elements
+  are in the protocol namespace.
+- **SCIM server protocol conformance.** Responses use
+  `application/scim+json`. Errors use the RFC 7644 error envelope. A create
+  answers `201` with a `Location` header, a duplicate answers `409
+  uniqueness`, and an unknown or malformed id answers `404`. PATCH accepts
+  Entra's capitalized ops and string booleans, operations without a path,
+  `emails[type eq "work"].value` and `members[value eq "..."]`, and refuses
+  unsupported paths with `invalidPath` instead of answering `200`.
+  `externalId` is stored. `/ResourceTypes` is a `ListResponse`, paging
+  parameters are clamped, and `/ServiceProviderConfig` no longer claims
+  password change or sorting.
+- **`POST /oauth/authorize` accepts an authorization request (#958).** OpenID
+  Connect Core §3.1.2.1 requires the authorization endpoint to take POST as
+  well as GET. On this server that path was the older JSON consent endpoint
+  behind the flow authentication, so a form-encoded authorization request got
+  `401` (conformance module `oidcc-ensure-post-request-succeeds`). A POST with
+  an `application/x-www-form-urlencoded` body is now handled exactly as a GET
+  with the same parameters. It is validated the same way, stashed as the same
+  pending login, and its errors go to the same place. The parameters come from
+  the body, not the query string. It does not pass through the flow
+  authentication, because the authorization endpoint is public. Any other
+  body goes to the consent handler as before. That handler only ever read
+  JSON, so no request that worked before now goes elsewhere. The admin
+  console, the login page and the tests never POST to this path. A cross-site
+  POST does not carry the `SameSite=Lax` single sign-on cookie, so it reaches
+  the login page even when the browser has a session.
+- **The `request` and `request_uri` parameters are refused, not ignored
+  (#958).** OpenIDX does not process request objects. It used to ignore them
+  and serve whatever sat outside, so a `state` or `nonce` sent only inside
+  the object was lost (conformance module
+  `oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported`).
+  `/oauth/authorize` and `/oauth/authorize/v2` now answer
+  `request_not_supported` or `request_uri_not_supported` at the registered
+  `redirect_uri`, with the outer `state`, as OIDC Core §6 allows. The check
+  runs after the `redirect_uri` is validated, so an unregistered one is still
+  answered in-band. Discovery now says `request_parameter_supported: false`
+  and `request_uri_parameter_supported: false`. The second one was missing,
+  and an absent `request_uri_parameter_supported` means `true`. That module
+  now ends as skipped, which the suite allows for a server that refuses
+  request objects. `request` and `request_uri` are redacted from request logs,
+  like the `state` and `nonce` they carry.
+- **Token responses now carry `Cache-Control: no-store` and `Pragma: no-cache`
+  (#958).** RFC 6749 §5.1 requires both on any response that contains a
+  token (conformance module `oidcc-refresh-token`). They are set on the route,
+  so every answer from `/oauth/token` has them: success and error, for all
+  five grants. The same goes for the other responses that carry a token, a
+  credential or a token's contents: `/oauth/device_authorization`,
+  `/oauth/introspect`, `/oauth/userinfo`, the registration endpoints
+  (`client_secret`, `registration_access_token`), `/oauth/stepup-verify`
+  (`step_up_token`) and the social-login callback when it answers with tokens.
+- **A sign-in straight after a logout is no longer refused as revoked
+  (#958).** A logout that names the user (`id_token_hint`), `logout-all` and
+  every sever path write a per-user cutoff, and an access token that dates
+  from at or before it is refused. The cutoff and the token's `iat` were both
+  whole seconds, compared with `<=`. So a token minted in the same second as
+  the logout was refused even if it came after it. A user who signed out and
+  back in within a second was rejected at `/oauth/userinfo`, and the
+  conformance run hit this on every logout. The cutoff is now written to the
+  microsecond (`<seconds>.<microseconds>`). An access token from the
+  authorization-code grant carries a private claim, `granted_at_us`: the
+  microsecond its code was issued. One from the refresh grant carries the
+  microsecond that refresh began. A token is refused when that time is at or
+  before the cutoff, so only a sign-in or refresh that provably came after the
+  logout gets through.
+
+  Revocation is not weakened:
+  - A token without the claim is compared at whole-second precision, and
+    refused in the same second, as before. That covers tokens from older
+    releases, from the device and token-exchange grants, and from the SAML
+    fallback.
+  - A cutoff an older release wrote is whole seconds and reaches to the end of
+    its second.
+  - The claim dates a token from its code, not from the exchange. A code
+    issued before the logout gives a token the logout revokes, however late
+    it is redeemed. Before, that was only caught when the exchange fell in the
+    same second.
+  - The token endpoint also refuses a code whose session was revoked since it
+    was issued (`invalid_grant`, `session_revoked`), the rule the refresh
+    grant already applied.
+
+  **Upgrading:** only oauth-service reads the cutoff. An older oauth-service
+  cannot parse the new format and fails closed: it refuses that user's tokens
+  until it is upgraded. Upgrade oauth-service first, or all services together
+  as the compose and Helm deployments do.
+
+  The new tests drive the mounted routes. The authorization-code case runs on
+  PostgreSQL, from sign-in through logout to a new sign-in in the same second.
+  Twenty-two mutations of the four fixes were each caught by a test.
 - **The sign-in page could not take a backup or bypass code.** Its code field
   took six digits and dropped every other character. Backup codes are eight
   letters and digits, and an administrator's bypass codes are sixteen. The

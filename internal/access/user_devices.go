@@ -430,9 +430,9 @@ func (s *Service) executeDeviceRevoke(ctx context.Context, orgID, agentID, zitiI
 // families ran under.
 //
 // WHY IT IS TWO STEPS. Revoking the refresh rows stops the device MINTING a new
-// access token; publishing revoked_session:<id> is what the refresh grant reads
-// (internal/oauth/service.go), and marking the sessions revoked is what the
-// console's session list and the identity service read. A device can hold
+// access token; the refresh grant (internal/oauth/service.go) also reads the
+// revoked_session:<id> marker and the session's row, and marking the sessions
+// revoked is what the console's session list reads too. A device can hold
 // several chains — one per sign-in — so both sets are collected from the rows
 // rather than assumed to be one.
 //
@@ -481,6 +481,17 @@ func (s *Service) revokeDeviceTokens(ctx context.Context, orgID, agentID string,
 	ids := make([]string, 0, len(sessionIDs))
 	for id := range sessionIDs {
 		ids = append(ids, id)
+	}
+
+	// Every other chain those sessions hold goes too, since the sessions end
+	// below. A refresh token issued on one of them to another client -- an
+	// application the same browser session signed into -- names no agent, so
+	// the statement above did not reach it, and with only the marker behind
+	// it, it went on refreshing whenever Redis was down or came back empty.
+	if n, err := sessionend.RevokeRefreshTokens(ctx, s.db.Pool, orgID, ids); err != nil {
+		warn("revoke_session_refresh_tokens", err)
+	} else {
+		res.RefreshTokensRevoked += n
 	}
 
 	// The marker is what the refresh grant honours, so publish it before the

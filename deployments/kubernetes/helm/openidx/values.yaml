@@ -1221,7 +1221,7 @@ eventRelay:
 # The outbox relay's sink. internal/common/events/relay.go drains the outbox
 # table and deletes a row once Publish returns nil, so the broker has to be
 # durable and the publish has to be synchronous -- see the measurements in
-# docs/plans/2026-09-13-global-scale-cell-architecture-plan.md section 3.2.
+# docs/archive/2026-09-13-global-scale-cell-architecture-plan.md section 3.2.
 #
 # Default off, like the pooler: a chart that ships a broker nobody configured
 # is a chart that fails to install.

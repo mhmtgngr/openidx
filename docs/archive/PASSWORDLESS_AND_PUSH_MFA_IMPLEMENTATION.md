@@ -1,3 +1,5 @@
+> **Archived record of 2026-01-16.** It is not maintained. The current MFA guide is [MFA_IMPLEMENTATION_GUIDE.md](../MFA_IMPLEMENTATION_GUIDE.md), and each feature's maturity is in the [README](../../README.md#feature-maturity).
+
 # Passwordless Authentication & Push MFA Implementation
 
 ## Summary

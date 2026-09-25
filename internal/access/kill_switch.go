@@ -47,10 +47,14 @@ type KillSwitchResult struct {
 	Username        string `json:"username"`
 	UserDisabled    bool   `json:"user_disabled"`
 	SessionsRevoked int64  `json:"iam_sessions_revoked"`
+	// RefreshTokensRevoked counts the refresh tokens revoked in the database:
+	// every one the user held, bound to a session or not. This, not the
+	// session rows, is what stops the refresh grant with Redis in any state.
+	RefreshTokensRevoked int64 `json:"iam_refresh_tokens_revoked"`
 	// AccessTokensRevoked is the per-user token cutoff. Distinct from
-	// SessionsRevoked: revoking the session rows stops the refresh grant,
-	// while this is what makes /oauth/userinfo and /oauth/introspect refuse
-	// the access token the user is already holding.
+	// RefreshTokensRevoked: revoking the refresh tokens stops the refresh
+	// grant, while this is what makes /oauth/userinfo and /oauth/introspect
+	// refuse the access token the user is already holding.
 	AccessTokensRevoked  bool      `json:"iam_access_tokens_revoked"`
 	APIKeysRevoked       int64     `json:"iam_api_keys_revoked"`
 	CheckoutsRevoked     int64     `json:"pam_checkouts_revoked"`
@@ -109,6 +113,7 @@ func (s *Service) handleUserKillSwitch(c *gin.Context) {
 			"reason":                         req.Reason,
 			"user_disabled":                  result.UserDisabled,
 			"iam_sessions_revoked":           result.SessionsRevoked,
+			"iam_refresh_tokens_revoked":     result.RefreshTokensRevoked,
 			"iam_access_tokens_revoked":      result.AccessTokensRevoked,
 			"iam_api_keys_revoked":           result.APIKeysRevoked,
 			"pam_checkouts_revoked":          result.CheckoutsRevoked,
@@ -210,6 +215,17 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 	// (internal/common/sessionend). Reported like every other step.
 	if err := sessionend.ForUser(ctx, s.db.Pool, orgID, userID); err != nil {
 		warn("backchannel_logout_capture", err)
+	}
+	// What the account can still mint, in the database: every refresh token
+	// it holds, bound to a session or not. The markers above live in Redis,
+	// and down or restarted empty they stop nothing, so with only them the
+	// sessions this revokes went on refreshing -- and a refresh token the
+	// device authorization grant issued, bound to no session, was not reached
+	// at all. Reported like every other step.
+	if n, err := sessionend.RevokeUserRefreshTokens(ctx, s.db.Pool, orgID, userID, ""); err != nil {
+		warn("revoke_refresh_tokens", err)
+	} else {
+		res.RefreshTokensRevoked = n
 	}
 	if tag, err := s.db.Pool.Exec(ctx,
 		`UPDATE sessions SET revoked = true, revoked_at = NOW()

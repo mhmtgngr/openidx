@@ -13,8 +13,8 @@
 > **Kapsam:** Kenar (edge) ağı, trafik akışı, servis sınırları, veri katmanı, saldırı
 > altında bozulma davranışı. Ürün özellikleri kapsam dışı.
 > **Sözleşme:** Her iddia bir dosyaya işaret eder. Kod ile bu belge çelişirse kod haklıdır,
-> belge çürümüştür; belgeyi düzelt (bkz. `docs/PROJECT-READINESS-GUIDE.md` §7).
-> **Uygulama planı:** `docs/plans/2026-09-13-global-scale-cell-architecture-plan.md` · **Takvim:** `docs/plans/2026-09-13-global-scale-roadmap.md`
+> belge çürümüştür; belgeyi düzelt (bkz. `docs/archive/PROJECT-READINESS-GUIDE.md` §7).
+> **Uygulama planı:** `docs/archive/2026-09-13-global-scale-cell-architecture-plan.md` · **Takvim:** `docs/archive/2026-09-13-global-scale-roadmap.md`
 
 ---
 

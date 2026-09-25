@@ -146,5 +146,5 @@ List endpoints support pagination via query parameters:
 
 For more information, see:
 - [Main Documentation](../)
-- [OpenAPI Specifications](../../api/openapi/)
-- [GitHub Issues](https://github.com/openidx/openidx/issues)
+- [OpenAPI Specifications](../../../api/openapi/)
+- [GitHub Issues](https://github.com/mhmtgngr/openidx/issues)

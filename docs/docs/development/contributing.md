@@ -53,11 +53,13 @@ openidx/
 ## Workflow
 
 1. Fork the repository
-2. Create a feature branch from `dev`
+2. Create a feature branch from `main`
 3. Make your changes
 4. Run tests: `make test` and `cd web/admin-console && npm test`
-5. Run linters: `make lint`
-6. Submit a pull request to `dev`
+5. Run linters: `make lint`, and the CI guards: `make guards`
+6. Submit a pull request to `main`. It can merge once the
+   [required checks](https://github.com/mhmtgngr/openidx/blob/main/CONTRIBUTING.md#required-checks)
+   pass.
 
 ## Code Style
 

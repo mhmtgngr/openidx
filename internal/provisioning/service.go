@@ -6,7 +6,6 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -17,7 +16,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -538,10 +536,10 @@ func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser
 	// Create user in users table
 	var userID string
 	err = s.db.Pool.QueryRow(ctx, `
-		INSERT INTO users (username, email, first_name, last_name, enabled, email_verified, created_at, updated_at, org_id, manager_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO users (username, email, first_name, last_name, enabled, email_verified, created_at, updated_at, org_id, manager_id, external_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''))
 		RETURNING id
-	`, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, false, now, now, org.ID, managerID).Scan(&userID)
+	`, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, false, now, now, org.ID, managerID, user.ExternalID).Scan(&userID)
 
 	if err != nil {
 		s.logger.Error("Failed to create user in users table", zap.Error(err))
@@ -583,7 +581,7 @@ func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser
 
 // GetSCIMUser retrieves a user via SCIM
 func (s *Service) GetSCIMUser(ctx context.Context, userID string) (*SCIMUser, error) {
-	var username, email, firstName, lastName string
+	var username, email, firstName, lastName, externalID string
 	var enabled bool
 	var createdAt, updatedAt time.Time
 
@@ -592,36 +590,46 @@ func (s *Service) GetSCIMUser(ctx context.Context, userID string) (*SCIMUser, er
 		return nil, err
 	}
 
+	// COALESCE because the name and email columns are nullable and the scan
+	// targets are not: a user created without a name used to answer 404.
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT username, email, first_name, last_name, enabled, created_at, updated_at
-		FROM users WHERE id = $1 AND org_id = $2
-	`, userID, org.ID).Scan(&username, &email, &firstName, &lastName, &enabled, &createdAt, &updatedAt)
+		SELECT username, COALESCE(email, ''), COALESCE(first_name, ''), COALESCE(last_name, ''),
+		       COALESCE(enabled, false), COALESCE(external_id, ''), created_at, updated_at
+		FROM users WHERE id::text = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&username, &email, &firstName, &lastName, &enabled, &externalID, &createdAt, &updatedAt)
 
 	if err != nil {
 		return nil, err
 	}
 
-	user := &SCIMUser{
-		Schemas:  []string{"urn:ietf:params:scim:schemas:core:2.0:User"},
-		ID:       userID,
-		UserName: username,
+	user := scimUserFromRow(userID, username, email, firstName, lastName, externalID, enabled, createdAt, updatedAt)
+	return &user, nil
+}
+
+// scimUserFromRow is the one mapping from a users row to a SCIM User, shared
+// by the resource and the list endpoints so the two cannot disagree.
+func scimUserFromRow(id, username, email, firstName, lastName, externalID string, enabled bool, createdAt, updatedAt time.Time) SCIMUser {
+	user := SCIMUser{
+		Schemas:    []string{"urn:ietf:params:scim:schemas:core:2.0:User"},
+		ID:         id,
+		ExternalID: externalID,
+		UserName:   username,
 		Name: SCIMName{
 			GivenName:  firstName,
 			FamilyName: lastName,
 		},
-		DisplayName: firstName + " " + lastName,
-		Emails: []SCIMEmail{
-			{Value: email, Type: "work", Primary: true},
-		},
-		Active: enabled,
+		DisplayName: strings.TrimSpace(firstName + " " + lastName),
+		Active:      enabled,
 		Meta: SCIMMeta{
 			ResourceType: "User",
 			Created:      createdAt,
 			LastModified: updatedAt,
 		},
 	}
-
-	return user, nil
+	if email != "" {
+		user.Emails = []SCIMEmail{{Value: email, Type: "work", Primary: true}}
+	}
+	return user
 }
 
 // UpdateSCIMUser updates a user via SCIM
@@ -666,9 +674,9 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 	if _, err = tx.Exec(ctx, `
 		UPDATE users
 		SET username = $2, email = $3, first_name = $4, last_name = $5, enabled = $6, updated_at = $7,
-		    manager_id = COALESCE($9::uuid, manager_id)
+		    manager_id = COALESCE($9::uuid, manager_id), external_id = NULLIF($10, '')
 		WHERE id = $1 AND org_id = $8
-	`, userID, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, now, org.ID, managerID); err != nil {
+	`, userID, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, now, org.ID, managerID, user.ExternalID); err != nil {
 		return nil, err
 	}
 
@@ -836,16 +844,22 @@ func (s *Service) DeleteSCIMUser(ctx context.Context, userID string) error {
 
 // ListSCIMUsers lists users via SCIM
 func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filter string) (*SCIMListResponse, error) {
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	// Translate the SCIM filter (e.g. userName eq "x") into a parameterized
 	// predicate. A nil predicate means no filter; errUnsupportedFilter is
 	// surfaced to the handler as 400 invalidFilter rather than silently
 	// returning an unfiltered page (which would break IdP dedup/existence).
 	pred, err := parseSCIMFilter(filter, scimUserFilterAttrs)
+	if err != nil {
+		return nil, err
+	}
+	return s.listSCIMUsers(ctx, startIndex, count, pred)
+}
+
+// listSCIMUsers is ListSCIMUsers with the filter already parsed. The handler
+// parses it itself and answers a bad one with 400, so the errors this returns
+// -- the ones that reach the log -- never carry the caller's filter text.
+func (s *Service) listSCIMUsers(ctx context.Context, startIndex, count int, pred *scimFilterPredicate) (*SCIMListResponse, error) {
+	org, err := orgctx.From(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -874,7 +888,7 @@ func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filt
 	// logged. A SCIM client reads that as "these accounts do not exist".
 	query := `
 		SELECT id, username, COALESCE(email, ''), COALESCE(first_name, ''),
-		       COALESCE(last_name, ''), enabled, created_at, updated_at
+		       COALESCE(last_name, ''), COALESCE(enabled, false), COALESCE(external_id, ''), created_at, updated_at
 		FROM users
 		WHERE org_id = $3`
 	listArgs := []interface{}{startIndex - 1, count, org.ID}
@@ -892,9 +906,10 @@ func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filt
 	}
 	defer rows.Close()
 
-	var users []SCIMUser
+	// Never nil: an empty page is "Resources": [], not null.
+	users := []SCIMUser{}
 	for rows.Next() {
-		var id, username, email, firstName, lastName string
+		var id, username, email, firstName, lastName, externalID string
 		var enabled bool
 		var createdAt, updatedAt time.Time
 
@@ -902,30 +917,13 @@ func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filt
 		// does not exist. Skipping it hands the caller a short page and calls
 		// it complete, which on a provisioning API is an account that never
 		// reaches a downstream application.
-		if err := rows.Scan(&id, &username, &email, &firstName, &lastName, &enabled, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&id, &username, &email, &firstName, &lastName, &enabled, &externalID, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan SCIM user: %w", err)
 		}
-
-		user := SCIMUser{
-			Schemas:  []string{"urn:ietf:params:scim:schemas:core:2.0:User"},
-			ID:       id,
-			UserName: username,
-			Name: SCIMName{
-				GivenName:  firstName,
-				FamilyName: lastName,
-			},
-			DisplayName: firstName + " " + lastName,
-			Emails: []SCIMEmail{
-				{Value: email, Type: "work", Primary: true},
-			},
-			Active: enabled,
-			Meta: SCIMMeta{
-				ResourceType: "User",
-				Created:      createdAt,
-				LastModified: updatedAt,
-			},
-		}
-		users = append(users, user)
+		users = append(users, scimUserFromRow(id, username, email, firstName, lastName, externalID, enabled, createdAt, updatedAt))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list SCIM users: %w", err)
 	}
 
 	return &SCIMListResponse{
@@ -941,6 +939,7 @@ func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filt
 func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.HandlerFunc) {
 	// SCIM 2.0 endpoints
 	scim := router.Group("/scim/v2")
+	scim.Use(scimContentType())
 	scim.Use(svc.openIDXAuthMiddleware())
 	for _, mw := range extraMiddleware {
 		scim.Use(mw)
@@ -966,6 +965,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		scim.GET("/Schemas", svc.handleGetSchemas)
 		scim.GET("/Schemas/:id", svc.handleGetSchema)
 		scim.GET("/ResourceTypes", svc.handleGetResourceTypes)
+		scim.GET("/ResourceTypes/:id", svc.handleGetResourceType)
 		scim.GET("/ServiceProviderConfig", svc.handleGetServiceProviderConfig)
 	}
 
@@ -985,416 +985,6 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		// Outbound SCIM: downstream target apps (provision OUT to SaaS).
 		svc.registerOutboundRoutes(prov)
 	}
-}
-
-// SCIM HTTP Handlers
-
-func (s *Service) handleListUsers(c *gin.Context) {
-	// Parse query parameters
-	startIndex := 1
-	if si := c.Query("startIndex"); si != "" {
-		if parsed, err := json.Number(si).Int64(); err == nil {
-			startIndex = int(parsed)
-		}
-	}
-
-	count := 100
-	if cnt := c.Query("count"); cnt != "" {
-		if parsed, err := json.Number(cnt).Int64(); err == nil {
-			count = int(parsed)
-		}
-	}
-	if count < 1 {
-		count = 1
-	}
-	if count > 200 {
-		count = 200
-	}
-
-	filter := c.Query("filter")
-
-	resp, err := s.ListSCIMUsers(c.Request.Context(), startIndex, count, filter)
-	if err != nil {
-		if errors.Is(err, errUnsupportedFilter) {
-			c.JSON(400, SCIMError{
-				Schemas:  []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
-				Status:   "400",
-				ScimType: "invalidFilter",
-				Detail:   err.Error(),
-			})
-			return
-		}
-		s.logger.Error("failed to list SCIM users", zap.Error(err))
-		c.JSON(500, SCIMError{
-			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
-			Status:  "500",
-			Detail:  "Failed to list users",
-		})
-		return
-	}
-	c.JSON(200, resp)
-}
-
-func (s *Service) handleCreateUser(c *gin.Context) {
-	var user SCIMUser
-	if err := c.ShouldBindJSON(&user); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Validate userName
-	if user.UserName == "" {
-		c.JSON(400, gin.H{"error": "userName is required"})
-		return
-	}
-	if len(user.UserName) > 255 {
-		c.JSON(400, gin.H{"error": "userName too long"})
-		return
-	}
-
-	// Validate email length
-	var primaryEmail string
-	for _, email := range user.Emails {
-		if email.Primary || primaryEmail == "" {
-			primaryEmail = email.Value
-		}
-	}
-	if len(primaryEmail) > 254 {
-		writeSCIMError(c, http.StatusBadRequest, "Email exceeds maximum length of 254 characters")
-		return
-	}
-
-	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
-	created, err := s.CreateSCIMUser(ctx, &user)
-	if err != nil {
-		s.logger.Error("failed to create SCIM user", zap.Error(err))
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(201, created)
-}
-
-func (s *Service) handleGetUser(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
-		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
-		return
-	}
-
-	user, err := s.GetSCIMUser(c.Request.Context(), id)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "user not found"})
-		return
-	}
-	c.JSON(200, user)
-}
-
-func (s *Service) handleReplaceUser(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
-		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
-		return
-	}
-
-	var user SCIMUser
-	if err := c.ShouldBindJSON(&user); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-
-	updated, err := s.UpdateSCIMUser(c.Request.Context(), id, &user)
-	if err != nil {
-		s.logger.Error("failed to update SCIM user", logsafe.String("id", id), zap.Error(err))
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(200, updated)
-}
-
-func (s *Service) handlePatchUser(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
-		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
-		return
-	}
-
-	var patch SCIMPatchRequest
-	if err := c.ShouldBindJSON(&patch); err != nil {
-		c.JSON(400, SCIMError{
-			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
-			Status:  "400",
-			Detail:  "Invalid PATCH request: " + err.Error(),
-		})
-		return
-	}
-
-	// Get existing user
-	user, err := s.GetSCIMUser(c.Request.Context(), id)
-	if err != nil {
-		c.JSON(404, SCIMError{
-			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
-			Status:  "404",
-			Detail:  "User not found",
-		})
-		return
-	}
-
-	// Apply patch operations
-	for _, op := range patch.Operations {
-		if err := s.applyUserPatchOperation(user, op); err != nil {
-			writeSCIMError(c, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-
-	// Update user
-	updated, err := s.UpdateSCIMUser(c.Request.Context(), id, user)
-	if err != nil {
-		s.logger.Error("failed to patch SCIM user", logsafe.String("id", id), zap.Error(err))
-		c.JSON(500, SCIMError{
-			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
-			Status:  "500",
-			Detail:  "Failed to update user",
-		})
-		return
-	}
-	c.JSON(200, updated)
-}
-
-// applyUserPatchOperation applies a PATCH operation to a user
-func (s *Service) applyUserPatchOperation(user *SCIMUser, op SCIMPatchOperation) error {
-	if op.Op != "add" && op.Op != "replace" && op.Op != "remove" {
-		return fmt.Errorf("invalid SCIM patch operation: %s", op.Op)
-	}
-	switch op.Op {
-	case "replace":
-		switch op.Path {
-		case "active":
-			if active, ok := op.Value.(bool); ok {
-				user.Active = active
-			}
-		case "userName":
-			if userName, ok := op.Value.(string); ok {
-				user.UserName = userName
-			}
-		case "displayName":
-			if displayName, ok := op.Value.(string); ok {
-				user.DisplayName = displayName
-			}
-		case "name.givenName":
-			if givenName, ok := op.Value.(string); ok {
-				user.Name.GivenName = givenName
-			}
-		case "name.familyName":
-			if familyName, ok := op.Value.(string); ok {
-				user.Name.FamilyName = familyName
-			}
-		case "emails":
-			// Replace the whole emails collection with the supplied set.
-			user.Emails = parseSCIMEmails(op.Value)
-		}
-	case "add":
-		// SCIM `add` on a multi-valued attribute unions the supplied values
-		// into the existing collection (RFC 7644 §3.5.2.1). Emails are the
-		// user attribute IdPs actually push; group membership for a user is
-		// managed through the Group resource (see applyGroupPatchOperation),
-		// not the read-only User.groups sub-attribute.
-		if op.Path == "emails" {
-			user.Emails = mergeSCIMEmails(user.Emails, parseSCIMEmails(op.Value))
-		}
-	case "remove":
-		// SCIM `remove` with no value clears the targeted collection; with a
-		// value it removes the matching members (RFC 7644 §3.5.2.2).
-		if op.Path == "emails" {
-			if op.Value == nil {
-				user.Emails = nil
-			} else {
-				user.Emails = removeSCIMEmails(user.Emails, parseSCIMEmails(op.Value))
-			}
-		}
-	}
-	return nil
-}
-
-// parseSCIMEmails coerces a SCIM PATCH value into a slice of SCIMEmail. The
-// value may be a single email object or an array of them; entries without a
-// usable "value" are dropped.
-func parseSCIMEmails(value interface{}) []SCIMEmail {
-	toEmail := func(m map[string]interface{}) (SCIMEmail, bool) {
-		addr, ok := m["value"].(string)
-		if !ok || addr == "" {
-			return SCIMEmail{}, false
-		}
-		email := SCIMEmail{Value: addr}
-		if t, ok := m["type"].(string); ok {
-			email.Type = t
-		}
-		if p, ok := m["primary"].(bool); ok {
-			email.Primary = p
-		}
-		return email, true
-	}
-
-	var emails []SCIMEmail
-	switch v := value.(type) {
-	case []interface{}:
-		for _, item := range v {
-			if m, ok := item.(map[string]interface{}); ok {
-				if email, ok := toEmail(m); ok {
-					emails = append(emails, email)
-				}
-			}
-		}
-	case map[string]interface{}:
-		if email, ok := toEmail(v); ok {
-			emails = append(emails, email)
-		}
-	case string:
-		// Bare string form: PATCH path was "emails.value".
-		if v != "" {
-			emails = append(emails, SCIMEmail{Value: v})
-		}
-	}
-	return emails
-}
-
-// mergeSCIMEmails unions incoming emails into existing ones, deduping by
-// address (case-insensitive). When an incoming email is marked primary it
-// becomes the sole primary, matching SCIM's single-primary invariant.
-func mergeSCIMEmails(existing, incoming []SCIMEmail) []SCIMEmail {
-	index := make(map[string]int, len(existing))
-	merged := make([]SCIMEmail, len(existing))
-	copy(merged, existing)
-	for i, e := range merged {
-		index[strings.ToLower(e.Value)] = i
-	}
-	for _, in := range incoming {
-		if in.Primary {
-			for i := range merged {
-				merged[i].Primary = false
-			}
-		}
-		if pos, ok := index[strings.ToLower(in.Value)]; ok {
-			merged[pos] = in
-			continue
-		}
-		index[strings.ToLower(in.Value)] = len(merged)
-		merged = append(merged, in)
-	}
-	return merged
-}
-
-// removeSCIMEmails drops any existing email whose address matches one of the
-// supplied emails (case-insensitive).
-func removeSCIMEmails(existing, toRemove []SCIMEmail) []SCIMEmail {
-	drop := make(map[string]struct{}, len(toRemove))
-	for _, e := range toRemove {
-		drop[strings.ToLower(e.Value)] = struct{}{}
-	}
-	kept := make([]SCIMEmail, 0, len(existing))
-	for _, e := range existing {
-		if _, ok := drop[strings.ToLower(e.Value)]; ok {
-			continue
-		}
-		kept = append(kept, e)
-	}
-	if len(kept) == 0 {
-		return nil
-	}
-	return kept
-}
-
-// applyGroupPatchOperation applies a PATCH operation to a group
-func (s *Service) applyGroupPatchOperation(group *SCIMGroup, op SCIMPatchOperation) error {
-	if op.Op != "add" && op.Op != "replace" && op.Op != "remove" {
-		return fmt.Errorf("invalid SCIM patch operation: %s", op.Op)
-	}
-	switch op.Op {
-	case "replace":
-		if op.Path == "displayName" {
-			if displayName, ok := op.Value.(string); ok {
-				group.DisplayName = displayName
-			}
-		}
-	case "add":
-		if op.Path == "members" {
-			// Union the supplied members into the group, deduping by user id.
-			existing := make(map[string]struct{}, len(group.Members))
-			for _, m := range group.Members {
-				existing[m.Value] = struct{}{}
-			}
-			for _, value := range parseSCIMMemberValues(op.Value) {
-				if _, ok := existing[value]; ok {
-					continue
-				}
-				existing[value] = struct{}{}
-				group.Members = append(group.Members, SCIMMember{Value: value, Type: "User"})
-			}
-		}
-	case "remove":
-		if op.Path == "members" {
-			// A remove with no value clears every member; with a value it drops
-			// the matching ones. Either way the result must be a non-nil slice
-			// so UpdateSCIMGroup persists the (possibly empty) membership set —
-			// a nil slice is treated as "members not supplied" and skipped,
-			// which previously made removing the last member a silent no-op.
-			if op.Value == nil {
-				group.Members = []SCIMMember{}
-				break
-			}
-			drop := make(map[string]struct{})
-			for _, value := range parseSCIMMemberValues(op.Value) {
-				drop[value] = struct{}{}
-			}
-			kept := make([]SCIMMember, 0, len(group.Members))
-			for _, m := range group.Members {
-				if _, ok := drop[m.Value]; ok {
-					continue
-				}
-				kept = append(kept, m)
-			}
-			group.Members = kept
-		}
-	}
-	return nil
-}
-
-// parseSCIMMemberValues extracts member user ids from a SCIM PATCH value, which
-// may be an array of member objects or a single member object.
-func parseSCIMMemberValues(value interface{}) []string {
-	var values []string
-	appendFromMap := func(m map[string]interface{}) {
-		if v, ok := m["value"].(string); ok && v != "" {
-			values = append(values, v)
-		}
-	}
-	switch v := value.(type) {
-	case []interface{}:
-		for _, item := range v {
-			if m, ok := item.(map[string]interface{}); ok {
-				appendFromMap(m)
-			}
-		}
-	case map[string]interface{}:
-		appendFromMap(v)
-	}
-	return values
-}
-
-func (s *Service) handleDeleteUser(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
-		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
-		return
-	}
-
-	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
-	if err := s.DeleteSCIMUser(ctx, id); err != nil {
-		s.logger.Error("failed to delete SCIM user", logsafe.String("id", id), zap.Error(err))
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(204, nil)
 }
 
 // SCIM 2.0 Group Operations
@@ -1419,10 +1009,10 @@ func (s *Service) CreateSCIMGroup(ctx context.Context, group *SCIMGroup) (*SCIMG
 	// Create group in groups table
 	var groupID string
 	err = s.db.Pool.QueryRow(ctx, `
-		INSERT INTO groups (name, description, created_at, updated_at, org_id)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO groups (name, description, created_at, updated_at, org_id, external_id)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''))
 		RETURNING id
-	`, group.DisplayName, "", now, now, org.ID).Scan(&groupID)
+	`, group.DisplayName, "", now, now, org.ID, group.ExternalID).Scan(&groupID)
 
 	if err != nil {
 		s.logger.Error("Failed to create group", zap.Error(err))
@@ -1445,12 +1035,21 @@ func (s *Service) CreateSCIMGroup(ctx context.Context, group *SCIMGroup) (*SCIMG
 		}
 	}
 
+	// Fan out what was stored, not what was asked for: a member that could
+	// not be added is not a member downstream either.
+	if members, err := s.groupMembers(ctx, groupID, org.ID); err != nil {
+		s.logger.Warn("could not read the members of a new SCIM group; its outbound fan-out is skipped",
+			zap.Error(err))
+	} else {
+		s.fanOutGroupChange(ctx, org.ID, groupID, OpCreate, group.DisplayName, members)
+	}
+
 	return group, nil
 }
 
 // GetSCIMGroup retrieves a group via SCIM
 func (s *Service) GetSCIMGroup(ctx context.Context, groupID string) (*SCIMGroup, error) {
-	var name, description string
+	var name, externalID string
 	var createdAt, updatedAt time.Time
 
 	org, err := orgctx.From(ctx)
@@ -1459,40 +1058,25 @@ func (s *Service) GetSCIMGroup(ctx context.Context, groupID string) (*SCIMGroup,
 	}
 
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT name, description, created_at, updated_at
-		FROM groups WHERE id = $1 AND org_id = $2
-	`, groupID, org.ID).Scan(&name, &description, &createdAt, &updatedAt)
+		SELECT name, COALESCE(external_id, ''), created_at, updated_at
+		FROM groups WHERE id::text = $1 AND org_id = $2
+	`, groupID, org.ID).Scan(&name, &externalID, &createdAt, &updatedAt)
 
 	if err != nil {
 		return nil, err
 	}
 
-	// Get members
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT gm.user_id, u.username
-		FROM group_memberships gm
-		JOIN users u ON gm.user_id = u.id
-		WHERE gm.group_id = $1 AND gm.org_id = $2
-	`, groupID, org.ID)
-
-	var members []SCIMMember
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var userID, username string
-			if err := rows.Scan(&userID, &username); err == nil {
-				members = append(members, SCIMMember{
-					Value:   userID,
-					Display: username,
-					Type:    "User",
-				})
-			}
-		}
+	// A member list that could not be read is an error, not an empty group:
+	// a SCIM client that reads "no members" removes them downstream.
+	members, err := s.scimGroupMembers(ctx, groupID, org.ID)
+	if err != nil {
+		return nil, err
 	}
 
 	return &SCIMGroup{
 		Schemas:     []string{"urn:ietf:params:scim:schemas:core:2.0:Group"},
 		ID:          groupID,
+		ExternalID:  externalID,
 		DisplayName: name,
 		Members:     members,
 		Meta: SCIMMeta{
@@ -1501,6 +1085,30 @@ func (s *Service) GetSCIMGroup(ctx context.Context, groupID string) (*SCIMGroup,
 			LastModified: updatedAt,
 		},
 	}, nil
+}
+
+// scimGroupMembers lists a group's members as SCIM member references.
+func (s *Service) scimGroupMembers(ctx context.Context, groupID, orgID string) ([]SCIMMember, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT gm.user_id::text, u.username
+		FROM group_memberships gm
+		JOIN users u ON gm.user_id = u.id
+		WHERE gm.group_id::text = $1 AND gm.org_id = $2
+		ORDER BY u.username, gm.user_id
+	`, groupID, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list group members: %w", err)
+	}
+	defer rows.Close()
+	var members []SCIMMember
+	for rows.Next() {
+		var userID, username string
+		if err := rows.Scan(&userID, &username); err != nil {
+			return nil, fmt.Errorf("scan group member: %w", err)
+		}
+		members = append(members, SCIMMember{Value: userID, Display: username, Type: "User"})
+	}
+	return members, rows.Err()
 }
 
 // UpdateSCIMGroup updates a group via SCIM
@@ -1517,8 +1125,8 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 	}
 
 	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE groups SET name = $2, updated_at = $3 WHERE id = $1 AND org_id = $4
-	`, groupID, group.DisplayName, now, org.ID)
+		UPDATE groups SET name = $2, updated_at = $3, external_id = NULLIF($5, '') WHERE id = $1 AND org_id = $4
+	`, groupID, group.DisplayName, now, org.ID, group.ExternalID)
 
 	if err != nil {
 		return nil, err
@@ -1583,6 +1191,13 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 		// commonest way a membership is taken away in this product, and
 		// "groups" is a claim on the access token.
 		s.revokeAfterMembershipLoss(ctx, "scim.UpdateSCIMGroup", membershipsLost(removed, kept)...)
+	}
+
+	if members, err := s.groupMembers(ctx, groupID, org.ID); err != nil {
+		s.logger.Warn("could not read the members of an updated SCIM group; its outbound fan-out is skipped",
+			zap.Error(err))
+	} else {
+		s.fanOutGroupChange(ctx, org.ID, groupID, OpUpdate, group.DisplayName, members)
 	}
 
 	return group, nil
@@ -1669,6 +1284,7 @@ func (s *Service) DeleteSCIMGroup(ctx context.Context, groupID string) error {
 		return err
 	}
 	s.revokeAfterMembershipLoss(ctx, "scim.DeleteSCIMGroup", members...)
+	s.fanOutGroupChange(ctx, org.ID, groupID, OpDelete, "", nil)
 	return nil
 }
 
@@ -1692,14 +1308,21 @@ func (s *Service) groupMembers(ctx context.Context, groupID, orgID string) ([]st
 	return out, rows.Err()
 }
 
-// ListSCIMGroups lists groups via SCIM
+// ListSCIMGroups lists groups via SCIM, with their members.
 func (s *Service) ListSCIMGroups(ctx context.Context, startIndex, count int, filter string) (*SCIMListResponse, error) {
-	org, err := orgctx.From(ctx)
+	pred, err := parseSCIMFilter(filter, scimGroupFilterAttrs)
 	if err != nil {
 		return nil, err
 	}
+	return s.listSCIMGroups(ctx, startIndex, count, pred, true)
+}
 
-	pred, err := parseSCIMFilter(filter, scimGroupFilterAttrs)
+// listSCIMGroups lists groups; withMembers false is excludedAttributes=members,
+// which Microsoft Entra sends so a large group's membership is not paged
+// through the list endpoint. The filter arrives parsed, for the reason
+// listSCIMUsers gives.
+func (s *Service) listSCIMGroups(ctx context.Context, startIndex, count int, pred *scimFilterPredicate, withMembers bool) (*SCIMListResponse, error) {
+	org, err := orgctx.From(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1719,7 +1342,7 @@ func (s *Service) ListSCIMGroups(ctx context.Context, startIndex, count int, fil
 	// $1 = offset, $2 = limit, $3 = org.ID, the filter value (if any) = $4.
 	// COALESCE for the same reason as the user list: description is nullable.
 	query := `
-		SELECT id, name, COALESCE(description, ''), created_at, updated_at
+		SELECT id, name, COALESCE(external_id, ''), created_at, updated_at
 		FROM groups WHERE org_id = $3`
 	listArgs := []interface{}{startIndex - 1, count, org.ID}
 	if pred != nil {
@@ -1734,16 +1357,18 @@ func (s *Service) ListSCIMGroups(ctx context.Context, startIndex, count int, fil
 	}
 	defer rows.Close()
 
-	var groups []SCIMGroup
+	// Never nil: an empty page is "Resources": [], not null.
+	groups := []SCIMGroup{}
 	for rows.Next() {
-		var id, name, description string
+		var id, name, externalID string
 		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&id, &name, &description, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&id, &name, &externalID, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan SCIM group: %w", err)
 		}
 		groups = append(groups, SCIMGroup{
 			Schemas:     []string{"urn:ietf:params:scim:schemas:core:2.0:Group"},
 			ID:          id,
+			ExternalID:  externalID,
 			DisplayName: name,
 			Meta: SCIMMeta{
 				ResourceType: "Group",
@@ -1751,6 +1376,19 @@ func (s *Service) ListSCIMGroups(ctx context.Context, startIndex, count int, fil
 				LastModified: updatedAt,
 			},
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list SCIM groups: %w", err)
+	}
+	rows.Close()
+	if withMembers {
+		for i := range groups {
+			members, err := s.scimGroupMembers(ctx, groups[i].ID, org.ID)
+			if err != nil {
+				return nil, err
+			}
+			groups[i].Members = members
+		}
 	}
 
 	return &SCIMListResponse{
@@ -1760,257 +1398,6 @@ func (s *Service) ListSCIMGroups(ctx context.Context, startIndex, count int, fil
 		ItemsPerPage: len(groups),
 		Resources:    groups,
 	}, nil
-}
-
-// Group handlers
-func (s *Service) handleListGroups(c *gin.Context) {
-	// Parse query parameters
-	startIndex := 1
-	if si := c.Query("startIndex"); si != "" {
-		if parsed, err := json.Number(si).Int64(); err == nil {
-			startIndex = int(parsed)
-		}
-	}
-
-	count := 100
-	if cnt := c.Query("count"); cnt != "" {
-		if parsed, err := json.Number(cnt).Int64(); err == nil {
-			count = int(parsed)
-		}
-	}
-	if count < 1 {
-		count = 1
-	}
-	if count > 200 {
-		count = 200
-	}
-
-	filter := c.Query("filter")
-
-	resp, err := s.ListSCIMGroups(c.Request.Context(), startIndex, count, filter)
-	if err != nil {
-		if errors.Is(err, errUnsupportedFilter) {
-			c.JSON(400, SCIMError{
-				Schemas:  []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
-				Status:   "400",
-				ScimType: "invalidFilter",
-				Detail:   err.Error(),
-			})
-			return
-		}
-		s.logger.Error("failed to list SCIM groups", zap.Error(err))
-		c.JSON(500, SCIMError{
-			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
-			Status:  "500",
-			Detail:  "Failed to list groups",
-		})
-		return
-	}
-	c.JSON(200, resp)
-}
-
-func (s *Service) handleCreateGroup(c *gin.Context) {
-	var group SCIMGroup
-	if err := c.ShouldBindJSON(&group); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-
-	created, err := s.CreateSCIMGroup(c.Request.Context(), &group)
-	if err != nil {
-		s.logger.Error("failed to create SCIM group", zap.Error(err))
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(201, created)
-}
-
-func (s *Service) handleGetGroup(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
-		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
-		return
-	}
-
-	group, err := s.GetSCIMGroup(c.Request.Context(), id)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "group not found"})
-		return
-	}
-	c.JSON(200, group)
-}
-
-func (s *Service) handleReplaceGroup(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
-		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
-		return
-	}
-
-	var group SCIMGroup
-	if err := c.ShouldBindJSON(&group); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-
-	updated, err := s.UpdateSCIMGroup(c.Request.Context(), id, &group)
-	if err != nil {
-		s.logger.Error("failed to replace SCIM group", logsafe.String("id", id), zap.Error(err))
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(200, updated)
-}
-
-func (s *Service) handlePatchGroup(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
-		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
-		return
-	}
-
-	var patch SCIMPatchRequest
-	if err := c.ShouldBindJSON(&patch); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Get existing group
-	group, err := s.GetSCIMGroup(c.Request.Context(), id)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "group not found"})
-		return
-	}
-
-	// Apply patch operations
-	for _, op := range patch.Operations {
-		if err := s.applyGroupPatchOperation(group, op); err != nil {
-			writeSCIMError(c, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-
-	// Update group
-	updated, err := s.UpdateSCIMGroup(c.Request.Context(), id, group)
-	if err != nil {
-		s.logger.Error("failed to patch SCIM group", logsafe.String("id", id), zap.Error(err))
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(200, updated)
-}
-
-func (s *Service) handleDeleteGroup(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := uuid.Parse(id); err != nil {
-		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
-		return
-	}
-
-	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
-	if err := s.DeleteSCIMGroup(ctx, id); err != nil {
-		s.logger.Error("failed to delete SCIM group", logsafe.String("id", id), zap.Error(err))
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(204, nil)
-}
-
-// Schema discovery handlers
-func (s *Service) handleGetSchemas(c *gin.Context) {
-	schemas := []gin.H{
-		{
-			"id":          "urn:ietf:params:scim:schemas:core:2.0:User",
-			"name":        "User",
-			"description": "User Account",
-			"attributes": []gin.H{
-				{"name": "userName", "type": "string", "multiValued": false, "required": true, "uniqueness": "server"},
-				{"name": "name", "type": "complex", "multiValued": false, "subAttributes": []gin.H{
-					{"name": "givenName", "type": "string"},
-					{"name": "familyName", "type": "string"},
-				}},
-				{"name": "emails", "type": "complex", "multiValued": true, "subAttributes": []gin.H{
-					{"name": "value", "type": "string"},
-					{"name": "primary", "type": "boolean"},
-				}},
-				{"name": "active", "type": "boolean", "multiValued": false, "required": false},
-				{"name": "displayName", "type": "string", "multiValued": false},
-			},
-			"meta": gin.H{"resourceType": "Schema", "location": "/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User"},
-		},
-		{
-			"id":          "urn:ietf:params:scim:schemas:core:2.0:Group",
-			"name":        "Group",
-			"description": "Group",
-			"attributes": []gin.H{
-				{"name": "displayName", "type": "string", "multiValued": false, "required": true},
-				{"name": "members", "type": "complex", "multiValued": true, "subAttributes": []gin.H{
-					{"name": "value", "type": "string"},
-					{"name": "display", "type": "string"},
-				}},
-			},
-			"meta": gin.H{"resourceType": "Schema", "location": "/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Group"},
-		},
-	}
-	c.JSON(200, gin.H{
-		"schemas":      []string{"urn:ietf:params:scim:api:messages:2.0:ListResponse"},
-		"totalResults": len(schemas),
-		"Resources":    schemas,
-	})
-}
-
-func (s *Service) handleGetSchema(c *gin.Context) {
-	schemaID := c.Param("id")
-	switch schemaID {
-	case "urn:ietf:params:scim:schemas:core:2.0:User":
-		c.JSON(200, gin.H{
-			"id":          "urn:ietf:params:scim:schemas:core:2.0:User",
-			"name":        "User",
-			"description": "User Account",
-			"attributes": []gin.H{
-				{"name": "userName", "type": "string", "multiValued": false, "required": true, "uniqueness": "server"},
-				{"name": "name", "type": "complex", "multiValued": false},
-				{"name": "emails", "type": "complex", "multiValued": true},
-				{"name": "active", "type": "boolean", "multiValued": false},
-				{"name": "displayName", "type": "string", "multiValued": false},
-			},
-		})
-	case "urn:ietf:params:scim:schemas:core:2.0:Group":
-		c.JSON(200, gin.H{
-			"id":          "urn:ietf:params:scim:schemas:core:2.0:Group",
-			"name":        "Group",
-			"description": "Group",
-			"attributes": []gin.H{
-				{"name": "displayName", "type": "string", "multiValued": false, "required": true},
-				{"name": "members", "type": "complex", "multiValued": true},
-			},
-		})
-	default:
-		c.JSON(404, gin.H{"schemas": []string{"urn:ietf:params:scim:api:messages:2.0:Error"}, "detail": "Schema not found", "status": "404"})
-	}
-}
-
-func (s *Service) handleGetResourceTypes(c *gin.Context) {
-	c.JSON(200, []gin.H{
-		{"name": "User", "endpoint": "/Users"},
-		{"name": "Group", "endpoint": "/Groups"},
-	})
-}
-
-func (s *Service) handleGetServiceProviderConfig(c *gin.Context) {
-	c.JSON(200, gin.H{
-		"schemas":          []string{"urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"},
-		"documentationUri": "https://docs.openidx.io/scim",
-		"patch":            gin.H{"supported": true},
-		"bulk":             gin.H{"supported": false},
-		"filter":           gin.H{"supported": true, "maxResults": 200},
-		"changePassword":   gin.H{"supported": true},
-		"sort":             gin.H{"supported": true},
-		"etag":             gin.H{"supported": false},
-		"authenticationSchemes": []gin.H{
-			{"type": "oauthbearertoken", "name": "OAuth Bearer Token"},
-		},
-	})
 }
 
 // Provisioning Rules CRUD

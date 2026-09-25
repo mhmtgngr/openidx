@@ -59,6 +59,21 @@ type severingFunc struct {
 	key      string // rel/path.go#FuncName
 	line     int
 	captures bool
+	revokes  bool // revokes or deletes refresh tokens in the same body
+}
+
+// refreshTokenStatement is a statement that ends refresh tokens in the
+// database, written out rather than through this package's helpers: the
+// device revoke's by-agent revocation and the DSAR paths' deletes.
+var refreshTokenStatement = regexp.MustCompile(`(?is)(UPDATE\s+oauth_refresh_tokens\s+SET\s+revoked_at\b|DELETE\s+FROM\s+oauth_refresh_tokens\b)`)
+
+// refreshTokenRevokers are the calls that revoke refresh tokens: this
+// package's two, and the per-session helper internal/identity and
+// internal/oauth each keep for the path that ends one session.
+var refreshTokenRevokers = map[string]bool{
+	"RevokeRefreshTokens":        true,
+	"RevokeUserRefreshTokens":    true,
+	"revokeSessionRefreshTokens": true,
 }
 
 // severingFunctions finds every function under internal/ (tests excluded)
@@ -92,22 +107,29 @@ func severingFunctions(t *testing.T, root string) []severingFunc {
 			if !ok || fn.Body == nil {
 				continue
 			}
-			severs, captures := false, false
+			severs, captures, revokes := false, false, false
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.BasicLit:
 					if x.Kind == token.STRING && severingStatement.MatchString(x.Value) {
 						severs = true
 					}
+					if x.Kind == token.STRING && refreshTokenStatement.MatchString(x.Value) {
+						revokes = true
+					}
 				case *ast.SelectorExpr:
 					if id, ok := x.X.(*ast.Ident); ok && id.Name == "sessionend" && strings.HasPrefix(x.Sel.Name, "For") {
 						captures = true
+					}
+					if refreshTokenRevokers[x.Sel.Name] {
+						revokes = true
 					}
 				}
 				return true
 			})
 			if severs {
-				out = append(out, severingFunc{key: filepath.ToSlash(rel) + "#" + fn.Name.Name, line: fset.Position(fn.Pos()).Line, captures: captures})
+				out = append(out, severingFunc{key: filepath.ToSlash(rel) + "#" + fn.Name.Name,
+					line: fset.Position(fn.Pos()).Line, captures: captures, revokes: revokes})
 			}
 		}
 		return nil
@@ -150,6 +172,68 @@ func TestEveryPathThatEndsSessionsCapturesThemForBackChannelLogout(t *testing.T)
 	for key := range exemptFunctions {
 		if !seenExempt[key] {
 			t.Errorf("exemption %q names a function that no longer ends sessions; remove it", key)
+		}
+	}
+}
+
+// AND EVERY ONE OF THEM ENDS WHAT THE SESSION CAN STILL MINT.
+//
+// Marking a session row revoked, or deleting it, used to stop nothing a device
+// noticed: the refresh grant read the refresh token's own row and the
+// revoked_session marker. That was found in the Sessions page (#992), and then
+// in the password change and reset, the lifecycle action, oauth-service's own
+// funnel, the admin console's revoke paths, breach containment, the kill switch
+// and the device revoke -- one path at a time, each by reading it.
+//
+// The grant now also refuses a token whose session row is gone, revoked or
+// expired. That is the net for sessions ended before the paths were fixed, not
+// a reason for a path to leave the rows: it does not reach a refresh token
+// bound to no session, and a path that ends "all of a user's sessions" means
+// those too. So this census reads the paths: a function that ends sessions
+// revokes their refresh tokens in the same body, or it is registered below
+// with the reason it need not.
+//
+// refreshTokensSurvive is the register. An entry that stops reproducing fails
+// the run, so it can only shrink.
+var refreshTokensSurvive = map[string]string{
+	"internal/identity/session_repository.go#Terminate": "the row removal and nothing else; its one caller, Service.TerminateSession, revokes the session's refresh tokens first (revokeSessionRefreshTokens)",
+	"internal/identity/service.go#deprovisionUser": "the same call disables or deletes the account, and the refresh grant refuses every token of a disabled or missing user (userIsActive). " +
+		"The rows survive: an account enabled again refreshes on its tokens bound to no session (the grant's session check refuses those bound to the sessions revoked or deleted here). " +
+		"Every disable path shares that, most of them without touching a session, so it is to be closed in one place -- a trigger on users.enabled -- rather than here",
+	"internal/identity/service.go#handleOffboardUser":  "disables the account in the same transaction; see internal/identity/service.go#deprovisionUser",
+	"internal/provisioning/service.go#deprovisionUser": "disables or deletes the account in the same call; see internal/identity/service.go#deprovisionUser",
+}
+
+func TestEveryPathThatEndsSessionsRevokesTheirRefreshTokens(t *testing.T) {
+	root := repoRoot(t)
+	found := severingFunctions(t, root)
+	if len(found) < 10 {
+		t.Fatalf("found only %d severing functions under internal/; this census is looking at the wrong thing", len(found))
+	}
+
+	seen := map[string]bool{}
+	for _, f := range found {
+		if reason, ok := refreshTokensSurvive[f.key]; ok {
+			seen[f.key] = true
+			if strings.TrimSpace(reason) == "" {
+				t.Errorf("%s is registered without a reason", f.key)
+			}
+			if f.revokes {
+				t.Errorf("%s revokes the refresh tokens now; remove it from refreshTokensSurvive", f.key)
+			}
+			continue
+		}
+		if !f.revokes {
+			t.Errorf("%s (line %d) revokes or deletes sessions rows and leaves their refresh tokens as they were.\n"+
+				"The refresh grant's check of the session row is a net for sessions ended before the paths were "+
+				"fixed; it does not reach a refresh token bound to no session. Call sessionend.RevokeRefreshTokens "+
+				"or RevokeUserRefreshTokens on the same handle before the statement, or register the function in "+
+				"refreshTokensSurvive with the reason its tokens may stay.", f.key, f.line)
+		}
+	}
+	for key := range refreshTokensSurvive {
+		if !seen[key] {
+			t.Errorf("refreshTokensSurvive names %q, which no longer ends sessions; remove it", key)
 		}
 	}
 }
