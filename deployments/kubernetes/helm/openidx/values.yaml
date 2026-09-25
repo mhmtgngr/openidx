@@ -117,7 +117,9 @@ config:
   # the running release.
   accessAssignmentEnforce: ""
   # ABAC mode (#956): off | observe | enforce. Empty means observe on a fresh
-  # install and unchanged on upgrade.
+  # install and unchanged on upgrade. The chart never chooses enforce, by
+  # decision: set it yourself once the access.abac.would_deny audit records
+  # name only the people a policy is meant to stop.
   abacEnforce: ""
   loginFailChallengeAfter: 5
   loginFailWindowSeconds: 900

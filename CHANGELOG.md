@@ -86,6 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#956). `scripts/generate-secrets.sh` and the Helm chart write these
   values. An existing install keeps its values until the operator changes
   them; the order to do that in is in the configuration reference.
+- **Decided: a fresh install keeps ABAC in `observe`** (#956). It is not
+  switched to `enforce` by default. An operator turns enforcement on after
+  reviewing the `access.abac.would_deny` audit records; the configuration
+  reference has the steps.
 - **An `off`/`observe`/`enforce` setting with an unknown value now stops the
   service at startup** and names the setting. Check the values of
   `ABAC_ENFORCE`, `STEPUP_GATE`, `BOT_GATE`, `PAM_SESSION_RISK_GATE`,
@@ -116,6 +120,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nats.enabled` — not as a default.
 
 ### Security
+- **A sign-in link no longer skips the second factor.** A magic link proves
+  the mailbox, which is one factor, and its redirect cannot ask for a second.
+  It issued an authorization code to whoever it was sent to, including a user
+  with a second factor enrolled and a user an MFA policy covers. It now signs
+  in only a user whom the password login would let in without a second factor,
+  because it asks the password login's own decision (`evaluateMFA`). Anyone
+  else goes back to the login page, for the same pending request, with the
+  reason: a second factor is needed, or a policy's grace period is over. The
+  link is spent either way, and the refusal is audited (`magic_link_login`,
+  failure). The login page now shows why a sign-in link was sent back; it used
+  to ignore the reason.
 - **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
   handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,
   the Android QR and the onboarding wizard's session — and none asked how
@@ -279,6 +294,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no-op control green.
 
 ### Added
+- **Lite install: sign in on a 4 GB machine (#961).** `./scripts/lite-up.sh`
+  starts `deployments/docker/docker-compose.lite.yml` (PostgreSQL, Redis, the
+  seven services the console calls, the production console as a same-origin
+  edge; published images, `OPENIDX_VERSION` default v1.37.0; memory limits
+  totalling 2080 MiB; only the console's port beyond 127.0.0.1), sets a random
+  admin password and prints it once. Elasticsearch, Guacamole, OpenZiti and
+  observability are `--with` profiles. The README quick start now uses it, and
+  the `lite-install` CI job runs it and signs in.
+- **Every release runs the display = enforcement table and carries the report
+  (#957).** `docs/evidence/display-equals-enforcement.md` asks for its table to
+  be verified at least once per release, and nothing ran it per release. A new
+  workflow, `display-equals-enforcement.yml`, runs every test the table's
+  "Automated checks" rows name, one package at a time, against a migrated
+  Postgres 16. Any test that fails, skips or does not run fails the run. A skip
+  counts as a failure because these tests skip without a database, and `go
+  test` then says ok. Measured: pointed at an unreachable database, all three
+  packages reported ok while all 13 tests skipped. The report gives the date,
+  ref, commit, runner, Postgres version and each test's result. It goes on the
+  run page, into a run artifact with the test logs, and onto the release as
+  `display-equals-enforcement-vX.Y.Z.md`. The tests under `test/integration`
+  stay with the integration job, and the report says so. `release.yml` starts
+  the run on the tag. The Release is published under `GITHUB_TOKEN`, which
+  starts no workflow, so a `release: published` trigger alone would never
+  fire. The table is the only list: `scripts/check-display-enforcement-tests.sh`
+  reads it on every pull request and fails when a named test is missing,
+  defined twice, or out of the release run's reach. A renamed test therefore
+  breaks its pull request, not the release. The guard and the run's reading of
+  `go test -v` both ship with self-tests that drive them red.
+- **A security baseline for the independent review (#959).** An OpenSSF
+  Scorecard workflow (`.github/workflows/scorecard.yml`) runs on every push to
+  `main` and weekly, uploads its findings to code scanning, and publishes the
+  result that the new README badge shows. `docs/security/pentest-scope.md` is the scope to send to penetration-test
+  vendors, with the steps to apply for the OpenSSF Best Practices badge.
+- **SAML interop and SCIM compliance tests in CI (#955).** The new SAML
+  interop workflow (`.github/workflows/saml-interop.yml`) runs the OpenIDX IdP
+  against SimpleSAMLphp 2.5.3.1 and Keycloak 26.7.4. Neither service provider
+  uses OpenIDX's SAML library. For each one, the suite runs SP-initiated SSO
+  with signed AuthnRequests, IdP-initiated SSO, and Single Logout in both
+  directions. It runs each flow twice: with a signed assertion in a signed
+  Response, and with an encrypted assertion in a signed Response. It then
+  sends each service provider forged Responses (unsigned, signed by an
+  untrusted key, for another audience, expired and, for SimpleSAMLphp,
+  replayed) and requires the SP to refuse every one. Go tests against a
+  migrated PostgreSQL cover the SAML messages the IdP receives. They check
+  that AuthnRequests and LogoutRequests are refused when unsigned where
+  signing is required, signed by the wrong key, altered after signing,
+  addressed to an unregistered ACS URL, stale or replayed. A SCIM compliance
+  test runs RFC 7643 and RFC 7644 cases against the real SCIM routes, and an
+  outbound test provisions users and groups to a mock SCIM target.
+  `docs/SAML.md` and `docs/SCIM.md` list the targets and the profiles tested.
+- **SAML IdP: assertion encryption, required AuthnRequest signing and
+  IdP-initiated SSO (migration v204).** A service provider with
+  `encryption_enabled` receives its assertion encrypted (AES-256-GCM, key
+  transport RSA-OAEP) to its `encryption_certificate`, or to its signing
+  certificate if none is set. If OpenIDX cannot encrypt, sign-on fails; it
+  never falls back to a plaintext assertion. Every Response and every
+  assertion is signed. `require_signed_authn_requests` makes the IdP refuse
+  unsigned AuthnRequests from that service provider; importing metadata with
+  `AuthnRequestsSigned="true"` sets it. Signatures on HTTP-Redirect requests
+  are now verified over the query string. `GET /saml/idp/sso/unsolicited`
+  starts IdP-initiated sign-on to a registered service provider.
+- **Outbound SCIM sends group members.** A group is provisioned with its
+  members, named by the ids the target issued for them. Group changes made
+  through inbound SCIM are now sent to targets.
+- **The OpenID Foundation conformance suite runs nightly (#958).**
+  `.github/workflows/oidc-conformance.yml` starts an OpenIDX stack the way the
+  smoke job does, puts it behind an HTTPS front at `https://op.openidx.test`,
+  and runs four certification plans through the suite's own runner: Basic OP,
+  Config OP, RP-Initiated Logout OP and Back-Channel Logout OP, with static
+  clients registered through the admin API. The suite release is pinned by
+  tag, commit and image digest (`test/conformance/suite.env`,
+  `test/conformance/compose.yml`). The results go to the run summary and an
+  artifact with the run's generated secrets removed; on `main` a failing run
+  opens or updates one tracking issue and a passing run closes it. Exceptions
+  need a dated entry in `test/conformance/waivers/`; only the three scope
+  modules OpenIDX does not offer (address, phone, all) are waived.
+  `docs/OAUTH-OIDC.md` lists the profiles, marked "not yet run" until the
+  first nightly run, and the deviations the code and one rehearsal outside CI
+  point to: the authorization endpoint refuses POST, the `request` parameter
+  is ignored rather than refused, and token responses lack
+  `Cache-Control: no-store`, among warnings. Formal certification is not
+  claimed and remains an owner decision.
 - **The post-logout allowlist can be registered from the console.** The
   RP-Initiated Logout list added below was reachable only through dynamic
   client registration and the OAuth client API. The applications editor —
@@ -565,6 +662,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after; a stub naming a missing source turns the build red.
 
 ### Fixed
+- **Distributed tracing works again.** With `TRACING_ENABLED=true`, every
+  service logged "Failed to initialize tracing: … conflicting Schema URL"
+  and ran untraced: `internal/common/tracing` pinned the semconv 1.24.0
+  schema on its resource, and the OpenTelemetry SDK's default resource now
+  carries 1.43.0, which `resource.Merge` refuses. The service attributes are
+  now schemaless, so they merge with whatever schema the SDK carries. The
+  test that accepted a "Schema URL" error as a normal outcome now requires
+  `Init` to succeed; against a real Jaeger 1.54, a span sent through `Init`
+  appears under its service name, and none did before.
+- **SAML: the IdP could not sign an assertion that carried attributes.** The
+  assertion did not declare the `xsi` prefix its attribute values use, so
+  signing failed and sign-on answered an error. The assertion now declares
+  every prefix it uses, and is signed as a copy so canonicalization cannot
+  remove a declaration from the sent XML.
+- **SAML: SP-initiated Single Logout and SP metadata import did not work.** The
+  parsers named namespace prefixes in their struct tags, which `encoding/xml`
+  never matches, so every LogoutRequest was refused as malformed and metadata
+  import found no ACS URL or certificate. Both now parse by namespace. A
+  LogoutRequest must be signed by the service provider, addressed to this
+  IdP, recent, and not seen before, and it ends only sessions recorded for
+  that service provider. LogoutResponses are signed and their status elements
+  are in the protocol namespace.
+- **SCIM server protocol conformance.** Responses use
+  `application/scim+json`. Errors use the RFC 7644 error envelope. A create
+  answers `201` with a `Location` header, a duplicate answers `409
+  uniqueness`, and an unknown or malformed id answers `404`. PATCH accepts
+  Entra's capitalized ops and string booleans, operations without a path,
+  `emails[type eq "work"].value` and `members[value eq "..."]`, and refuses
+  unsupported paths with `invalidPath` instead of answering `200`.
+  `externalId` is stored. `/ResourceTypes` is a `ListResponse`, paging
+  parameters are clamped, and `/ServiceProviderConfig` no longer claims
+  password change or sorting.
+- **`POST /oauth/authorize` accepts an authorization request (#958).** OpenID
+  Connect Core §3.1.2.1 requires the authorization endpoint to take POST as
+  well as GET. On this server that path was the older JSON consent endpoint
+  behind the flow authentication, so a form-encoded authorization request got
+  `401` (conformance module `oidcc-ensure-post-request-succeeds`). A POST with
+  an `application/x-www-form-urlencoded` body is now handled exactly as a GET
+  with the same parameters. It is validated the same way, stashed as the same
+  pending login, and its errors go to the same place. The parameters come from
+  the body, not the query string. It does not pass through the flow
+  authentication, because the authorization endpoint is public. Any other
+  body goes to the consent handler as before. That handler only ever read
+  JSON, so no request that worked before now goes elsewhere. The admin
+  console, the login page and the tests never POST to this path. A cross-site
+  POST does not carry the `SameSite=Lax` single sign-on cookie, so it reaches
+  the login page even when the browser has a session.
+- **The `request` and `request_uri` parameters are refused, not ignored
+  (#958).** OpenIDX does not process request objects. It used to ignore them
+  and serve whatever sat outside, so a `state` or `nonce` sent only inside
+  the object was lost (conformance module
+  `oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported`).
+  `/oauth/authorize` and `/oauth/authorize/v2` now answer
+  `request_not_supported` or `request_uri_not_supported` at the registered
+  `redirect_uri`, with the outer `state`, as OIDC Core §6 allows. The check
+  runs after the `redirect_uri` is validated, so an unregistered one is still
+  answered in-band. Discovery now says `request_parameter_supported: false`
+  and `request_uri_parameter_supported: false`. The second one was missing,
+  and an absent `request_uri_parameter_supported` means `true`. That module
+  now ends as skipped, which the suite allows for a server that refuses
+  request objects. `request` and `request_uri` are redacted from request logs,
+  like the `state` and `nonce` they carry.
+- **Token responses now carry `Cache-Control: no-store` and `Pragma: no-cache`
+  (#958).** RFC 6749 §5.1 requires both on any response that contains a
+  token (conformance module `oidcc-refresh-token`). They are set on the route,
+  so every answer from `/oauth/token` has them: success and error, for all
+  five grants. The same goes for the other responses that carry a token, a
+  credential or a token's contents: `/oauth/device_authorization`,
+  `/oauth/introspect`, `/oauth/userinfo`, the registration endpoints
+  (`client_secret`, `registration_access_token`), `/oauth/stepup-verify`
+  (`step_up_token`) and the social-login callback when it answers with tokens.
+- **A sign-in straight after a logout is no longer refused as revoked
+  (#958).** A logout that names the user (`id_token_hint`), `logout-all` and
+  every sever path write a per-user cutoff, and an access token that dates
+  from at or before it is refused. The cutoff and the token's `iat` were both
+  whole seconds, compared with `<=`. So a token minted in the same second as
+  the logout was refused even if it came after it. A user who signed out and
+  back in within a second was rejected at `/oauth/userinfo`, and the
+  conformance run hit this on every logout. The cutoff is now written to the
+  microsecond (`<seconds>.<microseconds>`). An access token from the
+  authorization-code grant carries a private claim, `granted_at_us`: the
+  microsecond its code was issued. A token is refused when that time is at or
+  before the cutoff, so only a sign-in that provably came after the logout
+  gets through.
+
+  Revocation is not weakened:
+  - A token without the claim is compared at whole-second precision, and
+    refused in the same second, as before. That covers tokens from older
+    releases, from the refresh, device and token-exchange grants, and from the
+    SAML fallback.
+  - A cutoff an older release wrote is whole seconds and reaches to the end of
+    its second.
+  - The claim dates a token from its code, not from the exchange. A code
+    issued before the logout gives a token the logout revokes, however late
+    it is redeemed. Before, that was only caught when the exchange fell in the
+    same second.
+  - The token endpoint also refuses a code whose session was revoked since it
+    was issued (`invalid_grant`, `session_revoked`), the rule the refresh
+    grant already applied.
+
+  **Upgrading:** only oauth-service reads the cutoff. An older oauth-service
+  cannot parse the new format and fails closed: it refuses that user's tokens
+  until it is upgraded. Upgrade oauth-service first, or all services together
+  as the compose and Helm deployments do.
+
+  The new tests drive the mounted routes. The authorization-code case runs on
+  PostgreSQL, from sign-in through logout to a new sign-in in the same second.
+  Twenty-two mutations of the four fixes were each caught by a test.
 - **The sign-in page could not take a backup or bypass code.** Its code field
   took six digits and dropped every other character. Backup codes are eight
   letters and digits, and an administrator's bypass codes are sixteen. The

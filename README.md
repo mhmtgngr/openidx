@@ -5,6 +5,10 @@
 </p>
 
 <p align="center">
+  <a href="https://scorecard.dev/viewer/?uri=github.com/mhmtgngr/openidx"><img src="https://api.scorecard.dev/projects/github.com/mhmtgngr/openidx/badge" alt="OpenSSF Scorecard"></a>
+</p>
+
+<p align="center">
   <a href="#feature-maturity">Feature maturity</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#architecture">Architecture</a> •
@@ -76,8 +80,8 @@ checked against the code, the tests and the docs on `main` on 2026-09-24.
 
 | Feature | Level | Why | Evidence |
 |---|---|---|---|
-| OAuth 2.0 and OpenID Connect provider: authorization code with PKCE, refresh rotation, client credentials, token exchange, device flow, dynamic registration, per-application consent | Beta (GA candidate) | Works and is tested, also against the running services. No conformance run yet. | [OAUTH-OIDC.md](docs/OAUTH-OIDC.md), [`oauth_flow_test.go`](test/integration/oauth_flow_test.go), [#958] |
-| SAML 2.0 identity provider | Beta (GA candidate) | Signs assertions with XML-DSig and serves metadata and single logout. Unit-tested; not yet tested against another SP. | [`saml_test.go`](internal/oauth/saml_test.go), [#955] |
+| OAuth 2.0 and OpenID Connect provider: authorization code with PKCE, refresh rotation, client credentials, token exchange, device flow, dynamic registration, per-application consent | Beta (GA candidate) | Works and is tested, also against the running services. The OpenID Foundation conformance suite runs nightly in CI; no certification is claimed ([#958]). | [OAUTH-OIDC.md](docs/OAUTH-OIDC.md), [`oauth_flow_test.go`](test/integration/oauth_flow_test.go), [conformance workflow](.github/workflows/oidc-conformance.yml) |
+| SAML 2.0 identity provider | Beta (GA candidate) | Signs assertions with XML-DSig and serves metadata and single logout. CI tests it against SimpleSAMLphp and Keycloak as service providers ([#955]). | [`saml_test.go`](internal/oauth/saml_test.go), [SAML interop workflow](.github/workflows/saml-interop.yml) |
 | MFA: TOTP, WebAuthn and passkeys, push, SMS and email codes | Beta (GA candidate) | Each factor is tested. SMS, email and push need a provider you configure, and no delivery has been recorded on a live install. | [MFA guide](docs/MFA_IMPLEMENTATION_GUIDE.md), [operational controls][ops] |
 | MFA policies | Beta | Required methods and a per-user grace period are enforced at password sign-in, tested both ways. Conditions are refused. | [display = enforcement][dee] |
 | OATH hardware tokens | Experimental | Tokens can be registered and verified through the identity API, but sign-in does not accept them. FIDO2 security keys work, through WebAuthn. | [`hardware_token.go`](internal/identity/hardware_token.go) |
@@ -86,7 +90,7 @@ checked against the code, the tests and the docs on `main` on 2026-09-24.
 | Social sign-in and external identity providers | Experimental | The sign-in round trip has no test. A generic OIDC provider is called at Keycloak's endpoint paths, not through discovery, and a SAML provider can be configured but nothing signs a user in through it. | [`social_login.go`](internal/oauth/social_login.go) |
 | Directory sync: LDAP and Active Directory | Beta | Scheduled user and group sync; referrals are followed, and a lost group loses its access. Tested against a fake directory. | [`ldap_referral_test.go`](internal/directory/ldap_referral_test.go) |
 | Directory sync: Azure AD (Entra ID) | Experimental | The Microsoft Graph calls have no test; only the configuration and the routing are tested. | [`azure_ad.go`](internal/directory/azure_ad.go) |
-| SCIM 2.0 server | Beta | Users and groups, with filters and PATCH; tested. No SCIM compliance run yet. | [SCIM.md](docs/SCIM.md), [#955] |
+| SCIM 2.0 server | Beta | Users and groups, with filters and PATCH. A SCIM compliance test runs in CI against the migrated schema ([#955]). | [SCIM.md](docs/SCIM.md), [`scim_compliance_testdb_test.go`](internal/provisioning/scim_compliance_testdb_test.go) |
 | Outbound SCIM | Beta | API only, with no console screen; tested. | [OUTBOUND_SCIM.md](docs/OUTBOUND_SCIM.md) |
 | HR-driven joiner/mover/leaver | Beta | BambooHR only, and API only. Tested against a fake BambooHR. | [HR_DRIVEN_JML.md](docs/HR_DRIVEN_JML.md) |
 | SSF/CAEP transmitter and receiver | Beta | API only. Tested, including delivery to receivers and tenant isolation. | [SSF_CAEP.md](docs/SSF_CAEP.md) |
@@ -151,7 +155,8 @@ checked against the code, the tests and the docs on `main` on 2026-09-24.
 
 | Feature | Level | Why | Evidence |
 |---|---|---|---|
-| Docker Compose | Experimental | CI checks only that the quick start writes its secrets and that the compose file resolves; nothing starts the stack. The console is built from its development stage, and an outsider cannot reach a login ([#961]). | [`check-first-run.test.sh`](scripts/check-first-run.test.sh), [#961] |
+| Lite install (Docker Compose) | Beta | CI builds the images, starts the lite stack and signs in on every change ([#961]). No run on a fresh 4 GB machine has been recorded yet. | [`lite-smoke.sh`](scripts/lite-smoke.sh), [#961] |
+| Full Docker Compose stack | Experimental | CI checks only that its secrets are written and that the compose file resolves; nothing starts the full stack. | [`check-first-run.test.sh`](scripts/check-first-run.test.sh) |
 | Helm chart | Beta | CI installs it on kind on every chart change. Image tags default to `latest`, and `values-prod.yaml` pins `v0.1.0`, a version no release has had ([#960]). | [Helm workflow](.github/workflows/helm.yml), [#960] |
 | Terraform: AWS and Azure | Experimental | CI runs `fmt` and `validate`; neither root has been applied from this repository. | [operator guide §13][opguide-13] |
 | Backup and restore | Experimental | `cmd/backup` wraps `pg_dump` and `pg_restore`, and only its encryption is tested. No restore has run in CI or been recorded on a live install ([#962]). | [disaster-recovery.md](docs/disaster-recovery.md), [#962] |
@@ -179,27 +184,50 @@ checked against the code, the tests and the docs on `main` on 2026-09-24.
 
 ## Quick Start
 
-### Prerequisites
-- Docker & Docker Compose
-- Go 1.26+ and Node.js 20+ (only for building from source)
-- kubectl + Helm (for Kubernetes deployment)
-- **Hardware floor**: the full stack is ~39 containers (Postgres,
-  Elasticsearch, OpenZiti, Guacamole, observability, 8 Go services…) —
-  plan on **≥ 8–10 GB RAM** and 4+ cores for a complete single-box install.
+### Lite install (the quick start)
 
-### Docker Compose
-
-This path is Experimental today (see
-[Install and operations](#install-and-operations)): no CI job starts the
-stack, and the compose file builds the console from its development stage.
-[#961](https://github.com/mhmtgngr/openidx/issues/961) adds a lite install
-that CI starts, and points this quick start at it.
+A working sign-in on one machine with **4 GB of RAM and 2 CPUs**: PostgreSQL,
+Redis, the seven services the console uses, and the console. It needs Linux
+on x86-64 with Docker Engine and the Compose plugin 2.20 or later
+([install Docker](https://docs.docker.com/engine/install/)), and about 3 GB of
+disk.
 
 ```bash
-# Clone the repository
-git clone https://github.com/mhmtgngr/openidx.git
+git clone --depth 1 https://github.com/mhmtgngr/openidx.git
 cd openidx
+./scripts/lite-up.sh
+```
 
+The script writes a `.env` with random secrets, starts
+`deployments/docker/docker-compose.lite.yml`, waits until every service is
+healthy, gives the `admin` account a random password and prints it once,
+with the URL (http://localhost:3000). Run it again at any time: it keeps the
+secrets and the password.
+
+- **From another machine:** `ssh -L 3000:localhost:3000 you@host` and open
+  http://localhost:3000, or run `./scripts/lite-up.sh --url http://<host>:3000`.
+  Only the console's port listens beyond 127.0.0.1.
+- **Optional components**, one at a time, each with more memory:
+  `./scripts/lite-up.sh --with elasticsearch` (also `guacamole`, `ziti`,
+  `observability`).
+- **Stop:** `docker compose -f deployments/docker/docker-compose.lite.yml down`
+  (add `-v` to delete the data).
+
+The lite install pulls the published images of release v1.37.0 or later; the
+v1.36.0 console image calls a fixed host and cannot work in it. It is an
+evaluation install: no TLS, development mode. Details, the memory budget and
+the components are in
+[Getting Started → Lite install](docs/GETTING-STARTED.md#lite-install).
+
+### Full stack (advanced)
+
+Every component on one machine: about 39 containers (Postgres,
+Elasticsearch, OpenZiti, BrowZer, Guacamole, APISIX, observability, 8 Go
+services…). Plan on **8–10 GB of RAM** and 4+ cores. It builds the images
+from source and publishes its ports on all interfaces, so run it on a
+development machine, not an exposed host.
+
+```bash
 # Generate a .env with random secrets (compose refuses to start without them)
 ./scripts/generate-secrets.sh
 
@@ -218,6 +246,11 @@ identity and oauth services refuse to start while the default still works.
 For a production single-VM install, layer the hardened overlay:
 `-f deployments/docker/docker-compose.yml -f deployments/docker/docker-compose.prod.yml`
 (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
+
+### Building from source
+
+Go 1.26+ and Node.js 20+; see
+[Getting Started → Developer Setup](docs/GETTING-STARTED.md#-developer-setup-from-source).
 
 ### Local development (services on the host)
 
@@ -313,6 +346,7 @@ openidx/
 - [How IAM ⇄ PAM ⇄ Ziti Interrelate](docs/IAM_PAM_ZITI_INTERRELATION.md)
 - [Zero Trust Network: Easy Ziti Deployment](docs/ZITI_EASY_DEPLOYMENT.md)
 - [Security Hardening Checklist](docs/SECURITY-HARDENING.md) and [Tenancy Trust Boundary](docs/SECURITY-TENANCY.md)
+- The [penetration test scope](docs/security/pentest-scope.md)
 - [API Reference](docs/api/README.md)
 
 ## Roadmap

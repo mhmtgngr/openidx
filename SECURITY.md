@@ -160,6 +160,11 @@ For security reviewers and auditors:
   vendor-risk reviews.
 - OpenIDX has **not** yet had an independent penetration test or a
   third-party audit, and it has not run the OpenID Foundation conformance
-  suite. These are planned; see [ROADMAP.md](ROADMAP.md).
+  suite. These are planned; see [ROADMAP.md](ROADMAP.md). The scope for the
+  penetration test is
+  [docs/security/pentest-scope.md](./docs/security/pentest-scope.md).
+- The [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/mhmtgngr/openidx)
+  checks the repository's supply-chain practices every week
+  (`.github/workflows/scorecard.yml`).
 
 Thank you for helping keep OpenIDX secure.

@@ -1,11 +1,11 @@
 # Getting Started with OpenIDX
 
 > **Just want to run OpenIDX?** Use the **[Quick Start in the repository
-> README](https://github.com/mhmtgngr/openidx/blob/main/README.md#quick-start)** — the Docker Compose path with
-> generated secrets is the one supported first run, and it is maintained
-> in exactly one place. This document is for **developers building from
-> source** (and for the first-time setup tasks below, which apply to
-> both paths).
+> README](https://github.com/mhmtgngr/openidx/blob/main/README.md#quick-start)**:
+> `./scripts/lite-up.sh`. The [Lite install](#lite-install) section below
+> has what it runs, its memory budget and its optional components. The rest
+> of this document is for **developers building from source**, and for the
+> first-time setup tasks, which apply to every path.
 >
 > **Planning a production deploy?** The developer setup below brings up
 > a development stack with insecure defaults. Before going to
@@ -132,14 +132,106 @@ Open your browser:
 
 ---
 
+## Lite install
+
+`./scripts/lite-up.sh` runs `deployments/docker/docker-compose.lite.yml`:
+the quick start in the README. It is sized for one machine with **4 GB of RAM
+and 2 CPUs** (Linux, x86-64, Docker Engine with Compose 2.20 or later).
+
+**What runs.** PostgreSQL, the three Redis roles (session, rate limit,
+revocation), and the seven services the console calls: identity, governance,
+provisioning, audit, admin-api, oauth and access. The console's own nginx is
+the edge: it serves the SPA and sends each API prefix to its service
+(`deployments/docker/nginx/admin-console.lite.conf`), so the browser talks to
+one origin. There is no APISIX, etcd, OPA, mailpit or gateway-service; the
+console calls none of them.
+
+**What the script does.** It writes `.env` with random secrets when there is
+none (mode 600; `scripts/generate-secrets.sh`, its output hidden), starts the
+stack, waits until every service is healthy, and the first time gives the
+seeded `admin` account a random password, printed once and stored nowhere.
+A second run changes nothing it was not asked to change. Lost the password?
+`./scripts/lite-up.sh --reset-admin-password`.
+
+**Images.** The published ones, `ghcr.io/mhmtgngr/openidx/<service>`, all at
+one release: `OPENIDX_VERSION`, default `v1.37.0`. v1.37.0 is the first
+release whose console image calls its own origin. To try an unreleased
+`main`, set `OPENIDX_VERSION` in `.env` to the full commit SHA of a `main`
+commit (docker.yml tags every image with it).
+
+**Memory.** Every container has a limit; the core's add up to 2080 MiB,
+which leaves about 2 GiB of a 4 GB machine for the kernel, Docker and the
+page cache.
+
+| Container | Limit (MiB) | Container | Limit (MiB) |
+|---|---|---|---|
+| postgres | 512 | oauth-service | 256 |
+| redis / redis-ratelimit / redis-revocation | 128 / 64 / 64 | admin-api | 192 |
+| identity-service | 192 | access-service | 192 |
+| audit-service | 160 | governance-service | 128 |
+| provisioning-service | 128 | admin-console (nginx) | 64 |
+
+`migrate` (256) and `seed` (64) finish before the services start. Measured
+with the seven services running as processes against PostgreSQL 16 and
+Redis 7 (not in containers): 30–51 MiB resident each when idle, 32–55 MiB
+after 50 sign-ins and 750 API calls, except oauth-service, which peaked at
+133 MiB because each password check holds 19 MiB for Argon2id. What the
+containers use on the CI runner is printed by the `lite-install` job.
+
+**Optional components.** One command each; each one needs the extra memory
+shown, so add them one at a time and watch `docker stats`:
+
+| Command | Adds | Extra limit (MiB) |
+|---|---|---|
+| `./scripts/lite-up.sh --with elasticsearch` | full-text audit search | 1024 |
+| `./scripts/lite-up.sh --with guacamole` | brokered SSH/RDP/VNC for PAM, at `/guacamole/` on the console | 768 |
+| `./scripts/lite-up.sh --with ziti` | the OpenZiti controller and one router; access-service connects to them | 384 |
+| `./scripts/lite-up.sh --with observability` | Prometheus, Alertmanager, Grafana (127.0.0.1:3001), Loki, Promtail, Jaeger (127.0.0.1:16686), and tracing on | 1216 |
+
+`--without <component>` takes one out. The choice is kept in `.env`
+(`COMPOSE_PROFILES`), so plain `docker compose -f
+deployments/docker/docker-compose.lite.yml ps|logs|down` sees the same
+components. Guacamole's `guacadmin` gets the generated
+`GUACAMOLE_ADMIN_PASSWORD`, not the schema's default. The Ziti profile
+advertises `*.localtest.me`, which resolves to 127.0.0.1, so clients on other
+machines cannot join it, and BrowZer is not included. Promtail reads the
+Docker socket, which is root-equivalent on the host. Alertmanager shows alerts
+(127.0.0.1:9093, and in Grafana) but delivers none: to send them somewhere,
+add a receiver to `deployments/docker/alertmanager/alertmanager.lite.yml`.
+
+**Reaching it from another machine.** The admin-console OAuth client accepts
+only the console URLs it has registered, and `http://localhost:3000` is the
+one registered by default. Either tunnel (`ssh -L 3000:localhost:3000
+you@host`, then open http://localhost:3000), or run `./scripts/lite-up.sh
+--url http://<host>:3000`: that registers the URL and makes it the token
+issuer. Browsers must then use exactly that URL. Over plain HTTP on an
+address other than localhost the browser has no Web Crypto, so the console
+falls back to PKCE `plain`; the lite install runs in development mode, which
+allows it. Put TLS in front for anything but a trial.
+
+**Ports.** Only the console (`OPENIDX_CONSOLE_PORT`, default 3000) listens
+beyond 127.0.0.1. PostgreSQL (5432), the session Redis (6379) and the
+services (8001–8007) are published on 127.0.0.1 for debugging.
+
+**What it is not.** It runs `APP_ENV=development` with no TLS and rate
+limiting off. `ADMIN_API_REQUIRE_AUTH` and `ACCESS_API_REQUIRE_AUTH` are on,
+so the admin and access APIs refuse anonymous callers even so. For
+production use the Helm chart (`docs/DEPLOYMENT.md`).
+
+**Check it.** `OPENIDX_ADMIN_PASSWORD_FILE=<file with the password>
+scripts/lite-smoke.sh` signs in the way the console does and checks the
+claims above; CI runs it on every change that touches the install.
+
+---
+
 ## 🐳 Docker Compose (Full Stack)
 
-The full-stack compose path is the **[README Quick
+The full stack is the advanced path in the **[README Quick
 Start](https://github.com/mhmtgngr/openidx/blob/main/README.md#quick-start)** — clone, run
 `./scripts/generate-secrets.sh` (compose refuses to start without the
 generated `.env`), then `docker compose -f
-deployments/docker/docker-compose.yml up -d`. It is not duplicated here
-so the instructions can never diverge. Infrastructure credentials
+deployments/docker/docker-compose.yml up -d`. It needs 8–10 GB of RAM. It
+is not duplicated here so the instructions can never diverge. Infrastructure credentials
 (PostgreSQL, Redis, Grafana, …) are the random values in your generated
 `.env`, not fixed defaults.
 
@@ -165,8 +257,13 @@ The admin console is at http://localhost:3000 (sign-in:
 ### 1. First Login
 
 You do not create the first admin — the seed migration (v10) already did.
-This is the **authoritative** first-login credential; if another document
-disagrees, this one is right:
+
+**Lite install:** `./scripts/lite-up.sh` replaces the seeded password with a
+random one on its first run and prints it once; sign in as `admin` with
+that. The seeded password below never works there.
+
+**Full stack and developer setup:** this is the **authoritative**
+first-login credential; if another document disagrees, this one is right:
 
 | Field | Value |
 |---|---|

@@ -562,6 +562,36 @@ describe('LoginPage', () => {
     })
   })
 
+  // A sign-in link that cannot finish the sign-in (a second factor is needed,
+  // or a policy's grace period is over) comes back here with ?error= and the
+  // pending request's login_session, so the person can continue with their
+  // password.
+  describe('a sign-in link sent back', () => {
+    afterEach(() => {
+      sessionStorage.clear()
+      window.location.search = ''
+    })
+
+    it('says why, and keeps the pending request', async () => {
+      window.location.search = '?login_session=ls-link-1&error=mfa_required'
+      renderWithRouter(<LoginPage />)
+      expect(await screen.findByText(/needs a second factor, and a sign-in link cannot ask for one/i)).toBeInTheDocument()
+      expect(sessionStorage.getItem('oidc_login_session')).toBe('ls-link-1')
+    })
+
+    it('says when the time to add a required method has passed', async () => {
+      window.location.search = '?login_session=ls-link-2&error=mfa_enrollment_required'
+      renderWithRouter(<LoginPage />)
+      expect(await screen.findByText(/the time to add one has passed/i)).toBeInTheDocument()
+    })
+
+    it('an error it does not know says nothing (control)', () => {
+      window.location.search = '?error=something_else'
+      renderWithRouter(<LoginPage />)
+      expect(screen.queryByText(/sign-in link/i)).not.toBeInTheDocument()
+    })
+  })
+
   // /oauth/authorize appends resume=1 when the browser holds a live session
   // that could not be carried straight to a code because this page has a
   // screen to show. The page then completes the pending request from that

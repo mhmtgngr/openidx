@@ -90,6 +90,17 @@ paths:
                     type: array
                     items:
                       type: string
+                  request_parameter_supported:
+                    type: boolean
+                    description: >-
+                      Always false: request objects are refused with
+                      `request_not_supported`.
+                  request_uri_parameter_supported:
+                    type: boolean
+                    description: >-
+                      Always false, and always present: OIDC Discovery 1.0 §3
+                      reads an absent value as true. `request_uri` is refused
+                      with `request_uri_not_supported`.
 
   /.well-known/jwks.json:
     get:
@@ -190,6 +201,22 @@ paths:
           schema:
             type: integer
             minimum: 0
+        - name: request
+          in: query
+          description: >-
+            Not supported. A request object (OIDC Core §6.1) is answered at the
+            `redirect_uri` with `request_not_supported` and the outer `state`;
+            the object is not opened.
+          schema:
+            type: string
+        - name: request_uri
+          in: query
+          description: >-
+            Not supported. Answered at the `redirect_uri` with
+            `request_uri_not_supported` and the outer `state`.
+          schema:
+            type: string
+            format: uri
       responses:
         '302':
           description: >-
@@ -222,7 +249,9 @@ paths:
             registered for the client; it is checked here rather than after the
             user has entered a password on a request that could never succeed.
             `login_required` and `consent_required` are the `prompt=none`
-            answers of OIDC Core §3.1.2.6.
+            answers of OIDC Core §3.1.2.6. `request_not_supported` and
+            `request_uri_not_supported` answer a request object, which this
+            server does not process.
           headers:
             Location:
               description: >-
@@ -240,12 +269,113 @@ paths:
             would be an open redirect, so these are answered in-band.
     post:
       tags: [Authorization]
-      summary: Authorization consent
+      summary: Authorization request (form) or consent submission (JSON)
+      description: >-
+        Two endpoints on one path, told apart by the Content-Type.
+
+
+        **`application/x-www-form-urlencoded`: an authorization request.** OIDC
+        Core §3.1.2.1 requires the authorization endpoint to accept POST. The
+        form body carries exactly the parameters of `GET /oauth/authorize`, and
+        the request is handled as that GET would be, with the same validation,
+        redirects and errors. The query string of a POST is not read. No
+        authentication: the authorization endpoint is public. A cross-site POST
+        does not carry the `SameSite=Lax` `openidx_sso` cookie, so it goes to
+        the login UI even when the browser has a session.
+
+
+        **`application/json`: consent submission.** Requires an authenticated
+        session. It mints a code for the session's user and answers with the
+        redirect URL, or starts the consent screen when consent is
+        outstanding.
       operationId: authorizeConsent
       security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [response_type, client_id, redirect_uri]
+              description: The parameters of GET /oauth/authorize.
+              properties:
+                response_type:
+                  type: string
+                  enum: [code]
+                client_id:
+                  type: string
+                redirect_uri:
+                  type: string
+                  format: uri
+                scope:
+                  type: string
+                state:
+                  type: string
+                nonce:
+                  type: string
+                code_challenge:
+                  type: string
+                code_challenge_method:
+                  type: string
+                  enum: [S256]
+                prompt:
+                  type: string
+                max_age:
+                  type: integer
+                  minimum: 0
+                idp_hint:
+                  type: string
+                request:
+                  type: string
+                  description: Not supported (`request_not_supported`).
+                request_uri:
+                  type: string
+                  description: Not supported (`request_uri_not_supported`).
+          application/json:
+            schema:
+              type: object
+              properties:
+                client_id:
+                  type: string
+                redirect_uri:
+                  type: string
+                response_type:
+                  type: string
+                scope:
+                  type: string
+                state:
+                  type: string
+                nonce:
+                  type: string
+                code_challenge:
+                  type: string
+                code_challenge_method:
+                  type: string
       responses:
+        '200':
+          description: >-
+            JSON consent submission: `redirect_url`, the client's redirect_uri
+            carrying the code.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect_url:
+                    type: string
+                    format: uri
         '302':
-          description: Redirect to client with code
+          description: >-
+            Form authorization request: the same redirects as GET
+            /oauth/authorize (single sign-on, the login UI, or a request error
+            at the redirect_uri).
+        '400':
+          description: >-
+            Form authorization request that cannot be reported to the client
+            (missing or unknown client_id, unregistered redirect_uri); or a
+            malformed consent submission.
+        '401':
+          description: JSON consent submission without an authenticated session.
 
   /oauth/login:
     post:
@@ -378,13 +508,28 @@ paths:
                   type: string
       responses:
         '200':
-          description: Token response
+          description: >-
+            Token response. Every response from this endpoint, success or
+            error, carries `Cache-Control: no-store` and `Pragma: no-cache`
+            (RFC 6749 §5.1).
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [no-store]
+            Pragma:
+              schema:
+                type: string
+                enum: [no-cache]
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenResponse'
         '400':
-          description: Invalid request
+          description: >-
+            Invalid request. For the authorization_code grant this includes a
+            code whose session was revoked after the code was issued
+            (`invalid_grant`, `session_revoked`).
         '401':
           description: Invalid client credentials
 
@@ -2193,6 +2338,48 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /saml/idp/sso/unsolicited:
+    get:
+      tags: [SAML]
+      summary: IdP-initiated (unsolicited) single sign-on to a registered service provider
+      description: |
+        Issues a signed SAML Response with no InResponseTo to the ACS URL
+        registered for the service provider, and to no other URL. A caller who
+        is not signed in is sent to the login page first.
+      operationId: idPInitiatedSSO
+      x-openidx-handler: internal/oauth.(*Service).handleIdPInitiatedSSO
+      security: []
+      parameters:
+        - name: sp_entity_id
+          in: query
+          required: true
+          description: Entity ID of a registered, enabled service provider
+          schema:
+            type: string
+        - name: RelayState
+          in: query
+          required: false
+          description: Passed through to the service provider unchanged
+          schema:
+            type: string
+      responses:
+        '200':
+          description: An HTML form that posts the SAML Response to the service provider's ACS URL
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Not signed in; redirect to the login page
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
 

@@ -31,6 +31,11 @@ const (
 	ErrorInvalidClient           = "invalid_client"
 	ErrorInvalidGrant            = "invalid_grant"
 	ErrorUnsupportedGrantType    = "unsupported_grant_type"
+
+	// OIDC Core §3.1.2.6: the answers for a request object this server does
+	// not process (requestObjectRefusal).
+	ErrorRequestNotSupported    = "request_not_supported"
+	ErrorRequestURINotSupported = "request_uri_not_supported"
 )
 
 // TokenFlowResponse represents a successful token response (RFC 6749 Section 5.1).

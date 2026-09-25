@@ -29,8 +29,9 @@ another shows that the disallowed case is refused
   - operational evidence: a restore, an upgrade, alerts and SLOs
     ([#962](https://github.com/mhmtgngr/openidx/issues/962)).
 
-  None of these has run yet, so no feature is GA today. "GA candidate" marks
-  a Beta feature that M1 is meant to verify.
+  The penetration test and the operational evidence have not happened yet,
+  and no release has carried the table's report, so no feature is GA today.
+  "GA candidate" marks a Beta feature that M1 is meant to verify.
 - **Tested means a test in CI exercises what the feature does.** A test of its
   configuration or its storage alone does not count. A feature that does not
   meet every Beta condition is Experimental.

@@ -96,7 +96,8 @@ Most secure flow for web and mobile applications.
 **Use Case:** Web applications, mobile apps
 
 **Flow:**
-1. Client redirects user to `/oauth/authorize`
+1. Client redirects user to `/oauth/authorize` (a GET, or a form POST; see
+   [The authorization endpoint](#the-authorization-endpoint))
 2. User logs in and grants consent
 3. OAuth service redirects back with authorization code
 4. Client exchanges code for tokens at `/oauth/token`
@@ -199,7 +200,41 @@ permission rather than letting any authenticated client introspect anything in
 the tenant.
 
 ### Discovery
-Automatic service configuration via `.well-known/openid-configuration`
+Automatic service configuration via `.well-known/openid-configuration`.
+
+The document states `request_parameter_supported: false` and
+`request_uri_parameter_supported: false` outright. OIDC Discovery 1.0 §3 reads
+an absent `request_uri_parameter_supported` as `true`, so leaving it out would
+advertise support this server does not have.
+
+### The authorization endpoint
+
+`/oauth/authorize` takes an authorization request by `GET`, with the
+parameters in the query string, or by `POST`, with the parameters in an
+`application/x-www-form-urlencoded` body (OIDC Core §3.1.2.1). A POST is
+handled exactly as a GET with the same parameters, with the same validation,
+errors and login redirect. Only the body is read. Parameters in the query
+string of a POST are ignored.
+
+`POST /oauth/authorize` with any other body, in practice JSON, is the older
+consent submission. It needs an authenticated session and is unchanged. The
+`Content-Type` tells the two apart. The consent handler only ever read JSON,
+so a form body never reached it with any effect.
+
+A cross-site form POST does not carry the `SameSite=Lax` `openidx_sso` cookie.
+Such a request reaches the login page even when the browser has a session, and
+single sign-on then completes after the user signs in.
+
+**Request objects are refused.** OpenIDX does not process request objects
+(OIDC Core §6). A request carrying `request` is answered with
+`request_not_supported`, and one carrying `request_uri` with
+`request_uri_not_supported`. Both go to the registered `redirect_uri`, with the
+`state` sent outside the object if there is one. The object is not opened, so
+a `state` sent only inside it is not returned. The check runs after the
+`redirect_uri` is validated, so a request with an unregistered one is still
+answered with `400` in-band. `/oauth/authorize/v2` refuses them the same way.
+Before, both parameters were ignored and the request went ahead without the
+`state` and `nonce` the client had put in the object.
 
 ### Single Sign-On across applications
 A login completion (password, MFA, passwordless, social, or after consent) sets
@@ -285,6 +320,37 @@ An application's detail and list responses report the list as an empty array
 when the client has registered nothing and omit the key entirely when there is
 no OAuth client behind the tile at all, which is how the console knows whether
 to show the field.
+
+### What a logout revokes
+
+A logout by `id_token_hint` (without a bearer), `/oauth/logout-all`, and every
+path that severs an account write a per-user revocation cutoff. An access
+token that dates from at or before the cutoff is refused at `/oauth/userinfo`
+and introspects as `active: false`.
+
+The cutoff is recorded to the microsecond. An access token from the
+authorization-code grant carries a private claim, `granted_at_us`: the
+microsecond its code was issued, never later than the moment the token was
+minted. When the token has it, that time is compared with the cutoff. So a
+user who signs out and back in within the same second keeps the new token, and
+any token whose code was issued before the logout is refused, however late the
+code was redeemed.
+
+A token without the claim is compared at whole-second precision: it is
+refused if its `iat` is in the same second as the cutoff or earlier. That
+covers tokens from earlier releases, from the refresh, device and
+token-exchange grants, and from the SAML fallback. A cutoff written by an
+earlier release is whole seconds and reaches to the end of its second. In
+both cases a token that could have been minted before the logout is refused.
+
+The token endpoint also refuses an authorization code whose session has been
+revoked since the code was issued (`invalid_grant`, `session_revoked`), the
+rule the refresh grant already applied. A logout therefore also stops the codes
+issued under the sessions it ends.
+
+Both times come from the clocks of the hosts involved, as they always have. A
+cutoff and a token minted by different hosts are compared as accurately as
+those clocks agree.
 
 ### Back-channel logout
 When a session stops being live — `/oauth/logout` (with the cookie, an
@@ -514,7 +580,8 @@ GET /.well-known/jwks.json
 ```bash
 # Authorization endpoint
 GET  /oauth/authorize
-POST /oauth/authorize  # Consent submission
+POST /oauth/authorize  # form body: an authorization request, as GET
+                       # JSON body: consent submission (authenticated)
 
 # Token endpoint
 POST /oauth/token
@@ -559,6 +626,9 @@ Signed JWT containing:
 - `iss`: Issuer (OpenIDX URL)
 - `iat`: Issued at timestamp
 - `exp`: Expiration timestamp
+- `granted_at_us`: from the authorization-code grant only. The microsecond
+  the code was issued, compared with a logout's revocation cutoff (see
+  [What a logout revokes](#what-a-logout-revokes))
 
 **Signature:** RS256 (RSA-SHA256)
 
@@ -624,6 +694,16 @@ requires that client to use PKCE from the next authorization request onward.
 - Codes deleted after first use
 - 10-minute expiration
 - Prevents replay attacks
+- A code whose session was revoked after it was issued (a logout, the kill
+  switch, a deprovision) is refused at the token endpoint
+
+### Token responses are not cacheable
+Every response from `/oauth/token`, success or error and for every grant,
+carries `Cache-Control: no-store` and `Pragma: no-cache` (RFC 6749 §5.1). So
+do the other responses that carry a token, a credential or a token's
+contents: `/oauth/device_authorization`, `/oauth/introspect`,
+`/oauth/userinfo`, the registration endpoints under `/oauth/register`,
+`/oauth/stepup-verify` and the social-login callback.
 
 ## Integration Examples
 
@@ -875,6 +955,169 @@ the current level.
 - [RFC 7517](https://tools.ietf.org/html/rfc7517) - JSON Web Key (JWK)
 - [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
 - [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
+
+The list above names the specifications the code implements. How closely it
+follows them is measured by the conformance run below.
+
+## Conformance testing (OpenID Foundation suite)
+
+`.github/workflows/oidc-conformance.yml` runs the OpenID Foundation's
+conformance suite against an OpenIDX stack started in CI, every night and on
+demand (issue #958). The suite is the open-source, self-hosted one at
+gitlab.com/openid/conformance-suite, pinned to one release in
+`test/conformance/suite.env` (its images by digest in
+`test/conformance/compose.yml`, its runner scripts by commit).
+
+### Profiles
+
+| Profile | Suite test plan | Variants | Result |
+|---------|-----------------|----------|--------|
+| Basic OP | `oidcc-basic-certification-test-plan` | discovery, static client | Not yet run |
+| Config OP | `oidcc-config-certification-test-plan` | discovery, static client | Not yet run |
+| RP-Initiated Logout OP | `oidcc-rp-initiated-logout-certification-test-plan` | `response_type=code`, static client | Not yet run |
+| Back-Channel Logout OP | `oidcc-backchannel-rp-initiated-logout-certification-test-plan` | `response_type=code`, static client | Not yet run |
+
+"Not yet run" means no nightly run has reported yet; this table is updated
+from the first one. The plan list is `test/conformance/plans.txt`.
+
+Other profiles are not run: Implicit, Hybrid and Form Post (OpenIDX
+implements only `response_type=code`), Dynamic OP (dynamic registration is
+off unless an operator enables it), Front-Channel Logout, Session Management,
+3rd Party-Initiated Login and FAPI 2.0. A profile is added when a customer
+needs it, together with whatever OpenIDX must implement for it.
+
+Formal OpenID certification (the Foundation's paid, published
+self-certification) is an owner decision and has not been taken. Nothing here
+claims certification.
+
+### How the run is set up
+
+- **The stack.** Postgres and Redis as service containers, the eight services
+  built with `go build` and started as processes, as in `ci.yml`'s smoke job.
+  `APP_ENV=development`, like the smoke job.
+- **HTTPS.** The suite requires every endpoint in the discovery document to be
+  https, so the issuer is `https://op.openidx.test`, served by an nginx front
+  (`test/conformance/edge/nginx.conf`) that proxies to oauth-service. Each run
+  makes a throwaway CA and one certificate for the front and for the suite
+  (`test/conformance/gen-certs.sh`); oauth-service trusts that CA so it can
+  deliver back-channel logout tokens to the suite.
+- **The login page.** The suite drives logins with HtmlUnit, which does not
+  run the admin console's ES module bundle. The front therefore serves
+  `test/conformance/edge/login.html` at `/login`: a page that makes the calls
+  the console's login page makes (`/oauth/login`, `/oauth/login/resume`,
+  `/oauth/consent`) and follows the redirect they answer with. The protocol
+  endpoints under test are OpenIDX's own; the login UI itself is not tested
+  by this run.
+- **Clients and users.** `test/conformance/setup_openidx.py` signs in as the
+  seeded first-run administrator and, through the admin APIs, creates one end
+  user per plan (the logout plans end every session of their user) and the
+  static clients each plan needs, with the redirect, post-logout and
+  back-channel URIs the suite expects. Passwords and client secrets are
+  generated per run, masked in the job log and removed from the uploaded
+  results (`test/conformance/redact.py`).
+- **Running and reporting.** `test/conformance/run-plans.sh` runs the plans,
+  one module at a time, through the suite's own runner, `run-test-plan.py` in its scripts directory;
+  its exit code decides whether the job is red. `test/conformance/summarize.py`
+  writes the per-module table to the run's summary, and the results and logs
+  are uploaded as the `oidc-conformance-results` artifact. On `main`, a failing
+  run opens or updates one issue titled "OIDC conformance: the nightly run is
+  failing", and the first passing run closes it.
+
+### Waivers
+
+A failure, warning or skip passes the run only when a dated entry in
+`test/conformance/waivers/expected-failures.json` or
+`test/conformance/waivers/expected-skips.json` covers it. The files use the
+suite runner's own format plus two fields: `waived-on` (the date) and
+`tracking` (the issue that owns the exception). An entry that no longer
+matches anything fails the run too, so the list cannot go stale quietly.
+
+| Waived | Module | Kind | Reason |
+|--------|--------|------|--------|
+| 2026-09-24 | `oidcc-scope-address` | skip | OpenIDX does not offer the `address` scope; it is not in `scopes_supported`, so the suite skips the module. |
+| 2026-09-24 | `oidcc-scope-phone` | skip | The same, for the `phone` scope. |
+| 2026-09-24 | `oidcc-scope-all` | skip | Asks for `address` and `phone` among others. |
+
+No failure or warning is waived. Each deviation below is either fixed or
+waived by a later, dated change.
+
+### Known deviations
+
+These come from reading the code and from rehearsals of the four plans on
+2026-09-24 and 2026-09-25, run outside CI with the pinned suite release. No
+nightly run has confirmed them yet.
+
+Fixed in #1006, which the first nightly needs; before it, each failed a module:
+
+- **The authorization endpoint accepts POST.** OpenID Connect Core §3.1.2.1
+  requires GET and POST; a form-encoded `POST /oauth/authorize` is now handled
+  like the same GET (`oidcc-ensure-post-request-succeeds`).
+- **The `request` parameter is refused, not ignored.** OpenIDX does not support
+  request objects: discovery says `request_parameter_supported: false`, and a
+  `request` or `request_uri` is answered with `request_not_supported` /
+  `request_uri_not_supported` at the redirect URI. The module then skips, which
+  the profile allows, and `expected-skips.json` waives it
+  (`oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported`).
+- **Token responses carry `Cache-Control: no-store`**, as RFC 6749 §5.1
+  requires of every response that contains a token (`oidcc-refresh-token`).
+
+Expected to raise a warning:
+
+- ID tokens carry `roles`, `groups` and `permissions` whatever the scope, and
+  `email` and `email_verified` when `email` is granted (`oidcc-server`,
+  `oidcc-scope-email`, `oidcc-alternate-happy-flow`). The first is a recorded
+  design choice (see "What a scope actually buys").
+- The `profile` scope returns `name`, `given_name`, `family_name` and
+  `preferred_username`, not the other standard profile claims
+  (`oidcc-scope-profile`).
+- The `claims` request parameter is ignored (`oidcc-claims-essential`), and no
+  `acr` claim is returned when `acr_values` is sent
+  (`oidcc-ensure-request-with-acr-values-succeeds`).
+- UserInfo accepts the access token only in the `Authorization` header
+  (`oidcc-userinfo-post-body`).
+- An access token issued for a code is not revoked when the code is replayed
+  (`oidcc-codereuse-30seconds`; RFC 6749 says SHOULD).
+
+Found by the first rehearsal and fixed in #1006: a logout that names the user
+(an `id_token_hint`) revoked every access token of that user minted up to and
+including the second of the logout, because `internal/revocation` compared
+whole seconds. The suite starts the next module inside that second, so its
+first token was refused at UserInfo, and a person who signed out and back in
+within one second met the same refusal. The cutoff is now precise to the
+microsecond, and the logout plans no longer wait before signing in.
+
+Modules that end with a screenshot for a human to review (for example the
+error page for an unregistered `redirect_uri`, or the logged-out page) pass
+the run; the screenshot is in the exported logs.
+
+### Running it locally
+
+Needs Docker with Compose, Go and Python 3, and ports 443 and 8443 free on
+127.0.0.1.
+
+1. Map the two host names to this machine:
+   `echo "127.0.0.1 op.openidx.test localhost.emobix.co.uk" | sudo tee -a /etc/hosts`.
+2. Make the TLS material:
+   `bash test/conformance/gen-certs.sh /tmp/conformance-tls`.
+3. Start Postgres and Redis, migrate, and start the services with the
+   environment of the `conformance` job in the workflow, including
+   `SSL_CERT_FILE=/tmp/conformance-tls/ca-bundle.pem`.
+4. Start the suite and the front:
+   `CONFORMANCE_TLS_DIR=/tmp/conformance-tls docker compose -f test/conformance/compose.yml up -d`.
+   The suite's UI is then at `https://localhost.emobix.co.uk:8443`.
+5. Clone the suite at the tag and commit in `test/conformance/suite.env`, and
+   install `test/conformance/requirements.txt` into a virtualenv.
+6. `python3 test/conformance/setup_openidx.py --out /tmp/conformance-plans`
+7. `PYTHON=<virtualenv>/bin/python bash test/conformance/run-plans.sh <suite clone> /tmp/conformance-plans /tmp/conformance-results`
+8. `python3 test/conformance/summarize.py --out /tmp/conformance-results --cafile /tmp/conformance-tls/ca.crt`
+
+To run one module, pass the runner a plan with a module list, for example
+`oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]:oidcc-server`.
+
+To move to a new suite release, change the tag and commit in `suite.env` and
+both image references in `compose.yml` in one change; the workflow refuses a
+mismatch. A new release can add or tighten checks, so read its notes before
+reading a changed result as a change in OpenIDX.
 
 ---
 

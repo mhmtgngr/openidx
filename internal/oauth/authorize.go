@@ -89,6 +89,14 @@ func (h *AuthorizeHandler) HandleAuthorizeRequest(c *gin.Context) {
 		return
 	}
 
+	// A request object is refused here as on /oauth/authorize, and at the same
+	// point: after the redirect_uri is known to be the client's, before any
+	// parameter the object might have carried is judged (requestObjectRefusal).
+	if code, desc, refused := requestObjectRefusal(authorizeParams{values: c.Request.URL.Query()}); refused {
+		h.handleError(c, req, errors.New(code), desc)
+		return
+	}
+
 	// Validate response type
 	if !h.validateResponseType(client, req.ResponseType) {
 		h.handleError(c, req, ErrUnsupportedResponseType, "response_type not supported")

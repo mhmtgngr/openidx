@@ -1,0 +1,252 @@
+name: SAML interop
+
+# The OpenIDX SAML identity provider against two service providers that share
+# no SAML code with it (#955):
+#
+#   - SimpleSAMLphp, as a service provider (PHP: simplesamlphp/saml2 and
+#     xmlseclibs), run from its release tarball in the official PHP image;
+#   - Keycloak, as a service provider brokering to OpenIDX (Java: Keycloak's
+#     SAML core on Apache Santuario), from its official image.
+#
+# OpenIDX signs with goxmldsig and encrypts with the Go standard library. A
+# service provider built on either would agree with every mistake OpenIDX
+# makes, so neither is one of these.
+#
+# For each service provider, in two profiles (signed assertion in a signed
+# Response; encrypted assertion in a signed Response), the suite in
+# test/interop/saml runs SP-initiated SSO with signed AuthnRequests,
+# IdP-initiated SSO, SP-initiated Single Logout and IdP-initiated Single
+# Logout. It then posts forged Responses -- unsigned, signed by an untrusted
+# key, for another audience, expired and (SimpleSAMLphp) replayed -- and
+# requires each service provider to refuse them, which is what makes the
+# accepted sign-ons mean something. docs/SAML.md lists the profiles.
+#
+# The IdP runs as the real oauth-service binary on the runner, as in ci.yml's
+# smoke job. The service providers run in containers on the host network, so
+# every party is at http://localhost:<port>, which is what each publishes in
+# its metadata.
+#
+# Every action is pinned to a commit, every image to a digest, and the
+# SimpleSAMLphp tarball to its SHA-256.
+
+on:
+  pull_request:
+    paths:
+      - "internal/oauth/**"
+      - "internal/common/**"
+      - "internal/identity/**"
+      - "internal/migrations/**"
+      - "internal/signingkeys/**"
+      - "cmd/oauth-service/**"
+      - "cmd/migrate/**"
+      - "test/interop/saml/**"
+      - ".github/workflows/saml-interop.yml"
+      - "go.mod"
+      - "go.sum"
+  push:
+    branches: [main]
+    paths:
+      - "internal/oauth/**"
+      - "internal/common/**"
+      - "internal/identity/**"
+      - "internal/migrations/**"
+      - "internal/signingkeys/**"
+      - "cmd/oauth-service/**"
+      - "cmd/migrate/**"
+      - "test/interop/saml/**"
+      - ".github/workflows/saml-interop.yml"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saml-interop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # A cache-key component only, as in ci.yml: setup-go reads go.mod.
+  GO_VERSION: "1.26"
+  SIMPLESAMLPHP_VERSION: "2.5.3.1"
+  SIMPLESAMLPHP_SHA256: "b199ebcba6e30220e7b5df2783ca42f8947dd9bdf046e9e6302fef3d3a438d01"
+  PHP_IMAGE: "php:8.4.25-cli@sha256:2b87a5d0c0465ade44b1bbec46e8f63520448a7bd7ec90a284dd8b8f0b07fd53"
+  KEYCLOAK_IMAGE: "quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c"
+
+jobs:
+  interop:
+    name: SAML interop (SimpleSAMLphp, Keycloak)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_DB: openidx
+          POSTGRES_USER: openidx
+          POSTGRES_PASSWORD: interop_secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openidx"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7.4.11-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    # The oauth-service configuration, as ci.yml's smoke job sets it. Nothing
+    # here is a real secret: the job runs on throwaway services.
+    env:
+      DATABASE_URL: postgres://openidx:interop_secret@localhost:5432/openidx?sslmode=disable
+      REDIS_URL: redis://localhost:6379
+      APP_ENV: development
+      DEFAULT_ORG_FALLBACK: "true"
+      DEFAULT_ORG_ID: 00000000-0000-0000-0000-000000000010
+      ACCESS_SESSION_SECRET: interop-access-session-secret-000
+      ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef"
+      OAUTH_ISSUER: http://localhost:8006
+      OAUTH_JWKS_URL: http://localhost:8006/.well-known/jwks.json
+      OAUTH_LOGIN_URL: http://localhost:8006/login
+      ZITI_ENABLED: "false"
+      BROWZER_ENABLED: "false"
+      CONTINUOUS_VERIFY_ENABLED: "false"
+      OPENIDX_ENABLE_RATE_LIMIT: "false"
+      GIN_MODE: release
+      LOG_LEVEL: info
+      KEYCLOAK_ADMIN_PASSWORD: interop-admin-not-a-secret
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Go build cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
+            ${{ runner.os }}-go-build-
+
+      # First, because it takes longest to boot; the next steps overlap it.
+      - name: Start Keycloak
+        run: |
+          set -euo pipefail
+          bash scripts/ci-retry.sh 3 5 -- docker pull "$KEYCLOAK_IMAGE"
+          docker run -d --name keycloak --network host \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+            -e KC_BOOTSTRAP_ADMIN_PASSWORD="$KEYCLOAK_ADMIN_PASSWORD" \
+            "$KEYCLOAK_IMAGE" start-dev \
+              --http-port=8080 --hostname=http://localhost:8080 --health-enabled=true
+
+      - name: Fetch SimpleSAMLphp and check its digest
+        run: |
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/simplesamlphp.tar.gz"
+          bash scripts/ci-retry.sh 3 5 -- curl -fsSL -o "$tarball" \
+            "https://github.com/simplesamlphp/simplesamlphp/releases/download/v${SIMPLESAMLPHP_VERSION}/simplesamlphp-${SIMPLESAMLPHP_VERSION}-full.tar.gz"
+          echo "${SIMPLESAMLPHP_SHA256}  ${tarball}" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/simplesamlphp"
+          tar -xzf "$tarball" -C "$RUNNER_TEMP/simplesamlphp" --strip-components=1
+
+      - name: Migrate and start the IdP
+        run: |
+          set -euo pipefail
+          go run ./cmd/migrate up
+          go build -o "$RUNNER_TEMP/oauth-service" ./cmd/oauth-service
+          PORT=8006 nohup "$RUNNER_TEMP/oauth-service" >"$RUNNER_TEMP/oauth-service.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -sf http://localhost:8006/health >/dev/null; then
+              echo "IdP is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the IdP did not come up within 60s"
+          tail -40 "$RUNNER_TEMP/oauth-service.log"
+          exit 1
+
+      - name: Start SimpleSAMLphp
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ssp-cert" "$RUNNER_TEMP/ssp-data/cache"
+          chmod 0777 "$RUNNER_TEMP/ssp-data" "$RUNNER_TEMP/ssp-data/cache"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=openidx-interop-simplesamlphp" \
+            -keyout "$RUNNER_TEMP/ssp-cert/sp.key" -out "$RUNNER_TEMP/ssp-cert/sp.crt"
+          chmod 0644 "$RUNNER_TEMP/ssp-cert/sp.key"
+          bash scripts/ci-retry.sh 3 5 -- docker pull "$PHP_IMAGE"
+          docker run -d --name simplesamlphp --network host \
+            -e SSP_DIR=/var/simplesamlphp \
+            -e SIMPLESAMLPHP_CONFIG_DIR=/interop/config \
+            -e SSP_CERT_DIR=/cert \
+            -e SSP_DATA_DIR=/data \
+            -e SSP_PROFILE=/data/profile.json \
+            -e SSP_BASEURL=http://localhost:8081 \
+            -e IDP_METADATA_URL=http://localhost:8006/saml/idp/metadata \
+            -e IDP_ENTITY_ID=http://localhost:8006 \
+            -e PHP_CLI_SERVER_WORKERS=4 \
+            -v "$GITHUB_WORKSPACE/test/interop/saml/simplesamlphp:/interop:ro" \
+            -v "$RUNNER_TEMP/simplesamlphp:/var/simplesamlphp:ro" \
+            -v "$RUNNER_TEMP/ssp-cert:/cert:ro" \
+            -v "$RUNNER_TEMP/ssp-data:/data" \
+            "$PHP_IMAGE" php -S 127.0.0.1:8081 -t /var/simplesamlphp/public /interop/app/router.php
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:8081/app/whoami >/dev/null; then
+              echo "SimpleSAMLphp is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::SimpleSAMLphp did not come up within 30s"
+          docker logs simplesamlphp
+          exit 1
+
+      - name: Wait for Keycloak
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 180); do
+            if curl -sf http://localhost:9000/health/ready >/dev/null; then
+              echo "Keycloak is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Keycloak did not come up within 180s"
+          docker logs keycloak | tail -60
+          exit 1
+
+      - name: Run the interop suite
+        env:
+          OPENIDX_URL: http://localhost:8006
+          SSP_URL: http://localhost:8081
+          KEYCLOAK_URL: http://localhost:8080
+          INTEROP_DATABASE_URL: ${{ env.DATABASE_URL }}
+          INTEROP_ENCRYPTION_KEY: ${{ env.ENCRYPTION_KEY }}
+          SSP_PROFILE_FILE: ${{ runner.temp }}/ssp-data/profile.json
+        run: go test -tags samlinterop -count=1 -v -timeout 15m ./test/interop/saml/
+
+      - name: Logs
+        if: always()
+        run: |
+          echo "::group::oauth-service"; tail -200 "$RUNNER_TEMP/oauth-service.log" || true; echo "::endgroup::"
+          echo "::group::simplesamlphp"; tail -200 "$RUNNER_TEMP/ssp-data/simplesamlphp.log" || true; docker logs simplesamlphp 2>&1 | tail -50 || true; echo "::endgroup::"
+          echo "::group::keycloak"; docker logs keycloak 2>&1 | tail -200 || true; echo "::endgroup::"

@@ -1,0 +1,34 @@
+[
+  {
+    "test-name": "oidcc-scope-address",
+    "variant": "*",
+    "configuration-filename": "*openidx-basic.json",
+    "comment": "OpenIDX does not offer the address scope. It is not in scopes_supported, so the suite skips the module, as the certification profile allows for an optional scope.",
+    "waived-on": "2026-09-24",
+    "tracking": "https://github.com/mhmtgngr/openidx/issues/958"
+  },
+  {
+    "test-name": "oidcc-scope-phone",
+    "variant": "*",
+    "configuration-filename": "*openidx-basic.json",
+    "comment": "OpenIDX does not offer the phone scope. It is not in scopes_supported, so the suite skips the module, as the certification profile allows for an optional scope.",
+    "waived-on": "2026-09-24",
+    "tracking": "https://github.com/mhmtgngr/openidx/issues/958"
+  },
+  {
+    "test-name": "oidcc-scope-all",
+    "variant": "*",
+    "configuration-filename": "*openidx-basic.json",
+    "comment": "The module asks for address and phone together with profile and email. OpenIDX offers neither of the first two, so the suite skips it.",
+    "waived-on": "2026-09-24",
+    "tracking": "https://github.com/mhmtgngr/openidx/issues/958"
+  },
+  {
+    "test-name": "oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported",
+    "variant": "*",
+    "configuration-filename": "*openidx-basic.json",
+    "comment": "OpenIDX does not support request objects: discovery says request_parameter_supported false and the authorization endpoints answer request_not_supported (#1006). The module then skips, which the certification profile allows for a server that rejects request objects.",
+    "waived-on": "2026-09-25",
+    "tracking": "https://github.com/mhmtgngr/openidx/pull/1006"
+  }
+]

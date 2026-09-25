@@ -159,8 +159,9 @@ PAM_GUAC_DB_PASSWORD=${PAM_GUAC_DB_PASSWORD}
 # before turning it on (docs/docs/deployment/configuration.md).
 ACCESS_ASSIGNMENT_ENFORCE=true
 # Attribute-based policies are evaluated and every would-be denial is
-# audited, but nothing is refused yet. Move to enforce once the audit shows
-# whom a policy would stop.
+# audited as access.abac.would_deny, but nothing is refused. A fresh install
+# stays in observe (decided in #956): set enforce yourself once those records
+# name only the people a policy is meant to stop.
 ABAC_ENFORCE=observe
 
 # ----- SMTP (optional) -----

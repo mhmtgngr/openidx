@@ -36,25 +36,33 @@ type SAMLServiceProvider struct {
 	AttributeMappings    map[string]string `json:"attribute_mappings,omitempty" db:"attribute_mappings"`
 	WantAssertionsSigned bool              `json:"want_assertions_signed" db:"want_assertions_signed"`
 	EncryptionEnabled    bool              `json:"encryption_enabled" db:"encryption_enabled"`
-	Enabled              bool              `json:"enabled" db:"enabled"`
-	CreatedAt            time.Time         `json:"created_at" db:"created_at"`
-	UpdatedAt            time.Time         `json:"updated_at" db:"updated_at"`
-	LastUsedAt           *time.Time        `json:"last_used_at,omitempty" db:"last_used_at"`
+	// EncryptionCertificate is the SP's encryption certificate (use="encryption"
+	// in its metadata). Empty means assertions are encrypted to Certificate.
+	EncryptionCertificate string `json:"encryption_certificate,omitempty" db:"encryption_certificate"`
+	// RequireSignedAuthnRequests refuses an AuthnRequest from this SP unless it
+	// carries a signature that verifies against Certificate.
+	RequireSignedAuthnRequests bool       `json:"require_signed_authn_requests" db:"require_signed_authn_requests"`
+	Enabled                    bool       `json:"enabled" db:"enabled"`
+	CreatedAt                  time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt                  time.Time  `json:"updated_at" db:"updated_at"`
+	LastUsedAt                 *time.Time `json:"last_used_at,omitempty" db:"last_used_at"`
 }
 
 // CreateSAMLServiceProviderRequest is the request to create a new SP
 type CreateSAMLServiceProviderRequest struct {
-	Name                 string            `json:"name" binding:"required"`
-	Description          string            `json:"description"`
-	EntityID             string            `json:"entity_id" binding:"required"`
-	ACSURL               string            `json:"acs_url" binding:"required"`
-	SLOURL               string            `json:"slo_url"`
-	MetadataURL          string            `json:"metadata_url"`
-	Certificate          string            `json:"certificate"`
-	NameIDFormat         string            `json:"name_id_format"`
-	AttributeMappings    map[string]string `json:"attribute_mappings"`
-	WantAssertionsSigned bool              `json:"want_assertions_signed"`
-	EncryptionEnabled    bool              `json:"encryption_enabled"`
+	Name                       string            `json:"name" binding:"required"`
+	Description                string            `json:"description"`
+	EntityID                   string            `json:"entity_id" binding:"required"`
+	ACSURL                     string            `json:"acs_url" binding:"required"`
+	SLOURL                     string            `json:"slo_url"`
+	MetadataURL                string            `json:"metadata_url"`
+	Certificate                string            `json:"certificate"`
+	NameIDFormat               string            `json:"name_id_format"`
+	AttributeMappings          map[string]string `json:"attribute_mappings"`
+	WantAssertionsSigned       bool              `json:"want_assertions_signed"`
+	EncryptionEnabled          bool              `json:"encryption_enabled"`
+	EncryptionCertificate      string            `json:"encryption_certificate"`
+	RequireSignedAuthnRequests bool              `json:"require_signed_authn_requests"`
 	// Enabled is a POINTER on purpose. As a plain bool, a request that simply
 	// omits the field decodes to Go's zero value (false) and is written to the
 	// column verbatim, silently overriding its DEFAULT true -- so every SP
@@ -68,18 +76,20 @@ type CreateSAMLServiceProviderRequest struct {
 
 // UpdateSAMLServiceProviderRequest is the request to update an SP
 type UpdateSAMLServiceProviderRequest struct {
-	Name                 *string           `json:"name"`
-	Description          *string           `json:"description"`
-	EntityID             *string           `json:"entity_id"`
-	ACSURL               *string           `json:"acs_url"`
-	SLOURL               *string           `json:"slo_url"`
-	MetadataURL          *string           `json:"metadata_url"`
-	Certificate          *string           `json:"certificate"`
-	NameIDFormat         *string           `json:"name_id_format"`
-	AttributeMappings    map[string]string `json:"attribute_mappings"`
-	WantAssertionsSigned *bool             `json:"want_assertions_signed"`
-	EncryptionEnabled    *bool             `json:"encryption_enabled"`
-	Enabled              *bool             `json:"enabled"`
+	Name                       *string           `json:"name"`
+	Description                *string           `json:"description"`
+	EntityID                   *string           `json:"entity_id"`
+	ACSURL                     *string           `json:"acs_url"`
+	SLOURL                     *string           `json:"slo_url"`
+	MetadataURL                *string           `json:"metadata_url"`
+	Certificate                *string           `json:"certificate"`
+	NameIDFormat               *string           `json:"name_id_format"`
+	AttributeMappings          map[string]string `json:"attribute_mappings"`
+	WantAssertionsSigned       *bool             `json:"want_assertions_signed"`
+	EncryptionEnabled          *bool             `json:"encryption_enabled"`
+	EncryptionCertificate      *string           `json:"encryption_certificate"`
+	RequireSignedAuthnRequests *bool             `json:"require_signed_authn_requests"`
+	Enabled                    *bool             `json:"enabled"`
 }
 
 // boolPtr returns a pointer to b, for request fields where "unset" and
@@ -139,7 +149,8 @@ func (s *Service) handleListSAMLServiceProviders(c *gin.Context) {
 	// had passed a search term to decide which args to reuse.
 	query := `SELECT id, name, description, entity_id, acs_url, slo_url, metadata_url,
 	          certificate, name_id_format, attribute_mappings, want_assertions_signed,
-	          encryption_enabled, enabled, created_at, updated_at, last_used_at
+	          encryption_enabled, encryption_certificate, require_signed_authn_requests,
+	          enabled, created_at, updated_at, last_used_at
 	          FROM saml_service_providers`
 	countQuery := `SELECT COUNT(*) FROM saml_service_providers`
 
@@ -238,21 +249,7 @@ func (s *Service) handleCreateSAMLServiceProvider(c *gin.Context) {
 			return
 		}
 
-		// Extract info from metadata
-		if req.EntityID == "" {
-			req.EntityID = metadata.EntityID
-		}
-		if len(metadata.SPSSODescriptor.AssertionConsumerServices) > 0 && req.ACSURL == "" {
-			req.ACSURL = metadata.SPSSODescriptor.AssertionConsumerServices[0].Location
-		}
-		if len(metadata.SPSSODescriptor.KeyDescriptors) > 0 && req.Certificate == "" {
-			for _, kd := range metadata.SPSSODescriptor.KeyDescriptors {
-				if kd.Use == "signing" {
-					req.Certificate = kd.KeyInfo.X509Data.X509Certificate
-					break
-				}
-			}
-		}
+		applyMetadataToRequest(&req, metadata)
 	}
 
 	// Validate required fields
@@ -427,38 +424,19 @@ func (s *Service) handleImportSAMLMetadata(c *gin.Context) {
 		return
 	}
 
-	// Extract certificate if available
-	var certificate string
-	if len(metadata.SPSSODescriptor.KeyDescriptors) > 0 {
-		for _, kd := range metadata.SPSSODescriptor.KeyDescriptors {
-			if kd.Use == "signing" {
-				certificate = kd.KeyInfo.X509Data.X509Certificate
-				break
-			}
-		}
-	}
-
 	// Create SP from metadata
 	createReq := &CreateSAMLServiceProviderRequest{
-		Name:                 req.Name,
-		Description:          "Imported from SAML metadata",
-		EntityID:             metadata.EntityID,
-		ACSURL:               metadata.SPSSODescriptor.AssertionConsumerServices[0].Location,
-		MetadataURL:          req.MetadataURL,
-		Certificate:          certificate,
-		WantAssertionsSigned: metadata.SPSSODescriptor.WantAssertionsSigned,
-		Enabled:              boolPtr(true),
-		MetadataXML:          req.MetadataXML,
+		Name:        req.Name,
+		Description: "Imported from SAML metadata",
+		MetadataURL: req.MetadataURL,
+		Enabled:     boolPtr(true),
+		MetadataXML: req.MetadataXML,
 	}
+	applyMetadataToRequest(createReq, metadata)
 
 	// Use entity ID as name if not provided
 	if createReq.Name == "" {
 		createReq.Name = metadata.EntityID
-	}
-
-	// Extract SLO URL if available
-	if len(metadata.SPSSODescriptor.SingleLogoutServices) > 0 {
-		createReq.SLOURL = metadata.SPSSODescriptor.SingleLogoutServices[0].Location
 	}
 
 	sp, err := s.createSAMLServiceProvider(c.Request.Context(), createReq)
@@ -486,19 +464,21 @@ func (s *Service) getSAMLServiceProviderByID(ctx context.Context, id string) (*S
 	}
 
 	var sp SAMLServiceProvider
-	var sloURL, metadataURL, certificate *string
+	var sloURL, metadataURL, certificate, encryptionCertificate *string
 	var attrMappingsJSON []byte
 	var lastUsedAt *time.Time
 
 	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, COALESCE(description, ''), entity_id, acs_url, slo_url, metadata_url,
 		       certificate, name_id_format, attribute_mappings, want_assertions_signed,
-		       encryption_enabled, enabled, created_at, updated_at, last_used_at
+		       encryption_enabled, encryption_certificate, require_signed_authn_requests,
+		       enabled, created_at, updated_at, last_used_at
 		FROM saml_service_providers
 		WHERE id = $1 AND org_id = $2
 	`, id, org.ID).Scan(&sp.ID, &sp.Name, &sp.Description, &sp.EntityID, &sp.ACSURL, &sloURL,
 		&metadataURL, &certificate, &sp.NameIDFormat, &attrMappingsJSON,
-		&sp.WantAssertionsSigned, &sp.EncryptionEnabled, &sp.Enabled,
+		&sp.WantAssertionsSigned, &sp.EncryptionEnabled, &encryptionCertificate,
+		&sp.RequireSignedAuthnRequests, &sp.Enabled,
 		&sp.CreatedAt, &sp.UpdatedAt, &lastUsedAt)
 
 	if err != nil {
@@ -513,6 +493,9 @@ func (s *Service) getSAMLServiceProviderByID(ctx context.Context, id string) (*S
 	}
 	if certificate != nil {
 		sp.Certificate = *certificate
+	}
+	if encryptionCertificate != nil {
+		sp.EncryptionCertificate = *encryptionCertificate
 	}
 	if lastUsedAt != nil {
 		sp.LastUsedAt = lastUsedAt
@@ -527,7 +510,7 @@ func (s *Service) getSAMLServiceProviderByID(ctx context.Context, id string) (*S
 // getSAMLServiceProviderByEntityID retrieves an SP by its entity ID
 func (s *Service) getSAMLServiceProviderByEntityID(ctx context.Context, entityID string) (*SAMLServiceProvider, error) {
 	var sp SAMLServiceProvider
-	var sloURL, metadataURL, certificate *string
+	var sloURL, metadataURL, certificate, encryptionCertificate *string
 	var attrMappingsJSON []byte
 	var lastUsedAt *time.Time
 
@@ -541,12 +524,14 @@ func (s *Service) getSAMLServiceProviderByEntityID(ctx context.Context, entityID
 	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), `
 		SELECT id, name, COALESCE(description, ''), entity_id, acs_url, slo_url, metadata_url,
 		       certificate, name_id_format, attribute_mappings, want_assertions_signed,
-		       encryption_enabled, enabled, created_at, updated_at, last_used_at
+		       encryption_enabled, encryption_certificate, require_signed_authn_requests,
+		       enabled, created_at, updated_at, last_used_at
 		FROM saml_service_providers
 		WHERE entity_id = $1
 	`, entityID).Scan(&sp.ID, &sp.Name, &sp.Description, &sp.EntityID, &sp.ACSURL, &sloURL,
 		&metadataURL, &certificate, &sp.NameIDFormat, &attrMappingsJSON,
-		&sp.WantAssertionsSigned, &sp.EncryptionEnabled, &sp.Enabled,
+		&sp.WantAssertionsSigned, &sp.EncryptionEnabled, &encryptionCertificate,
+		&sp.RequireSignedAuthnRequests, &sp.Enabled,
 		&sp.CreatedAt, &sp.UpdatedAt, &lastUsedAt)
 
 	if err != nil {
@@ -561,6 +546,9 @@ func (s *Service) getSAMLServiceProviderByEntityID(ctx context.Context, entityID
 	}
 	if certificate != nil {
 		sp.Certificate = *certificate
+	}
+	if encryptionCertificate != nil {
+		sp.EncryptionCertificate = *encryptionCertificate
 	}
 	if lastUsedAt != nil {
 		sp.LastUsedAt = lastUsedAt
@@ -589,32 +577,36 @@ func (s *Service) createSAMLServiceProvider(ctx context.Context, req *CreateSAML
 		INSERT INTO saml_service_providers (
 			id, org_id, name, description, entity_id, acs_url, slo_url, metadata_url,
 			certificate, name_id_format, attribute_mappings, want_assertions_signed,
-			encryption_enabled, enabled, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			encryption_enabled, encryption_certificate, require_signed_authn_requests,
+			enabled, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 	`, id, org.ID, req.Name, req.Description, req.EntityID, req.ACSURL, req.SLOURL,
 		req.MetadataURL, req.Certificate, req.NameIDFormat, attrMappingsJSON,
-		req.WantAssertionsSigned, req.EncryptionEnabled, enabled, now, now)
+		req.WantAssertionsSigned, req.EncryptionEnabled, nullIfBlank(req.EncryptionCertificate),
+		req.RequireSignedAuthnRequests, enabled, now, now)
 
 	if err != nil {
 		return nil, err
 	}
 
 	return &SAMLServiceProvider{
-		ID:                   id,
-		Name:                 req.Name,
-		Description:          req.Description,
-		EntityID:             req.EntityID,
-		ACSURL:               req.ACSURL,
-		SLOURL:               req.SLOURL,
-		MetadataURL:          req.MetadataURL,
-		Certificate:          req.Certificate,
-		NameIDFormat:         req.NameIDFormat,
-		AttributeMappings:    req.AttributeMappings,
-		WantAssertionsSigned: req.WantAssertionsSigned,
-		EncryptionEnabled:    req.EncryptionEnabled,
-		Enabled:              enabled,
-		CreatedAt:            now,
-		UpdatedAt:            now,
+		ID:                         id,
+		Name:                       req.Name,
+		Description:                req.Description,
+		EntityID:                   req.EntityID,
+		ACSURL:                     req.ACSURL,
+		SLOURL:                     req.SLOURL,
+		MetadataURL:                req.MetadataURL,
+		Certificate:                req.Certificate,
+		NameIDFormat:               req.NameIDFormat,
+		AttributeMappings:          req.AttributeMappings,
+		WantAssertionsSigned:       req.WantAssertionsSigned,
+		EncryptionEnabled:          req.EncryptionEnabled,
+		EncryptionCertificate:      req.EncryptionCertificate,
+		RequireSignedAuthnRequests: req.RequireSignedAuthnRequests,
+		Enabled:                    enabled,
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
 	}, nil
 }
 
@@ -623,19 +615,21 @@ func (s *Service) createSAMLServiceProvider(ctx context.Context, req *CreateSAML
 // rejects anything else even if a future bug tries to wire it in.
 // updated_at is appended unconditionally and is therefore in the set too.
 var samlSPUpdatableColumns = map[string]struct{}{
-	"name":                   {},
-	"description":            {},
-	"entity_id":              {},
-	"acs_url":                {},
-	"slo_url":                {},
-	"metadata_url":           {},
-	"certificate":            {},
-	"name_id_format":         {},
-	"attribute_mappings":     {},
-	"want_assertions_signed": {},
-	"encryption_enabled":     {},
-	"enabled":                {},
-	"updated_at":             {},
+	"name":                          {},
+	"description":                   {},
+	"entity_id":                     {},
+	"acs_url":                       {},
+	"slo_url":                       {},
+	"metadata_url":                  {},
+	"certificate":                   {},
+	"name_id_format":                {},
+	"attribute_mappings":            {},
+	"want_assertions_signed":        {},
+	"encryption_enabled":            {},
+	"encryption_certificate":        {},
+	"require_signed_authn_requests": {},
+	"enabled":                       {},
+	"updated_at":                    {},
 }
 
 // samlSPColumnRE is the runtime defense-in-depth check on column names.
@@ -672,6 +666,8 @@ func (s *Service) updateSAMLServiceProvider(ctx context.Context, id string, req 
 		{col: "attribute_mappings", val: attrJSON, set: req.AttributeMappings != nil},
 		{col: "want_assertions_signed", val: derefBool(req.WantAssertionsSigned), set: req.WantAssertionsSigned != nil},
 		{col: "encryption_enabled", val: derefBool(req.EncryptionEnabled), set: req.EncryptionEnabled != nil},
+		{col: "encryption_certificate", val: nullIfBlank(derefStr(req.EncryptionCertificate)), set: req.EncryptionCertificate != nil},
+		{col: "require_signed_authn_requests", val: derefBool(req.RequireSignedAuthnRequests), set: req.RequireSignedAuthnRequests != nil},
 		{col: "enabled", val: derefBool(req.Enabled), set: req.Enabled != nil},
 	}
 
@@ -724,6 +720,12 @@ func (s *Service) updateSAMLServiceProvider(ctx context.Context, id string, req 
 	if req.EncryptionEnabled != nil {
 		sp.EncryptionEnabled = *req.EncryptionEnabled
 	}
+	if req.EncryptionCertificate != nil {
+		sp.EncryptionCertificate = *req.EncryptionCertificate
+	}
+	if req.RequireSignedAuthnRequests != nil {
+		sp.RequireSignedAuthnRequests = *req.RequireSignedAuthnRequests
+	}
 	if req.Enabled != nil {
 		sp.Enabled = *req.Enabled
 	}
@@ -767,6 +769,16 @@ func derefBool(p *bool) bool {
 	return *p
 }
 
+// nullIfBlank stores an empty string as NULL, for the nullable text columns
+// whose NULL means "not set" (encryption_certificate falls back to
+// certificate when it is NULL).
+func nullIfBlank(s string) interface{} {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return s
+}
+
 // deleteSAMLServiceProvider deletes an SP
 func (s *Service) deleteSAMLServiceProvider(ctx context.Context, id string) error {
 	org, err := orgctx.From(ctx)
@@ -791,21 +803,24 @@ func scanSAMLServiceProviders(rows pgx.Rows) ([]SAMLServiceProvider, error) {
 	// The list query selects, in order:
 	//   id, name, description, entity_id, acs_url, slo_url, metadata_url,
 	//   certificate, name_id_format, attribute_mappings, want_assertions_signed,
-	//   encryption_enabled, enabled, created_at, updated_at, last_used_at
-	// slo_url / metadata_url / certificate / last_used_at are nullable, and
+	//   encryption_enabled, encryption_certificate, require_signed_authn_requests,
+	//   enabled, created_at, updated_at, last_used_at
+	// slo_url / metadata_url / certificate / encryption_certificate /
+	// last_used_at are nullable, and
 	// description may be NULL — scan them via pointers/COALESCE-equivalents so a
 	// NULL doesn't fail the scan (which previously left the whole list nil).
 	providers := []SAMLServiceProvider{}
 	for rows.Next() {
 		var sp SAMLServiceProvider
-		var description, sloURL, metadataURL, certificate *string
+		var description, sloURL, metadataURL, certificate, encryptionCertificate *string
 		var attrMappingsJSON []byte
 		var lastUsedAt *time.Time
 
 		if err := rows.Scan(
 			&sp.ID, &sp.Name, &description, &sp.EntityID, &sp.ACSURL, &sloURL,
 			&metadataURL, &certificate, &sp.NameIDFormat, &attrMappingsJSON,
-			&sp.WantAssertionsSigned, &sp.EncryptionEnabled, &sp.Enabled,
+			&sp.WantAssertionsSigned, &sp.EncryptionEnabled, &encryptionCertificate,
+			&sp.RequireSignedAuthnRequests, &sp.Enabled,
 			&sp.CreatedAt, &sp.UpdatedAt, &lastUsedAt,
 		); err != nil {
 			return nil, err
@@ -822,6 +837,9 @@ func scanSAMLServiceProviders(rows pgx.Rows) ([]SAMLServiceProvider, error) {
 		}
 		if certificate != nil {
 			sp.Certificate = *certificate
+		}
+		if encryptionCertificate != nil {
+			sp.EncryptionCertificate = *encryptionCertificate
 		}
 		if lastUsedAt != nil {
 			sp.LastUsedAt = lastUsedAt
@@ -843,36 +861,36 @@ func (s *Service) parseMetadataIntoRequest(req *CreateSAMLServiceProviderRequest
 	if err != nil {
 		return err
 	}
-
-	// Extract entity ID
-	if metadata.EntityID != "" && req.EntityID == "" {
-		req.EntityID = metadata.EntityID
-	}
-
-	// Extract ACS URL
-	if len(metadata.SPSSODescriptor.AssertionConsumerServices) > 0 && req.ACSURL == "" {
-		req.ACSURL = metadata.SPSSODescriptor.AssertionConsumerServices[0].Location
-	}
-
-	// Extract SLO URL
-	if len(metadata.SPSSODescriptor.SingleLogoutServices) > 0 && req.SLOURL == "" {
-		req.SLOURL = metadata.SPSSODescriptor.SingleLogoutServices[0].Location
-	}
-
-	// Extract certificate
-	if len(metadata.SPSSODescriptor.KeyDescriptors) > 0 && req.Certificate == "" {
-		for _, kd := range metadata.SPSSODescriptor.KeyDescriptors {
-			if kd.Use == "signing" {
-				req.Certificate = kd.KeyInfo.X509Data.X509Certificate
-				break
-			}
-		}
-	}
-
-	// Extract WantAssertionsSigned
-	req.WantAssertionsSigned = metadata.SPSSODescriptor.WantAssertionsSigned
-
+	applyMetadataToRequest(req, metadata)
 	return nil
+}
+
+// applyMetadataToRequest fills what a registration request leaves empty from
+// the service provider's metadata: entity id, the HTTP-POST ACS URL, the
+// HTTP-Redirect SLO URL and the signing and encryption certificates. The
+// metadata's own statements -- WantAssertionsSigned, and AuthnRequestsSigned,
+// which makes this IdP refuse unsigned requests in the SP's name -- are
+// carried over as the SP makes them, but never switch off a requirement the
+// request itself asks for.
+func applyMetadataToRequest(req *CreateSAMLServiceProviderRequest, md *SPMetadata) {
+	if req.EntityID == "" {
+		req.EntityID = md.EntityID
+	}
+	if req.ACSURL == "" {
+		req.ACSURL = md.PostACSURL()
+	}
+	if req.SLOURL == "" {
+		req.SLOURL = md.RedirectSLOURL()
+	}
+	signing, encryption := md.Certificates()
+	if req.Certificate == "" {
+		req.Certificate = signing
+	}
+	if req.EncryptionCertificate == "" {
+		req.EncryptionCertificate = encryption
+	}
+	req.WantAssertionsSigned = req.WantAssertionsSigned || md.SPSSODescriptor.WantAssertionsSigned
+	req.RequireSignedAuthnRequests = req.RequireSignedAuthnRequests || md.SPSSODescriptor.AuthnRequestsSigned
 }
 
 // parseSPMetadata parses SP metadata XML into a struct

@@ -152,19 +152,22 @@ Response:
 
 ## SAML 2.0
 
-OpenIDX is a SAML identity provider (IdP). It is not a SAML service provider:
-it has no endpoint that accepts a SAML response from an external IdP. A SAML
-provider can be added on the console's Identity Providers page, but nothing
-signs a user in through it; the
+OpenIDX is a SAML 2.0 Identity Provider (IdP). Applications that support SAML
+can use OpenIDX for sign-on and Single Logout. OpenIDX is not a SAML Service
+Provider: it has no endpoint that accepts a SAML response from an external
+IdP. A SAML provider can be added on the console's Identity Providers page,
+but nothing signs a user in through it; the
 [maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity) lists
 external identity providers as Experimental.
 
-### Identity Provider Mode
+The IdP metadata is at `/saml/idp/metadata`. Register a service provider in
+the Admin Console under **Applications > SAML Applications**, or import its
+metadata through `POST /api/v1/saml/service-providers/import-metadata`.
 
-Allow other applications to use OpenIDX as their SAML IdP. The protocol
-endpoints are `/saml/idp/metadata`, `/saml/idp/sso` and `/saml/idp/slo`.
-
-Configure via the Admin Console under **Applications > SAML Applications**.
+Every Response and every assertion is signed. Assertions are encrypted for
+service providers that ask for it. The [SAML guide](../guides/SAML.md) lists
+the endpoints, what the IdP accepts and refuses, and the service providers
+OpenIDX is tested against in CI.
 
 ## API Keys
 
