@@ -13,7 +13,7 @@
   },
   "browser": [
     {
-      "comment": "Every authorization request: sign in on the test login page, or approve consent when OpenIDX resumes an existing browser session, then wait for the suite's callback page. The sign-in waits for #ready, 1.2 seconds after the page loads, so that no access token is minted in the same second as the previous module's logout (see login.html).",
+      "comment": "Every authorization request: sign in on the test login page, or approve consent when OpenIDX resumes an existing browser session, then wait for the suite's callback page. The sign-in waits for #ready, which the page adds once it has loaded (see login.html).",
       "match": "@@OP_ISSUER@@/oauth/authorize*",
       "tasks": [
         {

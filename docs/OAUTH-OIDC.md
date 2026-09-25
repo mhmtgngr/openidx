@@ -949,21 +949,22 @@ waived by a later, dated change.
 
 ### Known deviations
 
-These come from reading the code and from one rehearsal of the four plans on
-2026-09-24, run outside CI with the pinned suite release. No nightly run has
-confirmed them yet.
+These come from reading the code and from rehearsals of the four plans on
+2026-09-24 and 2026-09-25, run outside CI with the pinned suite release. No
+nightly run has confirmed them yet.
 
-Expected to fail a module:
+Fixed in #1006, which the first nightly needs; before it, each failed a module:
 
-- **The authorization endpoint does not accept POST.** OpenID Connect Core
-  §3.1.2.1 requires GET and POST. `POST /oauth/authorize` is the consent
-  endpoint and answers an authorization request with `401`
-  (`oidcc-ensure-post-request-succeeds`).
-- **The `request` parameter is ignored.** OpenIDX neither processes a request
-  object nor answers `request_not_supported`, so the `state` and `nonce`
-  inside one are lost
+- **The authorization endpoint accepts POST.** OpenID Connect Core §3.1.2.1
+  requires GET and POST; a form-encoded `POST /oauth/authorize` is now handled
+  like the same GET (`oidcc-ensure-post-request-succeeds`).
+- **The `request` parameter is refused, not ignored.** OpenIDX does not support
+  request objects: discovery says `request_parameter_supported: false`, and a
+  `request` or `request_uri` is answered with `request_not_supported` /
+  `request_uri_not_supported` at the redirect URI. The module then skips, which
+  the profile allows, and `expected-skips.json` waives it
   (`oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported`).
-- **Token responses carry no `Cache-Control: no-store`**, which RFC 6749 §5.1
+- **Token responses carry `Cache-Control: no-store`**, as RFC 6749 §5.1
   requires of every response that contains a token (`oidcc-refresh-token`).
 
 Expected to raise a warning:
@@ -983,14 +984,13 @@ Expected to raise a warning:
 - An access token issued for a code is not revoked when the code is replayed
   (`oidcc-codereuse-30seconds`; RFC 6749 says SHOULD).
 
-Found by the rehearsal, and accommodated in the harness rather than waived: a
-logout that names the user (an `id_token_hint`) revokes every access token of
-that user minted up to and including the second of the logout
-(`internal/revocation`, `IsRevoked`, compares whole seconds with `<=`). The
-suite starts the next module inside that second, so the next module's first
-token was refused at UserInfo. The logout plans' login step waits 1.2 seconds
-(`#ready` in `login.html`). A person who signs out and back in within one
-second meets the same refusal.
+Found by the first rehearsal and fixed in #1006: a logout that names the user
+(an `id_token_hint`) revoked every access token of that user minted up to and
+including the second of the logout, because `internal/revocation` compared
+whole seconds. The suite starts the next module inside that second, so its
+first token was refused at UserInfo, and a person who signed out and back in
+within one second met the same refusal. The cutoff is now precise to the
+microsecond, and the logout plans no longer wait before signing in.
 
 Modules that end with a screenshot for a human to review (for example the
 error page for an unregistered `redirect_uri`, or the logged-out page) pass

@@ -22,11 +22,11 @@
   are created only when they can be used, because HtmlUnit waits for an
   element to exist, not for it to be visible.
 
-  #ready appears 1.2 seconds after the page loads. The logout plans wait for
-  it before signing in: OpenIDX's logout revokes every access token of the
-  user minted up to and including the second of the logout (whole seconds,
-  internal/revocation IsRevoked), and the suite starts the next module well
-  inside that second. See docs/OAUTH-OIDC.md, "Conformance testing".
+  #ready appears as soon as the page has loaded; the logout plans wait for it
+  before signing in. It used to be delayed 1.2 seconds, because a logout
+  revoked every access token of the user minted in the same whole second and
+  the suite starts the next module inside that second. Revocation is precise
+  to the microsecond since #1006, so no delay is needed.
 -->
 <html lang="en">
 <head>
@@ -168,11 +168,9 @@
     }, follow);
   });
 
-  window.setTimeout(function () {
-    var ready = document.createElement('span');
-    ready.id = 'ready';
-    document.body.appendChild(ready);
-  }, 1200);
+  var ready = document.createElement('span');
+  ready.id = 'ready';
+  document.body.appendChild(ready);
 
   if (!loginSession) {
     setStatus('No login_session in the URL: open this page from /oauth/authorize.');
