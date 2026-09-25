@@ -224,6 +224,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   depend on it. An unrelated session keeps refreshing. A census in
   `internal/common/sessionend` fails when a function that ends sessions
   leaves their refresh tokens usable, unless it is registered with a reason.
+- **OPENIDX-2026-001, High (CVSS 7.4): a session a user ended kept its refresh
+  tokens** ([advisory](docs/security/advisories/OPENIDX-2026-001.md),
+  [#992](https://github.com/mhmtgngr/openidx/issues/992)). Affects v1.1.0 to
+  v1.36.0; the fix is the #992 entry under Fixed. Sessions ended before the
+  upgrade lose their refresh tokens with it too, because the same release
+  refuses a refresh whose session is gone (OPENIDX-2026-004).
+- **OPENIDX-2026-002, High (CVSS 7.4): MFA policies did not enforce their
+  required methods, grace period or conditions**
+  ([advisory](docs/security/advisories/OPENIDX-2026-002.md),
+  [#990](https://github.com/mhmtgngr/openidx/issues/990)). Affects v1.0.0 to
+  v1.36.0; the change is the #990 entry under Changed. A policy's required
+  methods are now enforced, with a grace period. Upgrading clears the stored
+  methods, so set them again.
+- **OPENIDX-2026-003, High (CVSS 7.4): a sign-in link skipped the second
+  factor** ([advisory](docs/security/advisories/OPENIDX-2026-003.md),
+  [#1007](https://github.com/mhmtgngr/openidx/pull/1007)). Affects v1.28.0 to
+  v1.36.0; the fix is the entry "A sign-in link no longer skips the second
+  factor" in this section.
+- **OPENIDX-2026-004, High (CVSS 7.4): refresh tokens survived password
+  changes and the other ways a session ends**
+  ([advisory](docs/security/advisories/OPENIDX-2026-004.md),
+  [#1008](https://github.com/mhmtgngr/openidx/pull/1008)). Affects v1.0.0 to
+  v1.36.0; the fix is the entry "An ended session's refresh tokens stop
+  working" in this section. Sessions ended before the upgrade are refused
+  without a migration, but a password change made before it ended no session,
+  and the advisory says how to end them.
+- **OPENIDX-2026-005, Low (CVSS 3.7): `POST /oauth/force-login` ended any
+  session whose id it was sent**
+  ([advisory](docs/security/advisories/OPENIDX-2026-005.md),
+  [#1008](https://github.com/mhmtgngr/openidx/pull/1008)). Affects v1.0.0 to
+  v1.36.0; the fix is part of the same entry as OPENIDX-2026-004's.
 - **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
   handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,
   the Android QR and the onboarding wizard's session — and none asked how
@@ -893,8 +924,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read that row: it decides on the refresh token's own row and on the
   `revoked_session:<id>` marker. So the signed-out device kept getting new
   access tokens, and a new rotated refresh token with each one. The admin
-  path, password change, the kill switch and deprovisioning all published the
-  marker or removed the tokens; this path did neither.
+  path, the kill switch and deprovisioning all published the marker or
+  removed the tokens; this path did neither.
 
   Ending a session now revokes its refresh tokens in the database, which holds
   with Redis down, and publishes the marker, and only then deletes the row. A
