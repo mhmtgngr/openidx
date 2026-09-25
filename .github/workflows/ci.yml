@@ -287,6 +287,17 @@ jobs:
         run: bash scripts/check-inert-tests.test.sh
       - name: No test may be one unconditional skip
         run: bash scripts/check-inert-tests.sh --enforce
+      # docs/evidence/display-equals-enforcement.md names the tests that
+      # display-equals-enforcement.yml runs on every release. A name that no
+      # longer resolves fails here, on the pull request that renamed the test,
+      # not on the release after it. The run's own reading of `go test -v` is
+      # checked here too, because the release is its only other caller.
+      - name: Verify the display = enforcement guard can go red
+        run: bash scripts/check-display-enforcement-tests.test.sh
+      - name: Every test the display = enforcement table names exists, once
+        run: bash scripts/check-display-enforcement-tests.sh --enforce
+      - name: The release evidence run fails on a skipped, failed or missing test
+        run: bash scripts/run-display-enforcement-tests.test.sh
       - name: Verify the OpenAPI guard can go red
         run: bash scripts/check-openapi-parses.test.sh
       - name: Every OpenAPI spec must parse and resolve
