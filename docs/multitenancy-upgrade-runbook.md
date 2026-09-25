@@ -28,7 +28,7 @@ the RLS belt (v1.8.0).
    - **Staying single-tenant:** set `DEFAULT_ORG_FALLBACK=true`. Every request
      resolves to the default org; RLS scopes to it. Nothing else to do.
    - **Going multi-tenant:** leave `DEFAULT_ORG_FALLBACK=false` (the default) and
-     set `TENANT_BASE_DOMAIN` (e.g. `openidx.io`) so subdomains resolve tenants
+     set `TENANT_BASE_DOMAIN` (e.g. `example.com`) so subdomains resolve tenants
      and tokens get per-tenant `iss`.
 
 ## Procedure

@@ -165,11 +165,14 @@ ACCESS_ASSIGNMENT_ENFORCE=true
 ABAC_ENFORCE=observe
 
 # ----- SMTP (optional) -----
+# Nothing is sent until SMTP_HOST is set. SMTP_FROM is the address the mail
+# comes from: use one on a domain whose mail you control, so that SPF and
+# DMARC pass. There is no default; openidx.io is not this project's domain.
 SMTP_HOST=
 SMTP_PORT=587
 SMTP_USERNAME=
 SMTP_PASSWORD=
-SMTP_FROM=noreply@openidx.io
+SMTP_FROM=
 EOF
 
 # --- make the file visible to compose -------------------------------------

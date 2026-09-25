@@ -200,14 +200,28 @@ func (h *HealthService) LiveHandler() gin.HandlerFunc {
 	}
 }
 
-// RegisterStandardRoutes registers the standard health endpoints on the given router
+// RegisterStandardRoutes registers the standard health endpoints on the given
+// router, for GET and for HEAD.
+//
+// HEAD matters because it is what most probes send. The service Dockerfiles
+// and the full Compose stack check health with `wget --spider`, and GNU wget's
+// --spider is a HEAD request; a load balancer's default probe often is too.
+// With GET alone, gin answered every one of those with 404, so Docker reported
+// each service unhealthy while it served traffic, and a compose file that
+// waits on `condition: service_healthy` never started what depended on it
+// (#1002). The HEAD handler is the GET handler: net/http drops the body of a
+// HEAD response, so the status code is what the prober sees, and it is the
+// same code a GET would get.
 func (h *HealthService) RegisterStandardRoutes(router *gin.Engine, prefix string) {
 	if prefix == "" {
 		prefix = "/health"
 	}
 	router.GET(prefix, h.Handler())
+	router.HEAD(prefix, h.Handler())
 	router.GET(prefix+"/ready", h.ReadyHandler())
+	router.HEAD(prefix+"/ready", h.ReadyHandler())
 	router.GET(prefix+"/live", h.LiveHandler())
+	router.HEAD(prefix+"/live", h.LiveHandler())
 }
 
 // formatDuration produces a human-readable duration string

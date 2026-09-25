@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Service images and the full Compose stack report healthy (#1002).** Every
+  service Dockerfile and `deployments/docker/docker-compose.yml` probe health
+  with `wget --spider`, which sends `HEAD`, and the health routes answered
+  `GET` only, so gin returned 404 and Docker marked each container unhealthy
+  while it served traffic; a compose file waiting on `condition:
+  service_healthy` never started what depended on it. `/health`,
+  `/health/ready` and `/health/live` now answer `HEAD` with the status a `GET`
+  gets. A test holds each route to that, under the default prefix and under
+  another.
+- **The full Compose stack's Alertmanager starts (#1004).**
+  `deployments/docker/alertmanager/alertmanager.yml` was written with
+  `${SMTP_HOST:-localhost}`-style placeholders, which Alertmanager does not
+  expand, so it refused the file and restarted in a loop; its receivers also
+  posted to an admin-api route that does not exist. The file is now literal,
+  with the lite install's shape and a route for critical alerts, and says how
+  to add a delivery. A new guard, `scripts/check-alertmanager-config.sh`,
+  runs `amtool check-config` over both mounted files in CI and fails on a
+  placeholder outside a comment; its self-test proves it goes red on the file
+  that shipped.
+
+### Changed
+- **The security advisories name their patched release.** OPENIDX-2026-001 to
+  005 said the fix was on `main` and in no release. They now say v1.37.0
+  carries it, that the workarounds are for v1.36.0 and earlier, and that
+  publication as a GitHub security advisory is still to come.
+- **No product default names `openidx.io`.** That domain is not the
+  project's (SECURITY.md). `SMTP_FROM` in `.env.example` and
+  `scripts/generate-secrets.sh` has no default any more, with a note to use
+  a domain whose mail you control; the configuration guide says the same; the
+  Helm chart's maintainer entry points at the repository instead of a dead
+  address; and the multi-tenancy runbook's example base domain is
+  `example.com`.
+
 ## [1.37.0] - 2026-09-25
 
 ### Removed

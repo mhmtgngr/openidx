@@ -319,6 +319,26 @@ jobs:
       - name: Run the README quick start and check compose resolves
         run: bash scripts/check-first-run.test.sh
 
+      # Alertmanager expands no environment variables, so a configuration
+      # written with ${VAR:-default} placeholders never loads. The full stack's
+      # file was, and Alertmanager restarted on it in a loop on every install
+      # (#1004); nothing here loaded the file, so nothing went red. amtool is
+      # Alertmanager's own parser: what it accepts, Alertmanager loads. Same
+      # release as the compose file pins, so the check is of the binary that
+      # will read the file.
+      - name: Install amtool (Alertmanager's own configuration check)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/am
+          bash scripts/ci-retry.sh 3 5 -- curl -sSL -o /tmp/am/am.tgz \
+            https://github.com/prometheus/alertmanager/releases/download/v0.27.0/alertmanager-0.27.0.linux-amd64.tar.gz
+          tar -xzf /tmp/am/am.tgz --strip-components=1 -C /tmp/am alertmanager-0.27.0.linux-amd64/amtool
+          /tmp/am/amtool --version
+      - name: Verify the Alertmanager guard can go red
+        run: AMTOOL=/tmp/am/amtool bash scripts/check-alertmanager-config.test.sh
+      - name: Every Alertmanager configuration the compose files mount loads
+        run: AMTOOL=/tmp/am/amtool bash scripts/check-alertmanager-config.sh --enforce
+
   # The tenant boundary is the one thing this product cannot get wrong, and
   # task 2.1 changes how it is transported to Postgres. These tests need a REAL
   # Postgres (the property under test is that set_config(..., true) resets at

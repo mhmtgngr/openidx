@@ -63,7 +63,7 @@ OpenIDX services are configured via environment variables. All services share a 
 | `SMTP_PORT` | SMTP server port | `587` |
 | `SMTP_USERNAME` | SMTP username | — |
 | `SMTP_PASSWORD` | SMTP password | — |
-| `SMTP_FROM` | From email address | `noreply@openidx.io` |
+| `SMTP_FROM` | From address, on a domain whose mail you control | — |
 
 ## Secret Management
 

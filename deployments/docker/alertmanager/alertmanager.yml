@@ -1,46 +1,57 @@
+# Alertmanager for the full Compose stack (deployments/docker/docker-compose.yml).
+#
+# Everything in this file is literal. Alertmanager expands no environment
+# variables: an earlier version of this file wrote ${SMTP_HOST:-localhost}-style
+# placeholders, which Alertmanager read as the text they are, refused ("too
+# many colons in address"), and restarted on in a loop, so the full stack never
+# had a working Alertmanager (#1004). Its receivers also posted to an admin-api
+# route that does not exist. scripts/check-alertmanager-config.sh holds this
+# file and the lite install's to what `amtool check-config` accepts, in CI.
+#
+# As shipped, alerts are grouped and shown, not delivered: Prometheus fires
+# them into this Alertmanager, and they are visible at http://localhost:9093
+# and in Grafana. To deliver them, give a receiver an email_configs or
+# webhook_configs entry with literal values, for example:
+#
+#   global:
+#     smtp_from: alerts@idp.example.com
+#     smtp_smarthost: smtp.example.com:587
+#     smtp_auth_username: alerts@idp.example.com
+#     smtp_auth_password: '...'          # or smtp_auth_password_file
+#   receivers:
+#     - name: critical
+#       email_configs:
+#         - to: oncall@example.com
+#           send_resolved: true
+#
+# and check the result before starting the stack:
+#
+#   docker run --rm --entrypoint amtool \
+#     -v "$PWD/deployments/docker/alertmanager:/cfg:ro" \
+#     prom/alertmanager:v0.27.0 check-config /cfg/alertmanager.yml
 global:
   resolve_timeout: 5m
-  smtp_from: '${SMTP_FROM:-alertmanager@openidx.io}'
-  smtp_smarthost: '${SMTP_HOST:-localhost}:${SMTP_PORT:-587}'
-  smtp_auth_username: '${SMTP_USERNAME:-}'
-  smtp_auth_password: '${SMTP_PASSWORD:-}'
-  smtp_require_tls: false
 
 route:
-  receiver: webhook-default
+  receiver: default
   group_by: ['alertname', 'service']
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
   routes:
-    - receiver: critical-alerts
-      match:
-        severity: critical
+    # Critical alerts are grouped faster and repeated more often. They go to
+    # the same receiver until one with a delivery is configured above.
+    - receiver: critical
+      matchers:
+        - severity="critical"
       group_wait: 10s
       repeat_interval: 1h
-    - receiver: webhook-default
-      match:
-        severity: warning
 
 receivers:
-  - name: webhook-default
-    webhook_configs:
-      - url: 'http://admin-api:8005/api/v1/alerts/webhook'
-        send_resolved: true
-
-  - name: critical-alerts
-    webhook_configs:
-      - url: 'http://admin-api:8005/api/v1/alerts/webhook'
-        send_resolved: true
-    email_configs:
-      - to: '${ALERT_EMAIL:-admin@openidx.io}'
-        send_resolved: true
-        headers:
-          Subject: '[OpenIDX CRITICAL] {{ .GroupLabels.alertname }}'
+  - name: default
+  - name: critical
 
 inhibit_rules:
-  - source_match:
-      severity: critical
-    target_match:
-      severity: warning
+  - source_matchers: ['severity="critical"']
+    target_matchers: ['severity="warning"']
     equal: ['alertname', 'service']

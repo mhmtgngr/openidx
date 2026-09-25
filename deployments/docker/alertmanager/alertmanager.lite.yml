@@ -1,10 +1,10 @@
 # Alertmanager for the lite install's `observability` profile
 # (deployments/docker/docker-compose.lite.yml).
 #
-# The full stack's alertmanager.yml cannot be used here: it writes
-# ${SMTP_HOST:-localhost}-style placeholders, which Alertmanager does not
-# expand, so it refuses to load the file and restarts in a loop; and its
-# webhook receiver points at an admin-api route that does not exist.
+# The full stack's alertmanager.yml has the same shape with one more route for
+# critical alerts. Both files are literal, because Alertmanager expands no
+# environment variables (#1004), and scripts/check-alertmanager-config.sh
+# holds both to what `amtool check-config` accepts.
 #
 # Here alerts are grouped and shown, not delivered: Prometheus fires them into
 # this Alertmanager, and they are visible at http://127.0.0.1:9093 and in
