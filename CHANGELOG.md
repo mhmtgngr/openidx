@@ -698,15 +698,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   conformance run hit this on every logout. The cutoff is now written to the
   microsecond (`<seconds>.<microseconds>`). An access token from the
   authorization-code grant carries a private claim, `granted_at_us`: the
-  microsecond its code was issued. A token is refused when that time is at or
-  before the cutoff, so only a sign-in that provably came after the logout
-  gets through.
+  microsecond its code was issued. One from the refresh grant carries the
+  microsecond that refresh began. A token is refused when that time is at or
+  before the cutoff, so only a sign-in or refresh that provably came after the
+  logout gets through.
 
   Revocation is not weakened:
   - A token without the claim is compared at whole-second precision, and
     refused in the same second, as before. That covers tokens from older
-    releases, from the refresh, device and token-exchange grants, and from the
-    SAML fallback.
+    releases, from the device and token-exchange grants, and from the SAML
+    fallback.
   - A cutoff an older release wrote is whole seconds and reaches to the end of
     its second.
   - The claim dates a token from its code, not from the exchange. A code

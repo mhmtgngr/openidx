@@ -4008,6 +4008,10 @@ func (s *Service) userIsActive(ctx context.Context, userID string) (bool, error)
 }
 
 func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
+	// The access token this grant mints dates from now, before any of the
+	// checks below, so a per-user revocation that lands while they run still
+	// refuses it (revocation.GrantedAtClaim).
+	grantedAt := time.Now()
 	refreshToken := c.PostForm("refresh_token")
 	clientID, clientSecret, credsOK := clientCredentials(c)
 	if !credsOK {
@@ -4135,8 +4139,10 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 		}
 	}
 
-	// Generate new access token (with session ID linkage)
-	accessToken, _ := s.GenerateJWT(c.Request.Context(), token.UserID, clientID, token.Scope, client.EffectiveAccessTokenLifetime(), token.SessionID)
+	// Generate new access token (with session ID linkage). It carries when
+	// this grant began, to the microsecond: a per-user revocation earlier in
+	// the same second must not refuse a token the grant mints after it.
+	accessToken, _ := s.GenerateJWT(withGrantedAt(c.Request.Context(), grantedAt), token.UserID, clientID, token.Scope, client.EffectiveAccessTokenLifetime(), token.SessionID)
 
 	response := TokenResponse{
 		AccessToken: accessToken,

@@ -62,7 +62,8 @@ func UserTokensRevokedAtKey(userID string) string {
 // GrantedAtClaim is the private access-token claim that records, in
 // microseconds since the epoch, when the authorization the token was minted
 // from was granted -- for a token from the authorization-code grant, the moment
-// the code was issued. It is never later than the token's own issue time.
+// the code was issued; for one from the refresh grant, the moment that grant
+// began. It is never later than the token's own issue time.
 //
 // WHY IT EXISTS. The marker used to hold whole seconds and the comparison was
 // `iat <= cutoff`, also in whole seconds, so that a token minted in the same

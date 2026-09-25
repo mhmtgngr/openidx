@@ -12,11 +12,12 @@ import (
 type grantedAtKey struct{}
 
 // withGrantedAt tells GenerateJWT when the grant it is minting from was issued,
-// so the access token can carry revocation.GrantedAtClaim. Only a grant that
-// knows that moment sets it (the authorization-code grant: the code's
-// created_at). A token minted without it carries no claim and is compared with
-// the per-user revocation cutoff at whole-second precision, as every token was
-// before the claim existed.
+// so the access token can carry revocation.GrantedAtClaim. Two grants set it:
+// the authorization-code grant, with the code's created_at, and the refresh
+// grant, with the moment it began, since it checks the refresh token, its
+// session and the user again then. A token minted without it carries no claim
+// and is compared with the per-user revocation cutoff at whole-second
+// precision, as every token was before the claim existed.
 func withGrantedAt(ctx context.Context, at time.Time) context.Context {
 	if at.IsZero() {
 		return ctx
