@@ -104,6 +104,48 @@ func TestGetSettingsReturnsStored(t *testing.T) {
 	}
 }
 
+// force_logout_on_password_change was a Security-tab switch that nothing read;
+// a password change and a reset now always end sessions, and the switch is
+// gone. A document saved while it existed still carries the key. It must load
+// with every other value intact, not fall back to the defaults, and the next
+// save must write a document without it.
+func TestAStoredDocumentWithTheRetiredForceLogoutKeyLoadsAndSaves(t *testing.T) {
+	repo := newFakeSettingsRepository()
+	repo.store["system"] = []byte(`{
+		"general": {"organization_name": "Acme"},
+		"security": {
+			"password_policy": {"min_length": 20},
+			"idle_timeout": 3600,
+			"force_logout_on_password_change": false,
+			"max_concurrent_sessions": 3
+		}
+	}`)
+	s := newTestService(repo)
+
+	got, err := s.GetSettings(context.Background())
+	if err != nil {
+		t.Fatalf("GetSettings: %v", err)
+	}
+	if got.General.OrganizationName != "Acme" || got.Security.PasswordPolicy.MinLength != 20 ||
+		got.Security.IdleTimeout != 3600 || got.Security.MaxConcurrentSessions != 3 {
+		t.Fatalf("the stored values did not load: %+v", got.Security)
+	}
+
+	if err := s.UpdateSettings(context.Background(), got); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+	var saved map[string]map[string]interface{}
+	if err := json.Unmarshal(repo.store["system"], &saved); err != nil {
+		t.Fatalf("saved document: %v", err)
+	}
+	if _, ok := saved["security"]["force_logout_on_password_change"]; ok {
+		t.Error("the saved document still carries force_logout_on_password_change")
+	}
+	if saved["security"]["idle_timeout"] != float64(3600) {
+		t.Errorf("idle_timeout was not saved: %v", saved["security"]["idle_timeout"])
+	}
+}
+
 // Corrupt JSON in the row must not crash or leak — it degrades to defaults.
 func TestGetSettingsCorruptRowFallsBackToDefaults(t *testing.T) {
 	repo := newFakeSettingsRepository()

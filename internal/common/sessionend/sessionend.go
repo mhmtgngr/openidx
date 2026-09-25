@@ -33,16 +33,25 @@
 // token) is not captured: there is nobody to tell.
 //
 // AND WHAT THE SESSION CAN STILL MINT. Telling the relying parties stops
-// nothing. The refresh grant decides on the refresh token's own row
-// (revoked_at) and on the revoked_session:<id> marker in Redis, and reads
-// neither the sessions table nor this package's. A path that ends a session
-// and leaves the refresh tokens bound to it leaves every device they were
-// issued to minting access tokens: at once if it wrote no marker, from the
-// moment the marker expires if it wrote one, and whenever Redis is down or
-// comes back empty. RevokeRefreshTokens and RevokeUserRefreshTokens revoke the
-// rows themselves, which holds with Redis in any state; the marker stays as
-// the second line, and the only one that covers a refresh already in flight
-// when the rows are revoked.
+// nothing. The refresh grant refuses a refresh token when its own row is
+// revoked (revoked_at), when the revoked_session:<id> marker in Redis names
+// its session, or when its session's row is gone, revoked or expired; it
+// never reads this package's table. A path that ends a session revokes the
+// refresh tokens bound to it with RevokeRefreshTokens or
+// RevokeUserRefreshTokens, which holds with Redis in any state.
+//
+// The grant's reading of the session row is the net under that, not a
+// substitute for it. It catches a session ended before these helpers existed,
+// a session a future path ends and forgets, and a rotation that was already in
+// flight when the rows were revoked. It answers only for tokens bound to a
+// session: a refresh token the device authorization grant issued is bound to
+// none, and revoking its row is the only thing that ends it.
+//
+// Until that read was added, the grant decided on the token's row and the
+// marker alone, and a path that ended a session and left its refresh tokens
+// alone left every device they were issued to minting access tokens: at once
+// if it wrote no marker, from the moment the marker expired if it wrote one,
+// and whenever Redis was down or came back empty.
 //
 // This package imports no service and no signing code, so every severing path
 // in the tree can import it without a cycle.

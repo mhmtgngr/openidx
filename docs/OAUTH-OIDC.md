@@ -568,6 +568,16 @@ Opaque token stored in database:
 - Long-lived (default: 24 hours)
 - Can be revoked
 - Used to obtain new access tokens
+- Lives no longer than its session. A refresh token issued from a sign-in is
+  bound to that session, and the token endpoint refuses it
+  (`invalid_grant`, `session_revoked`) once the session has ended: signed
+  out, ended from the Sessions pages or the console, by a password change or
+  reset, by the idle or absolute timeout, or by breach containment or the
+  kill switch. A token issued by the device authorization grant is bound to
+  no session. It ends when it expires, when its user is disabled, or when it
+  is revoked, which a password change or reset, revoking all of a user's
+  sessions, the lifecycle action `revoke_sessions`, breach containment and
+  the kill switch all do.
 
 ## Scopes
 

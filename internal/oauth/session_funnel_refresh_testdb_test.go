@@ -34,7 +34,7 @@ func TestASessionOAuthEndedStaysEndedAfterItsMarkerExpires(t *testing.T) {
 	pastTheMarker := func() { f.mini.FastForward(25*time.Hour + time.Minute) }
 	sweep := func() { f.svc.processExpiredSessions(orgctx.WithBypassRLS(context.Background())) }
 
-	t.Run("the absolute-timeout sweep", func(t *testing.T) {
+	t.Run("the expiry sweep", func(t *testing.T) {
 		// A session already past its expiry, as the sweep finds it.
 		sess, err := f.ids.CreateSession(f.orgCtx, user, f.clientID, "203.0.113.9", "evidence-run", -time.Minute)
 		if err != nil {
@@ -42,9 +42,9 @@ func TestASessionOAuthEndedStaysEndedAfterItsMarkerExpires(t *testing.T) {
 		}
 		device := f.mintRefresh(t, user, sess.ID)
 		sweep()
-		f.cannotRefresh(t, device, "a session the expiry sweep ended")
+		f.ended(t, device, "a session the expiry sweep ended")
 		pastTheMarker()
-		f.cannotRefresh(t, device, "25 hours later, a session the expiry sweep ended")
+		f.ended(t, device, "25 hours later, a session the expiry sweep ended")
 	})
 	t.Run("the inactivity sweep", func(t *testing.T) {
 		sid, device := f.newSession(t, user)
@@ -53,9 +53,29 @@ func TestASessionOAuthEndedStaysEndedAfterItsMarkerExpires(t *testing.T) {
 			t.Fatalf("age the session: %v", err)
 		}
 		sweep()
-		f.cannotRefresh(t, device, "a session the inactivity sweep ended")
+		f.ended(t, device, "a session the inactivity sweep ended")
 		pastTheMarker()
-		f.cannotRefresh(t, device, "25 hours later, a session the inactivity sweep ended")
+		f.ended(t, device, "25 hours later, a session the inactivity sweep ended")
+	})
+	t.Run("the absolute timeout, counted from sign-in however active the session is", func(t *testing.T) {
+		// The seeded Security tab sets no absolute timeout, so the default of
+		// 24 hours applies. This session signed in 25 hours ago and refreshed
+		// a moment ago: its expires_at is in the future and it is not idle.
+		sid, device := f.newSession(t, user)
+		if _, err := f.db.Pool.Exec(context.Background(), `
+			UPDATE sessions SET started_at = NOW() - interval '25 hours', last_seen_at = NOW(),
+			                    expires_at = NOW() + interval '1 hour'
+			 WHERE id = $1::uuid`, sid); err != nil {
+			t.Fatalf("age the session: %v", err)
+		}
+		young, youngDevice := f.newSession(t, user)
+		if _, err := f.db.Pool.Exec(context.Background(),
+			`UPDATE sessions SET started_at = NOW() - interval '23 hours' WHERE id = $1::uuid`, young); err != nil {
+			t.Fatalf("age the session: %v", err)
+		}
+		sweep()
+		f.ended(t, device, "a session past the absolute timeout")
+		f.refreshes(t, youngDevice, "an active session inside the absolute timeout")
 	})
 	t.Run("a concurrent-session eviction", func(t *testing.T) {
 		setSecurity := func(max int, strategy string) {
@@ -83,7 +103,7 @@ func TestASessionOAuthEndedStaysEndedAfterItsMarkerExpires(t *testing.T) {
 			t.Fatalf("eviction: action %q, err %v", action, err)
 		}
 		pastTheMarker()
-		f.cannotRefresh(t, oldestDevice, "25 hours later, the session the eviction ended")
+		f.ended(t, oldestDevice, "25 hours later, the session the eviction ended")
 		f.refreshes(t, newerDevice, "the session the eviction kept")
 	})
 	t.Run("force-login", func(t *testing.T) {
@@ -104,9 +124,9 @@ func TestASessionOAuthEndedStaysEndedAfterItsMarkerExpires(t *testing.T) {
 		c.Request = req.WithContext(f.orgCtx)
 		f.svc.handleForceLogin(c)
 
-		f.cannotRefresh(t, device, "the session force-login ended")
+		f.ended(t, device, "the session force-login ended")
 		pastTheMarker()
-		f.cannotRefresh(t, device, "25 hours later, the session force-login ended")
+		f.ended(t, device, "25 hours later, the session force-login ended")
 	})
 	t.Run("logout with only the browser cookie", func(t *testing.T) {
 		sid, device := f.newSession(t, user)
@@ -122,9 +142,9 @@ func TestASessionOAuthEndedStaysEndedAfterItsMarkerExpires(t *testing.T) {
 			t.Fatalf("logout: %d %s", w.Code, w.Body.String())
 		}
 
-		f.cannotRefresh(t, device, "the session the user signed out of")
+		f.ended(t, device, "the session the user signed out of")
 		pastTheMarker()
-		f.cannotRefresh(t, device, "25 hours later, the session the user signed out of")
+		f.ended(t, device, "25 hours later, the session the user signed out of")
 	})
 	t.Run("another user's session keeps refreshing", func(t *testing.T) {
 		f.refreshes(t, bystanderDevice, "another user's session")
@@ -148,12 +168,12 @@ func TestARefreshReplayEndsEveryChainOfItsSession(t *testing.T) {
 
 	newest := f.refreshes(t, stolen, "the chain before the replay")
 	f.cannotRefresh(t, stolen, "a replayed refresh token")
-	f.cannotRefresh(t, newest, "the newest token of a replayed chain")
+	f.ended(t, newest, "the newest token of a replayed chain")
 
 	t.Run("the session's other chain stays refused once the marker has expired", func(t *testing.T) {
-		f.cannotRefresh(t, sibling, "another chain of the replayed session")
+		f.ended(t, sibling, "another chain of the replayed session")
 		f.mini.FastForward(24*time.Hour + time.Minute)
-		f.cannotRefresh(t, sibling, "24 hours later, another chain of the replayed session")
+		f.ended(t, sibling, "24 hours later, another chain of the replayed session")
 	})
 	t.Run("the user's other session and another user's keep refreshing", func(t *testing.T) {
 		f.refreshes(t, elsewhere, "the user's other session")

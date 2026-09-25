@@ -203,8 +203,8 @@ func TestAPasswordChangeEndsEveryOtherSession(t *testing.T) {
 		hereDevice = f.refreshes(t, hereDevice, "the session the password was changed from")
 	})
 	t.Run("the user's other sessions cannot refresh", func(t *testing.T) {
-		f.cannotRefresh(t, lostDevice, "another session of the user who changed their password")
-		f.cannotRefresh(t, tv, "a refresh token bound to no session")
+		f.ended(t, lostDevice, "another session of the user who changed their password")
+		f.ended(t, tv, "a refresh token bound to no session")
 		if !f.mini.Exists("revoked_session:" + lost) {
 			t.Error("no revoked_session marker was published for the session the change ended")
 		}
@@ -239,7 +239,7 @@ func TestAPasswordChangeEndsEveryOtherSession(t *testing.T) {
 			}
 		}()
 		changePassword(t, access)
-		f.cannotRefresh(t, lostDevice, "with Redis down, another session of the user who changed their password")
+		f.ended(t, lostDevice, "with Redis down, another session of the user who changed their password")
 		f.refreshes(t, hereDevice, "with Redis down, the session the password was changed from")
 	})
 	t.Run("a directory account's change ends the other sessions too", func(t *testing.T) {
@@ -249,7 +249,7 @@ func TestAPasswordChangeEndsEveryOtherSession(t *testing.T) {
 		_, lostDevice := f.newSession(t, user)
 
 		changePassword(t, f.bearer(t, user, here))
-		f.cannotRefresh(t, lostDevice, "another session of a directory user who changed their password")
+		f.ended(t, lostDevice, "another session of a directory user who changed their password")
 		f.refreshes(t, hereDevice, "the session a directory user changed their password from")
 	})
 }
@@ -288,7 +288,7 @@ func TestAPasswordResetEndsEverySession(t *testing.T) {
 	ended := func(t *testing.T, v victim, how string) {
 		t.Helper()
 		for _, d := range v.devices {
-			f.cannotRefresh(t, d, "a session of a user whose password was reset "+how)
+			f.ended(t, d, "a session of a user whose password was reset "+how)
 		}
 		bystanderDevice = f.refreshes(t, bystanderDevice, "another user's session")
 		if !f.mini.Exists(revocation.UserTokensRevokedAtKey(v.id)) {
@@ -344,7 +344,7 @@ func TestAPasswordResetEndsEverySession(t *testing.T) {
 		}()
 		forgotten(t, v, "reset-"+f.suffix+"-2")
 		for _, d := range v.devices {
-			f.cannotRefresh(t, d, "with Redis down, a session of a user whose password was reset")
+			f.ended(t, d, "with Redis down, a session of a user whose password was reset")
 		}
 		bystanderDevice = f.refreshes(t, bystanderDevice, "with Redis down, another user's session")
 	})
@@ -352,8 +352,9 @@ func TestAPasswordResetEndsEverySession(t *testing.T) {
 
 // The lifecycle action revoke_sessions deleted the session rows and cut the
 // access tokens, and said in a comment that deleting the rows ended the refresh
-// path. The refresh grant reads neither, so every device the user was signed in
-// on kept refreshing. Each session now ends the way the Sessions page ends one.
+// path. The refresh grant read the token's own row and the marker, neither of
+// which that wrote, so every device the user was signed in on kept refreshing.
+// Each session now ends the way the Sessions page ends one.
 func TestLifecycleRevokeSessionsEndsTheRefreshPath(t *testing.T) {
 	f := newSessionEndFixture(t)
 	wf := &identity.LifecycleWorkflow{
@@ -386,9 +387,9 @@ func TestLifecycleRevokeSessionsEndsTheRefreshPath(t *testing.T) {
 		_, second := f.newSession(t, user)
 		tv := f.mintRefresh(t, user, "")
 		run(t, user)
-		f.cannotRefresh(t, first, "a session the lifecycle action revoked")
-		f.cannotRefresh(t, second, "a session the lifecycle action revoked")
-		f.cannotRefresh(t, tv, "a refresh token bound to no session, after the lifecycle action revoked the user's sessions")
+		f.ended(t, first, "a session the lifecycle action revoked")
+		f.ended(t, second, "a session the lifecycle action revoked")
+		f.ended(t, tv, "a refresh token bound to no session, after the lifecycle action revoked the user's sessions")
 		if !f.mini.Exists("revoked_session:" + one) {
 			t.Error("no revoked_session marker was published for a session the lifecycle action ended")
 		}
@@ -406,7 +407,7 @@ func TestLifecycleRevokeSessionsEndsTheRefreshPath(t *testing.T) {
 			}
 		}()
 		run(t, user)
-		f.cannotRefresh(t, device, "with Redis down, a session the lifecycle action revoked")
+		f.ended(t, device, "with Redis down, a session the lifecycle action revoked")
 		bystanderDevice = f.refreshes(t, bystanderDevice, "with Redis down, another user's session")
 	})
 }

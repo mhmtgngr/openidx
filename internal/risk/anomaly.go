@@ -563,10 +563,10 @@ func (s *Service) RemediateAccountLock(ctx context.Context, userID string) error
 // RemediateRevokeSessions revokes all active sessions for a user.
 //
 // Nothing calls it today. It used to mark the session rows revoked and nothing
-// else, and the refresh grant does not read those rows: it reads the refresh
-// token's own row and the revoked_session marker. Wired up as it was, it would
-// have ended no device's access. The user's refresh tokens are revoked first
-// now, in the database.
+// else, when the refresh grant read only the refresh token's own row and the
+// revoked_session marker; wired up as it was, it would have ended no device's
+// access. The user's refresh tokens are revoked first now, in the database,
+// including those bound to no session.
 func (s *Service) RemediateRevokeSessions(ctx context.Context, userID string) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {

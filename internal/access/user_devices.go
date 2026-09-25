@@ -430,9 +430,9 @@ func (s *Service) executeDeviceRevoke(ctx context.Context, orgID, agentID, zitiI
 // families ran under.
 //
 // WHY IT IS TWO STEPS. Revoking the refresh rows stops the device MINTING a new
-// access token; publishing revoked_session:<id> is what the refresh grant reads
-// (internal/oauth/service.go), and marking the sessions revoked is what the
-// console's session list and the identity service read. A device can hold
+// access token; the refresh grant (internal/oauth/service.go) also reads the
+// revoked_session:<id> marker and the session's row, and marking the sessions
+// revoked is what the console's session list reads too. A device can hold
 // several chains — one per sign-in — so both sets are collected from the rows
 // rather than assumed to be one.
 //

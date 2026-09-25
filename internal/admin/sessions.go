@@ -30,10 +30,9 @@ const revokedSessionMarkerTTL = 30 * 24 * time.Hour
 
 // publishSessionRevocations writes the revoked_session:<id> markers for
 // sessions whose refresh tokens the caller has already revoked in the
-// database. The oauth-service's refresh grant reads the token's own row and
-// this marker, never the sessions table. The row revocation is what holds
-// with Redis down or restarted; the marker is the second line, and the one
-// that stops a refresh already in flight when the rows were revoked. Returns
+// database. The oauth-service's refresh grant reads the token's own row, this
+// marker and the session's row. The row revocation is what holds with Redis
+// down or restarted; the marker is the fast first check. Returns
 // one warning per marker that could not be published; callers surface them
 // instead of reporting a clean revoke.
 func (s *Service) publishSessionRevocations(ctx context.Context, sessionIDs []string) []string {
@@ -208,10 +207,10 @@ func (s *Service) handleAdminRevokeSession(c *gin.Context) {
 		s.logger.Error("revoking a session whose relying parties will not be told", zap.Error(err), zap.String("session_id", logsafe.Clean(sessionID)))
 	}
 	// What the session can still mint ends first, in the database. The
-	// refresh grant does not read the row updated below; it reads the token's
-	// own row and the marker, and the marker alone left the session
-	// refreshing whenever Redis was down or came back empty. If the tokens
-	// cannot be revoked, the session is not reported revoked.
+	// refresh grant used to read only the token's own row and the marker, not
+	// the row updated below, and the marker alone left the session refreshing
+	// whenever Redis was down or came back empty. If the tokens cannot be
+	// revoked, the session is not reported revoked.
 	if _, err := sessionend.RevokeRefreshTokens(ctx, s.db.Pool, org.ID, []string{sessionID}); err != nil {
 		s.logger.Error("Failed to revoke the session's refresh tokens", zap.Error(err), zap.String("session_id", logsafe.Clean(sessionID)))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke session"})

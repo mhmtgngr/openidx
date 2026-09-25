@@ -39,7 +39,8 @@ import (
 //	4. the user still exists and is enabled -- this is the actual kill-switch
 //	   behind disable/delete/SCIM-deprovision, because a refresh token outlives
 //	   the access token it minted;
-//	5. the linked session has not been revoked;
+//	5. the linked session has not been revoked (the marker here; the session's
+//	   row in refresh_session_live_testdb_test.go, which owns that decision);
 //	6. rotation happens only when the scope still carries offline_access.
 //
 // Delete any one of them and every test in this package still passes. That is
@@ -114,11 +115,12 @@ type refreshGrantFixture struct {
 // newRefreshGrantFixture builds the smallest service that can answer a refresh
 // grant: a real Postgres for the rows the decisions read, miniredis for the
 // session-revocation check, and an RSA key so the minted token is a real
-// signature rather than a stub. identityService is deliberately left nil --
-// every case below either has no session id or has a REVOKED one, and the
-// handler returns before the debounced activity update on both paths. A case
-// that needs a live session must set one rather than discover this in a
-// goroutine panic.
+// signature rather than a stub. identityService is deliberately left nil, and
+// there is no sessions table: every case below either has no session id or
+// has one the marker revokes, and the handler returns before it reads the
+// session's row on both paths. A case that needs a live session belongs with
+// the fixture in session_end_refresh_testdb_test.go, which migrates the full
+// schema.
 func newRefreshGrantFixture(t *testing.T) *refreshGrantFixture {
 	t.Helper()
 

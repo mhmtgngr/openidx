@@ -1158,11 +1158,13 @@ func (s *Service) GetUserSessions(ctx context.Context, userID string) ([]Session
 
 // TerminateSession terminates a specific session.
 //
-// The refresh grant does not read the sessions table. It decides on the
-// refresh token's own row and on the revoked_session:<id> marker, so deleting
-// the session alone left every device it was issued to refreshing, with a
-// fresh rotated token each time (#992). What the session can still mint is
-// ended first; if that cannot be written the session is not deleted, because a
+// The refresh grant used to decide on the refresh token's own row and on the
+// revoked_session:<id> marker only, so deleting the session alone left every
+// device it was issued to refreshing, with a fresh rotated token each time
+// (#992). The grant now also refuses a token whose session row is gone; the
+// tokens are still revoked here, because the row is what every other reader
+// of oauth_refresh_tokens sees. What the session can still mint is ended
+// first; if that cannot be written the session is not deleted, because a
 // session reported ended while its refresh tokens work is the defect itself.
 func (s *Service) TerminateSession(ctx context.Context, sessionID string) error {
 	s.logger.Info("Terminating session", zap.String("session_id", sessionID))
@@ -1725,14 +1727,13 @@ func (s *Service) RevokeUserSessionsOnPasswordChange(ctx context.Context, userID
 // keepSessionID. It returns the sessions it ended, whose markers the caller
 // publishes once tx has committed.
 //
-// The refresh grant does not read the sessions table. It decides on the
-// refresh token's own row and on the revoked_session:<id> marker, so what ends
-// a session here is revoking its refresh tokens; the row is marked so the
-// Sessions pages and single sign-on stop offering it. The revocation covers
-// every refresh token of the user but the kept session's, including the ones
-// bound to no session, which the device authorization grant issues, and the
-// ones bound to a session that ended earlier: a credential minted under the
-// old password is not the user's to keep once it has changed.
+// The refresh tokens are revoked and the rows marked. The refresh grant would
+// refuse a token of a revoked session on its own, but only a token bound to a
+// session: the revocation covers every refresh token of the user but the kept
+// session's, including the ones bound to no session, which the device
+// authorization grant issues. A credential minted under the old password is
+// not the user's to keep once it has changed. The rows are marked so the
+// Sessions pages and single sign-on stop offering them.
 func endSessionsOnPasswordChange(ctx context.Context, tx pgx.Tx, orgID, userID, keepSessionID string) ([]string, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id::text FROM sessions
@@ -7073,9 +7074,9 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 		// "revoke_sessions" as an action means what an operator reads it to
 		// mean: every device the user is signed in on stops. This used to
 		// delete the session rows and nothing else, and say that deleting them
-		// ended the refresh path. It did not: the refresh grant reads the
-		// refresh token's own row and the revoked_session:<id> marker, never
-		// the sessions table, so every device kept refreshing.
+		// ended the refresh path. It did not: the refresh grant read the
+		// refresh token's own row and the revoked_session:<id> marker, not the
+		// sessions table, so every device kept refreshing.
 		//
 		// First every refresh token the user holds, in one statement: those
 		// bound to the sessions below, and those bound to none, which the

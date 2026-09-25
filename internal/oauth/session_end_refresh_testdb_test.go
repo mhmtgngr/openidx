@@ -166,6 +166,35 @@ func (f *sessionEndFixture) refreshes(t *testing.T, tok, what string) string {
 	return next
 }
 
+// revokedInDB reports whether tok's own row is revoked.
+func (f *sessionEndFixture) revokedInDB(t *testing.T, tok string) bool {
+	t.Helper()
+	var revoked bool
+	if err := f.db.Pool.QueryRow(context.Background(),
+		`SELECT revoked_at IS NOT NULL FROM oauth_refresh_tokens WHERE token = $1`, tok).Scan(&revoked); err != nil {
+		t.Fatalf("read refresh token row: %v", err)
+	}
+	return revoked
+}
+
+// ended asserts that the path under test revoked tok's own row, and then that
+// the token endpoint refuses it.
+//
+// The row is checked BEFORE the token is presented, and that order matters.
+// The refresh grant also refuses a token whose session is no longer live, and
+// revokes the token as it does (sessionIsLive), so a path that marked its
+// sessions ended but left their refresh tokens alone is still refused at the
+// endpoint. That is the grant's net for sessions ended before this release;
+// what shows that each path revokes what it ends is the row.
+func (f *sessionEndFixture) ended(t *testing.T, tok, what string) {
+	t.Helper()
+	if !f.revokedInDB(t, tok) {
+		t.Errorf("%s: its refresh token's row was left unrevoked. The refresh grant decides on that row "+
+			"and on the revoked_session marker; the path that ended the session has to reach the row.", what)
+	}
+	f.cannotRefresh(t, tok, what)
+}
+
 // cannotRefresh asserts that the token endpoint refuses tok.
 func (f *sessionEndFixture) cannotRefresh(t *testing.T, tok, what string) {
 	t.Helper()
@@ -202,6 +231,9 @@ func TestAnEndedSessionCannotRefresh(t *testing.T) {
 		if err := f.ids.TerminateSession(f.orgCtx, sessionID); err != nil {
 			t.Fatalf("end the session: %v", err)
 		}
+		if !f.revokedInDB(t, device) {
+			t.Error("ending the session left its refresh token's row unrevoked")
+		}
 		if code, _, body := f.refresh(t, device); code != http.StatusBadRequest || body["error"] != "invalid_grant" {
 			t.Errorf("the ended session refreshed: %d %v. The device that was signed out keeps "+
 				"minting access tokens until its refresh token expires.", code, body)
@@ -226,6 +258,9 @@ func TestAnEndedSessionCannotRefresh(t *testing.T) {
 		f.mini.Close()
 		if err := f.ids.TerminateSession(f.orgCtx, sid); err != nil {
 			t.Fatalf("ending a session must not depend on Redis: %v", err)
+		}
+		if !f.revokedInDB(t, next) {
+			t.Error("with Redis down, ending the session left its refresh token's row unrevoked")
 		}
 		if code, _, body := f.refresh(t, next); code != http.StatusBadRequest || body["error"] != "invalid_grant" {
 			t.Errorf("with no marker to read, the ended session refreshed: %d %v", code, body)

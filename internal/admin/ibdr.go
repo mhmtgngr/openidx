@@ -714,12 +714,13 @@ func (s *ibdrService) recordEnhancedMonitoring(ctx context.Context, incident *Br
 // Revoking zero sessions is not a failure — a user with nothing live has
 // nothing to revoke — so only a query error is reported.
 //
-// Marking the rows revoked is not what stops a session. The refresh grant
-// reads the refresh token's own row and the revoked_session marker, never the
-// sessions table, and this used to write neither: a contained account's
-// devices went on refreshing, on a partial quarantine that leaves the account
-// enabled. The refresh tokens are revoked first, then the rows, then the
-// markers are published.
+// Marking the rows revoked used to stop nothing. The refresh grant read the
+// refresh token's own row and the revoked_session marker, not the sessions
+// table, and this wrote neither: a contained account's devices went on
+// refreshing, on a partial quarantine that leaves the account enabled. The
+// refresh tokens are revoked first -- every one the user holds, including
+// those bound to no session, which no check of a session row reaches -- then
+// the rows, then the markers are published.
 func (s *ibdrService) revokeUserSessions(ctx context.Context, userIDs []string) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {

@@ -83,7 +83,7 @@ func TestAnAdministratorEndingSessionsStopsTheirRefresh(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("revoke session: %d %v", code, body)
 		}
-		f.cannotRefresh(t, device, "with Redis down, a session an administrator revoked")
+		f.ended(t, device, "with Redis down, a session an administrator revoked")
 		f.refreshes(t, keptDevice, "the user's session the administrator did not revoke")
 		stillRefreshes(t)
 	})
@@ -97,8 +97,8 @@ func TestAnAdministratorEndingSessionsStopsTheirRefresh(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("revoke all sessions: %d %v", code, body)
 		}
-		f.cannotRefresh(t, first, "with Redis down, a session an administrator revoked with the rest")
-		f.cannotRefresh(t, second, "with Redis down, a session an administrator revoked with the rest")
+		f.ended(t, first, "with Redis down, a session an administrator revoked with the rest")
+		f.ended(t, second, "with Redis down, a session an administrator revoked with the rest")
 		stillRefreshes(t)
 	})
 	t.Run("breach containment revoking the sessions", func(t *testing.T) {
@@ -124,7 +124,7 @@ func TestAnAdministratorEndingSessionsStopsTheirRefresh(t *testing.T) {
 		user := f.seedUser(t, "contained")
 		sid, device := f.newSession(t, user)
 		contain(t, user)
-		f.cannotRefresh(t, device, "a session breach containment revoked")
+		f.ended(t, device, "a session breach containment revoked")
 		if !f.mini.Exists("revoked_session:" + sid) {
 			t.Error("breach containment published no revoked_session marker for the session it revoked")
 		}
@@ -134,7 +134,7 @@ func TestAnAdministratorEndingSessionsStopsTheirRefresh(t *testing.T) {
 		_, device = f.newSession(t, user)
 		f.redisDown(t)
 		contain(t, user)
-		f.cannotRefresh(t, device, "with Redis down, a session breach containment revoked")
+		f.ended(t, device, "with Redis down, a session breach containment revoked")
 		stillRefreshes(t)
 	})
 	t.Run("the kill switch without disabling the account", func(t *testing.T) {
@@ -147,8 +147,8 @@ func TestAnAdministratorEndingSessionsStopsTheirRefresh(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("kill switch: %d %v", code, body)
 		}
-		f.cannotRefresh(t, device, "with Redis down, a session the kill switch revoked")
-		f.cannotRefresh(t, tv, "with Redis down, a refresh token bound to no session, after the kill switch")
+		f.ended(t, device, "with Redis down, a session the kill switch revoked")
+		f.ended(t, tv, "with Redis down, a refresh token bound to no session, after the kill switch")
 		stillRefreshes(t)
 	})
 	t.Run("revoking a device ends every chain of the sessions it ran under", func(t *testing.T) {
@@ -180,8 +180,8 @@ func TestAnAdministratorEndingSessionsStopsTheirRefresh(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("revoke device: %d %v", code, body)
 		}
-		f.cannotRefresh(t, deviceChain, "the revoked device's own chain")
-		f.cannotRefresh(t, otherChain, "with Redis down, another chain of a session the device revoke ended")
+		f.ended(t, deviceChain, "the revoked device's own chain")
+		f.ended(t, otherChain, "with Redis down, another chain of a session the device revoke ended")
 		f.refreshes(t, elsewhere, "the user's session that never ran on the device")
 		stillRefreshes(t)
 	})
@@ -201,7 +201,7 @@ func TestRiskRemediationRevokingSessionsStopsTheirRefresh(t *testing.T) {
 	if err := risk.NewService(f.db, f.rc, zap.NewNop()).RemediateRevokeSessions(f.orgCtx, user); err != nil {
 		t.Fatalf("remediate: %v", err)
 	}
-	f.cannotRefresh(t, device, "a session the risk remediation revoked")
-	f.cannotRefresh(t, tv, "a refresh token bound to no session, after the risk remediation")
+	f.ended(t, device, "a session the risk remediation revoked")
+	f.ended(t, tv, "a refresh token bound to no session, after the risk remediation")
 	f.refreshes(t, bystanderDevice, "another user's session")
 }

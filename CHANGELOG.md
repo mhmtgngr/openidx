@@ -107,21 +107,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nats.enabled` — not as a default.
 
 ### Security
-- **Every path that ends a session now revokes its refresh tokens.** The
-  refresh grant decides on the refresh token's own row and on the
-  `revoked_session:<id>` marker in Redis. It does not read the sessions
-  table. #993 fixed this for the Sessions page. These paths still ended
-  sessions and left the refresh tokens bound to them usable:
+- **An ended session's refresh tokens stop working.** The refresh grant
+  decided on the refresh token's own row and on the `revoked_session:<id>`
+  marker in Redis, and did not read the sessions table. #993 fixed this for
+  the Sessions page. These paths still ended sessions and left the refresh
+  tokens bound to them usable:
   - **Password change and reset.** None of them ended a session: a user
     changing their own password, the forgotten-password link, an
     administrator setting a password, and an administrator resetting a
     directory account. Now a user's own change ends every other session of
-    theirs and keeps the one it was made from. A reset ends every session.
-    The refresh tokens are revoked in the transaction that writes the
-    password, or right after the directory accepts it. The user's
-    outstanding access tokens are cut at userinfo and introspection. That
-    cutoff is per user, so it also covers the access token of the session
-    that made the change; that client gets a new one on its next refresh.
+    theirs and keeps the one it was made from. A reset ends every session,
+    including when an administrator sets their own password through the
+    set-password route. The refresh tokens are revoked in the transaction
+    that writes the password, or right after the directory accepts it. The
+    user's outstanding access tokens are cut at userinfo and introspection.
+    That cutoff is per user, so it also covers the access token of the
+    session that made the change; that client gets a new one on its next
+    refresh. The Security tab's "Force logout on password change" switch is
+    removed: nothing read it, and a change or reset now always ends
+    sessions. A stored settings document that still holds the key loads and
+    saves as before. The per-application column
+    `application_sso_settings.force_logout_on_password_change` (v63), which
+    nothing reads or writes, stays until a later migration drops it.
   - **The lifecycle action `revoke_sessions`** deleted the session rows and
     nothing else. It now ends each session the way the Sessions page does,
     and revokes every refresh token the user holds.
@@ -139,12 +146,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     database, which holds with Redis down or restarted. The kill switch
     reports the count as `iam_refresh_tokens_revoked`.
 
+  **The refresh grant now also reads the session.** A refresh token bound to
+  a session is refused (`invalid_grant`, `session_revoked`), and revoked,
+  unless that session's row exists in the token's organization, is not
+  revoked and has not expired. This covers sessions ended before this
+  release, whose tokens no path revoked and whose markers have expired, so
+  no migration is needed for them. It also covers a session past its
+  expiry that the sweep has not reached yet. If the session cannot be read,
+  the grant mints nothing. Tokens bound to no session, which the device
+  authorization grant issues, are unaffected.
+
+  **A refresh keeps its session alive again, and the absolute timeout is
+  enforced.** The refresh grant recorded session activity with a context
+  that carried no organization, which the update refused. So `last_seen_at`
+  never moved, and the inactivity sweep ended sessions that were in use,
+  counting from sign-in. The activity update also moves a session's expiry
+  forward, so once it works that expiry no longer bounds a session's life.
+  The Security tab's absolute timeout (24 hours unless set) was shown and
+  read by nothing. The sweep now ends a session that long after sign-in,
+  however active it is. The sweep applies the Security tab's timeouts; the
+  per-application idle and absolute timeouts are not applied by it, as
+  before.
+
+  **`POST /oauth/force-login` ends only a session of the user signing in.**
+  It ended the session it was given before reading the pending sign-in,
+  so anyone who knew a session's id could end that session. It now reads the
+  pending sign-in first and ends the named session only if it is a live
+  session of that user in the same organization. Otherwise it answers
+  `400` and ends nothing.
+
+  **Upgrade:** a session ended by the idle or absolute timeout now takes
+  its refresh tokens with it, for good. Before, a client refused during the
+  25 hours after a timeout could refresh again once the marker expired.
+  Native clients that stay offline longer than the idle timeout now sign in
+  again. To allow longer offline access, raise the idle and absolute
+  timeouts on the Security tab. The idle timeout counts from the last
+  refresh, so it should be longer than the access-token lifetime of any
+  client that refreshes only when its token runs out: the default idle
+  timeout (30 minutes) is shorter than the default access-token lifetime
+  (one hour). Sessions ended before the upgrade are refused from the first
+  request.
+
+  **Known and not fixed here:** a disabled account's refresh tokens are
+  refused while it is disabled (the grant checks that the user is active),
+  but their rows are not revoked. If the account is enabled again, tokens
+  bound to no session work again, and so do tokens of sessions the disable
+  path left live. Closing that needs a migration, which will follow once
+  the pending v204 lands.
+
   Tests on the migrated schema end sessions through each of these paths and
   then present the refresh tokens at the token endpoint. The ended sessions
-  are refused, with Redis down where a path used to depend on it, and an
-  unrelated session keeps refreshing. A census in `internal/common/sessionend`
-  fails when a function that ends sessions leaves their refresh tokens
-  usable, unless it is registered with a reason.
+  are refused, and their rows revoked, with Redis down where a path used to
+  depend on it. An unrelated session keeps refreshing. A census in
+  `internal/common/sessionend` fails when a function that ends sessions
+  leaves their refresh tokens usable, unless it is registered with a reason.
 - **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
   handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,
   the Android QR and the onboarding wizard's session — and none asked how

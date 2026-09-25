@@ -4016,15 +4016,43 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 			c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "session_revoked"})
 			return
 		}
-		// Debounced activity update (only if >30s since last update)
+		// And the session itself. The marker is Redis's copy and it expires;
+		// the row is the record. A session ended before its path revoked
+		// refresh tokens, one past its expiry that no sweep has reached yet,
+		// or one a future path ends and forgets, is refused here, and the
+		// token presented is revoked so its own row refuses it from now on.
+		// If the row cannot be read, nothing is minted.
+		live, err := s.sessionIsLive(c.Request.Context(), token.SessionID)
+		if err != nil {
+			s.logger.Error("refresh grant: failed to check the token's session",
+				zap.String("session_id", logsafe.Clean(token.SessionID)), zap.Error(err))
+			writeServerOrUnavailable(c, err)
+			return
+		}
+		if !live {
+			if err := s.RevokeRefreshToken(c.Request.Context(), refreshToken); err != nil {
+				s.logger.Warn("refresh grant: refused a token of a session that is not live, but could not revoke it",
+					zap.String("session_id", logsafe.Clean(token.SessionID)), zap.Error(err))
+			}
+			c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "session_revoked"})
+			return
+		}
+		// Debounced activity update (only if >30s since last update). The
+		// goroutine outlives the request, so it gets a context that keeps the
+		// request's organization and drops its cancellation. It used to get
+		// context.Background(), which the org-scoped update refuses, so a
+		// refresh never moved last_seen_at and the inactivity sweep ended
+		// sessions that were in use.
 		debounceKey := "session_activity:" + token.SessionID
-		if set, _ := s.redis.Client.SetNX(c.Request.Context(), debounceKey, "1", 30*time.Second).Result(); set {
-			// Update session activity in background with timeout
-			go func(sessionID string) {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if set, _ := s.redis.Client.SetNX(c.Request.Context(), debounceKey, "1", 30*time.Second).Result(); set && s.identityService != nil {
+			go func(ctx context.Context, sessionID string) {
+				ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
-				s.identityService.UpdateSessionActivity(ctx, sessionID)
-			}(token.SessionID)
+				if err := s.identityService.UpdateSessionActivity(ctx, sessionID); err != nil {
+					s.logger.Warn("refresh grant: session activity not recorded",
+						zap.String("session_id", logsafe.Clean(sessionID)), zap.Error(err))
+				}
+			}(orgctx.Detached(c.Request.Context()), token.SessionID)
 		}
 	}
 
@@ -4642,12 +4670,12 @@ func (s *Service) handleForceLogin(c *gin.Context) {
 		return
 	}
 
-	// Revoke the specified session
-	if req.TerminateSessionID != "" {
-		s.revokeSessionWithRedis(c.Request.Context(), req.TerminateSessionID)
-	}
-
-	// Retrieve the pending login session from Redis
+	// The pending sign-in comes first: it is the only thing that says who is
+	// asking. This route is public, and it used to end terminate_session_id
+	// before reading it, so anyone who knew a session id -- it is the sid
+	// claim every relying party the session reached was given -- could end
+	// that session, and since sessions' refresh tokens are revoked when they
+	// end, end it for good.
 	sessionKey := "login_session:" + req.LoginSession
 	data, err := s.redis.Client.Get(c.Request.Context(), sessionKey).Result()
 	if err != nil {
@@ -4662,7 +4690,29 @@ func (s *Service) handleForceLogin(c *gin.Context) {
 		return
 	}
 
+	// user_id is written into the pending sign-in only when the password has
+	// been checked and the concurrent-session limit asked the user which
+	// session to end. Without it nobody has signed in.
 	userID := oauthParams["user_id"]
+	if userID == "" {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "this sign-in is not waiting for a session to be ended"})
+		return
+	}
+
+	// Only a live session of that same user, in this organization, may be
+	// ended. One answer for every other case, so the route says nothing about
+	// whether the id exists or whose it is.
+	if !s.sessionBelongsTo(c.Request.Context(), req.TerminateSessionID, userID) {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "choose one of your active sessions to end"})
+		return
+	}
+	if err := s.revokeSessionWithRedis(c.Request.Context(), req.TerminateSessionID); err != nil {
+		s.logger.Error("force-login: the chosen session could not be ended",
+			zap.String("session_id", logsafe.Clean(req.TerminateSessionID)), zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
 	clientIP := c.ClientIP()
 	userAgent := c.Request.UserAgent()
 

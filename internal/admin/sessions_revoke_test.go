@@ -15,11 +15,11 @@ import (
 )
 
 // TestPublishSessionRevocationsWritesMarkers pins the fix for the inert admin
-// revoke: flipping sessions.revoked in Postgres is invisible to enforcement,
-// because the oauth-service's refresh-grant check reads only the
-// "revoked_session:<id>" Redis marker (internal/oauth/service.go). The key
-// format asserted here is therefore load-bearing — change it and revocation
-// silently stops working again.
+// revoke: flipping sessions.revoked in Postgres was invisible to enforcement
+// when the oauth-service's refresh-grant check read only the
+// "revoked_session:<id>" Redis marker (internal/oauth/service.go). It reads the
+// session row too now, and the marker is still its first check, so the key
+// format asserted here stays load-bearing.
 func TestPublishSessionRevocationsWritesMarkers(t *testing.T) {
 	mini := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mini.Addr()})

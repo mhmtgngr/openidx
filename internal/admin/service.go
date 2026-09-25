@@ -261,7 +261,6 @@ type SecuritySettings struct {
 	RememberMeDuration        int            `json:"remember_me_duration"`
 	ReauthInterval            int            `json:"reauth_interval"`
 	BindSessionToIP           bool           `json:"bind_session_to_ip"`
-	ForceLogoutOnPwdChange    bool           `json:"force_logout_on_password_change"`
 	MaxConcurrentSessions     int            `json:"max_concurrent_sessions"`
 	ConcurrentSessionStrategy string         `json:"concurrent_session_strategy"`
 }
@@ -744,7 +743,6 @@ func (s *Service) GetSettings(ctx context.Context) (*Settings, error) {
 			RememberMeDuration:        2592000,
 			ReauthInterval:            0,
 			BindSessionToIP:           false,
-			ForceLogoutOnPwdChange:    true,
 			MaxConcurrentSessions:     0,
 			ConcurrentSessionStrategy: "deny_new",
 		},

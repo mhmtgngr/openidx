@@ -5774,7 +5774,6 @@ const tr: typeof en = {
           prompt_user: 'Kullanıcıya Sor',
         },
         bindToIp: 'Oturumları IP adresine bağla',
-        forceLogout: 'Parola değişiminde oturumları kapat',
       },
       geo: {
         title: 'Ülke Tabanlı Erişim Denetimi',
