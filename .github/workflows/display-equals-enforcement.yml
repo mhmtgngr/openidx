@@ -1,0 +1,181 @@
+name: Display = enforcement
+
+# The tests docs/evidence/display-equals-enforcement.md names in its
+# "Automated checks" table, run on every release against a migrated Postgres,
+# with the report attached to the release (#957).
+#
+# The doc asks for its table to be verified at least once per release. Each of
+# these tests already runs in CI, inside its package's unit job. Nothing ran
+# the table as a set on the commit a release ships, and nothing kept a record
+# of it. This run does both.
+#
+# THE LIST IS THE DOC'S. scripts/run-display-enforcement-tests.sh asks
+# scripts/check-display-enforcement-tests.sh which package holds each named
+# test, and runs those. There is no second list here to drift. The same guard
+# runs on every pull request (ci.yml, "GitHub config is runnable"), so a
+# renamed test fails the pull request that renames it, not the next release.
+#
+# A SKIP IS A FAILURE. These tests skip when they have no database, and `go
+# test` then reports ok. A green run could have verified nothing, so every
+# named test has to print its own PASS.
+#
+# HOW A RELEASE STARTS IT. release.yml publishes the Release under
+# GITHUB_TOKEN, and GitHub starts no workflow from an event that token causes.
+# So the `release: published` trigger never fires for a release that workflow
+# makes. release.yml therefore dispatches this workflow on the tag it released
+# (its `evidence` job), and a run dispatched on a tag attaches its report to
+# that tag's Release, as a `release` event does. The `release` trigger covers a
+# release published by hand.
+#
+# The actions are pinned to the commits that ci.yml's tags name today, as
+# renovate.json's pinDigests asks. This workflow runs on a release and holds a
+# write token, so a tag moved under it matters more here than elsewhere.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to test. Leave it empty to test the ref you dispatch on; on a tag, the report is then attached to that tag's release."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# One release can start two runs: publishing it by hand fires `release`, and
+# release.yml hands the same tag off. Both would replace the same asset, so
+# they queue instead of racing.
+concurrency:
+  group: display-equals-enforcement-${{ inputs.ref || github.ref }}
+  cancel-in-progress: false
+
+env:
+  # A cache-key component only, as in ci.yml: setup-go reads go.mod.
+  GO_VERSION: '1.26'
+
+jobs:
+  run:
+    name: The tests the evidence table names
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # The unit jobs' services, as ci.yml's test-unit declares them.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: openidx_test
+          POSTGRES_USER: openidx
+          POSTGRES_PASSWORD: test_secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openidx"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          # Nothing in this job pushes. The tests are repository code, so they
+          # get no credential to find in .git/config.
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Go build cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
+            ${{ runner.os }}-go-build-
+
+      # OPENIDX_TEST_DATABASE_URL is the variable every named test's setup
+      # helper reads. Without it they start throwaway containers, as they do in
+      # the unit jobs. Here they use the service, so the report can name the
+      # server they ran on. They drop and rebuild its public schema, which is
+      # why the script runs one package at a time. They connect as the
+      # service's superuser, the same privilege the containers give them.
+      # Nothing here tests row-level security, so no role is set up. No named
+      # test reads TEST_POSTGRES_DSN; one that did would skip here, and a skip
+      # fails the run.
+      #
+      # DATABASE_URL and REDIS_URL are the unit jobs' own two variables, so a
+      # test finds here what it finds in the job the table says it runs in.
+      - name: Run the named tests, one package at a time
+        env:
+          OPENIDX_TEST_DATABASE_URL: postgres://openidx:test_secret@localhost:5432/openidx_test?sslmode=disable
+          DATABASE_URL: postgres://openidx:test_secret@localhost:5432/openidx_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379
+          EVIDENCE_REF: ${{ inputs.ref || github.ref_name }}
+        run: bash scripts/run-display-enforcement-tests.sh "$RUNNER_TEMP/evidence"
+
+      - name: Put the report on the run page
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/evidence/report.md" ]; then
+            cat "$RUNNER_TEMP/evidence/report.md" >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "No report was written: the run stopped before the tests. The step above says why." >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep the report and the test logs
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: display-equals-enforcement
+          path: ${{ runner.temp }}/evidence/
+          if-no-files-found: error
+
+  # The only job with write access, and it runs no repository code: it uploads
+  # the report the run job wrote. It runs when the tests fail too, because a
+  # release carries its evidence either way.
+  attach:
+    name: Attach the report to the release
+    needs: run
+    if: ${{ !cancelled() && (github.event_name == 'release' || (inputs.ref == '' && startsWith(github.ref, 'refs/tags/'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The workflow-level permissions block is read-only; uploading a release
+    # asset needs write.
+    permissions:
+      contents: write # gh release upload
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: display-equals-enforcement
+          path: evidence
+
+      - name: Upload the report as a release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name || github.ref_name }}
+        run: |
+          set -euo pipefail
+          asset="display-equals-enforcement-$TAG.md"
+          cp evidence/report.md "$asset"
+          # --clobber: a re-run replaces the report instead of failing on it.
+          gh release upload "$TAG" "$asset" --clobber
+          echo "Attached $asset to the $TAG release."

@@ -149,50 +149,18 @@ Response:
 
 ## SAML 2.0
 
-OpenIDX can act as both a SAML Service Provider (SP) and Identity Provider (IdP).
+OpenIDX is a SAML 2.0 Identity Provider (IdP). Applications that support SAML
+can use OpenIDX for sign-on and Single Logout. OpenIDX is not a SAML Service
+Provider: it does not accept SAML assertions from another identity provider.
 
-### Service Provider Mode
+The IdP metadata is at `/saml/idp/metadata`. Register a service provider in
+the Admin Console under **Applications > SAML Applications**, or import its
+metadata through `POST /api/v1/saml/service-providers/import-metadata`.
 
-Use an external IdP (like Azure AD, Okta) to authenticate users.
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant App
-    participant OpenIDX as OpenIDX (SP)
-    participant IdP
-
-    User->>App: Click "Login with SAML"
-    App->>OpenIDX: Initiate SAML request
-    OpenIDX->>IdP: SAML AuthnRequest
-    IdP->>User: Redirect to IdP login
-    User->>IdP: Enter credentials
-    IdP->>OpenIDX: SAML Response (assertion)
-    OpenIDX->>App: Create local session + redirect
-```
-
-#### SAML Metadata
-
-```xml
-<?xml version="1.0"?>
-<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"
-                  entityID="https://openidx.example.com">
-  <SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
-    <SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
-                        Location="https://openidx.example.com/saml/slo"/>
-    <NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified</NameIDFormat>
-    <AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
-                              Location="https://openidx.example.com/saml/acs"
-                              index="0"/>
-  </SPSSODescriptor>
-</EntityDescriptor>
-```
-
-### Identity Provider Mode
-
-Allow other applications to use OpenIDX as their SAML IdP.
-
-Configure via the Admin Console under **Applications > SAML Applications**.
+Every Response and every assertion is signed. Assertions are encrypted for
+service providers that ask for it. The [SAML guide](../guides/SAML.md) lists
+the endpoints, what the IdP accepts and refuses, and the service providers
+OpenIDX is tested against in CI.
 
 ## API Keys
 

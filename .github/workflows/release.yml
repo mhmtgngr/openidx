@@ -313,3 +313,30 @@ jobs:
           gh workflow run client-mobile-release.yml --ref "$RELEASE_VERSION"
           echo "Dispatched client-mobile-release.yml on $RELEASE_VERSION."
           echo "The APK and the IPA are attached by that run, not this one."
+
+  # The display = enforcement run (#957): display-equals-enforcement.yml runs
+  # the tests docs/evidence/display-equals-enforcement.md names and attaches
+  # its report to the Release. Its `release: published` trigger cannot fire
+  # for a Release this workflow publishes, because the release job publishes
+  # it under GITHUB_TOKEN, and GitHub starts no workflow from an event that
+  # token causes. That holds on BOTH paths, the pushed tag and the dispatch,
+  # so unlike stamp-images this hand-off is not gated on the event.
+  # workflow_dispatch is one of the two events GITHUB_TOKEN may still start,
+  # and a run dispatched on the tag attaches its report to the tag's Release.
+  evidence:
+    name: Run the display = enforcement checks on the release
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Ask display-equals-enforcement.yml to run on the tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh workflow run display-equals-enforcement.yml --ref "$RELEASE_VERSION"
+          echo "Dispatched display-equals-enforcement.yml on $RELEASE_VERSION."
+          echo "Its report is attached to the Release by that run, not this one."

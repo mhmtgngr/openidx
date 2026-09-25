@@ -40,6 +40,23 @@ var (
 // calls in this package are rare enough that 5 in a row failing is a real
 // signal, not flakiness.
 func (s *Service) outboundHTTPClient(target string, timeout time.Duration) *resilience.ResilientHTTPClient {
+	return s.outboundClient(target, &http.Client{Timeout: timeout})
+}
+
+// outboundHTTPClientNoRedirect is outboundHTTPClient for a call whose answer
+// IS the redirect. An SP answers a back-channel SAML LogoutRequest with the
+// redirect-binding LogoutResponse it would send a browser; following it would
+// only send this service's own client back to this service's SLO endpoint.
+func (s *Service) outboundHTTPClientNoRedirect(target string, timeout time.Duration) *resilience.ResilientHTTPClient {
+	return s.outboundClient(target, &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	})
+}
+
+func (s *Service) outboundClient(target string, raw *http.Client) *resilience.ResilientHTTPClient {
 	outboundOnce.Do(func() {
 		outboundRegistry = resilience.NewRegistry()
 	})
@@ -53,6 +70,5 @@ func (s *Service) outboundHTTPClient(target string, timeout time.Duration) *resi
 		})
 		outboundRegistry.Register(cb)
 	}
-	raw := &http.Client{Timeout: timeout}
 	return resilience.NewResilientHTTPClient(raw, cb)
 }

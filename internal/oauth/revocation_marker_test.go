@@ -42,7 +42,7 @@ func TestAnAccessReviewsRevocationReachesTheTokenCheck(t *testing.T) {
 	ctx := context.Background()
 	const user = "22222222-0000-0000-0000-000000000001"
 
-	issuedAt := time.Now().Add(-time.Minute).Unix()
+	issuedAt := revocation.IssuedAt{Seconds: time.Now().Add(-time.Minute).Unix()}
 
 	// Before the review: the token is good.
 	revoked, err := svc.IsAccessTokenRevoked(ctx, "some-token", user, issuedAt)
@@ -70,7 +70,7 @@ func TestAnAccessReviewsRevocationReachesTheTokenCheck(t *testing.T) {
 	}
 
 	// A token minted after the revocation is a fresh login and must work.
-	revoked, err = svc.IsAccessTokenRevoked(ctx, "some-token", user, time.Now().Add(time.Minute).Unix())
+	revoked, err = svc.IsAccessTokenRevoked(ctx, "some-token", user, revocation.IssuedAt{Seconds: time.Now().Add(time.Minute).Unix()})
 	if err != nil {
 		t.Fatalf("IsAccessTokenRevoked: %v", err)
 	}
@@ -103,21 +103,27 @@ func TestLogoutAllAndAnAccessReviewUseTheSameMarker(t *testing.T) {
 }
 
 func TestATokenIssuedInTheSameSecondAsTheRevocationIsRefused(t *testing.T) {
-	// Redis stores seconds. A strict `<` comparison would leave a one-second
-	// window in which a token minted at the very moment somebody said "revoke
-	// everything" keeps working -- which is exactly when a compromised session
-	// is racing the operator.
-	now := time.Now().Unix()
-	if !revocation.IsRevoked(now, now) {
+	// A token that carries only whole seconds cannot say which side of the
+	// cutoff it fell on inside that second, so it is refused: a strict
+	// comparison would leave a one-second window in which a token minted at the
+	// very moment somebody said "revoke everything" keeps working -- which is
+	// exactly when a compromised session is racing the operator.
+	at := time.Unix(time.Now().Unix(), 500_000_000) // the middle of a second
+	now := at.Unix()
+	cutoff, err := revocation.ParseMarker(revocation.MarkerValue(at))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cutoff.Revokes(revocation.IssuedAt{Seconds: now}) {
 		t.Error("a token issued in the same second as the revocation survived it")
 	}
-	if revocation.IsRevoked(now+1, now) {
+	if cutoff.Revokes(revocation.IssuedAt{Seconds: now + 1}) {
 		t.Error("a token issued after the revocation was refused")
 	}
-	if revocation.IsRevoked(0, now) {
+	if cutoff.Revokes(revocation.IssuedAt{}) {
 		t.Error("a missing iat was treated as revoked; that would refuse tokens no one revoked")
 	}
-	if revocation.IsRevoked(now, 0) {
+	if (revocation.Cutoff{}).Revokes(revocation.IssuedAt{Seconds: now}) {
 		t.Error("an absent marker revoked a token")
 	}
 }
@@ -143,7 +149,7 @@ func TestASeverPathsRevocationReachesTheTokenCheck(t *testing.T) {
 	const user = "22222222-0000-0000-0000-000000000003"
 
 	// The token in the leaver's browser, minted before anyone disabled them.
-	issuedAt := time.Now().Add(-30 * time.Minute).Unix()
+	issuedAt := revocation.IssuedAt{Seconds: time.Now().Add(-30 * time.Minute).Unix()}
 
 	revoked, err := svc.IsAccessTokenRevoked(ctx, "leaver-token", user, issuedAt)
 	if err != nil {

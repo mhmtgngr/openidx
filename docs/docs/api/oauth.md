@@ -16,7 +16,7 @@ The OAuth Service implements OAuth 2.0 and OpenID Connect.
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
 | GET | `/oauth/authorize` | Start authorization flow | None |
-| POST | `/oauth/authorize` | Submit consent | None |
+| POST | `/oauth/authorize` | Form body: start authorization flow, as GET (OIDC Core §3.1.2.1). JSON body: submit consent | None (form); session (JSON) |
 | POST | `/oauth/login` | Resource owner login | None |
 | GET | `/oauth/callback` | OAuth callback handler | None |
 

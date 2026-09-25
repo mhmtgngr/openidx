@@ -276,6 +276,21 @@ paths:
         '200':
           description: Supported resource types
 
+  /scim/v2/ResourceTypes/{id}:
+    get:
+      tags: [SCIM Discovery]
+      summary: Get one resource type (User or Group)
+      operationId: getResourceType
+      x-openidx-handler: internal/provisioning.(*Service).handleGetResourceType
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Resource type definition (RFC 7643 §6)
+        '404':
+          description: No resource type with that id
+
   /scim/v2/ServiceProviderConfig:
     get:
       tags: [SCIM Discovery]

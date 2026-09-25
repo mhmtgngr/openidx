@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beevik/etree"
 	"github.com/google/uuid"
 )
 
@@ -847,24 +848,23 @@ func TestSAMLAssertionSignRoundTrip(t *testing.T) {
 		issuer:     "https://idp.example.com",
 	}
 
-	// The Assertion declares its own xmlns:saml so it is independently
-	// canonicalizable, exactly as the production IdPAssertion struct emits it.
-	responseXML := `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_resp1" Version="2.0">` +
-		`<saml:Issuer>https://idp.example.com</saml:Issuer>` +
-		`<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_assertion123" Version="2.0" IssueInstant="2026-01-01T00:00:00Z">` +
-		`<saml:Issuer>https://idp.example.com</saml:Issuer>` +
-		`<saml:Subject><saml:NameID>alice-user</saml:NameID></saml:Subject>` +
-		`</saml:Assertion></samlp:Response>`
-
-	signed, err := svc.signAssertionEnveloped([]byte(responseXML))
+	// A response with attributes: every attribute value carries xsi:type, and
+	// the xsi prefix used to be undeclared, so signing any real assertion
+	// failed. This is the shape every sign-on produces.
+	b := svc.NewSAMLResponseBuilder()
+	b.SetRequest("_req1", "https://sp.example.com/acs")
+	b.SetAudience("https://sp.example.com")
+	b.SetSubject("alice-user", NameIDFormatUnspecified)
+	b.SetAttributes([]SAMLAttribute{{Name: "email", Values: []string{"alice@example.com"}}})
+	signed, err := b.Build()
 	if err != nil {
-		t.Fatalf("signAssertionEnveloped failed: %v", err)
+		t.Fatalf("Build failed: %v", err)
 	}
 
 	// The signature must be a real enveloped XML-DSig, not hand-rolled markup.
 	for _, want := range []string{"Signature", "SignedInfo", "SignatureValue", "DigestValue", "enveloped-signature"} {
 		if !strings.Contains(signed, want) {
-			t.Errorf("signed assertion missing %q", want)
+			t.Errorf("signed response missing %q", want)
 		}
 	}
 
@@ -873,17 +873,23 @@ func TestSAMLAssertionSignRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("samlSigningCertBase64 failed: %v", err)
 	}
-	certDER, err := base64.StdEncoding.DecodeString(certB64)
+	cert, err := parseSAMLCertificate(certB64)
 	if err != nil {
-		t.Fatalf("cert is not valid base64: %v", err)
-	}
-	if _, err := x509.ParseCertificate(certDER); err != nil {
 		t.Fatalf("published cert is not a valid X.509 certificate: %v", err)
 	}
 
-	// The signature must validate against that cert.
-	if err := verifySAMLSignature([]byte(signed), certB64); err != nil {
-		t.Fatalf("verifySAMLSignature rejected a valid signature: %v", err)
+	verify := func(doc string) (response, assertion error) {
+		d := etree.NewDocument()
+		if err := d.ReadFromString(doc); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return verifyEnvelopedRootSignature(d.Root(), cert),
+			verifyEnvelopedRootSignature(findAssertionElement(d.Root()), cert)
+	}
+
+	// Both signatures must validate against that cert.
+	if rerr, aerr := verify(signed); rerr != nil || aerr != nil {
+		t.Fatalf("a valid response did not verify: response=%v assertion=%v", rerr, aerr)
 	}
 
 	// Tampering with the signed content must break verification.
@@ -891,8 +897,8 @@ func TestSAMLAssertionSignRoundTrip(t *testing.T) {
 	if tampered == signed {
 		t.Fatal("failed to tamper with signed XML for negative test")
 	}
-	if err := verifySAMLSignature([]byte(tampered), certB64); err == nil {
-		t.Error("verifySAMLSignature accepted a tampered assertion")
+	if rerr, aerr := verify(tampered); rerr == nil || aerr == nil {
+		t.Errorf("a tampered assertion verified: response=%v assertion=%v", rerr, aerr)
 	}
 }
 

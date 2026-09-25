@@ -88,7 +88,8 @@ Most secure flow for web and mobile applications.
 **Use Case:** Web applications, mobile apps
 
 **Flow:**
-1. Client redirects user to `/oauth/authorize`
+1. Client redirects user to `/oauth/authorize` (a GET, or a form POST; see
+   [The authorization endpoint](#the-authorization-endpoint))
 2. User logs in and grants consent
 3. OAuth service redirects back with authorization code
 4. Client exchanges code for tokens at `/oauth/token`
@@ -191,7 +192,41 @@ permission rather than letting any authenticated client introspect anything in
 the tenant.
 
 ### Discovery
-Automatic service configuration via `.well-known/openid-configuration`
+Automatic service configuration via `.well-known/openid-configuration`.
+
+The document states `request_parameter_supported: false` and
+`request_uri_parameter_supported: false` outright. OIDC Discovery 1.0 §3 reads
+an absent `request_uri_parameter_supported` as `true`, so leaving it out would
+advertise support this server does not have.
+
+### The authorization endpoint
+
+`/oauth/authorize` takes an authorization request by `GET`, with the
+parameters in the query string, or by `POST`, with the parameters in an
+`application/x-www-form-urlencoded` body (OIDC Core §3.1.2.1). A POST is
+handled exactly as a GET with the same parameters, with the same validation,
+errors and login redirect. Only the body is read. Parameters in the query
+string of a POST are ignored.
+
+`POST /oauth/authorize` with any other body, in practice JSON, is the older
+consent submission. It needs an authenticated session and is unchanged. The
+`Content-Type` tells the two apart. The consent handler only ever read JSON,
+so a form body never reached it with any effect.
+
+A cross-site form POST does not carry the `SameSite=Lax` `openidx_sso` cookie.
+Such a request reaches the login page even when the browser has a session, and
+single sign-on then completes after the user signs in.
+
+**Request objects are refused.** OpenIDX does not process request objects
+(OIDC Core §6). A request carrying `request` is answered with
+`request_not_supported`, and one carrying `request_uri` with
+`request_uri_not_supported`. Both go to the registered `redirect_uri`, with the
+`state` sent outside the object if there is one. The object is not opened, so
+a `state` sent only inside it is not returned. The check runs after the
+`redirect_uri` is validated, so a request with an unregistered one is still
+answered with `400` in-band. `/oauth/authorize/v2` refuses them the same way.
+Before, both parameters were ignored and the request went ahead without the
+`state` and `nonce` the client had put in the object.
 
 ### Single Sign-On across applications
 A login completion (password, MFA, passwordless, social, or after consent) sets
@@ -277,6 +312,37 @@ An application's detail and list responses report the list as an empty array
 when the client has registered nothing and omit the key entirely when there is
 no OAuth client behind the tile at all, which is how the console knows whether
 to show the field.
+
+### What a logout revokes
+
+A logout by `id_token_hint` (without a bearer), `/oauth/logout-all`, and every
+path that severs an account write a per-user revocation cutoff. An access
+token that dates from at or before the cutoff is refused at `/oauth/userinfo`
+and introspects as `active: false`.
+
+The cutoff is recorded to the microsecond. An access token from the
+authorization-code grant carries a private claim, `granted_at_us`: the
+microsecond its code was issued, never later than the moment the token was
+minted. When the token has it, that time is compared with the cutoff. So a
+user who signs out and back in within the same second keeps the new token, and
+any token whose code was issued before the logout is refused, however late the
+code was redeemed.
+
+A token without the claim is compared at whole-second precision: it is
+refused if its `iat` is in the same second as the cutoff or earlier. That
+covers tokens from earlier releases, from the refresh, device and
+token-exchange grants, and from the SAML fallback. A cutoff written by an
+earlier release is whole seconds and reaches to the end of its second. In
+both cases a token that could have been minted before the logout is refused.
+
+The token endpoint also refuses an authorization code whose session has been
+revoked since the code was issued (`invalid_grant`, `session_revoked`), the
+rule the refresh grant already applied. A logout therefore also stops the codes
+issued under the sessions it ends.
+
+Both times come from the clocks of the hosts involved, as they always have. A
+cutoff and a token minted by different hosts are compared as accurately as
+those clocks agree.
 
 ### Back-channel logout
 When a session stops being live — `/oauth/logout` (with the cookie, an
@@ -506,7 +572,8 @@ GET /.well-known/jwks.json
 ```bash
 # Authorization endpoint
 GET  /oauth/authorize
-POST /oauth/authorize  # Consent submission
+POST /oauth/authorize  # form body: an authorization request, as GET
+                       # JSON body: consent submission (authenticated)
 
 # Token endpoint
 POST /oauth/token
@@ -551,6 +618,9 @@ Signed JWT containing:
 - `iss`: Issuer (OpenIDX URL)
 - `iat`: Issued at timestamp
 - `exp`: Expiration timestamp
+- `granted_at_us`: from the authorization-code grant only. The microsecond
+  the code was issued, compared with a logout's revocation cutoff (see
+  [What a logout revokes](#what-a-logout-revokes))
 
 **Signature:** RS256 (RSA-SHA256)
 
@@ -616,6 +686,16 @@ requires that client to use PKCE from the next authorization request onward.
 - Codes deleted after first use
 - 10-minute expiration
 - Prevents replay attacks
+- A code whose session was revoked after it was issued (a logout, the kill
+  switch, a deprovision) is refused at the token endpoint
+
+### Token responses are not cacheable
+Every response from `/oauth/token`, success or error and for every grant,
+carries `Cache-Control: no-store` and `Pragma: no-cache` (RFC 6749 §5.1). So
+do the other responses that carry a token, a credential or a token's
+contents: `/oauth/device_authorization`, `/oauth/introspect`,
+`/oauth/userinfo`, the registration endpoints under `/oauth/register`,
+`/oauth/stepup-verify` and the social-login callback.
 
 ## Integration Examples
 

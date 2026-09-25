@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -52,32 +53,115 @@ import (
 const MarkerTTL = 7 * 24 * time.Hour
 
 // UserTokensRevokedAtKey is the Redis key recording the most recent "revoke
-// everything for this user" timestamp. Any access token whose `iat` is at or
-// before the value at this key is revoked.
+// everything for this user" timestamp. Any access token that dates from at or
+// before the value at this key is revoked (Cutoff.Revokes).
 func UserTokensRevokedAtKey(userID string) string {
 	return "oauth:user_tokens_revoked_at:" + userID
 }
 
-// MarkerValue renders the marker for a moment in time. It is seconds since the
-// epoch as a decimal string, which is what ParseMarker reads back and what the
-// `iat` claim is measured in -- comparing them needs no conversion and no
-// timezone.
+// GrantedAtClaim is the private access-token claim that records, in
+// microseconds since the epoch, when the authorization the token was minted
+// from was granted -- for a token from the authorization-code grant, the moment
+// the code was issued. It is never later than the token's own issue time.
+//
+// WHY IT EXISTS. The marker used to hold whole seconds and the comparison was
+// `iat <= cutoff`, also in whole seconds, so that a token minted in the same
+// second as a revocation could not survive it. The price was that a token
+// minted in that second AFTER the revocation was refused too: somebody who
+// signed out and straight back in inside one second got a token that
+// /oauth/userinfo rejected, and the OpenID conformance suite, which starts its
+// next test inside that second, met it on every logout. The issue time in the
+// token (iat) is whole seconds by convention and cannot say which side of the
+// cutoff it fell on; this claim can.
+//
+// A token without it -- every token an older release minted, and those from
+// grants that do not stamp it -- is compared as before, at whole-second
+// precision and conservatively (IssuedAt, Cutoff.Revokes).
+const GrantedAtClaim = "granted_at_us"
+
+// MarkerValue renders the marker for a moment in time: seconds since the epoch,
+// a dot, and six digits of microseconds ("1727200000.123456"). ParseMarker
+// reads it back, and also reads the whole-second form ("1727200000") that
+// releases before this one wrote, so a marker already in Redis during an
+// upgrade keeps working.
+//
+// An older oauth-service that reads the new form cannot parse it and fails
+// closed: it refuses that user's tokens rather than serving them. That lasts
+// until the service is upgraded, and only for users revoked meanwhile.
 func MarkerValue(at time.Time) string {
-	return strconv.FormatInt(at.Unix(), 10)
+	return fmt.Sprintf("%d.%06d", at.Unix(), at.Nanosecond()/int(time.Microsecond))
+}
+
+// Cutoff is a parsed marker: the last instant, in microseconds since the
+// epoch, that it revokes. Tokens dating from that instant or earlier are
+// revoked.
+type Cutoff struct {
+	lastRevokedMicros int64
 }
 
 // ParseMarker reads a stored marker. An unparseable value is an error rather
 // than a zero: a zero would silently mean "nothing is revoked", which is the
 // direction this control must never fail in by accident.
-func ParseMarker(v string) (int64, error) {
+//
+// A whole-second marker (written by a release before this one) says only that
+// the revocation happened somewhere inside that second, so it revokes up to the
+// END of the second -- exactly the reach the `<=` comparison on seconds had. A
+// fractional marker revokes up to its own microsecond; digits past the sixth
+// are dropped, which moves the cutoff earlier by less than a microsecond and
+// is compared against token times truncated the same way (Revokes).
+func ParseMarker(v string) (Cutoff, error) {
 	if v == "" {
-		return 0, fmt.Errorf("empty revocation marker")
+		return Cutoff{}, fmt.Errorf("empty revocation marker")
 	}
-	n, err := strconv.ParseInt(v, 10, 64)
+	secPart, fracPart, fractional := strings.Cut(v, ".")
+	sec, err := strconv.ParseInt(secPart, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("revocation marker %q is not a unix timestamp: %w", v, err)
+		return Cutoff{}, fmt.Errorf("revocation marker %q is not a unix timestamp: %w", v, err)
 	}
-	return n, nil
+	if !fractional {
+		return Cutoff{lastRevokedMicros: sec*1e6 + 999_999}, nil
+	}
+	if fracPart == "" || len(fracPart) > 9 || strings.Trim(fracPart, "0123456789") != "" {
+		return Cutoff{}, fmt.Errorf("revocation marker %q has a malformed fraction", v)
+	}
+	micros, _ := strconv.ParseInt((fracPart + "000000")[:6], 10, 64)
+	return Cutoff{lastRevokedMicros: sec*1e6 + micros}, nil
+}
+
+// IssuedAt is what an access token says about when it dates from.
+type IssuedAt struct {
+	// Seconds is the token's `iat` claim, seconds since the epoch.
+	Seconds int64
+	// GrantedMicros is the token's GrantedAtClaim, or 0 when it has none.
+	GrantedMicros int64
+}
+
+// earliestMicros is the earliest instant the token may date from.
+//
+// Without GrantedAtClaim, the start of its `iat` second: the token was minted
+// somewhere inside that second, and assuming the earliest point is what keeps
+// a token that may have come before a revocation on the revoked side. With it,
+// the claim -- unless the claim lies after the end of the `iat` second, which
+// no minter here produces; a token that says so is read by its `iat` instead,
+// never by the later of the two.
+func (t IssuedAt) earliestMicros() int64 {
+	start := t.Seconds * 1e6
+	if t.GrantedMicros > 0 && t.GrantedMicros < start+1e6 {
+		return t.GrantedMicros
+	}
+	return start
+}
+
+// Revokes reports whether a token that dates from t falls under this cutoff.
+//
+// The comparison is `<=`, not `<`: a token whose time equals the cutoff's, to
+// the precision both carry, is revoked. With whole seconds on either side that
+// is the old rule exactly -- a token minted in the same second as the
+// revocation does not survive it, whichever came first. Only when BOTH sides
+// carry microseconds does a token minted later in the same second survive, and
+// then only because it provably came after.
+func (c Cutoff) Revokes(t IssuedAt) bool {
+	return t.Seconds > 0 && c.lastRevokedMicros > 0 && t.earliestMicros() <= c.lastRevokedMicros
 }
 
 // RevokeUserTokens writes the cutoff that stops every access token this user
@@ -146,17 +230,6 @@ func noClient(client redis.UniversalClient) bool {
 	}
 }
 
-// IsRevoked reports whether a token issued at issuedAt (seconds since the
-// epoch) falls under a marker set at cutoff.
-//
-// The comparison is `<=`, not `<`, deliberately: a token minted in the same
-// wall-clock second as the revocation must not survive it. Redis stores seconds,
-// so a strict comparison would leave a one-second window in which a token
-// issued at the moment somebody said "revoke everything" keeps working.
-func IsRevoked(issuedAt, cutoff int64) bool {
-	return issuedAt > 0 && cutoff > 0 && issuedAt <= cutoff
-}
-
 // Revoker returns the "cut this user's outstanding tokens" callback a service
 // hands to a component that severs access but does not own a Redis client.
 //
@@ -209,7 +282,7 @@ func AccessTokenBlacklistKey(token string) string {
 // IsAccessTokenRevoked reports whether an access token has been revoked, by
 // either of the two mechanisms this product has: the token's own blacklist
 // entry, or the user's "revoke everything issued up to T" marker standing at or
-// after the token's iat.
+// after the time the token dates from (Cutoff.Revokes).
 //
 // It takes the revocation Redis, not a general client. An error means the
 // question could not be answered, and EVERY caller must fail closed on it --
@@ -217,7 +290,7 @@ func AccessTokenBlacklistKey(token string) string {
 // revocation check that cannot reach Redis and reports "not revoked" is the
 // defect this package was written about: a control that returns success while
 // the thing it is supposed to establish is unknown.
-func IsAccessTokenRevoked(ctx context.Context, client redis.UniversalClient, token, userID string, issuedAt int64) (bool, error) {
+func IsAccessTokenRevoked(ctx context.Context, client redis.UniversalClient, token, userID string, issuedAt IssuedAt) (bool, error) {
 	if noClient(client) {
 		return false, fmt.Errorf("revocation redis not configured")
 	}
@@ -230,7 +303,7 @@ func IsAccessTokenRevoked(ctx context.Context, client redis.UniversalClient, tok
 
 	// The per-user marker only bears on a token that says who it is for and
 	// when it was minted; without both there is nothing to compare.
-	if userID == "" || issuedAt <= 0 {
+	if userID == "" || issuedAt.Seconds <= 0 {
 		return false, nil
 	}
 	v, err := client.Get(ctx, UserTokensRevokedAtKey(userID)).Result()
@@ -247,5 +320,5 @@ func IsAccessTokenRevoked(ctx context.Context, client redis.UniversalClient, tok
 		// token the install has already been told to stop honouring.
 		return false, fmt.Errorf("unreadable revocation marker for user: %w", perr)
 	}
-	return IsRevoked(issuedAt, cutoff), nil
+	return cutoff.Revokes(issuedAt), nil
 }

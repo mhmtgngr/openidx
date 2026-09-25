@@ -38,6 +38,9 @@ var publicQueryParams = map[string]string{
 	// authorises anything; they are the shape of the page being asked for.
 	"page": "pagination", "page_size": "pagination", "limit": "pagination",
 	"offset": "pagination", "count": "pagination", "startIndex": "pagination (SCIM)",
+	// RFC 7644 §3.9: the attribute names the caller wants left out of the
+	// response. A list of schema attribute names, never a value or a secret.
+	"excludedAttributes": "response shape (SCIM)",
 	// The keyset cursor (task 2.5). Opaque, but not secret: it encodes a
 	// timestamp and an event id the caller was just given, so logging it says
 	// nothing the caller does not already hold -- and it is the one field that
