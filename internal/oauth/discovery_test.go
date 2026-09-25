@@ -137,6 +137,19 @@ func TestDiscoveryAdvertisesOnlyImplementedFlows(t *testing.T) {
 	assert.Equal(t, []string{"S256"}, strs(t, doc, "code_challenge_methods_supported"))
 }
 
+// Request objects are refused (request_not_supported / request_uri_not_supported),
+// and the document has to say so out loud: OIDC Discovery 1.0 §3 reads an
+// absent request_uri_parameter_supported as TRUE, so omitting it advertised a
+// capability this server never had.
+func TestDiscoverySaysRequestObjectsAreNotSupported(t *testing.T) {
+	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	for _, key := range []string{"request_parameter_supported", "request_uri_parameter_supported"} {
+		v, present := doc[key]
+		require.True(t, present, "%s is absent; request_uri_parameter_supported defaults to true when omitted", key)
+		assert.Equal(t, false, v, "%s must be false: /oauth/authorize refuses request objects", key)
+	}
+}
+
 // Public clients exist here -- dcr.go registers one when
 // token_endpoint_auth_method=none, and the token endpoint skips secret
 // verification for that type -- so "none" belongs in the advertised methods.

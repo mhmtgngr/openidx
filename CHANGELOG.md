@@ -649,6 +649,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after; a stub naming a missing source turns the build red.
 
 ### Fixed
+- **`POST /oauth/authorize` accepts an authorization request (#958).** OpenID
+  Connect Core §3.1.2.1 requires the authorization endpoint to take POST as
+  well as GET. On this server that path was the older JSON consent endpoint
+  behind the flow authentication, so a form-encoded authorization request got
+  `401` (conformance module `oidcc-ensure-post-request-succeeds`). A POST with
+  an `application/x-www-form-urlencoded` body is now handled exactly as a GET
+  with the same parameters. It is validated the same way, stashed as the same
+  pending login, and its errors go to the same place. The parameters come from
+  the body, not the query string. It does not pass through the flow
+  authentication, because the authorization endpoint is public. Any other
+  body goes to the consent handler as before. That handler only ever read
+  JSON, so no request that worked before now goes elsewhere. The admin
+  console, the login page and the tests never POST to this path. A cross-site
+  POST does not carry the `SameSite=Lax` single sign-on cookie, so it reaches
+  the login page even when the browser has a session.
+- **The `request` and `request_uri` parameters are refused, not ignored
+  (#958).** OpenIDX does not process request objects. It used to ignore them
+  and serve whatever sat outside, so a `state` or `nonce` sent only inside
+  the object was lost (conformance module
+  `oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported`).
+  `/oauth/authorize` and `/oauth/authorize/v2` now answer
+  `request_not_supported` or `request_uri_not_supported` at the registered
+  `redirect_uri`, with the outer `state`, as OIDC Core §6 allows. The check
+  runs after the `redirect_uri` is validated, so an unregistered one is still
+  answered in-band. Discovery now says `request_parameter_supported: false`
+  and `request_uri_parameter_supported: false`. The second one was missing,
+  and an absent `request_uri_parameter_supported` means `true`. That module
+  now ends as skipped, which the suite allows for a server that refuses
+  request objects. `request` and `request_uri` are redacted from request logs,
+  like the `state` and `nonce` they carry.
+- **Token responses now carry `Cache-Control: no-store` and `Pragma: no-cache`
+  (#958).** RFC 6749 §5.1 requires both on any response that contains a
+  token (conformance module `oidcc-refresh-token`). They are set on the route,
+  so every answer from `/oauth/token` has them: success and error, for all
+  five grants. The same goes for the other responses that carry a token, a
+  credential or a token's contents: `/oauth/device_authorization`,
+  `/oauth/introspect`, `/oauth/userinfo`, the registration endpoints
+  (`client_secret`, `registration_access_token`), `/oauth/stepup-verify`
+  (`step_up_token`) and the social-login callback when it answers with tokens.
+- **A sign-in straight after a logout is no longer refused as revoked
+  (#958).** A logout that names the user (`id_token_hint`), `logout-all` and
+  every sever path write a per-user cutoff, and an access token that dates
+  from at or before it is refused. The cutoff and the token's `iat` were both
+  whole seconds, compared with `<=`. So a token minted in the same second as
+  the logout was refused even if it came after it. A user who signed out and
+  back in within a second was rejected at `/oauth/userinfo`, and the
+  conformance run hit this on every logout. The cutoff is now written to the
+  microsecond (`<seconds>.<microseconds>`). An access token from the
+  authorization-code grant carries a private claim, `granted_at_us`: the
+  microsecond its code was issued. A token is refused when that time is at or
+  before the cutoff, so only a sign-in that provably came after the logout
+  gets through.
+
+  Revocation is not weakened:
+  - A token without the claim is compared at whole-second precision, and
+    refused in the same second, as before. That covers tokens from older
+    releases, from the refresh, device and token-exchange grants, and from the
+    SAML fallback.
+  - A cutoff an older release wrote is whole seconds and reaches to the end of
+    its second.
+  - The claim dates a token from its code, not from the exchange. A code
+    issued before the logout gives a token the logout revokes, however late
+    it is redeemed. Before, that was only caught when the exchange fell in the
+    same second.
+  - The token endpoint also refuses a code whose session was revoked since it
+    was issued (`invalid_grant`, `session_revoked`), the rule the refresh
+    grant already applied.
+
+  **Upgrading:** only oauth-service reads the cutoff. An older oauth-service
+  cannot parse the new format and fails closed: it refuses that user's tokens
+  until it is upgraded. Upgrade oauth-service first, or all services together
+  as the compose and Helm deployments do.
+
+  The new tests drive the mounted routes. The authorization-code case runs on
+  PostgreSQL, from sign-in through logout to a new sign-in in the same second.
+  Twenty-two mutations of the four fixes were each caught by a test.
 - **The sign-in page could not take a backup or bypass code.** Its code field
   took six digits and dropped every other character. Backup codes are eight
   letters and digits, and an administrator's bypass codes are sixteen. The

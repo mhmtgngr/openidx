@@ -252,6 +252,14 @@ type OIDCDiscovery struct {
 	EndSessionEndpoint                string `json:"end_session_endpoint,omitempty"`
 	BackchannelLogoutSupported        bool   `json:"backchannel_logout_supported,omitempty"`
 	BackchannelLogoutSessionSupported bool   `json:"backchannel_logout_session_supported,omitempty"`
+
+	// OIDC Discovery 1.0 §3. Deliberately NOT omitempty: false is the answer.
+	// request_uri_parameter_supported defaults to TRUE when it is absent, so
+	// leaving it out advertised request_uri support this server never had.
+	// /oauth/authorize answers both parameters with request_not_supported /
+	// request_uri_not_supported (authorize_post.go, requestObjectRefusal).
+	RequestParameterSupported    bool `json:"request_parameter_supported"`
+	RequestURIParameterSupported bool `json:"request_uri_parameter_supported"`
 }
 
 // Service provides OAuth/OIDC operations
@@ -1049,8 +1057,9 @@ func accessTokenBlacklistKey(token string) string {
 }
 
 // userTokensRevokedAtKey returns the Redis key recording the most recent
-// "revoke everything for this user" timestamp. Any access token whose `iat`
-// is older than the value at this key is considered revoked.
+// "revoke everything for this user" timestamp. Any access token that dates
+// from at or before the value at this key is considered revoked
+// (revocation.Cutoff.Revokes).
 //
 // The format lives in internal/revocation because this service is not the only
 // writer: governance sets the same marker when an access review revokes
@@ -1080,9 +1089,12 @@ func (s *Service) MarkAccessTokenRevoked(ctx context.Context, token string, expi
 }
 
 // MarkUserTokensRevoked records a per-user "revoke everything issued so far"
-// marker. IsAccessTokenRevoked treats any access token with `iat` ≤ this
-// timestamp as revoked, which is how /oauth/logout-all invalidates every
-// outstanding access token at once without enumerating them.
+// marker. IsAccessTokenRevoked treats any access token dating from at or
+// before this moment as revoked, which is how /oauth/logout-all invalidates
+// every outstanding access token at once without enumerating them. The marker
+// carries microseconds (revocation.MarkerValue), so a token from an
+// authorization code issued after it, even inside the same second, is not
+// caught by it (revocation.GrantedAtClaim).
 func (s *Service) MarkUserTokensRevoked(ctx context.Context, userID string) error {
 	if s.redis == nil || s.redis.Client == nil {
 		return fmt.Errorf("redis not configured for token revocation")
@@ -1095,14 +1107,15 @@ func (s *Service) MarkUserTokensRevoked(ctx context.Context, userID string) erro
 
 // IsAccessTokenRevoked returns true when either (a) the token's own
 // blacklist entry exists, or (b) the user's "revoke everything before
-// timestamp T" marker is newer than the token's `iat`. When Redis is
-// unavailable it returns the error so the caller can fail closed.
+// timestamp T" marker stands at or after the time the token dates from
+// (tokenIssuedAt). When Redis is unavailable it returns the error so the
+// caller can fail closed.
 //
 // The Redis reads run through a circuit breaker: after repeated Redis failures
 // the breaker opens and this returns fast (an error) instead of every request
 // paying the Redis read timeout during a brownout. Callers already fail closed
 // on error, so opening the breaker is safe — it just makes the failure cheap.
-func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID string, issuedAt int64) (bool, error) {
+func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID string, issuedAt revocation.IssuedAt) (bool, error) {
 	if s.redis == nil || s.redis.Client == nil {
 		return false, fmt.Errorf("redis not configured for token revocation")
 	}
@@ -1358,6 +1371,18 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 	// Add session ID claim if provided
 	if len(sessionID) > 0 && sessionID[0] != "" {
 		claims["sid"] = sessionID[0]
+	}
+
+	// When the grant this token comes from dates from a known moment -- an
+	// authorization code's issue time -- record it to the microsecond, so the
+	// per-user revocation cutoff can tell a sign-in that completed after a
+	// logout from one that came before it, even inside one second
+	// (revocation.GrantedAtClaim, withGrantedAt). Never later than now.
+	if at, ok := grantedAtFrom(ctx); ok {
+		if at.After(now) {
+			at = now
+		}
+		claims[revocation.GrantedAtClaim] = at.UnixMicro()
 	}
 
 	// Emit amr (authentication methods references) from the login session's
@@ -1644,18 +1669,25 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 
 	oauth := router.Group("/oauth")
 	{
-		// Authorization endpoint (legacy - using original implementation)
+		// Authorization endpoint (legacy - using original implementation).
+		// OIDC Core §3.1.2.1 requires GET and POST; the POST half is below,
+		// sharing its path with the consent endpoint.
 		oauth.GET("/authorize", svc.handleAuthorize)
 
 		// Authorization endpoint v2 (using new AuthorizeHandler with full PKCE support)
 		oauth.GET("/authorize/v2", svc.handleAuthorizeV2)
 
-		// Consent endpoint (requires authentication)
-		if len(flowAuth) > 0 {
-			oauth.POST("/authorize", append(flowAuth, svc.handleAuthorizeConsent)...)
-		} else {
-			oauth.POST("/authorize", svc.handleAuthorizeConsent)
-		}
+		// POST /oauth/authorize is two endpoints on one path. A form-encoded
+		// body is an authorization request (OIDC Core §3.1.2.1), served by
+		// handleAuthorize exactly as a GET is and without flowAuth, because the
+		// authorization endpoint is public. Anything else -- the JSON consent
+		// submission this path always carried -- goes on through flowAuth to
+		// handleAuthorizeConsent unchanged. handleAuthorizePost explains why
+		// the Content-Type is a safe discriminator.
+		authorizePost := []gin.HandlerFunc{svc.handleAuthorizePost}
+		authorizePost = append(authorizePost, flowAuth...)
+		authorizePost = append(authorizePost, svc.handleAuthorizeConsent)
+		oauth.POST("/authorize", authorizePost...)
 
 		// Consent endpoint v2 (using new AuthorizeHandler with full PKCE support)
 		if len(flowAuth) > 0 {
@@ -1704,25 +1736,31 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 		// for a valid bearer — that was the root cause of issue #124.
 		if len(flowAuth) > 0 {
 			oauth.POST("/stepup-challenge", append(flowAuth, svc.handleStepUpChallenge)...)
-			oauth.POST("/stepup-verify", append(flowAuth, svc.handleStepUpVerify)...)
+			// stepup-verify answers with a signed step_up_token (noStore).
+			stepUpVerify := append([]gin.HandlerFunc{noStore}, flowAuth...)
+			oauth.POST("/stepup-verify", append(stepUpVerify, svc.handleStepUpVerify)...)
 			oauth.GET("/stepup-status/:id", append(flowAuth, svc.handleStepUpStatus)...)
 		} else {
 			oauth.POST("/stepup-challenge", svc.handleStepUpChallenge)
-			oauth.POST("/stepup-verify", svc.handleStepUpVerify)
+			oauth.POST("/stepup-verify", noStore, svc.handleStepUpVerify)
 			oauth.GET("/stepup-status/:id", svc.handleStepUpStatus)
 		}
 
 		// SSO callback endpoint
 		oauth.GET("/callback", svc.handleCallback)
 
-		// Token endpoint (with OPTIONS for CORS preflight)
-		oauth.POST("/token", svc.handleToken)
+		// Token endpoint (with OPTIONS for CORS preflight). noStore: every
+		// response, success or error, carries Cache-Control: no-store and
+		// Pragma: no-cache (RFC 6749 §5.1; nostore.go).
+		oauth.POST("/token", noStore, svc.handleToken)
 		oauth.OPTIONS("/token", svc.handleToken)
 
 		// Device authorization grant (RFC 8628). The device asks here for a code
 		// pair; it then polls /token with grant_type=device_code. The two
 		// verification routes back the page the user opens on a second device.
-		oauth.POST("/device_authorization", svc.handleDeviceAuthorization)
+		// The response carries the device_code, the credential the device then
+		// redeems for tokens, so it is not cacheable either.
+		oauth.POST("/device_authorization", noStore, svc.handleDeviceAuthorization)
 		oauth.OPTIONS("/device_authorization", svc.handleDeviceAuthorization)
 
 		// The verification routes sit behind flowAuth for the same reason the
@@ -1745,19 +1783,26 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 		// RFC 7662 §2.1 / RFC 7009 §2.1: both endpoints require client
 		// authentication. They were previously reachable unauthenticated, so
 		// anyone holding a token string could read its metadata or revoke it.
-		oauth.POST("/introspect", svc.requireTokenEndpointClientAuth(), svc.handleIntrospect)
+		// Introspection answers with the token's own metadata (subject, client,
+		// scope, expiry), so it is marked no-store like the token endpoint.
+		oauth.POST("/introspect", noStore, svc.requireTokenEndpointClientAuth(), svc.handleIntrospect)
 		oauth.POST("/revoke", svc.requireTokenEndpointClientAuth(), svc.handleRevoke)
 
 		// Dynamic Client Registration (RFC 7591) + management (RFC 7592).
-		oauth.POST("/register", svc.handleRegisterClient)
+		// Registration responses carry the client_secret and the
+		// registration_access_token (RFC 7591 §3.2.1, RFC 7592 §3), so they are
+		// no-store too.
+		oauth.POST("/register", noStore, svc.handleRegisterClient)
 		oauth.OPTIONS("/register", func(c *gin.Context) { c.AbortWithStatus(204) })
-		oauth.GET("/register/:client_id", svc.handleGetRegisteredClient)
-		oauth.PUT("/register/:client_id", svc.handleUpdateRegisteredClient)
+		oauth.GET("/register/:client_id", noStore, svc.handleGetRegisteredClient)
+		oauth.PUT("/register/:client_id", noStore, svc.handleUpdateRegisteredClient)
 		oauth.DELETE("/register/:client_id", svc.handleDeleteRegisteredClient)
 
 		// UserInfo endpoint (with OPTIONS for CORS preflight)
-		oauth.GET("/userinfo", svc.handleUserInfo)
-		oauth.POST("/userinfo", svc.handleUserInfo)
+		// The claims about the end user that the access token unlocks: not
+		// for a shared cache.
+		oauth.GET("/userinfo", noStore, svc.handleUserInfo)
+		oauth.POST("/userinfo", noStore, svc.handleUserInfo)
 		oauth.OPTIONS("/userinfo", svc.handleUserInfo)
 
 		// Native (mobile) login-session init — mints a login_session from JSON
@@ -1887,6 +1932,11 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		EndSessionEndpoint:                base + "/oauth/logout",
 		BackchannelLogoutSupported:        true,
 		BackchannelLogoutSessionSupported: true,
+		// Request objects are refused, not processed (requestObjectRefusal),
+		// and the document says so rather than relying on defaults -- one of
+		// which (request_uri) defaults to "supported".
+		RequestParameterSupported:    false,
+		RequestURIParameterSupported: false,
 	}
 
 	c.JSON(200, discovery)
@@ -1932,11 +1982,14 @@ func (s *Service) handleJWKS(c *gin.Context) {
 }
 
 func (s *Service) handleAuthorize(c *gin.Context) {
-	idpHint := c.Query("idp_hint")
+	// The query string of a GET, or the form body of a POST (OIDC Core
+	// §3.1.2.1); everything below reads the request through q.
+	q := authorizeRequestParams(c)
+	idpHint := q.Query("idp_hint")
 
 	if idpHint != "" {
 		// SSO flow with external IdP
-		s.handleSSOAuthorize(c, idpHint)
+		s.handleSSOAuthorize(c, q, idpHint)
 		return
 	}
 
@@ -1944,14 +1997,14 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	// Store OAuth parameters in Redis and redirect to login page
 	loginSession := GenerateRandomToken(32)
 	oauthParams := map[string]string{
-		"client_id":             c.Query("client_id"),
-		"redirect_uri":          c.Query("redirect_uri"),
-		"response_type":         c.Query("response_type"),
-		"scope":                 c.Query("scope"),
-		"state":                 c.Query("state"),
-		"nonce":                 c.Query("nonce"),
-		"code_challenge":        c.Query("code_challenge"),
-		"code_challenge_method": c.Query("code_challenge_method"),
+		"client_id":             q.Query("client_id"),
+		"redirect_uri":          q.Query("redirect_uri"),
+		"response_type":         q.Query("response_type"),
+		"scope":                 q.Query("scope"),
+		"state":                 q.Query("state"),
+		"nonce":                 q.Query("nonce"),
+		"code_challenge":        q.Query("code_challenge"),
+		"code_challenge_method": q.Query("code_challenge_method"),
 	}
 	// Validate redirect_uri against the registered client.
 	//
@@ -1979,6 +2032,16 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	}
 	if !validRedirect {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri not registered for client"})
+		return
+	}
+
+	// A request object (OIDC Core §6), by value or by reference, is refused
+	// first: its contents may be the real scope, PKCE challenge or nonce, so
+	// judging the parameters outside it would answer the wrong question. After
+	// the redirect_uri check, like every other request error, so the refusal
+	// goes to the client and never to an unvalidated address.
+	if code, desc, refused := requestObjectRefusal(q); refused {
+		s.redirectAuthorizeError(c, oauthParams["redirect_uri"], oauthParams["state"], code, desc)
 		return
 	}
 
@@ -2038,12 +2101,12 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	// prompt and max_age (OIDC Core §3.1.2.1) — parsed here, after the
 	// redirect_uri is known to be the client's, because a malformed value is
 	// the client's error to receive (§3.1.2.6, invalid_request).
-	prompt, perr := parsePrompt(c.Query("prompt"))
+	prompt, perr := parsePrompt(q.Query("prompt"))
 	if perr != nil {
 		s.redirectAuthorizeError(c, oauthParams["redirect_uri"], oauthParams["state"], ErrorInvalidRequest, perr.Error())
 		return
 	}
-	maxAge, maxAgeSet, merr := parseMaxAge(c.Query("max_age"))
+	maxAge, maxAgeSet, merr := parseMaxAge(q.Query("max_age"))
 	if merr != nil {
 		s.redirectAuthorizeError(c, oauthParams["redirect_uri"], oauthParams["state"], ErrorInvalidRequest, merr.Error())
 		return
@@ -2061,10 +2124,10 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	// complete it from the browser session (POST /oauth/login/resume), and
 	// that endpoint must refuse a prompt=login request and honour max_age
 	// exactly as this one did. Raw strings, as validated above.
-	if raw := c.Query("prompt"); raw != "" {
+	if raw := q.Query("prompt"); raw != "" {
 		oauthParams["prompt"] = raw
 	}
-	if raw := c.Query("max_age"); raw != "" {
+	if raw := q.Query("max_age"); raw != "" {
 		oauthParams["max_age"] = raw
 	}
 
@@ -3224,7 +3287,7 @@ func parseBrowserNameFromUA(userAgent string) string {
 	}
 }
 
-func (s *Service) handleSSOAuthorize(c *gin.Context, idpID string) {
+func (s *Service) handleSSOAuthorize(c *gin.Context, q authorizeParams, idpID string) {
 	// 1. Get IdP from identity service
 	idp, err := s.identityService.GetIdentityProvider(c.Request.Context(), idpID)
 	if err != nil {
@@ -3242,14 +3305,14 @@ func (s *Service) handleSSOAuthorize(c *gin.Context, idpID string) {
 	// so it expires with the flow.
 	state := GenerateRandomToken(32)
 	originalParams := map[string]string{
-		"client_id":             c.Query("client_id"),
-		"redirect_uri":          c.Query("redirect_uri"),
-		"response_type":         c.Query("response_type"),
-		"scope":                 c.Query("scope"),
-		"state":                 c.Query("state"),
-		"nonce":                 c.Query("nonce"),
-		"code_challenge":        c.Query("code_challenge"),
-		"code_challenge_method": c.Query("code_challenge_method"),
+		"client_id":             q.Query("client_id"),
+		"redirect_uri":          q.Query("redirect_uri"),
+		"response_type":         q.Query("response_type"),
+		"scope":                 q.Query("scope"),
+		"state":                 q.Query("state"),
+		"nonce":                 q.Query("nonce"),
+		"code_challenge":        q.Query("code_challenge"),
+		"code_challenge_method": q.Query("code_challenge_method"),
 		"idp_id":                idp.ID.String(),
 	}
 	// PKCE, before the flow leaves for the external IdP. This path is reached
@@ -3258,8 +3321,8 @@ func (s *Service) handleSSOAuthorize(c *gin.Context, idpID string) {
 	// names. The refusal is a 400 and not a redirect: this handler has not
 	// validated redirect_uri against the client, and reporting an error to an
 	// unvalidated redirect_uri is an open redirect.
-	if ssoClient, cerr := s.GetClient(c.Request.Context(), c.Query("client_id")); cerr == nil {
-		if perr := validatePKCERequest(ssoClient, c.Query("code_challenge"), c.Query("code_challenge_method"), s.isProduction()); perr != nil {
+	if ssoClient, cerr := s.GetClient(c.Request.Context(), q.Query("client_id")); cerr == nil {
+		if perr := validatePKCERequest(ssoClient, q.Query("code_challenge"), q.Query("code_challenge_method"), s.isProduction()); perr != nil {
 			c.JSON(400, gin.H{"error": "invalid_request", "error_description": perr.Error()})
 			return
 		}
@@ -3834,6 +3897,19 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 		s.redis.Client.Del(c.Request.Context(), "authcode_session:"+code)
 	}
 
+	// The session this code was issued under may have ended since: a logout,
+	// a kill switch or a deprovision revokes it between the code and its
+	// exchange. The refresh grant already refuses a revoked session; the code
+	// did not, so a code minted just before a logout still bought a token.
+	// The per-user revocation marker used to catch that only when the exchange
+	// fell in the same second as the logout; this catches it whenever.
+	if sessionID != "" {
+		if revoked, _ := s.redis.RevocationDB().Exists(c.Request.Context(), "revoked_session:"+sessionID).Result(); revoked > 0 {
+			c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "session_revoked"})
+			return
+		}
+	}
+
 	// Fallback: if the Redis bridge is empty (the login path didn't write
 	// one, or the key expired), look up the user's most-recently-started
 	// active session. Without this, the access token has no `sid` claim
@@ -3858,8 +3934,11 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 		}
 	}
 
-	// Generate tokens (with session ID linkage)
-	accessToken, _ := s.GenerateJWT(c.Request.Context(), authCode.UserID, clientID, authCode.Scope, client.EffectiveAccessTokenLifetime(), sessionID)
+	// Generate tokens (with session ID linkage). The access token dates from
+	// the moment the code was issued, not from this exchange, for the per-user
+	// revocation cutoff: a code issued before a logout yields a token that the
+	// logout's marker revokes, however late it is exchanged.
+	accessToken, _ := s.GenerateJWT(withGrantedAt(c.Request.Context(), authCode.CreatedAt), authCode.UserID, clientID, authCode.Scope, client.EffectiveAccessTokenLifetime(), sessionID)
 
 	response := TokenResponse{
 		AccessToken: accessToken,
@@ -4272,11 +4351,7 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 	// one whose revocation state can't be verified) introspects as active:false
 	// (fail closed; not a 401, since introspection's contract is the boolean).
 	userID, _ := claims["sub"].(string)
-	var issuedAt int64
-	if iatF, ok := claims["iat"].(float64); ok {
-		issuedAt = int64(iatF)
-	}
-	if revoked, err := s.IsAccessTokenRevoked(c.Request.Context(), token, userID, issuedAt); err != nil {
+	if revoked, err := s.IsAccessTokenRevoked(c.Request.Context(), token, userID, tokenIssuedAt(claims)); err != nil {
 		s.logger.Warn("introspect: revocation check failed", zap.Error(err))
 		c.JSON(200, gin.H{"active": false})
 		return
@@ -4424,12 +4499,11 @@ func (s *Service) handleUserInfo(c *gin.Context) {
 	}
 
 	userID, _ := claims["sub"].(string)
-	iat, _ := claims["iat"].(float64)
 
 	// Honor revocation: a signature-valid token may still have been revoked
 	// via /oauth/revoke or /oauth/logout(-all). Without this, "log out and
 	// redirect" UX was security-theater.
-	if revoked, err := s.IsAccessTokenRevoked(c.Request.Context(), tokenString, userID, int64(iat)); err != nil {
+	if revoked, err := s.IsAccessTokenRevoked(c.Request.Context(), tokenString, userID, tokenIssuedAt(claims)); err != nil {
 		s.logger.Warn("userinfo: revocation check failed", zap.Error(err))
 		c.JSON(401, gin.H{"error": "invalid_token"})
 		return
