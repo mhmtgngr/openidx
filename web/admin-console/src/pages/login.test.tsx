@@ -424,11 +424,171 @@ describe('LoginPage', () => {
     // defect this block exists for, so the source is read and counted.
     it('no completion path follows redirect_url on its own', async () => {
       const source = (await import('./login.tsx?raw')).default as string
+      // finishAuth follows a redirect, or holds it for the MFA policy's notice
+      // and the notice's Continue button follows what finishAuth held.
       const directRedirects = source.match(/completeOIDCRedirect\(/g) ?? []
-      expect(directRedirects, 'completeOIDCRedirect is called from finishAuth only').toHaveLength(1)
+      expect(directRedirects, 'completeOIDCRedirect is called from finishAuth and the notice it holds').toHaveLength(2)
+      expect(source.match(/completeOIDCRedirect\(pendingRedirect\.url\)/g) ?? []).toHaveLength(1)
       const redirectReads = source.match(/\.redirect_url\b/g) ?? []
-      expect(redirectReads, 'redirect_url is read inside finishAuth only').toHaveLength(2)
+      expect(redirectReads, 'redirect_url is read inside finishAuth only').toHaveLength(3)
       expect(source.match(/finishAuth\(/g) ?? [], 'seven completion paths, the consent decision and the browser-session resume').toHaveLength(9)
+    })
+  })
+
+  // An MFA policy that requires particular methods tells a user who has none
+  // of them by when to add one, and after that lets them in only with an
+  // administrator's bypass code. The notice rides on the challenge and on the
+  // response that completes the sign-in (mfa_enrollment_due).
+  describe('MFA policy notice', () => {
+    const fetchMock = vi.fn()
+    const due = { methods: ['webauthn'], deadline: '2026-10-01T12:00:00Z' }
+
+    beforeEach(() => {
+      sessionStorage.setItem('oidc_login_session', 'test-session')
+      fetchMock.mockReset()
+      vi.stubGlobal('fetch', fetchMock)
+      mockLocation.href = 'http://localhost:5173/login'
+    })
+
+    afterEach(() => {
+      sessionStorage.clear()
+      vi.unstubAllGlobals()
+    })
+
+    const jsonOnce = (body: unknown, ok = true) =>
+      fetchMock.mockImplementationOnce(() =>
+        Promise.resolve({ ok, json: () => Promise.resolve(body) } as Response)
+      )
+
+    const signIn = async () => {
+      const user = userEvent.setup()
+      renderWithRouter(<LoginPage />)
+      await user.type(screen.getByLabelText(/username or email/i), 'testuser')
+      await user.type(screen.getByLabelText(/^password$/i), 'password123')
+      await user.click(screen.getByRole('button', { name: /sign in$/i }))
+      return user
+    }
+
+    it('the MFA screen says which method is due, and by when', async () => {
+      jsonOnce({ mfa_required: true, mfa_session: 'mfa-1', mfa_methods: ['totp'], mfa_enrollment_due: due })
+      await signIn()
+      await screen.findByLabelText(/verification code/i)
+      const notice = screen.getByRole('status')
+      expect(notice).toHaveTextContent(/requires Security Key to sign in/i)
+      expect(notice).toHaveTextContent(/add one before/i)
+    })
+
+    it('a challenge without the notice shows none (control)', async () => {
+      jsonOnce({ mfa_required: true, mfa_session: 'mfa-1', mfa_methods: ['totp'] })
+      await signIn()
+      await screen.findByLabelText(/verification code/i)
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    })
+
+    it('holds the redirect until the notice is read', async () => {
+      jsonOnce({ mfa_required: true, mfa_session: 'mfa-1', mfa_methods: ['totp'], mfa_enrollment_due: due })
+      const user = await signIn()
+      await screen.findByLabelText(/verification code/i)
+
+      jsonOnce({ redirect_url: 'https://app.example.com/callback?code=abc', mfa_enrollment_due: due })
+      await user.type(screen.getByLabelText(/verification code/i), '123456')
+      await user.click(screen.getByRole('button', { name: /^verify$/i }))
+
+      await screen.findByText(/add a sign-in method/i)
+      expect(mockLocation.href).toBe('http://localhost:5173/login')
+      await user.click(screen.getByRole('button', { name: /^continue$/i }))
+      expect(mockLocation.href).toBe('https://app.example.com/callback?code=abc')
+      expect(sessionStorage.getItem('oidc_login_session')).toBeNull()
+    })
+
+    it('a sign-in with no challenge shows the notice before the redirect too', async () => {
+      jsonOnce({ redirect_url: 'https://app.example.com/callback?code=xyz', mfa_enrollment_due: due })
+      const user = await signIn()
+      await screen.findByText(/add a sign-in method/i)
+      expect(mockLocation.href).toBe('http://localhost:5173/login')
+      await user.click(screen.getByRole('button', { name: /^continue$/i }))
+      expect(mockLocation.href).toBe('https://app.example.com/callback?code=xyz')
+    })
+
+    it('after the grace period, a bypass code of letters and digits can be entered and sent', async () => {
+      jsonOnce({
+        mfa_required: true,
+        mfa_session: 'mfa-1',
+        mfa_methods: ['bypass'],
+        mfa_enrollment_due: { ...due, overdue: true },
+      })
+      const user = await signIn()
+      const input = await screen.findByLabelText(/verification code/i)
+      expect(screen.getByRole('status')).toHaveTextContent(/the time to add one has passed/i)
+      expect(screen.getByText(/enter the bypass code an administrator gave you/i)).toBeInTheDocument()
+
+      jsonOnce({ redirect_url: 'https://app.example.com/callback?code=abc', mfa_enrollment_due: { ...due, overdue: true } })
+      await user.type(input, 'Ab3-_xYz9Qw2Er5T')
+      expect(input).toHaveValue('Ab3-_xYz9Qw2Er5T')
+      await user.click(screen.getByRole('button', { name: /^verify$/i }))
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+      const [url, init] = fetchMock.mock.calls[1]
+      expect(String(url)).toContain('/oauth/mfa-verify')
+      expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({
+        mfa_session: 'mfa-1',
+        code: 'Ab3-_xYz9Qw2Er5T',
+        method: 'bypass',
+      })
+      await screen.findByText(/add a sign-in method/i)
+    })
+
+    it('a one-time code is still six digits (control)', async () => {
+      jsonOnce({ mfa_required: true, mfa_session: 'mfa-1', mfa_methods: ['totp'] })
+      const user = await signIn()
+      const input = await screen.findByLabelText(/verification code/i)
+      await user.type(input, 'Ab-_x12345678')
+      expect(input).toHaveValue('123456')
+    })
+
+    it('a refusal after the grace period says why', async () => {
+      jsonOnce(
+        {
+          error: 'mfa_enrollment_required',
+          error_description:
+            'Your organization requires one of these sign-in methods: webauthn. The time to add one has passed. Ask an administrator for a bypass code, sign in with it, and add one.',
+          required_methods: ['webauthn'],
+        },
+        false,
+      )
+      await signIn()
+      expect(await screen.findByText(/the time to add one has passed/i)).toBeInTheDocument()
+      expect(mockLocation.href).toBe('http://localhost:5173/login')
+    })
+  })
+
+  // A sign-in link that cannot finish the sign-in (a second factor is needed,
+  // or a policy's grace period is over) comes back here with ?error= and the
+  // pending request's login_session, so the person can continue with their
+  // password.
+  describe('a sign-in link sent back', () => {
+    afterEach(() => {
+      sessionStorage.clear()
+      window.location.search = ''
+    })
+
+    it('says why, and keeps the pending request', async () => {
+      window.location.search = '?login_session=ls-link-1&error=mfa_required'
+      renderWithRouter(<LoginPage />)
+      expect(await screen.findByText(/needs a second factor, and a sign-in link cannot ask for one/i)).toBeInTheDocument()
+      expect(sessionStorage.getItem('oidc_login_session')).toBe('ls-link-1')
+    })
+
+    it('says when the time to add a required method has passed', async () => {
+      window.location.search = '?login_session=ls-link-2&error=mfa_enrollment_required'
+      renderWithRouter(<LoginPage />)
+      expect(await screen.findByText(/the time to add one has passed/i)).toBeInTheDocument()
+    })
+
+    it('an error it does not know says nothing (control)', () => {
+      window.location.search = '?error=something_else'
+      renderWithRouter(<LoginPage />)
+      expect(screen.queryByText(/sign-in link/i)).not.toBeInTheDocument()
     })
   })
 

@@ -23,26 +23,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   migration that adds the column back.
 
 ### Changed
-- **MFA policies no longer offer required methods, a grace period or
-  conditions. Nothing enforced any of them (#990).** The login path discards
-  the policy it matched, so a policy that listed WebAuthn was satisfied by SMS
-  or email OTP. The grace period was read by nothing. The API accepted three
-  conditions (`factor_enrolled`, `min_risk_score`, `client_ids`) that no code
-  reads, and refused the four the evaluator reads. So every policy applied to
-  every user with an enrolled factor. A policy now means exactly that.
-  - **API:** creating a policy with methods, a grace period or any condition
-    answers 400.
-  - **Updates:** an update may clear those fields, or send back the stored
-    values, so older policies can still be renamed and toggled.
-  - **Console:** the method checkboxes and the grace field are gone, the page
-    says what a policy does, older policies that store such settings are
-    flagged, and the toggle sends only `enabled`.
-  - **Tests:** a new test on the login path shows both halves. With the policy
-    on, a user whose only factor is email OTP is challenged; with it off, or
-    for a user with no factor, not.
+- **MFA policies enforce what they show (#990).** The login path used to
+  discard the policy it matched, so a policy that listed WebAuthn was
+  satisfied by SMS or email OTP, and nothing read the grace period. The API
+  accepted three conditions (`factor_enrolled`, `min_risk_score`,
+  `client_ids`) that no code reads, and refused the four the evaluator reads.
+  So every policy applied to every user with an enrolled factor.
+  - **Required methods are enforced** at password sign-in. A policy that
+    requires methods offers only those, and no other factor satisfies it, nor
+    does a remembered browser. An administrator's bypass code still works, as
+    the way back in. Backup codes do not satisfy it.
+  - **The grace period is enforced, per user.** A user with none of the
+    required methods gets the grace period, from their first sign-in under
+    the policy, to add one (`mfa_policy_grace`, v203). Until then they sign
+    in as before, and the sign-in page shows them the deadline. After it,
+    sign-in is refused with `403 mfa_enrollment_required` unless they have a
+    bypass code, which is then the only method offered. The start and the
+    refusal are audited (`mfa_grace_started`, `mfa_enrollment_required`).
+    Raising the grace period extends every running window. Changing the
+    method list starts every window again. 0 hours refuses at once, and the
+    most is 720 (30 days).
+  - **Policies are tried in the order the console lists them**, lowest
+    priority number first, then by name. The login used to try the highest
+    first, which did not matter while every policy did the same thing.
+  - **Conditions are still refused**, and the console flags an older policy
+    that stores some: nothing enforces them yet.
+  - **API:** methods must come from `totp`, `webauthn`, `push`, `sms` and
+    `email`, with no duplicates. A grace period needs at least one method and
+    must be 0 to 720 hours. Anything else answers 400.
+  - **Console:** the method checkboxes and the grace field are back, with what
+    each does, and the table lists both. The toggle sends only `enabled`.
+  - **Scope:** a policy governs sign-in with a password, as before this
+    release.
+  - **Tests:** each rule has two sides, at the login decision, at
+    `POST /oauth/login` and in the admin API, against a migrated Postgres.
 
-  Enforcing particular methods needs a decision first: what happens to a user
-  who has none of them enrolled.
+  **Upgrade: v203 clears the required methods and grace periods stored on
+  existing policies**, and the column default drops from 24 hours to 0. No
+  code enforced them. Enforcing them on upgrade would start windows nobody
+  chose, and refuse sign-ins a day later. So every existing policy keeps
+  doing what it did: challenge every user who has a factor enrolled. To
+  require methods, set them again in MFA Management. A rollback drops the
+  grace table, and cannot restore the cleared values.
 - **The Helm chart ships the OPA policy** (#980). The OPA pods used to run
   empty unless an operator created a ConfigMap, so every decision was
   undefined. They now load the policy the chart carries, or the ConfigMap
@@ -55,6 +77,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#956). `scripts/generate-secrets.sh` and the Helm chart write these
   values. An existing install keeps its values until the operator changes
   them; the order to do that in is in the configuration reference.
+- **Decided: a fresh install keeps ABAC in `observe`** (#956). It is not
+  switched to `enforce` by default. An operator turns enforcement on after
+  reviewing the `access.abac.would_deny` audit records; the configuration
+  reference has the steps.
 - **An `off`/`observe`/`enforce` setting with an unknown value now stops the
   service at startup** and names the setting. Check the values of
   `ABAC_ENFORCE`, `STEPUP_GATE`, `BOT_GATE`, `PAM_SESSION_RISK_GATE`,
@@ -85,6 +111,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nats.enabled` — not as a default.
 
 ### Security
+- **A sign-in link no longer skips the second factor.** A magic link proves
+  the mailbox, which is one factor, and its redirect cannot ask for a second.
+  It issued an authorization code to whoever it was sent to, including a user
+  with a second factor enrolled and a user an MFA policy covers. It now signs
+  in only a user whom the password login would let in without a second factor,
+  because it asks the password login's own decision (`evaluateMFA`). Anyone
+  else goes back to the login page, for the same pending request, with the
+  reason: a second factor is needed, or a policy's grace period is over. The
+  link is spent either way, and the refusal is audited (`magic_link_login`,
+  failure). The login page now shows why a sign-in link was sent back; it used
+  to ignore the reason.
 - **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
   handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,
   the Android QR and the onboarding wizard's session — and none asked how
@@ -248,6 +285,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no-op control green.
 
 ### Added
+- **Lite install: sign in on a 4 GB machine (#961).** `./scripts/lite-up.sh`
+  starts `deployments/docker/docker-compose.lite.yml` (PostgreSQL, Redis, the
+  seven services the console calls, the production console as a same-origin
+  edge; published images, `OPENIDX_VERSION` default v1.37.0; memory limits
+  totalling 2080 MiB; only the console's port beyond 127.0.0.1), sets a random
+  admin password and prints it once. Elasticsearch, Guacamole, OpenZiti and
+  observability are `--with` profiles. The README quick start now uses it, and
+  the `lite-install` CI job runs it and signs in.
 - **Every release runs the display = enforcement table and carries the report
   (#957).** `docs/evidence/display-equals-enforcement.md` asks for its table to
   be verified at least once per release, and nothing ran it per release. A new
@@ -268,7 +313,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defined twice, or out of the release run's reach. A renamed test therefore
   breaks its pull request, not the release. The guard and the run's reading of
   `go test -v` both ship with self-tests that drive them red.
-
 - **The post-logout allowlist can be registered from the console.** The
   RP-Initiated Logout list added below was reachable only through dynamic
   client registration and the OAuth client API. The applications editor —
@@ -555,6 +599,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after; a stub naming a missing source turns the build red.
 
 ### Fixed
+- **Distributed tracing works again.** With `TRACING_ENABLED=true`, every
+  service logged "Failed to initialize tracing: … conflicting Schema URL"
+  and ran untraced: `internal/common/tracing` pinned the semconv 1.24.0
+  schema on its resource, and the OpenTelemetry SDK's default resource now
+  carries 1.43.0, which `resource.Merge` refuses. The service attributes are
+  now schemaless, so they merge with whatever schema the SDK carries. The
+  test that accepted a "Schema URL" error as a normal outcome now requires
+  `Init` to succeed; against a real Jaeger 1.54, a span sent through `Init`
+  appears under its service name, and none did before.
+- **The sign-in page could not take a backup or bypass code.** Its code field
+  took six digits and dropped every other character. Backup codes are eight
+  letters and digits, and an administrator's bypass codes are sixteen. The
+  field now takes them as typed when the method is a backup or bypass code.
 - **`PAM_SESSION_RISK_GATE` terminated sessions on "Off" or "OBSERVE".** It
   compared the raw value, so any spelling other than exactly `off` or
   `observe` enforced. It now reads the value the way every other gate does.

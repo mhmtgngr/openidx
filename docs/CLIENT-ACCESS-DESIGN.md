@@ -218,10 +218,11 @@ fails the build.
 
 - Factors: TOTP, WebAuthn/passkeys, push number-match (over ntfy), SMS, email,
   backup codes (`internal/identity/`).
-- **Policy engine**: org-scoped `mfa_policies` with conditions on groups, IP
-  ranges, time windows and user attributes, `required_methods`, a grace period;
-  evaluated at login for every client including native ones, since
-  `openidx-mobile` / `openidx-desktop` go through the SPA login
+- **Policy engine**: org-scoped `mfa_policies` with `required_methods` and a
+  per-user grace period to add one (`mfa_policy_grace`); conditions are
+  refused until something enforces them (#990). Evaluated at password login
+  for every client including native ones, since `openidx-mobile` /
+  `openidx-desktop` go through the SPA login
   (`internal/oauth/mfa_policy.go` → `IsMFARequired`).
 - **Adaptive**: new device +30, new location +20, impossible travel +50, blocked
   IP +40, failed login +10; ≥ 70 requires MFA (`adaptive_mfa.*`).

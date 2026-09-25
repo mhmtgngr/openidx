@@ -88,17 +88,33 @@ func TestIsMFARequired(t *testing.T) {
 		}
 	})
 
-	t.Run("the highest priority policy wins", func(t *testing.T) {
+	// The console lists policies lowest priority number first ("lower =
+	// first"), then by name, and the policy it lists first is the one that
+	// decides: which policy matched is observable once a policy can require
+	// particular methods.
+	t.Run("the policy the console lists first wins", func(t *testing.T) {
 		if _, err := db.Pool.Exec(ctx, `INSERT INTO mfa_policies (name, enabled, priority, conditions, org_id)
-			VALUES ('stronger', true, 99, '{"factor_enrolled":true}', $1)`, org); err != nil {
+			VALUES ('later', true, 99, '{"factor_enrolled":true}', $1)`, org); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 		_, policy, err := svc.IsMFARequired(ctx, user, "1.2.3.4")
 		if err != nil {
 			t.Fatalf("IsMFARequired: %v", err)
 		}
-		if policy == nil || policy.Name != "stronger" {
-			t.Errorf("got %+v, want the priority-99 policy", policy)
+		if policy == nil || policy.Name != "always" {
+			t.Errorf("got %+v, want the priority-5 policy, which the console lists before priority 99", policy)
+		}
+
+		if _, err := db.Pool.Exec(ctx, `INSERT INTO mfa_policies (name, enabled, priority, conditions, org_id)
+			VALUES ('aardvark', true, 5, '{"factor_enrolled":true}', $1)`, org); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		_, policy, err = svc.IsMFARequired(ctx, user, "1.2.3.4")
+		if err != nil {
+			t.Fatalf("IsMFARequired: %v", err)
+		}
+		if policy == nil || policy.Name != "aardvark" {
+			t.Errorf("got %+v, want the policy named first among equal priorities", policy)
 		}
 	})
 

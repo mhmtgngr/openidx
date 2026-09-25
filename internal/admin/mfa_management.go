@@ -205,11 +205,11 @@ func (s *Service) handleCreateMFAPolicy(c *gin.Context) {
 	}
 
 	conditions := req.Conditions
-	if conditions == nil {
+	if isEmptyJSON(conditions) {
 		conditions = json.RawMessage("{}")
 	}
 	requiredMethods := req.RequiredMethods
-	if requiredMethods == nil {
+	if isEmptyJSON(requiredMethods) {
 		requiredMethods = json.RawMessage("[]")
 	}
 
@@ -286,10 +286,22 @@ func (s *Service) handleUpdateMFAPolicy(c *gin.Context) {
 		return
 	}
 
+	// One transaction: the check, the update and the grace reset below see the
+	// same row, so a concurrent update cannot change the method set between
+	// the check and the write (FOR UPDATE).
+	ctx := c.Request.Context()
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		respondError(c, s.logger, apperrors.Internal("Failed to update MFA policy", err))
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	methodsChanged := false
 	if req.Conditions != nil || req.RequiredMethods != nil || req.GracePeriodHours != nil {
 		var stored storedMFAPolicySettings
-		err := s.db.Pool.QueryRow(c.Request.Context(),
-			`SELECT conditions, required_methods, grace_period_hours FROM mfa_policies WHERE id = $1 AND org_id = $2`,
+		err := tx.QueryRow(ctx,
+			`SELECT conditions, required_methods, grace_period_hours FROM mfa_policies WHERE id = $1 AND org_id = $2 FOR UPDATE`,
 			id, org.ID).Scan(&stored.conditions, &stored.requiredMethods, &stored.graceHours)
 		if errors.Is(err, pgx.ErrNoRows) {
 			respondError(c, nil, apperrors.NotFound("MFA policy"))
@@ -299,7 +311,7 @@ func (s *Service) handleUpdateMFAPolicy(c *gin.Context) {
 			respondError(c, s.logger, apperrors.Internal("Failed to read MFA policy", err))
 			return
 		}
-		if err := checkMFAPolicyUpdate(stored, req.Conditions, req.RequiredMethods, req.GracePeriodHours); err != nil {
+		if methodsChanged, err = checkMFAPolicyUpdate(stored, req.Conditions, req.RequiredMethods, req.GracePeriodHours); err != nil {
 			respondError(c, nil, apperrors.BadRequest(err.Error()))
 			return
 		}
@@ -330,13 +342,21 @@ func (s *Service) handleUpdateMFAPolicy(c *gin.Context) {
 		argIdx++
 	}
 	if req.Conditions != nil {
+		conditions := *req.Conditions
+		if isEmptyJSON(conditions) {
+			conditions = json.RawMessage("{}")
+		}
 		sets = append(sets, fmt.Sprintf("conditions = $%d", argIdx))
-		args = append(args, *req.Conditions)
+		args = append(args, conditions)
 		argIdx++
 	}
 	if req.RequiredMethods != nil {
+		requiredMethods := *req.RequiredMethods
+		if isEmptyJSON(requiredMethods) {
+			requiredMethods = json.RawMessage("[]")
+		}
 		sets = append(sets, fmt.Sprintf("required_methods = $%d", argIdx))
-		args = append(args, *req.RequiredMethods)
+		args = append(args, requiredMethods)
 		argIdx++
 	}
 	if req.GracePeriodHours != nil {
@@ -353,13 +373,25 @@ func (s *Service) handleUpdateMFAPolicy(c *gin.Context) {
 	query := fmt.Sprintf("UPDATE mfa_policies SET %s WHERE id = $%d AND org_id = $%d",
 		joinSetClauses(sets), argIdx, orgArgIdx)
 
-	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
+	tag, err := tx.Exec(ctx, query, args...)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to update MFA policy", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
 		respondError(c, nil, apperrors.NotFound("MFA policy"))
+		return
+	}
+	// A new method set starts every user's grace period again: their window
+	// was the time to add one of the old methods (migration v203).
+	if methodsChanged {
+		if _, err := tx.Exec(ctx, `DELETE FROM mfa_policy_grace WHERE policy_id = $1 AND org_id = $2`, id, org.ID); err != nil {
+			respondError(c, s.logger, apperrors.Internal("Failed to reset MFA grace periods", err))
+			return
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		respondError(c, s.logger, apperrors.Internal("Failed to update MFA policy", err))
 		return
 	}
 

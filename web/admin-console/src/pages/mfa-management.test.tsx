@@ -143,8 +143,9 @@ describe('MFAManagementPage', () => {
     expect(await screen.findByText('No MFA policies configured')).toBeInTheDocument()
   })
 
-  // #990: nothing enforces required methods, a grace period or conditions, so
-  // the page no longer offers or lists them as if it did.
+  // What a policy enforces at password sign-in: required methods, with a grace
+  // period to add one, or any enrolled factor when none is required. Conditions
+  // are not enforced, so the form does not offer them (#990).
   describe('what a policy enforces', () => {
     const plain = {
       ...policy,
@@ -166,24 +167,35 @@ describe('MFAManagementPage', () => {
       await screen.findByText('MFA Management')
       await user.click(screen.getByRole('tab', { name: /mfa policies/i }))
     }
+    const openCreate = async (user: ReturnType<typeof userEvent.setup>) => {
+      withPolicies([])
+      await openPoliciesTab(user)
+      await user.click(await screen.findByRole('button', { name: /create policy/i }))
+      await user.type(screen.getByPlaceholderText(/second factor for everyone/i), 'Strong sign-in')
+      return screen.getByRole('dialog')
+    }
 
-    it('says what a policy does, and lists no methods or grace period', async () => {
+    it('lists each policy with its required methods and grace period', async () => {
       const user = userEvent.setup()
       withPolicies([policy, plain])
       await openPoliciesTab(user)
-      expect(await screen.findByText(/every user who has a second factor enrolled is asked for it/i)).toBeInTheDocument()
-      expect(screen.queryByRole('columnheader', { name: /required methods/i })).not.toBeInTheDocument()
-      expect(screen.queryByRole('columnheader', { name: /grace period/i })).not.toBeInTheDocument()
+      expect(await screen.findByRole('columnheader', { name: /required methods/i })).toBeInTheDocument()
+      expect(screen.getByRole('columnheader', { name: /grace period/i })).toBeInTheDocument()
+      const strict = screen.getByText('Admin role — TOTP required').closest('tr') as HTMLElement
+      expect(within(strict).getByText('TOTP')).toBeInTheDocument()
+      expect(within(strict).getByText('24 h')).toBeInTheDocument()
+      const any = screen.getByText('Second factor for everyone').closest('tr') as HTMLElement
+      expect(within(any).getByText('Any enrolled factor')).toBeInTheDocument()
     })
 
-    it('flags a policy that stores settings nothing enforces, and only that one', async () => {
+    it('flags a policy that stores conditions, and only that one', async () => {
       const user = userEvent.setup()
       withPolicies([policy, plain])
       await openPoliciesTab(user)
       await screen.findByText('Second factor for everyone')
-      expect(screen.getAllByText('stored settings not enforced')).toHaveLength(1)
+      expect(screen.getAllByText('stored conditions not enforced')).toHaveLength(1)
       const flagged = screen.getByText('Admin role — TOTP required').closest('tr')
-      expect(flagged).toHaveTextContent('stored settings not enforced')
+      expect(flagged).toHaveTextContent('stored conditions not enforced')
     })
 
     it('toggles a policy by sending only enabled', async () => {
@@ -194,39 +206,95 @@ describe('MFAManagementPage', () => {
       expect(api.put).toHaveBeenCalledWith('/api/v1/mfa/policies/pol-1', { enabled: false })
     })
 
-    it('creates a policy without methods, a grace period or conditions', async () => {
+    it('creates a policy that requires methods, with a grace period to add one', async () => {
       const user = userEvent.setup()
-      withPolicies([])
-      await openPoliciesTab(user)
-      await user.click(await screen.findByRole('button', { name: /create policy/i }))
-      expect(screen.queryByText('WebAuthn', { selector: 'label' })).not.toBeInTheDocument()
-      expect(screen.queryByLabelText(/grace period/i)).not.toBeInTheDocument()
-      await user.type(screen.getByPlaceholderText(/second factor for everyone/i), 'Everyone')
-      const dialog = screen.getByRole('dialog')
+      const dialog = await openCreate(user)
+      await user.click(within(dialog).getByRole('checkbox', { name: 'WebAuthn' }))
+      await user.click(within(dialog).getByRole('checkbox', { name: 'TOTP' }))
+      const grace = within(dialog).getByLabelText(/grace period/i)
+      expect(grace).toBeEnabled()
+      await user.clear(grace)
+      await user.type(grace, '72')
       await user.click(within(dialog).getByRole('button', { name: /^create policy$/i }))
       expect(api.post).toHaveBeenCalledWith('/api/v1/mfa/policies', {
-        name: 'Everyone',
+        name: 'Strong sign-in',
         description: '',
         enabled: true,
         priority: 100,
+        required_methods: ['totp', 'webauthn'],
+        grace_period_hours: 72,
       })
     })
 
-    it('saves an edited policy without re-sending what it stores', async () => {
+    it('creates a policy that accepts any factor, with no grace period', async () => {
+      const user = userEvent.setup()
+      const dialog = await openCreate(user)
+      expect(within(dialog).getByLabelText(/grace period/i)).toBeDisabled()
+      expect(within(dialog).queryByText(/conditions/i, { selector: 'label' })).not.toBeInTheDocument()
+      await user.click(within(dialog).getByRole('button', { name: /^create policy$/i }))
+      expect(api.post).toHaveBeenCalledWith('/api/v1/mfa/policies', {
+        name: 'Strong sign-in',
+        description: '',
+        enabled: true,
+        priority: 100,
+        required_methods: [],
+        grace_period_hours: 0,
+      })
+    })
+
+    it('unchecking the last method clears the grace period', async () => {
+      const user = userEvent.setup()
+      const dialog = await openCreate(user)
+      await user.click(within(dialog).getByRole('checkbox', { name: 'TOTP' }))
+      const grace = within(dialog).getByLabelText(/grace period/i)
+      await user.clear(grace)
+      await user.type(grace, '48')
+      await user.click(within(dialog).getByRole('checkbox', { name: 'TOTP' }))
+      expect(grace).toBeDisabled()
+      expect(grace).toHaveValue(0)
+    })
+
+    it('will not save a grace period the API refuses', async () => {
+      const user = userEvent.setup()
+      const dialog = await openCreate(user)
+      await user.click(within(dialog).getByRole('checkbox', { name: 'TOTP' }))
+      const grace = within(dialog).getByLabelText(/grace period/i)
+      await user.clear(grace)
+      await user.type(grace, '721')
+      expect(within(dialog).getByText(/whole number of hours from 0 to 720/i)).toBeInTheDocument()
+      expect(within(dialog).getByRole('button', { name: /^create policy$/i })).toBeDisabled()
+    })
+
+    it('saves an edited policy with its methods and grace period, and without its conditions', async () => {
       const user = userEvent.setup()
       withPolicies([policy])
       await openPoliciesTab(user)
       const row = (await screen.findByText('Admin role — TOTP required')).closest('tr') as HTMLElement
       await user.click(within(row).getAllByRole('button')[0])
       const dialog = await screen.findByRole('dialog')
-      expect(within(dialog).getByText(/none of them is enforced/i)).toBeInTheDocument()
+      expect(within(dialog).getByText(/they are not enforced/i)).toBeInTheDocument()
+      expect(within(dialog).getByRole('checkbox', { name: 'TOTP' })).toBeChecked()
+      expect(within(dialog).queryByText(/starts every user's grace period again/i)).not.toBeInTheDocument()
       await user.click(within(dialog).getByRole('button', { name: /update policy/i }))
       expect(api.put).toHaveBeenCalledWith('/api/v1/mfa/policies/pol-1', {
         name: policy.name,
         description: policy.description,
         enabled: true,
         priority: 100,
+        required_methods: ['totp'],
+        grace_period_hours: 24,
       })
+    })
+
+    it('warns that changing the methods starts every grace period again', async () => {
+      const user = userEvent.setup()
+      withPolicies([policy])
+      await openPoliciesTab(user)
+      const row = (await screen.findByText('Admin role — TOTP required')).closest('tr') as HTMLElement
+      await user.click(within(row).getAllByRole('button')[0])
+      const dialog = await screen.findByRole('dialog')
+      await user.click(within(dialog).getByRole('checkbox', { name: 'WebAuthn' }))
+      expect(within(dialog).getByText(/starts every user's grace period again/i)).toBeInTheDocument()
     })
   })
 })

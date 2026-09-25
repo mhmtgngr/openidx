@@ -8,7 +8,7 @@ records the analysis behind this version (in Turkish).
 [ADR 0001](docs/adr/0001-product-focus-and-trusted-core.md) records the
 decision.
 
-*Last updated: 2026-09-23.*
+*Last updated: 2026-09-24.*
 
 ## What OpenIDX is
 
@@ -46,7 +46,7 @@ evidence.
 
 | # | Exit criterion | Issue |
 |---|---|---|
-| 1 | Enforcement on by default for new installs | [#956](https://github.com/mhmtgngr/openidx/issues/956) |
+| 1 | Enforcement on by default for new installs. Decided: ABAC stays in `observe` on a new install, and the operator turns on `enforce` after reviewing the `access.abac.would_deny` records | [#956](https://github.com/mhmtgngr/openidx/issues/956) |
 | 2 | The display = enforcement table is automated and recorded for each release | [#957](https://github.com/mhmtgngr/openidx/issues/957) |
 | 3 | The OpenID Connect conformance suite runs nightly in CI | [#958](https://github.com/mhmtgngr/openidx/issues/958) |
 | 4 | SAML interop and SCIM compliance tests run in CI | [#955](https://github.com/mhmtgngr/openidx/issues/955) |
