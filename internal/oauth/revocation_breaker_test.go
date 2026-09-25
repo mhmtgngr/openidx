@@ -11,6 +11,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/resilience"
+	"github.com/openidx/openidx/internal/revocation"
 )
 
 // TestRevocationBreakerFastFailsOnRedisOutage proves Tier 2.8: once Redis is
@@ -43,7 +44,7 @@ func TestRevocationBreakerFastFailsOnRedisOutage(t *testing.T) {
 	ctx := context.Background()
 
 	// Healthy: a normal check succeeds and reports "not revoked".
-	if revoked, err := s.IsAccessTokenRevoked(ctx, "tok", "user-1", time.Now().Unix()); err != nil || revoked {
+	if revoked, err := s.IsAccessTokenRevoked(ctx, "tok", "user-1", revocation.IssuedAt{Seconds: time.Now().Unix()}); err != nil || revoked {
 		t.Fatalf("healthy check: revoked=%v err=%v, want false/nil", revoked, err)
 	}
 	if got := s.redisBreaker.State(); got != resilience.StateClosed {
@@ -55,7 +56,7 @@ func TestRevocationBreakerFastFailsOnRedisOutage(t *testing.T) {
 
 	// Drive enough failures to trip the breaker (threshold=3).
 	for i := 0; i < 3; i++ {
-		if _, err := s.IsAccessTokenRevoked(ctx, "tok", "user-1", time.Now().Unix()); err == nil {
+		if _, err := s.IsAccessTokenRevoked(ctx, "tok", "user-1", revocation.IssuedAt{Seconds: time.Now().Unix()}); err == nil {
 			t.Fatalf("call %d: expected an error while Redis is down", i)
 		}
 	}
@@ -68,7 +69,7 @@ func TestRevocationBreakerFastFailsOnRedisOutage(t *testing.T) {
 	// A call while open should return quickly (well under the Redis read timeout)
 	// and still surface an error so the caller fails closed.
 	start := time.Now()
-	revoked, err := s.IsAccessTokenRevoked(ctx, "tok", "user-1", time.Now().Unix())
+	revoked, err := s.IsAccessTokenRevoked(ctx, "tok", "user-1", revocation.IssuedAt{Seconds: time.Now().Unix()})
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("open breaker should still surface an error (caller fails closed)")
