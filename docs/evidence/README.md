@@ -11,6 +11,11 @@ Controls split two ways, and the split is the whole point:
 | **Automated** ([release-gate.md](release-gate.md)) | CI, on every push | the run link — the control ran or the merge was blocked |
 | **Operator-run** ([operational.md](operational.md), [display-equals-enforcement.md](display-equals-enforcement.md)) | a person, against a live deployment | a dated row in the file, with the output |
 
+[display-equals-enforcement.md](display-equals-enforcement.md) has an
+automated half too. Its automated checks run on every release, and the release
+carries the report as an asset. Its Runs table is for runs against a
+deployment.
+
 Two files here are neither.
 
 [final-audit.md](final-audit.md) is the **last pass over the whole readiness
@@ -48,3 +53,6 @@ At tag time, copy the CI run URL for the release commit into
 [release-gate.md](release-gate.md)'s log. That single link covers every
 automated control in one go, because they all ran on that commit — which is
 the reason for automating them.
+
+The display = enforcement report needs no copying. Its own run attaches it to
+the release as `display-equals-enforcement-vX.Y.Z.md`.

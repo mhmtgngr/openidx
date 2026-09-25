@@ -5,9 +5,8 @@
 #   docker build --target production -t admin-console \
 #     -f deployments/docker/Dockerfile.admin-console .
 #
-# The `development` target only needs the frontend sources, so it can also
-# be built from web/admin-console with --build-arg SRC_DIR=. (used by the
-# docker-compose dev stack).
+# Every target copies api/openapi/, so every target needs the repo root as
+# its context too. The compose files build `production` that way.
 
 # ============================================
 # Stage 1: Dependencies (cached separately)

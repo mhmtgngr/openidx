@@ -517,11 +517,13 @@ services:
   admin-console:
     restart: always
     build:
-      context: ../../web/admin-console
-      dockerfile: ../../deployments/docker/Dockerfile.admin-console
+      # Repository root, as in docker-compose.yml: the Dockerfile copies
+      # api/openapi/ from outside web/admin-console.
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.admin-console
+      target: production
       network: host
       args:
-        - SRC_DIR=.
         - VITE_API_URL=https://openidx.tdv.org
         - VITE_OAUTH_URL=https://openidx.tdv.org
         - VITE_OAUTH_CLIENT_ID=admin-console

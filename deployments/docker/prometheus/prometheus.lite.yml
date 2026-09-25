@@ -1,0 +1,69 @@
+# Prometheus for the lite install's observability profile
+# (docker-compose.lite.yml). The same scrape jobs as prometheus.yml, minus
+# gateway-service, which the lite install does not run: scraping it would keep
+# the ServiceDown alert firing for a service that is not meant to be there.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+rule_files:
+  - '/etc/prometheus/alert_rules.yml'
+
+scrape_configs:
+  - job_name: 'identity-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['identity-service:8001']
+        labels:
+          service: identity-service
+
+  - job_name: 'governance-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['governance-service:8002']
+        labels:
+          service: governance-service
+
+  - job_name: 'provisioning-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['provisioning-service:8003']
+        labels:
+          service: provisioning-service
+
+  - job_name: 'audit-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['audit-service:8004']
+        labels:
+          service: audit-service
+
+  - job_name: 'admin-api'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['admin-api:8005']
+        labels:
+          service: admin-api
+
+  - job_name: 'oauth-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['oauth-service:8006']
+        labels:
+          service: oauth-service
+
+  - job_name: 'access-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['access-service:8007']
+        labels:
+          service: access-service
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

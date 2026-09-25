@@ -157,7 +157,12 @@ Two policy engines meet here, and the difference matters:
   proxy. ABAC has three modes (`ABAC_ENFORCE=off|observe|enforce`); in
   `observe` it records what it *would* deny without denying it, so you can see
   the blast radius before you turn it on. The console shows which mode is
-  live.
+  live. A new install starts in `observe` and stays there: `enforce` is not a
+  default, it is a step you take (decided in #956). Take it once the
+  `access.abac.would_deny` records name only the people your policies are
+  meant to stop; the
+  [configuration reference](../deployment/configuration.md#turning-the-gates-on-for-an-existing-install)
+  has the steps.
 - **Approval policies** describe who signs off. They gate the request, not the
   request's runtime.
 
