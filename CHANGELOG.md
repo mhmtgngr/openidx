@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.37.0] - 2026-09-25
+
 ### Removed
 - **`oauth_clients.front_channel_logout_uri` is dropped (v202).** v63 added it
   next to the back-channel logout URI. The back-channel column became a
@@ -11465,7 +11467,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.36.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.37.0...HEAD
+[1.37.0]: https://github.com/mhmtgngr/openidx/compare/v1.36.0...v1.37.0
 [1.36.0]: https://github.com/mhmtgngr/openidx/compare/v1.35.0...v1.36.0
 [1.35.0]: https://github.com/mhmtgngr/openidx/compare/v1.34.0...v1.35.0
 [1.34.0]: https://github.com/mhmtgngr/openidx/compare/v1.33.3...v1.34.0
