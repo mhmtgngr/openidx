@@ -177,8 +177,9 @@ var knownDead = map[string]string{
 	// are wired". Manager does not: local backups are plain os.ReadFile /
 	// os.WriteFile against config.StorageDir, and S3 is reached through the
 	// concrete *S3Storage. The capability was real -- a created backup is
-	// uploaded, and a restore falls back to the bucket -- so the document is
-	// corrected rather than the code bent to match. Progress, its Reader, the
+	// uploaded, and a restore falls back to the bucket -- so the document was
+	// corrected rather than the code bent to match. (#963 has since deleted
+	// that document, as stale.) Progress, its Reader, the
 	// DirEntry/FileInfo shims and the whole os-function indirection layer the
 	// tests substituted went with it: every one of them existed so LocalStorage
 	// could walk a directory.

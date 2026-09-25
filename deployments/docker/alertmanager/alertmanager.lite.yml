@@ -1,0 +1,29 @@
+# Alertmanager for the lite install's `observability` profile
+# (deployments/docker/docker-compose.lite.yml).
+#
+# The full stack's alertmanager.yml cannot be used here: it writes
+# ${SMTP_HOST:-localhost}-style placeholders, which Alertmanager does not
+# expand, so it refuses to load the file and restarts in a loop; and its
+# webhook receiver points at an admin-api route that does not exist.
+#
+# Here alerts are grouped and shown, not delivered: Prometheus fires them into
+# this Alertmanager, and they are visible at http://127.0.0.1:9093 and in
+# Grafana. To deliver them, give the `default` receiver an email_configs or
+# webhook_configs entry with literal values.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default
+  group_by: ['alertname', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: default
+
+inhibit_rules:
+  - source_matchers: ['severity="critical"']
+    target_matchers: ['severity="warning"']
+    equal: ['alertname', 'service']

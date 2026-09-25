@@ -331,11 +331,14 @@ func (w *outboundWorker) applyGroup(ctx context.Context, client *scimclient.Clie
 	if err != nil {
 		return err
 	}
-	scimGroup := &scimclient.Group{DisplayName: snap.DisplayName, ExternalID: snap.ID}
-	hash := payloadHash(scimGroup)
-
 	switch it.operation {
 	case OpCreate, OpUpdate:
+		members, err := w.remoteMembers(ctx, it.targetID, snap.MemberIDs)
+		if err != nil {
+			return err
+		}
+		scimGroup := &scimclient.Group{DisplayName: snap.DisplayName, ExternalID: snap.ID, Members: members}
+		hash := payloadHash(scimGroup)
 		if rec != nil && rec.remoteID != "" {
 			if it.operation == OpUpdate && rec.lastHash == hash {
 				return nil
@@ -377,6 +380,38 @@ type provRecord struct {
 	remoteID string
 	status   string
 	lastHash string
+}
+
+// remoteMembers maps local member ids to the ids the target knows them by. A
+// member this target has no live account for -- never provisioned there, or
+// deprovisioned -- cannot be referenced and is left out, and is included the
+// next time the group is sent (its next change, or a full sync). The outbox
+// is drained in id order, so a user created before the group reaches the
+// target before the group that names it.
+func (w *outboundWorker) remoteMembers(ctx context.Context, targetID string, localIDs []string) ([]scimclient.MemberRef, error) {
+	members := []scimclient.MemberRef{}
+	if len(localIDs) == 0 {
+		return members, nil
+	}
+	//orgscope:ignore outbox drain (runs under bypass_rls) reading the mappings of a target it is already processing; target_id carries the tenant through an enforced foreign key and one worker serves every tenant
+	rows, err := w.svc.db.Pool.Query(ctx, `
+        SELECT remote_id FROM scim_provisioning_records
+         WHERE target_id=$1 AND resource_type='user' AND status=$2
+           AND remote_id IS NOT NULL AND local_id::text = ANY($3::text[])
+         ORDER BY remote_id`,
+		targetID, RecordActive, localIDs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve group members: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var remote string
+		if err := rows.Scan(&remote); err != nil {
+			return nil, fmt.Errorf("scan group member: %w", err)
+		}
+		members = append(members, scimclient.MemberRef{Value: remote})
+	}
+	return members, rows.Err()
 }
 
 func (w *outboundWorker) loadRecord(ctx context.Context, targetID, resourceType, localID string) (*provRecord, error) {

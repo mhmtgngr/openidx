@@ -4,8 +4,11 @@ Thank you for your interest in contributing to OpenIDX. This guide explains how 
 
 ## Prerequisites
 
-- Go 1.22+
-- Node.js 20+
+- Go 1.26. `go.mod` declares `go 1.26.0` and pins `toolchain go1.26.8`; with
+  the default `GOTOOLCHAIN=auto`, the `go` command downloads that toolchain.
+  The endpoint agent in `agent/` is a separate module on Go 1.25
+  (`agent/go.mod`).
+- Node.js 20, the version CI uses
 - Docker and Docker Compose
 - Make
 
@@ -47,15 +50,18 @@ internal/               # Private application code
   audit/                # Audit logging, compliance
   admin/                # Admin API, dashboard
   oauth/                # OAuth 2.0, OIDC, SAML
+  access/               # ZTNA, PAM broker, kill switch
+  migrations/           # Database migrations
   common/               # Shared packages (config, middleware, database)
 web/admin-console/      # React frontend
+client/                 # Flutter app (mobile and desktop)
+agent/                  # Go endpoint agent, its own module
 deployments/            # Docker, Kubernetes, Terraform configs
-migrations/             # Database migration files
 ```
 
 ## Development Workflow
 
-1. **Fork** the repository and create a branch from `dev`
+1. **Fork** the repository and create a branch from `main`
 2. **Name your branch** descriptively: `feat/add-user-export`, `fix/session-timeout`, `docs/api-reference`
 3. **Write code** following the style guidelines below
 4. **Add tests** for new functionality
@@ -70,17 +76,68 @@ migrations/             # Database migration files
    what CI runs rather than a copy that can drift from it. It prints the few
    invocations it cannot run locally — the ones CI computes an argument for —
    instead of counting them as passes.
-6. **Open a Pull Request** against the `dev` branch
+6. **Open a Pull Request** against `main`. It can merge once the
+   [required checks](#required-checks) pass.
 
 ## Branching Strategy
 
 | Branch | Purpose |
 |--------|---------|
-| `main` | Stable releases |
-| `dev` | Active development, PR target |
+| `main` | Every pull request targets it. Releases are tags on `main` ([docs/RELEASING.md](docs/RELEASING.md)) |
 | `feat/*` | New features |
 | `fix/*` | Bug fixes |
 | `docs/*` | Documentation |
+
+## Required checks
+
+The **Required Checks** job (`status-check` in `.github/workflows/ci.yml`) is
+the merge gate. It passes only when every job below passed or was skipped. A
+job is skipped, which counts as a pass, when the pull request does not touch
+what it checks: the Go jobs run when a `.go`, `go.mod` or `go.sum` file
+changed, and the web jobs when something under `web/` changed. The list is the
+`needs:` of that job, and `scripts/check-required-checks.sh` fails the build
+if a job in `ci.yml` is in neither `needs:` nor the informational register. If
+this table and `ci.yml` disagree, `ci.yml` is right.
+
+| Check | Job | Runs on | What it checks |
+|---|---|---|---|
+| detect-changes | `detect-changes` | every change | Decides which of the jobs below the change needs |
+| Every commit is signed off | `dco` | pull requests | Every commit the pull request adds has a `Signed-off-by` line |
+| No internal topology | `no-internal-topology` | every change | The changed lines add no site-specific internal addresses |
+| No prose running as shell | `shell-prose` | every change | Shell scripts run no stray prose; no document cites a missing path (`scripts/check-docs-drift.sh`); a detached database call names its tenant |
+| GitHub config is runnable | `github-config` | every change | Workflows parse, CODEOWNERS names real owners, every CI job is required or declared informational, versions match `VERSION`, and the release and OpenAPI guards hold |
+| Retries can still go red | `ci-resilience-guards` | every change | CI retries keep failures visible, `setup-go` installs the pinned toolchain, Windows-only tests have a job, and the mobile clients keep their secrets out of backups |
+| UI safety guards | `ui-safety-guards` | every change | Console rules: every query shows its error, destructive actions ask for confirmation, controls are named and reachable by keyboard, and `web/admin-console/e2e/suite.txt` lists every spec |
+| The documented first run works | `first-run` | every change | The README quick start writes the secrets compose needs, and the compose file resolves |
+| The OPA policy parses and its tests pass | `opa-policy` | every change | `opa check --strict` on the policy and the chart's copy, then `opa test` |
+| Tenant isolation (RLS_MODE=session and local) | `rls-isolation` | every change | Tenant isolation and other database-backed suites, against PostgreSQL as a role that cannot bypass RLS |
+| Self-heal loop tests | `selfheal` | every change | The self-heal scripts' safety checks, with fake probes |
+| Pipeline reacts correctly to every failure | `fault-matrix` | every change | The CI-over-overlay pipeline step handles each origin failure (`deployments/ci/faulttest`) |
+| Field fixes still hold | `field-fix-scoreboard` | every change | The field-fix scoreboard (`scripts/field-fix-score.sh`) is at target |
+| Build (Go 1.26) | `build-matrix` | Go changes | The services build, and the integration tests compile |
+| Lint | `lint` | Go changes | `gofmt` and `golangci-lint` |
+| Unit Tests (…) | `test-unit` | Go changes | `go test` for each package group, with coverage |
+| Race Detector | `test-race` | Go changes | `go test -race ./...` |
+| Integration Tests | `test-integration` | Go changes | `go test -tags=integration` on `./test/integration/...` and `./cmd/rekey/...`, against PostgreSQL, Redis and the running services |
+| Vulnerability Check | `vulnerability-check` | Go changes | `govulncheck` on the root module and the agent module |
+| Every tested package has a job | `testmatrix` | Go changes | Every package with tests is in the unit-test matrix |
+| Org-scope lint | `orgscope` | Go changes | Every query on a tenant table names its organization |
+| Unread-config lint | `deadconfig` | Go changes | Every setting is read by something, and every documented setting is bound |
+| Unreachable-service lint | `deadservice` | Go changes | Every service type can be reached from a binary |
+| Inert-test lint | `inerttests` | Go changes | No test passes without calling the code it tests |
+| Inert-switch lint | `inertswitch` | Go changes | No boolean an API accepts is stored without something deciding on it |
+| Route-reachability lint | `routereach` | Go changes | Every handler is mounted, and reads only the parameters its routes declare |
+| Unwritten-table lint | `tablewriters` | Go changes | Every table the migrations create has a writer, or is registered as having none |
+| Posture-coverage lint | `posturevocab` | Go changes | Each posture check covers every operating system that reports it |
+| Zero-answer lint | `zeroanswer` | Go changes | No one-row aggregate query drops its scan error |
+| The stack answers end to end | `smoke` | Go or web changes | The services and the console, built from source, pass `make smoke-test` and the contract check |
+| The console's journeys work in a browser | `e2e` | Go or web changes | The Playwright specs marked `run` in `web/admin-console/e2e/suite.txt`, against a running stack |
+| Frontend Tests | `test-frontend` | web changes | Console lint, type check and unit tests |
+
+Other workflows run on pull requests that touch their paths: Frontend CI,
+Documentation (`mkdocs build --strict`), Helm Chart, Docker Build, Security
+Scanning, CodeQL Analysis, Terraform, Android CI and the client builds. The
+Required Checks job does not include them, so read their results too.
 
 ## Commit Message Convention
 

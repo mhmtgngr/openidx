@@ -1,0 +1,23 @@
+# The OpenID Foundation test plans the nightly conformance run executes, in
+# order. One per line: the plan name with the variants the plan leaves open,
+# written exactly as the suite's scripts/run-test-plan.py takes it, then the
+# plan configuration (a template in plans/, rendered by setup_openidx.py).
+#
+# Plan names come from the suite's own @PublishTestPlan annotations, at the
+# release pinned in suite.env:
+#   oidcc-basic-certification-test-plan                            "Basic OP"
+#   oidcc-config-certification-test-plan                           "Config OP"
+#   oidcc-rp-initiated-logout-certification-test-plan              "RP-Initiated OP"
+#   oidcc-backchannel-rp-initiated-logout-certification-test-plan  "Back-Channel OP"
+#
+# The config plan fixes both of its variants itself. Every client is static
+# (registered by setup_openidx.py through the admin API), and response_type
+# is code, the only one OpenIDX implements.
+#
+# Other profiles (implicit, hybrid, form post, dynamic registration, FAPI 2.0,
+# front-channel logout, session management) are not run. They are added when
+# a customer needs one; see docs/OAUTH-OIDC.md.
+oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client] openidx-basic.json
+oidcc-config-certification-test-plan openidx-basic.json
+oidcc-rp-initiated-logout-certification-test-plan[response_type=code][client_registration=static_client] openidx-rp-logout.json
+oidcc-backchannel-rp-initiated-logout-certification-test-plan[response_type=code][client_registration=static_client] openidx-backchannel-logout.json

@@ -8,9 +8,9 @@
 > moment, not the tree. Kept because the commit-by-commit narrative is
 > occasionally useful archaeology.
 >
-> For what is true now: **[PROJECT-READINESS-GUIDE.md](./PROJECT-READINESS-GUIDE.md)**
-> (state and roadmap) and **[GETTING-STARTED.md](./GETTING-STARTED.md)**
-> (how to run it).
+> For what is true now: the **[maturity matrix](../README.md#feature-maturity)**
+> (state), **[ROADMAP.md](../ROADMAP.md)** (priorities) and
+> **[GETTING-STARTED.md](./GETTING-STARTED.md)** (how to run it).
 
 **Branch:** `claude/identity-service-crud-9Fvs5`
 **Last Updated:** 2026-01-17

@@ -816,8 +816,8 @@ This automatically approves all challenges after 2 seconds.
 
 For questions or issues:
 - GitHub Issues: https://github.com/mhmtgngr/openidx/issues
-- Documentation: https://docs.openidx.io
-- Email: support@openidx.io
+- GitHub Discussions: https://github.com/mhmtgngr/openidx/discussions
+- Documentation: https://mhmtgngr.github.io/openidx
 
 ---
 

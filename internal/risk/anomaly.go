@@ -561,6 +561,12 @@ func (s *Service) RemediateAccountLock(ctx context.Context, userID string) error
 }
 
 // RemediateRevokeSessions revokes all active sessions for a user.
+//
+// Nothing calls it today. It used to mark the session rows revoked and nothing
+// else, when the refresh grant read only the refresh token's own row and the
+// revoked_session marker; wired up as it was, it would have ended no device's
+// access. The user's refresh tokens are revoked first now, in the database,
+// including those bound to no session.
 func (s *Service) RemediateRevokeSessions(ctx context.Context, userID string) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -572,6 +578,9 @@ func (s *Service) RemediateRevokeSessions(ctx context.Context, userID string) er
 	if serr := sessionend.ForUser(ctx, s.db.Pool, org.ID, userID); serr != nil {
 		s.logger.Warn("auto-remediation: the sessions' relying parties will not be told",
 			zap.String("user_id", userID), zap.Error(serr))
+	}
+	if _, err := sessionend.RevokeUserRefreshTokens(ctx, s.db.Pool, org.ID, userID, ""); err != nil {
+		return fmt.Errorf("failed to revoke refresh tokens: %w", err)
 	}
 	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)`, userID, org.ID)

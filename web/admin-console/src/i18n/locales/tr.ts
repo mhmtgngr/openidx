@@ -472,6 +472,13 @@ const tr: typeof en = {
       qrCreateFailed: 'QR oturumu oluşturulamadı.',
       qrExpired: 'QR oturumunun süresi doldu. Lütfen tekrar deneyin.',
       consentFailed: 'Kararınız kaydedilemedi. Lütfen yeniden oturum açın.',
+      linkNeedsSecondFactor:
+        'Hesabınız ikinci bir faktör gerektiriyor ve oturum açma bağlantısı bunu isteyemez. Parolanızla oturum açın.',
+      linkNeedsEnrollment:
+        'Kuruluşunuz eklemediğiniz bir oturum açma yöntemini zorunlu kılıyor ve eklemek için tanınan süre doldu. Parolanız ve yöneticinin verdiği bir atlama koduyla oturum açın.',
+      linkRefusedRisk: 'Bu oturum açma bağlantısı buradan kullanılamaz. Parolanızla oturum açın.',
+      linkInvalid: 'Bu oturum açma bağlantısı geçersiz, süresi dolmuş veya kullanılmış. Yeni bir bağlantı isteyin.',
+      linkSessionExpired: 'Bu oturum açma isteğinin süresi doldu. Uygulamadan yeniden başlayın.',
     },
     resume: {
       checking: 'Mevcut oturumunuz denetleniyor…',
@@ -5774,7 +5781,6 @@ const tr: typeof en = {
           prompt_user: 'Kullanıcıya Sor',
         },
         bindToIp: 'Oturumları IP adresine bağla',
-        forceLogout: 'Parola değişiminde oturumları kapat',
       },
       geo: {
         title: 'Ülke Tabanlı Erişim Denetimi',

@@ -26,8 +26,9 @@ import (
 //
 // S3 itself works: a created backup is uploaded through S3Storage.Save, and a
 // restore falls back to S3Storage.Load when the file is not on disk. What was
-// untrue was the architecture, not the capability, so the document is corrected
-// rather than the code bent to match a design nobody adopted.
+// untrue was the architecture, not the capability, so the document was
+// corrected rather than the code bent to match a design nobody adopted. (#963
+// has since deleted that document, as stale.)
 
 // S3Storage stores backups in an S3-compatible bucket.
 type S3Storage struct {

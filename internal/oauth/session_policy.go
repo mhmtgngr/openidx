@@ -5,9 +5,11 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/syssettings"
-	"go.uber.org/zap"
 )
 
 // SessionPolicy defines the effective session policy for a client
@@ -17,7 +19,6 @@ type SessionPolicy struct {
 	RememberMeDuration        int    `json:"remember_me_duration"` // seconds
 	ReauthInterval            int    `json:"reauth_interval"`      // seconds, 0 = disabled
 	BindSessionToIP           bool   `json:"bind_session_to_ip"`
-	ForceLogoutOnPwdChange    bool   `json:"force_logout_on_password_change"`
 	MaxConcurrentSessions     int    `json:"max_concurrent_sessions"`     // 0 = unlimited
 	ConcurrentSessionStrategy string `json:"concurrent_session_strategy"` // deny_new, terminate_oldest, prompt_user
 }
@@ -30,7 +31,6 @@ func DefaultSessionPolicy() SessionPolicy {
 		RememberMeDuration:        2592000, // 30 days
 		ReauthInterval:            0,       // disabled
 		BindSessionToIP:           false,
-		ForceLogoutOnPwdChange:    true,
 		MaxConcurrentSessions:     0, // unlimited
 		ConcurrentSessionStrategy: "deny_new",
 	}
@@ -65,7 +65,6 @@ func (s *Service) getEffectiveSessionPolicy(ctx context.Context, clientID string
 			policy.ReauthInterval = sec.ReauthInterval
 		}
 		policy.BindSessionToIP = sec.BindSessionToIP
-		policy.ForceLogoutOnPwdChange = sec.ForceLogoutOnPwdChange
 		if sec.MaxConcurrentSessions > 0 {
 			policy.MaxConcurrentSessions = sec.MaxConcurrentSessions
 		}
@@ -118,8 +117,26 @@ func (s *Service) getEffectiveSessionPolicy(ctx context.Context, clientID string
 	return policy
 }
 
-// revokeSessionWithRedis marks a session as revoked in both DB and Redis
+// revokeSessionWithRedis ends one session: the refresh tokens bound to it are
+// revoked, the row is marked revoked, the revoked_session marker is published
+// and the relying parties the session reached are told. The expiry and
+// inactivity sweeps, the concurrent-session eviction, force-login,
+// /oauth/logout, logout-all and the SSF receiver all end sessions here.
 func (s *Service) revokeSessionWithRedis(ctx context.Context, sessionID string) error {
+	// What the session can still mint ends first, in the database. This used
+	// to mark the row and write the marker, and leave the refresh tokens as
+	// they were. The refresh grant did not read the row then, and the marker
+	// lives 25 hours, so a device that came back after a day refreshed as if
+	// the session had never ended; a native client keeps its refresh token
+	// for 14 to 30 days. The grant now also checks the row (sessionIsLive);
+	// the tokens are revoked here all the same, so the record says what
+	// happened. If they cannot be revoked the row is left live, so the sweep
+	// that called this tries again on its next tick rather than recording an
+	// end that did not happen.
+	if _, err := s.revokeSessionRefreshTokens(ctx, sessionID); err != nil {
+		return err
+	}
+
 	// Mark in database
 	_, err := s.db.Pool.Exec(ctx,
 		//orgscope:ignore revokes by globally-unique session id; reachable from the cross-org background session sweep
@@ -129,7 +146,10 @@ func (s *Service) revokeSessionWithRedis(ctx context.Context, sessionID string) 
 		return err
 	}
 
-	// Add to Redis revocation set (TTL = 25 hours to cover absolute timeout + buffer)
+	// Add to Redis revocation set (TTL = 25 hours to cover absolute timeout +
+	// buffer). The rows above are what hold after it expires; while it lives
+	// it also stops a refresh that was already in flight when they were
+	// revoked.
 	s.redis.RevocationDB().Set(ctx, "revoked_session:"+sessionID, "1", 25*time.Hour)
 
 	s.logger.Info("Session revoked", zap.String("session_id", sessionID))
@@ -138,4 +158,55 @@ func (s *Service) revokeSessionWithRedis(ctx context.Context, sessionID string) 
 	// this is the one place a session stops being live (backchannel_logout.go).
 	s.notifyBackchannelLogout(sessionID)
 	return nil
+}
+
+// sessionIsLive reports whether sessionID names a session of the request's
+// organization whose row exists, is not revoked and has not expired. The
+// refresh grant asks it of every token bound to a session.
+//
+// The paths that end a session revoke the refresh tokens bound to it, and the
+// marker in Redis stands in front of that. Neither covers a session that ended
+// before those paths revoked anything -- its marker expired long ago -- nor a
+// session that ended in a way nobody wrote down, like reaching its expiry
+// between two sweeps, nor a future path that forgets. The session row is the
+// record all of them share, so the grant reads it.
+//
+// An id that is not a UUID cannot name a session row: not live, and no query.
+// An error means the question could not be answered, and the caller mints
+// nothing.
+func (s *Service) sessionIsLive(ctx context.Context, sessionID string) (bool, error) {
+	if _, err := uuid.Parse(sessionID); err != nil {
+		return false, nil
+	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
+	var live bool
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM sessions
+			 WHERE id = $1::uuid AND org_id = $2
+			   AND COALESCE(revoked, false) = false AND expires_at > NOW())`,
+		sessionID, org.ID).Scan(&live)
+	if err != nil {
+		return false, err
+	}
+	return live, nil
+}
+
+// revokeSessionRefreshTokens revokes, in the database, every refresh token
+// bound to sessionID, and reports how many. Keyed by the globally-unique
+// session id alone, like the row update in revokeSessionWithRedis, because the
+// sweeps that end sessions run across every organization with no tenant on the
+// context. A request's context still carries its tenant's scope.
+func (s *Service) revokeSessionRefreshTokens(ctx context.Context, sessionID string) (int64, error) {
+	tag, err := s.db.Pool.Exec(ctx,
+		//orgscope:ignore revokes by globally-unique session id; reachable from the cross-org background session sweep
+		`UPDATE oauth_refresh_tokens SET revoked_at = NOW() WHERE session_id = $1 AND revoked_at IS NULL`,
+		sessionID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }

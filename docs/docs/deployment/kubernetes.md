@@ -41,9 +41,10 @@ The install itself bootstraps the platform: a post-install/pre-upgrade
 hook Job runs the database migrations (`helm install` waits for it to
 complete — if the install errors, inspect it with
 `kubectl -n openidx logs job/openidx-migrate`), and the chart deploys
-OPA for the policy engine — load your policies into the ConfigMap named
-by `opa.policyConfigMap`, because governance fails closed while OPA has
-no policies.
+OPA with the policy it ships, or with the ConfigMap `opa.policyConfigMap`
+names. The services consult OPA only when `ENABLE_OPA_AUTHZ=true`, which
+is off by default and not ready to turn on yet
+([#980](https://github.com/mhmtgngr/openidx/issues/980)).
 
 ## Configuration
 

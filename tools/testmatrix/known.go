@@ -21,6 +21,12 @@ var elsewhere = map[string]string{
 		`passes -tags=integration and brings up Postgres, Redis and ` +
 		`Elasticsearch first.`,
 
+	"test/interop/saml": `Run by the "SAML interop (SimpleSAMLphp, Keycloak)" ` +
+		`job in saml-interop.yml, which is the only one that can: the suite ` +
+		`drives a running oauth-service against SimpleSAMLphp and Keycloak ` +
+		`containers, and its files are behind the "samlinterop" build tag, so ` +
+		`the unit matrix would compile zero tests and report success.`,
+
 	// cmd/rekey WAS here, with the reason that its only test file sat behind
 	// the "integration" build tag while the package sat under the matrix's
 	// ./cmd/... entry -- so the entry looked like coverage and compiled zero

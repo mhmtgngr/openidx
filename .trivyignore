@@ -1,8 +1,8 @@
 # Trivy ignore list.
 #
 # Trivy blocks on CRITICAL/HIGH with fixes available (decision D2 in
-# docs/PROJECT-READINESS-GUIDE.md). Everything unfixed upstream is already
-# excluded by `ignore-unfixed`, so an entry here is a claim that a FIXED
+# docs/archive/PROJECT-READINESS-GUIDE.md). Everything unfixed upstream is
+# already excluded by `ignore-unfixed`, so an entry here is a claim that a FIXED
 # vulnerability does not apply to this repository — which needs a reason a
 # reviewer can check, and a way out.
 #

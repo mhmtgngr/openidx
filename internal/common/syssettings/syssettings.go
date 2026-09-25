@@ -72,7 +72,6 @@ type Security struct {
 	RememberMeDuration        int    `json:"remember_me_duration"` // seconds
 	ReauthInterval            int    `json:"reauth_interval"`      // seconds, 0 = unset
 	BindSessionToIP           bool   `json:"bind_session_to_ip"`
-	ForceLogoutOnPwdChange    bool   `json:"force_logout_on_password_change"`
 	MaxConcurrentSessions     int    `json:"max_concurrent_sessions"`
 	ConcurrentSessionStrategy string `json:"concurrent_session_strategy"`
 }

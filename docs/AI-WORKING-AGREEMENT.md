@@ -29,8 +29,9 @@ The Go services live under `cmd/` and `internal/`, and the React console under
   current milestone needs the maintainer's go-ahead. The current milestone is
   **M1 "Trusted Core"**, which means **no new features**: only hardening,
   verification, secure defaults and fixes.
-- **Frozen:** the global-scale / cell-architecture programme under
-  `docs/plans/`. Do not extend it until the maintainer lifts the freeze.
+- **Frozen:** the global-scale / cell-architecture programme, whose plans are
+  archived under `docs/archive/`. Do not extend it until the maintainer lifts
+  the freeze.
 
 ## 2. Security-critical code needs human approval
 
@@ -79,8 +80,8 @@ A change is done only when all of the following hold:
 ## 4. Keep the repository clean
 
 - **No session logs in the repository.** Do not append progress narratives,
-  "windows" or "lessons" to `CHANGELOG.md`,
-  `docs/PROJECT-READINESS-GUIDE.md` or plan documents. Progress belongs in the
+  "windows" or "lessons" to `CHANGELOG.md`, plan documents or anything under
+  `docs/archive/`, which holds dated records only. Progress belongs in the
   PR description and the GitHub issue. A CHANGELOG entry is one or two
   user-facing lines.
 - **One topic per PR,** small enough for one human review.

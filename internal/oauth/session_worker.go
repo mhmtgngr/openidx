@@ -62,6 +62,23 @@ func (s *Service) processExpiredSessions(ctx context.Context) {
 		}
 	}
 
+	// Phase 1b: the absolute timeout, counted from sign-in. expires_at is not
+	// that bound: the refresh grant's activity update pushes it forward on
+	// every refresh, so it measures how long a session has been left alone.
+	// The Security tab's absolute timeout was shown and read by nothing; while
+	// that activity update was lost, the 24 hours every session is created
+	// with happened to stand in for it.
+	if policy.AbsoluteTimeout > 0 {
+		cutoff := time.Now().Add(-time.Duration(policy.AbsoluteTimeout) * time.Second)
+		s.revokeSessionsWhere(ctx, "absolute timeout",
+			//orgscope:ignore background ticker sweeping sessions past the absolute timeout across all orgs; no request/tenant context
+			`SELECT id FROM sessions
+			WHERE (revoked IS NULL OR revoked = false)
+			AND started_at <= $1
+			LIMIT 500
+		`, cutoff)
+	}
+
 	// Phase 2: Revoke sessions that have been idle too long (based on global policy)
 	if policy.IdleTimeout > 0 {
 		idleCutoff := time.Now().Add(-time.Duration(policy.IdleTimeout) * time.Second)
@@ -104,4 +121,34 @@ func (s *Service) processExpiredSessions(ctx context.Context) {
 
 	// Phase 4: Clean up stale Redis revocation keys for sessions that are already old
 	// Redis TTL handles this automatically via the 25-hour expiry set in revokeSessionWithRedis
+}
+
+// revokeSessionsWhere ends every session the query selects (one id column),
+// through the same funnel as the other phases, and logs how many.
+func (s *Service) revokeSessionsWhere(ctx context.Context, why, query string, args ...interface{}) {
+	rows, err := s.db.Pool.Query(ctx, query, args...)
+	if err != nil {
+		s.logger.Error("Failed to query sessions to end", zap.String("reason", why), zap.Error(err))
+		return
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	ended := 0
+	for _, id := range ids {
+		if err := s.revokeSessionWithRedis(ctx, id); err != nil {
+			s.logger.Error("Failed to end session", zap.String("reason", why),
+				zap.String("session_id", id), zap.Error(err))
+			continue
+		}
+		ended++
+	}
+	if ended > 0 {
+		s.logger.Info("Ended sessions", zap.String("reason", why), zap.Int("count", ended))
+	}
 }

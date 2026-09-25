@@ -4,8 +4,8 @@ This directory mixes two very different kinds of writing, and telling them
 apart matters:
 
 - **Product documentation** — written for people running or evaluating
-  OpenIDX. Kept current; if one of these contradicts the code, that is a
-  bug ([PROJECT-READINESS-GUIDE.md §7](./PROJECT-READINESS-GUIDE.md)).
+  OpenIDX. Kept current; if one of these contradicts the code or the
+  [maturity matrix](../README.md#feature-maturity), that is a bug.
 - **Engineering artifacts** — design documents, implementation plans,
   audits and reviews written *for contributors at a point in time*. They
   describe the thinking, not necessarily the current behavior. Nothing in
@@ -26,8 +26,8 @@ front door; this directory is the full depth behind it.
 | [USER_GUIDE.md](./USER_GUIDE.md) | End-user walkthrough of the portal and console |
 | [docs/deployment/operator-guide.md](./docs/deployment/operator-guide.md) | **The condensed operator manual**: install paths, the secrets and the production gate, what is enforced and how to check it, upgrade and rollback, the scale knobs in order, backup and drills, alerts, the recurring controls, and what is not done |
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Production deployment reference |
-| [PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md) | Deploy-side readiness view |
-| [PROJECT-READINESS-GUIDE.md](./PROJECT-READINESS-GUIDE.md) | User-perspective readiness: mental model, journey scorecard, P0–P4 program, recurring controls |
+| [MATURITY.md](./MATURITY.md) | What GA, Beta and Experimental mean; the per-feature matrix is in the [README](../README.md#feature-maturity) |
+| [../ROADMAP.md](../ROADMAP.md) | The one source of priorities: milestones, and what is on hold |
 | [RELEASING.md](./RELEASING.md) | How releases are cut |
 | [disaster-recovery.md](./disaster-recovery.md) | Backup/restore and DR drills |
 
@@ -40,6 +40,7 @@ front door; this directory is the full depth behind it.
 | [THREAT-MODEL.md](./THREAT-MODEL.md) | Trust boundaries, per-component STRIDE, residual risks R1–R8 |
 | [COMPLIANCE-CONTROL-MAPPING.md](./COMPLIANCE-CONTROL-MAPPING.md) | SOC 2 / ISO 27001:2022 → capability → evidence |
 | [OPENBAO_KEK.md](./OPENBAO_KEK.md) | Vault KEKs from OpenBao instead of env |
+| [security/pentest-scope.md](./security/pentest-scope.md) | Scope for the independent penetration test, and the steps to apply for the OpenSSF Best Practices badge |
 
 ## Concepts & architecture (product docs)
 
@@ -48,15 +49,13 @@ conceptual doc — how the pillars share one spine),
 [how-network-access-works.md](./how-network-access-works.md),
 [zero-trust-architecture.md](./zero-trust-architecture.md),
 [OPENIDX_ZITI_ARCHITECTURE.md](./OPENIDX_ZITI_ARCHITECTURE.md),
-[OPENIDX_CLIENTLESS_EDGE_ARCHITECTURE.md](./OPENIDX_CLIENTLESS_EDGE_ARCHITECTURE.md),
-[v2-multitenancy-design.md](./v2-multitenancy-design.md).
+[OPENIDX_CLIENTLESS_EDGE_ARCHITECTURE.md](./OPENIDX_CLIENTLESS_EDGE_ARCHITECTURE.md).
 
 ## Feature & integration guides (product docs)
 
 Identity/OAuth: [OAUTH-OIDC.md](./OAUTH-OIDC.md),
 [TOKEN_EXCHANGE_AND_DCR.md](./TOKEN_EXCHANGE_AND_DCR.md),
 [MFA_IMPLEMENTATION_GUIDE.md](./MFA_IMPLEMENTATION_GUIDE.md),
-[PASSWORDLESS_AND_PUSH_MFA_IMPLEMENTATION.md](./PASSWORDLESS_AND_PUSH_MFA_IMPLEMENTATION.md),
 [windows/mfa-without-a-phone.md](./windows/mfa-without-a-phone.md).
 Provisioning: [SCIM.md](./SCIM.md), [OUTBOUND_SCIM.md](./OUTBOUND_SCIM.md),
 [HR_DRIVEN_JML.md](./HR_DRIVEN_JML.md), [SSF_CAEP.md](./SSF_CAEP.md).
@@ -107,6 +106,9 @@ any *what* against the code before relying on it.
   lives here), [access-model-redesign.md](./access-model-redesign.md),
   [access-and-login-convergence-design.md](./access-and-login-convergence-design.md),
   [architecture/](./architecture/) (per-topic design notes and reviews),
+  [v2-multitenancy-design.md](./v2-multitenancy-design.md) (the June 2026
+  multi-tenancy design; what shipped is in
+  [SECURITY-TENANCY.md](./SECURITY-TENANCY.md)),
   [IMPLEMENTATION_PLAN_PARALLEL.md](./IMPLEMENTATION_PLAN_PARALLEL.md),
   [selfheal/](./selfheal/) (self-heal loop design + runbook),
   [ux-audit/](./ux-audit/) (admin-console UX audit and UI roadmap).
@@ -122,13 +124,30 @@ any *what* against the code before relying on it.
 
 ## Historical (superseded — kept for context, bannered)
 
-[PROJECT-STATUS.md](./PROJECT-STATUS.md),
 [FEATURE_PRIORITY_PLAN.md](./FEATURE_PRIORITY_PLAN.md),
 [DEV-BRANCH-SUMMARY.md](./DEV-BRANCH-SUMMARY.md) (a January 2026 branch
 snapshot),
 [IMPLEMENTATION_PLAN_PARALLEL.md](./IMPLEMENTATION_PLAN_PARALLEL.md) (the
 July 2026 parallelisation board) — all carry banners pointing at the
 current docs.
+
+## Archive (dated records, not maintained)
+
+[archive/](./archive/) holds session-log documents. Each starts with a
+one-line note giving its date. Nothing is added to them.
+
+- [PROJECT-READINESS-GUIDE.md](./archive/PROJECT-READINESS-GUIDE.md): the
+  readiness programme, 2026-09-01 to 2026-09-24. The state of each feature
+  is now the [maturity matrix](../README.md#feature-maturity), and the
+  recurring controls are in [evidence/](./evidence/).
+- [2026-09-13-global-scale-cell-architecture-plan.md](./archive/2026-09-13-global-scale-cell-architecture-plan.md)
+  and [2026-09-13-global-scale-roadmap.md](./archive/2026-09-13-global-scale-roadmap.md)
+  (in Turkish): the global-scale programme, frozen by
+  [ADR 0001](./adr/0001-product-focus-and-trusted-core.md). Its design stays
+  in [architecture/](./architecture/).
+- [PASSWORDLESS_AND_PUSH_MFA_IMPLEMENTATION.md](./archive/PASSWORDLESS_AND_PUSH_MFA_IMPLEMENTATION.md):
+  the January 2026 implementation report. The current guide is
+  [MFA_IMPLEMENTATION_GUIDE.md](./MFA_IMPLEMENTATION_GUIDE.md).
 
 ## Türkçe / Turkish-language docs
 

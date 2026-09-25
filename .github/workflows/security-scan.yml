@@ -39,9 +39,9 @@ env:
   IMAGE_PREFIX: ghcr.io/mhmtgngr/openidx
   TRIVY_SEVERITY: 'CRITICAL,HIGH'
   # A scanner that cannot fail the run is a report, not a gate (decision D2 in
-  # docs/PROJECT-READINESS-GUIDE.md). This was '0' under the comment "Don't fail
-  # on nightly scans", which is backwards: going red is the entire purpose of a
-  # nightly scan.
+  # docs/archive/PROJECT-READINESS-GUIDE.md). This was '0' under the comment
+  # "Don't fail on nightly scans", which is backwards: going red is the entire
+  # purpose of a nightly scan.
   TRIVY_EXIT_CODE: '1'
   # Unfixed vulnerabilities are ignored, deliberately. A CRITICAL with no
   # upstream patch is not something a pull request can act on, and a gate that

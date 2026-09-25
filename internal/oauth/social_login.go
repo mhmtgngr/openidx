@@ -74,7 +74,9 @@ func (s *Service) RegisterSocialLoginRoutes(router *gin.Engine) {
 	social := router.Group("/oauth/social")
 	{
 		social.GET("/:provider_id", s.handleSocialLoginInit)
-		social.GET("/callback", s.handleSocialLoginCallback)
+		// noStore: without a login_session the callback answers with an
+		// access and ID token in the body (generateTokensForUser).
+		social.GET("/callback", noStore, s.handleSocialLoginCallback)
 	}
 }
 

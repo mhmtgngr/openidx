@@ -505,6 +505,18 @@ func (s *Service) handleMagicLinkVerify(c *gin.Context) {
 		return
 	}
 
+	// A magic link proves the mailbox, and nothing else: it is one factor, and
+	// this redirect cannot ask for a second. So it signs in only a user whom
+	// the password login would let in without one (evaluateMFA, the same
+	// decision). A user it would challenge or refuse goes back to the login
+	// page for the same pending request, to sign in with their password and
+	// second factor. The link is spent either way.
+	if reason := s.magicLinkNeedsMore(c, userID, clientIP, userAgent); reason != "" {
+		back := url.Values{"login_session": {loginSession}, "error": {reason}}
+		c.Redirect(302, "/login?"+back.Encode())
+		return
+	}
+
 	// Create a session for this login
 	session, sessionErr := s.identityService.CreateSession(ctx, userID, oauthParams["client_id"], clientIP, userAgent, 24*time.Hour)
 	if sessionErr != nil {
@@ -569,6 +581,40 @@ func (s *Service) handleMagicLinkVerify(c *gin.Context) {
 	}()
 
 	c.Redirect(302, redirectURL.String())
+}
+
+// magicLinkNeedsMore reports why a magic link cannot complete this sign-in on
+// its own, or "" when it can. It asks evaluateMFA, the password login's
+// decision, so the two cannot disagree: a user the password login would
+// challenge (a second factor enrolled, a policy, or risk), refuse under an MFA
+// policy, or deny outright is refused here, and the refusal is audited. It
+// fails closed: a user who cannot be loaded is refused.
+func (s *Service) magicLinkNeedsMore(c *gin.Context, userID, clientIP, userAgent string) string {
+	ctx := c.Request.Context()
+	user, err := s.identityService.GetUser(ctx, userID)
+	if err != nil || user == nil {
+		s.logger.Warn("Magic link user could not be loaded; refusing the link", zap.Error(err))
+		return "invalid_magic_link"
+	}
+	ev := s.evaluateMFA(ctx, user, clientIP, userAgent, "", "", false, 0, nil)
+	if ev.GraceBegan {
+		s.auditMFAGrace(ctx, user.ID, clientIP, "mfa_grace_started", "success", ev)
+	}
+	reason := ""
+	switch {
+	case ev.EnrollmentRequired:
+		reason = "mfa_enrollment_required"
+	case ev.Challenge:
+		reason = "mfa_required"
+	case ev.DenyAccess:
+		reason = "high_risk_login"
+	default:
+		return ""
+	}
+	s.logAuditEvent(ctx, "authentication", "security", "magic_link_login", "failure",
+		user.ID, clientIP, user.ID, "user",
+		map[string]interface{}{"method": "magic_link", "reason": reason})
+	return reason
 }
 
 // handleQRLoginCreate creates a QR login session for mobile-to-desktop authentication.

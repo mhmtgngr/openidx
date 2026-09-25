@@ -143,6 +143,7 @@ func bclSetup(t *testing.T) (*Service, *database.PostgresDB, *outcomeBox) {
 			session_id UUID,
 			expires_at TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ DEFAULT NOW(),
+			revoked_at TIMESTAMPTZ,
 			org_id UUID NOT NULL
 		)`,
 	} {
