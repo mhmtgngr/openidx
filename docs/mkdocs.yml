@@ -139,6 +139,9 @@ nav:
           - Security Advisories:
               - OPENIDX-2026-001 — Ending a session did not revoke its refresh tokens: guides/security/advisories/OPENIDX-2026-001.md
               - OPENIDX-2026-002 — MFA policies did not enforce their methods: guides/security/advisories/OPENIDX-2026-002.md
+              - OPENIDX-2026-003 — A sign-in link skipped the second factor: guides/security/advisories/OPENIDX-2026-003.md
+              - OPENIDX-2026-004 — Refresh tokens survived password changes and other session ends: guides/security/advisories/OPENIDX-2026-004.md
+              - OPENIDX-2026-005 — Force-login ended any session whose id it was sent: guides/security/advisories/OPENIDX-2026-005.md
       - Identity:
           - OAuth 2.0 & OpenID Connect Provider - OpenIDX: guides/OAUTH-OIDC.md
           - Token Exchange (RFC 8693) & Dynamic Client Registration (RFC 7591/7592): guides/TOKEN_EXCHANGE_AND_DCR.md

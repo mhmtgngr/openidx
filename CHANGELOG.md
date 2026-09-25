@@ -120,6 +120,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   v1.36.0; the change is the #990 entry under Changed. A policy's required
   methods are now enforced, with a grace period. Upgrading clears the stored
   methods, so set them again.
+- **OPENIDX-2026-003, High (CVSS 7.4): a sign-in link skipped the second
+  factor** ([advisory](docs/security/advisories/OPENIDX-2026-003.md),
+  [#1007](https://github.com/mhmtgngr/openidx/pull/1007)). Affects v1.28.0 to
+  v1.36.0; the fix is the entry "A sign-in link no longer skips the second
+  factor" in this section.
+- **OPENIDX-2026-004, High (CVSS 7.4): refresh tokens survived password
+  changes and the other ways a session ends**
+  ([advisory](docs/security/advisories/OPENIDX-2026-004.md),
+  [#1008](https://github.com/mhmtgngr/openidx/pull/1008)). Affects v1.0.0 to
+  v1.36.0; the fix is the entry "An ended session's refresh tokens stop
+  working" in this section. Sessions ended before the upgrade are refused
+  without a migration, but a password change made before it ended no session,
+  and the advisory says how to end them.
+- **OPENIDX-2026-005, Low (CVSS 3.7): `POST /oauth/force-login` ended any
+  session whose id it was sent**
+  ([advisory](docs/security/advisories/OPENIDX-2026-005.md),
+  [#1008](https://github.com/mhmtgngr/openidx/pull/1008)). Affects v1.0.0 to
+  v1.36.0; the fix is part of the same entry as OPENIDX-2026-004's.
 - **A tenant may mint at most 100 device-enrolment tokens an hour.** Three
   handlers mint `agent_enrollment_tokens` rows — the admin token endpoint,
   the Android QR and the onboarding wizard's session — and none asked how
