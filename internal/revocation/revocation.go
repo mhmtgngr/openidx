@@ -106,7 +106,10 @@ func ParseMarker(v string) (int64, error) {
 // something an operator needs in the record.
 func RevokeUserTokens(ctx context.Context, client redis.UniversalClient, userID string) error {
 	if noClient(client) {
-		return fmt.Errorf("no redis client: cannot revoke tokens for user %s", userID)
+		// The error does not name the user. Callers log it with the user's id
+		// already attached, and an id copied into error text would reach the
+		// log without the cleaning that field gets.
+		return errors.New("no redis client: cannot revoke the user's tokens")
 	}
 	return client.Set(ctx, UserTokensRevokedAtKey(userID), MarkerValue(time.Now()), MarkerTTL).Err()
 }
