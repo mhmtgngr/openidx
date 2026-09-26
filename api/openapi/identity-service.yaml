@@ -830,6 +830,14 @@ paths:
     post:
       tags: [MFA - TOTP]
       summary: Verify TOTP code
+      description: |
+        Verifies a code against the caller's enrolled TOTP credential. A code
+        is accepted once: the credential records the time step of each code it
+        accepts, and a code for that step or an earlier one answers
+        `{"valid": false}`, as a wrong code does. The code that confirmed the
+        enrollment counts as used. Five wrong codes lock the credential for
+        fifteen minutes, and no code is accepted while it is locked, including
+        one that arrives as wrong codes sent with it lock it.
       operationId: verifyTOTP
       requestBody:
         required: true
@@ -843,9 +851,16 @@ paths:
                   type: string
       responses:
         '200':
-          description: Code valid
+          description: '`{"valid": true}` for a code accepted now; `{"valid": false}` for a wrong code or one already used'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
         '401':
-          description: Code invalid
+          description: Not authenticated
 
   /api/v1/identity/mfa/totp/status:
     get:
@@ -2904,6 +2919,13 @@ paths:
     post:
       tags: [MFA]
       summary: Verify hardware token
+      description: |
+        Verifies `otp` against the hardware token assigned to the caller. A
+        code is accepted once (`{"valid": false}` the second time). Five wrong
+        codes lock the token for fifteen minutes; while it is locked every
+        code, including one that arrives as wrong codes sent with it lock it,
+        answers 400 with `too many failed hardware token attempts; try again
+        later`.
       operationId: verifyHardwareToken
       x-openidx-handler: internal/identity.(*Service).handleVerifyHardwareToken
       requestBody:

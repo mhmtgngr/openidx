@@ -143,6 +143,7 @@ Each subsection: what can go wrong → what the code does about it.
 |---|---|---|
 | Spoofing | Credential stuffing, password spraying | Argon2id (bcrypt verified for legacy hashes) via `internal/common/pwhash`; rate limiting; login-anomaly detection; risk scoring adds **+70** when the source IP is on a configured threat list (`internal/risk/service.go` factor `ip_threat_list`), pushing straight past the MFA step-up threshold (≥ 70, `internal/oauth/mfa_policy.go`) |
 | Spoofing | Phishing OTPs | WebAuthn/FIDO2 (origin-bound, unphishable) as first-class factor; push MFA with anti-phishing number |
+| Spoofing | A TOTP code that was seen or relayed (over a shoulder, in a proxy log, by a phishing page) used again inside its window | A TOTP code is accepted once. Each credential records the time step it last accepted (`mfa_totp.last_step`, migration v207), and `VerifyTOTP` accepts a code only for a later step, in the `UPDATE` that records it, so two requests carrying one code admit one. The same write re-checks the lockout (five wrong codes, fifteen minutes), so guesses sent together cannot outrun it: a right code that arrives as concurrent failures lock the factor is refused. Sign-in, step-up (and so the step-up gate at PAM launch) and the self-service routes all verify through it; enrollment records the step of its confirming code. A hardware token's TOTP and HOTP codes are spent, and its lockout re-checked, the same way through its counter (`internal/identity/totp_replay_testdb_test.go`, `internal/oauth/totp_replay_testdb_test.go`, `internal/identity/lockout_race_testdb_test.go`) |
 | Spoofing | Seeded default admin (`admin` / documented password) left in place | **Startup gate**: in production, identity and oauth refuse to boot while the seeded admin (fixed UUID, migration v10) still matches the shipped hash and is enabled — `internal/identity/default_admin_gate.go`, called from both `cmd/identity-service` and `cmd/oauth-service` |
 | Tampering | Forged tokens | RS256 asymmetric signing, keys published via JWKS; services verify, never share the private key |
 | Tampering | A signed-in user who is not an administrator, or a credential that holds no role, rewrites the organization's OAuth clients (redirect URIs, secret, `api_access`), SAML service providers or SSF streams | The oauth-service's management APIs need the `admin` or `super_admin` role behind their authentication (`requireAdminRole`, `internal/oauth/service.go`); `internal/oauth/management_admin_gate_testdb_test.go` drives every route through the real route table. Dynamic client registration is opened by the initial access token instead and cannot set `api_access` |
@@ -152,7 +153,8 @@ Each subsection: what can go wrong → what the code does about it.
 
 Evidence: `internal/identity/`, `internal/oauth/`, `internal/risk/`
 (`scorer_ip_threat_test.go`), `internal/identity/default_admin_gate_test.go`,
-`internal/identity/webauthn_session_store_test.go`.
+`internal/identity/webauthn_session_store_test.go`,
+`internal/identity/totp_replay_testdb_test.go`.
 
 ### 4.2 Sessions and revocation
 

@@ -17,7 +17,7 @@ import (
 
 // TOTP verification had no attempt limit at all.
 //
-// A TOTP code is six digits and validateTOTPWithSkew accepts a ±1 step window,
+// A TOTP code is six digits and totpStepOf accepts a ±1 step window,
 // so roughly 3 of 10^6 values are valid at any instant. Against an endpoint
 // that never says no, an attacker expects a hit within the low hundreds of
 // thousands of requests — minutes of traffic. The second factor is only a
@@ -36,6 +36,7 @@ CREATE TABLE mfa_totp (
     failed_attempts INTEGER NOT NULL DEFAULT 0,
     last_failed_at  TIMESTAMPTZ,
     locked_until    TIMESTAMPTZ,
+    last_step       BIGINT NOT NULL DEFAULT 0,
     org_id          UUID NOT NULL
 );`
 
@@ -165,7 +166,13 @@ func TestVerifyTOTPLocksAfterRepeatedFailures(t *testing.T) {
 			totpUser, totpOrg); err != nil {
 			t.Fatalf("expire lock: %v", err)
 		}
-		ok, err := s.VerifyTOTP(ctx, totpUser, currentTOTP(t, secret))
+		// The next step's code: the current one was accepted above, and a
+		// code is accepted once.
+		next, err := totp.GenerateCode(secret, time.Now().UTC().Add(totpPeriod*time.Second))
+		if err != nil {
+			t.Fatalf("generate the next code: %v", err)
+		}
+		ok, err := s.VerifyTOTP(ctx, totpUser, next)
 		if err != nil {
 			t.Fatalf("verify after lock expiry: %v", err)
 		}

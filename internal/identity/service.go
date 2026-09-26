@@ -2373,32 +2373,53 @@ func (s *Service) GenerateTOTPSecret(ctx context.Context, userID string) (*TOTPE
 	}, nil
 }
 
-// validateTOTPWithSkew validates a TOTP code allowing a +/- 1 period (30s)
-// clock-skew window, matching what Google/Microsoft Authenticator and most
-// verifiers accept. The default totp.Validate uses skew=0, so a user whose
-// phone clock drifts by even a few seconds across a period boundary gets a
-// spurious "invalid code" during enrollment/verification. Skew=1 fixes the most
-// common "my code doesn't work" failure without meaningfully weakening the OTP.
-func validateTOTPWithSkew(code, secret string) bool {
+// totpPeriod is the length of one TOTP time step, in seconds, for every
+// credential this service enrolls.
+const totpPeriod = 30
+
+// totpCodeOpts are the parameters every enrolled authenticator was given.
+var totpCodeOpts = totp.ValidateOpts{
+	Period:    totpPeriod,
+	Digits:    otp.DigitsSix,
+	Algorithm: otp.AlgorithmSHA1,
+}
+
+// totpStepOf reports which time step a TOTP code belongs to, within a +/- 1
+// period (30s) clock-skew window, matching what Google/Microsoft Authenticator
+// and most verifiers accept. A window of the current step alone gives a user
+// whose phone clock drifts by a few seconds across a boundary a spurious
+// "invalid code"; one step either side fixes that without meaningfully
+// weakening the OTP.
+//
+// The step, and not only a yes, is what the verifiers need: a code is accepted
+// once, for a step later than the last one its credential accepted (RFC 6238
+// section 5.2). The latest matching step is returned, so a code that happens to
+// be valid for two steps counts as the later.
+func totpStepOf(code, secret string, now time.Time) (int64, bool) {
 	code = strings.TrimSpace(code)
-	valid, err := totp.ValidateCustom(code, secret, time.Now().UTC(), totp.ValidateOpts{
-		Period:    30,
-		Skew:      1,
-		Digits:    otp.DigitsSix,
-		Algorithm: otp.AlgorithmSHA1,
-	})
-	if err != nil {
-		return false
+	if len(code) != totpCodeOpts.Digits.Length() {
+		return 0, false
 	}
-	return valid
+	current := now.Unix() / totpPeriod
+	for step := current + 1; step >= current-1; step-- {
+		want, err := totp.GenerateCodeCustom(secret, time.Unix(step*totpPeriod, 0).UTC(), totpCodeOpts)
+		if err != nil {
+			return 0, false
+		}
+		if subtle.ConstantTimeCompare([]byte(want), []byte(code)) == 1 {
+			return step, true
+		}
+	}
+	return 0, false
 }
 
 // EnrollTOTP enrolls a user with TOTP MFA after verification
 func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCode string) error {
 	s.logger.Info("Enrolling TOTP for user", zap.String("user_id", userID))
 
-	// Verify the code first
-	valid := validateTOTPWithSkew(verificationCode, secret)
+	// Verify the code first. Its step is stored with the credential, so the
+	// code that confirmed the enrollment cannot then sign in.
+	step, valid := totpStepOf(verificationCode, secret, time.Now())
 	if !valid {
 		return fmt.Errorf("invalid TOTP verification code")
 	}
@@ -2430,9 +2451,9 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCo
 
 	// Insert TOTP record
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO mfa_totp (id, user_id, secret, enabled, enrolled_at, created_at, updated_at, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, totpID, userID, secret, true, now, now, now, org.ID); err != nil {
+		INSERT INTO mfa_totp (id, user_id, secret, enabled, enrolled_at, created_at, updated_at, org_id, last_step)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, totpID, userID, secret, true, now, now, now, org.ID, step); err != nil {
 		return fmt.Errorf("failed to enroll TOTP: %w", err)
 	}
 
@@ -2485,26 +2506,60 @@ func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, er
 		return false, ErrTOTPLockedOut
 	}
 
-	if validateTOTPWithSkew(code, secret) {
-		// Success clears the counter and the lock in one statement.
-		if _, err := s.db.Pool.Exec(ctx, `
-			UPDATE mfa_totp
-			SET last_used_at = NOW(), updated_at = NOW(),
-			    failed_attempts = 0, last_failed_at = NULL, locked_until = NULL
-			WHERE user_id = $1 AND org_id = $2
-		`, userID, org.ID); err != nil {
-			s.logger.Warn("Failed to update TOTP state after success", zap.Error(err))
-		}
-		return true, nil
+	step, ok := totpStepOf(code, secret, time.Now())
+	if !ok {
+		s.recordFailedTOTP(ctx, userID, org.ID)
+		return false, nil
 	}
 
-	s.recordFailedTOTP(ctx, userID, org.ID)
+	// Accept the code by recording its step, and only for a step later than the
+	// last one this credential accepted.
+	//
+	// A code is valid for about 90 seconds (its step and one either side), and
+	// this used to accept it for all of them: last_used_at was written and never
+	// read, so the code a user had just signed in with -- seen over a shoulder,
+	// in a proxy log, or relayed by a phishing page -- signed in again. The
+	// comparison is in the statement that records the step, so two requests
+	// carrying one code cannot both pass: the row lock serialises them and the
+	// second finds last_step already at the step. The lock is re-checked here
+	// for the same reason, so a code arriving while a concurrent failure locks
+	// the factor is refused. Success clears the failure counter and the lock.
+	var accepted int64
+	err = s.db.Pool.QueryRow(ctx, `
+		UPDATE mfa_totp
+		SET last_step = $3, last_used_at = NOW(), updated_at = NOW(),
+		    failed_attempts = 0, last_failed_at = NULL, locked_until = NULL
+		WHERE user_id = $1 AND org_id = $2 AND enabled AND last_step < $3
+		  AND (locked_until IS NULL OR locked_until <= NOW())
+		RETURNING last_step
+	`, userID, org.ID, step).Scan(&accepted)
+	if err == nil {
+		return true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		// The write is the acceptance: a code whose use cannot be recorded
+		// could be presented again, so it is not accepted.
+		return false, fmt.Errorf("failed to record TOTP use: %w", err)
+	}
+
+	// No row: locked by a concurrent failure, or the step was already used. A
+	// replay is refused without counting as a guess -- the code is known, so
+	// counting it bounds nothing, and it would lock out a user whose browser
+	// submitted the form twice.
+	var nowLocked *time.Time
+	if rerr := s.db.Pool.QueryRow(ctx,
+		`SELECT locked_until FROM mfa_totp WHERE user_id = $1 AND org_id = $2`,
+		userID, org.ID).Scan(&nowLocked); rerr == nil && nowLocked != nil && time.Now().Before(*nowLocked) {
+		return false, ErrTOTPLockedOut
+	}
+	s.logger.Warn("TOTP code refused: its time step was already used",
+		zap.String("user_id", logsafe.Clean(userID)), zap.Int64("step", step))
 	return false, nil
 }
 
 // TOTP verification throttling.
 //
-// A TOTP code is six digits and validateTOTPWithSkew accepts a ±1 step window,
+// A TOTP code is six digits and totpStepOf accepts a ±1 step window,
 // so roughly 3 of 10^6 values are valid at any instant. Unthrottled, an
 // attacker expects a hit in the low hundreds of thousands of requests — minutes
 // of sustained traffic against an endpoint that otherwise looks healthy. The

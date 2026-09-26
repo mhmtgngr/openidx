@@ -107,6 +107,7 @@ CREATE TABLE mfa_totp (
     failed_attempts INTEGER NOT NULL DEFAULT 0,
     last_failed_at  TIMESTAMPTZ,
     locked_until    TIMESTAMPTZ,
+    last_step       BIGINT NOT NULL DEFAULT 0,
     org_id          UUID NOT NULL
 );
 CREATE TABLE mfa_backup_codes (

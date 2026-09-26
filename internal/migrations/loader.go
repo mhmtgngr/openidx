@@ -1469,5 +1469,12 @@ func allMigrations() []*Migration {
 			UpSQL:       tenantDomainDNSProofUp,
 			DownSQL:     tenantDomainDNSProofDown,
 		},
+		{
+			Version:     207,
+			Name:        "totp_last_step",
+			Description: "Add mfa_totp.last_step: the last TOTP time step each credential accepted. VerifyTOTP accepted any code valid in its +/-1 step window and recorded only last_used_at, which nothing read, so a code that had just been accepted stayed acceptable for about 90 seconds: anyone who saw it could sign in or pass a step-up with it again (RFC 6238 section 5.2). The verifier now accepts a code only for a step later than this column, in the same UPDATE that records it (WHERE last_step < $step), so two requests carrying one code admit exactly one; enrollment records the step of its confirming code. BIGINT NOT NULL DEFAULT 0, below every real step, so existing credentials verify as before on their next use; the constant default rewrites no row. Down drops the column.",
+			UpSQL:       totpLastStepUp,
+			DownSQL:     totpLastStepDown,
+		},
 	}
 }

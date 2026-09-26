@@ -263,7 +263,9 @@ Algorithm is **explicit in the emitted URI [verified]**:
   `{ "secret": "<from setup>", "code": "123456" }` → `{ "status": "enrolled" }`
   (`service.go:3959`).
 - **Verify** — `POST /api/v1/identity/mfa/totp/verify` `{ "code": "123456" }` →
-  `{ "valid": true }` (`service.go:3985`).
+  `{ "valid": true }` (`service.go:3985`). A code is accepted once: the same
+  code again, an earlier one, or the code that activated the credential answers
+  `{ "valid": false }`. Wait for the next code rather than resubmitting.
 - **Status** — `GET .../mfa/totp/status`; **Disable** — `DELETE .../mfa/totp`.
 - App code: `client/lib/features/totp.dart` (RFC 6238, unit-tested against the RFC
   vectors in `client/test/totp_test.dart`), UI
