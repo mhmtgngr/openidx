@@ -60,6 +60,10 @@ verification, or an inbound SSF signal), it emits a **CAEP session-revoked**
 event: it builds and signs a SET (Security Event Token, RFC 8417) with its RS256
 key and enqueues one per subscribed stream, which a push worker delivers as
 `application/secevent+jwt` (RFC 8935) with retry/backoff + dead-lettering.
+Every push goes through the outbound guard (`internal/common/netutil/outbound.go`):
+a delivery endpoint that names or resolves to an internal address is not
+contacted, and the item fails and is retried like any failed push, unless the
+host is in `OIDX_OUTBOUND_ALLOWLIST`. Redirects are not followed.
 
 ### Stream management
 

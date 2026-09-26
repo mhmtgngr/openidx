@@ -958,6 +958,11 @@ paths:
     post:
       tags: [SAML]
       summary: Create SAML service provider
+      description: |
+        A metadata_url is fetched through the outbound guard: a URL that names or
+        resolves to an internal address (loopback, private, link-local, shared,
+        reserved), or redirects to one, is refused with 400 before anything is
+        stored. OIDX_OUTBOUND_ALLOWLIST lists internal hosts allowed anyway.
       operationId: createSAMLServiceProvider
       x-openidx-handler: internal/oauth.(*Service).handleCreateSAMLServiceProvider
       requestBody:
@@ -988,6 +993,9 @@ paths:
     post:
       tags: [SAML]
       summary: Import SAML metadata
+      description: |
+        A metadata_url is fetched under the same outbound rule as POST
+        /api/v1/saml/service-providers.
       operationId: importSAMLMetadata
       x-openidx-handler: internal/oauth.(*Service).handleImportSAMLMetadata
       requestBody:

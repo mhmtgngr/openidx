@@ -281,6 +281,13 @@ Ziti identity: policies limit what it can dial, and the kill switch severs it.
 | Tampering | Image substitution | Images built in CI with provenance/SBOM attestation; the release checksums and the Helm chart are signed with keyless cosign; the images are not signed yet ([#960](https://github.com/mhmtgngr/openidx/issues/960)) |
 | Spoofing | A shipped default names a domain, or a registry or GitHub namespace, the project does not own, so whoever registers it receives what installs send there: the Helm chart's issuer and ingress hosts, the console's support address and WebAuthn fields, Alertmanager's addresses, the welcome mail's link, the SCIM documentation link and the Terraform modules' chart source all did, up to v1.38.0 | No default names one. The chart has no issuer default and requires `config.oauthIssuer`, and refuses any value naming a host under the project's name at .io, .org, .com, .net or .dev (`openidx.rejectPlaceholders`, `deployments/kubernetes/helm/openidx/templates/_helpers.tpl`); `scripts/check-unowned-domains.sh` fails CI when one comes back anywhere in the tree; migration v210 cleared the stored copies of the settings defaults |
 
+### 4.11 Requests to URLs an organization supplies (`internal/common/netutil/outbound.go`)
+
+| Threat | Vector | Mitigation |
+|---|---|---|
+| Info disclosure (SSRF) | An organization's administrator points a webhook, an audit-stream webhook, an outbound SCIM target, an SSF stream's delivery endpoint or a SAML metadata URL at an address inside the platform's network -- the cloud metadata endpoint, another service's port -- and reads the answer back: the first 1000 bytes of each webhook delivery, the SCIM connection test's error, the parsed metadata | The **outbound guard** resolves the host when the URL is saved and refuses it (400) if it names or resolves to a loopback, private, link-local, shared (`100.64.0.0/10`), unspecified, multicast or reserved address, in any spelling (IPv4-mapped, NAT64, 6to4, IPv4-compatible). Every connection is checked again and dialed only at the address that was checked, so a name that moves inward after it was saved (DNS rebinding) is refused, and a URL saved before the guard existed gets nowhere either. Redirects are not followed (the SAML metadata fetch follows them, each hop checked at its connection); behind an HTTP(S) proxy the destination is checked before the proxy is handed it. The refusal names the host and the kind of address, never where a name resolved. `OIDX_OUTBOUND_ALLOWLIST`, empty by default, is the operator's list of internal receivers allowed anyway. `internal/common/netutil/outbound_test.go`, `internal/webhooks/outbound_guard_testdb_test.go`, `internal/admin/webhook_destination_testdb_test.go` |
+| Info disclosure (SSRF) | The same, through a URL not yet behind the guard: an external identity provider's token and userinfo endpoints, an OIDC back-channel logout URI, a SAML service provider's single-logout URL, EDR connector and BambooHR base URLs | Residual R9 (section 5) |
+
 ## 5. Residual risks and operator obligations
 
 Honesty section — what the platform does **not** absorb for you:
@@ -295,6 +302,7 @@ Honesty section — what the platform does **not** absorb for you:
 | R6 | RLS is the tenant wall; a DB superuser can disable it, and so can SQL running as the application role, by setting `app.bypass_rls` ([#964](https://github.com/mhmtgngr/openidx/issues/964)) | Restrict superuser access, encrypt DB storage and backups, alert on policy changes |
 | R7 | DB backups are not encrypted by OpenIDX itself | Encrypt backups at the storage layer; drill restores (`make dr-game-day`) |
 | R8 | JWT signing key age is not tracked in code | Rotate ≤ 90 days per operational control §5.2 |
+| R9 | Some requests to administrator-configured URLs are not behind the outbound guard (§4.11): external identity providers, OIDC back-channel logout, SAML single logout, EDR connectors, BambooHR. Most are blind (the answer is not shown), and internal identity providers and service providers are common | Restrict the services' egress to what they need; treat those settings as an administrator's trust |
 
 Assumptions: TLS everywhere at TB1 (enforced for DB by
 `ValidateProduction()`); operator keeps host OS and container runtime

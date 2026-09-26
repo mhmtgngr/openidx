@@ -4,6 +4,7 @@ package netutil
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strings"
 )
@@ -118,44 +119,13 @@ func (c *SSRFProtectedClient) domainMatches(hostname, pattern string) bool {
 	return hostname == pattern
 }
 
-// isPrivateIP checks if an IP address is in a private range (RFC 1918, RFC 4193, etc.)
+// isPrivateIP reports whether ip is anything but a public address: loopback,
+// private, link-local, carrier-grade NAT, unspecified, multicast, reserved,
+// or one of those written as IPv6. It is the same decision the outbound guard
+// makes at dial time (internalReason in outbound.go), so the two cannot drift.
 func isPrivateIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-		return true
-	}
-
-	if ip4 := ip.To4(); ip4 != nil {
-		// RFC 1918 private IPv4 ranges
-		privateRanges := []string{
-			"10.0.0.0/8",
-			"172.16.0.0/12",
-			"192.168.0.0/16",
-			"169.254.0.0/16", // Link-local
-			"100.64.0.0/10",  // Carrier-grade NAT
-		}
-		for _, cidr := range privateRanges {
-			_, network, _ := net.ParseCIDR(cidr)
-			if network.Contains(ip4) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// IPv6 private ranges (RFC 4193, etc.)
-	privateIPv6Ranges := []string{
-		"fc00::/7",  // Unique local addresses
-		"fe80::/10", // Link-local
-		"fd00::/8",  // Unique local (commonly used)
-	}
-	for _, cidr := range privateIPv6Ranges {
-		_, network, _ := net.ParseCIDR(cidr)
-		if network.Contains(ip) {
-			return true
-		}
-	}
-
-	return false
+	addr, ok := netip.AddrFromSlice(ip)
+	return !ok || internalReason(addr) != ""
 }
 
 // isLocalhostIP checks if an IP address is localhost

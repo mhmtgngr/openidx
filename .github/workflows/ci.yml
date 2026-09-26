@@ -898,6 +898,12 @@ jobs:
       # processes do to one row at the same time. The SUPERUSER DSN is here for
       # the same reason as the step below: the suite builds its tables in a
       # schema of its own rather than clobbering the shared ones.
+      # The same tables and the same delivery path answer where a webhook may
+      # point: a subscription URL on the platform's own network (loopback,
+      # private, link-local, the cloud metadata address, any name resolving
+      # there) is refused when it is created, when it is delivered and when it
+      # is pinged -- at the connection itself for a name that moved inward
+      # after it was checked -- and a redirect is recorded, not followed.
       - name: A webhook delivery is claimed, not re-read, and its backoff is honoured
         env:
           TEST_POSTGRES_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
@@ -905,7 +911,7 @@ jobs:
         run: |
           set -euo pipefail
           out=$(go test ./internal/webhooks/ \
-            -run 'RetrySweepDoesNot|BackloggedDelivery|NudgeWasLost|FailedIsQueuedAgain|TwoSweepsAtOnce|BackoffInsteadOfSpending|TakenByTwoConsumers|SweepLeavesADelivery|ConsumerRefusesADelivery' \
+            -run 'RetrySweepDoesNot|BackloggedDelivery|NudgeWasLost|FailedIsQueuedAgain|TwoSweepsAtOnce|BackoffInsteadOfSpending|TakenByTwoConsumers|SweepLeavesADelivery|ConsumerRefusesADelivery|InternalAddressIsRefusedWhenItIsCreated|MovesToAnInternalAddressIsRefusedAtTheConnection|WebhookRedirectIsRecordedAndNotFollowed|WebhookToAPublicAddressIsStillDelivered|AllowlistedInternalWebhookIsDelivered|InternalAddressSavedEarlierIsRefusedAtDeliveryAndPing|RefusedDestinationsDoNotOpenTheBreaker' \
             -count=1 -v 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           for want in TestTheRetrySweepDoesNotReEnqueueADeliveryItAlreadyQueued \
@@ -916,7 +922,14 @@ jobs:
                       TestAFailedDeliveryWaitsForItsBackoffInsteadOfSpendingEveryAttemptAtOnce \
                       TestTheSameDeliveryTakenByTwoConsumersAtOnceIsSentOnce \
                       TestTheSweepLeavesADeliveryAloneUntilItsRetryIsDue \
-                      TestAConsumerRefusesADeliveryWhoseBackoffHasNotElapsed; do
+                      TestAConsumerRefusesADeliveryWhoseBackoffHasNotElapsed \
+                      TestAWebhookToAnInternalAddressIsRefusedWhenItIsCreated \
+                      TestAWebhookWhoseNameMovesToAnInternalAddressIsRefusedAtTheConnection \
+                      TestAWebhookRedirectIsRecordedAndNotFollowed \
+                      TestAWebhookToAPublicAddressIsStillDelivered \
+                      TestAnAllowlistedInternalWebhookIsDelivered \
+                      TestASubscriptionToAnInternalAddressSavedEarlierIsRefusedAtDeliveryAndPing \
+                      TestRefusedDestinationsDoNotOpenTheBreakerEveryOrganizationShares; do
             grep -q -- "--- PASS: $want " <<<"$out" \
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done

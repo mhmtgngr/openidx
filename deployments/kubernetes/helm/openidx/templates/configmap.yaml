@@ -30,6 +30,10 @@ data:
   # once per hop and export openidx_forwarded_for_from_untrusted_hop_total until
   # it matches. Never "*".
   OIDX_TRUSTED_PROXIES: {{ .Values.config.trustedProxies | default "" | quote }}
+  # Internal destinations that organization-supplied URLs (webhooks, audit-stream
+  # webhooks, outbound SCIM targets, SSF receivers, SAML metadata) may reach.
+  # Empty: public addresses only. See config.outboundAllowlist.
+  OIDX_OUTBOUND_ALLOWLIST: {{ .Values.config.outboundAllowlist | default "" | quote }}
   # How the tenant scope reaches Postgres (global-scale plan task 2.1):
   #   session (default) — stamped on the pooled connection at checkout.
   #   local             — stamped on each transaction (SET LOCAL), which is the

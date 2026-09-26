@@ -22,6 +22,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/netutil"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/common/validation"
@@ -2765,19 +2766,24 @@ func (s *Service) handleCreateWebhook(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "webhook URL must use HTTPS"})
 		return
 	}
-	// Block internal/private IPs (SSRF prevention)
-	host := parsedURL.Hostname()
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0.0.0.0" ||
-		strings.HasPrefix(host, "10.") || strings.HasPrefix(host, "192.168.") || strings.HasPrefix(host, "172.") {
-		c.JSON(400, gin.H{"error": "webhook URL must not point to internal addresses"})
-		return
-	}
 
 	userID, _ := c.Get("user_id")
 	createdBy, _ := userID.(string)
 
+	// Where the URL may point is the webhook service's decision (the outbound
+	// guard in internal/common/netutil): it resolves the name and refuses
+	// loopback, private, link-local, shared and reserved addresses, in every
+	// spelling, before anything is stored -- and again at every delivery.
 	sub, err := s.webhookService.CreateSubscription(c.Request.Context(), req.Name, req.URL, req.Secret, req.Events, createdBy)
 	if err != nil {
+		var refused *netutil.DestinationError
+		if errors.As(err, &refused) {
+			c.JSON(400, gin.H{
+				"error": "webhook URL is not allowed: " + refused.Error(),
+				"hint":  "webhooks are delivered to public addresses only; an operator can allow internal ones with " + netutil.OutboundAllowlistEnv,
+			})
+			return
+		}
 		s.logger.Error("failed to create webhook", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return

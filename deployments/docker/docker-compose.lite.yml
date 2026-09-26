@@ -345,6 +345,7 @@ services:
       - OAUTH_ISSUER=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OIDX_OUTBOUND_ALLOWLIST=${OIDX_OUTBOUND_ALLOWLIST:-}
       - OPENIDX_ENABLE_RATE_LIMIT=false
       - TRACING_ENABLED=${OPENIDX_TRACING_ENABLED:-false}
       - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
@@ -393,6 +394,7 @@ services:
       - OAUTH_ISSUER=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OIDX_OUTBOUND_ALLOWLIST=${OIDX_OUTBOUND_ALLOWLIST:-}
       - OPENIDX_ENABLE_RATE_LIMIT=false
       # Empty keeps full-text search off; the elasticsearch profile sets it.
       - ELASTICSEARCH_URL=${OPENIDX_ELASTICSEARCH_URL:-}
@@ -455,6 +457,7 @@ services:
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - PUBLIC_BASE_URL=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OIDX_OUTBOUND_ALLOWLIST=${OIDX_OUTBOUND_ALLOWLIST:-}
       - OPENIDX_ENABLE_RATE_LIMIT=false
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -513,6 +516,7 @@ services:
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - OAUTH_LOGIN_URL=${OPENIDX_PUBLIC_URL:-http://localhost:3000}/login
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OIDX_OUTBOUND_ALLOWLIST=${OIDX_OUTBOUND_ALLOWLIST:-}
       - OPENIDX_ENABLE_RATE_LIMIT=false
       # Fresh-install enforcement (#956), as scripts/generate-secrets.sh writes it.
       - ACCESS_ASSIGNMENT_ENFORCE=${ACCESS_ASSIGNMENT_ENFORCE:-true}

@@ -392,6 +392,15 @@ paths:
     post:
       tags: [Outbound SCIM Targets]
       summary: Create target
+      description: |
+        base_url is where the worker sends this organization's users, with the
+        target's credentials, so it must point at the internet: its host is resolved, and a URL that names or resolves to a loopback,
+        private, link-local (169.254.169.254 included), shared (100.64.0.0/10),
+        unspecified, multicast or reserved address -- in any spelling, IPv4-mapped,
+        NAT64 and 6to4 included -- is refused with 400 and nothing is stored.
+        The same check is made at every connection, and redirects are not
+        followed. OIDX_OUTBOUND_ALLOWLIST (docs/docs/deployment/configuration.md)
+        is the operator's list of internal destinations allowed anyway.
       operationId: createTarget
       x-openidx-handler: internal/provisioning.(*Service).handleCreateTarget
       requestBody:
@@ -468,6 +477,9 @@ paths:
     put:
       tags: [Outbound SCIM Targets]
       summary: Update target
+      description: |
+        A new base_url is held to the rule of POST /api/v1/provisioning/targets:
+        an internal destination is refused with 400 and the target is unchanged.
       operationId: updateTarget
       x-openidx-handler: internal/provisioning.(*Service).handleUpdateTarget
       requestBody:
@@ -561,6 +573,11 @@ paths:
     post:
       tags: [Outbound SCIM Targets]
       summary: Test target
+      description: |
+        Probes the target's /ServiceProviderConfig. A target whose base_url the
+        outbound rule refuses (one saved before it existed, or a name that now
+        resolves inward) is not contacted; the answer is ok false with the
+        refusal as the error.
       operationId: testTarget
       x-openidx-handler: internal/provisioning.(*Service).handleTestTarget
       requestBody:

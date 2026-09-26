@@ -63,7 +63,7 @@ func TestOutboundHandlersCRUD(t *testing.T) {
 		t.Fatalf("schema: %v", err)
 	}
 
-	svc := &Service{db: db, logger: zap.NewNop()}
+	svc := &Service{db: db, logger: zap.NewNop(), outbound: testOutbound(t)}
 	r := newOutboundTestRouter(svc)
 
 	// Create.
@@ -151,7 +151,7 @@ func TestOutboundHandlerTestConnection(t *testing.T) {
 	srv := sp.server()
 	defer srv.Close()
 
-	svc := &Service{db: db, logger: zap.NewNop()}
+	svc := &Service{db: db, logger: zap.NewNop(), outbound: testOutbound(t)}
 	r := newOutboundTestRouter(svc)
 
 	w := doJSON(t, r, http.MethodPost, "/api/v1/provisioning/targets", TargetAppInput{
@@ -192,7 +192,7 @@ func TestOutboundHandlerSyncEnqueues(t *testing.T) {
 	db.Pool.Exec(ctx, `INSERT INTO users (username,email,enabled,org_id)
         VALUES ('a@a','a@a',true,$1::uuid),('b@b','b@b',true,$1::uuid)`, testOrgID)
 
-	svc := &Service{db: db, logger: zap.NewNop()}
+	svc := &Service{db: db, logger: zap.NewNop(), outbound: testOutbound(t)}
 	r := newOutboundTestRouter(svc)
 
 	w := doJSON(t, r, http.MethodPost, "/api/v1/provisioning/targets", TargetAppInput{

@@ -38,7 +38,7 @@ func TestOutboundSCIM_TenantIsolation(t *testing.T) {
 	}
 
 	const orgB = "00000000-0000-0000-0000-0000000000ba"
-	svc := &Service{db: db, logger: zap.NewNop()}
+	svc := &Service{db: db, logger: zap.NewNop(), outbound: testOutbound(t)}
 
 	targetA, err := svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{
 		Name: "org-a-slack", BaseURL: "https://a.example.test/scim/v2", AuthType: "bearer",

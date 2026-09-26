@@ -21,9 +21,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/openidx/openidx/internal/common/netutil"
 	"github.com/openidx/openidx/internal/common/resilience"
 	"go.uber.org/zap"
 )
+
+// orgOutboundGuard is the outbound guard for URLs an organization's
+// administrator supplies -- a SAML service provider's metadata URL, an SSF
+// stream's delivery endpoint: public addresses, and what
+// OIDX_OUTBOUND_ALLOWLIST names, checked at every connection. A variable so
+// tests can stand a server up where the guard lets it be reached.
+var orgOutboundGuard = func() *netutil.OutboundGuard {
+	g, _ := netutil.DefaultOutboundGuard()
+	return g
+}
 
 var (
 	outboundOnce     sync.Once
@@ -54,6 +65,16 @@ func (s *Service) outboundHTTPClientNoRedirect(target string, timeout time.Durat
 			return http.ErrUseLastResponse
 		},
 	})
+}
+
+// outboundGuardedHTTPClient is outboundHTTPClient for a URL an organization's
+// administrator supplied: every connection it opens, a redirect's included,
+// is held to orgOutboundGuard, so a metadata URL cannot fetch the platform's
+// own services or the cloud metadata endpoint, directly or by redirecting.
+func (s *Service) outboundGuardedHTTPClient(target string, timeout time.Duration) *resilience.ResilientHTTPClient {
+	c := orgOutboundGuard().Client(timeout)
+	c.CheckRedirect = nil // follow redirects: each hop dials through the guard
+	return s.outboundClient(target, c)
 }
 
 func (s *Service) outboundClient(target string, raw *http.Client) *resilience.ResilientHTTPClient {

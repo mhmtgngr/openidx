@@ -7324,6 +7324,16 @@ paths:
     post:
       tags: [Webhooks]
       summary: Create webhook
+      description: |
+        The URL must be https, and it must point at the internet: its host is resolved, and a URL that names or resolves to a loopback,
+        private, link-local (169.254.169.254 included), shared (100.64.0.0/10),
+        unspecified, multicast or reserved address -- in any spelling, IPv4-mapped,
+        NAT64 and 6to4 included -- is refused with 400 and nothing is stored.
+        The same check is made at every connection, and redirects are not
+        followed. OIDX_OUTBOUND_ALLOWLIST (docs/docs/deployment/configuration.md)
+        is the operator's list of internal destinations allowed anyway.
+        The 400 names the host and the kind of address, never where a name
+        resolved.
       operationId: createWebhook
       x-openidx-handler: internal/admin.(*Service).handleCreateWebhook
       requestBody:
@@ -7525,6 +7535,13 @@ paths:
     post:
       tags: [Webhooks]
       summary: Test webhook
+      description: |
+        Sends a signed ping and answers with the delivery record, including the
+        first 1000 bytes of the receiver's answer. A subscription whose URL is
+        not allowed by the outbound rule of POST /api/v1/webhooks (one saved
+        before that rule existed, or a name that now resolves inward) is not
+        contacted: the delivery comes back `failed`, with the refusal as its
+        response body.
       operationId: testWebhook
       x-openidx-handler: internal/admin.(*Service).handleTestWebhook
       requestBody:

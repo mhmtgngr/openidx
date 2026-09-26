@@ -77,6 +77,7 @@ func newSCIMHarness(t *testing.T) *scimHarness {
 
 	cfg := &config.Config{OAuthIssuer: "https://issuer.example.test", OAuthJWKSURL: jwks.URL}
 	h := &scimHarness{t: t, svc: NewService(db, nil, cfg, zap.NewNop()), key: key}
+	h.svc.outbound = testOutbound(t)
 	h.token = h.mint(key, cfg.OAuthIssuer)
 
 	h.router = gin.New()

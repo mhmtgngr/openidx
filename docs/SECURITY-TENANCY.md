@@ -293,6 +293,7 @@ The rules are in `internal/access/ziti_scope.go` and `internal/access/ziti_roles
 | Tokens and API keys | Bound — accepted only in their own organization, except a platform admin's |
 | Authorization / governance | Scoped — campaigns, certifications, ABAC, SoD, and risk policies carry `org_id` |
 | Audit | Scoped — `audit_events` is org-scoped, including Elasticsearch search; only the platform's own services write events (`INTERNAL_SERVICE_TOKEN`), so no caller can file an event under another organization |
+| Outbound requests | Contained — URLs an organization's administrator supplies (webhooks, audit-stream webhooks, outbound SCIM targets, SSF receivers, SAML metadata) reach public addresses only, so no organization can use the platform's network position to reach its services or their data (`internal/common/netutil/outbound.go`). The exceptions, `OIDX_OUTBOUND_ALLOWLIST`, apply to every organization. A refused URL does not count against the webhook circuit breaker every organization shares |
 | CI / tests | Enforced — `orgscope` merge gate + cross-org integration test |
 
 ## Federation vs. multi-tenancy

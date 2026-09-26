@@ -106,6 +106,13 @@ HTTP-POST ACS URL, the HTTP-Redirect SLO URL, and `AuthnRequestsSigned`.
 Migration 204 (`internal/migrations/sql_v204.go`) adds `encryption_certificate`
 and `require_signed_authn_requests`.
 
+A `metadata_url` is fetched from inside your network, so it goes through the
+outbound guard (`internal/common/netutil/outbound.go`): a URL that names or
+resolves to a loopback, private, link-local, shared or reserved address, or
+redirects to one, is refused with 400 and nothing is registered. A service
+provider that publishes its metadata on an internal host needs that host in
+`OIDX_OUTBOUND_ALLOWLIST`, or its metadata pasted as `metadata_xml`.
+
 ## Interoperability testing
 
 The interop suite runs OpenIDX against two service providers that do not use
