@@ -442,7 +442,7 @@ version of this page grow rows the product never had.
 | Setting | Where it lives |
 |---|---|
 | Password policy — minimum length, character classes, history, expiry | Admin console → Settings → Security. Stored per organization and enforced by `POST /api/v1/admin/validate-password`. |
-| Session idle timeout, absolute timeout, concurrent-session limit | Admin console → Settings → Security. Read by the session policy on every refresh, and by the console's idle-timeout dialog. |
+| Session idle timeout, absolute timeout, concurrent-session limit | The install's settings document (`system_settings`, key `system`): `security.idle_timeout` and `security.absolute_timeout` in seconds, and per application in `application_sso_settings`. Read by the session sweep, on every refresh, and by the console's idle-timeout dialog. `0` turns a timeout off; a value the document does not carry keeps the default, 30 minutes idle and 24 hours absolute. Admin console → Settings → Security shows them, but its Session Policies card does not save them yet. |
 | Access, refresh and ID token lifetimes | Per OAuth client, on the application in Applications → the app. |
 | OTP code length, lifetime, attempt ceiling | Admin console → Settings → SMS. Applied without a restart by the identity service's config watcher. |
 | Certification campaign duration and reminders | Per campaign, when the campaign is created. |
