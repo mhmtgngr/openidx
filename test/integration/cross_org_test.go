@@ -227,8 +227,12 @@ func bypassQueryRow(t *testing.T, db *pgxpool.Pool, dest interface{}, sql string
 }
 
 // TestCrossOrgIsolation verifies the v1.7.0 enforcement guarantee: a request
-// scoped (via X-Org-Slug) to org A cannot read org B's resource — it gets 404
-// (anti-enumeration), not 403 — while the same resource reads 200 under org B.
+// scoped (via X-Org-Slug) to one org cannot read another org's resource — it
+// gets 404 (anti-enumeration), not 403 — while the same resource reads 200
+// under its own org. Every request here carries a token its org may use: an
+// access token is bound to the org it was minted in, and a token presented to
+// a request scoped to another org is refused with 403 unless its holder is a
+// platform admin, which is asserted too.
 //
 // Requires the running stack (make dev-infra) with the tenant resolver wired and
 // DefaultOrgFallback off. Run: make test-integration.
@@ -251,17 +255,40 @@ func TestCrossOrgIsolation(t *testing.T) {
 		bypassExec(t, db, "DELETE FROM users WHERE id = $1", userB)
 	})
 
+	// The seeded admin signs in to the default org on this single-org suite,
+	// so that is the org its token is bound to.
 	token := getAdminToken(t)
+	const defaultSlug = "default"
 	url := identityURL + "/api/v1/identity/users/" + userB
 
+	// A platform admin is the one caller whose token may be used in an org
+	// other than its own; see seedPlatformAdmin.
+	saUser, saPassword := seedPlatformAdmin(t, db, suffix)
+	saToken := loginAndGetToken(t, saUser, saPassword)
+
 	t.Run("same org reads 200", func(t *testing.T) {
-		status, _ := apiRequestWithOrg(t, "GET", url, "", token, slugB)
-		assert.Equal(t, 200, status, "org B should read its own user")
+		// Org B's user, read in org B. No token here belongs to org B, so the
+		// reader is the platform admin, switching to B the way the console's
+		// organization selector does.
+		status, _ := apiRequestWithOrg(t, "GET", url, "", saToken, slugB)
+		assert.Equal(t, 200, status, "org B's user should read in org B")
 	})
 
 	t.Run("cross org reads 404 not 403", func(t *testing.T) {
-		status, _ := apiRequestWithOrg(t, "GET", url, "", token, slugA)
-		assert.Equal(t, 404, status, "org A must not see org B's user (404, anti-enumeration)")
+		// The default admin's token, scoped to the org it belongs to.
+		status, _ := apiRequestWithOrg(t, "GET", url, "", token, defaultSlug)
+		assert.Equal(t, 404, status, "the default org must not see org B's user (404, anti-enumeration)")
+	})
+
+	t.Run("a token is refused in another org", func(t *testing.T) {
+		for _, slug := range []string{slugB, slugA} {
+			status, body := apiRequestWithOrg(t, "GET", url, "", token, slug)
+			assert.Equal(t, 403, status,
+				"the default admin's token acted in %s, an org it does not belong to: %v", slug, body)
+		}
+		// The same token in its own org is served.
+		status, _ := apiRequestWithOrg(t, "GET", identityURL+"/api/v1/identity/users", "", token, defaultSlug)
+		assert.Equal(t, 200, status, "the default admin's token was refused in its own org")
 	})
 
 	// The X-Org-ID platform-admin bypass, both halves.
@@ -325,10 +352,8 @@ func TestCrossOrgIsolation(t *testing.T) {
 	t.Run("platform-admin X-Org-ID cross-org read is audited", func(t *testing.T) {
 		// A platform admin has to be MADE, not hoped for: no migration seeds a
 		// role named super_admin (v134 grants a permission to one and matches
-		// nothing), and HasRoleInContext is equality, not hierarchy.
-		saUser, saPassword := seedPlatformAdmin(t, db, suffix)
-		saToken := loginAndGetToken(t, saUser, saPassword)
-
+		// nothing), and HasRoleInContext is equality, not hierarchy. saToken
+		// above is that admin's.
 		agents := adminAPIURL + "/api/v1/ai-agents"
 
 		status, body := apiRequest(t, "GET", agents, "", saToken)
@@ -400,6 +425,28 @@ func TestCrossOrgIsolation(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, insertForOrgB(), "the bypass did not let the mandatory audit row through")
 		bypassExec(t, db, `DELETE FROM audit_events WHERE org_id = $1 AND actor_type = 'platform_admin' AND actor_id IS NULL`, orgB)
+	})
+
+	t.Run("platform-admin X-Org-Slug cross-org read is audited", func(t *testing.T) {
+		// The console's organization selector sends X-Org-Slug, not X-Org-ID.
+		// Where the resolver runs after auth it compares the slug with the
+		// token's org, lets a platform admin through, and writes the same
+		// mandatory audit row as for X-Org-ID.
+		agents := adminAPIURL + "/api/v1/ai-agents"
+		before := crossOrgAuditCount(t, db, orgB)
+		status, body := apiRequestWithOrg(t, "GET", agents, "", saToken, slugB)
+		require.Equal(t, 200, status, "a super_admin must be able to switch orgs with X-Org-Slug: %v", body)
+		assert.True(t, listsOrgBAgent(t, body), "X-Org-Slug was accepted but the request stayed in the caller's org")
+		assert.Equal(t, before+1, crossOrgAuditCount(t, db, orgB),
+			"a platform admin's X-Org-Slug crossing must write an audit_events row under the target org")
+	})
+
+	t.Run("a plain admin cannot cross with X-Org-Slug where the resolver can see the token", func(t *testing.T) {
+		before := crossOrgAuditCount(t, db, orgB)
+		status, body := apiRequestWithOrg(t, "GET", adminAPIURL+"/api/v1/ai-agents", "", token, slugB)
+		assert.Equal(t, 403, status, "a plain admin's token was scoped to another org by X-Org-Slug: %v", body)
+		assert.Equal(t, before, crossOrgAuditCount(t, db, orgB),
+			"a refused crossing must not write a cross-org audit row")
 	})
 
 	t.Run("a plain admin cannot cross with X-Org-ID even where the resolver can see roles", func(t *testing.T) {
@@ -1297,9 +1344,11 @@ func TestPreResolutionLookupsUnderRLS(t *testing.T) {
 // client-supplied X-Org-Slug header: a request through the gateway (:8008)
 // carrying a forged X-Org-Slug for another org is STRIPPED — the gateway
 // re-derives org from the authenticated identity — so it cannot read the forged
-// org's data. (Sending the header straight to a service is NOT a negative:
-// services trust X-Org-Slug because the gateway sets it.) Skips if the gateway
-// isn't reachable (CI may not start it; the box does).
+// org's data. (Sent straight to a service, the header chooses the org a
+// request is scoped to, and what stops a caller using it to act in another
+// org is that its token is bound to its own; TestCrossOrgIsolation asserts
+// that.) Skips if the gateway isn't reachable (CI may not start it; the box
+// does).
 func TestCrossOrgSpoofing(t *testing.T) {
 	db := integrationDB(t)
 	defer db.Close()

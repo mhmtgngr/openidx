@@ -630,6 +630,10 @@ Signed JWT, typed `at+jwt` in its header (RFC 9068 §2.1), containing:
 - `sub`: User ID
 - `client_id`: OAuth client ID
 - `scope`: Granted scopes
+- `org_id`: The organization the token was minted in. OpenIDX's APIs accept
+  the token only for requests in that organization, except a platform
+  admin's, and refuse a token without it (see
+  [SECURITY-TENANCY.md](SECURITY-TENANCY.md))
 - `iss`: Issuer (OpenIDX URL)
 - `iat`: Issued at timestamp
 - `exp`: Expiration timestamp

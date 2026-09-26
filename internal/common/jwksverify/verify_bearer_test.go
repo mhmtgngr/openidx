@@ -30,10 +30,14 @@ func newJWKSServer(t *testing.T, kid string, pub *rsa.PublicKey) *httptest.Serve
 }
 
 // signRS256 signs claims as the issuer signs an access token: RS256, under kid,
-// typed "at+jwt". Every bearer these tests present is meant to be one; a test
-// about another kind of token builds its own.
+// typed "at+jwt" and bound to an organization (testOrgID unless the claims name
+// another). Every bearer these tests present is meant to be one; a test about
+// another kind of token builds its own.
 func signRS256(t *testing.T, key *rsa.PrivateKey, kid string, claims jwt.MapClaims) string {
 	t.Helper()
+	if _, ok := claims[OrgIDClaim]; !ok {
+		claims[OrgIDClaim] = testOrgID
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tok.Header["kid"] = kid
 	tok.Header["typ"] = AccessTokenType
@@ -43,6 +47,9 @@ func signRS256(t *testing.T, key *rsa.PrivateKey, kid string, claims jwt.MapClai
 	}
 	return s
 }
+
+// testOrgID is the organization the tokens in these tests are minted in.
+const testOrgID = "22222222-2222-2222-2222-222222222222"
 
 func resetJWKSCache() {
 	globalJWKSCache.mu.Lock()

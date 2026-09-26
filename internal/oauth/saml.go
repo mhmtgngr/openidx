@@ -632,6 +632,11 @@ func (s *Service) extractSAMLUserFromToken(reqCtx context.Context, tokenStr stri
 	if !middleware.IsAccessToken(token.Header, claims) {
 		return nil, fmt.Errorf("invalid token: %w", middleware.ErrNotAccessToken)
 	}
+	// And one minted in this organization: the assertion is issued to this
+	// organization's service provider about a user of this organization.
+	if _, err := tokenOrgForRequest(reqCtx, claims); err != nil {
+		return nil, fmt.Errorf("invalid token: %w", err)
+	}
 
 	userID, _ := claims["sub"].(string)
 	email, _ := claims["email"].(string)

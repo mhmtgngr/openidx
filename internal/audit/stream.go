@@ -227,10 +227,17 @@ func (es *EventStreamer) handleWebSocketStream(c *gin.Context) {
 			c.JSON(401, gin.H{"error": "missing access token (pass as access_token_<jwt> subprotocol)"})
 			return
 		}
-		if _, err := middleware.VerifyBearerToken(es.jwksURL, tokenStr); err != nil {
+		claims, err := middleware.VerifyBearerToken(es.jwksURL, tokenStr)
+		if err != nil {
 			es.logger.Warn("audit stream: rejected unauthenticated/invalid WebSocket token",
 				zap.String("remote_addr", c.Request.RemoteAddr), zap.Error(err))
 			c.JSON(401, gin.H{"error": "invalid access token"})
+			return
+		}
+		// As on every other audit route (middleware.Auth): a token is
+		// accepted only in the organization it was minted in.
+		if _, err := middleware.CheckTokenOrg(c, claims); err != nil {
+			c.JSON(403, gin.H{"error": err.Error()})
 			return
 		}
 	}

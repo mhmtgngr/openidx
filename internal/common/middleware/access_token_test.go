@@ -42,10 +42,11 @@ func idToken(t *testing.T, kid string, claims jwt.MapClaims) string {
 // carry: the roles are the point, since they are what an API authorizes on.
 func adminClaims() jwt.MapClaims {
 	return jwt.MapClaims{
-		"sub":   "11111111-1111-1111-1111-111111111111",
-		"aud":   "admin-console",
-		"roles": []interface{}{"admin"},
-		"exp":   float64(time.Now().Add(time.Hour).Unix()),
+		"sub":    "11111111-1111-1111-1111-111111111111",
+		"aud":    "admin-console",
+		"roles":  []interface{}{"admin"},
+		"org_id": DefaultOrgID,
+		"exp":    float64(time.Now().Add(time.Hour).Unix()),
 	}
 }
 

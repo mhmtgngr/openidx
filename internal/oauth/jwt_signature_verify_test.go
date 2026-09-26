@@ -53,9 +53,20 @@ func mintToken(t *testing.T, claims jwt.MapClaims, key *rsa.PrivateKey) string {
 	return tok
 }
 
-// mintAccessToken is mintToken typed as an access token, the way newAccessToken
-// types every bearer this package mints.
+// mintAccessToken is mintToken typed as an access token and bound to an
+// organization -- the default one unless the claims name another -- the way
+// newAccessToken types and binds every bearer this package mints.
 func mintAccessToken(t *testing.T, claims jwt.MapClaims, key *rsa.PrivateKey) string {
+	t.Helper()
+	if _, ok := claims[middleware.OrgIDClaim]; !ok {
+		claims[middleware.OrgIDClaim] = middleware.DefaultOrgID
+	}
+	return mintAccessTokenWithoutOrg(t, claims, key)
+}
+
+// mintAccessTokenWithoutOrg is an access token as minted before the org_id
+// claim existed: typed, and bound to no organization unless the claims say so.
+func mintAccessTokenWithoutOrg(t *testing.T, claims jwt.MapClaims, key *rsa.PrivateKey) string {
 	t.Helper()
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tok.Header["typ"] = middleware.AccessTokenType

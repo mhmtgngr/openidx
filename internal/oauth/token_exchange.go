@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -67,8 +68,9 @@ func (s *Service) handleTokenExchangeGrant(c *gin.Context) {
 		return
 	}
 
-	// Validate the subject token: it must be a live token this service issued.
-	subjectClaims, err := s.validateExchangeToken(subjectToken)
+	// Validate the subject token: it must be a live access token this service
+	// issued, in the organization this request is for.
+	subjectClaims, err := s.validateExchangeToken(c.Request.Context(), subjectToken)
 	if err != nil {
 		teError(c, "invalid_grant", "subject_token is invalid or expired")
 		return
@@ -83,7 +85,7 @@ func (s *Service) handleTokenExchangeGrant(c *gin.Context) {
 			teError(c, "invalid_request", "unsupported actor_token_type")
 			return
 		}
-		actorClaims, err = s.validateExchangeToken(actorToken)
+		actorClaims, err = s.validateExchangeToken(c.Request.Context(), actorToken)
 		if err != nil {
 			teError(c, "invalid_grant", "actor_token is invalid or expired")
 			return
@@ -148,15 +150,17 @@ func (s *Service) authenticateExchangeClient(c *gin.Context) (*OAuthClient, bool
 }
 
 // validateExchangeToken parses + verifies a token this service issued and
-// returns its claims. Rejects expired/invalid signatures, and any token that is
-// not an access token.
+// returns its claims. Rejects expired/invalid signatures, any token that is not
+// an access token, and one bound to another organization than the request's:
+// the token this issues is bound to the request's organization and carries the
+// subject's roles, which hold in the subject token's organization only.
 //
 // The exchange does not offer RFC 8693's id_token token type
 // (isSupportedTokenType lists access_token and jwt), and a signature check
 // alone cannot tell an ID token from an access token. The difference matters
 // here more than anywhere: the exchange copies the subject's roles and groups
 // into the access token it issues.
-func (s *Service) validateExchangeToken(token string) (jwt.MapClaims, error) {
+func (s *Service) validateExchangeToken(ctx context.Context, token string) (jwt.MapClaims, error) {
 	parsed, err := jwt.Parse(token, s.verificationKeyfunc, jwt.WithValidMethods([]string{"RS256"}))
 	if err != nil {
 		return nil, err
@@ -171,12 +175,21 @@ func (s *Service) validateExchangeToken(token string) (jwt.MapClaims, error) {
 	if !middleware.IsAccessToken(parsed.Header, claims) {
 		return nil, middleware.ErrNotAccessToken
 	}
+	if _, err := tokenOrgForRequest(ctx, claims); err != nil {
+		return nil, err
+	}
 	return claims, nil
 }
 
 // issueExchangedToken mints the new access token, carrying an `act` (actor)
 // claim for delegation per RFC 8693 §4.1.
 func (s *Service) issueExchangedToken(c *gin.Context, subject, audience, scope string, subjectClaims, actorClaims jwt.MapClaims, client *OAuthClient) (string, int, error) {
+	// The organization the exchange was requested in, which the client
+	// authenticated in and validateExchangeToken held the subject token to.
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		return "", 0, err
+	}
 	now := time.Now()
 	expiresIn := client.EffectiveAccessTokenLifetime()
 	if expiresIn <= 0 {
@@ -225,21 +238,16 @@ func (s *Service) issueExchangedToken(c *gin.Context, subject, audience, scope s
 	// whose rows are somewhere else -- the same misdirection as a misrouted
 	// login, one exchange deeper. Resolving the tenant's home cell means the
 	// exchanged token inherits the disagreement instead of laundering it.
-	//
-	// Without an org scope on the request there is nothing to resolve, and the
-	// serving cell is what the code did before this comment existed.
 	if s.cellID != "" {
 		stamp := s.cellID
-		if org, orgErr := orgctx.From(c.Request.Context()); orgErr == nil {
-			if tc := s.tokenCell(c.Request.Context(), org.ID); tc != "" {
-				stamp = tc
-			}
+		if tc := s.tokenCell(c.Request.Context(), org.ID); tc != "" {
+			stamp = tc
 		}
 		claims[cell.Claim] = stamp
 	}
 
 	kid, signKey := s.signingKey()
-	signed, err := newAccessToken(claims, kid).SignedString(signKey)
+	signed, err := newAccessToken(claims, kid, org.ID).SignedString(signKey)
 	if err != nil {
 		return "", 0, err
 	}

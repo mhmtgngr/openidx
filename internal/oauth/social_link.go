@@ -71,7 +71,7 @@ func (s *Service) bearerUserID(c *gin.Context) string {
 	if !strings.HasPrefix(authHeader, "Bearer ") {
 		return ""
 	}
-	claims, err := s.parseAccessToken(strings.TrimPrefix(authHeader, "Bearer "))
+	claims, err := s.parseAccessToken(c.Request.Context(), strings.TrimPrefix(authHeader, "Bearer "))
 	if err != nil {
 		return ""
 	}

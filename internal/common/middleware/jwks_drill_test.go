@@ -55,10 +55,14 @@ func newFlippableJWKSServer(t *testing.T, kid string, pub *rsa.PublicKey) *flipp
 }
 
 // signRS256 signs claims as the issuer signs an access token: RS256, under kid,
-// typed "at+jwt". Every bearer these tests present is meant to be one; a test
-// about another kind of token builds its own.
+// typed "at+jwt" and bound to an organization (the default one unless the
+// claims name another). Every bearer these tests present is meant to be one; a
+// test about another kind of token builds its own.
 func signRS256(t *testing.T, key *rsa.PrivateKey, kid string, claims jwt.MapClaims) string {
 	t.Helper()
+	if _, ok := claims[OrgIDClaim]; !ok {
+		claims[OrgIDClaim] = DefaultOrgID
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tok.Header["kid"] = kid
 	tok.Header["typ"] = AccessTokenType

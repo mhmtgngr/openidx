@@ -49,6 +49,7 @@ func TestHandleIntrospectHonorsRevocation(t *testing.T) {
 	claims := jwt.MapClaims{
 		"sub":       "user-xyz",
 		"client_id": "test-client",
+		"org_id":    "11111111-1111-1111-1111-111111111111",
 		"scope":     "openid",
 		"iat":       float64(now.Unix()),
 		"exp":       float64(now.Add(time.Hour).Unix()),

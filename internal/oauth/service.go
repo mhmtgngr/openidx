@@ -1393,7 +1393,7 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 	}
 
 	kid, signKey := s.signingKey()
-	return newAccessToken(claims, kid).SignedString(signKey)
+	return newAccessToken(claims, kid, org.ID).SignedString(signKey)
 }
 
 // GenerateIDToken generates an OIDC ID token.
@@ -4358,6 +4358,13 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 		c.JSON(200, gin.H{"active": false})
 		return
 	}
+	// Nor for an access token bound to no organization, or to another one than
+	// the organization the calling client belongs to -- the token the API
+	// validators would refuse.
+	if _, err := tokenOrgForRequest(c.Request.Context(), claims); err != nil {
+		c.JSON(200, gin.H{"active": false})
+		return
+	}
 
 	// Honor revocation: a signature-valid access token may have been revoked via
 	// /oauth/revoke or /oauth/logout(-all). RFC 7662 §2.2 — a revoked token (or
@@ -4507,7 +4514,7 @@ func (s *Service) handleUserInfo(c *gin.Context) {
 	// Parse and validate JWT. OIDC Core §5.3 has this endpoint take an access
 	// token, and parseAccessToken refuses an ID token: every relying party the
 	// user signed in to holds one.
-	claims, err := s.parseAccessToken(tokenString)
+	claims, err := s.parseAccessToken(c.Request.Context(), tokenString)
 	if err != nil {
 		c.JSON(401, invalidTokenBody(err))
 		return
@@ -5099,7 +5106,7 @@ func (s *Service) handleLogoutAll(c *gin.Context) {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	claims, err := s.parseAccessToken(tokenStr)
+	claims, err := s.parseAccessToken(c.Request.Context(), tokenStr)
 	if err != nil {
 		c.JSON(401, invalidTokenBody(err))
 		return
@@ -5142,7 +5149,7 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	claims, err := s.parseAccessToken(tokenStr)
+	claims, err := s.parseAccessToken(c.Request.Context(), tokenStr)
 	if err != nil {
 		c.JSON(401, invalidTokenBody(err))
 		return
@@ -5163,7 +5170,14 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, clientID string, scopes []string) (*TokenFlowResponse, error) {
 	now := time.Now()
 	accessLifetime := 1 * time.Hour
-	org, _ := orgctx.From(ctx) // best-effort: per-tenant issuer when subdomain tenancy is on
+	// The organization the sign-in resolved to: it picks the per-tenant issuer
+	// when subdomain tenancy is on, and the access token is bound to it. A
+	// token bound to no organization is refused by every API, so there is no
+	// point minting one.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Generate access token
 	accessToken := generateRandomToken(32)
@@ -5212,7 +5226,7 @@ func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, cli
 	}
 
 	signKid, signKey := s.signingKey()
-	signedToken, err := newAccessToken(claims, signKid).SignedString(signKey)
+	signedToken, err := newAccessToken(claims, signKid, org.ID).SignedString(signKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign access token: %w", err)
 	}

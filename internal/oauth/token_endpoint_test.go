@@ -151,7 +151,7 @@ func signedAccessToken(t *testing.T, ctx *TestOIDCContext, exp time.Time) string
 		"iss": ctx.Service.issuer,
 		"iat": time.Now().Unix(),
 		"exp": exp.Unix(),
-	}, "")
+	}, "", "11111111-1111-1111-1111-111111111111")
 	signed, err := tok.SignedString(ctx.Service.privateKey)
 	if err != nil {
 		t.Fatalf("sign: %v", err)

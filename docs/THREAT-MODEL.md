@@ -168,6 +168,7 @@ Evidence: `internal/identity/`, `internal/oauth/`, `internal/risk/`
 | Info disclosure / tampering | Any query missing an org predicate | **FORCE row-level security** on every tenant table — applies even to the table owner; org stamped per pooled connection (`internal/common/database/rls.go`); fail-closed |
 | Elevation | New code forgets the org scope | `tools/orgscope` static linter is **merge-blocking CI**; install-wide paths must carry an audited `//orgscope:ignore` with a justification (e.g. the vault checkout sweeper, `internal/vault/sweeper.go`) |
 | Spoofing | Client-supplied `X-Org-ID` abuse | The header is **ignored** unless the caller is a platform admin (`PlatformAdminPredicate`), and every platform-admin cross-org resolution synchronously records a mandatory audit entry before the request proceeds (`internal/common/middleware/tenant_resolver.go`) |
+| Elevation | A token or API key of one org presented to a request scoped to another (`X-Org-Slug`, or the default-org fallback) | Access tokens carry `org_id` and API keys their org; every API validator refuses a credential for another org (403) unless its holder is a platform admin, and refuses a token without `org_id` (401). A platform admin's `X-Org-Slug` crossing is audited like `X-Org-ID`'s where the resolver runs after auth (`internal/common/middleware/tokenorg.go`) |
 
 Evidence: [SECURITY-TENANCY.md](./SECURITY-TENANCY.md) (policy SQL shape,
 known non-org-scoped tables), `internal/common/orgctx/`.

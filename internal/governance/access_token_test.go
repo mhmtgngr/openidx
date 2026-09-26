@@ -14,6 +14,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // An administrator's ID token verifies against the key that signs their access
@@ -41,7 +42,7 @@ func TestGovernanceRefusesAnIDToken(t *testing.T) {
 		t.Helper()
 		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 			"sub": "u1", "iss": issuer, "aud": "admin-console", "roles": []interface{}{"admin"},
-			"exp": time.Now().Add(time.Hour).Unix(),
+			"org_id": middleware.DefaultOrgID, "exp": time.Now().Add(time.Hour).Unix(),
 		})
 		if typ != "" {
 			tok.Header["typ"] = typ
@@ -65,5 +66,70 @@ func TestGovernanceRefusesAnIDToken(t *testing.T) {
 	}
 	if code := call(sign(middleware.AccessTokenType)); code != http.StatusOK {
 		t.Fatalf("the same claims as an access token answered %d, want 200", code)
+	}
+}
+
+// A token's roles hold in the organization it was minted in. With the tenant
+// resolver mounted ahead of this middleware, as the service mounts it, a token
+// of another organization is refused unless it is a platform admin's, and a
+// token naming no organization is refused rather than read as the default one.
+func TestGovernanceBindsATokenToItsOrganization(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const (
+		issuer = "https://issuer.test"
+		orgA   = "aaaaaaaa-0000-0000-0000-00000000000a"
+		orgB   = "bbbbbbbb-0000-0000-0000-00000000000b"
+	)
+	s := &Service{
+		logger:          zap.NewNop(),
+		config:          &config.Config{OAuthIssuer: issuer},
+		jwksCachedKey:   &key.PublicKey,
+		jwksCacheExpiry: time.Now().Add(time.Hour),
+	}
+	call := func(resolved, tokenOrg, role string) int {
+		t.Helper()
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: resolved}))
+			c.Next()
+		})
+		router.GET("/api/v1/governance/policies", s.openIDXAuthMiddleware(), func(c *gin.Context) { c.Status(http.StatusOK) })
+		claims := jwt.MapClaims{
+			"sub": "u1", "iss": issuer, "client_id": "admin-console", "roles": []interface{}{role},
+			"exp": time.Now().Add(time.Hour).Unix(),
+		}
+		if tokenOrg != "" {
+			claims[middleware.OrgIDClaim] = tokenOrg
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["typ"] = middleware.AccessTokenType
+		signed, err := tok.SignedString(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/governance/policies", nil)
+		req.Header.Set("Authorization", "Bearer "+signed)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	for _, tc := range []struct {
+		name                     string
+		resolved, tokenOrg, role string
+		want                     int
+	}{
+		{"its own organization", orgA, orgA, "admin", http.StatusOK},
+		{"another organization", orgB, orgA, "admin", http.StatusForbidden},
+		{"a platform admin in another organization", orgB, orgA, "super_admin", http.StatusOK},
+		{"no organization", middleware.DefaultOrgID, "", "admin", http.StatusUnauthorized},
+	} {
+		if got := call(tc.resolved, tc.tokenOrg, tc.role); got != tc.want {
+			t.Errorf("%s: status %d, want %d", tc.name, got, tc.want)
+		}
 	}
 }

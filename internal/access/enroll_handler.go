@@ -80,12 +80,16 @@ func (e enrollError) Error() string { return e.msg }
 // entitlement is present. This is the security-critical gate; keep it small.
 func (s *Service) resolveEnrollSubject(c *gin.Context, req *darkEnrollRequest) (subject, method string, err error) {
 	// 1. Verified session (bearer). Reuses the same JWKS verification as the
-	//    proxy's getSessionFromBearer — a forged/unsigned token yields nothing.
+	//    proxy's getSessionFromBearer — a forged/unsigned token yields nothing,
+	//    and neither does one minted in another organization than the one this
+	//    request resolved to.
 	if authHeader := c.GetHeader("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		if claims, verr := middleware.VerifyBearerToken(s.oauthJWKSURL, token); verr == nil {
-			if sub, _ := claims["sub"].(string); sub != "" {
-				return sub, "session", nil
+			if _, oerr := middleware.CheckTokenOrg(c, claims); oerr == nil {
+				if sub, _ := claims["sub"].(string); sub != "" {
+					return sub, "session", nil
+				}
 			}
 		}
 	}

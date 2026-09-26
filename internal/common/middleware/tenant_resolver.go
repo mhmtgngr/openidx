@@ -115,10 +115,11 @@ type TenantResolverConfig struct {
 	Logger *zap.Logger
 
 	// OnPlatformCrossOrg, when set, is invoked exactly when a platform
-	// admin resolves a request to an org via the X-Org-ID header (a
-	// deliberate cross-org access). It MUST record an audit entry — this
-	// is the mandatory audit trail for platform-admin org-boundary
-	// crossings. It runs synchronously before the request proceeds.
+	// admin resolves a request to an org via the X-Org-ID header, or via an
+	// X-Org-Slug naming an org other than their credential's (a deliberate
+	// cross-org access). It MUST record an audit entry — this is the
+	// mandatory audit trail for platform-admin org-boundary crossings. It
+	// runs synchronously before the request proceeds.
 	OnPlatformCrossOrg func(c *gin.Context, target orgctx.Org)
 }
 
@@ -128,7 +129,10 @@ type TenantResolverConfig struct {
 // Resolution order (per v2.0 multi-tenancy design):
 //  1. X-Org-Slug header (set by the gateway from the subdomain when
 //     the install fronts wildcard *.openidx.io). Highest priority
-//     because the URL is the most explicit tenant signal.
+//     because the URL is the most explicit tenant signal. Where auth
+//     has already run, a slug naming an organization other than the
+//     credential's own is refused (403) unless the caller is a platform
+//     admin, whose crossing is audited as in step 3.
 //  2. JWT claim "org_id" (already attached to the gin context by
 //     the Auth middleware; the resolver does not re-parse the JWT).
 //  3. X-Org-ID header, only honored when PlatformAdminPredicate
@@ -146,7 +150,8 @@ type TenantResolverConfig struct {
 // Set Logger to have the mismatch reported when a caller actually tries to
 // use X-Org-ID against a resolver that cannot answer.
 //
-// On lookup failure: ErrOrgNotFound → 400. Any other error → 500.
+// On lookup failure: ErrOrgNotFound → 400. A credential from another
+// organization (ErrWrongOrganization) → 403. Any other error → 500.
 //
 // The middleware does NOT enforce org scoping itself. It only
 // attaches the resolved org to the context. Service code that reads
@@ -163,6 +168,12 @@ func TenantResolver(lookup OrgLookup, cfg TenantResolverConfig) gin.HandlerFunc 
 		if err != nil {
 			if errors.Is(err, ErrOrgNotFound) {
 				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+					"error": err.Error(),
+				})
+				return
+			}
+			if errors.Is(err, ErrWrongOrganization) {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 					"error": err.Error(),
 				})
 				return
@@ -234,13 +245,27 @@ func resolveOrgFromRequest(c *gin.Context, lookup OrgLookup, cfg TenantResolverC
 			}
 			return orgctx.Org{}, err
 		}
+		// Where authentication has already run -- cmd/admin-api mounts this
+		// resolver behind it -- the credential names its own organization:
+		// the token's org_id, or the API key's. A slug naming another one
+		// asks to act there with roles the credential holds only in its own,
+		// which only a platform admin may do, and that crossing is audited
+		// exactly as step 3's is.
+		if authOrg := c.GetString("org_id"); authOrg != "" && authOrg != org.ID {
+			if cfg.PlatformAdminPredicate == nil || !cfg.PlatformAdminPredicate(c) {
+				return orgctx.Org{}, ErrWrongOrganization
+			}
+			if cfg.OnPlatformCrossOrg != nil {
+				cfg.OnPlatformCrossOrg(c, org)
+			}
+		}
 		return org, nil
 	}
 
-	// 2. JWT claim "org_id" already on context (set by Auth middleware).
-	// Note: the existing Auth middleware sets the default UUID when the
-	// JWT lacks the claim, so we treat the default UUID and an unset
-	// value identically — they both fall through to step 4.
+	// 2. JWT claim "org_id" already on context (set by Auth middleware,
+	// which requires the claim on every token and uses the default UUID
+	// for an API key that records no org). The default UUID and an unset
+	// value are treated identically — they both fall through to step 4.
 	if v, ok := c.Get("org_id"); ok {
 		if id, ok := v.(string); ok && id != "" && id != cfg.DefaultOrgID {
 			org, err := lookup.ByID(ctx, id)

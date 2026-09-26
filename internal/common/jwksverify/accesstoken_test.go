@@ -52,6 +52,7 @@ func TestVerifyBearerTokenAcceptsOnlyAccessTokens(t *testing.T) {
 	sign := func(typ string, claims jwt.MapClaims) string {
 		t.Helper()
 		claims["exp"] = float64(time.Now().Add(time.Hour).Unix())
+		claims[OrgIDClaim] = testOrgID
 		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 		tok.Header["kid"] = kid
 		if typ == "" {
@@ -90,5 +91,48 @@ func TestVerifyBearerTokenAcceptsOnlyAccessTokens(t *testing.T) {
 		if _, err := VerifyBearerToken(srv.URL, tok); !errors.Is(err, ErrNotAccessToken) {
 			t.Errorf("%s: err = %v, want ErrNotAccessToken", name, err)
 		}
+	}
+}
+
+func TestTokenOrgID(t *testing.T) {
+	if org, err := TokenOrgID(map[string]interface{}{OrgIDClaim: testOrgID}); err != nil || org != testOrgID {
+		t.Fatalf("TokenOrgID = %q, %v; want %q", org, err, testOrgID)
+	}
+	for name, claims := range map[string]map[string]interface{}{
+		"no claim":     {"sub": "u"},
+		"empty claim":  {OrgIDClaim: ""},
+		"not a string": {OrgIDClaim: 42},
+	} {
+		if _, err := TokenOrgID(claims); !errors.Is(err, ErrNoOrganization) {
+			t.Errorf("%s: err = %v, want ErrNoOrganization", name, err)
+		}
+	}
+}
+
+// An access token minted before the claim existed names no organization. It is
+// refused, not read as the default organization: whichever organization it came
+// from, it would otherwise act in the default one.
+func TestVerifyBearerTokenRefusesAnAccessTokenWithNoOrganization(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("genkey: %v", err)
+	}
+	const kid = "no-org-kid"
+	srv := newJWKSServer(t, kid, &key.PublicKey)
+	defer srv.Close()
+	resetJWKSCache()
+
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"sub": "u", "client_id": "admin-console", "roles": []interface{}{"admin"},
+		"exp": float64(time.Now().Add(time.Hour).Unix()),
+	})
+	tok.Header["kid"] = kid
+	tok.Header["typ"] = AccessTokenType
+	signed, err := tok.SignedString(key)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if _, err := VerifyBearerToken(srv.URL, signed); !errors.Is(err, ErrNoOrganization) {
+		t.Fatalf("err = %v, want ErrNoOrganization", err)
 	}
 }

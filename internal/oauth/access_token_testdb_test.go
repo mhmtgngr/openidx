@@ -44,6 +44,8 @@ type tokenHarness struct {
 	db          *database.PostgresDB
 	issuer      *Service
 	suffix      string
+	jwksURL     string
+	orgs        middleware.OrgLookup
 	identityAPI *gin.Engine
 	adminAPI    *gin.Engine
 	oauthAPI    *gin.Engine
@@ -76,13 +78,12 @@ func newTokenHarness(t *testing.T) *tokenHarness {
 		privateKey: key, publicKey: &key.PublicKey, issuer: "https://token-binding.test",
 	}
 
-	resolver := middleware.TenantResolver(
-		organization.NewOrgLookup(organization.NewService(db, rdb, &config.Config{}, zap.NewNop())),
-		middleware.TenantResolverConfig{
-			DefaultOrgFallback:     true,
-			DefaultOrgID:           middleware.DefaultOrgID,
-			PlatformAdminPredicate: auth.SuperAdminPredicate,
-		})
+	h.orgs = organization.NewOrgLookup(organization.NewService(db, rdb, &config.Config{}, zap.NewNop()))
+	resolver := middleware.TenantResolver(h.orgs, middleware.TenantResolverConfig{
+		DefaultOrgFallback:     true,
+		DefaultOrgID:           middleware.DefaultOrgID,
+		PlatformAdminPredicate: auth.SuperAdminPredicate,
+	})
 
 	h.oauthAPI = gin.New()
 	h.oauthAPI.Use(resolver)
@@ -91,6 +92,7 @@ func newTokenHarness(t *testing.T) *tokenHarness {
 	srv := httptest.NewServer(h.oauthAPI)
 	t.Cleanup(srv.Close)
 	jwksURL := srv.URL + "/.well-known/jwks.json"
+	h.jwksURL = jwksURL
 
 	idSvc := identity.NewService(db, rdb, &config.Config{
 		Environment: "production", OAuthIssuer: h.issuer.issuer, OAuthJWKSURL: jwksURL,

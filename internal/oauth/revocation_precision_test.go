@@ -71,7 +71,7 @@ func TestTheRevocationCutoffIsComparedToTheMicrosecond(t *testing.T) {
 
 	token := func(iat time.Time, grantedAt *time.Time) string {
 		claims := jwt.MapClaims{
-			"sub": user, "client_id": "c", "aud": "c", "scope": "openid",
+			"sub": user, "client_id": "c", "aud": "c", "scope": "openid", "org_id": ssoTestOrg,
 			"iat": iat.Unix(), "exp": time.Now().Add(time.Hour).Unix(),
 		}
 		if grantedAt != nil {

@@ -3123,6 +3123,14 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 	// exactly as a missing cookie does. Never build a ProxySession from
 	// unverified claims. If JWKS is unconfigured, verification fails → no
 	// session (fail-closed: bearer auth is unavailable, never forgeable).
+	//
+	// The token must also name the organization it was minted in, which
+	// VerifyBearerToken enforces. It is not compared with the organization
+	// the tenant resolver chose for this request, as the API validators
+	// compare it: a proxied request is resolved by the route its host
+	// matched (findRouteByHost reads across organizations), not by
+	// X-Org-Slug, so the resolver's answer says nothing about which tenant's
+	// application is being reached.
 	claims, err := middleware.VerifyBearerToken(s.oauthJWKSURL, token)
 	if err != nil {
 		s.logger.Debug("bearer token rejected", zap.Error(err))

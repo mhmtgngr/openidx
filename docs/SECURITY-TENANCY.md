@@ -55,7 +55,26 @@ order, the request subdomain, the authenticated JWT, or the `X-Org-ID` header,
 and places it in the request's org context (`orgctx`). If none resolves, the
 request has no tenant and RLS yields zero rows — **fail-closed**.
 
-### 5. A CI linter makes it un-bypassable by construction
+### 5. Tokens are bound to their organization
+
+The tenant decides which rows a request sees; the token decides which roles
+the caller holds, and those are their roles in one organization. Every access
+token therefore carries `org_id`, the organization it was minted in, and every
+API validator checks it against the organization the request resolved to:
+
+- A token presented to a request for another organization is refused with
+  `403`, whether that organization came from `X-Org-Slug` or from the
+  default-org fallback. The same holds for an API key, whose organization is
+  the key's own (the default organization for a key that records none).
+- A token with no `org_id` is refused with `401`; signing in again or
+  refreshing replaces it.
+- A platform admin (`super_admin`) may act in another organization, by
+  `X-Org-Slug` (the console's organization selector) or `X-Org-ID`. Where the
+  resolver runs after authentication (admin-api), every such crossing writes a
+  `platform_admin_cross_org_access` row to the target organization's audit
+  trail.
+
+### 6. A CI linter makes it un-bypassable by construction
 
 `tools/orgscope` is a static analyzer wired as a **merge-blocking required CI
 check**. It fails the build on any query against a tenant table that lacks an
@@ -84,6 +103,7 @@ tenant-scoped and fail-closed.
 |---|---|
 | Database schema | Enforced — `org_id` + FORCE RLS on tenant tables |
 | Application services | Enforced — `app.org_id` stamped per connection; queries carry `org_id` |
+| Tokens and API keys | Bound — accepted only in their own organization, except a platform admin's |
 | Authorization / governance | Scoped — campaigns, certifications, ABAC, SoD, and risk policies carry `org_id` |
 | Audit | Scoped — `audit_events` is org-scoped, including Elasticsearch search |
 | CI / tests | Enforced — `orgscope` merge gate + cross-org integration test |

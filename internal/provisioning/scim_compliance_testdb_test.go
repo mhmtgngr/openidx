@@ -92,6 +92,7 @@ func (h *scimHarness) mint(key *rsa.PrivateKey, issuer string) string {
 	h.t.Helper()
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iss": issuer, "sub": "scim-client", "exp": time.Now().Add(time.Hour).Unix(),
+		middleware.OrgIDClaim: scimTestOrg,
 	})
 	tok.Header["typ"] = middleware.AccessTokenType
 	signed, err := tok.SignedString(key)

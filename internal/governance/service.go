@@ -272,6 +272,13 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// And only in the organization it was minted in, whose roles it
+		// carries; see middleware.CheckTokenOrg.
+		if _, err := middleware.CheckTokenOrg(c, claims); err != nil {
+			middleware.AbortForTokenOrg(c, err)
+			return
+		}
+
 		// Validate issuer
 		if iss, ok := claims["iss"].(string); ok {
 			expectedIssuer := s.config.OAuthIssuer

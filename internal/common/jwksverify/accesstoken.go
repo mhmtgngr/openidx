@@ -41,3 +41,29 @@ func IsAccessToken(header, claims map[string]interface{}) bool {
 	clientID, _ := claims["client_id"].(string)
 	return clientID != ""
 }
+
+// OrgIDClaim is the claim naming the organization an access token was minted
+// in: the tenant whose rows the sign-in, refresh or client authentication that
+// produced it was scoped to.
+const OrgIDClaim = "org_id"
+
+// ErrNoOrganization is returned for an access token that names no
+// organization.
+var ErrNoOrganization = errors.New("token has no organization; sign in again")
+
+// TokenOrgID returns the organization an access token is bound to.
+//
+// The roles a token carries are the roles its subject holds in that
+// organization and nowhere else, so a validator needs the claim to know where
+// the token may be used. A token without it is refused rather than read as the
+// default organization: every access token minted before the claim existed
+// lacks it, whichever organization it came from, so reading absence as the
+// default would let a token from any organization act in the default one.
+// Refusing costs one refresh or sign-in after the upgrade, within one
+// access-token lifetime.
+func TokenOrgID(claims map[string]interface{}) (string, error) {
+	if orgID, _ := claims[OrgIDClaim].(string); orgID != "" {
+		return orgID, nil
+	}
+	return "", ErrNoOrganization
+}
