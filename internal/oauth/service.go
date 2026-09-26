@@ -96,6 +96,14 @@ type OAuthClient struct {
 	// the field send nothing for it, and reading that as false would take API
 	// access away from the console itself on its next edit.
 	APIAccess *bool `json:"api_access,omitempty"`
+
+	// TokenExchangeAudiences are the audiences, besides the client itself,
+	// that token exchange may issue this client tokens for (v209,
+	// token_exchange.go). Nil or empty means none. A pointer for APIAccess's
+	// reason: a writer that leaves it out leaves it as it is, and only an
+	// administrator's write through /api/v1/oauth/clients sets it --
+	// dynamic registration cannot.
+	TokenExchangeAudiences *[]string `json:"token_exchange_audiences,omitempty"`
 }
 
 // MayCallAPI reports whether access tokens issued to this client carry the

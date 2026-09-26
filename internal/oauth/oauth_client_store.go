@@ -91,13 +91,16 @@ func (r *PostgresOAuthClientStore) GetByClientID(ctx context.Context, clientID s
 	var refreshTokenMaxLifetime *int
 
 	var apiAccess bool
+	// NULL means the client may exchange tokens for itself only (v209).
+	var tokenExchangeAudiencesJSON []byte
 	err = r.db.Pool.QueryRow(dbCtx, `
 		SELECT id, client_id, client_secret, name, description, type,
 		       redirect_uris, grant_types, response_types, scopes,
 		       logo_uri, policy_uri, tos_uri, pkce_required,
 		       allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
 		       refresh_token_max_lifetime, back_channel_logout_uri,
-		       post_logout_redirect_uris, api_access, created_at, updated_at
+		       post_logout_redirect_uris, api_access, token_exchange_audiences,
+		       created_at, updated_at
 		FROM oauth_clients WHERE client_id = $1 AND org_id = $2
 	`, clientID, org.ID).Scan(
 		&client.ID, &client.ClientID, &clientSecret, &client.Name, &description,
@@ -105,7 +108,8 @@ func (r *PostgresOAuthClientStore) GetByClientID(ctx context.Context, clientID s
 		&logoURI, &policyURI, &tosURI, &client.PKCERequired,
 		&client.AllowRefreshToken, &client.AccessTokenLifetime, &client.RefreshTokenLifetime,
 		&refreshTokenMaxLifetime, &backChannelLogoutURI,
-		&postLogoutRedirectURIsJSON, &apiAccess, &client.CreatedAt, &client.UpdatedAt,
+		&postLogoutRedirectURIsJSON, &apiAccess, &tokenExchangeAudiencesJSON,
+		&client.CreatedAt, &client.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -143,6 +147,13 @@ func (r *PostgresOAuthClientStore) GetByClientID(ctx context.Context, clientID s
 	// A NULL column leaves the slice nil, which is what the logout path reads
 	// as "this client registered nothing" and falls back on (v199).
 	json.Unmarshal(postLogoutRedirectURIsJSON, &client.PostLogoutRedirectURIs)
+	if tokenExchangeAudiencesJSON != nil {
+		var audiences []string
+		if err := json.Unmarshal(tokenExchangeAudiencesJSON, &audiences); err != nil {
+			return nil, fmt.Errorf("get oauth client: token_exchange_audiences: %w", err)
+		}
+		client.TokenExchangeAudiences = &audiences
+	}
 
 	return &client, nil
 }
@@ -231,6 +242,9 @@ func (r *PostgresOAuthClientStore) Create(ctx context.Context, client *OAuthClie
 	if err := validatePostLogoutRedirectURIs(client.PostLogoutRedirectURIs); err != nil {
 		return err
 	}
+	if err := validateTokenExchangeAudiences(client.TokenExchangeAudiences); err != nil {
+		return err
+	}
 	now := time.Now()
 	client.CreatedAt = now
 	client.UpdatedAt = now
@@ -262,14 +276,14 @@ func (r *PostgresOAuthClientStore) Create(ctx context.Context, client *OAuthClie
 			logo_uri, policy_uri, tos_uri, pkce_required,
 			allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
 			created_at, updated_at, org_id, back_channel_logout_uri,
-			post_logout_redirect_uris, api_access
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NULLIF($21, ''), $22, $23)
+			post_logout_redirect_uris, api_access, token_exchange_audiences
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NULLIF($21, ''), $22, $23, $24)
 	`, client.ID, client.ClientID, client.ClientSecret, client.Name, client.Description,
 		client.Type, redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON,
 		client.LogoURI, client.PolicyURI, client.TOSUri, client.PKCERequired,
 		client.AllowRefreshToken, client.AccessTokenLifetime, client.RefreshTokenLifetime,
 		client.CreatedAt, client.UpdatedAt, org.ID, strings.TrimSpace(client.BackChannelLogoutURI),
-		postLogoutRedirectURIsJSON, apiAccess)
+		postLogoutRedirectURIsJSON, apiAccess, marshalTokenExchangeAudiences(client.TokenExchangeAudiences))
 	if err != nil {
 		return fmt.Errorf("create oauth client: %w", err)
 	}
@@ -285,6 +299,9 @@ func (r *PostgresOAuthClientStore) Update(ctx context.Context, clientID string, 
 		return err
 	}
 	if err := validatePostLogoutRedirectURIs(client.PostLogoutRedirectURIs); err != nil {
+		return err
+	}
+	if err := validateTokenExchangeAudiences(client.TokenExchangeAudiences); err != nil {
 		return err
 	}
 	org, err := orgctx.From(ctx)
@@ -310,8 +327,10 @@ func (r *PostgresOAuthClientStore) Update(ctx context.Context, clientID string, 
 	// anyone renamed it. The cap is set by migration; changing it is a
 	// deliberate SQL change, not a side effect of editing a description.
 	//
-	// api_access is written only when the caller sent it, for the same
-	// reason: a nil APIAccess leaves the column as it is.
+	// api_access and token_exchange_audiences are written only when the
+	// caller sent them, for the same reason: a nil APIAccess or
+	// TokenExchangeAudiences leaves the column as it is. Dynamic registration's
+	// update never sends either.
 	result, err := r.db.Pool.Exec(dbCtx, `
 		UPDATE oauth_clients
 		SET name = $2, description = $3, redirect_uris = $4, grant_types = $5,
@@ -320,12 +339,14 @@ func (r *PostgresOAuthClientStore) Update(ctx context.Context, clientID string, 
 		    refresh_token_lifetime = $11, updated_at = $12,
 		    back_channel_logout_uri = NULLIF($14, ''),
 		    post_logout_redirect_uris = $15,
-		    api_access = COALESCE($16, api_access)
+		    api_access = COALESCE($16, api_access),
+		    token_exchange_audiences = COALESCE($17, token_exchange_audiences)
 		WHERE client_id = $1 AND org_id = $13
 	`, clientID, client.Name, client.Description, redirectURIsJSON, grantTypesJSON,
 		responseTypesJSON, scopesJSON, client.PKCERequired, client.AllowRefreshToken,
 		client.AccessTokenLifetime, client.RefreshTokenLifetime, now, org.ID,
-		strings.TrimSpace(client.BackChannelLogoutURI), postLogoutRedirectURIsJSON, client.APIAccess)
+		strings.TrimSpace(client.BackChannelLogoutURI), postLogoutRedirectURIsJSON, client.APIAccess,
+		marshalTokenExchangeAudiences(client.TokenExchangeAudiences))
 	if err != nil {
 		return fmt.Errorf("update oauth client: %w", err)
 	}

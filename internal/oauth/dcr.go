@@ -240,6 +240,12 @@ func (s *Service) buildClientFromMetadata(md *clientMetadata) (*OAuthClient, err
 	if md.TokenEndpointAuthMethod == "none" {
 		clientType = "public"
 	}
+	// Token exchange admits a confidential client only (token_exchange.go).
+	// Registering a public one for it would hand back a client every exchange
+	// it asks for refuses, so the registration is refused instead.
+	if clientType == "public" && contains(grantTypes, grantTypeTokenExchange) {
+		return nil, &metadataError{"token_endpoint_auth_method none cannot be used with the " + grantTypeTokenExchange + " grant: it needs a confidential client"}
+	}
 
 	responseTypes := md.ResponseTypes
 	if len(responseTypes) == 0 && needsRedirect {

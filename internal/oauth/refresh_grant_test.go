@@ -81,6 +81,8 @@ CREATE TABLE oauth_clients (
   post_logout_redirect_uris JSONB,
     -- v205: the column default for a client registered after the upgrade.
     api_access             BOOLEAN NOT NULL DEFAULT false,
+    -- v209: NULL, no audience besides the client itself.
+    token_exchange_audiences JSONB,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     org_id                 UUID NOT NULL,

@@ -490,7 +490,11 @@ paths:
               properties:
                 grant_type:
                   type: string
-                  enum: [authorization_code, refresh_token, client_credentials]
+                  enum:
+                    - authorization_code
+                    - refresh_token
+                    - client_credentials
+                    - urn:ietf:params:oauth:grant-type:token-exchange
                 code:
                   type: string
                   description: Required for authorization_code grant
@@ -519,12 +523,49 @@ paths:
                     authentication of the device.
                 scope:
                   type: string
+                subject_token:
+                  type: string
+                  description: >-
+                    Token exchange (RFC 8693): the access token to exchange. It
+                    must be an access token OpenIDX issued, of the organization
+                    the request is for, unexpired and not revoked.
+                subject_token_type:
+                  type: string
+                  enum:
+                    - urn:ietf:params:oauth:token-type:access_token
+                    - urn:ietf:params:oauth:token-type:jwt
+                actor_token:
+                  type: string
+                  description: >-
+                    Token exchange: optional, the acting party's access token,
+                    held to the subject token's rules and recorded in the
+                    issued token's `act` claim.
+                actor_token_type:
+                  type: string
+                  enum:
+                    - urn:ietf:params:oauth:token-type:access_token
+                    - urn:ietf:params:oauth:token-type:jwt
+                audience:
+                  type: string
+                  description: >-
+                    Token exchange: the audience of the issued token. It must
+                    be the requesting client itself or one of its
+                    `token_exchange_audiences`. Absent means the requesting
+                    client.
+                resource:
+                  type: string
+                  description: >-
+                    Token exchange: the same target as `audience`, under RFC
+                    8693's other name. When both are sent they must name the
+                    same target.
       responses:
         '200':
           description: >-
             Token response. Every response from this endpoint, success or
             error, carries `Cache-Control: no-store` and `Pragma: no-cache`
-            (RFC 6749 §5.1).
+            (RFC 6749 §5.1). A token-exchange response also carries
+            `issued_token_type`; the issued token expires no later than the
+            subject token.
           headers:
             Cache-Control:
               schema:
@@ -542,9 +583,17 @@ paths:
           description: >-
             Invalid request. For the authorization_code grant this includes a
             code whose session was revoked after the code was issued
-            (`invalid_grant`, `session_revoked`).
+            (`invalid_grant`, `session_revoked`). For token exchange:
+            `unauthorized_client` when the client is not registered for the
+            grant, `invalid_target` when the audience is not one the client
+            may obtain tokens for, and `invalid_grant` for a subject or actor
+            token that is not a live, unrevoked access token of the
+            organization.
         '401':
-          description: Invalid client credentials
+          description: >-
+            Invalid client credentials (`invalid_client`). Token exchange
+            answers this to any client that is not confidential or does not
+            present its secret.
 
   /oauth/introspect:
     post:
@@ -2797,6 +2846,13 @@ components:
             application's access token. Clients that existed at the upgrade
             that added the setting have it; a client registered since has it
             only if it was set.
+        token_exchange_audiences:
+          type: array
+          items:
+            type: string
+          description: >-
+            The audiences, besides the client itself, token exchange may issue
+            this client tokens for. Absent or empty means none.
         enabled:
           type: boolean
         created_at:
@@ -2857,6 +2913,19 @@ components:
             only signs users in does not). On update, absent leaves the
             setting as it is. Not accepted at `POST /oauth/register`, where a
             client always starts without it.
+        token_exchange_audiences:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+          description: >-
+            Optional. The audiences, besides the client itself, token exchange
+            may issue this client tokens for (RFC 8693 `audience` or
+            `resource`). On update, absent leaves the list as it is and an
+            empty list clears it. Not accepted at `POST /oauth/register`, where
+            a client always starts without one.
         enabled:
           type: boolean
           default: true

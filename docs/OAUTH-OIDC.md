@@ -343,10 +343,15 @@ when the refresh began, not when its refresh token was issued. Some cutoffs
 leave refresh tokens valid on purpose: losing a role cuts the access tokens
 that carry it, and the next refresh mints one with the roles the user has now.
 
+An access token from token exchange carries the claim of the token it was
+exchanged from: the moment that token dates from. A cutoff that revokes the
+subject token revokes the exchanged one as well, even if the exchange came
+after the cutoff.
+
 A token without the claim is compared at whole-second precision: it is
 refused if its `iat` is in the same second as the cutoff or earlier. That
-covers tokens from earlier releases, from the device and token-exchange
-grants, and from the SAML fallback. A cutoff written by an
+covers tokens from earlier releases, from the device grant, and from the SAML
+fallback. A cutoff written by an
 earlier release is whole seconds and reaches to the end of its second. In
 both cases a token that could have been minted before the logout is refused.
 
@@ -649,9 +654,9 @@ Signed JWT, typed `at+jwt` in its header (RFC 9068 §2.1), containing:
 - `iss`: Issuer (OpenIDX URL)
 - `iat`: Issued at timestamp
 - `exp`: Expiration timestamp
-- `granted_at_us`: from the authorization-code and refresh grants. The
-  microsecond the code was issued or the refresh began, compared with a
-  logout's revocation cutoff (see
+- `granted_at_us`: from the authorization-code, refresh and token-exchange
+  grants. The microsecond the code was issued, the refresh began, or the
+  exchanged token dates from, compared with a logout's revocation cutoff (see
   [What a logout revokes](#what-a-logout-revokes))
 
 **Signature:** RS256 (RSA-SHA256)

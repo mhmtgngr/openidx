@@ -131,6 +131,7 @@ func bclSetup(t *testing.T) (*Service, *database.PostgresDB, *outcomeBox) {
 			back_channel_logout_uri VARCHAR(500),
 			post_logout_redirect_uris JSONB,
 			api_access BOOLEAN NOT NULL DEFAULT false,
+			token_exchange_audiences JSONB,
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW(),
 			org_id UUID NOT NULL,

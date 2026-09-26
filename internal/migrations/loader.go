@@ -1483,5 +1483,12 @@ func allMigrations() []*Migration {
 			UpSQL:       magicLinkLookupUp,
 			DownSQL:     magicLinkLookupDown,
 		},
+		{
+			Version:     209,
+			Name:        "oauth_clients_token_exchange_audiences",
+			Description: "Add oauth_clients.token_exchange_audiences: the audiences, besides the client itself, a client may obtain tokens for through token exchange (RFC 8693). The exchange used to take the issued token's audience from the request verbatim, so any client registered for the grant could turn a user's access token into one for any other application, carrying the user's roles; an administrator now lists what each client may ask for. NULL, which every existing row gets, means none: a client exchanging tokens for itself keeps working, and one asking for another audience is refused with invalid_target until it is listed. Down drops the column.",
+			UpSQL:       oauthClientsTokenExchangeAudiencesUp,
+			DownSQL:     oauthClientsTokenExchangeAudiencesDown,
+		},
 	}
 }
