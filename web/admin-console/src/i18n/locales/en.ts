@@ -9009,6 +9009,7 @@ const en = {
         htmlBody: 'HTML Body',
         textBody: 'Plain Text Body',
         previewLabel: 'Preview',
+        previewFrame: 'Email preview',
         empty: 'Select a template from the left to edit',
       },
     },

@@ -123,4 +123,49 @@ describe('EmailTemplatesPage', () => {
     await user.click(screen.getByRole('button', { name: /hide branding/i }))
     expect(screen.queryByText('Email Branding')).not.toBeInTheDocument()
   })
+
+  // The preview shows HTML one administrator wrote to the others who open it,
+  // platform admins among them. It has to look as the email will, and none of
+  // it may become part of the console's document, where it would run with the
+  // console's origin and could read the tokens the console keeps.
+  describe('preview', () => {
+    const planted =
+      '<h1 id="planted-heading">Welcome, John!</h1>' +
+      '<img id="planted-img" src="x" onerror="window.__planted = true">' +
+      '<script id="planted-script">window.__planted = true</script>'
+
+    async function openPreview() {
+      const user = userEvent.setup()
+      vi.mocked(api.post).mockImplementationOnce(
+        () => Promise.resolve({ html: planted }) as ReturnType<typeof api.post>,
+      )
+      render(<EmailTemplatesPage />, { wrapper: createWrapper() })
+      await user.click(await screen.findByText('Welcome Email'))
+      await user.click(screen.getByRole('button', { name: /^preview$/i }))
+      return screen.findByTitle('Email preview')
+    }
+
+    it('shows the rendered template in a frame that grants it nothing', async () => {
+      const frame = await openPreview()
+
+      expect(api.post).toHaveBeenCalledWith('/api/v1/email-templates/tpl-welcome/preview', {})
+      expect(frame.tagName).toBe('IFRAME')
+      // The administrator sees exactly what the server rendered...
+      expect(frame.getAttribute('srcdoc')).toBe(planted)
+      // ...in a sandbox with no allowances: without allow-scripts nothing in it
+      // runs, and without allow-same-origin its origin is not the console's.
+      const sandbox = frame.getAttribute('sandbox')
+      expect(sandbox).not.toBeNull()
+      expect(sandbox!.split(/\s+/).filter(Boolean)).toEqual([])
+    })
+
+    it('never places the template markup in the console document', async () => {
+      await openPreview()
+
+      expect(document.getElementById('planted-heading')).toBeNull()
+      expect(document.getElementById('planted-img')).toBeNull()
+      expect(document.getElementById('planted-script')).toBeNull()
+      expect(document.querySelector('[onerror]')).toBeNull()
+    })
+  })
 })

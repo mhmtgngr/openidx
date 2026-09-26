@@ -290,6 +290,17 @@ Ziti identity: policies limit what it can dial, and the kill switch severs it.
 | Info disclosure (SSRF) | An organization's administrator points a webhook, an audit-stream webhook, an outbound SCIM target, an SSF stream's delivery endpoint or a SAML metadata URL at an address inside the platform's network -- the cloud metadata endpoint, another service's port -- and reads the answer back: the first 1000 bytes of each webhook delivery, the SCIM connection test's error, the parsed metadata | The **outbound guard** resolves the host when the URL is saved and refuses it (400) if it names or resolves to a loopback, private, link-local, shared (`100.64.0.0/10`), unspecified, multicast or reserved address, in any spelling (IPv4-mapped, NAT64, 6to4, IPv4-compatible). Every connection is checked again and dialed only at the address that was checked, so a name that moves inward after it was saved (DNS rebinding) is refused, and a URL saved before the guard existed gets nowhere either. Redirects are not followed (the SAML metadata fetch follows them, each hop checked at its connection); behind an HTTP(S) proxy the destination is checked before the proxy is handed it. The refusal names the host and the kind of address, never where a name resolved. `OIDX_OUTBOUND_ALLOWLIST`, empty by default, is the operator's list of internal receivers allowed anyway. `internal/common/netutil/outbound_test.go`, `internal/webhooks/outbound_guard_testdb_test.go`, `internal/admin/webhook_destination_testdb_test.go` |
 | Info disclosure (SSRF) | The same, through a URL not yet behind the guard: an external identity provider's token and userinfo endpoints, an OIDC back-channel logout URI, a SAML service provider's single-logout URL, EDR connector and BambooHR base URLs | Residual R9 (section 5) |
 
+### 4.11 Admin console (browser)
+
+The console keeps its access and refresh tokens in `localStorage`, so any
+script that runs in its origin can read them (residual R9).
+
+| Threat | Vector | Mitigation |
+|---|---|---|
+| Elevation, info disclosure | One administrator writes HTML that another administrator's console renders, such as an email template opened in the preview, and its script reads that administrator's tokens | HTML the console did not write is shown only in an `<iframe srcdoc>` whose `sandbox` grants nothing, so it runs no script and has an opaque origin (`web/admin-console/src/components/email-preview-frame.tsx`). The console's lint configuration refuses `dangerouslySetInnerHTML`, `innerHTML` and the other markup sinks, and a `srcdoc` frame without `sandbox` |
+| Elevation, info disclosure | Script injected into the console by any other route | Every nginx configuration that serves the console sends a Content-Security-Policy from each location that answers with its files: no inline script and no `eval` (`script-src 'self'`, plus the Turnstile origin on the login page), `object-src 'none'`, `base-uri` and `form-action` held to the console's origin, and `frame-ancestors 'none'` (`'self'` in the two site configurations). `scripts/check-console-csp.sh` fails CI when a location loses or loosens it, and the build fails if it would emit an inline script the policy refuses |
+| Tampering | Clickjacking | `frame-ancestors` in the policy, and `X-Frame-Options` |
+
 ## 5. Residual risks and operator obligations
 
 Honesty section — what the platform does **not** absorb for you:
@@ -305,6 +316,7 @@ Honesty section — what the platform does **not** absorb for you:
 | R7 | DB backups are not encrypted by OpenIDX itself | Encrypt backups at the storage layer; drill restores (`make dr-game-day`) |
 | R8 | JWT signing key age is not tracked in code | Rotate ≤ 90 days per operational control §5.2 |
 | R9 | Some requests to administrator-configured URLs are not behind the outbound guard (§4.11): external identity providers, OIDC back-channel logout, SAML single logout, EDR connectors, BambooHR. Most are blind (the answer is not shown), and internal identity providers and service providers are common | Restrict the services' egress to what they need; treat those settings as an administrator's trust |
+| R9 | The admin console keeps its access and refresh tokens in `localStorage` ([#965](https://github.com/mhmtgngr/openidx/issues/965)): script that runs in its origin can read them, and the Content-Security-Policy that stops injected script works only where it is sent (§4.11) | Serve the console with the nginx configurations this repository ships. If another web server or a CDN serves the built console, send the policy from `deployments/docker/nginx/admin-console.conf` on its documents and files, and keep it off the API, OAuth, SAML and Guacamole paths |
 
 Assumptions: TLS everywhere at TB1 (enforced for DB by
 `ValidateProduction()`); operator keeps host OS and container runtime

@@ -8779,6 +8779,7 @@ const tr: typeof en = {
         htmlBody: 'HTML Gövdesi',
         textBody: 'Düz Metin Gövdesi',
         previewLabel: 'Önizleme',
+        previewFrame: 'E-posta önizlemesi',
         empty: 'Düzenlemek için soldan bir şablon seçin',
       },
     },
