@@ -6870,6 +6870,9 @@ paths:
     get:
       tags: [Tenants]
       summary: List tenant domains
+      description: >-
+        The organization's domain claims. An unverified claim carries the TXT
+        record that verifies it.
       operationId: listTenantDomains
       x-openidx-handler: internal/admin.(*Service).handleListTenantDomains
       responses:
@@ -6879,7 +6882,11 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TenantDomain'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -6891,23 +6898,41 @@ paths:
     post:
       tags: [Tenants]
       summary: Create tenant domain
+      description: >-
+        Claims a domain for the organization. The claim is unverified until its
+        TXT record is published and the verify operation finds it; the answer
+        carries that record. An unverified claim holds nothing: any number of
+        organizations may claim the same domain, and the one that proves
+        control in DNS gets it. An organization claims a domain once, and a
+        domain another organization has verified cannot be claimed; both are
+        answered 409.
       operationId: createTenantDomain
       x-openidx-handler: internal/admin.(*Service).handleCreateTenantDomain
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              required: [domain]
+              properties:
+                domain:
+                  type: string
+                  description: >-
+                    A DNS name of at least two labels, such as
+                    login.example.com. It is stored in lower case without a
+                    trailing dot.
+                domain_type:
+                  type: string
+                  enum: [subdomain, custom]
+                  default: subdomain
       responses:
-        '200':
-          description: Success
+        '201':
+          description: The claim, with the record that verifies it
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TenantDomain'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -6916,6 +6941,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -6970,33 +6997,52 @@ paths:
     post:
       tags: [Tenants]
       summary: Verify tenant domain
+      description: >-
+        Looks up the TXT record _openidx-challenge.<domain> and marks the claim
+        verified only if one of its values is exactly
+        openidx-domain-verification=<the claim's token>; the lookup is given 5
+        seconds. The request body is not read: nothing sent with the request
+        stands in for the record, for an organization's admin or for a
+        platform admin. Verifying a claim removes every other organization's
+        unverified claim to the domain. A verified claim answers 200 again.
       operationId: verifyTenantDomain
       x-openidx-handler: internal/admin.(*Service).handleVerifyTenantDomain
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
       responses:
         '200':
-          description: Success
+          description: The domain is verified
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: true
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >-
+            No TXT record at the challenge name holds the expected value, or
+            the claim has no token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: Another organization has verified the domain
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/ServerError'
+        '502':
+          description: The DNS lookup failed or timed out; try again
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /api/v1/tenants/{orgId}/settings:
     parameters:
@@ -7445,6 +7491,12 @@ components:
             $ref: '#/components/schemas/Error'
     NotFound:
       description: No such resource in the caller's organization
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: The request conflicts with the resource's current state
       content:
         application/json:
           schema:
@@ -8069,3 +8121,53 @@ components:
           type: string
           format: date-time
           nullable: true
+
+    TenantDomain:
+      type: object
+      properties:
+        id:
+          type: string
+        org_id:
+          type: string
+        domain:
+          type: string
+          description: A DNS name, stored in lower case without a trailing dot
+        domain_type:
+          type: string
+          enum: [subdomain, custom]
+        verified:
+          type: boolean
+        verification_token:
+          type: string
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        ssl_enabled:
+          type: boolean
+        primary_domain:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        verification_record:
+          $ref: '#/components/schemas/DomainVerificationRecord'
+
+    DomainVerificationRecord:
+      type: object
+      description: >-
+        The TXT record whose presence verifies the domain, given while it is
+        unverified.
+      properties:
+        type:
+          type: string
+          enum: [TXT]
+        name:
+          type: string
+          example: _openidx-challenge.login.example.com
+        value:
+          type: string
+          example: openidx-domain-verification=3f9c0a6e1b2d4c5e8f7a6b5c4d3e2f1a

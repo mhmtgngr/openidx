@@ -7967,7 +7967,7 @@ const en = {
       },
       domains: {
         title: 'Custom Domains',
-        desc: 'Manage domains for this tenant',
+        desc: 'The sign-in page served at a verified domain shows this organization\'s branding.',
         add: 'Add Domain',
         adding: 'Adding...',
         emptyTitle: 'No domains configured',
@@ -7985,10 +7985,13 @@ const en = {
           subdomain: 'Subdomain',
           custom: 'Custom Domain',
         },
-        verifyTitle: 'Verify this domain?',
-        verifyDesc:
-          'This marks {{domain}} as a verified, trusted domain for this tenant. Verified domains are trusted for branded URLs and identity binding.',
-        verifyConfirm: 'Verify',
+        verify: 'Verify',
+        verifyAria: 'Verify {{domain}}',
+        recordHint:
+          'Publish this TXT record in the DNS of {{domain}}, then verify. The record proves that this organization controls the domain.',
+        recordType: 'Type',
+        recordName: 'Name',
+        recordValue: 'Value',
         deleteTitle: 'Delete this domain?',
         deleteDesc:
           'This removes {{domain}} from the tenant. Any branded URLs relying on it will stop working.',
@@ -8002,11 +8005,17 @@ const en = {
         settingsFailed: 'Failed to save settings',
         domainAdded: 'Domain added',
         domainAddFailed: 'Failed to add domain',
+        domainInvalid: 'Enter a DNS name such as login.example.com.',
+        domainConflict:
+          'This organization has already added the domain, or another organization has verified it.',
         domainVerified: 'Domain verified',
         verifyFailed: 'Verification failed',
+        recordNotFound:
+          'OpenIDX did not find the TXT record. Publish it, allow time for DNS to update, and try again.',
+        verifiedElsewhere: 'Another organization has verified this domain.',
+        lookupFailed: 'The DNS lookup failed. Try again later.',
         domainRemoved: 'Domain removed',
         domainDeleteFailed: 'Failed to delete domain',
-        tokenCopied: 'Token copied',
       },
     },
     // Admin device inventory (the operator view; `myDevices` is the

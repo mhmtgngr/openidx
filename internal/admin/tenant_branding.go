@@ -1,10 +1,14 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -60,6 +65,92 @@ type TenantDomain struct {
 	PrimaryDomain     bool       `json:"primary_domain"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
+
+	// VerificationRecord is the DNS record whose presence verifies the domain,
+	// set while it is unverified.
+	VerificationRecord *DomainVerificationRecord `json:"verification_record,omitempty"`
+}
+
+// DomainVerificationRecord is the TXT record an organization publishes to prove
+// it controls a domain it has claimed.
+type DomainVerificationRecord struct {
+	Type  string `json:"type"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// A domain is verified by DNS, never on an administrator's word: the record
+// named domainChallengeLabel under the domain must hold domainChallengePrefix
+// followed by the token its claim was given. Only whoever runs the domain's DNS
+// can publish that, and the token is the claim's own, so one organization's
+// record verifies no other organization's claim. The label keeps the record
+// off the host itself, which is usually a CNAME to the install and can carry
+// no other record.
+const (
+	domainChallengeLabel  = "_openidx-challenge"
+	domainChallengePrefix = "openidx-domain-verification="
+
+	// domainLookupTimeout bounds the lookup the verify request waits on.
+	domainLookupTimeout = 5 * time.Second
+)
+
+// TXTResolver looks up the TXT records at a name. *net.Resolver satisfies it.
+type TXTResolver interface {
+	LookupTXT(ctx context.Context, name string) ([]string, error)
+}
+
+// SetTXTResolver replaces the resolver domain verification looks records up
+// with; nil restores net.DefaultResolver.
+func (s *Service) SetTXTResolver(r TXTResolver) {
+	s.txtResolver = r
+}
+
+func (s *Service) domainResolver() TXTResolver {
+	if s.txtResolver != nil {
+		return s.txtResolver
+	}
+	return net.DefaultResolver
+}
+
+// domainVerificationRecord is the record that verifies a claim to domain with
+// token.
+func domainVerificationRecord(domain, token string) *DomainVerificationRecord {
+	return &DomainVerificationRecord{
+		Type:  "TXT",
+		Name:  domainChallengeLabel + "." + domain,
+		Value: domainChallengePrefix + token,
+	}
+}
+
+// normalizeDomain returns the host name a claim is stored under: lower case,
+// without a trailing dot, and a DNS name of letters, digits and hyphens with at
+// least two labels, short enough that its challenge name is one too. Browsers
+// report the login page's host this way, and the branding lookup compares it
+// exactly.
+func normalizeDomain(raw string) (string, bool) {
+	d := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(raw)), ".")
+	if d == "" || len(domainChallengeLabel)+1+len(d) > 253 {
+		return "", false
+	}
+	labels := strings.Split(d, ".")
+	if len(labels) < 2 {
+		return "", false
+	}
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return "", false
+		}
+		for _, r := range label {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+				return "", false
+			}
+		}
+	}
+	// A name whose last label is numeric is an IPv4 address, not a domain.
+	if strings.Trim(labels[len(labels)-1], "0123456789") == "" {
+		return "", false
+	}
+	return d, true
 }
 
 // tenantOrgAllowed holds a /tenants/:orgId route to the organization the
@@ -280,8 +371,11 @@ func (s *Service) handleListTenantDomains(c *gin.Context) {
 		return
 	}
 
+	// A row written by hand may carry no token; scanning its NULL into a string
+	// used to fail, and the row was skipped, so a verified domain could be
+	// missing from its organization's own list.
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT id, org_id, domain, domain_type, verified, verification_token, verified_at,
+		`SELECT id, org_id, domain, domain_type, verified, COALESCE(verification_token, ''), verified_at,
 		        ssl_enabled, primary_domain, created_at, updated_at
 		 FROM tenant_domains WHERE org_id = $1 ORDER BY primary_domain DESC, created_at`, orgID)
 	if err != nil {
@@ -298,6 +392,9 @@ func (s *Service) handleListTenantDomains(c *gin.Context) {
 			&d.CreatedAt, &d.UpdatedAt); err != nil {
 			continue
 		}
+		if !d.Verified && d.VerificationToken != "" {
+			d.VerificationRecord = domainVerificationRecord(d.Domain, d.VerificationToken)
+		}
 		domains = append(domains, d)
 	}
 	if domains == nil {
@@ -306,7 +403,15 @@ func (s *Service) handleListTenantDomains(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": domains})
 }
 
-// handleCreateTenantDomain registers a new custom domain for a tenant organization
+// handleCreateTenantDomain registers a new custom domain for a tenant
+// organization. The claim is unverified and carries the TXT record that will
+// verify it.
+//
+// An unverified claim holds nothing, so it does not keep another organization
+// from claiming the same domain: the one that proves control in DNS gets it,
+// and a squatter's claim cannot stand in the real owner's way. A domain another
+// organization has already verified is refused with 409, which tells the
+// caller that the domain is taken on this install and nothing about by whom.
 func (s *Service) handleCreateTenantDomain(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
@@ -325,6 +430,32 @@ func (s *Service) handleCreateTenantDomain(c *gin.Context) {
 		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
+	domain, ok := normalizeDomain(req.Domain)
+	if !ok {
+		respondError(c, nil, apperrors.BadRequest("domain must be a DNS name such as login.example.com"))
+		return
+	}
+	switch req.DomainType {
+	case "":
+		req.DomainType = "subdomain"
+	case "subdomain", "custom":
+	default:
+		respondError(c, nil, apperrors.BadRequest("domain_type must be subdomain or custom"))
+		return
+	}
+
+	ctx := c.Request.Context()
+	var verifiedElsewhere bool
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM tenant_domains WHERE domain = $1 AND verified AND org_id <> $2)`,
+		domain, orgID).Scan(&verifiedElsewhere); err != nil {
+		respondError(c, s.logger, apperrors.Internal("Failed to create domain", err))
+		return
+	}
+	if verifiedElsewhere {
+		respondError(c, nil, apperrors.Conflict("Another organization has verified this domain"))
+		return
+	}
 
 	// Generate a verification token (16 random bytes, hex-encoded)
 	tokenBytes := make([]byte, 16)
@@ -335,19 +466,24 @@ func (s *Service) handleCreateTenantDomain(c *gin.Context) {
 	verificationToken := hex.EncodeToString(tokenBytes)
 
 	var d TenantDomain
-	err := s.db.Pool.QueryRow(c.Request.Context(),
+	err := s.db.Pool.QueryRow(ctx,
 		`INSERT INTO tenant_domains (org_id, domain, domain_type, verification_token)
 		 VALUES ($1, $2, $3, $4)
 		 RETURNING id, org_id, domain, domain_type, verified, verification_token, verified_at,
 		           ssl_enabled, primary_domain, created_at, updated_at`,
-		orgID, req.Domain, req.DomainType, verificationToken,
+		orgID, domain, req.DomainType, verificationToken,
 	).Scan(&d.ID, &d.OrgID, &d.Domain, &d.DomainType, &d.Verified,
 		&d.VerificationToken, &d.VerifiedAt, &d.SSLEnabled, &d.PrimaryDomain,
 		&d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
+		if isUniqueViolation(err) {
+			respondError(c, nil, apperrors.Conflict("This organization has already added this domain"))
+			return
+		}
 		respondError(c, s.logger, apperrors.Internal("Failed to create domain", err))
 		return
 	}
+	d.VerificationRecord = domainVerificationRecord(d.Domain, d.VerificationToken)
 
 	c.JSON(http.StatusCreated, d)
 }
@@ -378,7 +514,15 @@ func (s *Service) handleDeleteTenantDomain(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Domain deleted"})
 }
 
-// handleVerifyTenantDomain verifies a custom domain using the verification token
+// handleVerifyTenantDomain verifies a claimed domain by looking up its TXT
+// record. The request body is not read: nothing the caller sends can stand in
+// for the record.
+//
+// It used to compare a token in the request with the one the domain list had
+// just shown the same administrator, so an administrator of any organization
+// could mark any host verified -- the install's own login host included, where
+// the public branding endpoint would then serve their logo, texts and custom
+// CSS on the page every organization's users sign in at.
 func (s *Service) handleVerifyTenantDomain(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
@@ -389,34 +533,107 @@ func (s *Service) handleVerifyTenantDomain(c *gin.Context) {
 		return
 	}
 	domainID := c.Param("domainId")
+	ctx := c.Request.Context()
 
-	var req struct {
-		Token string `json:"token"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
-		return
-	}
-
-	var storedToken string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT verification_token FROM tenant_domains WHERE id = $1 AND org_id = $2`,
+	var domain, token string
+	var verified bool
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT domain, COALESCE(verification_token, ''), verified FROM tenant_domains WHERE id = $1 AND org_id = $2`,
 		domainID, orgID,
-	).Scan(&storedToken)
+	).Scan(&domain, &token, &verified)
 	if err != nil {
 		respondError(c, nil, apperrors.NotFound("Domain"))
 		return
 	}
-
-	if storedToken != req.Token {
-		respondError(c, nil, apperrors.BadRequest("Verification token does not match"))
+	if verified {
+		c.JSON(http.StatusOK, gin.H{"message": "Domain verified"})
+		return
+	}
+	// With no token, the expected value would be the bare prefix, which anyone
+	// could publish on a domain whose claim was written by hand.
+	if token == "" {
+		respondError(c, nil, apperrors.BadRequest("This domain has no verification token; remove it and add it again"))
 		return
 	}
 
-	_, err = s.db.Pool.Exec(c.Request.Context(),
-		`UPDATE tenant_domains SET verified = true, verified_at = NOW(), updated_at = NOW()
-		 WHERE id = $1 AND org_id = $2`, domainID, orgID)
+	var verifiedElsewhere bool
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM tenant_domains WHERE domain = $1 AND verified AND org_id <> $2)`,
+		domain, orgID).Scan(&verifiedElsewhere); err != nil {
+		respondError(c, s.logger, apperrors.Internal("Failed to verify domain", err))
+		return
+	}
+	if verifiedElsewhere {
+		respondError(c, nil, apperrors.Conflict("Another organization has verified this domain"))
+		return
+	}
+
+	record := domainVerificationRecord(domain, token)
+	lookupCtx, cancel := context.WithTimeout(ctx, domainLookupTimeout)
+	values, err := s.domainResolver().LookupTXT(lookupCtx, record.Name)
+	cancel()
 	if err != nil {
+		var dnsErr *net.DNSError
+		if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
+			s.logger.Warn("tenant domain verification: DNS lookup failed",
+				logsafe.String("name", record.Name), zap.Error(err))
+			respondError(c, nil, apperrors.New("DNS_LOOKUP_FAILED",
+				"The DNS lookup of "+record.Name+" failed; try again", http.StatusBadGateway))
+			return
+		}
+		values = nil
+	}
+	found := false
+	for _, v := range values {
+		if v == record.Value {
+			found = true
+			break
+		}
+	}
+	if !found {
+		respondError(c, nil, apperrors.BadRequest(
+			"No TXT record at "+record.Name+" holds "+record.Value+"; publish it and try again"))
+		return
+	}
+
+	// Mark this claim verified and drop every other organization's unverified
+	// claim to the domain, together: after this the domain is this
+	// organization's until it removes it. The partial unique index on verified
+	// domains settles a race with another organization verifying the same
+	// domain -- whose record would have had to be published too.
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		respondError(c, s.logger, apperrors.Internal("Failed to verify domain", err))
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx,
+		`UPDATE tenant_domains SET verified = true, verified_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND org_id = $2 AND NOT verified`, domainID, orgID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			respondError(c, nil, apperrors.Conflict("Another organization has verified this domain"))
+			return
+		}
+		respondError(c, s.logger, apperrors.Internal("Failed to verify domain", err))
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		// Deleted, or verified by a concurrent request, since it was read.
+		respondError(c, nil, apperrors.NotFound("Domain"))
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM tenant_domains WHERE domain = $1 AND org_id <> $2 AND NOT verified`,
+		domain, orgID); err != nil {
+		respondError(c, s.logger, apperrors.Internal("Failed to verify domain", err))
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		if isUniqueViolation(err) {
+			respondError(c, nil, apperrors.Conflict("Another organization has verified this domain"))
+			return
+		}
 		respondError(c, s.logger, apperrors.Internal("Failed to verify domain", err))
 		return
 	}

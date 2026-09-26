@@ -7844,7 +7844,7 @@ const tr: typeof en = {
       },
       domains: {
         title: 'Özel Alan Adları',
-        desc: 'Bu kiracının alan adlarını yönetin',
+        desc: 'Doğrulanmış bir alan adında sunulan oturum açma sayfası bu kuruluşun markalamasını gösterir.',
         add: 'Alan Adı Ekle',
         adding: 'Ekleniyor...',
         emptyTitle: 'Yapılandırılmış alan adı yok',
@@ -7861,10 +7861,13 @@ const tr: typeof en = {
           subdomain: 'Alt alan adı',
           custom: 'Özel alan adı',
         },
-        verifyTitle: 'Bu alan adı doğrulansın mı?',
-        verifyDesc:
-          '{{domain}} bu kiracı için doğrulanmış, güvenilir bir alan adı olarak işaretlenir. Doğrulanmış alan adları markalı URL\'ler ve kimlik bağlama için güvenilir kabul edilir.',
-        verifyConfirm: 'Doğrula',
+        verify: 'Doğrula',
+        verifyAria: '{{domain}} alan adını doğrula',
+        recordHint:
+          '{{domain}} alan adının DNS kayıtlarına bu TXT kaydını ekleyin, ardından doğrulayın. Kayıt, alan adının bu kuruluşun denetiminde olduğunu kanıtlar.',
+        recordType: 'Tür',
+        recordName: 'Ad',
+        recordValue: 'Değer',
         deleteTitle: 'Bu alan adı silinsin mi?',
         deleteDesc:
           '{{domain}} kiracıdan kaldırılır. Buna dayanan markalı URL\'ler çalışmayı durdurur.',
@@ -7878,11 +7881,17 @@ const tr: typeof en = {
         settingsFailed: 'Ayarlar kaydedilemedi',
         domainAdded: 'Alan adı eklendi',
         domainAddFailed: 'Alan adı eklenemedi',
+        domainInvalid: 'login.example.com gibi bir DNS adı girin.',
+        domainConflict:
+          'Bu kuruluş alan adını zaten ekledi ya da başka bir kuruluş onu doğruladı.',
         domainVerified: 'Alan adı doğrulandı',
         verifyFailed: 'Doğrulama başarısız',
+        recordNotFound:
+          'OpenIDX TXT kaydını bulamadı. Kaydı yayımlayın, DNS\'in güncellenmesini bekleyin ve yeniden deneyin.',
+        verifiedElsewhere: 'Bu alan adını başka bir kuruluş doğruladı.',
+        lookupFailed: 'DNS sorgusu başarısız oldu. Daha sonra yeniden deneyin.',
         domainRemoved: 'Alan adı kaldırıldı',
         domainDeleteFailed: 'Alan adı silinemedi',
-        tokenCopied: 'Belirteç kopyalandı',
       },
     },
     devices: {

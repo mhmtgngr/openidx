@@ -93,6 +93,16 @@ administrators of the organization the request resolved to and by a platform
 admin; anyone else gets the `404` an unknown id gets. Only a platform admin
 creates an organization.
 
+A verified custom domain decides which organization's branding, custom CSS
+included, the login page served at that host shows. A claim to a domain is
+verified only by DNS: the TXT record `_openidx-challenge.<domain>` must hold
+`openidx-domain-verification=<token>`, where the token is the one the claim was
+given when it was added. Nothing sent with the request stands in for the
+record, for a platform admin either. An unverified claim holds nothing, so any
+number of organizations may claim the same domain, and a squatter's claim does
+not keep the domain's owner out. One claim to a domain can be verified, and
+verifying it removes the other organizations' unverified claims.
+
 ### 6. A CI linter makes it un-bypassable by construction
 
 `tools/orgscope` is a static analyzer wired as a **merge-blocking required CI

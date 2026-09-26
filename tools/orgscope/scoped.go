@@ -54,7 +54,7 @@ var installWideTables = map[string]string{
 // so a belt would fail the operation closed rather than scope it.
 var beltExempt = map[string]string{
 	"tenant_branding":     "read during tenant RESOLUTION, before app.org_id can be set (v38)",
-	"tenant_domains":      "the table tenant resolution looks the host up in; belting it makes resolution impossible (v38)",
+	"tenant_domains":      "the public login-branding endpoint looks the host up in it before any organization is resolved; a verified claim, proved in DNS since v206, names whose branding a host shows (v38)",
 	"tenant_settings":     "read alongside tenant_domains during resolution (v38)",
 	"ssf_stream_delivery": "outbox drained by a background worker that spans orgs (v99)",
 	"ssf_received_events": "replay-dedup log of INBOUND SETs from an external transmitter; the receiver DOES resolve a tenant and v172 gives the ledger org_id + a (org_id, jti) key, but the endpoint is public and RLS on it is a separate decision from getting its tenant resolution right",

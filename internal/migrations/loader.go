@@ -1462,5 +1462,12 @@ func allMigrations() []*Migration {
 			UpSQL:       oauthClientsAPIAccessUp,
 			DownSQL:     oauthClientsAPIAccessDown,
 		},
+		{
+			Version:     206,
+			Name:        "tenant_domain_dns_proof",
+			Description: "Tenant domains are verified by a DNS record, and uniqueness is among verified claims. A verified tenant_domains row decides which organization's branding, custom CSS included, the login page served at that host shows, and the verify route checked nothing an administrator did not already hold: it compared the request's token with the one the domain list had just shown them, so any organization's administrator could mark any host verified, the install's own login host included. The admin API now verifies a claim only when the TXT record _openidx-challenge.<domain> holds openidx-domain-verification=<token>. v38 made domain UNIQUE across the install, verified or not, so a squatter's unverified claim kept the real owner from adding its own domain; now (org_id, domain) is unique, any number of organizations may hold an unverified claim, a partial unique index allows one verified claim per domain, and verifying a claim deletes the other organizations' unverified claims to it. Verified rows stay verified; a NULL verified becomes false and the column NOT NULL; an unverified row with no token is given one. Down restores the install-wide UNIQUE, which fails once two organizations have claimed the same domain -- refusing beats deleting a claim to make a rollback succeed.",
+			UpSQL:       tenantDomainDNSProofUp,
+			DownSQL:     tenantDomainDNSProofDown,
+		},
 	}
 }

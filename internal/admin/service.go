@@ -389,6 +389,10 @@ type Service struct {
 	webhookService   WebhookManager
 	securityService  SecurityService
 	aiClient         *ai.Client
+
+	// txtResolver looks up the TXT records that verify a tenant domain;
+	// nil means net.DefaultResolver (see SetTXTResolver).
+	txtResolver TXTResolver
 }
 
 // requireAdmin checks if the authenticated user has admin or super_admin role.
