@@ -1,6 +1,7 @@
 import { AlertTriangle, ShieldAlert } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../lib/utils'
+import { isPlatformAdminRequired } from '../lib/platform-admin'
 
 /** Extract the HTTP status from a rejected api/axios error, if present. */
 export function getErrorStatus(error: unknown): number | undefined {
@@ -34,7 +35,9 @@ export function QueryError({ error, resource, className }: QueryErrorProps) {
   const message = isAuth
     ? status === 401
       ? t('queryError.sessionExpired')
-      : t('queryError.noPermission', { resource: what })
+      : isPlatformAdminRequired(error)
+        ? t('queryError.platformAdminRequired')
+        : t('queryError.noPermission', { resource: what })
     : t('queryError.loadFailed', { resource: what })
 
   const Icon = isAuth ? ShieldAlert : AlertTriangle

@@ -20,6 +20,7 @@ import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { QueryError } from '../components/query-error'
+import { isPlatformAdminRequired } from '../lib/platform-admin'
 
 interface PasswordlessSettings {
   magic_link_enabled: boolean
@@ -88,6 +89,17 @@ export function PasswordlessSettingsPage() {
   const [editSettings, setEditSettings] = useState<PasswordlessSettings>(settings)
 
   // Mutations
+  // These settings are shared by every organization on the install; the
+  // backend lets only a platform administrator change them, and an
+  // organization's own admin is told why.
+  const settingsChangeFailed = (error: Error) => {
+    toast({
+      title: t('common.error'),
+      description: isPlatformAdminRequired(error) ? t('queryError.platformAdminRequired') : error.message,
+      variant: 'destructive',
+    })
+  }
+
   const updateSettingsMutation = useMutation({
     mutationFn: (data: PasswordlessSettings) =>
       api.put('/api/v1/identity/passwordless/settings', data),
@@ -99,9 +111,7 @@ export function PasswordlessSettingsPage() {
       })
       setEditDialog(false)
     },
-    onError: (error: Error) => {
-      toast({ title: t('common.error'), description: error.message, variant: 'destructive' })
-    }
+    onError: settingsChangeFailed,
   })
 
   const sendTestMagicLinkMutation = useMutation({
@@ -125,7 +135,8 @@ export function PasswordlessSettingsPage() {
       api.patch('/api/v1/identity/passwordless/settings', { [key]: value }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['passwordless-settings'] })
-    }
+    },
+    onError: settingsChangeFailed,
   })
 
   const openEditDialog = () => {

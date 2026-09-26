@@ -436,6 +436,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// data-plane POSTs (device posture self-report, posture evaluate) stay open
 		// because a device submits its own posture. `adminOnly` is the shared gate.
 		adminOnly := svc.requireAdminRole()
+		// `platformOnly` follows adminOnly on the routes whose settings exist
+		// once for the whole install -- the OpenZiti controller connection, the
+		// BrowZer domain and certificate, the platform TLS certificate -- which
+		// an organization's admin role cannot authorize on its own. See
+		// middleware.RequirePlatformAdmin.
+		platformOnly := svc.requirePlatformAdmin()
 
 		// Upstream pools: the operator's declaration of a route's backend set.
 		// Reads are open to any authenticated tenant user like the route list;
@@ -450,13 +456,17 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.PUT("/upstream-pools/:id/members/:memberId", adminOnly, svc.handleUpdateUpstreamPoolMember)
 		api.DELETE("/upstream-pools/:id/members/:memberId", adminOnly, svc.handleDeleteUpstreamPoolMember)
 
-		// Runtime connection control (admin-only): configure + connect/disconnect
-		// the OpenZiti controller from the admin panel with no restart.
-		api.GET("/ziti/settings", adminOnly, svc.handleGetZitiSettings)
-		api.PUT("/ziti/settings", adminOnly, svc.handlePutZitiSettings)
-		api.POST("/ziti/settings/test", adminOnly, svc.handleTestZitiSettings)
-		api.POST("/ziti/connect", adminOnly, svc.handleZitiConnect)
-		api.POST("/ziti/disconnect", adminOnly, svc.handleZitiDisconnect)
+		// Runtime connection control: configure + connect/disconnect the
+		// OpenZiti controller from the admin panel with no restart. One
+		// controller serves every organization, so this is for platform
+		// administrators only. The read returns the controller's admin account,
+		// and the test dials a caller-chosen controller with the stored
+		// password, so both are gated like the writes.
+		api.GET("/ziti/settings", adminOnly, platformOnly, svc.handleGetZitiSettings)
+		api.PUT("/ziti/settings", adminOnly, platformOnly, svc.handlePutZitiSettings)
+		api.POST("/ziti/settings/test", adminOnly, platformOnly, svc.handleTestZitiSettings)
+		api.POST("/ziti/connect", adminOnly, platformOnly, svc.handleZitiConnect)
+		api.POST("/ziti/disconnect", adminOnly, platformOnly, svc.handleZitiDisconnect)
 		api.GET("/ziti/services", svc.handleListZitiServices)
 		api.POST("/ziti/services", adminOnly, svc.handleCreateZitiService)
 		api.DELETE("/ziti/services/:id", adminOnly, svc.handleDeleteZitiService)
@@ -628,24 +638,28 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 		// BrowZer management endpoints
 		api.GET("/ziti/browzer/status", svc.handleBrowZerStatus)
-		api.POST("/ziti/browzer/enable", adminOnly, svc.handleEnableBrowZer)
-		api.POST("/ziti/browzer/disable", adminOnly, svc.handleDisableBrowZer)
+		// BrowZer's bootstrap (ziti_browzer_config, the external JWT signer) is
+		// one per install; the per-service toggles below it are per route.
+		api.POST("/ziti/browzer/enable", adminOnly, platformOnly, svc.handleEnableBrowZer)
+		api.POST("/ziti/browzer/disable", adminOnly, platformOnly, svc.handleDisableBrowZer)
 		api.POST("/ziti/browzer/services/:id/enable", adminOnly, svc.handleEnableBrowZerOnService)
 		api.POST("/ziti/browzer/services/:id/disable", adminOnly, svc.handleDisableBrowZerOnService)
 
 		// BrowZer bootstrapper management panel endpoints
 		api.GET("/ziti/browzer/management", svc.handleBrowZerManagement)
-		api.POST("/ziti/browzer/certificates", adminOnly, svc.handleBrowZerCertUpload)
-		api.DELETE("/ziti/browzer/certificates", adminOnly, svc.handleBrowZerCertRevert)
-		api.PUT("/ziti/browzer/domain", adminOnly, svc.handleBrowZerDomainChange)
-		api.POST("/ziti/browzer/restart", adminOnly, svc.handleBrowZerRestart)
+		// The bootstrapper's certificate, key and domain are the install's.
+		api.POST("/ziti/browzer/certificates", adminOnly, platformOnly, svc.handleBrowZerCertUpload)
+		api.DELETE("/ziti/browzer/certificates", adminOnly, platformOnly, svc.handleBrowZerCertRevert)
+		api.PUT("/ziti/browzer/domain", adminOnly, platformOnly, svc.handleBrowZerDomainChange)
+		api.POST("/ziti/browzer/restart", adminOnly, platformOnly, svc.handleBrowZerRestart)
 
-		// Platform certificate management
+		// Platform certificate management. One certificate and key serve every
+		// organization's traffic; the reads return only the public certificate.
 		api.GET("/certificates/platform", svc.handleGetPlatformCert)
-		api.POST("/certificates/platform", adminOnly, svc.handleUploadPlatformCert)
-		api.DELETE("/certificates/platform", adminOnly, svc.handleRevertPlatformCert)
-		api.POST("/certificates/apisix/enable", adminOnly, svc.handleEnableAPISIXSSL)
-		api.POST("/certificates/apisix/disable", adminOnly, svc.handleDisableAPISIXSSL)
+		api.POST("/certificates/platform", adminOnly, platformOnly, svc.handleUploadPlatformCert)
+		api.DELETE("/certificates/platform", adminOnly, platformOnly, svc.handleRevertPlatformCert)
+		api.POST("/certificates/apisix/enable", adminOnly, platformOnly, svc.handleEnableAPISIXSSL)
+		api.POST("/certificates/apisix/disable", adminOnly, platformOnly, svc.handleDisableAPISIXSSL)
 		api.GET("/certificates/status", svc.handleGetCertStatus)
 
 		// Forward-auth endpoint for APISIX

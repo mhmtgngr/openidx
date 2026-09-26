@@ -1,0 +1,144 @@
+package middleware
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/common/orgctx"
+)
+
+// INSTALL-WIDE SETTINGS NEED A PLATFORM ADMINISTRATOR.
+//
+// Some configuration exists once per install rather than once per
+// organization: the rows of system_settings (SMS delivery, the passwordless
+// defaults, the OpenZiti controller connection, the BrowZer domain), the OAuth
+// signing keys, the shared IP deny-list and error catalog, the platform TLS
+// certificate and key, and the self-heal loop's controls. Changing one of them
+// changes it for every organization on the install.
+//
+// The admin role cannot be what authorizes that. An organization's
+// administrators grant it inside their own organization, so on a multi-tenant
+// install the admin role says what a caller may do in one organization, while
+// these settings decide things for all of them -- including where every
+// organization's SMS one-time codes are delivered.
+//
+// A platform administrator is a caller who holds admin or super_admin AND whose
+// own organization is the install's default organization: the one
+// DEFAULT_ORG_ID names, which is the organization the installer seeds unless an
+// operator overrode it. A fresh install seeds only the admin role, and on a
+// single-organization install every user belongs to the default organization,
+// so its administrators keep managing these settings exactly as before. On a
+// multi-tenant install the default organization is the operator's own.
+//
+// super_admin is tested the same way as admin: both are granted inside an
+// organization, by that organization, so it is the organization and not the
+// role that makes the holder an administrator of the install.
+//
+// "Own organization" means users.org_id for the token's subject, read from the
+// database on every check. It is deliberately not the organization the request
+// resolved to -- a platform administrator working inside another tenant
+// resolves to that tenant, and still administers the install -- and it is not a
+// claim carried in the token.
+
+// PlatformAdminRequired is the error a refused caller receives. The admin
+// console recognises it and explains that the setting is install-wide, so it
+// must not be reworded without changing the console to match.
+const PlatformAdminRequired = "platform administrator required"
+
+// errPlatformAdminNoDatabase is returned when the gate has no database to look
+// the caller up in. It fails closed: a gate that cannot look cannot vouch.
+var errPlatformAdminNoDatabase = errors.New("platform administrator check has no database")
+
+// userOrgQuerier is the one method the lookup needs, as an interface so the
+// decision can be tested without a database.
+type userOrgQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// RequirePlatformAdmin admits only a platform administrator, as defined above.
+// Mount it after authentication, where "roles" and "user_id" are set, and on
+// every route that changes install-wide configuration or reads a secret stored
+// there.
+//
+// defaultOrgID is the configured DEFAULT_ORG_ID; empty means the canonical
+// default organization. db may be nil when the routes are registered only to
+// be listed (the route-table tests do this); a request that reaches the gate
+// then fails closed.
+func RequirePlatformAdmin(db *database.PostgresDB, defaultOrgID string, logger *zap.Logger) gin.HandlerFunc {
+	if strings.TrimSpace(defaultOrgID) == "" {
+		defaultOrgID = DefaultOrgID
+	}
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	return func(c *gin.Context) {
+		// Resolved per request rather than when the route is registered:
+		// services register their routes before every test has a pool, and a
+		// nil *ScopedPool held in the interface would not compare equal to nil.
+		var q userOrgQuerier
+		if db != nil && db.Pool != nil {
+			q = db.Pool
+		}
+		ok, err := isPlatformAdmin(c, q, defaultOrgID)
+		if err != nil {
+			logger.Error("could not decide whether the caller is a platform administrator; refusing",
+				logsafe.String("user_id", c.GetString("user_id")),
+				logsafe.String("route", c.Request.Method+" "+c.FullPath()),
+				zap.Error(err))
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+				"error": "platform administrator check unavailable",
+			})
+			return
+		}
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": PlatformAdminRequired})
+			return
+		}
+		c.Next()
+	}
+}
+
+// isPlatformAdmin is the decision. It returns an error only when it could not
+// look; every "no" is a (false, nil).
+func isPlatformAdmin(c *gin.Context, q userOrgQuerier, defaultOrgID string) (bool, error) {
+	// The role test comes first and costs nothing: a caller who is not an
+	// administrator anywhere is refused without a query.
+	if !callerHoldsAdminRole(c) {
+		return false, nil
+	}
+	// A service account or a token whose subject is not a user id has no row
+	// in users, and so no organization of its own.
+	userID := c.GetString("user_id")
+	if _, err := uuid.Parse(userID); err != nil {
+		return false, nil
+	}
+	if q == nil {
+		return false, errPlatformAdminNoDatabase
+	}
+
+	// users is behind the FORCE'd RLS belt, and the request's tenant scope is
+	// the organization it resolved to -- which for a platform administrator
+	// working in another tenant is not their own, so a scoped read would find
+	// no row and refuse them. The bypass is safe because the read is keyed by
+	// the caller's own user id and returns only that user's organization.
+	var orgID string
+	err := q.QueryRow(orgctx.WithBypassRLS(c.Request.Context()),
+		//orgscope:ignore platform-administrator check: reads the caller's own organization by their globally-unique user id, which must not depend on the tenant the request resolved to
+		`SELECT org_id::text FROM users WHERE id = $1`, userID).Scan(&orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return orgID == defaultOrgID, nil
+}

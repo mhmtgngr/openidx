@@ -32,6 +32,7 @@ import {
 } from '../components/ui/dropdown-menu'
 import { api } from '../lib/api'
 import { QueryError } from '../components/query-error'
+import { isPlatformAdminRequired } from '../lib/platform-admin'
 import { useToast } from '../hooks/use-toast'
 import { ConfirmAction } from '../components/confirm-action'
 
@@ -521,7 +522,10 @@ function ConnectionTab() {
     queryFn: () => api.get<ZitiStatus>('/api/v1/access/ziti/status'),
     refetchInterval: 10000,
   })
-  const { isLoading } = useQuery({
+  // One controller serves every organization on the install, so the backend
+  // shows and changes its connection only for a platform administrator; an
+  // organization's own admin gets the reason instead of a form that never loads.
+  const { isLoading, isError, error } = useQuery({
     queryKey: ['ziti-settings'],
     queryFn: async () => {
       const s = await api.get<ZitiConnSettings>('/api/v1/access/ziti/settings')
@@ -529,6 +533,7 @@ function ConnectionTab() {
       return s
     },
   })
+  const failureText = (e: Error) => (isPlatformAdminRequired(e) ? t('queryError.platformAdminRequired') : e.message)
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['ziti-status'] })
@@ -539,7 +544,7 @@ function ConnectionTab() {
   const save = useMutation({
     mutationFn: (s: ZitiConnSettings) => api.put('/api/v1/access/ziti/settings', s),
     onSuccess: () => toast({ title: t('pages.zitiNetwork.connection.toast.saved'), description: t('pages.zitiNetwork.connection.toast.savedDesc') }),
-    onError: (e: Error) => toast({ title: t('pages.zitiNetwork.connection.toast.saveFailed'), description: e.message, variant: 'destructive' }),
+    onError: (e: Error) => toast({ title: t('pages.zitiNetwork.connection.toast.saveFailed'), description: failureText(e), variant: 'destructive' }),
   })
   const test = useMutation({
     mutationFn: (s: ZitiConnSettings) =>
@@ -555,19 +560,20 @@ function ConnectionTab() {
           : r.error || t('pages.zitiNetwork.connection.toast.unreachable'),
         variant: r.reachable ? undefined : 'destructive',
       }),
-    onError: (e: Error) => toast({ title: t('pages.zitiNetwork.connection.toast.testError'), description: e.message, variant: 'destructive' }),
+    onError: (e: Error) => toast({ title: t('pages.zitiNetwork.connection.toast.testError'), description: failureText(e), variant: 'destructive' }),
   })
   const connect = useMutation({
     mutationFn: async (s: ZitiConnSettings) => { await api.put('/api/v1/access/ziti/settings', s); return api.post('/api/v1/access/ziti/connect', {}) },
     onSuccess: () => { invalidate(); toast({ title: t('pages.zitiNetwork.connection.toast.connected'), description: t('pages.zitiNetwork.connection.toast.connectedDesc') }) },
-    onError: (e: Error) => toast({ title: t('pages.zitiNetwork.connection.toast.connectFailed'), description: e.message, variant: 'destructive' }),
+    onError: (e: Error) => toast({ title: t('pages.zitiNetwork.connection.toast.connectFailed'), description: failureText(e), variant: 'destructive' }),
   })
   const disconnect = useMutation({
     mutationFn: () => api.post('/api/v1/access/ziti/disconnect', {}),
     onSuccess: () => { invalidate(); toast({ title: t('pages.zitiNetwork.connection.toast.disconnected'), description: t('pages.zitiNetwork.connection.toast.disconnectedDesc') }) },
-    onError: (e: Error) => toast({ title: t('pages.zitiNetwork.connection.toast.disconnectFailed'), description: e.message, variant: 'destructive' }),
+    onError: (e: Error) => toast({ title: t('pages.zitiNetwork.connection.toast.disconnectFailed'), description: failureText(e), variant: 'destructive' }),
   })
 
+  if (isError) return <QueryError error={error} resource={t('pages.zitiNetwork.connection.title')} />
   if (isLoading || !form) return <div className="py-8 text-center text-muted-foreground">{t('pages.zitiNetwork.loading')}</div>
 
   const reachable = !!status?.controller_reachable
@@ -3384,13 +3390,21 @@ function RemoteAccessTab() {
   const enableMutation = useMutation({
     mutationFn: () => api.post('/api/v1/access/ziti/browzer/enable'),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['browzer-status'] }); toast({ title: t('pages.zitiNetwork.remoteAccess.toast.enabled') }) },
-    onError: () => toast({ title: t('pages.zitiNetwork.remoteAccess.toast.enableFailed'), variant: 'destructive' }),
+    onError: (e: Error) => toast({
+      title: t('pages.zitiNetwork.remoteAccess.toast.enableFailed'),
+      description: isPlatformAdminRequired(e) ? t('queryError.platformAdminRequired') : undefined,
+      variant: 'destructive',
+    }),
   })
 
   const disableMutation = useMutation({
     mutationFn: () => api.post('/api/v1/access/ziti/browzer/disable'),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['browzer-status'] }); toast({ title: t('pages.zitiNetwork.remoteAccess.toast.disabled') }) },
-    onError: () => toast({ title: t('pages.zitiNetwork.remoteAccess.toast.disableFailed'), variant: 'destructive' }),
+    onError: (e: Error) => toast({
+      title: t('pages.zitiNetwork.remoteAccess.toast.disableFailed'),
+      description: isPlatformAdminRequired(e) ? t('queryError.platformAdminRequired') : undefined,
+      variant: 'destructive',
+    }),
   })
 
   const connectMutation = useMutation({

@@ -281,6 +281,8 @@ const tr: typeof en = {
   queryError: {
     sessionExpired: 'Oturumunuzun süresi doldu. Lütfen tekrar giriş yapın.',
     noPermission: '{{resource}} için görüntüleme izniniz yok.',
+    platformAdminRequired:
+      'Bu ayar bu kurulumdaki tüm kuruluşlar için geçerlidir; yalnızca bir platform yöneticisi (varsayılan kuruluşun yöneticisi) görüntüleyebilir veya değiştirebilir.',
     loadFailed: '{{resource}} yüklenemedi. Lütfen tekrar deneyin.',
     defaultResource: 'Veriler',
   },

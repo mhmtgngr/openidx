@@ -106,6 +106,24 @@ under an explicit, audited bypass:
 The bypass is deliberate and narrow; the default for all request-path code is
 tenant-scoped and fail-closed.
 
+## Install-wide settings
+
+Some settings exist once for the whole install rather than once per
+organization: the `system_settings` rows (SMS delivery, the passwordless
+defaults, the OpenZiti controller connection, the BrowZer domain, the APISIX TLS
+switch), the OAuth signing keys, the shared IP deny-list and error catalog, the
+platform TLS certificate and key, and the self-heal loop's controls. Changing
+one of them changes it for every organization.
+
+Changing them needs a **platform administrator**: a user who holds `admin` or
+`super_admin` and whose own organization (`users.org_id`) is the install's
+default organization, the one `DEFAULT_ORG_ID` names. On a single-organization
+install that is every administrator. An administrator of any other organization
+is refused with `403 {"error": "platform administrator required"}`, and so is a
+read of the two settings that carry credentials, the SMS provider and the
+OpenZiti controller connection. The rule is in
+`internal/common/middleware/platform_admin.go`.
+
 ## What multi-tenancy covers
 
 | Layer | Tenant isolation |

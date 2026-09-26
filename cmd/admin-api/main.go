@@ -421,8 +421,9 @@ func main() {
 		adminhandlers.RegisterAllRoutes(v1, db.Pool, log, admin.RequireAdmin())
 
 		// Self-heal control panel. Reads are RequireAdmin; mutations
-		// (mode/kill-switch/sweep) additionally require selfheal:manage and are
-		// written to the admin audit log. Always-on auth — no dev bypass.
+		// (mode/kill-switch/sweep) additionally require selfheal:manage and a
+		// platform administrator, because they act on the whole install, and
+		// are written to the admin audit log. Always-on auth — no dev bypass.
 		selfhealHandler := adminhandlers.NewSelfHealHandler(log, cfg.SelfHealStateDir, cfg.SelfHealScriptsDir,
 			func(c *gin.Context, action string, before, after interface{}) {
 				actorID, _ := c.Get("user_id")
@@ -436,7 +437,8 @@ func main() {
 				}
 			})
 		adminhandlers.SelfHealRoutes(v1, selfhealHandler, admin.RequireAdmin(),
-			middleware.RequirePermission("selfheal", "manage"))
+			middleware.RequirePermission("selfheal", "manage"),
+			middleware.RequirePlatformAdmin(db, cfg.DefaultOrgID, log))
 
 		// Vault (PAM credential store) — fail-closed: service must not start
 		// without a usable KEK. Falls back to EncryptionKey as id 0.

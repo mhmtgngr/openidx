@@ -19,6 +19,7 @@ import {
 } from './ui/alert-dialog'
 import { useToast } from '../hooks/use-toast'
 import { QueryError } from './query-error'
+import { isPlatformAdminRequired } from '../lib/platform-admin'
 import { api, SelfHealMode, SelfHealFinding } from '../lib/api'
 
 const MODES: SelfHealMode[] = ['off', 'observe', 'tier0', 'tier1']
@@ -66,13 +67,17 @@ export function SelfHealPanel() {
   const findings = useQuery({ queryKey: ['selfheal-findings'], queryFn: () => api.selfheal.findings() })
   const history = useQuery({ queryKey: ['selfheal-history'], queryFn: () => api.selfheal.history(25) })
 
+  // Mode, kill switch and sweep act on the whole install, so the backend lets
+  // only a platform administrator use them.
+  const failureText = (e: Error) => (isPlatformAdminRequired(e) ? t('queryError.platformAdminRequired') : e.message)
+
   const setMode = useMutation({
     mutationFn: ({ mode, confirm }: { mode: SelfHealMode; confirm?: string }) => api.selfheal.setMode(mode, confirm),
     onSuccess: (_d, v) => {
       toast({ title: `Mode → ${v.mode}`, variant: 'success' })
       invalidate()
     },
-    onError: (e: Error) => toast({ title: t('components.selfHeal.modeChangeFailed'), description: e.message, variant: 'destructive' }),
+    onError: (e: Error) => toast({ title: t('components.selfHeal.modeChangeFailed'), description: failureText(e), variant: 'destructive' }),
   })
 
   const killSwitch = useMutation({
@@ -81,7 +86,7 @@ export function SelfHealPanel() {
       toast({ title: enabled ? t('components.selfHeal.killEngagedToast') : t('components.selfHeal.killReleasedToast'), variant: enabled ? 'destructive' : 'success' })
       invalidate()
     },
-    onError: (e: Error) => toast({ title: t('components.selfHeal.killFailed'), description: e.message, variant: 'destructive' }),
+    onError: (e: Error) => toast({ title: t('components.selfHeal.killFailed'), description: failureText(e), variant: 'destructive' }),
   })
 
   const sweep = useMutation({
@@ -90,7 +95,7 @@ export function SelfHealPanel() {
       toast({ title: t('components.selfHeal.sweepComplete'), variant: 'success' })
       invalidate()
     },
-    onError: (e: Error) => toast({ title: t('components.selfHeal.sweepFailed'), description: e.message, variant: 'destructive' }),
+    onError: (e: Error) => toast({ title: t('components.selfHeal.sweepFailed'), description: failureText(e), variant: 'destructive' }),
   })
 
   if (status.isError) return <QueryError error={status.error} resource="self-heal status" />

@@ -4124,10 +4124,11 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.GET("/passwordless/preferences", svc.handleGetPasswordlessPreferences)
 		identity.PUT("/passwordless/preferences", svc.handleUpdatePasswordlessPreferences)
 
-		// Passwordless Settings (Admin)
+		// Passwordless Settings (Admin). They are one system_settings row for
+		// the whole install, so changing them needs a platform administrator.
 		identity.GET("/passwordless/settings", svc.handleGetPasswordlessSettings)
-		identity.PUT("/passwordless/settings", svc.handleUpdatePasswordlessSettings)
-		identity.PATCH("/passwordless/settings", svc.handlePatchPasswordlessSettings)
+		identity.PUT("/passwordless/settings", svc.requirePlatformAdmin(), svc.handleUpdatePasswordlessSettings)
+		identity.PATCH("/passwordless/settings", svc.requirePlatformAdmin(), svc.handlePatchPasswordlessSettings)
 		identity.GET("/passwordless/stats", svc.handleGetPasswordlessStats)
 		identity.POST("/passwordless/magic-link/test", svc.handleTestMagicLink)
 

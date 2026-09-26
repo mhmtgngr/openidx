@@ -451,6 +451,13 @@ version of this page grow rows the product never had.
 | Redis password and database number | The `REDIS_URL` itself. |
 | OAuth signing key | Generated on first start into `oauth_signing_keys`, encrypted with `ENCRYPTION_KEY`. Rotate with `POST /api/v1/admin/oauth/signing-keys/rotate`. |
 
+The SMS settings and the OAuth signing key apply to every organization on the
+install, as do the passwordless defaults, the OpenZiti controller connection and
+the platform TLS certificate. Only a platform administrator can change them: a
+user with the `admin` or `super_admin` role whose own organization is the one
+`DEFAULT_ORG_ID` names. On a single-organization install that is every
+administrator.
+
 ## Configuration file
 
 The same keys can be set in `config.yaml`, found in `.`, `./configs` or

@@ -286,6 +286,10 @@ const en = {
   queryError: {
     sessionExpired: 'Your session has expired. Please sign in again.',
     noPermission: "You don't have permission to view {{resource}}.",
+    // The backend's "platform administrator required": the setting is shared
+    // by every organization on the install.
+    platformAdminRequired:
+      'This setting applies to every organization on this installation, so only a platform administrator (an administrator of the default organization) can view or change it.',
     loadFailed: 'Failed to load {{resource}}. Please try again.',
     defaultResource: 'data',
   },

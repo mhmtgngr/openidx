@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -60,6 +60,25 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Settings')).toBeInTheDocument()
     })
+  })
+
+  // SMS delivery is configured once for the whole install. The backend answers
+  // an organization's own admin with 403 "platform administrator required",
+  // and the tab must say so instead of waiting for settings that never come.
+  it('explains why the SMS tab is closed to an organization admin', async () => {
+    vi.mocked(api.get).mockImplementation((url: string) =>
+      url === '/api/v1/settings/sms'
+        ? Promise.reject({ response: { status: 403, data: { error: 'platform administrator required' } } })
+        : Promise.resolve(mockSettings),
+    )
+    const wrapper = createWrapper()
+
+    render(<SettingsPage />, { wrapper })
+
+    fireEvent.click(await screen.findByRole('button', { name: /SMS \/ OTP/ }))
+    expect(await screen.findByText(/applies to every organization on this installation/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Loading SMS settings/i)).toBeNull()
+    expect(screen.getByRole('button', { name: /save/i })).toBeDisabled()
   })
 
   it('has save button', async () => {
