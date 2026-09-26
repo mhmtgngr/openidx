@@ -1279,9 +1279,12 @@ func any(key string, value interface{}) zap.Field {
 // mgmtAuth guards the /api/v1/saml/service-providers management API and is
 // ALWAYS required — these endpoints create/modify SAML service providers, so
 // they must never be reachable unauthenticated (a nil here is a programmer
-// error and intentionally panics at request time). The public SAML protocol
-// endpoints under /saml/idp (metadata, SSO, SLO) stay unauthenticated by
-// design — they are consumed by relying parties and browsers.
+// error and intentionally panics at request time). requireAdminRole follows
+// it: registering a service provider, or replacing its certificate, decides
+// whose requests this IdP answers with the organization's users' assertions.
+// The public SAML protocol endpoints under /saml/idp (metadata, SSO, SLO) stay
+// unauthenticated by design — they are consumed by relying parties and
+// browsers.
 func (s *Service) RegisterSAMLIdPRoutes(router *gin.Engine, mgmtAuth gin.HandlerFunc) {
 	// IdP endpoints
 	idp := router.Group("/saml/idp")
@@ -1301,9 +1304,9 @@ func (s *Service) RegisterSAMLIdPRoutes(router *gin.Engine, mgmtAuth gin.Handler
 		idp.POST("/slo", s.handleIdPSLO)
 	}
 
-	// SP management API endpoints — always authenticated.
+	// SP management API endpoints — always authenticated, administrators only.
 	spAPI := router.Group("/api/v1/saml/service-providers")
-	spAPI.Use(mgmtAuth)
+	spAPI.Use(mgmtAuth, requireAdminRole)
 	{
 		// List all SPs with pagination
 		spAPI.GET("", s.handleListSAMLServiceProviders)

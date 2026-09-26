@@ -19,7 +19,7 @@ SAML messages OpenIDX does receive: AuthnRequests and LogoutRequests.
 | `GET /saml/idp/sso`, `POST /saml/idp/sso` | HTTP-Redirect, HTTP-POST | SP-initiated sign-on (AuthnRequest in, Response out over HTTP-POST) |
 | `GET /saml/idp/sso/unsolicited?sp_entity_id=<id>&RelayState=<state>` | | IdP-initiated sign-on to a registered service provider |
 | `GET /saml/idp/slo`, `POST /saml/idp/slo` | HTTP-Redirect, HTTP-POST | Single Logout: a LogoutRequest from an SP, or a request from the signed-in user to log out everywhere |
-| `/api/v1/saml/service-providers` | | Management API: register, update, import metadata, rotate certificates |
+| `/api/v1/saml/service-providers` | | Management API: register, update, import metadata, rotate certificates. Needs the `admin` or `super_admin` role; any other caller gets `403` |
 
 The code is in `internal/oauth/saml.go`, `internal/oauth/saml_slo.go`,
 `internal/oauth/saml_sp.go` and `internal/oauth/saml_metadata.go`.

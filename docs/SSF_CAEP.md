@@ -14,7 +14,10 @@ SSF/CAEP with native network termination.
     ([ROADMAP.md](https://github.com/mhmtgngr/openidx/blob/main/ROADMAP.md#later-when-there-is-demand)),
     recorded so nobody goes hunting for a page that is not there. Everything
     below is served, routed and tested (including tenant isolation); the only
-    missing piece is the admin UI. Subscribe a receiver with a POST:
+    missing piece is the admin UI. An administrator subscribes a receiver
+    with a POST; `$TOKEN` is an access token holding the `admin` or
+    `super_admin` role in the organization the stream is for, and any other
+    caller, a receiver's own client-credentials token included, gets `403`:
 
     ```bash
     curl -X POST https://oauth.openidx.example.com/ssf/streams \

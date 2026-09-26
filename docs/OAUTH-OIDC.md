@@ -623,6 +623,15 @@ PUT /api/v1/oauth/clients/:id
 DELETE /api/v1/oauth/clients/:id
 ```
 
+These routes need the `admin` or `super_admin` role in the organization the
+request is for. Any other caller gets `403`: a signed-in user without either
+role, and a credential that holds no role, such as a client-credentials token
+or a service account's API key. The SAML service-provider API
+(`/api/v1/saml/service-providers`) and SSF stream management (`/ssf/streams`)
+follow the same rule. Dynamic client registration (`POST /oauth/register`) is
+opened by the initial access token set in `DCR_INITIAL_ACCESS_TOKEN` instead,
+and cannot set `api_access`.
+
 ## Token Types
 
 ### Access Token (JWT)

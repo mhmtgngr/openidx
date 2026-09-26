@@ -77,3 +77,6 @@ POST /oauth/token
 | PUT | `/api/v1/oauth/clients/:id` | Update client | Bearer |
 | DELETE | `/api/v1/oauth/clients/:id` | Delete client | Bearer |
 | POST | `/api/v1/oauth/clients/:id/regenerate-secret` | Regenerate secret | Bearer |
+
+The bearer must hold the `admin` or `super_admin` role in the organization the
+request is for; any other caller gets `403`.

@@ -631,6 +631,10 @@ paths:
     get:
       tags: [Client Management]
       summary: List OAuth clients
+      description: >-
+        Every client-management operation needs the `admin` or `super_admin`
+        role in the organization the request is for; any other caller gets
+        403.
       operationId: listClients
       responses:
         '200':
@@ -641,6 +645,10 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/OAuthClient'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       tags: [Client Management]
       summary: Create OAuth client
@@ -658,6 +666,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OAuthClient'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/oauth/clients/{id}:
     get:
@@ -673,6 +685,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OAuthClient'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     put:
       tags: [Client Management]
       summary: Update OAuth client
@@ -688,6 +706,10 @@ paths:
       responses:
         '200':
           description: Client updated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     delete:
       tags: [Client Management]
       summary: Delete OAuth client
@@ -697,6 +719,10 @@ paths:
       responses:
         '204':
           description: Client deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/oauth/clients/{id}/regenerate-secret:
     post:
@@ -715,6 +741,10 @@ paths:
                 properties:
                   client_secret:
                     type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /.well-known/apple-app-site-association:
     get:

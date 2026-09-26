@@ -320,7 +320,9 @@ func main() {
 
 	// The client-management API (/api/v1/oauth/clients) is ALWAYS authenticated
 	// — it creates/modifies OAuth clients, so it must never be reachable
-	// unauthenticated, including in development. The interactive OIDC flow
+	// unauthenticated, including in development. authMW only authenticates;
+	// RegisterRoutes puts the admin role behind it on that API, the SAML
+	// service-provider API and SSF stream management. The interactive OIDC flow
 	// endpoints (consent, step-up) are authenticated only outside development,
 	// preserving the friction-free local login flow.
 	// Accept both OAuth JWTs and minted API keys / service-account PATs on the

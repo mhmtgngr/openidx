@@ -1633,17 +1633,33 @@ func VerifyPKCE(codeVerifier, codeChallenge, method string) bool {
 
 // HTTP Handlers
 
-// RegisterRoutes registers OAuth/OIDC routes.
-// authMiddleware is optional; when provided it protects the client management API and consent endpoint.
+// requireAdminRole admits only an administrator -- admin or super_admin, the
+// rule of every other admin surface -- to the management APIs this service
+// serves: OAuth clients, SAML service providers and SSF streams. clientMgmtAuth
+// in front of it authenticates and nothing more, and each of these APIs decides
+// how the organization's users sign in elsewhere or who learns about them: a
+// client's redirect URIs and secret decide who receives and redeems its
+// authorization codes, its api_access whether its tokens open OpenIDX's own
+// APIs, a service provider's certificate whose requests this IdP trusts, and a
+// stream's endpoint where the organization's security events are delivered.
+// Anyone else -- a signed-in user without either role, a machine credential
+// that holds none -- is refused with 403. The roles are the token's, held in
+// the token's organization, and the validator refuses the token in any other
+// unless its holder is a platform admin; the handlers keep each read and write
+// to the organization the request resolved to.
+var requireAdminRole = middleware.RequireRoles("admin", "super_admin")
+
 // RegisterRoutes wires the oauth-service HTTP routes.
 //
-// clientMgmtAuth guards the /api/v1/oauth/clients management API and is
-// ALWAYS required — these endpoints create and modify OAuth clients, so they
-// must be authenticated in every environment (a nil here is a programmer error
-// and intentionally panics at request time rather than silently exposing the
-// API). The variadic flowAuth is applied to the interactive OIDC flow
-// endpoints (consent, step-up) only when supplied; callers omit it in
-// development to keep the local login flow friction-free.
+// clientMgmtAuth authenticates the management APIs -- /api/v1/oauth/clients,
+// the SAML service-provider API and SSF stream management -- and is ALWAYS
+// required: these endpoints create and modify OAuth clients, so they must be
+// authenticated in every environment (a nil here is a programmer error and
+// intentionally panics at request time rather than silently exposing the API).
+// requireAdminRole follows it on every one of those routes. The variadic
+// flowAuth is applied to the interactive OIDC flow endpoints (consent,
+// step-up) only when supplied; callers omit it in development to keep the
+// local login flow friction-free.
 func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.HandlerFunc, flowAuth ...gin.HandlerFunc) {
 	// OIDC Discovery - include OPTIONS for CORS preflight (required for BrowZer and browser-based OIDC clients)
 	router.GET("/.well-known/openid-configuration", svc.handleDiscovery)
@@ -1665,9 +1681,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 	// delivery_endpoint that receives this org's security events (session
 	// revoked, credential change), so an unauthenticated caller must never be
 	// able to enumerate, create or delete one. Gated with the same middleware
-	// as the client-management API.
+	// as the client-management API, and like it held to administrators.
 	ssfAdmin := router.Group("/ssf")
-	ssfAdmin.Use(clientMgmtAuth)
+	ssfAdmin.Use(clientMgmtAuth, requireAdminRole)
 	{
 		ssfAdmin.GET("/streams", svc.handleListSSFStreams)
 		ssfAdmin.POST("/streams", svc.handleCreateSSFStream)
@@ -1848,9 +1864,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 	}
 
 	// Client management API — always authenticated (creates/modifies OAuth
-	// clients, so it must never be reachable unauthenticated in any env).
+	// clients, so it must never be reachable unauthenticated in any env), and
+	// administrators only. Dynamic client registration (/oauth/register above)
+	// is a different door: an initial access token opens it, and a client
+	// registered through it cannot set api_access.
 	clients := router.Group("/api/v1/oauth/clients")
-	clients.Use(clientMgmtAuth)
+	clients.Use(clientMgmtAuth, requireAdminRole)
 	{
 		clients.GET("", svc.handleListClients)
 		clients.POST("", svc.handleCreateClient)
@@ -1861,7 +1880,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 	}
 
 	// SAML IdP and Service Provider endpoints (SP management shares the
-	// always-on client-management auth; public /saml/idp endpoints stay open).
+	// always-on client-management auth and the admin role behind it; public
+	// /saml/idp endpoints stay open).
 	svc.RegisterSAMLIdPRoutes(router, clientMgmtAuth)
 
 	// Social login endpoints
