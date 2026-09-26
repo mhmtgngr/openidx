@@ -118,6 +118,11 @@ look the client up before they read the body or change anything, so an update,
 a secret regeneration or a delete aimed at another organization's client does
 not report a failure or a success it did not have.
 
+Dynamic client registration (`POST /oauth/register`) is opened by one initial
+access token for the whole install, so it registers clients in one
+organization only: `DCR_ORG_ID`, or `DEFAULT_ORG_ID`. The token cannot pick
+another organization through `X-Org-Slug` or a tenant's host.
+
 ### 6. A CI linter makes it un-bypassable by construction
 
 `tools/orgscope` is a static analyzer wired as a **merge-blocking required CI

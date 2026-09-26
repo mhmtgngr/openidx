@@ -317,6 +317,10 @@ type Service struct {
 	// accepted when dcrInitialAccessToken is empty. Default false = closed, so a
 	// deployment that sets neither value refuses anonymous client registration.
 	dcrAllowOpenRegistration bool
+
+	// dcrOrgID is the one organization dynamic registration creates clients
+	// in (DCR_ORG_ID, else DEFAULT_ORG_ID); see dcrRegistersIn.
+	dcrOrgID string
 	// ssfReceiverConfig trusts an upstream SSF transmitter's issuer + JWKS for
 	// inbound SET validation. Empty = only OpenIDX-issued SETs are accepted.
 	ssfReceiverConfig SSFReceiverConfig
@@ -469,6 +473,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		cellID:                   cfg.CellID,
 		dcrInitialAccessToken:    cfg.DCRInitialAccessToken,
 		dcrAllowOpenRegistration: cfg.DCRAllowOpenRegistration,
+		dcrOrgID:                 dcrOrgFromConfig(cfg),
 		ssfReceiverConfig:        SSFReceiverConfig{Issuer: cfg.SSFReceiverIssuer, JWKSURL: cfg.SSFReceiverJWKSURL},
 		identityService:          idSvc,
 	}

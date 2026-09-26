@@ -272,6 +272,15 @@ type Config struct {
 	// open registration deployment.
 	DCRAllowOpenRegistration bool `mapstructure:"dcr_allow_open_registration"`
 
+	// DCROrgID is the one organization dynamic client registration creates
+	// clients in. The initial access token is one for the whole install, and a
+	// registration used to land in whichever organization the request resolved
+	// to, so the token's holder could register a client in any organization by
+	// naming it in X-Org-Slug or calling its host. A registration resolved to
+	// any other organization is refused like one without the token. Empty
+	// means DEFAULT_ORG_ID, where a request naming no organization lands.
+	DCROrgID string `mapstructure:"dcr_org_id"`
+
 	// SSFReceiverIssuer / SSFReceiverJWKSURL trust an upstream SSF transmitter
 	// for inbound SET (RFC 8417) validation on POST /ssf/events. Empty leaves the
 	// receiver accepting only OpenIDX-issued SETs.
@@ -1177,6 +1186,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("tenant_base_domain", "")
 	v.SetDefault("dcr_initial_access_token", "")
 	v.SetDefault("dcr_allow_open_registration", false)
+	v.SetDefault("dcr_org_id", "")
 	v.SetDefault("ssf_receiver_issuer", "")
 	v.SetDefault("ssf_receiver_jwks_url", "")
 	v.SetDefault("ziti_per_org_attributes", false)
@@ -1410,6 +1420,7 @@ func bindEnvVars(v *viper.Viper) {
 		"tenant_base_domain":                  "TENANT_BASE_DOMAIN",
 		"dcr_initial_access_token":            "DCR_INITIAL_ACCESS_TOKEN",
 		"dcr_allow_open_registration":         "DCR_ALLOW_OPEN_REGISTRATION",
+		"dcr_org_id":                          "DCR_ORG_ID",
 		"ssf_receiver_issuer":                 "SSF_RECEIVER_ISSUER",
 		"ssf_receiver_jwks_url":               "SSF_RECEIVER_JWKS_URL",
 		"ziti_per_org_attributes":             "ZITI_PER_ORG_ATTRIBUTES",

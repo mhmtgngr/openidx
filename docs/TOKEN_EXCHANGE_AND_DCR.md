@@ -131,13 +131,28 @@ POST /oauth/register
 
 ### Gating
 
-Registration is **open by default** (dev/first-run). Set
-`DCR_INITIAL_ACCESS_TOKEN` to require a bearer initial access token:
+Registration is **closed by default**. Set `DCR_INITIAL_ACCESS_TOKEN` to open
+it to holders of that bearer initial access token:
 
 ```
 POST /oauth/register
 Authorization: Bearer <initial-access-token>
 ```
+
+With no token set, `DCR_ALLOW_OPEN_REGISTRATION=true` opens it to anyone.
+
+### Organization
+
+A registration creates its client in one organization: `DCR_ORG_ID`, or
+`DEFAULT_ORG_ID` when that is not set. The initial access token is one for the
+whole install, so it is not allowed to choose the organization. A registration
+request that resolves to any other organization, by `X-Org-Slug` or by a
+tenant's host, is answered `401 invalid_token`, like one without the token,
+and creates nothing. A request that names no organization resolves to
+`DEFAULT_ORG_ID`.
+
+An organization other than the one `DCR_ORG_ID` names registers clients through
+`/api/v1/oauth/clients`, as its administrators.
 
 ## Client management (RFC 7592)
 

@@ -1986,6 +1986,13 @@ paths:
     post:
       tags: [Dynamic Client Registration]
       summary: Register client
+      description: >-
+        RFC 7591 registration, opened by the initial access token in
+        DCR_INITIAL_ACCESS_TOKEN (or, with DCR_ALLOW_OPEN_REGISTRATION, by
+        nothing). It creates clients in one organization only, DCR_ORG_ID or
+        else DEFAULT_ORG_ID; a request that resolves to any other
+        organization is answered 401 `invalid_token`, as one without the
+        token is.
       operationId: registerClient
       x-openidx-handler: internal/oauth.(*Service).handleRegisterClient
       requestBody:

@@ -97,6 +97,7 @@ postgres://user:password@host:5432/openidx?sslmode=verify-full&pool_max_conns=25
 | `OAUTH_LOGIN_URL` | url | `<OAUTH_ISSUER>/login` | Where `/oauth/authorize` sends a browser to sign in. Set it when the console is served from a different origin than the issuer; the reference compose stack is exactly that case. Must be absolute. |
 | `DCR_ALLOW_OPEN_REGISTRATION` | bool | `false` | Allow unauthenticated dynamic client registration. |
 | `DCR_INITIAL_ACCESS_TOKEN` | string | - | Bearer required for dynamic client registration when open registration is off. |
+| `DCR_ORG_ID` | string | `DEFAULT_ORG_ID` | The one organization dynamic client registration creates clients in. A registration request that resolves to any other organization (by `X-Org-Slug` or a tenant's host) is refused with `401`. |
 | `SSF_RECEIVER_ISSUER` | string | - | Expected issuer for inbound SSF/CAEP events. |
 | `SSF_RECEIVER_JWKS_URL` | url | - | JWKS for verifying inbound SSF/CAEP events. |
 

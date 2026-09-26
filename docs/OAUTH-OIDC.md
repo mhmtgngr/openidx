@@ -640,7 +640,8 @@ or a service account's API key. The SAML service-provider API
 (`/api/v1/saml/service-providers`) and SSF stream management (`/ssf/streams`)
 follow the same rule. Dynamic client registration (`POST /oauth/register`) is
 opened by the initial access token set in `DCR_INITIAL_ACCESS_TOKEN` instead,
-and cannot set `api_access`.
+registers clients only in the organization `DCR_ORG_ID` names (by default
+`DEFAULT_ORG_ID`), and cannot set `api_access`.
 
 A route that names one client, service provider or stream answers `404` when
 the organization the request is for has none by that id, whether it does not
