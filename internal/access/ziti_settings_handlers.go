@@ -75,17 +75,14 @@ func (s *Service) requireAdminRole() gin.HandlerFunc {
 
 // requirePlatformAdmin guards what exists once per install -- the controller
 // connection, the BrowZer bootstrap and certificate, the platform TLS
-// certificate -- behind a platform administrator. The rule lives in
-// middleware.RequirePlatformAdmin; this supplies the database and the
-// configured default organization. It carries no DevAdminBypass: that
-// convenience makes every caller an admin of their organization, which is not
-// the same thing as an administrator of the install.
+// certificate -- behind an administrator of the default organization. The rule
+// lives in middleware.RequirePlatformAdmin; this supplies the database, and
+// DEFAULT_ORG_ID -- the tenant resolver's fallback -- has no say in it. It
+// carries no DevAdminBypass: that convenience makes every caller an admin of
+// their organization, which is not the same thing as an administrator of the
+// install.
 func (s *Service) requirePlatformAdmin() gin.HandlerFunc {
-	defaultOrg := ""
-	if s.config != nil {
-		defaultOrg = s.config.DefaultOrgID
-	}
-	return middleware.RequirePlatformAdmin(s.db, defaultOrg, s.logger)
+	return middleware.RequirePlatformAdmin(s.db, s.logger)
 }
 
 // buildZitiConnParams resolves the effective connection: DB settings win, else

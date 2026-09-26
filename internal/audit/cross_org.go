@@ -14,9 +14,11 @@ import (
 
 // CrossOrgAuditor returns the TenantResolverConfig.OnPlatformCrossOrg hook
 // for a service: it records a mandatory audit_events row whenever a platform
-// admin (super_admin) crosses an org boundary via the X-Org-ID header. The
-// event is written under the TARGET org's id so it shows up in that tenant's
-// audit trail, with the acting platform admin captured as the actor.
+// admin -- super_admin held in the install's default organization,
+// middleware.IsPlatformAdmin -- crosses an org boundary, by the X-Org-ID header
+// or by an X-Org-Slug naming an organization other than their credential's.
+// The event is written under the TARGET org's id so it shows up in that
+// tenant's audit trail, with the acting platform admin captured as the actor.
 //
 // It is intentionally best-effort and synchronous (the resolver calls it
 // inline): a failed insert is logged rather than blocking the request, but the

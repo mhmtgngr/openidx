@@ -496,7 +496,8 @@ paths:
           description: >-
             `reserved_role_name`: the name `super_admin` (compared without case
             or surrounding space) is reserved for the install's default
-            organization, where it makes its holder a platform administrator.
+            organization, where it makes its holder a platform admin, who may
+            act in every organization.
 
   /api/v1/identity/roles/{id}:
     get:

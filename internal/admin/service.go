@@ -408,14 +408,12 @@ func requireAdmin(c *gin.Context) bool {
 }
 
 // requirePlatformAdmin is the gate for install-wide settings. The rule lives
-// in middleware.RequirePlatformAdmin; this only supplies the database and the
-// configured default organization.
+// in middleware.RequirePlatformAdmin; this only supplies the database.
+// DEFAULT_ORG_ID is deliberately not passed: it names the tenant resolver's
+// fallback organization, not the organization whose administrators administer
+// the install.
 func (s *Service) requirePlatformAdmin() gin.HandlerFunc {
-	defaultOrg := ""
-	if s.config != nil {
-		defaultOrg = s.config.DefaultOrgID
-	}
-	return middleware.RequirePlatformAdmin(s.db, defaultOrg, s.logger)
+	return middleware.RequirePlatformAdmin(s.db, s.logger)
 }
 
 // NewService creates a new admin service
@@ -1165,8 +1163,8 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	admin.Use(RequireAdmin())
 
 	// Install-wide settings -- one value for every organization on the install
-	// -- need a platform administrator, not only the admin role; see
-	// middleware.RequirePlatformAdmin for who that is.
+	// -- need an administrator of the default organization, not only the admin
+	// role; see middleware.RequirePlatformAdmin for who that is.
 	platform := svc.requirePlatformAdmin()
 
 	// Dashboard and Settings are now handled by internal/admin/handlers package
@@ -1208,7 +1206,8 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	admin.GET("/directories/:id/sync-state", svc.handleGetSyncState)
 
 	// MFA configuration. The method list is one system_settings row for the
-	// whole install, so changing it needs a platform administrator.
+	// whole install, so changing it needs an administrator of the default
+	// organization.
 	admin.GET("/mfa/methods", svc.handleListMFAMethods)
 	admin.PUT("/mfa/methods", platform, svc.handleUpdateMFAMethods)
 

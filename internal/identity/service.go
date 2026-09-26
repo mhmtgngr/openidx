@@ -459,7 +459,8 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 
 		// And only in the organization it was minted in, whose roles it
 		// carries; see middleware.CheckTokenOrg.
-		if _, err := middleware.CheckTokenOrg(c, claims); err != nil {
+		tokenOrg, err := middleware.CheckTokenOrg(c, claims)
+		if err != nil {
 			middleware.AbortForTokenOrg(c, err)
 			return
 		}
@@ -493,6 +494,10 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 		if sid, ok := claims["sid"].(string); ok && sid != "" {
 			c.Set("session_id", sid)
 		}
+		// The organization the token was minted in, bound as the shared
+		// validators bind it: the roles below hold there, and the
+		// install-settings gate (middleware.RequirePlatformAdmin) reads it.
+		c.Set("org_id", tokenOrg)
 
 		// Roles, groups AND THE MINTING CELL, through the one binder every other
 		// service goes through.
@@ -4125,7 +4130,8 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.PUT("/passwordless/preferences", svc.handleUpdatePasswordlessPreferences)
 
 		// Passwordless Settings (Admin). They are one system_settings row for
-		// the whole install, so changing them needs a platform administrator.
+		// the whole install, so changing them needs an administrator of the
+		// default organization.
 		identity.GET("/passwordless/settings", svc.handleGetPasswordlessSettings)
 		identity.PUT("/passwordless/settings", svc.requirePlatformAdmin(), svc.handleUpdatePasswordlessSettings)
 		identity.PATCH("/passwordless/settings", svc.requirePlatformAdmin(), svc.handlePatchPasswordlessSettings)

@@ -369,7 +369,7 @@ comment apiece.
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `DEFAULT_ORG_ID` | uuid | - | Organization a request with no tenant signal belongs to. |
+| `DEFAULT_ORG_ID` | uuid | - | Organization a request with no tenant signal belongs to. It does not decide who administers the install. |
 | `DEFAULT_ORG_FALLBACK` | bool | `false` | Use it, rather than refusing a request with no tenant signal. |
 | `TENANT_BASE_DOMAIN` | string | - | Base domain from which a subdomain identifies the tenant. |
 
@@ -453,10 +453,11 @@ version of this page grow rows the product never had.
 
 The SMS settings and the OAuth signing key apply to every organization on the
 install, as do the passwordless defaults, the OpenZiti controller connection and
-the platform TLS certificate. Only a platform administrator can change them: a
-user with the `admin` or `super_admin` role whose own organization is the one
-`DEFAULT_ORG_ID` names. On a single-organization install that is every
-administrator.
+the platform TLS certificate. Only an administrator of the default
+organization can change them: a user with the `admin` or `super_admin` role in
+the install's default organization, `00000000-0000-0000-0000-000000000010`,
+signed in there. `DEFAULT_ORG_ID` does not change who that is. On a
+single-organization install that is every administrator.
 
 ## Configuration file
 

@@ -15,16 +15,13 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
-// The decision behind RequirePlatformAdmin, driven without a database: a fake
-// users lookup answers with an organization, no row, or an error, and records
-// whether it was asked at all and under which RLS scope. The same decision
-// against a real Postgres, as a non-superuser under the FORCE'd belt, is in
-// platform_admin_testdb_test.go.
+// The decision behind RequirePlatformAdmin, isInstallAdministrator, driven
+// without a database: a fake users lookup answers with an organization, no
+// row, or an error, and records whether it was asked at all and under which RLS
+// scope. The same decision against a real Postgres, as a non-superuser under
+// the FORCE'd belt, is in platform_admin_testdb_test.go.
 
-const (
-	platformTestUser  = "11111111-1111-1111-1111-111111111111"
-	platformTestOther = "22222222-2222-2222-2222-222222222222"
-)
+const platformTestUser = "11111111-1111-1111-1111-111111111111"
 
 type fakeUserOrgRow struct {
 	org string
@@ -60,9 +57,10 @@ func (f *fakeUserOrgs) QueryRow(ctx context.Context, _ string, args ...any) pgx.
 	return fakeUserOrgRow{org: org}
 }
 
-// decide runs isPlatformAdmin inside a real gin request, so the caller's roles
-// and subject are read from the context exactly as the middleware reads them.
-func decide(t *testing.T, q userOrgQuerier, defaultOrg, userID string, roles []string) (bool, error) {
+// decide runs isInstallAdministrator inside a real gin request, so the caller's
+// roles, subject and -- when one is given -- credential organization are read
+// from the context exactly as the middleware reads them.
+func decide(t *testing.T, q userOrgQuerier, userID string, roles []string, credentialOrg ...string) (bool, error) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	var (
@@ -77,14 +75,17 @@ func decide(t *testing.T, q userOrgQuerier, defaultOrg, userID string, roles []s
 		if roles != nil {
 			c.Set("roles", roles)
 		}
-		ok, err = isPlatformAdmin(c, q, defaultOrg)
+		if len(credentialOrg) > 0 {
+			c.Set("org_id", credentialOrg[0])
+		}
+		ok, err = isInstallAdministrator(c, q)
 		c.Status(http.StatusNoContent)
 	})
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 	return ok, err
 }
 
-func TestPlatformAdminDecision(t *testing.T) {
+func TestInstallAdministratorDecision(t *testing.T) {
 	const otherOrg = "33333333-3333-3333-3333-333333333333"
 	for _, tc := range []struct {
 		name      string
@@ -114,35 +115,57 @@ func TestPlatformAdminDecision(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			q := &fakeUserOrgs{orgs: tc.orgs}
-			got, err := decide(t, q, DefaultOrgID, tc.userID, tc.roles)
+			got, err := decide(t, q, tc.userID, tc.roles)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if got != tc.want {
-				t.Errorf("platform administrator = %v, want %v", got, tc.want)
+				t.Errorf("install administrator = %v, want %v", got, tc.want)
 			}
 			if asked := q.asked > 0; asked != tc.wantAsked {
 				t.Errorf("users lookup asked = %v, want %v", asked, tc.wantAsked)
 			}
 			if q.asked > 0 && !q.bypassed {
-				t.Error("the users lookup ran under the request's tenant scope; a platform administrator " +
+				t.Error("the users lookup ran under the request's tenant scope; a platform admin " +
 					"working in another tenant would find no row of their own and be refused")
 			}
 		})
 	}
 }
 
-// DEFAULT_ORG_ID can name an organization other than the seeded one; the
-// install's default organization is whichever one it names.
-func TestPlatformAdminFollowsTheConfiguredDefaultOrganization(t *testing.T) {
-	const configured = "44444444-4444-4444-4444-444444444444"
-	q := &fakeUserOrgs{orgs: map[string]string{platformTestUser: configured, platformTestOther: DefaultOrgID}}
-
-	if ok, err := decide(t, q, configured, platformTestUser, []string{"admin"}); err != nil || !ok {
-		t.Errorf("an admin of the configured default organization: got (%v, %v), want (true, nil)", ok, err)
-	}
-	if ok, err := decide(t, q, configured, platformTestOther, []string{"admin"}); err != nil || ok {
-		t.Errorf("an admin of the seeded organization, which DEFAULT_ORG_ID no longer names: got (%v, %v), want (false, nil)", ok, err)
+// The roles a credential carries hold in the organization it was issued in, so
+// where the validator bound that organization it has to be the default one as
+// well. A user whose own row is in the default organization but who presents a
+// credential of another organization is refused, before any query; a bound
+// organization that names nothing is a refusal too, not an absence. Whether
+// DEFAULT_ORG_ID can move the rule is asked of each service that mounts the
+// gate, which is where that setting is read: see
+// TestTheFallbackOrganizationDoesNotChooseInstallAdministrators in
+// internal/admin and the settings tests of identity and access.
+func TestInstallAdministratorNeedsTheCredentialsOrganization(t *testing.T) {
+	const otherOrg = "33333333-3333-3333-3333-333333333333"
+	for _, tc := range []struct {
+		name          string
+		credentialOrg string
+		want, asked   bool
+	}{
+		{"a credential of the default organization", DefaultOrgID, true, true},
+		{"a credential of another organization", otherOrg, false, false},
+		{"a credential that names no organization", "", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := &fakeUserOrgs{orgs: map[string]string{platformTestUser: DefaultOrgID}}
+			got, err := decide(t, q, platformTestUser, []string{"admin"}, tc.credentialOrg)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("install administrator = %v, want %v", got, tc.want)
+			}
+			if asked := q.asked > 0; asked != tc.asked {
+				t.Errorf("users lookup asked = %v, want %v", asked, tc.asked)
+			}
+		})
 	}
 }
 
@@ -150,7 +173,7 @@ func TestPlatformAdminFollowsTheConfiguredDefaultOrganization(t *testing.T) {
 // it, and it must never answer 2xx.
 func TestPlatformAdminLookupFailureIsAnError(t *testing.T) {
 	q := &fakeUserOrgs{err: errors.New("connection refused")}
-	ok, err := decide(t, q, DefaultOrgID, platformTestUser, []string{"admin"})
+	ok, err := decide(t, q, platformTestUser, []string{"admin"})
 	if ok || err == nil {
 		t.Fatalf("got (%v, %v), want (false, error)", ok, err)
 	}
@@ -178,7 +201,7 @@ func TestRequirePlatformAdminWithoutADatabase(t *testing.T) {
 				c.Set("roles", tc.roles)
 				c.Next()
 			})
-			r.PUT("/settings", RequirePlatformAdmin(nil, "", zap.NewNop()), func(c *gin.Context) {
+			r.PUT("/settings", RequirePlatformAdmin(nil, zap.NewNop()), func(c *gin.Context) {
 				reached = true
 				c.Status(http.StatusOK)
 			})

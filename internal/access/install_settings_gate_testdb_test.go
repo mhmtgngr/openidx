@@ -86,9 +86,14 @@ func TestInstallWideAccessSettingsNeedAPlatformAdministrator(t *testing.T) {
 	}))
 	t.Cleanup(controller.Close)
 
+	// DEFAULT_ORG_ID names the tenant, as an operator might point the resolver's
+	// fallback at a customer's organization. It must not make that
+	// organization's administrators the install's: every caller below is judged
+	// against the default organization all the same.
 	cfg := &config.Config{
 		Environment:   "production",
 		EncryptionKey: "0123456789abcdef0123456789abcdef",
+		DefaultOrgID:  otherOrg,
 	}
 	logger := zap.NewNop()
 	svc := NewService(db, &database.RedisClient{}, cfg, logger)

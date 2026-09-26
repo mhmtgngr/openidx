@@ -366,8 +366,9 @@ func main() {
 	// context (v1.7.0 #2). Group-level and after Auth, so unlike the
 	// other services the JWT org_id claim path is live here, not just
 	// X-Org-Slug — and so is the platform-admin X-Org-ID path, which
-	// makes this the only service where a super_admin can cross a tenant
-	// boundary and where CrossOrgAuditor's mandatory row is written.
+	// makes this the only service where a platform admin (super_admin held
+	// in the default organization, middleware.IsPlatformAdmin) can cross a
+	// tenant boundary and where CrossOrgAuditor's mandatory row is written.
 	// test/integration/cross_org_test.go asserts that, and asserts a
 	// plain admin cannot. Keep this mount behind auth.
 	// DefaultOrgFallback keeps single-tenant installs on the default
@@ -421,9 +422,10 @@ func main() {
 		adminhandlers.RegisterAllRoutes(v1, db.Pool, log, admin.RequireAdmin())
 
 		// Self-heal control panel. Reads are RequireAdmin; mutations
-		// (mode/kill-switch/sweep) additionally require selfheal:manage and a
-		// platform administrator, because they act on the whole install, and
-		// are written to the admin audit log. Always-on auth — no dev bypass.
+		// (mode/kill-switch/sweep) additionally require selfheal:manage and an
+		// administrator of the default organization (RequirePlatformAdmin),
+		// because they act on the whole install, and are written to the admin
+		// audit log. Always-on auth — no dev bypass.
 		selfhealHandler := adminhandlers.NewSelfHealHandler(log, cfg.SelfHealStateDir, cfg.SelfHealScriptsDir,
 			func(c *gin.Context, action string, before, after interface{}) {
 				actorID, _ := c.Get("user_id")
@@ -438,7 +440,7 @@ func main() {
 			})
 		adminhandlers.SelfHealRoutes(v1, selfhealHandler, admin.RequireAdmin(),
 			middleware.RequirePermission("selfheal", "manage"),
-			middleware.RequirePlatformAdmin(db, cfg.DefaultOrgID, log))
+			middleware.RequirePlatformAdmin(db, log))
 
 		// Vault (PAM credential store) — fail-closed: service must not start
 		// without a usable KEK. Falls back to EncryptionKey as id 0.

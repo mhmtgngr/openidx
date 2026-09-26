@@ -125,14 +125,25 @@ switch), the OAuth signing keys, the shared IP deny-list and error catalog, the
 platform TLS certificate and key, and the self-heal loop's controls. Changing
 one of them changes it for every organization.
 
-Changing them needs a **platform administrator**: a user who holds `admin` or
-`super_admin` and whose own organization (`users.org_id`) is the install's
-default organization, the one `DEFAULT_ORG_ID` names. On a single-organization
-install that is every administrator. An administrator of any other organization
-is refused with `403 {"error": "platform administrator required"}`, and so is a
-read of the two settings that carry credentials, the SMS provider and the
-OpenZiti controller connection. The rule is in
-`internal/common/middleware/platform_admin.go`.
+Changing them needs an **administrator of the default organization**: a user
+who holds `admin` or `super_admin` in the install's default organization
+(`00000000-0000-0000-0000-000000000010`). Their own organization
+(`users.org_id`, read from the database rather than from the request) must be
+that organization, and so must the organization of the token or API key they
+present, whose roles hold there only. `DEFAULT_ORG_ID` does not change who that
+is: it names the organization a request with no tenant signal falls back to,
+and nothing else. On a single-organization install that is every
+administrator. An administrator of any other organization is refused with
+`403 {"error": "platform administrator required"}`, and so is a read of the two
+settings that carry credentials, the SMS provider and the OpenZiti controller
+connection. The rule is in `internal/common/middleware/platform_admin.go`.
+
+The default organization carries two rules, and they are not the same one.
+Acting in another organization, listing every organization and creating one
+need `super_admin` held there: a platform admin. Changing an install-wide setting
+needs `admin` or `super_admin` held there. Every platform admin can change
+install-wide settings; an `admin` of the default organization without
+`super_admin` can change them and still cannot act in any other organization.
 
 ## What multi-tenancy covers
 

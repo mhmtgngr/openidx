@@ -31,7 +31,9 @@ import (
 //     bypassed read finds it;
 //   - an administrator of another organization whose request resolved to the
 //     default organization must still be refused: the resolved tenant is not
-//     their organization and must not stand in for it.
+//     their organization and must not stand in for it;
+//   - and a default-organization administrator presenting a credential of
+//     another organization is refused: the roles are that credential's.
 func TestRequirePlatformAdminAgainstTheRLSBelt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	admin := delegationTestPool(t) // migrated; skips when no database is configured
@@ -95,13 +97,14 @@ func TestRequirePlatformAdminAgainstTheRLSBelt(t *testing.T) {
 		t.Fatalf("a read scoped to another tenant saw the default organization's user; RLS is not in force for %s, so this test would prove nothing", role)
 	}
 
-	gate := RequirePlatformAdmin(appDB, "", zap.NewNop())
-	call := func(userID, resolvedOrg string, roles ...string) (int, string) {
+	gate := RequirePlatformAdmin(appDB, zap.NewNop())
+	call := func(userID, credentialOrg, resolvedOrg string, roles ...string) (int, string) {
 		t.Helper()
 		r := gin.New()
 		r.Use(func(c *gin.Context) {
 			c.Set("user_id", userID)
 			c.Set("roles", roles)
+			c.Set("org_id", credentialOrg)
 			c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: resolvedOrg}))
 			c.Next()
 		})
@@ -115,22 +118,25 @@ func TestRequirePlatformAdminAgainstTheRLSBelt(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		name        string
-		user        string
-		resolvedOrg string
-		roles       []string
-		want        int
+		name          string
+		user          string
+		credentialOrg string
+		resolvedOrg   string
+		roles         []string
+		want          int
 	}{
-		{"a default-organization admin in their own organization", platformAdmin, DefaultOrgID, []string{"admin"}, http.StatusOK},
-		{"a default-organization admin working inside another tenant", platformAdmin, otherOrg, []string{"admin"}, http.StatusOK},
-		{"a default-organization super_admin working inside another tenant", platformAdmin, otherOrg, []string{"super_admin"}, http.StatusOK},
-		{"another organization's admin in their own organization", tenantAdmin, otherOrg, []string{"admin"}, http.StatusForbidden},
-		{"another organization's admin whose request resolved to the default organization", tenantAdmin, DefaultOrgID, []string{"admin"}, http.StatusForbidden},
-		{"another organization's super_admin whose request resolved to the default organization", tenantAdmin, DefaultOrgID, []string{"super_admin"}, http.StatusForbidden},
-		{"a plain user of the default organization", platformAdmin, DefaultOrgID, []string{"user"}, http.StatusForbidden},
+		{"a default-organization admin in their own organization", platformAdmin, DefaultOrgID, DefaultOrgID, []string{"admin"}, http.StatusOK},
+		{"a default-organization admin working inside another tenant", platformAdmin, DefaultOrgID, otherOrg, []string{"admin"}, http.StatusOK},
+		{"a default-organization super_admin working inside another tenant", platformAdmin, DefaultOrgID, otherOrg, []string{"super_admin"}, http.StatusOK},
+		{"another organization's admin in their own organization", tenantAdmin, otherOrg, otherOrg, []string{"admin"}, http.StatusForbidden},
+		{"another organization's admin whose request resolved to the default organization", tenantAdmin, otherOrg, DefaultOrgID, []string{"admin"}, http.StatusForbidden},
+		{"another organization's super_admin whose request resolved to the default organization", tenantAdmin, otherOrg, DefaultOrgID, []string{"super_admin"}, http.StatusForbidden},
+		// The users lookup alone would admit this one; the credential is what refuses it.
+		{"a default-organization admin presenting a credential of another organization", platformAdmin, otherOrg, otherOrg, []string{"admin"}, http.StatusForbidden},
+		{"a plain user of the default organization", platformAdmin, DefaultOrgID, DefaultOrgID, []string{"user"}, http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			code, msg := call(tc.user, tc.resolvedOrg, tc.roles...)
+			code, msg := call(tc.user, tc.credentialOrg, tc.resolvedOrg, tc.roles...)
 			if code != tc.want {
 				t.Fatalf("status %d (%q), want %d", code, msg, tc.want)
 			}

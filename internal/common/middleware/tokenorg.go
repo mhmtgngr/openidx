@@ -33,6 +33,14 @@ const PlatformAdminRole = "super_admin"
 // CredentialOrgAllowed, and auth.SuperAdminPredicate for the tenant resolver,
 // which reads the same two facts from the gin context
 // (tokenorg_agreement_test.go holds the two together).
+//
+// It is the narrower of the two rules the default organization carries.
+// Crossing into another organization -- this rule -- needs super_admin held in
+// the default organization; changing an install-wide setting needs admin or
+// super_admin held there (RequirePlatformAdmin, platform_admin.go, whose name
+// predates the distinction). Every platform admin may change install-wide
+// settings; an admin of the default organization may change them and still
+// cannot act in any other organization.
 func IsPlatformAdmin(orgID string, roles []string) bool {
 	if orgID != DefaultOrgID {
 		return false

@@ -172,8 +172,10 @@ func (h *SelfHealHandler) PostSweep(c *gin.Context) {
 // SelfHealRoutes registers the panel routes. Reads are guarded by adminMW;
 // mutations by adminMW + manageMW (selfheal:manage) + every gate in installMW.
 // The loop's mode, kill switch and sweep act on the whole install rather than
-// on one organization, so cmd/admin-api passes the platform-administrator gate
-// there: selfheal:manage is a permission an organization can grant itself.
+// on one organization, so cmd/admin-api passes the install-settings gate there
+// (middleware.RequirePlatformAdmin: admin or super_admin of the default
+// organization): selfheal:manage is a permission an organization can grant
+// itself.
 func SelfHealRoutes(router *gin.RouterGroup, handler *SelfHealHandler, adminMW, manageMW gin.HandlerFunc, installMW ...gin.HandlerFunc) {
 	read := router.Group("/selfheal")
 	if adminMW != nil {

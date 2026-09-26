@@ -66,7 +66,12 @@ func TestPasswordlessSettingsNeedAPlatformAdministrator(t *testing.T) {
 	plainUser := seedUser(defaultOrg, "plain-user")
 
 	jwks := jwksServer(t)
-	cfg := &config.Config{Environment: "production", OAuthIssuer: "https://issuer.test", OAuthJWKSURL: jwks.URL}
+	// DEFAULT_ORG_ID names the tenant, as an operator might point the resolver's
+	// fallback at a customer's organization. It must not make that
+	// organization's administrators the install's: every caller below is judged
+	// against the default organization all the same.
+	cfg := &config.Config{Environment: "production", OAuthIssuer: "https://issuer.test", OAuthJWKSURL: jwks.URL,
+		DefaultOrgID: otherOrg}
 	svc := NewService(db, &database.RedisClient{}, cfg, zap.NewNop())
 	r := gin.New()
 	RegisterRoutes(r, svc)
@@ -90,6 +95,13 @@ func TestPasswordlessSettingsNeedAPlatformAdministrator(t *testing.T) {
 	callers := []caller{
 		{"another organization's admin", tenantAdmin, otherOrg, []string{"admin"}, false},
 		{"another organization's super_admin", tenantSuper, otherOrg, []string{"admin", "super_admin"}, false},
+		// The token names the default organization, and the user's own row
+		// does not: the users lookup refuses it.
+		{"another organization's admin, with a token naming the default organization", tenantAdmin, defaultOrg, []string{"admin"}, false},
+		// The user's own row is in the default organization, and the token
+		// names another: the roles are that token's, and the credential's
+		// organization refuses it.
+		{"a default-organization admin, with a token naming another organization", platformAdmin, otherOrg, []string{"admin"}, false},
 		{"plain user", plainUser, defaultOrg, []string{"user"}, false},
 		{"default-organization admin", platformAdmin, defaultOrg, []string{"admin"}, true},
 		{"default-organization super_admin", platformSuper, defaultOrg, []string{"super_admin"}, true},

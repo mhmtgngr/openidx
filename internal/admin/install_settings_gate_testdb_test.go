@@ -127,7 +127,7 @@ func TestInstallWideSettingsNeedAPlatformAdministrator(t *testing.T) {
 		admitManage := func(c *gin.Context) { c.Next() }
 		adminhandlers.SelfHealRoutes(v1,
 			adminhandlers.NewSelfHealHandler(zap.NewNop(), stateDir, t.TempDir(), nil),
-			RequireAdmin(), admitManage, middleware.RequirePlatformAdmin(db, "", zap.NewNop()))
+			RequireAdmin(), admitManage, middleware.RequirePlatformAdmin(db, zap.NewNop()))
 		return r
 	}
 
