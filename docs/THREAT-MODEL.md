@@ -212,6 +212,7 @@ known non-org-scoped tables), `internal/common/orgctx/`.
 | Repudiation | Privileged user denies actions on a target | Full session recording (§4.7) + audit chain; recordings support retention and legal hold |
 | Tampering | Disable recording mid-session | Recording is broker-enforced, not client-optional |
 | Info disclosure | guacd speaks cleartext protocols inside its segment | **Operator obligation R3**: guacd must be network-isolated with the access service as its only client (see §5 and SECURITY-HARDENING.md) |
+| Info disclosure | A route's Guacamole feature password read from the database, a backup or the feature API | Sealed with the access service's `ENCRYPTION_KEY` cipher before it is stored, and never returned: the feature reads carry `guacamole_password_set` in its place (`storedConfigJSON`, `redactFeatureConfig`, `internal/access/feature_manager.go`). An enable that leaves it out reuses it only for the same protocol, host, port and user. Values stored in plaintext by earlier releases are sealed when the access service starts (`SealStoredSecrets`). The vault-backed injection above keeps the password out of the access service altogether |
 
 ### 4.6 Credential vault (`internal/vault`)
 

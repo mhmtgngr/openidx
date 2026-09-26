@@ -5589,6 +5589,9 @@ paths:
     get:
       tags: [Services]
       summary: Get all services status
+      description: >-
+        Every enabled route's features, as GET /services/{id}/features returns
+        them: a Guacamole password is never returned.
       operationId: getAllServicesStatus
       x-openidx-handler: internal/access.(*Service).handleGetAllServicesStatus
       responses:
@@ -5612,6 +5615,10 @@ paths:
     get:
       tags: [Services]
       summary: Get service features
+      description: >-
+        Each feature's state and stored configuration. A Guacamole feature's
+        password is stored sealed and never returned: its configuration carries
+        `guacamole_password_set: true` in its place when one is stored.
       operationId: getServiceFeatures
       x-openidx-handler: internal/access.(*Service).handleGetServiceFeatures
       responses:
@@ -5739,6 +5746,14 @@ paths:
     post:
       tags: [Services]
       summary: Enable guacamole feature
+      description: >-
+        Creates the broker connection with `guacamole_protocol`,
+        `guacamole_host`, `guacamole_port`, `guacamole_username` and
+        `guacamole_password`; what is left out defaults to the route's remote
+        host and port and ssh. The password is stored sealed with the access
+        service's ENCRYPTION_KEY and never returned. An enable that leaves the
+        password out keeps the stored one if it names the same protocol, host,
+        port and user, and connects without one otherwise.
       operationId: enableGuacamoleFeature
       x-openidx-handler: internal/access.(*Service).handleEnableGuacamoleFeature
       requestBody:
@@ -5866,6 +5881,9 @@ paths:
     get:
       tags: [Services]
       summary: Get service status
+      description: >-
+        The route's features, as GET /services/{id}/features returns them: a
+        Guacamole password is never returned.
       operationId: getServiceStatus
       x-openidx-handler: internal/access.(*Service).handleGetServiceStatus
       responses:

@@ -378,6 +378,17 @@ func main() {
 	accessService.SetFeatureManager(featureManager)
 	log.Info("Feature Manager initialized")
 
+	// Guacamole feature passwords were stored in plaintext before they were
+	// sealed. Seal the ones still waiting now, where the key is, rather than
+	// at each feature's next enable.
+	sealCtx, cancelSeal := context.WithTimeout(context.Background(), 30*time.Second)
+	if n, err := featureManager.SealStoredSecrets(sealCtx); err != nil {
+		log.Warn("could not seal the stored Guacamole feature passwords; each is sealed at its feature's next enable", zap.Error(err))
+	} else if n > 0 {
+		log.Info("sealed stored Guacamole feature passwords", zap.Int("count", n))
+	}
+	cancelSeal()
+
 	// Initialize Unified Audit Service
 	auditService := access.NewUnifiedAuditService(db, log)
 	accessService.SetAuditService(auditService)

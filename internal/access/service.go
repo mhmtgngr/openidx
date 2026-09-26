@@ -243,9 +243,13 @@ func (s *Service) SetZitiManager(zm *ZitiManager) {
 	s.zitiProvider.Store(zm)
 }
 
-// SetFeatureManager sets the feature manager for the service
+// SetFeatureManager sets the feature manager for the service. The manager
+// seals the secrets it stores with this service's ENCRYPTION_KEY cipher.
 func (s *Service) SetFeatureManager(fm *FeatureManager) {
 	s.featureManager = fm
+	if s.idpCipher != nil {
+		fm.SetSecretCipher(s.idpCipher)
+	}
 	if s.zitiProvider != nil {
 		fm.SetZitiProvider(s.zitiProvider)
 	}
