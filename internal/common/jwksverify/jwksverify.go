@@ -287,7 +287,8 @@ func FirstSigningKey(jwksURL string) (*rsa.PublicKey, error) {
 // VerifyBearerToken validates a bearer JWT against the OAuth JWKS and returns
 // its claims. It enforces the same guarantees as Auth(): an RS256 algorithm pin
 // (rejecting "none"/HS256 and alg-confusion), a kid→JWKS signing-key lookup via
-// the shared 1-hour key cache, and a required, unexpired exp. It is for services
+// the shared 1-hour key cache, a required, unexpired exp, and that the token is
+// an access token rather than an ID token (IsAccessToken). It is for services
 // that authenticate a bearer OUTSIDE the Auth() middleware (e.g. the access
 // reverse proxy resolving a forwarded bearer). Any verification failure returns
 // an error; callers MUST treat a non-nil error as "unauthenticated" and build no
@@ -326,6 +327,9 @@ func VerifyBearerToken(jwksURL, tokenString string) (map[string]interface{}, err
 	}
 	if time.Now().Unix() > int64(exp) {
 		return nil, fmt.Errorf("token expired")
+	}
+	if !IsAccessToken(token.Header, claims) {
+		return nil, ErrNotAccessToken
 	}
 	return claims, nil
 }

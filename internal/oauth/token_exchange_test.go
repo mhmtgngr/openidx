@@ -10,10 +10,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/openidx/openidx/internal/common/middleware"
 )
 
-// mintTestToken signs a token with the test service's key so validateExchangeToken
-// accepts it (same key = same issuer for the unit path).
+// mintTestToken signs an access token with the test service's key so
+// validateExchangeToken accepts it (same key = same issuer for the unit path).
+// It is typed "at+jwt" as newAccessToken types every bearer this package mints.
 func mintTestToken(t *testing.T, svc *Service, claims jwt.MapClaims) string {
 	t.Helper()
 	if _, ok := claims["exp"]; !ok {
@@ -23,6 +26,7 @@ func mintTestToken(t *testing.T, svc *Service, claims jwt.MapClaims) string {
 		claims["iat"] = time.Now().Unix()
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["typ"] = middleware.AccessTokenType
 	signed, err := tok.SignedString(svc.privateKey)
 	if err != nil {
 		t.Fatalf("sign test token: %v", err)

@@ -29,8 +29,9 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 
 ### Semantics
 
-- **Subject validation** — the subject token must be a live, RS256 token
-  OpenIDX issued (own `kid`). Cross-issuer federation is out of scope.
+- **Subject validation** — the subject token must be a live, RS256 access
+  token OpenIDX issued (own `kid`). An ID token is refused, as subject or as
+  actor. Cross-issuer federation is out of scope.
 - **Scope narrowing** — the issued token's scope is the intersection of the
   requested scope with the subject's. Requesting a scope the subject lacks drops
   it; it never escalates. Empty request keeps the subject's scope.

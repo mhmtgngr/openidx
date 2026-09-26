@@ -1393,9 +1393,7 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 	}
 
 	kid, signKey := s.signingKey()
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	token.Header["kid"] = kid
-	return token.SignedString(signKey)
+	return newAccessToken(claims, kid).SignedString(signKey)
 }
 
 // GenerateIDToken generates an OIDC ID token.
@@ -4352,6 +4350,15 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 		return
 	}
 
+	// This endpoint answers for the tokens a resource server is handed: access
+	// tokens and refresh tokens. An ID token is signed with the same key, and
+	// reporting one as an active access_token would tell a resource server
+	// that relies on introspection to accept it as a bearer.
+	if !middleware.IsAccessToken(parsed.Header, claims) {
+		c.JSON(200, gin.H{"active": false})
+		return
+	}
+
 	// Honor revocation: a signature-valid access token may have been revoked via
 	// /oauth/revoke or /oauth/logout(-all). RFC 7662 §2.2 — a revoked token (or
 	// one whose revocation state can't be verified) introspects as active:false
@@ -4453,6 +4460,13 @@ func (s *Service) handleRevoke(c *gin.Context) {
 // for the OIDC id_token_hint, which the spec permits to be expired — while STILL requiring a valid
 // signature.
 func (s *Service) parseVerifiedClaims(tokenString string, allowExpired bool) (jwt.MapClaims, error) {
+	_, claims, err := s.parseVerifiedToken(tokenString, allowExpired)
+	return claims, err
+}
+
+// parseVerifiedToken is parseVerifiedClaims returning the verified token as
+// well, for a caller that has to read its header.
+func (s *Service) parseVerifiedToken(tokenString string, allowExpired bool) (*jwt.Token, jwt.MapClaims, error) {
 	keyfunc := func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
@@ -4465,13 +4479,13 @@ func (s *Service) parseVerifiedClaims(tokenString string, allowExpired bool) (jw
 	}
 	token, err := jwt.NewParser(opts...).Parse(tokenString, keyfunc)
 	if err != nil || !token.Valid {
-		return nil, fmt.Errorf("token signature verification failed: %w", err)
+		return nil, nil, fmt.Errorf("token signature verification failed: %w", err)
 	}
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return nil, errors.New("invalid token claims")
+		return nil, nil, errors.New("invalid token claims")
 	}
-	return claims, nil
+	return token, claims, nil
 }
 
 func (s *Service) handleUserInfo(c *gin.Context) {
@@ -4490,17 +4504,12 @@ func (s *Service) handleUserInfo(c *gin.Context) {
 
 	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
-	// Parse and validate JWT
-	token, err := jwt.Parse(tokenString, s.verificationKeyfunc)
-
-	if err != nil || !token.Valid {
-		c.JSON(401, gin.H{"error": "invalid_token"})
-		return
-	}
-
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		c.JSON(401, gin.H{"error": "invalid_token"})
+	// Parse and validate JWT. OIDC Core §5.3 has this endpoint take an access
+	// token, and parseAccessToken refuses an ID token: every relying party the
+	// user signed in to holds one.
+	claims, err := s.parseAccessToken(tokenString)
+	if err != nil {
+		c.JSON(401, invalidTokenBody(err))
 		return
 	}
 
@@ -5090,9 +5099,9 @@ func (s *Service) handleLogoutAll(c *gin.Context) {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	claims, err := s.parseVerifiedClaims(tokenStr, false)
+	claims, err := s.parseAccessToken(tokenStr)
 	if err != nil {
-		c.JSON(401, gin.H{"error": "invalid_token"})
+		c.JSON(401, invalidTokenBody(err))
 		return
 	}
 
@@ -5133,9 +5142,9 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	claims, err := s.parseVerifiedClaims(tokenStr, false)
+	claims, err := s.parseAccessToken(tokenStr)
 	if err != nil {
-		c.JSON(401, gin.H{"error": "invalid_token"})
+		c.JSON(401, invalidTokenBody(err))
 		return
 	}
 
@@ -5203,9 +5212,7 @@ func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, cli
 	}
 
 	signKid, signKey := s.signingKey()
-	jwtToken := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	jwtToken.Header["kid"] = signKid
-	signedToken, err := jwtToken.SignedString(signKey)
+	signedToken, err := newAccessToken(claims, signKid).SignedString(signKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign access token: %w", err)
 	}

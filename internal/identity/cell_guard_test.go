@@ -18,6 +18,7 @@ import (
 	"github.com/openidx/openidx/internal/common/cell"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/middleware"
 )
 
 // identity-service REFUSING A TOKEN MINTED IN ANOTHER CELL, END TO END.
@@ -92,8 +93,8 @@ func celledIdentity(t *testing.T, serving string) (*gin.Engine, string) {
 	return r, cfg.OAuthIssuer
 }
 
-// token mints a signed token for these claims, merged over the minimum the
-// middleware requires (sub, iss, exp).
+// token mints a signed access token for these claims, merged over the minimum
+// the middleware requires (sub, iss, exp, and the "at+jwt" type).
 func token(t *testing.T, issuer string, claims jwt.MapClaims) string {
 	t.Helper()
 	full := jwt.MapClaims{
@@ -104,7 +105,9 @@ func token(t *testing.T, issuer string, claims jwt.MapClaims) string {
 	for k, v := range claims {
 		full[k] = v
 	}
-	signed, err := jwt.NewWithClaims(jwt.SigningMethodRS256, full).SignedString(signingKey)
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, full)
+	tok.Header["typ"] = middleware.AccessTokenType
+	signed, err := tok.SignedString(signingKey)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}

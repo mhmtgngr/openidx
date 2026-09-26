@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/cell"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -147,7 +148,14 @@ func (s *Service) authenticateExchangeClient(c *gin.Context) (*OAuthClient, bool
 }
 
 // validateExchangeToken parses + verifies a token this service issued and
-// returns its claims. Rejects expired/invalid signatures.
+// returns its claims. Rejects expired/invalid signatures, and any token that is
+// not an access token.
+//
+// The exchange does not offer RFC 8693's id_token token type
+// (isSupportedTokenType lists access_token and jwt), and a signature check
+// alone cannot tell an ID token from an access token. The difference matters
+// here more than anywhere: the exchange copies the subject's roles and groups
+// into the access token it issues.
 func (s *Service) validateExchangeToken(token string) (jwt.MapClaims, error) {
 	parsed, err := jwt.Parse(token, s.verificationKeyfunc, jwt.WithValidMethods([]string{"RS256"}))
 	if err != nil {
@@ -159,6 +167,9 @@ func (s *Service) validateExchangeToken(token string) (jwt.MapClaims, error) {
 	claims, ok := parsed.Claims.(jwt.MapClaims)
 	if !ok {
 		return nil, jwt.ErrTokenInvalidClaims
+	}
+	if !middleware.IsAccessToken(parsed.Header, claims) {
+		return nil, middleware.ErrNotAccessToken
 	}
 	return claims, nil
 }
@@ -228,9 +239,7 @@ func (s *Service) issueExchangedToken(c *gin.Context, subject, audience, scope s
 	}
 
 	kid, signKey := s.signingKey()
-	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	tok.Header["kid"] = kid
-	signed, err := tok.SignedString(signKey)
+	signed, err := newAccessToken(claims, kid).SignedString(signKey)
 	if err != nil {
 		return "", 0, err
 	}

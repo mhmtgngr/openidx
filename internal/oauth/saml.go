@@ -21,6 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
@@ -623,6 +624,13 @@ func (s *Service) extractSAMLUserFromToken(reqCtx context.Context, tokenStr stri
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
 		return nil, fmt.Errorf("invalid token claims")
+	}
+
+	// The bearer has to be an access token. An ID token verifies against the
+	// same key, but it is given to every relying party the user signs in to,
+	// and must not be enough to sign the user in to a service provider here.
+	if !middleware.IsAccessToken(token.Header, claims) {
+		return nil, fmt.Errorf("invalid token: %w", middleware.ErrNotAccessToken)
 	}
 
 	userID, _ := claims["sub"].(string)

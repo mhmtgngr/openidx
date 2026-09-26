@@ -62,12 +62,16 @@ func (s *Service) RegisterSocialLinkRoutes(router *gin.Engine) {
 // bearerUserID resolves the authenticated local user from the Authorization
 // header. Returns "" when the caller is unauthenticated or the token is not
 // currently valid.
+//
+// The bearer has to be an access token. Linking adds a way to sign in to the
+// account, and an ID token -- which every relying party the user signs in to
+// is given -- must not be enough to do that.
 func (s *Service) bearerUserID(c *gin.Context) string {
 	authHeader := c.GetHeader("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
 		return ""
 	}
-	claims, err := s.parseVerifiedClaims(strings.TrimPrefix(authHeader, "Bearer "), false)
+	claims, err := s.parseAccessToken(strings.TrimPrefix(authHeader, "Bearer "))
 	if err != nil {
 		return ""
 	}

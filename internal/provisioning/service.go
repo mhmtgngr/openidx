@@ -347,6 +347,15 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 			}
 		}
 
+		// Only an access token may call this API. The issuer signs its ID
+		// tokens with the same key; see middleware.IsAccessToken.
+		if !middleware.IsAccessToken(token.Header, claims) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid token: " + middleware.ErrNotAccessToken.Error(),
+			})
+			return
+		}
+
 		// Validate issuer
 		if iss, ok := claims["iss"].(string); ok {
 			expectedIssuer := s.config.OAuthIssuer

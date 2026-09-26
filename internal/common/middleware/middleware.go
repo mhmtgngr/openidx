@@ -221,6 +221,15 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 			}
 		}
 
+		// The key that signs access tokens also signs ID tokens, so a verified
+		// signature does not make this a token the API may be called with.
+		if !IsAccessToken(token.Header, claims) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": fmt.Sprintf("invalid token: %v", ErrNotAccessToken),
+			})
+			return
+		}
+
 		// Set user context
 		if sub, ok := claims["sub"].(string); ok {
 			c.Set("user_id", sub)
@@ -315,6 +324,14 @@ func SoftAuth(jwksURL string) gin.HandlerFunc {
 
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
+			c.Next()
+			return
+		}
+
+		// An ID token is not a credential for the API, here any more than in
+		// Auth; like every other token SoftAuth cannot accept, it leaves the
+		// request unauthenticated.
+		if !IsAccessToken(token.Header, claims) {
 			c.Next()
 			return
 		}

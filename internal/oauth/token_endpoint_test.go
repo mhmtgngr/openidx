@@ -146,12 +146,12 @@ func TestHandleTokenAnswersPreflightWithoutDispatching(t *testing.T) {
 // generateTokensForUser does.
 func signedAccessToken(t *testing.T, ctx *TestOIDCContext, exp time.Time) string {
 	t.Helper()
-	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+	tok := newAccessToken(jwt.MapClaims{
 		"sub": "test-user-123",
 		"iss": ctx.Service.issuer,
 		"iat": time.Now().Unix(),
 		"exp": exp.Unix(),
-	})
+	}, "")
 	signed, err := tok.SignedString(ctx.Service.privateKey)
 	if err != nil {
 		t.Fatalf("sign: %v", err)

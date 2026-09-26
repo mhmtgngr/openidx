@@ -626,7 +626,7 @@ DELETE /api/v1/oauth/clients/:id
 ## Token Types
 
 ### Access Token (JWT)
-Signed JWT containing:
+Signed JWT, typed `at+jwt` in its header (RFC 9068 §2.1), containing:
 - `sub`: User ID
 - `client_id`: OAuth client ID
 - `scope`: Granted scopes
@@ -639,6 +639,14 @@ Signed JWT containing:
   [What a logout revokes](#what-a-logout-revokes))
 
 **Signature:** RS256 (RSA-SHA256)
+
+ID tokens, logout tokens and Security Event Tokens are signed with the same
+key, so a valid signature does not make a token a bearer. OpenIDX's APIs and
+its UserInfo endpoint accept only an access token as a bearer and answer any
+other token with `401`; token exchange refuses any other token as subject or
+actor, and introspection reports it inactive. An access token is recognised by
+its `at+jwt` type or, for a token minted before that header was added, by its
+`client_id` claim, which an ID token never carries.
 
 ### ID Token (JWT)
 OpenID Connect identity token containing:

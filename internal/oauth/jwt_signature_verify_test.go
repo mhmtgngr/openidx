@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/middleware"
 )
 
 // newTestServiceWithRedis builds a minimal Service with its own RSA key and a
@@ -50,6 +51,17 @@ func mintToken(t *testing.T, claims jwt.MapClaims, key *rsa.PrivateKey) string {
 	tok, err := jwt.NewWithClaims(jwt.SigningMethodRS256, claims).SignedString(key)
 	require.NoError(t, err)
 	return tok
+}
+
+// mintAccessToken is mintToken typed as an access token, the way newAccessToken
+// types every bearer this package mints.
+func mintAccessToken(t *testing.T, claims jwt.MapClaims, key *rsa.PrivateKey) string {
+	t.Helper()
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["typ"] = middleware.AccessTokenType
+	signed, err := tok.SignedString(key)
+	require.NoError(t, err)
+	return signed
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +202,7 @@ func TestHandleLogoutAll_ValidTokenReturns200(t *testing.T) {
 		"sub": "real-user",
 		"exp": float64(time.Now().Add(time.Hour).Unix()),
 	}
-	tok := mintToken(t, claims, pk)
+	tok := mintAccessToken(t, claims, pk)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -244,7 +256,7 @@ func TestHandleSessionInfo_ValidTokenPassesAuth(t *testing.T) {
 		"aud": "test-client",
 		"exp": float64(time.Now().Add(time.Hour).Unix()),
 	}
-	tok := mintToken(t, claims, pk)
+	tok := mintAccessToken(t, claims, pk)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
