@@ -56,13 +56,15 @@ func TestTheAuditStreamBindsATokenToItsOrganization(t *testing.T) {
 	es := NewEventStreamerWithConfig(zap.NewNop(), nil, DefaultStreamConfig())
 	es.SetJWKSURL(jwksSrv.URL)
 
-	// sign mints an administrator's access token in org, or naming no
+	// sign mints an administrator's access token of the console, an
+	// application allowed to call OpenIDX's APIs, in org, or naming no
 	// organization when org is empty.
 	sign := func(org string) string {
 		t.Helper()
 		claims := jwt.MapClaims{
 			"sub": "11111111-1111-1111-1111-111111111111", "client_id": "admin-console",
-			"roles": []interface{}{"admin"}, "exp": time.Now().Add(time.Hour).Unix(),
+			"roles": []interface{}{"admin"}, middleware.APIAccessClaim: true,
+			"exp": time.Now().Add(time.Hour).Unix(),
 		}
 		if org != "" {
 			claims[middleware.OrgIDClaim] = org

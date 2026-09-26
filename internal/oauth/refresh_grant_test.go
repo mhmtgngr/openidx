@@ -79,6 +79,8 @@ CREATE TABLE oauth_clients (
     refresh_token_max_lifetime INT,
     back_channel_logout_uri VARCHAR(500),
   post_logout_redirect_uris JSONB,
+    -- v205: the column default for a client registered after the upgrade.
+    api_access             BOOLEAN NOT NULL DEFAULT false,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     org_id                 UUID NOT NULL,

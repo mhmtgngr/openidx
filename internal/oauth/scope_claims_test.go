@@ -242,10 +242,11 @@ func TestAuthorizationClaimsAreNotGatedOnAProfileScope(t *testing.T) {
 // A new claim added to a token and not to claims_supported fails here.
 func TestDiscoveryAdvertisesEveryClaimTheIssuerEmits(t *testing.T) {
 	notClaimsAboutTheUser := map[string]string{
-		"nonce":     "an echo of the client's own request parameter, bound to this token rather than describing the end user",
-		"client_id": "names the audience, not the subject; RFC 9068 calls it a token claim",
-		"scope":     "what this token was granted, not a fact about the end user",
-		"org_id":    "the organization the access token was minted in and may be used in: binds the token, is not a fact about the end user, and is never in an ID token or at UserInfo",
+		"nonce":       "an echo of the client's own request parameter, bound to this token rather than describing the end user",
+		"client_id":   "names the audience, not the subject; RFC 9068 calls it a token claim",
+		"scope":       "what this token was granted, not a fact about the end user",
+		"org_id":      "the organization the access token was minted in and may be used in: binds the token, is not a fact about the end user, and is never in an ID token or at UserInfo",
+		"openidx_api": "whether the token's application may call OpenIDX's own APIs: a property of the client, not a fact about the end user, and never in an ID token or at UserInfo",
 	}
 
 	f := setupScopeClaims(t, true)

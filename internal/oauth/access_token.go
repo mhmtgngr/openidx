@@ -26,12 +26,33 @@ import (
 // to a request for another organization (middleware.CheckTokenOrg), so the
 // caller passes the organization it resolved the grant in, never one read out
 // of a token it was handed.
-func newAccessToken(claims jwt.MapClaims, kid, orgID string) *jwt.Token {
+//
+// apiAccess is whether the application the token is issued to may call
+// OpenIDX's own APIs (oauth_clients.api_access, middleware.HasAPIAccess). The
+// claim is written only when it is true, so a token that says nothing is a
+// token the APIs refuse.
+func newAccessToken(claims jwt.MapClaims, kid, orgID string, apiAccess bool) *jwt.Token {
 	claims[middleware.OrgIDClaim] = orgID
+	if apiAccess {
+		claims[middleware.APIAccessClaim] = true
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tok.Header["kid"] = kid
 	tok.Header["typ"] = middleware.AccessTokenType
 	return tok
+}
+
+// clientMayCallAPI reads, at mint time, whether the client a token is being
+// issued to may call OpenIDX's own APIs. It is read from the client row rather
+// than passed in by each grant so that no mint site can forget it, and so that
+// an administrator's change takes effect at the client's next token. A client
+// that cannot be read is treated as one that may not.
+func (s *Service) clientMayCallAPI(ctx context.Context, clientID string) bool {
+	if s.clients == nil || clientID == "" {
+		return false
+	}
+	client, err := s.GetClient(ctx, clientID)
+	return err == nil && client.MayCallAPI()
 }
 
 // parseAccessToken verifies a bearer presented to one of this service's own
@@ -50,6 +71,22 @@ func (s *Service) parseAccessToken(ctx context.Context, tokenString string) (jwt
 	}
 	if _, err := tokenOrgForRequest(ctx, claims); err != nil {
 		return nil, err
+	}
+	return claims, nil
+}
+
+// parseAPIToken is parseAccessToken for this service's account endpoints --
+// sign-out-everywhere, the session policy read, social account linking --
+// which, like the other OpenIDX APIs, a token only carries out for an
+// application allowed to call them (middleware.HasAPIAccess). UserInfo is not
+// one of them: it is the endpoint every relying party calls.
+func (s *Service) parseAPIToken(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
+	claims, err := s.parseAccessToken(ctx, tokenString)
+	if err != nil {
+		return nil, err
+	}
+	if !middleware.HasAPIAccess(claims) {
+		return nil, middleware.ErrNoAPIAccess
 	}
 	return claims, nil
 }
@@ -75,14 +112,14 @@ func tokenOrgForRequest(ctx context.Context, claims jwt.MapClaims) (string, erro
 }
 
 // invalidTokenBody is the RFC 6750 §3.1 invalid_token answer for a bearer that
-// parseAccessToken refused. A correctly signed token refused for what it is --
-// the wrong kind of token, one naming no organization, one of another
-// organization -- is told why, so a client can tell "send your access token"
-// or "sign in again" from "your token is bad"; every other failure keeps the
-// bare error it always had.
+// parseAccessToken or parseAPIToken refused. A correctly signed token refused
+// for what it is -- the wrong kind of token, one naming no organization, one of
+// another organization, one whose application may not call the API -- is told
+// why, so a client can tell "send your access token" or "sign in again" from
+// "your token is bad"; every other failure keeps the bare error it always had.
 func invalidTokenBody(err error) gin.H {
 	if errors.Is(err, middleware.ErrNotAccessToken) || errors.Is(err, middleware.ErrNoOrganization) ||
-		errors.Is(err, middleware.ErrWrongOrganization) {
+		errors.Is(err, middleware.ErrWrongOrganization) || errors.Is(err, middleware.ErrNoAPIAccess) {
 		return gin.H{"error": "invalid_token", "error_description": err.Error()}
 	}
 	return gin.H{"error": "invalid_token"}

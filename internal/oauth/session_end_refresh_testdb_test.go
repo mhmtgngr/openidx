@@ -67,10 +67,13 @@ func newSessionEndFixture(t *testing.T) *sessionEndFixture {
 		suffix: fmt.Sprintf("%d", time.Now().UnixNano()),
 		secret: "s3cret",
 	}
+	// The client stands in for the console: its bearers call the identity API
+	// (a password change, an administrator's reset), which accepts only the
+	// tokens of an application allowed to call OpenIDX's APIs.
 	f.clientID = "sess-app-" + f.suffix
 	if _, err := db.Pool.Exec(ctx, `
-		INSERT INTO oauth_clients (client_id, client_secret, name, type, allow_refresh_token, org_id)
-		VALUES ($1, $2, $1, 'confidential', true, $3::uuid)`, f.clientID, f.secret, sessionEndOrg); err != nil {
+		INSERT INTO oauth_clients (client_id, client_secret, name, type, allow_refresh_token, api_access, org_id)
+		VALUES ($1, $2, $1, 'confidential', true, true, $3::uuid)`, f.clientID, f.secret, sessionEndOrg); err != nil {
 		t.Fatalf("seed client: %v", err)
 	}
 

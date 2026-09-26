@@ -238,6 +238,15 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 			return
 		}
 
+		// Nor does an access token issued to an application that may not call
+		// this API; see HasAPIAccess.
+		if !HasAPIAccess(claims) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": fmt.Sprintf("invalid token: %v", ErrNoAPIAccess),
+			})
+			return
+		}
+
 		// The token's roles hold in the organization it was minted in, and
 		// only there. See CheckTokenOrg.
 		orgID, err := CheckTokenOrg(c, claims)
@@ -343,9 +352,10 @@ func SoftAuth(jwksURL string) gin.HandlerFunc {
 		}
 
 		// An ID token is not a credential for the API, here any more than in
-		// Auth; like every other token SoftAuth cannot accept, it leaves the
-		// request unauthenticated.
-		if !IsAccessToken(token.Header, claims) {
+		// Auth, and neither is the access token of an application that may not
+		// call it; like every other token SoftAuth cannot accept, they leave
+		// the request unauthenticated.
+		if !IsAccessToken(token.Header, claims) || !HasAPIAccess(claims) {
 			c.Next()
 			return
 		}

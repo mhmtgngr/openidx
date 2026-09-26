@@ -87,6 +87,7 @@ func TestARealTokenOpensAnAdminRouteOnlyForAMember(t *testing.T) {
 	issuer := &Service{
 		db: db, config: &config.Config{}, logger: zap.NewNop(),
 		privateKey: key, publicKey: &key.PublicKey, issuer: "https://role-probe.test",
+		clients: NewPostgresOAuthClientStore(db),
 	}
 	jwks := gin.New()
 	jwks.GET("/.well-known/jwks.json", issuer.handleJWKS)

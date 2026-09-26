@@ -637,6 +637,12 @@ func (s *Service) extractSAMLUserFromToken(reqCtx context.Context, tokenStr stri
 	if _, err := tokenOrgForRequest(reqCtx, claims); err != nil {
 		return nil, fmt.Errorf("invalid token: %w", err)
 	}
+	// Signing a user in to a service provider is OpenIDX acting for them, so
+	// the token must be one of an application allowed to call OpenIDX's own
+	// APIs, not any relying party's.
+	if !middleware.HasAPIAccess(claims) {
+		return nil, fmt.Errorf("invalid token: %w", middleware.ErrNoAPIAccess)
+	}
 
 	userID, _ := claims["sub"].(string)
 	email, _ := claims["email"].(string)

@@ -53,6 +53,7 @@ func TestVerifyBearerTokenAcceptsOnlyAccessTokens(t *testing.T) {
 		t.Helper()
 		claims["exp"] = float64(time.Now().Add(time.Hour).Unix())
 		claims[OrgIDClaim] = testOrgID
+		claims[APIAccessClaim] = true
 		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 		tok.Header["kid"] = kid
 		if typ == "" {
@@ -134,5 +135,60 @@ func TestVerifyBearerTokenRefusesAnAccessTokenWithNoOrganization(t *testing.T) {
 	}
 	if _, err := VerifyBearerToken(srv.URL, signed); !errors.Is(err, ErrNoOrganization) {
 		t.Fatalf("err = %v, want ErrNoOrganization", err)
+	}
+}
+
+func TestHasAPIAccess(t *testing.T) {
+	if !HasAPIAccess(map[string]interface{}{APIAccessClaim: true}) {
+		t.Fatal("a token carrying the claim was refused")
+	}
+	for name, claims := range map[string]map[string]interface{}{
+		"no claim, as the issuer mints for an application without API access": {"sub": "u"},
+		"false":                   {APIAccessClaim: false},
+		"a string, not a boolean": {APIAccessClaim: "true"},
+	} {
+		if HasAPIAccess(claims) {
+			t.Errorf("%s: HasAPIAccess = true", name)
+		}
+	}
+}
+
+// Every application a user signs in to holds an access token carrying their
+// roles. VerifyBearerToken, which the access proxy, the MCP gateway, device
+// enrolment and the audit stream call, accepts one only from an application
+// allowed to call OpenIDX's own APIs.
+func TestVerifyBearerTokenRefusesATokenWithoutAPIAccess(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("genkey: %v", err)
+	}
+	const kid = "api-access-kid"
+	srv := newJWKSServer(t, kid, &key.PublicKey)
+	defer srv.Close()
+
+	sign := func(claims jwt.MapClaims) string {
+		t.Helper()
+		claims["sub"] = "u"
+		claims["client_id"] = "third-party"
+		claims["roles"] = []interface{}{"admin"}
+		claims[OrgIDClaim] = testOrgID
+		claims["exp"] = float64(time.Now().Add(time.Hour).Unix())
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["kid"] = kid
+		tok.Header["typ"] = AccessTokenType
+		s, err := tok.SignedString(key)
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		return s
+	}
+
+	resetJWKSCache()
+	if _, err := VerifyBearerToken(srv.URL, sign(jwt.MapClaims{})); !errors.Is(err, ErrNoAPIAccess) {
+		t.Fatalf("a third-party application's token: err = %v, want ErrNoAPIAccess", err)
+	}
+	resetJWKSCache()
+	if _, err := VerifyBearerToken(srv.URL, sign(jwt.MapClaims{APIAccessClaim: true})); err != nil {
+		t.Fatalf("the same token with API access was refused: %v", err)
 	}
 }

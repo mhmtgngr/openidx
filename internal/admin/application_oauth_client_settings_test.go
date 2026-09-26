@@ -417,3 +417,92 @@ func TestApplicationReadDistinguishesNoClientFromNoRegistration(t *testing.T) {
 		t.Fatalf("org B must read its own row: %#v", appB.PostLogoutRedirectURIs)
 	}
 }
+
+func (f *appClientSettingsFixture) apiAccessRow(t *testing.T, clientID string) bool {
+	t.Helper()
+	var allowed bool
+	if err := f.s.db.Pool.QueryRow(orgctx.WithBypassRLS(context.Background()),
+		`SELECT api_access FROM oauth_clients WHERE client_id = $1`, clientID).Scan(&allowed); err != nil {
+		t.Fatalf("api_access row: %v", err)
+	}
+	return allowed
+}
+
+// Whether an application's access tokens may call OpenIDX's own APIs (v205)
+// comes from, and goes to, the backing OAuth client like the settings above:
+// written only when the payload names it and only to the tenant's own client,
+// reported on the detail, omitted for a tile with no client behind it, and in
+// the list shown to an administrator only.
+func TestApplicationAPIAccessRoundTripsThroughTheBackingClient(t *testing.T) {
+	f, cleanup := setupAppClientSettings(t)
+	if f == nil {
+		return
+	}
+	defer cleanup()
+	ctxA := orgctx.With(context.Background(), orgctx.Org{ID: f.orgA})
+
+	// Both clients were registered after v205, so neither may call the APIs.
+	if app := f.getApp(t, f.orgA, f.appA); app.APIAccess == nil || *app.APIAccess {
+		t.Fatalf("a client registered after v205 must read as not allowed: %v", app.APIAccess)
+	}
+	if tile := f.getApp(t, f.orgA, f.tile); tile.APIAccess != nil {
+		t.Fatalf("a tile with no OAuth client must omit api_access: %v", *tile.APIAccess)
+	}
+
+	if err := f.s.UpdateApplication(ctxA, f.appA, map[string]interface{}{"api_access": true}); err != nil {
+		t.Fatalf("a client-only update naming api_access must be accepted: %v", err)
+	}
+	if !f.apiAccessRow(t, "cs-client") {
+		t.Fatal("api_access=true did not land on the client")
+	}
+	if f.apiAccessRow(t, "cs-client-b") {
+		t.Fatal("org B's client must be untouched")
+	}
+	if app := f.getApp(t, f.orgA, f.appA); app.APIAccess == nil || !*app.APIAccess {
+		t.Fatalf("detail after the update: %v", app.APIAccess)
+	}
+
+	// An edit that does not name it neither grants nor removes it.
+	if err := f.s.UpdateApplication(ctxA, f.appA, map[string]interface{}{"description": "renamed", "pkce_required": true}); err != nil {
+		t.Fatal(err)
+	}
+	if !f.apiAccessRow(t, "cs-client") {
+		t.Fatal("an edit that did not name api_access removed it")
+	}
+
+	list := func(roles ...string) map[string]interface{} {
+		t.Helper()
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/applications?limit=10", nil).WithContext(ctxA)
+		c.Set("roles", roles)
+		f.s.handleListApplications(c)
+		if w.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", w.Code, w.Body.String())
+		}
+		var apps []map[string]interface{}
+		if err := json.Unmarshal(w.Body.Bytes(), &apps); err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range apps {
+			if a["id"] == f.appA {
+				return a
+			}
+		}
+		t.Fatal("the application is missing from the list")
+		return nil
+	}
+	if got, ok := list("admin")["api_access"]; !ok || got != true {
+		t.Fatalf("an administrator's list must mark the application: api_access=%v present=%v", got, ok)
+	}
+	if got, ok := list("user")["api_access"]; ok {
+		t.Fatalf("a non-administrator's list must omit api_access, got %v", got)
+	}
+
+	if err := f.s.UpdateApplication(ctxA, f.appA, map[string]interface{}{"api_access": false}); err != nil {
+		t.Fatal(err)
+	}
+	if f.apiAccessRow(t, "cs-client") {
+		t.Fatal("api_access=false did not land on the client")
+	}
+}

@@ -2702,6 +2702,15 @@ components:
             exactly, including path and query. Absent or empty leaves the
             client on the origin rule derived from `redirect_uris`, which
             accepts any path on the same host.
+        api_access:
+          type: boolean
+          description: >-
+            Whether this application's access tokens may call OpenIDX's own
+            APIs: they then carry the `openidx_api` claim those APIs require.
+            UserInfo, introspection, revocation and logout accept any
+            application's access token. Clients that existed at the upgrade
+            that added the setting have it; a client registered since has it
+            only if it was set.
         enabled:
           type: boolean
         created_at:
@@ -2753,6 +2762,15 @@ components:
             RP-initiated logout; matched exactly. Also accepted under the same
             name at `POST /oauth/register`. Registering none leaves the client
             on the looser origin rule.
+        api_access:
+          type: boolean
+          default: false
+          description: >-
+            Allow this application's access tokens on OpenIDX's own APIs (the
+            console, desktop and mobile apps need this; an application that
+            only signs users in does not). On update, absent leaves the
+            setting as it is. Not accepted at `POST /oauth/register`, where a
+            client always starts without it.
         enabled:
           type: boolean
           default: true

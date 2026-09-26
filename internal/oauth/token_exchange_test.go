@@ -46,6 +46,9 @@ func mintTestToken(t *testing.T, svc *Service, claims jwt.MapClaims) string {
 	if _, ok := claims[middleware.OrgIDClaim]; !ok {
 		claims[middleware.OrgIDClaim] = exchangeTestOrg
 	}
+	if _, ok := claims[middleware.APIAccessClaim]; !ok {
+		claims[middleware.APIAccessClaim] = true
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tok.Header["typ"] = middleware.AccessTokenType
 	signed, err := tok.SignedString(svc.privateKey)
@@ -242,5 +245,47 @@ func TestTokenExchangeIsBoundToTheRequestsOrganization(t *testing.T) {
 	if _, _, err := svc.issueExchangedToken(c, "alice", "aud", "read", jwt.MapClaims{"sub": "alice"}, nil,
 		&OAuthClient{ClientID: "svc-a"}); err == nil {
 		t.Error("a token was issued with no organization to bind it to")
+	}
+}
+
+// Whether an exchanged token may call OpenIDX's own APIs follows the client
+// that asked for the exchange, and an exchange never grants it from a subject
+// token that did not carry it: that would turn a third-party application's
+// token into one the APIs accept.
+func TestAnExchangedTokenCallsTheAPIOnlyIfItsClientAndItsSubjectMay(t *testing.T) {
+	ctx := NewTestOIDCContext(t)
+	defer ctx.Cleanup()
+	svc := ctx.Service
+
+	allowed, refused := true, false
+	for _, tc := range []struct {
+		name       string
+		client     *bool
+		subjectAPI bool
+		want       bool
+	}{
+		{"a client allowed to call the API, exchanging a token that may", &allowed, true, true},
+		{"a client not allowed to, exchanging a token that may", &refused, true, false},
+		{"a client that says nothing, exchanging a token that may", nil, true, false},
+		{"a client allowed to, exchanging a token that may not", &allowed, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &OAuthClient{ClientID: "svc-a", APIAccess: tc.client}
+			subject := jwt.MapClaims{"sub": "alice", "scope": "read"}
+			if tc.subjectAPI {
+				subject[middleware.APIAccessClaim] = true
+			}
+			tok, _, err := svc.issueExchangedToken(exchangeContext(), "alice", "https://api.example.com", "read", subject, nil, client)
+			if err != nil {
+				t.Fatalf("issueExchangedToken: %v", err)
+			}
+			claims, err := svc.validateExchangeToken(orgctx.With(context.Background(), orgctx.Org{ID: exchangeTestOrg}), tok)
+			if err != nil {
+				t.Fatalf("validate the issued token: %v", err)
+			}
+			if got := middleware.HasAPIAccess(claims); got != tc.want {
+				t.Fatalf("issued token may call the API = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

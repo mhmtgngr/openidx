@@ -76,6 +76,7 @@ func newTokenHarness(t *testing.T) *tokenHarness {
 	h.issuer = &Service{
 		db: db, redis: rdb, config: &config.Config{}, logger: zap.NewNop(),
 		privateKey: key, publicKey: &key.PublicKey, issuer: "https://token-binding.test",
+		clients: NewPostgresOAuthClientStore(db),
 	}
 
 	h.orgs = organization.NewOrgLookup(organization.NewService(db, rdb, &config.Config{}, zap.NewNop()))
@@ -140,13 +141,46 @@ func (h *tokenHarness) seedUser(orgID, name string, roles ...string) string {
 	return id
 }
 
+// registerClient registers an application in org, allowed to call OpenIDX's
+// own APIs or not, and returns its client_id, which is unique across the
+// install and so is made unique to the organization and the run.
+func (h *tokenHarness) registerClient(org orgctx.Org, name string, apiAccess bool) string {
+	h.t.Helper()
+	clientID := name + "-" + org.ID[:8] + "-" + h.suffix
+	if _, err := h.db.Pool.Exec(context.Background(), `
+		INSERT INTO oauth_clients (client_id, name, type, api_access, org_id)
+		VALUES ($1, $1, 'public', $2, $3::uuid) ON CONFLICT DO NOTHING`,
+		clientID, apiAccess, org.ID); err != nil {
+		h.t.Fatalf("register client %s: %v", clientID, err)
+	}
+	return clientID
+}
+
+// consoleClient is the application a sign-in to the console in org is issued
+// to: in the default organization the seeded admin-console, which v205 left
+// allowed to call the APIs, and in any other a client registered there with
+// that permission, since the seeded one exists in the default organization
+// only.
+func (h *tokenHarness) consoleClient(org orgctx.Org) string {
+	if org.ID == middleware.DefaultOrgID {
+		return "admin-console"
+	}
+	return h.registerClient(org, "console", true)
+}
+
 // accessToken and idToken mint the two tokens a sign-in to the admin console
 // produces, in the organization the sign-in resolved to.
 func (h *tokenHarness) accessToken(org orgctx.Org, userID string) string {
 	h.t.Helper()
-	tok, err := h.issuer.GenerateJWT(orgctx.With(context.Background(), org), userID, "admin-console", "openid profile email", 300)
+	return h.tokenFor(org, userID, h.consoleClient(org))
+}
+
+// tokenFor mints the access token a sign-in to clientID in org produces.
+func (h *tokenHarness) tokenFor(org orgctx.Org, userID, clientID string) string {
+	h.t.Helper()
+	tok, err := h.issuer.GenerateJWT(orgctx.With(context.Background(), org), userID, clientID, "openid profile email", 300)
 	if err != nil {
-		h.t.Fatalf("mint access token: %v", err)
+		h.t.Fatalf("mint access token for %s: %v", clientID, err)
 	}
 	return tok
 }

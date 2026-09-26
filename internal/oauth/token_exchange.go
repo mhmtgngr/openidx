@@ -246,8 +246,15 @@ func (s *Service) issueExchangedToken(c *gin.Context, subject, audience, scope s
 		claims[cell.Claim] = stamp
 	}
 
+	// Whether the issued token may call OpenIDX's own APIs follows the client
+	// that asked for it, and never exceeds what the subject token could do:
+	// like the scope above, an exchange narrows and does not widen, so it is
+	// not a way to turn a third-party application's token into one the APIs
+	// accept.
+	apiAccess := client.MayCallAPI() && middleware.HasAPIAccess(subjectClaims)
+
 	kid, signKey := s.signingKey()
-	signed, err := newAccessToken(claims, kid, org.ID).SignedString(signKey)
+	signed, err := newAccessToken(claims, kid, org.ID, apiAccess).SignedString(signKey)
 	if err != nil {
 		return "", 0, err
 	}

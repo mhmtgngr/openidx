@@ -67,3 +67,28 @@ func TokenOrgID(claims map[string]interface{}) (string, error) {
 	}
 	return "", ErrNoOrganization
 }
+
+// APIAccessClaim marks an access token OpenIDX's own APIs accept. The issuer
+// sets it, to true, only on the tokens of an application allowed to call those
+// APIs (oauth_clients.api_access, the application's "May call the OpenIDX API"
+// setting).
+const APIAccessClaim = "openidx_api"
+
+// ErrNoAPIAccess is returned for an access token issued to an application that
+// may not call OpenIDX's own APIs.
+var ErrNoAPIAccess = errors.New("this application may not call the OpenIDX API")
+
+// HasAPIAccess reports whether an access token may call OpenIDX's own APIs.
+//
+// Every application a user signs in to through OpenIDX receives an access
+// token carrying that user's roles, including a third-party application that
+// only needed to know who the user is. The roles are a fact about the user;
+// whether a token may exercise them on OpenIDX is a decision about the
+// application, and this claim records it. A token without the claim -- a
+// third-party application's, or one minted before the claim existed -- is
+// refused by the APIs, while the endpoints a relying party calls (UserInfo,
+// introspection, revocation, logout) keep accepting it.
+func HasAPIAccess(claims map[string]interface{}) bool {
+	allowed, _ := claims[APIAccessClaim].(bool)
+	return allowed
+}

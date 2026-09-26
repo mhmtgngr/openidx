@@ -88,6 +88,20 @@ type OAuthClient struct {
 	// authorization itself: past it the chain is revoked whatever it has been
 	// doing (v187).
 	RefreshTokenMaxLifetime int `json:"refresh_token_max_lifetime,omitempty"`
+
+	// APIAccess says whether this application's access tokens may call
+	// OpenIDX's own APIs (v205, middleware.HasAPIAccess). A pointer because a
+	// write that leaves it out must leave it alone: the console's client
+	// editor, RFC 7592's client update and every other writer that predates
+	// the field send nothing for it, and reading that as false would take API
+	// access away from the console itself on its next edit.
+	APIAccess *bool `json:"api_access,omitempty"`
+}
+
+// MayCallAPI reports whether access tokens issued to this client carry the
+// claim OpenIDX's own APIs require.
+func (c *OAuthClient) MayCallAPI() bool {
+	return c != nil && c.APIAccess != nil && *c.APIAccess
 }
 
 // defaultAccessTokenLifetimeSeconds is what a client gets when it asks for
@@ -1393,7 +1407,7 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 	}
 
 	kid, signKey := s.signingKey()
-	return newAccessToken(claims, kid, org.ID).SignedString(signKey)
+	return newAccessToken(claims, kid, org.ID, s.clientMayCallAPI(ctx, clientID)).SignedString(signKey)
 }
 
 // GenerateIDToken generates an OIDC ID token.
@@ -5106,7 +5120,7 @@ func (s *Service) handleLogoutAll(c *gin.Context) {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	claims, err := s.parseAccessToken(c.Request.Context(), tokenStr)
+	claims, err := s.parseAPIToken(c.Request.Context(), tokenStr)
 	if err != nil {
 		c.JSON(401, invalidTokenBody(err))
 		return
@@ -5149,7 +5163,7 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	claims, err := s.parseAccessToken(c.Request.Context(), tokenStr)
+	claims, err := s.parseAPIToken(c.Request.Context(), tokenStr)
 	if err != nil {
 		c.JSON(401, invalidTokenBody(err))
 		return
@@ -5226,7 +5240,7 @@ func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, cli
 	}
 
 	signKid, signKey := s.signingKey()
-	signedToken, err := newAccessToken(claims, signKid, org.ID).SignedString(signKey)
+	signedToken, err := newAccessToken(claims, signKid, org.ID, s.clientMayCallAPI(ctx, clientID)).SignedString(signKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign access token: %w", err)
 	}

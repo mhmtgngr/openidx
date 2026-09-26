@@ -29,14 +29,18 @@ func newJWKSServer(t *testing.T, kid string, pub *rsa.PublicKey) *httptest.Serve
 	}))
 }
 
-// signRS256 signs claims as the issuer signs an access token: RS256, under kid,
-// typed "at+jwt" and bound to an organization (testOrgID unless the claims name
-// another). Every bearer these tests present is meant to be one; a test about
+// signRS256 signs claims as the issuer signs an access token for the console:
+// RS256, under kid, typed "at+jwt", bound to an organization (testOrgID unless
+// the claims name another) and allowed to call the API unless the claims say
+// otherwise. Every bearer these tests present is meant to be one; a test about
 // another kind of token builds its own.
 func signRS256(t *testing.T, key *rsa.PrivateKey, kid string, claims jwt.MapClaims) string {
 	t.Helper()
 	if _, ok := claims[OrgIDClaim]; !ok {
 		claims[OrgIDClaim] = testOrgID
+	}
+	if _, ok := claims[APIAccessClaim]; !ok {
+		claims[APIAccessClaim] = true
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tok.Header["kid"] = kid

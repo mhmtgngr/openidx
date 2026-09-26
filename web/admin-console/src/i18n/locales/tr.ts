@@ -1797,6 +1797,8 @@ const tr: typeof en = {
       },
       active: 'Etkin',
       disabled: 'Devre Dışı',
+      apiAccessBadge: 'OpenIDX API',
+      apiAccessBadgeTitle: "Bu uygulamanın erişim jetonları OpenIDX'in kendi API'lerini çağırabilir",
       menu: {
         edit: 'Uygulamayı Düzenle',
         copyClientId: 'İstemci Kimliğini Kopyala',
@@ -1831,6 +1833,11 @@ const tr: typeof en = {
         scopesLabel: 'Kapsamlar (virgülle ayrılmış)',
         scopesHint: 'Bu istemcinin isteyebileceği OAuth/OIDC kapsamları',
         pkce: 'PKCE Zorunlu (mobil/SPA için önerilir)',
+        apiAccess: "OpenIDX API'sini çağırabilir",
+        apiAccessHint:
+          "Bu uygulamanın erişim jetonlarının OpenIDX'in kendi API'lerinde kullanılmasına izin verin. Konsol, masaüstü ve mobil uygulamalar buna ihtiyaç duyar; üçüncü taraf uygulamalar genellikle duymaz.",
+        apiAccessConsoleWarning:
+          "Bu, konsolun kendisinin oturum açtığı uygulamadır. Bu ayar olmadan konsol, mevcut erişim jetonunun süresi dolduktan sonra OpenIDX API'lerini çağıramaz.",
         afterTitle: 'Kayıttan sonra:',
         afterReceive: 'Bir <b>İstemci Kimliği</b> ve <b>İstemci Gizli Anahtarı</b> alacaksınız',
         afterStore: 'İstemci gizli anahtarını güvenle saklayın - bir daha gösterilmeyecek',

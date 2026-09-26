@@ -41,6 +41,10 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
   token is nested for chained delegation.
 - **Client authorization** — the requesting client must be registered with the
   `urn:ietf:params:oauth:grant-type:token-exchange` grant.
+- **OpenIDX API access** — the issued token carries the `openidx_api` claim,
+  which OpenIDX's own APIs require, only when the requesting client may call
+  those APIs and the subject token carried the claim (see
+  [OAUTH-OIDC.md](OAUTH-OIDC.md#which-applications-may-call-openidxs-apis)).
 
 ### Response (RFC 8693 §2.2.1)
 
@@ -74,6 +78,11 @@ POST /oauth/register
   loopback (`http://localhost`, `http://127.0.0.1`), or a native custom scheme.
 - `token_endpoint_auth_method: none` yields a **public** client (no secret,
   PKCE required); otherwise **confidential** (secret minted).
+- A registered client may not call OpenIDX's own APIs: its access tokens are
+  refused by the admin, identity, governance and other OpenIDX APIs and the
+  MCP gateway until the application's "May call the OpenIDX API" setting
+  (`api_access`) is turned on through `/api/v1/oauth/clients` or the console.
+  Registration and RFC 7592 updates cannot set it.
 
 ### Response (RFC 7591 §3.2.1)
 

@@ -53,13 +53,17 @@ func mintToken(t *testing.T, claims jwt.MapClaims, key *rsa.PrivateKey) string {
 	return tok
 }
 
-// mintAccessToken is mintToken typed as an access token and bound to an
-// organization -- the default one unless the claims name another -- the way
-// newAccessToken types and binds every bearer this package mints.
+// mintAccessToken is mintToken typed as an access token, bound to an
+// organization -- the default one unless the claims name another -- and, unless
+// the claims say otherwise, allowed to call OpenIDX's APIs: the token
+// newAccessToken mints for the console.
 func mintAccessToken(t *testing.T, claims jwt.MapClaims, key *rsa.PrivateKey) string {
 	t.Helper()
 	if _, ok := claims[middleware.OrgIDClaim]; !ok {
 		claims[middleware.OrgIDClaim] = middleware.DefaultOrgID
+	}
+	if _, ok := claims[middleware.APIAccessClaim]; !ok {
+		claims[middleware.APIAccessClaim] = true
 	}
 	return mintAccessTokenWithoutOrg(t, claims, key)
 }

@@ -70,13 +70,14 @@ func bearerJWKS(t *testing.T) string {
 	return srv.URL
 }
 
-// bearerFor signs an access token that the agent client agent-a holds for an
-// administrator, minted in org, or naming no organization when org is empty.
+// bearerFor signs an access token that the agent client agent-a, an application
+// allowed to call OpenIDX's APIs, holds for an administrator, minted in org, or
+// naming no organization when org is empty.
 func bearerFor(t *testing.T, org string) string {
 	t.Helper()
 	claims := jwt.MapClaims{
 		"sub": bearerSubject, "client_id": "agent-a", "roles": []interface{}{"admin"},
-		"exp": time.Now().Add(time.Hour).Unix(),
+		middleware.APIAccessClaim: true, "exp": time.Now().Add(time.Hour).Unix(),
 	}
 	if org != "" {
 		claims[middleware.OrgIDClaim] = org

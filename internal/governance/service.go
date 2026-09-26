@@ -272,6 +272,15 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// And only one issued to an application allowed to call OpenIDX's
+		// own APIs; see middleware.HasAPIAccess.
+		if !middleware.HasAPIAccess(claims) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid token: " + middleware.ErrNoAPIAccess.Error(),
+			})
+			return
+		}
+
 		// And only in the organization it was minted in, whose roles it
 		// carries; see middleware.CheckTokenOrg.
 		if _, err := middleware.CheckTokenOrg(c, claims); err != nil {

@@ -7665,6 +7665,13 @@ components:
             origin against its redirect URIs; the key is omitted entirely only
             for a tile with no OAuth client behind it. The two are different
             answers and the console renders them differently.
+        api_access:
+          type: boolean
+          description: >-
+            From the backing OAuth client: whether the application's access
+            tokens may call OpenIDX's own APIs. Omitted for a tile with no
+            OAuth client behind it, and in the list for a caller who is not
+            an administrator.
         created_at:
           type: string
           format: date-time
@@ -7700,9 +7707,10 @@ components:
       type: object
       description: >-
         Fields absent from the payload are left alone. `pkce_required`,
-        `back_channel_logout_uri` and `post_logout_redirect_uris` are written
-        to the backing OAuth client (the row the OAuth flow enforces),
-        `redirect_uris`, `name` and `description` to both.
+        `back_channel_logout_uri`, `post_logout_redirect_uris` and
+        `api_access` are written to the backing OAuth client (the row the
+        OAuth flow enforces), `redirect_uris`, `name` and `description` to
+        both.
       properties:
         name:
           type: string
@@ -7737,6 +7745,11 @@ components:
             entries are dropped. An entry that is not an absolute URI with a
             scheme and host could never be matched at logout and is refused
             with 400, with nothing written.
+        api_access:
+          type: boolean
+          description: >-
+            Allow the application's access tokens on OpenIDX's own APIs. It
+            takes effect at the application's next token.
 
     ApplicationSSOSettings:
       type: object

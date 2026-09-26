@@ -224,3 +224,52 @@ func TestIntrospectionReportsAnotherOrganizationsTokenInactive(t *testing.T) {
 	assert.Equal(t, false, introspectIn(orgB, tokA), "another organization's token introspected as active")
 	assert.Equal(t, false, introspectIn(orgA, mintAccessTokenWithoutOrg(t, claims(), pk)), "a token naming no organization introspected as active")
 }
+
+// A third-party application's access token -- valid, of the request's
+// organization, and without the API-access claim -- is refused by this
+// service's account endpoints: sign-out everywhere, the session policy read,
+// social account linking and the SAML IdP's bearer sign-in. The endpoints
+// every relying party calls keep accepting it: the check UserInfo makes, and
+// introspection by the client it was issued to.
+func TestTheServicesAccountEndpointsRefuseATokenWithoutAPIAccess(t *testing.T) {
+	svc, pk, cleanup := newTestServiceWithRedis(t)
+	defer cleanup()
+	thirdParty := mintAccessTokenWithoutOrg(t, jwt.MapClaims{
+		"sub": "user-a", "client_id": "rp-client", "roles": []interface{}{"admin"},
+		middleware.OrgIDClaim: middleware.DefaultOrgID,
+		"exp":                 float64(time.Now().Add(time.Hour).Unix()),
+	}, pk)
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: middleware.DefaultOrgID})
+
+	for _, ep := range []struct {
+		name    string
+		handler gin.HandlerFunc
+		method  string
+		path    string
+	}{
+		{"logout-all", svc.handleLogoutAll, http.MethodPost, "/oauth/logout-all"},
+		{"session-info", svc.handleSessionInfo, http.MethodGet, "/oauth/session-info"},
+	} {
+		code, body := serveBearerIn(t, ep.handler, ep.method, ep.path, thirdParty, middleware.DefaultOrgID)
+		assert.Equal(t, http.StatusUnauthorized, code, "%s accepted a third-party application's token", ep.name)
+		assert.Equal(t, "invalid_token", body["error"], ep.name)
+		assert.Equal(t, "this application may not call the OpenIDX API", body["error_description"], ep.name)
+	}
+
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/oauth/social/link/p/start", nil).WithContext(ctx)
+	c.Request.Header.Set("Authorization", "Bearer "+thirdParty)
+	assert.Empty(t, svc.bearerUserID(c), "social account linking resolved a user from a third-party application's token")
+
+	_, err := svc.extractSAMLUserFromToken(ctx, thirdParty)
+	assert.True(t, errors.Is(err, middleware.ErrNoAPIAccess), "SAML IdP bearer sign-in: err = %v", err)
+
+	_, err = svc.parseAccessToken(ctx, thirdParty)
+	assert.NoError(t, err, "the check UserInfo makes refused a relying party's own access token")
+	w := postFormAsClient(t, svc.handleIntrospect, url.Values{"token": {thirdParty}}, "rp-client")
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["active"], "introspection reported a relying party's own access token inactive")
+}

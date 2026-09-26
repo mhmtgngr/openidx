@@ -54,6 +54,20 @@ func TokenOrgID(claims map[string]interface{}) (string, error) {
 	return jwksverify.TokenOrgID(claims)
 }
 
+// APIAccessClaim is the claim marking an access token OpenIDX's own APIs
+// accept.
+const APIAccessClaim = jwksverify.APIAccessClaim
+
+// ErrNoAPIAccess is the refusal for an access token issued to an application
+// that may not call OpenIDX's own APIs.
+var ErrNoAPIAccess = jwksverify.ErrNoAPIAccess
+
+// HasAPIAccess reports whether an access token may call OpenIDX's own APIs.
+// See jwksverify.HasAPIAccess.
+func HasAPIAccess(claims map[string]interface{}) bool {
+	return jwksverify.HasAPIAccess(claims)
+}
+
 // FetchJWKS resolves the signing key for a token against a remote JWKS. Used
 // for ID tokens from external identity providers.
 func FetchJWKS(jwksURL string, token *jwt.Token) (interface{}, error) {

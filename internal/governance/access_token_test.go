@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,7 +43,8 @@ func TestGovernanceRefusesAnIDToken(t *testing.T) {
 		t.Helper()
 		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 			"sub": "u1", "iss": issuer, "aud": "admin-console", "roles": []interface{}{"admin"},
-			"org_id": middleware.DefaultOrgID, "exp": time.Now().Add(time.Hour).Unix(),
+			"org_id": middleware.DefaultOrgID, middleware.APIAccessClaim: true,
+			"exp": time.Now().Add(time.Hour).Unix(),
 		})
 		if typ != "" {
 			tok.Header["typ"] = typ
@@ -100,7 +102,7 @@ func TestGovernanceBindsATokenToItsOrganization(t *testing.T) {
 		router.GET("/api/v1/governance/policies", s.openIDXAuthMiddleware(), func(c *gin.Context) { c.Status(http.StatusOK) })
 		claims := jwt.MapClaims{
 			"sub": "u1", "iss": issuer, "client_id": "admin-console", "roles": []interface{}{role},
-			"exp": time.Now().Add(time.Hour).Unix(),
+			middleware.APIAccessClaim: true, "exp": time.Now().Add(time.Hour).Unix(),
 		}
 		if tokenOrg != "" {
 			claims[middleware.OrgIDClaim] = tokenOrg
@@ -131,5 +133,56 @@ func TestGovernanceBindsATokenToItsOrganization(t *testing.T) {
 		if got := call(tc.resolved, tc.tokenOrg, tc.role); got != tc.want {
 			t.Errorf("%s: status %d, want %d", tc.name, got, tc.want)
 		}
+	}
+}
+
+// An administrator who signs in to a third-party application hands it an
+// access token carrying their roles. openIDXAuthMiddleware accepts the access
+// token of an application allowed to call OpenIDX's APIs and refuses the same
+// token without that claim.
+func TestGovernanceRefusesATokenWithoutAPIAccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const issuer = "https://issuer.test"
+	s := &Service{
+		logger:          zap.NewNop(),
+		config:          &config.Config{OAuthIssuer: issuer},
+		jwksCachedKey:   &key.PublicKey,
+		jwksCacheExpiry: time.Now().Add(time.Hour),
+	}
+	router := gin.New()
+	router.GET("/api/v1/governance/policies", s.openIDXAuthMiddleware(), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+	call := func(apiAccess bool) (int, string) {
+		t.Helper()
+		claims := jwt.MapClaims{
+			"sub": "u1", "iss": issuer, "client_id": "third-party", "roles": []interface{}{"admin"},
+			"org_id": middleware.DefaultOrgID, "exp": time.Now().Add(time.Hour).Unix(),
+		}
+		if apiAccess {
+			claims[middleware.APIAccessClaim] = true
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["typ"] = middleware.AccessTokenType
+		signed, err := tok.SignedString(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/governance/policies", nil)
+		req.Header.Set("Authorization", "Bearer "+signed)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code, w.Body.String()
+	}
+
+	if code, body := call(false); code != http.StatusUnauthorized || !strings.Contains(body, "may not call the OpenIDX API") {
+		t.Fatalf("a token without API access answered %d %s, want 401 naming the reason", code, body)
+	}
+	if code, _ := call(true); code != http.StatusOK {
+		t.Fatalf("the same token with API access answered %d, want 200", code)
 	}
 }

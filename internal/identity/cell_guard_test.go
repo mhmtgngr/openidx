@@ -94,14 +94,16 @@ func celledIdentity(t *testing.T, serving string) (*gin.Engine, string) {
 }
 
 // token mints a signed access token for these claims, merged over the minimum
-// the middleware requires (sub, iss, exp, org_id, and the "at+jwt" type).
+// the middleware requires (sub, iss, exp, org_id, the API-access claim, and the
+// "at+jwt" type).
 func token(t *testing.T, issuer string, claims jwt.MapClaims) string {
 	t.Helper()
 	full := jwt.MapClaims{
-		"sub":    "11111111-1111-1111-1111-111111111111",
-		"iss":    issuer,
-		"exp":    float64(time.Now().Add(time.Hour).Unix()),
-		"org_id": middleware.DefaultOrgID,
+		"sub":                     "11111111-1111-1111-1111-111111111111",
+		"iss":                     issuer,
+		"exp":                     float64(time.Now().Add(time.Hour).Unix()),
+		"org_id":                  middleware.DefaultOrgID,
+		middleware.APIAccessClaim: true,
 	}
 	for k, v := range claims {
 		full[k] = v

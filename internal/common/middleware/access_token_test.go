@@ -94,6 +94,7 @@ func TestAuthRefusesAnIDToken(t *testing.T) {
 	}
 	legacy := adminClaims()
 	legacy["client_id"] = "admin-console"
+	legacy[APIAccessClaim] = true
 	if status, _, _ := probeRoute(t, Auth(jwks.srv.URL), idToken(t, kid, legacy)); status != http.StatusOK {
 		t.Fatalf("pre-upgrade access token: status %d, want 200", status)
 	}
@@ -114,5 +115,51 @@ func TestSoftAuthDoesNotBindAnIDToken(t *testing.T) {
 	}
 	if status, _, user := probeRoute(t, SoftAuth(jwks.srv.URL), signRS256(t, accessTokenKey, kid, adminClaims())); status != http.StatusOK || user == "" {
 		t.Fatalf("access token: status %d, user %q; want it bound", status, user)
+	}
+}
+
+// withoutAPIAccess signs claims as the issuer signs the access token of an
+// application that may not call OpenIDX's own APIs: typed, bound to its
+// organization, and carrying no API-access claim.
+func withoutAPIAccess(t *testing.T, kid string, claims jwt.MapClaims) string {
+	t.Helper()
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = kid
+	tok.Header["typ"] = AccessTokenType
+	signed, err := tok.SignedString(accessTokenKey)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	return signed
+}
+
+// TestAuthRefusesATokenWithoutAPIAccess: a third-party application an
+// administrator signs in to holds an access token carrying the administrator's
+// roles. Auth accepts an access token only from an application allowed to
+// call OpenIDX's APIs, SoftAuth leaves the request unauthenticated, and an API
+// key, which is no application's token, is unaffected.
+func TestAuthRefusesATokenWithoutAPIAccess(t *testing.T) {
+	jwksverify.ResetCache()
+	t.Cleanup(jwksverify.ResetCache)
+	const kid = "api-access-kid"
+	jwks := newFlippableJWKSServer(t, kid, &accessTokenKey.PublicKey)
+	thirdParty := withoutAPIAccess(t, kid, adminClaims())
+
+	status, body, user := probeRoute(t, Auth(jwks.srv.URL), thirdParty)
+	if status != http.StatusUnauthorized || user != "" {
+		t.Fatalf("third-party token: status %d, handler saw user %q; want 401 before the handler", status, user)
+	}
+	if body["error"] != "invalid token: this application may not call the OpenIDX API" {
+		t.Fatalf("third-party token: error = %v", body["error"])
+	}
+	if status, _, user := probeRoute(t, SoftAuth(jwks.srv.URL), thirdParty); user != "" || status != http.StatusUnauthorized {
+		t.Fatalf("SoftAuth bound a third-party token: status %d, user %q", status, user)
+	}
+
+	if status, _, _ := probeRoute(t, Auth(jwks.srv.URL), signRS256(t, accessTokenKey, kid, adminClaims())); status != http.StatusOK {
+		t.Fatalf("the console's token: status %d, want 200", status)
+	}
+	if status, _, _ := probeRoute(t, AuthWithAPIKey(jwks.srv.URL, orgKeys{}), "oidx_key"); status != http.StatusOK {
+		t.Fatalf("an API key: status %d, want 200", status)
 	}
 }

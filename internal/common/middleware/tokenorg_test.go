@@ -66,9 +66,10 @@ func tokenIn(t *testing.T, kid, orgID string, roles ...string) string {
 		roleClaim = append(roleClaim, r)
 	}
 	claims := jwt.MapClaims{
-		"sub":   "11111111-1111-1111-1111-111111111111",
-		"roles": roleClaim,
-		"exp":   float64(time.Now().Add(time.Hour).Unix()),
+		"sub":          "11111111-1111-1111-1111-111111111111",
+		"roles":        roleClaim,
+		APIAccessClaim: true,
+		"exp":          float64(time.Now().Add(time.Hour).Unix()),
 	}
 	if orgID != "" {
 		claims[OrgIDClaim] = orgID

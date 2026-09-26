@@ -63,15 +63,16 @@ func (s *Service) RegisterSocialLinkRoutes(router *gin.Engine) {
 // header. Returns "" when the caller is unauthenticated or the token is not
 // currently valid.
 //
-// The bearer has to be an access token. Linking adds a way to sign in to the
-// account, and an ID token -- which every relying party the user signs in to
-// is given -- must not be enough to do that.
+// The bearer has to be an access token, of an application allowed to call
+// OpenIDX's own APIs. Linking adds a way to sign in to the account, and neither
+// an ID token nor a third-party application's access token -- each of which a
+// relying party the user signed in to holds -- must be enough to do that.
 func (s *Service) bearerUserID(c *gin.Context) string {
 	authHeader := c.GetHeader("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
 		return ""
 	}
-	claims, err := s.parseAccessToken(c.Request.Context(), strings.TrimPrefix(authHeader, "Bearer "))
+	claims, err := s.parseAPIToken(c.Request.Context(), strings.TrimPrefix(authHeader, "Bearer "))
 	if err != nil {
 		return ""
 	}

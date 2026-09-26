@@ -182,4 +182,128 @@ describe('ApplicationsPage', () => {
       expect((data as Record<string, unknown>).post_logout_redirect_uris).toEqual([])
     })
   })
+
+  // Whether an application's access tokens may call OpenIDX's own APIs is a
+  // setting of its OAuth client: shown in the list so an operator can review
+  // which applications have it, and edited and registered like the settings
+  // above.
+  describe('OpenIDX API access', () => {
+    const app = (overrides: Record<string, unknown>) => ({
+      id: 'app-1',
+      client_id: 'grafana',
+      name: 'Grafana',
+      description: 'Dashboards',
+      type: 'web',
+      protocol: 'oidc',
+      base_url: 'https://grafana.example',
+      redirect_uris: ['https://grafana.example/cb'],
+      enabled: true,
+      pkce_required: true,
+      post_logout_redirect_uris: [],
+      api_access: false,
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: '2024-01-01T00:00:00Z',
+      ...overrides,
+    })
+
+    const openEditDialogFor = async (application: Record<string, unknown>) => {
+      const user = userEvent.setup()
+      vi.mocked(api.getWithHeaders).mockResolvedValue({ data: [application], headers: {} })
+      render(<ApplicationsPage />, { wrapper: createWrapper() })
+      await screen.findByText(application.name as string)
+      const triggers = screen.getAllByRole('button').filter((b) => b.getAttribute('aria-haspopup') === 'menu')
+      await user.click(triggers[0])
+      await user.click(await screen.findByRole('menuitem', { name: /edit application/i }))
+      await screen.findByRole('button', { name: /update application/i })
+      return user
+    }
+
+    it('marks the applications that may call the OpenIDX API in the list', async () => {
+      vi.mocked(api.getWithHeaders).mockResolvedValue({
+        data: [app({ id: 'a', name: 'Console', api_access: true }), app({ id: 'b', name: 'Wiki', client_id: 'wiki' })],
+        headers: {},
+      })
+      render(<ApplicationsPage />, { wrapper: createWrapper() })
+      await screen.findByText('Wiki')
+      expect(screen.getAllByText('OpenIDX API')).toHaveLength(1)
+      const consoleRow = screen.getByText('Console').closest('tr') as HTMLElement
+      expect(consoleRow).toHaveTextContent('OpenIDX API')
+    })
+
+    it("shows the application's setting and saves the change", async () => {
+      const user = await openEditDialogFor(app({ api_access: false }))
+      const box = screen.getByLabelText(/may call the openidx api/i) as HTMLInputElement
+      expect(box.checked).toBe(false)
+      await user.click(box)
+      await user.click(screen.getByRole('button', { name: /update application/i }))
+
+      await waitFor(() => expect(api.put).toHaveBeenCalled())
+      const [url, data] = vi.mocked(api.put).mock.calls[0]
+      expect(String(url)).toBe('/api/v1/applications/app-1')
+      expect(data).toMatchObject({ api_access: true })
+    })
+
+    it('saves turning it off', async () => {
+      const user = await openEditDialogFor(app({ api_access: true }))
+      const box = screen.getByLabelText(/may call the openidx api/i) as HTMLInputElement
+      expect(box.checked).toBe(true)
+      await user.click(box)
+      await user.click(screen.getByRole('button', { name: /update application/i }))
+
+      await waitFor(() => expect(api.put).toHaveBeenCalled())
+      expect(vi.mocked(api.put).mock.calls[0][1]).toMatchObject({ api_access: false })
+    })
+
+    // A tile with no OAuth client behind it has no such setting: no box, and
+    // nothing sent that the server would have nowhere to write.
+    it('offers no setting for a tile with no OAuth client', async () => {
+      const tile = app({ client_id: 'proxy-app-route-1', name: 'Intranet' })
+      delete (tile as Record<string, unknown>).api_access
+      const user = await openEditDialogFor(tile)
+      expect(screen.queryByLabelText(/may call the openidx api/i)).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /update application/i }))
+
+      await waitFor(() => expect(api.put).toHaveBeenCalled())
+      expect(vi.mocked(api.put).mock.calls[0][1]).not.toHaveProperty('api_access')
+    })
+
+    it("warns before the console's own application loses it", async () => {
+      const user = await openEditDialogFor(app({ client_id: 'admin-console', name: 'Admin Console', api_access: true }))
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      await user.click(screen.getByLabelText(/may call the openidx api/i))
+      expect(screen.getByRole('alert')).toHaveTextContent(/console itself signs in with/i)
+    })
+
+    it('registers an application without it unless it is ticked', async () => {
+      const user = userEvent.setup()
+      render(<ApplicationsPage />, { wrapper: createWrapper() })
+      await user.click(await screen.findByRole('button', { name: /register application/i }))
+      await user.type(await screen.findByLabelText(/application name/i), 'Wiki')
+      await user.type(screen.getByLabelText(/^redirect uris/i), 'https://wiki.example/cb')
+      expect((screen.getByLabelText(/may call the openidx api/i) as HTMLInputElement).checked).toBe(false)
+      // The page's own button opens the dialog; the dialog's submits it.
+      const register = screen.getAllByRole('button', { name: /register application/i })
+      await user.click(register[register.length - 1])
+
+      await waitFor(() => expect(api.post).toHaveBeenCalled())
+      const [url, data] = vi.mocked(api.post).mock.calls[0]
+      expect(String(url)).toBe('/api/v1/oauth/clients')
+      expect(data).toMatchObject({ name: 'Wiki', api_access: false })
+    })
+
+    it('registers an application with it when it is ticked', async () => {
+      const user = userEvent.setup()
+      render(<ApplicationsPage />, { wrapper: createWrapper() })
+      await user.click(await screen.findByRole('button', { name: /register application/i }))
+      await user.type(await screen.findByLabelText(/application name/i), 'Desktop')
+      await user.type(screen.getByLabelText(/^redirect uris/i), 'http://127.0.0.1:47600/callback')
+      await user.click(screen.getByLabelText(/may call the openidx api/i))
+      // The page's own button opens the dialog; the dialog's submits it.
+      const register = screen.getAllByRole('button', { name: /register application/i })
+      await user.click(register[register.length - 1])
+
+      await waitFor(() => expect(api.post).toHaveBeenCalled())
+      expect(vi.mocked(api.post).mock.calls[0][1]).toMatchObject({ name: 'Desktop', api_access: true })
+    })
+  })
 })

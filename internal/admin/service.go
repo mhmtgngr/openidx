@@ -116,8 +116,14 @@ type Application struct {
 	// would collapse those two into the same omitted key and hide the field
 	// from exactly the applications that need it.
 	PostLogoutRedirectURIs *[]string `json:"post_logout_redirect_uris,omitempty"`
-	CreatedAt              time.Time `json:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at"`
+	// APIAccess mirrors oauth_clients.api_access (v205): whether the
+	// application's access tokens may call OpenIDX's own APIs. A pointer for
+	// the reason PKCERequired is one -- a tile with no OAuth client behind it
+	// has no such setting -- and, like RequireAssignment, left out of the list
+	// for a caller who is not an administrator.
+	APIAccess *bool     `json:"api_access,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ErrInvalidBackChannelLogoutURI is returned by UpdateApplication when the
@@ -867,7 +873,12 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		}
 	}
 
-	if len(setParts) == 0 && !hasPKCE && !hasBackChannel && !hasPostLogout {
+	// Whether the application's access tokens may call OpenIDX's own APIs.
+	// Absent from the payload the column is left alone, so an edit of any
+	// other field neither grants nor removes it.
+	apiAccess, hasAPIAccess := updates["api_access"].(bool)
+
+	if len(setParts) == 0 && !hasPKCE && !hasBackChannel && !hasPostLogout && !hasAPIAccess {
 		return fmt.Errorf("no valid fields to update")
 	}
 
@@ -929,6 +940,11 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		ocArgs = append(ocArgs, payload)
 		ocN++
 	}
+	if hasAPIAccess {
+		ocSet = append(ocSet, fmt.Sprintf("api_access = $%d", ocN))
+		ocArgs = append(ocArgs, apiAccess)
+		ocN++
+	}
 	if len(ocSet) > 0 {
 		var clientID string
 		if e := s.db.Pool.QueryRow(ctx,
@@ -965,7 +981,7 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 		SELECT a.id, a.client_id, a.name, COALESCE(a.description, ''), a.type, a.protocol,
 		       COALESCE(a.base_url, ''), a.redirect_uris, a.enabled, a.require_assignment,
 		       oc.pkce_required, oc.back_channel_logout_uri, oc.client_id, oc.post_logout_redirect_uris,
-		       a.created_at, a.updated_at
+		       oc.api_access, a.created_at, a.updated_at
 		FROM applications a
 		LEFT JOIN oauth_clients oc ON oc.client_id = a.client_id AND oc.org_id = a.org_id
 		WHERE a.org_id = $1
@@ -999,7 +1015,7 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 			&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
 			&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.RequireAssignment,
 			&app.PKCERequired, &app.BackChannelLogoutURI, &ocClientID, &postLogoutJSON,
-			&app.CreatedAt, &app.UpdatedAt,
+			&app.APIAccess, &app.CreatedAt, &app.UpdatedAt,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -1619,10 +1635,12 @@ func (s *Service) handleListApplications(c *gin.Context) {
 	// This route is intentionally reachable by any authenticated org user (the
 	// end-user Access Requests page reads it), unlike the admin-only detail
 	// endpoint. require_assignment marks which applications are assignment-
-	// gated, so strip it for non-admins rather than disclose that to everyone.
+	// gated, and api_access which may call OpenIDX's own APIs, so strip both
+	// for non-admins rather than disclose them to everyone.
 	if isAdmin, _ := auth.IsAdminInContext(c); !isAdmin {
 		for i := range apps {
 			apps[i].RequireAssignment = nil
+			apps[i].APIAccess = nil
 		}
 	}
 
@@ -1658,7 +1676,7 @@ func (s *Service) handleGetApplication(c *gin.Context) {
 		SELECT a.id, a.client_id, a.name, COALESCE(a.description, ''), a.type, a.protocol,
 		       COALESCE(a.base_url, ''), a.redirect_uris, a.enabled, a.require_assignment,
 		       oc.pkce_required, oc.back_channel_logout_uri, oc.client_id, oc.post_logout_redirect_uris,
-		       a.created_at, a.updated_at
+		       oc.api_access, a.created_at, a.updated_at
 		FROM applications a
 		LEFT JOIN oauth_clients oc ON oc.client_id = a.client_id AND oc.org_id = a.org_id
 		WHERE a.id = $1 AND a.org_id = $2
@@ -1666,7 +1684,7 @@ func (s *Service) handleGetApplication(c *gin.Context) {
 		&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
 		&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.RequireAssignment,
 		&app.PKCERequired, &app.BackChannelLogoutURI, &ocClientID, &postLogoutJSON,
-		&app.CreatedAt, &app.UpdatedAt,
+		&app.APIAccess, &app.CreatedAt, &app.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "Application not found"})
