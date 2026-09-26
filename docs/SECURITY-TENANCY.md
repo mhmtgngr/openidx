@@ -184,7 +184,10 @@ host whose sign-in set its cookie and on no other host, whichever
 organization's route that is. The proxy follows a `redirect_url` only to a path
 on the same host, to the access service's own host, or to a host of the
 organization's own routes, where the organization is the one that owns the
-route serving the request's host.
+route serving the request's host. The nginx configuration generated for
+BrowZer takes a route only when its host, path, landing path and upstream are
+plain values that nginx cannot read as syntax
+(`internal/access/browzer_config_values.go`).
 
 ## What multi-tenancy covers
 

@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -320,6 +322,14 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 			if parsed.Path != "" && parsed.Path != "/" {
 				info.pathPrefix = parsed.Path
 			}
+		}
+
+		// Everything generated from these routes is nginx configuration shared
+		// by every organization; see browzer_config_values.go.
+		if reason := browzerRouteUnsafe(info); reason != "" {
+			tm.logger.Warn("a BrowZer route is left out of the generated configuration: "+reason,
+				logsafe.String("from_url", fromURL), logsafe.String("service", serviceName))
+			continue
 		}
 
 		routes = append(routes, info)
@@ -719,8 +729,10 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 	b.WriteString("a:hover{background:#e0e0e0}</style></head><body>")
 	b.WriteString("<h1>OpenIDX BrowZer Services</h1><p>Available services:</p>")
 	for _, m := range mappings {
+		// queryBrowZerRoutes admits no character that is markup or nginx
+		// syntax into a path; escaping here keeps the page safe on its own.
 		label := strings.TrimPrefix(m.pathPrefix, "/")
-		fmt.Fprintf(&b, "<a href=\"%s\">%s</a>", m.pathPrefix, label)
+		fmt.Fprintf(&b, "<a href=\"%s\">%s</a>", html.EscapeString(m.pathPrefix), html.EscapeString(label))
 	}
 	b.WriteString("</body></html>';\n")
 	b.WriteString("    }\n")
