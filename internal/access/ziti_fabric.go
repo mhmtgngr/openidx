@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -140,7 +141,7 @@ func (zm *ZitiManager) ListEdgeRouters(ctx context.Context) ([]ZitiEdgeRouterInf
 // GetEdgeRouter retrieves a single edge router by ID from the Ziti controller
 func (zm *ZitiManager) GetEdgeRouter(ctx context.Context, routerID string) (*ZitiEdgeRouterInfo, error) {
 	respData, statusCode, err := zm.mgmtRequest("GET",
-		fmt.Sprintf("/edge/management/v1/edge-routers/%s", routerID), nil)
+		"/edge/management/v1/edge-routers/"+url.PathEscape(routerID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get edge router %s: %w", routerID, err)
 	}

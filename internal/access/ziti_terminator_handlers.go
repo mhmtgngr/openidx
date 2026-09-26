@@ -3,6 +3,7 @@ package access
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -99,7 +100,7 @@ func (s *Service) handleGetTerminator(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/terminators/"+id, nil)
+	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/terminators/"+url.PathEscape(id), nil)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get terminator", err), s.logger)
 		return
@@ -160,7 +161,7 @@ func (s *Service) handleDeleteTerminator(c *gin.Context) {
 			return
 		}
 	}
-	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/terminators/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/terminators/"+url.PathEscape(id), nil)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete terminator", err), s.logger)
 		return

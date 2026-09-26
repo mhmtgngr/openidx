@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -384,7 +385,7 @@ func (s *Service) handleUpdateEdgeRouterPolicy(c *gin.Context) {
 		"identityRoles":   req.IdentityRoles,
 	}
 	body, _ := json.Marshal(payload)
-	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/edge-router-policies/"+id, body)
+	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/edge-router-policies/"+url.PathEscape(id), body)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update edge router policy", err), s.logger)
 		return
@@ -401,7 +402,7 @@ func (s *Service) handleDeleteEdgeRouterPolicy(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/edge-router-policies/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/edge-router-policies/"+url.PathEscape(id), nil)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete edge router policy", err), s.logger)
 		return

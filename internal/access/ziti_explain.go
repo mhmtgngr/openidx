@@ -15,6 +15,7 @@ package access
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -205,7 +206,7 @@ func (s *Service) explainService(ctx context.Context, name string) ResourceDiagn
 	termHop := ChainHop{
 		Step: 6, Title: "A gateway is connected right now", Technical: "terminator",
 	}
-	if svcID != "" && s.serviceHasTerminator(ctx, name) {
+	if svcID != "" && s.serviceHasTerminator(ctx, name, svcID) {
 		termHop.Status = "ok"
 		termHop.Detail = "a gateway is online and serving this resource"
 	} else {
@@ -231,7 +232,7 @@ func (s *Service) explainService(ctx context.Context, name string) ResourceDiagn
 }
 
 // serviceHasTerminator reports whether a gateway currently serves the service.
-func (s *Service) serviceHasTerminator(ctx context.Context, serviceName string) bool {
+func (s *Service) serviceHasTerminator(ctx context.Context, serviceName, serviceID string) bool {
 	ents, err := s.ziti().listEdgeEntities(ctx, "terminators")
 	if err != nil {
 		s.logger.Warn("explain: terminator list failed", zap.Error(err))
@@ -245,13 +246,16 @@ func (s *Service) serviceHasTerminator(ctx context.Context, serviceName string) 
 		}
 	}
 	// Fall back to the dedicated terminator query, which resolves the service.
-	return s.terminatorExistsForService(ctx, serviceName)
+	return s.terminatorExistsForService(ctx, serviceID)
 }
 
 // terminatorExistsForService asks the controller for terminators filtered to one
 // service, which is authoritative when the list form does not embed the name.
-func (s *Service) terminatorExistsForService(ctx context.Context, serviceName string) bool {
-	path := `/edge/management/v1/terminators?filter=service.name="` + serviceName + `"`
+// The filter names the service by the id the controller gave it rather than by
+// the name in the request: the filter is the controller's query language, and
+// a name is text an administrator chose.
+func (s *Service) terminatorExistsForService(ctx context.Context, serviceID string) bool {
+	path := "/edge/management/v1/terminators?filter=" + url.QueryEscape(`service="`+serviceID+`"`)
 	data, status, err := s.ziti().mgmtRequest("GET", path, nil)
 	if err != nil || status != http.StatusOK {
 		return false

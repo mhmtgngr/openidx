@@ -3,6 +3,7 @@ package access
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -157,7 +158,7 @@ func (s *Service) handleUpdateConfig(c *gin.Context) {
 		"data": req.Data,
 	}
 	body, _ := json.Marshal(payload)
-	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/configs/"+id, body)
+	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/configs/"+url.PathEscape(id), body)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update config", err), s.logger)
 		return
@@ -174,7 +175,7 @@ func (s *Service) handleDeleteConfig(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/configs/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/configs/"+url.PathEscape(id), nil)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete config", err), s.logger)
 		return

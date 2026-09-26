@@ -8182,9 +8182,17 @@ paths:
       description: >-
         Operator tier or above. An install administrator gets every
         session on the controller; anyone else gets the sessions between
-        their organization's identities and its services.
+        their organization's identities and its services. type, when
+        given, is Dial or Bind in any case; any other value is 400.
       operationId: listZitiSessions
       x-openidx-handler: internal/access.(*Service).handleListZitiSessions
+      parameters:
+        - name: type
+          in: query
+          required: false
+          description: The session type, Dial or Bind, in any case.
+          schema:
+            type: string
       responses:
         '200':
           description: Success
@@ -8193,6 +8201,8 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

@@ -3,7 +3,9 @@ package access
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
@@ -12,6 +14,11 @@ import (
 // ---------------------------------------------------------------------------
 // Ziti Session Visibility handlers
 // ---------------------------------------------------------------------------
+
+// zitiSessionTypes are the controller's session types, the only values the
+// session list's type filter takes. The filter is the controller's query
+// language, so a value outside this list could rewrite the query itself.
+var zitiSessionTypes = map[string]string{"dial": "Dial", "bind": "Bind"}
 
 // handleListZitiSessions lists the controller's sessions: who is connected to
 // which service. An install administrator sees them all; anyone else sees the
@@ -27,8 +34,13 @@ func (s *Service) handleListZitiSessions(c *gin.Context) {
 	}
 
 	path := "/edge/management/v1/sessions?limit=200"
-	if sessionType := c.Query("type"); sessionType != "" {
-		path += "&filter=type%3D%22" + sessionType + "%22"
+	if raw := c.Query("type"); raw != "" {
+		sessionType, ok := zitiSessionTypes[strings.ToLower(raw)]
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "type must be Dial or Bind"})
+			return
+		}
+		path += "&filter=" + url.QueryEscape(`type="`+sessionType+`"`)
 	}
 
 	respData, statusCode, err := s.ziti().MgmtRequest("GET", path, nil)
@@ -127,7 +139,7 @@ func (s *Service) handleDeleteZitiSession(c *gin.Context) {
 			return
 		}
 	}
-	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/sessions/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/sessions/"+url.PathEscape(id), nil)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete ziti session", err), s.logger)
 		return
@@ -213,7 +225,7 @@ func (s *Service) handleBatchDeleteZitiSessions(c *gin.Context) {
 		}
 
 		if matchedIdentity == req.IdentityID {
-			_, sc, delErr := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/sessions/"+entry.ID, nil)
+			_, sc, delErr := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/sessions/"+url.PathEscape(entry.ID), nil)
 			if delErr == nil && (sc == http.StatusOK || sc == http.StatusNoContent) {
 				terminated++
 			}
