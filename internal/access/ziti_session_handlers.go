@@ -104,11 +104,29 @@ func (s *Service) handleListZitiSessions(c *gin.Context) {
 	c.JSON(http.StatusOK, results)
 }
 
+// handleDeleteZitiSession ends one controller session. An organization's admin
+// ends the organization's own sessions (ownsZitiSession) and gets the 404 an
+// unknown id gets for any other; an install administrator ends any.
 func (s *Service) handleDeleteZitiSession(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
 	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
+	if !view.install {
+		owned, err := s.ownsZitiSession(c.Request.Context(), view.orgID, id)
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete ziti session", err), s.logger)
+			return
+		}
+		if !owned {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+			return
+		}
+	}
 	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/sessions/"+id, nil)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete ziti session", err), s.logger)
@@ -126,8 +144,15 @@ func (s *Service) handleDeleteZitiSession(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "session terminated"})
 }
 
+// handleBatchDeleteZitiSessions ends every session one identity holds. An
+// organization's admin names one of the organization's identities, and gets
+// the 404 an unknown one gets for any other; an install administrator any.
 func (s *Service) handleBatchDeleteZitiSessions(c *gin.Context) {
 	if s.zitiUnavailable(c) {
+		return
+	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
 		return
 	}
 
@@ -137,6 +162,17 @@ func (s *Service) handleBatchDeleteZitiSessions(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if !view.install {
+		owned, err := s.ownsZitiIdentity(c.Request.Context(), view.orgID, req.IdentityID)
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("terminate ziti sessions", err), s.logger)
+			return
+		}
+		if !owned {
+			c.JSON(http.StatusNotFound, gin.H{"error": "ziti identity not found"})
+			return
+		}
 	}
 
 	// List all sessions

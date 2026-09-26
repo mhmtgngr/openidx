@@ -137,11 +137,29 @@ func (s *Service) handleGetTerminator(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json", resp.Data)
 }
 
+// handleDeleteTerminator removes one terminator. An organization's admin
+// removes those of the organization's own services and gets the 404 an unknown
+// id gets for any other; an install administrator removes any.
 func (s *Service) handleDeleteTerminator(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
 	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
+	if !view.install {
+		owned, err := s.ownsZitiTerminator(c.Request.Context(), view.orgID, id)
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete terminator", err), s.logger)
+			return
+		}
+		if !owned {
+			c.JSON(http.StatusNotFound, gin.H{"error": "terminator not found"})
+			return
+		}
+	}
 	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/terminators/"+id, nil)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete terminator", err), s.logger)

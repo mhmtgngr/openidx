@@ -909,11 +909,29 @@ func (s *Service) handleGetCertExpiryAlerts(c *gin.Context) {
 	c.JSON(http.StatusOK, certs)
 }
 
+// handleRotateCertificate rotates one of the organization's certificates. The
+// rotation reads and claims the certificate by id alone, because the expiry
+// monitor rotates across organizations, so the organization is checked here.
 func (s *Service) handleRotateCertificate(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
 	}
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	id := c.Param("id")
+	var owned bool
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT EXISTS (SELECT 1 FROM ziti_certificates WHERE id::text = $1 AND org_id = $2)`, id, org.ID).Scan(&owned); err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to rotate certificate", err), s.logger)
+		return
+	}
+	if !owned {
+		c.JSON(http.StatusNotFound, gin.H{"error": "certificate not found"})
+		return
+	}
 	if err := s.ziti().RotateCertificate(c.Request.Context(), id); err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to rotate certificate", err), s.logger)
 		return

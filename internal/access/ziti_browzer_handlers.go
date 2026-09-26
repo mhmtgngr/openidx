@@ -87,7 +87,9 @@ func (s *Service) handleDisableBrowZer(c *gin.Context) {
 }
 
 // handleEnableBrowZerOnService adds the "browzer-enabled" role attribute to a Ziti service
-// and optionally creates a proxy_route for path-based BrowZer access.
+// and optionally creates a proxy_route for path-based BrowZer access. The
+// attribute publishes the service to every BrowZer user of the install, so an
+// organization's admin publishes only the organization's own services.
 func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ziti not initialized"})
@@ -99,6 +101,9 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 	org, oerr := orgctx.From(c.Request.Context())
 	if oerr != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	if !s.browzerServiceAllowed(c, zitiServiceID) {
 		return
 	}
 
@@ -312,6 +317,9 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
+	if !s.browzerServiceAllowed(c, zitiServiceID) {
+		return
+	}
 
 	attrs, err := s.ziti().GetServiceRoleAttributes(c.Request.Context(), zitiServiceID)
 	if err != nil {
@@ -367,4 +375,30 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 	s.enqueueReconcile()
 
 	c.JSON(http.StatusOK, gin.H{"message": "BrowZer disabled on service", "role_attributes": filtered})
+}
+
+// browzerServiceAllowed decides whether the caller may turn BrowZer on or off
+// for a controller service: an install administrator for any, anyone else for
+// one of their organization's services. It writes the refusal -- the 404 an
+// unknown service gets -- and returns false otherwise. It runs before the
+// controller is touched: the toggles rewrite the service's role attributes
+// there, whoever owns it.
+func (s *Service) browzerServiceAllowed(c *gin.Context, zitiServiceID string) bool {
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return false
+	}
+	if view.install {
+		return true
+	}
+	owned, err := s.ownsZitiService(c.Request.Context(), view.orgID, zitiServiceID)
+	if err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("read the organization's Ziti services", err), s.logger)
+		return false
+	}
+	if !owned {
+		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
+		return false
+	}
+	return true
 }

@@ -919,6 +919,10 @@ paths:
     post:
       tags: [Ziti Fabric]
       summary: Reconnect to Ziti controller
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The controller connection serves every organization.
+        An organization's admin gets 403 platform administrator required.
       operationId: reconnectFabric
       responses:
         '200':
@@ -932,6 +936,10 @@ paths:
                     type: string
                   message:
                     type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/ziti/fabric/metrics:
     get:
@@ -1138,6 +1146,10 @@ paths:
     post:
       tags: [Policy Sync]
       summary: Sync governance policy to Ziti
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Governance-policy syncs have no organization. An
+        organization's admin gets 403 platform administrator required.
       operationId: syncGovernancePolicy
       requestBody:
         required: true
@@ -1154,11 +1166,19 @@ paths:
                 $ref: '#/components/schemas/PolicySyncState'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/ziti/policy-sync/{id}/trigger:
     post:
       tags: [Policy Sync]
       summary: Trigger policy sync
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Governance-policy syncs have no organization. An
+        organization's admin gets 403 platform administrator required.
       operationId: triggerPolicySync
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -1169,6 +1189,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PolicySyncState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1176,12 +1200,20 @@ paths:
     delete:
       tags: [Policy Sync]
       summary: Delete policy sync state
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Governance-policy syncs have no organization. An
+        organization's admin gets 403 platform administrator required.
       operationId: deletePolicySyncState
       parameters:
         - $ref: '#/components/parameters/IdPath'
       responses:
         '204':
           description: Policy sync state deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1233,6 +1265,9 @@ paths:
     post:
       tags: [Certificates]
       summary: Rotate certificate
+      description: >-
+        Admin role. The certificate is one of the organization's; 404
+        otherwise.
       operationId: rotateCertificate
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -1243,6 +1278,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Certificate'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1300,12 +1339,19 @@ paths:
         The path route is created on the BrowZer domain and the vhost route on
         `domain`; a host another enabled route serves, other than this service's
         own BrowZer route, is refused with 409 before the controller is changed.
+        Admin role. The service is one of the organization's, or any for
+        an install administrator; 404 otherwise, before the controller is
+        touched.
       operationId: enableBrowzerOnService
       parameters:
         - $ref: '#/components/parameters/IdPath'
       responses:
         '200':
           description: BrowZer enabled on service
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -1315,12 +1361,20 @@ paths:
     post:
       tags: [BrowZer]
       summary: Disable BrowZer on service
+      description: >-
+        Admin role. The service is one of the organization's, or any for
+        an install administrator; 404 otherwise, before the controller is
+        touched.
       operationId: disableBrowzerOnService
       parameters:
         - $ref: '#/components/parameters/IdPath'
       responses:
         '200':
           description: BrowZer disabled on service
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -6468,6 +6522,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Ziti AI analyze
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The AI ledger and risk scores cover every identity
+        on the controller. An organization's admin gets 403 platform
+        administrator required.
       operationId: zitiAIAnalyze
       x-openidx-handler: internal/access.(*Service).handleZitiAIAnalyze
       requestBody:
@@ -6526,6 +6585,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Update ziti anomaly status
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The AI ledger covers every identity on the
+        controller. An organization's admin gets 403 platform
+        administrator required.
       operationId: updateZitiAnomalyStatus
       x-openidx-handler: internal/access.(*Service).handleUpdateZitiAnomalyStatus
       requestBody:
@@ -6560,6 +6624,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Quarantine ziti identity
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Quarantine takes any identity by its controller id;
+        an organization's admin uses the kill switch. An organization's
+        admin gets 403 platform administrator required.
       operationId: quarantineZitiIdentity
       x-openidx-handler: internal/access.(*Service).handleQuarantineZitiIdentity
       requestBody:
@@ -6594,6 +6663,10 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Unquarantine ziti identity
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Quarantine takes any identity by its controller id.
+        An organization's admin gets 403 platform administrator required.
       operationId: unquarantineZitiIdentity
       x-openidx-handler: internal/access.(*Service).handleUnquarantineZitiIdentity
       requestBody:
@@ -6728,6 +6801,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Create auth policy
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Authentication policies decide how every
+        organization's identities sign in to the controller. An
+        organization's admin gets 403 platform administrator required.
       operationId: createAuthPolicy
       x-openidx-handler: internal/access.(*Service).handleCreateAuthPolicy
       requestBody:
@@ -6760,6 +6838,11 @@ paths:
     delete:
       tags: [OpenZiti Overlay]
       summary: Delete auth policy
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Authentication policies decide how every
+        organization's identities sign in to the controller. An
+        organization's admin gets 403 platform administrator required.
       operationId: deleteAuthPolicy
       x-openidx-handler: internal/access.(*Service).handleDeleteAuthPolicy
       responses:
@@ -6783,6 +6866,11 @@ paths:
     put:
       tags: [OpenZiti Overlay]
       summary: Update auth policy
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Authentication policies decide how every
+        organization's identities sign in to the controller. An
+        organization's admin gets 403 platform administrator required.
       operationId: updateAuthPolicy
       x-openidx-handler: internal/access.(*Service).handleUpdateAuthPolicy
       requestBody:
@@ -7007,6 +7095,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Create config
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The config writes take any config by its controller
+        id. An organization's admin gets 403 platform administrator
+        required.
       operationId: createConfig
       x-openidx-handler: internal/access.(*Service).handleCreateConfig
       requestBody:
@@ -7039,6 +7132,11 @@ paths:
     delete:
       tags: [OpenZiti Overlay]
       summary: Delete config
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The config writes take any config by its controller
+        id. An organization's admin gets 403 platform administrator
+        required.
       operationId: deleteConfig
       x-openidx-handler: internal/access.(*Service).handleDeleteConfig
       responses:
@@ -7062,6 +7160,11 @@ paths:
     put:
       tags: [OpenZiti Overlay]
       summary: Update config
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The config writes take any config by its controller
+        id, and a host.v1 config decides where a service's traffic goes.
+        An organization's admin gets 403 platform administrator required.
       operationId: updateConfig
       x-openidx-handler: internal/access.(*Service).handleUpdateConfig
       requestBody:
@@ -7229,6 +7332,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Create edge router policy
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The policies decide which identities of any
+        organization use which routers. An organization's admin gets 403
+        platform administrator required.
       operationId: createEdgeRouterPolicy
       x-openidx-handler: internal/access.(*Service).handleCreateEdgeRouterPolicy
       requestBody:
@@ -7261,6 +7369,11 @@ paths:
     delete:
       tags: [OpenZiti Overlay]
       summary: Delete edge router policy
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The policies decide which identities of any
+        organization use which routers. An organization's admin gets 403
+        platform administrator required.
       operationId: deleteEdgeRouterPolicy
       x-openidx-handler: internal/access.(*Service).handleDeleteEdgeRouterPolicy
       responses:
@@ -7284,6 +7397,11 @@ paths:
     put:
       tags: [OpenZiti Overlay]
       summary: Update edge router policy
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The policies decide which identities of any
+        organization use which routers. An organization's admin gets 403
+        platform administrator required.
       operationId: updateEdgeRouterPolicy
       x-openidx-handler: internal/access.(*Service).handleUpdateEdgeRouterPolicy
       requestBody:
@@ -7316,6 +7434,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Router enroll token
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. A new edge router carries every organization's
+        traffic. An organization's admin gets 403 platform administrator
+        required.
       operationId: routerEnrollToken
       x-openidx-handler: internal/access.(*Service).handleRouterEnrollToken
       requestBody:
@@ -7383,6 +7506,10 @@ paths:
       description: >-
         A `from_url` whose host another enabled route serves is refused with
         409.
+        Install administrator only: admin or super_admin of the default
+        organization. Import adopts a controller service no organization
+        manages. An organization's admin gets 403 platform administrator
+        required.
       operationId: importZitiService
       x-openidx-handler: internal/access.(*Service).handleImportZitiService
       requestBody:
@@ -7415,6 +7542,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Bulk import ziti services
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Import adopts controller services no organization
+        manages. An organization's admin gets 403 platform administrator
+        required.
       operationId: bulkImportZitiServices
       x-openidx-handler: internal/access.(*Service).handleBulkImportZitiServices
       requestBody:
@@ -7469,6 +7601,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Create jwt signer
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. JWT signers decide whose tokens the controller
+        accepts, for every organization. An organization's admin gets 403
+        platform administrator required.
       operationId: createJWTSigner
       x-openidx-handler: internal/access.(*Service).handleCreateJWTSigner
       requestBody:
@@ -7501,6 +7638,11 @@ paths:
     delete:
       tags: [OpenZiti Overlay]
       summary: Delete jwt signer
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. JWT signers decide whose tokens the controller
+        accepts, for every organization. An organization's admin gets 403
+        platform administrator required.
       operationId: deleteJWTSigner
       x-openidx-handler: internal/access.(*Service).handleDeleteJWTSigner
       responses:
@@ -7524,6 +7666,11 @@ paths:
     put:
       tags: [OpenZiti Overlay]
       summary: Update jwt signer
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. JWT signers decide whose tokens the controller
+        accepts, for every organization. An organization's admin gets 403
+        platform administrator required.
       operationId: updateJWTSigner
       x-openidx-handler: internal/access.(*Service).handleUpdateJWTSigner
       requestBody:
@@ -8003,6 +8150,9 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Batch delete ziti sessions
+      description: >-
+        Admin role. identity_id is one of the organization's identities,
+        or any for an install administrator; 404 otherwise.
       operationId: batchDeleteZitiSessions
       x-openidx-handler: internal/access.(*Service).handleBatchDeleteZitiSessions
       requestBody:
@@ -8026,6 +8176,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -8035,6 +8187,10 @@ paths:
     delete:
       tags: [OpenZiti Overlay]
       summary: Delete ziti session
+      description: >-
+        Admin role. Ends one of the organization's sessions (its identity
+        and its service both the organization's), or any for an install
+        administrator; 404 otherwise.
       operationId: deleteZitiSession
       x-openidx-handler: internal/access.(*Service).handleDeleteZitiSession
       responses:
@@ -8418,6 +8574,9 @@ paths:
     delete:
       tags: [OpenZiti Overlay]
       summary: Delete terminator
+      description: >-
+        Admin role. Removes a terminator of one of the organization's
+        services, or any for an install administrator; 404 otherwise.
       operationId: deleteTerminator
       x-openidx-handler: internal/access.(*Service).handleDeleteTerminator
       responses:

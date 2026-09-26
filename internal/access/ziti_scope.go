@@ -3,7 +3,9 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -135,6 +137,80 @@ func (s *Service) ownedZitiConfigs(ctx context.Context, orgID string) (map[strin
 		}
 	}
 	return out, nil
+}
+
+// ownsZitiService reports whether the controller service with this id is one
+// of the organization's.
+func (s *Service) ownsZitiService(ctx context.Context, orgID, zitiID string) (bool, error) {
+	var owned bool
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM ziti_services WHERE ziti_id = $1 AND org_id = $2)`, zitiID, orgID).Scan(&owned)
+	return owned, err
+}
+
+// ownsZitiIdentity reports whether the controller identity with this id is one
+// of the organization's.
+func (s *Service) ownsZitiIdentity(ctx context.Context, orgID, zitiID string) (bool, error) {
+	var owned bool
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM ziti_identities WHERE ziti_id = $1 AND org_id = $2)`, zitiID, orgID).Scan(&owned)
+	return owned, err
+}
+
+// ownsZitiSession reports whether the controller session with this id runs
+// between one of the organization's identities and one of its services. A
+// session the controller does not know is nobody's.
+func (s *Service) ownsZitiSession(ctx context.Context, orgID, id string) (bool, error) {
+	data, status, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/sessions/"+url.PathEscape(id), nil)
+	if err != nil {
+		return false, err
+	}
+	if status == http.StatusNotFound {
+		return false, nil
+	}
+	if status != http.StatusOK {
+		return false, fmt.Errorf("controller answered %d reading session", status)
+	}
+	var resp struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return false, err
+	}
+	identity, service := zitiSessionEnds(resp.Data)
+	if identity.ID == "" || service.ID == "" {
+		return false, nil
+	}
+	ownIdentity, err := s.ownsZitiIdentity(ctx, orgID, identity.ID)
+	if err != nil || !ownIdentity {
+		return false, err
+	}
+	return s.ownsZitiService(ctx, orgID, service.ID)
+}
+
+// ownsZitiTerminator reports whether the controller terminator with this id
+// hosts one of the organization's services.
+func (s *Service) ownsZitiTerminator(ctx context.Context, orgID, id string) (bool, error) {
+	data, status, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/terminators/"+url.PathEscape(id), nil)
+	if err != nil {
+		return false, err
+	}
+	if status == http.StatusNotFound {
+		return false, nil
+	}
+	if status != http.StatusOK {
+		return false, fmt.Errorf("controller answered %d reading terminator", status)
+	}
+	var resp struct {
+		Data zitiTerminator `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return false, err
+	}
+	if resp.Data.serviceID() == "" {
+		return false, nil
+	}
+	return s.ownsZitiService(ctx, orgID, resp.Data.serviceID())
 }
 
 // zitiEntityRef is the {id, name} reference the controller embeds for a

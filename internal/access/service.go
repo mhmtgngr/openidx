@@ -475,8 +475,16 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		//     metrics, the edge-router and authentication policies, the JWT
 		//     signers, the AI ledger -- which needs `adminOnly, platformOnly`.
 		//
-		// Writes that reconfigure the fabric need `adminOnly`, the shared
-		// gate. The self-service routes (/my/ziti/services,
+		// Writes follow the same line. One that changes something the
+		// organization owns -- its services, identities, policies, posture
+		// checks, certificates, sessions and terminators, BrowZer on one of
+		// its services -- needs `adminOnly` and reaches only the
+		// organization's own objects, as the mirror records them; an install
+		// administrator reaches any. One that changes something no
+		// organization owns -- a router, an edge-router, authentication or
+		// JWT-signer policy, a raw config, the AI ledger, a governance-policy
+		// sync, an import of an unowned service -- needs `adminOnly,
+		// platformOnly`. The self-service routes (/my/ziti/services,
 		// /ziti/sync/my-identity and the device posture self-report) answer
 		// for the caller only.
 		//
@@ -542,11 +550,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/ziti/fabric/overview", operatorTier, svc.handleGetFabricOverview)
 		api.GET("/ziti/fabric/routers", adminOnly, platformOnly, svc.handleListEdgeRouters)
 		// One-command router/gateway onboarding: mint an edge-router enrollment
-		// JWT + a copy-paste command; the router joins via the #all bootstrap.
-		api.POST("/ziti/fabric/routers/enroll-token", adminOnly, svc.handleRouterEnrollToken)
+		// JWT + a copy-paste command; the router joins via the #all bootstrap
+		// and carries every organization's traffic.
+		api.POST("/ziti/fabric/routers/enroll-token", adminOnly, platformOnly, svc.handleRouterEnrollToken)
 		api.GET("/ziti/fabric/routers/:id", adminOnly, platformOnly, svc.handleGetEdgeRouter)
 		api.GET("/ziti/fabric/health", operatorTier, svc.handleGetHealth)
-		api.POST("/ziti/fabric/reconnect", adminOnly, svc.handleReconnect)
+		api.POST("/ziti/fabric/reconnect", adminOnly, platformOnly, svc.handleReconnect)
 		api.GET("/ziti/fabric/metrics", adminOnly, platformOnly, svc.handleGetMetrics)
 		api.GET("/ziti/fabric/service-policies", operatorTier, svc.handleListServicePolicies)
 
@@ -561,9 +570,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Edge router policy CRUD. The policies decide which identities of any
 		// organization may use which routers.
 		api.GET("/ziti/edge-router-policies", adminOnly, platformOnly, svc.handleListEdgeRouterPolicies)
-		api.POST("/ziti/edge-router-policies", adminOnly, svc.handleCreateEdgeRouterPolicy)
-		api.PUT("/ziti/edge-router-policies/:id", adminOnly, svc.handleUpdateEdgeRouterPolicy)
-		api.DELETE("/ziti/edge-router-policies/:id", adminOnly, svc.handleDeleteEdgeRouterPolicy)
+		api.POST("/ziti/edge-router-policies", adminOnly, platformOnly, svc.handleCreateEdgeRouterPolicy)
+		api.PUT("/ziti/edge-router-policies/:id", adminOnly, platformOnly, svc.handleUpdateEdgeRouterPolicy)
+		api.DELETE("/ziti/edge-router-policies/:id", adminOnly, platformOnly, svc.handleDeleteEdgeRouterPolicy)
 
 		// Service policy CRUD
 		api.POST("/ziti/service-policies", adminOnly, svc.handleCreateServicePolicy)
@@ -653,36 +662,41 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 		// Phase 3: Policy sync. policy_sync_state has no organization.
 		api.GET("/ziti/policy-sync", adminOnly, platformOnly, svc.handleListPolicySyncStates)
-		api.POST("/ziti/policy-sync", adminOnly, svc.handleSyncGovernancePolicy)
-		api.POST("/ziti/policy-sync/:id/trigger", adminOnly, svc.handleTriggerPolicySync)
-		api.DELETE("/ziti/policy-sync/:id", adminOnly, svc.handleDeletePolicySyncState)
+		api.POST("/ziti/policy-sync", adminOnly, platformOnly, svc.handleSyncGovernancePolicy)
+		api.POST("/ziti/policy-sync/:id/trigger", adminOnly, platformOnly, svc.handleTriggerPolicySync)
+		api.DELETE("/ziti/policy-sync/:id", adminOnly, platformOnly, svc.handleDeletePolicySyncState)
 
 		// Config types & configs management. A host.v1 config names the
-		// internal address its service forwards to.
+		// internal address its service forwards to. The writes take any
+		// config by its controller id, and a changed host.v1 moves where a
+		// service's traffic goes, so they are the install's; an organization's
+		// own configs follow its routes and services.
 		api.GET("/ziti/config-types", adminOnly, platformOnly, svc.handleListConfigTypes)
 		api.GET("/ziti/configs", operatorTier, svc.handleListConfigs)
-		api.POST("/ziti/configs", adminOnly, svc.handleCreateConfig)
-		api.PUT("/ziti/configs/:id", adminOnly, svc.handleUpdateConfig)
-		api.DELETE("/ziti/configs/:id", adminOnly, svc.handleDeleteConfig)
+		api.POST("/ziti/configs", adminOnly, platformOnly, svc.handleCreateConfig)
+		api.PUT("/ziti/configs/:id", adminOnly, platformOnly, svc.handleUpdateConfig)
+		api.DELETE("/ziti/configs/:id", adminOnly, platformOnly, svc.handleDeleteConfig)
 
 		// Auth policies & JWT signers management: how every organization's
 		// identities authenticate to the controller.
 		api.GET("/ziti/auth-policies", adminOnly, platformOnly, svc.handleListAuthPolicies)
-		api.POST("/ziti/auth-policies", adminOnly, svc.handleCreateAuthPolicy)
-		api.PUT("/ziti/auth-policies/:id", adminOnly, svc.handleUpdateAuthPolicy)
-		api.DELETE("/ziti/auth-policies/:id", adminOnly, svc.handleDeleteAuthPolicy)
+		api.POST("/ziti/auth-policies", adminOnly, platformOnly, svc.handleCreateAuthPolicy)
+		api.PUT("/ziti/auth-policies/:id", adminOnly, platformOnly, svc.handleUpdateAuthPolicy)
+		api.DELETE("/ziti/auth-policies/:id", adminOnly, platformOnly, svc.handleDeleteAuthPolicy)
 		api.GET("/ziti/jwt-signers", adminOnly, platformOnly, svc.handleListJWTSigners)
-		api.POST("/ziti/jwt-signers", adminOnly, svc.handleCreateJWTSigner)
-		api.PUT("/ziti/jwt-signers/:id", adminOnly, svc.handleUpdateJWTSigner)
-		api.DELETE("/ziti/jwt-signers/:id", adminOnly, svc.handleDeleteJWTSigner)
+		api.POST("/ziti/jwt-signers", adminOnly, platformOnly, svc.handleCreateJWTSigner)
+		api.PUT("/ziti/jwt-signers/:id", adminOnly, platformOnly, svc.handleUpdateJWTSigner)
+		api.DELETE("/ziti/jwt-signers/:id", adminOnly, platformOnly, svc.handleDeleteJWTSigner)
 
 		// Terminators management. A terminator names the address a service
-		// is hosted at.
+		// is hosted at. The delete reaches the organization's own terminators.
 		api.GET("/ziti/terminators", operatorTier, svc.handleListTerminators)
 		api.GET("/ziti/terminators/:id", operatorTier, svc.handleGetTerminator)
 		api.DELETE("/ziti/terminators/:id", adminOnly, svc.handleDeleteTerminator)
 
-		// Ziti session visibility: who is connected to which service right now.
+		// Ziti session visibility: who is connected to which service right
+		// now. The deletes reach the organization's own sessions and
+		// identities.
 		api.GET("/ziti/sessions", operatorTier, svc.handleListZitiSessions)
 		api.DELETE("/ziti/sessions/:id", adminOnly, svc.handleDeleteZitiSession)
 		api.POST("/ziti/sessions/batch-terminate", adminOnly, svc.handleBatchDeleteZitiSessions)
@@ -692,17 +706,19 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// recommendations, and quarantine response. Analysis mutates the
 		// ledger/baselines and quarantine rewrites identity attributes, so
 		// those are admin-only. The baselines, the ledger and the quarantine
-		// list have no organization, and the risk scores and recommendations
-		// are computed over every identity, service and policy on the
-		// controller, so the reads need an install administrator.
+		// list have no organization, the risk scores and recommendations are
+		// computed over every identity, service and policy on the controller,
+		// and quarantine takes any identity by its controller id, so every
+		// route needs an install administrator. An organization's admin cuts
+		// a user off with the kill switch, which stays in the organization.
 		api.GET("/ziti/ai/insights", adminOnly, platformOnly, svc.handleZitiAIInsights)
-		api.POST("/ziti/ai/analyze", adminOnly, svc.handleZitiAIAnalyze)
+		api.POST("/ziti/ai/analyze", adminOnly, platformOnly, svc.handleZitiAIAnalyze)
 		api.GET("/ziti/ai/anomalies", adminOnly, platformOnly, svc.handleListZitiAnomalies)
-		api.POST("/ziti/ai/anomalies/:id/status", adminOnly, svc.handleUpdateZitiAnomalyStatus)
+		api.POST("/ziti/ai/anomalies/:id/status", adminOnly, platformOnly, svc.handleUpdateZitiAnomalyStatus)
 		api.GET("/ziti/ai/identity-risk", adminOnly, platformOnly, svc.handleZitiIdentityRisk)
 		api.GET("/ziti/ai/recommendations", adminOnly, platformOnly, svc.handleZitiAIRecommendations)
-		api.POST("/ziti/ai/identities/:id/quarantine", adminOnly, svc.handleQuarantineZitiIdentity)
-		api.POST("/ziti/ai/identities/:id/unquarantine", adminOnly, svc.handleUnquarantineZitiIdentity)
+		api.POST("/ziti/ai/identities/:id/quarantine", adminOnly, platformOnly, svc.handleQuarantineZitiIdentity)
+		api.POST("/ziti/ai/identities/:id/unquarantine", adminOnly, platformOnly, svc.handleUnquarantineZitiIdentity)
 		// Controller version / OpenZiti v2.0 feature detection
 		api.GET("/ziti/controller/features", adminOnly, platformOnly, svc.handleZitiControllerFeatures)
 
@@ -958,8 +974,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// that no route manages yet, and import turns them into proxy routes.
 		// A service no organization owns is the install's (ziti_scope.go).
 		api.GET("/ziti/discover", adminOnly, platformOnly, svc.handleDiscoverZitiServices)
-		api.POST("/ziti/import", adminOnly, svc.handleImportZitiService)
-		api.POST("/ziti/import/bulk", adminOnly, svc.handleBulkImportZitiServices)
+		api.POST("/ziti/import", adminOnly, platformOnly, svc.handleImportZitiService)
+		api.POST("/ziti/import/bulk", adminOnly, platformOnly, svc.handleBulkImportZitiServices)
 		api.GET("/ziti/unmanaged/count", adminOnly, platformOnly, svc.handleGetUnmanagedServicesCount)
 
 		// App publishing (register, discover, classify, publish). These are

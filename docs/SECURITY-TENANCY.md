@@ -226,6 +226,17 @@ gives to an organization is the install's.
   the overlay is up and count the organization's own services and identities.
   The controller's version, addresses and error text go to an install
   administrator only.
+- A write to something the organization owns needs the admin role and reaches
+  only the organization's own objects: ending one of its sessions, or every
+  session of one of its identities, removing a terminator of one of its
+  services, turning BrowZer on or off for one of its services, rotating one of
+  its certificates. Another organization's object, taken by its id, gets the
+  `404` an unknown id gets. An install administrator reaches any.
+- A write to something no organization owns needs an install administrator:
+  enrolling an edge router, reconnecting the controller, the edge-router,
+  authentication and JWT-signer policies, raw configs, the AI analysis, its
+  anomalies and quarantine, the governance-policy syncs, and importing a
+  service no organization manages.
 
 The rules are in `internal/access/ziti_scope.go`.
 
