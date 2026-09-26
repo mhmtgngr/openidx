@@ -101,11 +101,16 @@ export function OrganizationsPage() {
       toast({ title: t('pages.organizations.toasts.updated') })
       setEditOrg(null)
     },
-    onError: () =>
+    // The plan, status and limits are a platform admin's to change; the API
+    // refuses anyone else's change to them with 403 and names the fields.
+    onError: (err: unknown) => {
+      const fields = (err as { response?: { data?: { fields?: unknown } } } | null)?.response?.data?.fields
       toast({
         title: t('pages.organizations.toasts.updateFailed'),
+        description: Array.isArray(fields) ? t('pages.organizations.toasts.platformAdminFields') : undefined,
         variant: 'destructive',
-      }),
+      })
+    },
   })
 
   const addMemberMutation = useMutation({
@@ -148,7 +153,13 @@ export function OrganizationsPage() {
 
   const handleSave = () => {
     if (editOrg) {
-      updateMutation.mutate({ id: editOrg.id, body: { name: form.name, plan: form.plan, status: editOrg.status } })
+      updateMutation.mutate({
+        id: editOrg.id,
+        body: {
+          name: form.name, plan: form.plan, status: editOrg.status,
+          max_users: form.max_users, max_applications: form.max_applications,
+        },
+      })
     } else {
       createMutation.mutate(form)
     }
@@ -233,7 +244,7 @@ export function OrganizationsPage() {
                     <TableCell>{new Date(org.created_at).toLocaleDateString()}</TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(org)}>
+                        <Button variant="ghost" size="sm" aria-label={t('pages.organizations.form.editTitle')} onClick={() => openEdit(org)}>
                           <Pencil className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(org)}>

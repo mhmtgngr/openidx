@@ -91,7 +91,10 @@ list are read by its members, in any role, and by a platform admin; its
 branding, settings and custom domains (`/api/v1/tenants/{orgId}/...`) by the
 administrators of the organization the request resolved to and by a platform
 admin; anyone else gets the `404` an unknown id gets. Only a platform admin
-creates an organization.
+creates an organization. An organization's owners and admins rename it; its
+plan, status and limits are the install's decisions and only a platform admin
+changes them. An owner or admin who tries gets `403`, and nothing of the
+request is applied.
 
 A verified custom domain decides which organization's branding, custom CSS
 included, the login page served at that host shows. A claim to a domain is

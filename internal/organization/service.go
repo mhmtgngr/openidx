@@ -4,13 +4,16 @@ package organization
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
@@ -238,13 +241,47 @@ func (s *Service) ListOrganizations(ctx context.Context, limit, offset int) ([]O
 	return orgs, total, nil
 }
 
-// UpdateOrganization updates an organization's name, plan, and status
-func (s *Service) UpdateOrganization(ctx context.Context, orgID string, name, plan, status string) error {
+// OrganizationUpdate is a change to an organization's record: each field that
+// is set is written, and a nil field keeps its value.
+type OrganizationUpdate struct {
+	Name            *string `json:"name"`
+	Plan            *string `json:"plan"`
+	Status          *string `json:"status"`
+	MaxUsers        *int    `json:"max_users"`
+	MaxApplications *int    `json:"max_applications"`
+}
+
+// installFieldChanges names the fields of u that would change the plan, the
+// status or a limit of org. Those are the install's decisions about a tenant --
+// what it is sold, whether it is suspended, how much it may hold -- and so the
+// platform admin's, not the organization's own owners'. A field restated with
+// the value it has changes nothing and is not named.
+func (u OrganizationUpdate) installFieldChanges(org *Organization) []string {
+	var changed []string
+	if u.Plan != nil && *u.Plan != org.Plan {
+		changed = append(changed, "plan")
+	}
+	if u.Status != nil && *u.Status != org.Status {
+		changed = append(changed, "status")
+	}
+	if u.MaxUsers != nil && *u.MaxUsers != org.MaxUsers {
+		changed = append(changed, "max_users")
+	}
+	if u.MaxApplications != nil && *u.MaxApplications != org.MaxApplications {
+		changed = append(changed, "max_applications")
+	}
+	return changed
+}
+
+// UpdateOrganization writes the fields of u that are set.
+func (s *Service) UpdateOrganization(ctx context.Context, orgID string, u OrganizationUpdate) error {
 	now := time.Now().UTC()
 
 	result, err := s.db.Pool.Exec(ctx,
-		`UPDATE organizations SET name = $1, plan = $2, status = $3, updated_at = $4 WHERE id = $5`,
-		name, plan, status, now, orgID,
+		`UPDATE organizations SET name = COALESCE($1, name), plan = COALESCE($2, plan), status = COALESCE($3, status),
+		        max_users = COALESCE($4, max_users), max_applications = COALESCE($5, max_applications), updated_at = $6
+		 WHERE id = $7`,
+		u.Name, u.Plan, u.Status, u.MaxUsers, u.MaxApplications, now, orgID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update organization: %w", err)
@@ -523,29 +560,93 @@ func (s *Service) handleGetOrganization(c *gin.Context) {
 	c.JSON(http.StatusOK, org)
 }
 
+// handleUpdateOrganization changes an organization's record. A field the
+// request leaves out keeps its value.
+//
+// An owner or admin of the organization changes its name. The plan, the status
+// and the limits are the platform admin's: an owner used to be able to upgrade
+// their own plan, raise their limits or lift their own suspension here. An owner
+// or admin may still send them as they are -- the console restates them with
+// every rename, and every client did while plan and status were required -- but
+// a request that would change one is refused whole with 403 naming the fields,
+// rather than applied without them.
 func (s *Service) handleUpdateOrganization(c *gin.Context) {
 	orgID := c.Param("id")
 	if !s.requireOrgAdmin(c, orgID) {
 		return
 	}
 
-	var req struct {
-		Name   string `json:"name" binding:"required"`
-		Plan   string `json:"plan" binding:"required"`
-		Status string `json:"status" binding:"required"`
-	}
-
+	var req OrganizationUpdate
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.Name == nil && req.Plan == nil && req.Status == nil && req.MaxUsers == nil && req.MaxApplications == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "nothing to update"})
+		return
+	}
+	for _, f := range []struct {
+		name  string
+		value *string
+	}{{"name", req.Name}, {"plan", req.Plan}, {"status", req.Status}} {
+		if f.value != nil && strings.TrimSpace(*f.value) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": f.name + " must not be empty"})
+			return
+		}
+	}
+	for _, f := range []struct {
+		name  string
+		value *int
+	}{{"max_users", req.MaxUsers}, {"max_applications", req.MaxApplications}} {
+		if f.value != nil && *f.value < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": f.name + " must not be negative"})
+			return
+		}
+	}
 
-	if err := s.UpdateOrganization(c.Request.Context(), orgID, req.Name, req.Plan, req.Status); err != nil {
+	ctx := c.Request.Context()
+	current, ok := s.loadOrganization(c, orgID)
+	if !ok {
+		return
+	}
+	if !orgctx.IsPlatformAdmin(ctx) {
+		if changed := req.installFieldChanges(current); len(changed) > 0 {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":             "forbidden",
+				"error_description": "only a platform admin can change an organization's plan, status or limits",
+				"fields":            changed,
+			})
+			return
+		}
+		// Restated as they are, so nothing of them is written: a concurrent
+		// change by the platform admin is not undone by an owner's rename.
+		req.Plan, req.Status, req.MaxUsers, req.MaxApplications = nil, nil, nil, nil
+	}
+
+	if err := s.UpdateOrganization(ctx, orgID, req); err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to update organization", err), s.logger)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "organization updated"})
+}
+
+// loadOrganization reads the organization a write names. An id that names none
+// -- reachable by a platform admin, whom requireOrgAdmin does not look up -- is
+// answered 404, as is an id that is not a UUID, rather than a database error.
+func (s *Service) loadOrganization(c *gin.Context, orgID string) (*Organization, bool) {
+	if _, err := uuid.Parse(orgID); err == nil {
+		org, err := s.GetOrganization(c.Request.Context(), orgID)
+		if err == nil {
+			return org, true
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to load organization", err), s.logger)
+			return nil, false
+		}
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
+	return nil, false
 }
 
 func (s *Service) handleListMembers(c *gin.Context) {
@@ -662,11 +763,17 @@ func (s *Service) requireOrgAdmin(c *gin.Context, orgID string) bool {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "error_description": "authentication required"})
 		return false
 	}
-	role, err := s.GetMemberRole(ctx, orgID, callerID)
-	if err != nil {
-		s.logger.Error("failed to check organization membership", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-		return false
+	// An id that is not a UUID names no membership; asking the database would
+	// only turn the refusal into a 500.
+	role := ""
+	if _, err := uuid.Parse(orgID); err == nil {
+		if _, err := uuid.Parse(callerID); err == nil {
+			if role, err = s.GetMemberRole(ctx, orgID, callerID); err != nil {
+				s.logger.Error("failed to check organization membership", zap.Error(err))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+				return false
+			}
+		}
 	}
 	if role != "owner" && role != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "error_description": "must be an owner or admin of this organization"})

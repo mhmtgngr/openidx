@@ -8270,6 +8270,8 @@ const tr: typeof en = {
         createFailed: 'Kuruluş oluşturulamadı',
         updated: 'Kuruluş güncellendi',
         updateFailed: 'Kuruluş güncellenemedi',
+        platformAdminFields:
+          'Bir kuruluşun planını, durumunu ve sınırlarını yalnızca bir platform yöneticisi değiştirebilir.',
         deleted: 'Kuruluş silindi',
         memberAdded: 'Üye eklendi',
         memberAddFailed: 'Üye eklenemedi',

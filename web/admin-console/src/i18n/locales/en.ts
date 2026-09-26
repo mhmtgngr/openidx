@@ -8428,6 +8428,8 @@ const en = {
         createFailed: 'Failed to create organization',
         updated: 'Organization updated',
         updateFailed: 'Failed to update organization',
+        platformAdminFields:
+          'Only a platform administrator can change an organization\'s plan, status or limits.',
         deleted: 'Organization deleted',
         memberAdded: 'Member added',
         memberAddFailed: 'Failed to add member',

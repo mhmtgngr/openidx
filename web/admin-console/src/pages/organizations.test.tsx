@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -13,8 +13,9 @@ vi.mock('../lib/api', () => ({
   },
 }))
 
+const { toast } = vi.hoisted(() => ({ toast: vi.fn() }))
 vi.mock('../hooks/use-toast', () => ({
-  useToast: () => ({ toast: vi.fn() }),
+  useToast: () => ({ toast }),
 }))
 
 import { OrganizationsPage } from './organizations'
@@ -127,5 +128,32 @@ describe('OrganizationsPage', () => {
     expect(
       screen.getByText(/create an organization to enable multi-tenancy/i),
     ).toBeInTheDocument()
+  })
+
+  // Editing sends the limits the dialog shows -- they used to be dropped -- and
+  // when the API refuses a change to a field only a platform admin may change,
+  // the toast says so instead of failing without a reason.
+  it('sends the limits with an edit and explains a platform-admin refusal', async () => {
+    vi.mocked(api.put).mockRejectedValueOnce({
+      response: { status: 403, data: { error: 'forbidden', fields: ['max_users'] } },
+    })
+    const user = userEvent.setup()
+    render(<OrganizationsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Acme Inc')
+
+    await user.click(screen.getAllByRole('button', { name: 'Edit Organization' })[0])
+    await user.click(await screen.findByRole('button', { name: 'Update' }))
+
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.put).mock.calls[0]).toEqual([
+      '/api/v1/organizations/org-1',
+      { name: 'Acme Inc', plan: 'enterprise', status: 'active', max_users: 100, max_applications: 50 },
+    ])
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Failed to update organization',
+        description: expect.stringMatching(/only a platform administrator/i),
+      })),
+    )
   })
 })

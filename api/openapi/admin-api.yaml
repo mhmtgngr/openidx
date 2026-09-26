@@ -5094,15 +5094,40 @@ paths:
     put:
       tags: [Organizations]
       summary: Update organization
+      description: >-
+        Changes the fields the request sets; a field left out keeps its value.
+        An owner or admin of the organization changes its name. The plan, the
+        status and the limits are changed by a platform admin only: an owner or
+        admin may send them as they are, and a request that would change any of
+        them is refused whole with 403, whose body names the fields. Anyone who
+        is not an owner or admin of the organization, or a platform admin, gets
+        403.
       operationId: updateOrganization
       x-openidx-handler: internal/organization.(*Service).handleUpdateOrganization
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              minProperties: 1
+              properties:
+                name:
+                  type: string
+                plan:
+                  type: string
+                  description: Platform admin only
+                status:
+                  type: string
+                  description: Platform admin only
+                max_users:
+                  type: integer
+                  minimum: 0
+                  description: Platform admin only
+                max_applications:
+                  type: integer
+                  minimum: 0
+                  description: Platform admin only
       responses:
         '200':
           description: Success
