@@ -1658,6 +1658,25 @@ func VerifyPKCE(codeVerifier, codeChallenge, method string) bool {
 // to the organization the request resolved to.
 var requireAdminRole = middleware.RequireRoles("admin", "super_admin")
 
+// managementStepUp is the MFA-freshness gate admin-api mounts on every write
+// made with admin authority (STEPUP_GATE, middleware.RequireFreshMFA), for the
+// same writes here: an OAuth client's redirect URIs and secret, a SAML service
+// provider's certificate, an SSF stream's endpoint. These APIs are admin
+// surfaces served by another binary, and they were left out: with the gate
+// enforcing, an administrator whose last second factor was hours old could not
+// delete a user in the console but could re-point the organization's single
+// sign-on. Same settings, same decision, the same step_up_required answer and
+// the same audit events (under this service's "oauth" source); reads and
+// machine credentials are never gated. It follows requireAdminRole, and with
+// the gate off it makes no query.
+func (s *Service) managementStepUp() gin.HandlerFunc {
+	cfg := middleware.StepUpConfig{Source: appaccess.SourceOIDC}
+	if s.config != nil {
+		cfg.Gate, cfg.MaxAge = s.config.StepUpGate, s.config.StepUpMaxAge
+	}
+	return middleware.RequireFreshMFA(s.db, cfg, s.recordUnifiedEvent, s.logger)
+}
+
 // RegisterRoutes wires the oauth-service HTTP routes.
 //
 // clientMgmtAuth authenticates the management APIs -- /api/v1/oauth/clients,
@@ -1665,7 +1684,8 @@ var requireAdminRole = middleware.RequireRoles("admin", "super_admin")
 // required: these endpoints create and modify OAuth clients, so they must be
 // authenticated in every environment (a nil here is a programmer error and
 // intentionally panics at request time rather than silently exposing the API).
-// requireAdminRole follows it on every one of those routes. The variadic
+// requireAdminRole follows it on every one of those routes, and
+// managementStepUp after that. The variadic
 // flowAuth is applied to the interactive OIDC flow endpoints (consent,
 // step-up) only when supplied; callers omit it in development to keep the
 // local login flow friction-free.
@@ -1692,7 +1712,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 	// able to enumerate, create or delete one. Gated with the same middleware
 	// as the client-management API, and like it held to administrators.
 	ssfAdmin := router.Group("/ssf")
-	ssfAdmin.Use(clientMgmtAuth, requireAdminRole)
+	ssfAdmin.Use(clientMgmtAuth, requireAdminRole, svc.managementStepUp())
 	{
 		ssfAdmin.GET("/streams", svc.handleListSSFStreams)
 		ssfAdmin.POST("/streams", svc.handleCreateSSFStream)
@@ -1878,7 +1898,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 	// is a different door: an initial access token opens it, and a client
 	// registered through it cannot set api_access.
 	clients := router.Group("/api/v1/oauth/clients")
-	clients.Use(clientMgmtAuth, requireAdminRole)
+	clients.Use(clientMgmtAuth, requireAdminRole, svc.managementStepUp())
 	{
 		clients.GET("", svc.handleListClients)
 		clients.POST("", svc.handleCreateClient)

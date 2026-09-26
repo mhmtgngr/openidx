@@ -37,7 +37,9 @@ SSF/CAEP with native network termination.
 
     Then `GET /ssf/streams` to list, `DELETE /ssf/streams/{id}` to unsubscribe,
     and `POST /ssf/streams/{id}/verify` to send a verification event and prove
-    the receiver is reachable before you rely on it.
+    the receiver is reachable before you rely on it. With `STEPUP_GATE` on, the
+    writes also need a recently verified second factor, as admin-api's writes
+    do (`403 step_up_required`).
 
 ## Two directions
 

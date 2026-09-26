@@ -647,6 +647,12 @@ the organization the request is for has none by that id, whether it does not
 exist or belongs to another organization. The client routes answer it before
 they read the request body or change anything.
 
+With `STEPUP_GATE` set to `enforce`, a write on any of these APIs also needs a
+second factor verified within `STEPUP_MAX_AGE`, as every admin-api write does.
+Otherwise the answer is `403 step_up_required` with the endpoint that clears
+it. `observe` records the writes it would have refused. Reads, API keys,
+service accounts and client-credentials tokens are never gated.
+
 ## Token Types
 
 ### Access Token (JWT)

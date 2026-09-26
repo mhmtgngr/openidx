@@ -3,6 +3,7 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -140,4 +141,37 @@ func (s *Service) recordABACDecision(ctx context.Context, userID, clientID, appI
 			zap.Bool("enforced", enforced),
 			zap.Error(err))
 	}
+}
+
+// recordUnifiedEvent writes one row to unified_audit_events in the request's
+// organization. It has the shape of middleware.StepUpRecorder, which is how the
+// step-up gate on the management APIs (managementStepUp) records its
+// decisions: the admin API hands the gate the access service's RecordEvent,
+// which this service does not link, so the same insert is made here, as the
+// assignment and ABAC recorders above make theirs. The caller logs a failure.
+func (s *Service) recordUnifiedEvent(ctx context.Context, source, eventType, routeID, userID, actorIP string, details map[string]interface{}) error {
+	if s.db == nil || s.db.Pool == nil {
+		return errors.New("no database handle")
+	}
+	detailsJSON, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
+	var routeIDPtr, userIDPtr *string
+	if routeID != "" {
+		routeIDPtr = &routeID
+	}
+	if userID != "" {
+		userIDPtr = &userID
+	}
+	orgID, resolved := orgctx.AuditOrgID(ctx)
+	if !resolved {
+		s.logger.Warn("unified audit event has no org context; filed under the primary organization",
+			logsafe.String("source", source), logsafe.String("event_type", eventType))
+	}
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO unified_audit_events (id, org_id, source, event_type, route_id, user_id, actor_ip, details, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+	`, uuid.New().String(), orgID, source, eventType, routeIDPtr, userIDPtr, actorIP, detailsJSON)
+	return err
 }
