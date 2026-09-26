@@ -156,4 +156,31 @@ describe('OrganizationsPage', () => {
       })),
     )
   })
+
+  // Only the organization's own users can be added by its owners and admins;
+  // the API answers another organization's user as no user at all, and the
+  // toast says what that means.
+  it('explains why a member could not be added', async () => {
+    vi.mocked(api.post).mockRejectedValueOnce({ response: { status: 404, data: { error: 'user not found' } } })
+    const user = userEvent.setup()
+    render(<OrganizationsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Acme Inc')
+
+    await user.click(screen.getByRole('button', { name: '42' }))
+    await user.click(await screen.findByRole('button', { name: 'Add Member' }))
+    await user.type(await screen.findByPlaceholderText('User UUID'), '6f1c1c52-5a0e-4d33-9f0c-0d1f5f4f1a11')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.post).mock.calls[0]).toEqual([
+      '/api/v1/organizations/org-1/members',
+      { user_id: '6f1c1c52-5a0e-4d33-9f0c-0d1f5f4f1a11', role: 'member' },
+    ])
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Failed to add member',
+        description: 'No user with this ID belongs to this organization.',
+      })),
+    )
+  })
 })

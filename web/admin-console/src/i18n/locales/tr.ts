@@ -8275,7 +8275,11 @@ const tr: typeof en = {
         deleted: 'Kuruluş silindi',
         memberAdded: 'Üye eklendi',
         memberAddFailed: 'Üye eklenemedi',
+        memberInvalid: 'Bir kullanıcının kimliğini girin.',
+        memberNotFound: 'Bu kimliğe sahip bir kullanıcı bu kuruluşta yok.',
+        lastOwner: 'Bir kuruluşun en az bir sahibi olmalıdır.',
         memberRemoved: 'Üye kaldırıldı',
+        memberRemoveFailed: 'Üye kaldırılamadı',
       },
     },
     auditArchival: {

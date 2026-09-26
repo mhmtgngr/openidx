@@ -122,11 +122,20 @@ export function OrganizationsPage() {
       toast({ title: t('pages.organizations.toasts.memberAdded') })
       setAddMemberOpen(false)
     },
-    onError: () =>
+    // A member is one of the organization's own users (a platform admin may
+    // add anyone), and the organization keeps at least one owner.
+    onError: (err: unknown) => {
+      const status = (err as { response?: { status?: number } } | null)?.response?.status
       toast({
         title: t('pages.organizations.toasts.memberAddFailed'),
+        description:
+          status === 400 ? t('pages.organizations.toasts.memberInvalid')
+            : status === 404 ? t('pages.organizations.toasts.memberNotFound')
+              : status === 409 ? t('pages.organizations.toasts.lastOwner')
+                : undefined,
         variant: 'destructive',
-      }),
+      })
+    },
   })
 
   const removeMemberMutation = useMutation({
@@ -137,6 +146,11 @@ export function OrganizationsPage() {
       queryClient.invalidateQueries({ queryKey: ['organizations'] })
       toast({ title: t('pages.organizations.toasts.memberRemoved') })
     },
+    onError: () =>
+      toast({
+        title: t('pages.organizations.toasts.memberRemoveFailed'),
+        variant: 'destructive',
+      }),
   })
 
   const openCreate = () => {

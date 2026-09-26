@@ -94,7 +94,12 @@ admin; anyone else gets the `404` an unknown id gets. Only a platform admin
 creates an organization. An organization's owners and admins rename it; its
 plan, status and limits are the install's decisions and only a platform admin
 changes them. An owner or admin who tries gets `403`, and nothing of the
-request is applied.
+request is applied. An organization's members are its own users
+(`users.org_id`) in a role it grants: `owner`, `admin` or `member`. Its owners
+and admins add only its users, and a user of another organization gets the
+`404` an id that names no user gets; a platform admin may add any user. Only an
+owner or a platform admin grants the owner role or changes or removes an
+owner's membership, and an organization keeps at least one owner.
 
 A verified custom domain decides which organization's branding, custom CSS
 included, the login page served at that host shows. A claim to a domain is

@@ -8433,7 +8433,11 @@ const en = {
         deleted: 'Organization deleted',
         memberAdded: 'Member added',
         memberAddFailed: 'Failed to add member',
+        memberInvalid: 'Enter the ID of a user.',
+        memberNotFound: 'No user with this ID belongs to this organization.',
+        lastOwner: 'An organization must keep at least one owner.',
         memberRemoved: 'Member removed',
+        memberRemoveFailed: 'Failed to remove member',
       },
     },
     // Audit archival. Byte-size units (B/KB/MB/GB) are unit symbols and stay

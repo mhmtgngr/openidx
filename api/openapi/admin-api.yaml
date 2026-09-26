@@ -5177,18 +5177,41 @@ paths:
     post:
       tags: [Organizations]
       summary: Add member
+      description: >-
+        Makes a user a member of the organization, or changes the role of one
+        who is. Needs an owner or admin of the organization, or a platform
+        admin. The role is one the organization grants. An owner or admin adds
+        only the organization's own users (users.org_id); a user of another
+        organization is answered 404, as an id that names no user is. A
+        platform admin adds any existing user. Granting the owner role, or
+        changing an owner's role, needs an owner or a platform admin, and the
+        last owner cannot be demoted (409).
       operationId: addMember
       x-openidx-handler: internal/organization.(*Service).handleAddMember
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              required: [user_id, role]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                role:
+                  type: string
+                  enum: [owner, admin, member]
       responses:
         '200':
-          description: Success
+          description: The member's role was changed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '201':
+          description: The user was added
           content:
             application/json:
               schema:
@@ -5202,6 +5225,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -5216,6 +5241,11 @@ paths:
     delete:
       tags: [Organizations]
       summary: Remove member
+      description: >-
+        Removes a member. Needs an owner or admin of the organization, or a
+        platform admin; removing an owner needs an owner or a platform admin,
+        and the last owner cannot be removed (409). Someone who is not a
+        member is answered 404.
       operationId: removeMember
       x-openidx-handler: internal/organization.(*Service).handleRemoveMember
       responses:
@@ -5226,14 +5256,14 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-        '400':
-          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/ServerError'
 
