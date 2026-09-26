@@ -642,6 +642,11 @@ follow the same rule. Dynamic client registration (`POST /oauth/register`) is
 opened by the initial access token set in `DCR_INITIAL_ACCESS_TOKEN` instead,
 and cannot set `api_access`.
 
+A route that names one client, service provider or stream answers `404` when
+the organization the request is for has none by that id, whether it does not
+exist or belongs to another organization. The client routes answer it before
+they read the request body or change anything.
+
 ## Token Types
 
 ### Access Token (JWT)

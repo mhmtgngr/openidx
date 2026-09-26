@@ -111,6 +111,13 @@ number of organizations may claim the same domain, and a squatter's claim does
 not keep the domain's owner out. One claim to a domain can be verified, and
 verifying it removes the other organizations' unverified claims.
 
+Tables under the belt give the same answer. A route that names one record of
+another organization finds nothing and answers `404`, as it does for an id
+that does not exist. The OAuth client routes (`/api/v1/oauth/clients/{id}`)
+look the client up before they read the body or change anything, so an update,
+a secret regeneration or a delete aimed at another organization's client does
+not report a failure or a success it did not have.
+
 ### 6. A CI linter makes it un-bypassable by construction
 
 `tools/orgscope` is a static analyzer wired as a **merge-blocking required CI

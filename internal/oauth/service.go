@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/validation"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
@@ -4661,7 +4662,7 @@ func (s *Service) handleCreateClient(c *gin.Context) {
 	client.ClientSecret = GenerateRandomToken(32)
 
 	if err := s.CreateClient(c.Request.Context(), &client); err != nil {
-		apperrors.HandleErrorWithLogger(c, apperrors.Internal("create client", err), s.logger)
+		s.writeClientStoreError(c, "create client", err)
 		return
 	}
 
@@ -4689,10 +4690,50 @@ func (s *Service) handleCreateClient(c *gin.Context) {
 	c.JSON(201, client)
 }
 
-func (s *Service) handleGetClient(c *gin.Context) {
+// managedClient loads the client a /api/v1/oauth/clients/:id request names, in
+// the organization the request resolved to, and answers 404 when that
+// organization has none -- before anything else is done with the request.
+//
+// Each route used to go straight to its write, scoped to the organization, and
+// report whatever that write returned: for another organization's client, an
+// update answered 500, a secret regeneration 200 with a new secret that was
+// never stored, and a delete 204. Nothing changed, but the answers said a
+// write had failed or had happened. One lookup up front gives a client that
+// does not exist and a client of another organization the same answer, the
+// one a read of it already gave.
+func (s *Service) managedClient(c *gin.Context) (*OAuthClient, bool) {
 	client, err := s.GetClient(c.Request.Context(), c.Param("id"))
 	if err != nil {
+		s.writeClientStoreError(c, "get client", err)
+		return nil, false
+	}
+	return client, true
+}
+
+// writeClientStoreError answers a client read or write the store refused: 404
+// for a client the organization does not have (a delete or a write that raced
+// one is the same case), 400 for a value the store will not keep, and 500 for
+// anything else. Every one of them used to be 500, which told an administrator
+// who typed an access-token lifetime too long, or a malformed logout URI, that
+// the server had failed.
+func (s *Service) writeClientStoreError(c *gin.Context, op string, err error) {
+	var invalid *validation.ValidationError
+	switch {
+	case errors.Is(err, ErrOAuthClientNotFound):
 		c.JSON(404, gin.H{"error": "client not found"})
+	case errors.Is(err, ErrAccessTokenLifetimeTooLong),
+		errors.Is(err, ErrInvalidPostLogoutRedirectURI),
+		errors.Is(err, ErrInvalidTokenExchangeAudiences),
+		errors.As(err, &invalid):
+		c.JSON(400, gin.H{"error": err.Error()})
+	default:
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal(op, err), s.logger)
+	}
+}
+
+func (s *Service) handleGetClient(c *gin.Context) {
+	client, ok := s.managedClient(c)
+	if !ok {
 		return
 	}
 
@@ -4702,6 +4743,9 @@ func (s *Service) handleGetClient(c *gin.Context) {
 }
 
 func (s *Service) handleUpdateClient(c *gin.Context) {
+	if _, ok := s.managedClient(c); !ok {
+		return
+	}
 	var client OAuthClient
 	if err := c.ShouldBindJSON(&client); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -4709,7 +4753,7 @@ func (s *Service) handleUpdateClient(c *gin.Context) {
 	}
 
 	if err := s.UpdateClient(c.Request.Context(), c.Param("id"), &client); err != nil {
-		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update client", err), s.logger)
+		s.writeClientStoreError(c, "update client", err)
 		return
 	}
 
@@ -4717,31 +4761,43 @@ func (s *Service) handleUpdateClient(c *gin.Context) {
 }
 
 func (s *Service) handleDeleteClient(c *gin.Context) {
+	if _, ok := s.managedClient(c); !ok {
+		return
+	}
 	if err := s.DeleteClient(c.Request.Context(), c.Param("id")); err != nil {
-		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete client", err), s.logger)
+		s.writeClientStoreError(c, "delete client", err)
 		return
 	}
 
-	c.JSON(204, nil)
+	c.Status(204)
 }
 
+// RegenerateClientSecret stores a new secret for clientID in the request's
+// organization and returns it, or ErrOAuthClientNotFound when the organization
+// has no such client: a secret that was not stored is not handed out.
 func (s *Service) RegenerateClientSecret(ctx context.Context, clientID string) (string, error) {
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return "", err
 	}
 	newSecret := GenerateRandomToken(32)
-	_, err = s.db.Pool.Exec(ctx, "UPDATE oauth_clients SET client_secret = $2, updated_at = NOW() WHERE client_id = $1 AND org_id = $3", clientID, newSecret, org.ID)
+	tag, err := s.db.Pool.Exec(ctx, "UPDATE oauth_clients SET client_secret = $2, updated_at = NOW() WHERE client_id = $1 AND org_id = $3", clientID, newSecret, org.ID)
 	if err != nil {
 		return "", err
+	}
+	if tag.RowsAffected() == 0 {
+		return "", ErrOAuthClientNotFound
 	}
 	return newSecret, nil
 }
 
 func (s *Service) handleRegenerateClientSecret(c *gin.Context) {
+	if _, ok := s.managedClient(c); !ok {
+		return
+	}
 	secret, err := s.RegenerateClientSecret(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		apperrors.HandleErrorWithLogger(c, apperrors.Internal("regenerate client secret", err), s.logger)
+		s.writeClientStoreError(c, "regenerate client secret", err)
 		return
 	}
 	c.JSON(200, gin.H{"client_secret": secret})

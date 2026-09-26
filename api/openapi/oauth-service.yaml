@@ -696,7 +696,9 @@ paths:
       description: >-
         Every client-management operation needs the `admin` or `super_admin`
         role in the organization the request is for; any other caller gets
-        403.
+        403. The operations on one client answer 404 for a client the
+        organization does not have, including another organization's, before
+        they read the request body or change anything.
       operationId: listClients
       responses:
         '200':
@@ -728,6 +730,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OAuthClient'
+        '400':
+          description: >-
+            A value the client may not have: an access-token lifetime past the
+            revocation marker's, an invalid back-channel or post-logout URI, or
+            an invalid `token_exchange_audiences` list.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -768,10 +775,16 @@ paths:
       responses:
         '200':
           description: Client updated
+        '400':
+          description: >-
+            A malformed body, or a value the client may not have (see the
+            create operation).
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     delete:
       tags: [Client Management]
       summary: Delete OAuth client
@@ -785,6 +798,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /api/v1/oauth/clients/{id}/regenerate-secret:
     post:
@@ -795,7 +810,9 @@ paths:
         - $ref: '#/components/parameters/IdPath'
       responses:
         '200':
-          description: New secret generated
+          description: >-
+            New secret generated and stored. The previous secret no longer
+            authenticates the client.
           content:
             application/json:
               schema:
@@ -807,6 +824,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /.well-known/apple-app-site-association:
     get:

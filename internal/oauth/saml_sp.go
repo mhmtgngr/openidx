@@ -321,6 +321,13 @@ func (s *Service) handleUpdateSAMLServiceProvider(c *gin.Context) {
 // DELETE /api/v1/saml/service-providers/:id
 func (s *Service) handleDeleteSAMLServiceProvider(c *gin.Context) {
 	spID := c.Param("id")
+	// An id that is not a UUID names no service provider. The DELETE below
+	// would fail on the cast and answer 500, a server failure, for a request
+	// that only asked about something that is not there.
+	if _, err := uuid.Parse(spID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Service provider not found"})
+		return
+	}
 
 	err := s.deleteSAMLServiceProvider(c.Request.Context(), spID)
 	if err != nil {
@@ -342,6 +349,11 @@ func (s *Service) handleDeleteSAMLServiceProvider(c *gin.Context) {
 // POST /api/v1/saml/service-providers/:id/rotate-certificate
 func (s *Service) handleRotateSPCertificate(c *gin.Context) {
 	spID := c.Param("id")
+	// Not a UUID: no service provider, as for a delete.
+	if _, err := uuid.Parse(spID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Service provider not found"})
+		return
+	}
 
 	var req struct {
 		Certificate string `json:"certificate" binding:"required"`
