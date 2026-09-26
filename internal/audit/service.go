@@ -346,8 +346,8 @@ func (s *Service) LogEvent(ctx context.Context, event *ServiceAuditEvent) error 
 	// ways that mattered, both measured in es_ordering_testdb_test.go:
 	//
 	//   - The id is the Elasticsearch DOCUMENT id and it arrives in the
-	//     request body of POST /api/v1/audit/events, which is deliberately
-	//     unauthenticated (service-to-service, isolated by network). The
+	//     request body of POST /api/v1/audit/events, which took any caller
+	//     then (it now takes only a service holding the internal token). The
 	//     PRIMARY KEY on audit_events.id is the only thing in the system
 	//     making that document id unique, so a caller supplying another
 	//     tenant's event id got the INSERT refused and the index OVERWRITTEN.
@@ -1282,12 +1282,12 @@ func (s *Service) GetComplianceReport(ctx context.Context, reportID string) (*Co
 // is sensitive security data and MUST NOT be readable/exportable unauthenticated.
 func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.HandlerFunc) {
 	// Ingestion endpoint — the internal, server-to-server audit WRITE path
-	// (e.g. access-service posts proxy-access events here with no user token).
-	// It is deliberately OUTSIDE the authenticated group: it must be reachable
-	// service-to-service and is protected by network isolation, not a user JWT.
-	// It only accepts writes; it never reads/leaks the trail.
+	// (access-service posts proxy and PAM events here with no user token). It
+	// is outside the user-authenticated group because no user is behind it,
+	// and inside requireInternalService: only an OpenIDX service holding the
+	// internal service token may write an event. See ingest_auth.go.
 	ingest := router.Group("/api/v1/audit")
-	ingest.POST("/events", svc.handleLogEvent)
+	ingest.POST("/events", svc.requireInternalService(), svc.handleLogEvent)
 
 	// Everything else reads/exports the audit trail (sensitive security data) and
 	// MUST be authenticated. extraMiddleware carries the JWT auth middleware.

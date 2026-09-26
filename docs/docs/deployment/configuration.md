@@ -130,7 +130,7 @@ with `POST /api/v1/admin/oauth/signing-keys/rotate`.
 | `BAO_TOKEN` | string | - | Token for that server. |
 | `BAO_KEK_PATH` | string | - | Path to the KEK secret. |
 | `BAO_CACERT` | path | - | CA bundle for that server. |
-| `INTERNAL_SERVICE_TOKEN` | string | - | Shared bearer for service-to-service calls that do not carry a user token. |
+| `INTERNAL_SERVICE_TOKEN` | string | - | What the services present to one another, in `X-Internal-Token`, on calls no user makes: access-service's policy checks against governance, and every audit event it posts. The audit service writes an event only for a caller presenting it; unset, it accepts none and warns at startup. Set the same value on audit-service, access-service and governance-service. `scripts/generate-secrets.sh` and `scripts/lite-up.sh` write one; the Helm chart generates one and keeps it across upgrades (`secrets.internalServiceToken` overrides it). |
 
 ### Network security
 
@@ -331,6 +331,7 @@ neither has a switch, so there is nothing to turn off by accident.
 | `AUDIT_SIEM_BATCH_SIZE` | int | `100` | Events per batch. |
 | `AUDIT_SIEM_POLL_SECONDS` | int | `10` | How often the forwarder sweeps. |
 | `AUDIT_SIEM_HOSTNAME` | string | - | Hostname stamped on forwarded events. |
+| `AUDIT_EDGE_ADDR` | string | - | A second audit-service listener (for example `:8014`) serving every route except event ingestion, which answers 404 there. For an edge that cannot refuse `POST /api/v1/audit/events` while passing the `GET`: the Helm chart routes the audit prefix of its Ingress here. Empty: one listener. |
 
 Retention and archival are configured in the admin console under Audit →
 Archival, not here: they are per organization.

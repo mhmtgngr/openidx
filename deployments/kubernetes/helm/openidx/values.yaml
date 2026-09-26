@@ -16,6 +16,13 @@ secrets:
   guacamoleAdminPassword: ""
   guacamoleZitiAdminPassword: ""
   pamGuacDbPassword: ""
+  # INTERNAL_SERVICE_TOKEN: what the services present to one another on calls
+  # no user makes -- access-service's policy checks, and the events it writes
+  # into the audit trail. Empty generates one on the first install and keeps
+  # it on every upgrade (templates/secrets.yaml, -internal-token). Set it when
+  # the chart is rendered without a cluster (GitOps), or when a service
+  # outside this release must present the same value.
+  internalServiceToken: ""
 
 # ----- External Secrets Operator -----
 # Enable this to pull secrets from AWS Secrets Manager, HashiCorp Vault, etc.
@@ -277,6 +284,9 @@ auditService:
   service:
     type: ClusterIP
     port: 8004
+    # The port the API Ingress sends /api/v1/audit to: every audit route but
+    # event ingestion, which only the platform's own services use (on port).
+    edgePort: 8014
   # WebSocket origin validation for audit stream
   # Controls which origins can connect to the real-time audit event stream
   # Prevents Cross-Site WebSocket Hijacking (CSWSH) attacks

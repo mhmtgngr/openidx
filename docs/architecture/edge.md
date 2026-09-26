@@ -20,7 +20,7 @@ to the service ports, with **zero** references to `:8008`; nothing connected to
 | `/api/v1/identity/*` | `127.0.0.1:8001` |
 | `/api/v1/governance/*` | `127.0.0.1:8002` |
 | `/api/v1/provisioning/*`, `/scim/*` | `127.0.0.1:8003` |
-| `/api/v1/audit/*` (ws) | `127.0.0.1:8004` |
+| `/api/v1/audit/*` (ws) | `127.0.0.1:8004`, except `POST /api/v1/audit/events` (event ingestion, for the services only), which the edge answers 404 |
 | `/api/*` (admin) | `127.0.0.1:8005` |
 | `/oauth/*`, `/.well-known/*` | `127.0.0.1:8006` |
 | `/api/v1/access/*` (ws) | `127.0.0.1:8007` |

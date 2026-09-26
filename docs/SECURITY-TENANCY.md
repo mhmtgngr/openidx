@@ -292,7 +292,7 @@ The rules are in `internal/access/ziti_scope.go` and `internal/access/ziti_roles
 | Application services | Enforced — `app.org_id` stamped per connection; queries carry `org_id` |
 | Tokens and API keys | Bound — accepted only in their own organization, except a platform admin's |
 | Authorization / governance | Scoped — campaigns, certifications, ABAC, SoD, and risk policies carry `org_id` |
-| Audit | Scoped — `audit_events` is org-scoped, including Elasticsearch search |
+| Audit | Scoped — `audit_events` is org-scoped, including Elasticsearch search; only the platform's own services write events (`INTERNAL_SERVICE_TOKEN`), so no caller can file an event under another organization |
 | CI / tests | Enforced — `orgscope` merge gate + cross-org integration test |
 
 ## Federation vs. multi-tenancy

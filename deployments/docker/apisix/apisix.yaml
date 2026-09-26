@@ -30,6 +30,30 @@ routes:
       nodes:
         "admin-api:8005": 1
 
+  # Audit event ingestion never leaves the cluster either. POST
+  # /api/v1/audit/events is how OpenIDX's own services write to the audit
+  # trail, over the internal network with the internal service token; nothing
+  # outside has a reason to reach it, and the audit route below forwards the
+  # whole prefix. Only POST is caught: the console's GET of the same path
+  # falls through to the audit route, and so does every other audit route.
+  # scripts/check-audit-ingest-edges.sh keeps this route in every edge.
+  - uris:
+      - /api/v1/audit/events
+      - /api/v1/audit/events/
+    methods:
+      - POST
+    name: deny-audit-ingest
+    priority: 90
+    plugins:
+      fault-injection:
+        abort:
+          http_status: 404
+          body: "{\"error\":\"not found\"}"
+    upstream:
+      type: roundrobin
+      nodes:
+        "admin-api:8005": 1
+
   # Identity service
   - uri: /api/v1/identity/*
     name: identity-service

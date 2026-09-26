@@ -97,7 +97,24 @@ paths:
     post:
       tags: [Audit Events]
       summary: Log an audit event
+      description: |
+        How OpenIDX's own services write to the audit trail; access-service is
+        the one that does. The caller presents the internal service token
+        (INTERNAL_SERVICE_TOKEN) in X-Internal-Token. A user's access token is
+        not accepted in its place, whatever its roles. X-Org-Slug names the
+        organization the event is filed under. The shipped edges do not route
+        this operation, and on the audit service's edge listener
+        (AUDIT_EDGE_ADDR) it answers 404.
       operationId: logEvent
+      security:
+        - internalServiceToken: []
+      parameters:
+        - name: X-Org-Slug
+          in: header
+          required: false
+          description: The organization the event is filed under; the default organization when absent and DEFAULT_ORG_FALLBACK is on.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -107,6 +124,12 @@ paths:
       responses:
         '201':
           description: Event logged
+        '400':
+          description: The body is not an audit event
+        '401':
+          description: No internal service token, or the wrong one; nothing is written
+        '404':
+          description: Called on the edge listener, which does not serve ingestion
 
   /api/v1/audit/events/{id}:
     get:
@@ -550,6 +573,11 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    internalServiceToken:
+      type: apiKey
+      in: header
+      name: X-Internal-Token
+      description: INTERNAL_SERVICE_TOKEN, held by the OpenIDX services that write audit events.
 
   parameters:
     IdPath:

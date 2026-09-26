@@ -241,9 +241,11 @@ type Config struct {
 	AuditURL      string `mapstructure:"audit_url"`
 
 	// InternalServiceToken is a shared secret for trusted service-to-service
-	// calls (the access-proxy authenticating its policy /evaluate call to the
-	// governance service). Empty disables the internal-auth path, leaving only
-	// user JWT auth. Set the same value on every service that participates.
+	// calls: the access-proxy authenticating its policy /evaluate call to the
+	// governance service, and the audit events it posts to the audit service.
+	// Empty disables the internal-auth path: governance then takes only user
+	// JWTs, and the audit service accepts no events at all. Set the same value
+	// on every service that participates.
 	InternalServiceToken string `mapstructure:"internal_service_token"`
 	AccessSessionSecret  string `mapstructure:"access_session_secret"`
 	AccessProxyDomain    string `mapstructure:"access_proxy_domain"`
@@ -764,6 +766,13 @@ type Config struct {
 	// covered; longer costs less. The verification response reports the
 	// unsealed count so the window is visible either way.
 	AuditChainInterval time.Duration `mapstructure:"audit_chain_interval"`
+
+	// AuditEdgeAddr, when set, is a second listener for the audit service
+	// (":8014") that serves every route except event ingestion. It is for an
+	// edge that cannot tell GET /api/v1/audit/events from POST -- a Kubernetes
+	// Ingress cannot match on method -- so that it can route the audit prefix
+	// to a listener with no ingestion on it. Empty: one listener, as before.
+	AuditEdgeAddr string `mapstructure:"audit_edge_addr"`
 
 	// Redis Sentinel configuration
 	RedisSentinelEnabled    bool   `mapstructure:"redis_sentinel_enabled"`
@@ -1631,6 +1640,7 @@ func bindEnvVars(v *viper.Viper) {
 		"recordings_s3_use_ssl":             "RECORDINGS_S3_USE_SSL",
 		"audit_chain_secret":                "AUDIT_CHAIN_SECRET",
 		"audit_chain_interval":              "AUDIT_CHAIN_INTERVAL",
+		"audit_edge_addr":                   "AUDIT_EDGE_ADDR",
 	}
 
 	for key, env := range envMappings {

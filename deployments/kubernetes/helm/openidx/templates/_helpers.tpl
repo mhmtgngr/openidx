@@ -399,3 +399,29 @@ Usage: include "openidx.installDefault" (dict "ctx" $ "key" "ENV_NAME" "value" .
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+openidx.internalServiceToken is INTERNAL_SERVICE_TOKEN, the secret the
+services present to one another where no user is behind a call: access-service
+to governance for its policy checks, and to the audit service for every event
+it writes into the audit trail. In order of precedence:
+  1. secrets.internalServiceToken, when the operator set one;
+  2. the value the release's own -internal-token Secret already holds, so an
+     upgrade keeps the token every running pod was started with;
+  3. a new random value, on the first install that renders this.
+lookup sees no cluster under `helm template`, so a GitOps tool that renders
+with it gets a new value on every render and pods restarted at different times
+would disagree. Set secrets.internalServiceToken there.
+*/}}
+{{- define "openidx.internalServiceToken" -}}
+{{- if .Values.secrets.internalServiceToken -}}
+{{- .Values.secrets.internalServiceToken -}}
+{{- else -}}
+{{- $s := lookup "v1" "Secret" .Release.Namespace (printf "%s-internal-token" (include "openidx.fullname" .)) -}}
+{{- if and $s (hasKey $s "data") $s.data (hasKey $s.data "INTERNAL_SERVICE_TOKEN") -}}
+{{- index $s.data "INTERNAL_SERVICE_TOKEN" | b64dec -}}
+{{- else -}}
+{{- randAlphaNum 48 -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

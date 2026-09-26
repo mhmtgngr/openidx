@@ -101,6 +101,13 @@ func main() {
 
 	cfg.LogSecurityWarnings(log)
 
+	// The audit service writes an event only for a service presenting the
+	// internal token, so without one every event this service posts is refused.
+	if cfg.AuditURL != "" && cfg.InternalServiceToken == "" {
+		log.Warn("INTERNAL_SERVICE_TOKEN is not set: the audit service will refuse every audit event " +
+			"this service posts (PAM reveals, proxy decisions). Set the same value on access-service and audit-service.")
+	}
+
 	// Initialize tracing
 	tracingCfg := tracing.ConfigFromEnv("access-service", cfg.Environment)
 	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)

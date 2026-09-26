@@ -3389,7 +3389,7 @@ func (s *Service) evaluatePolicies(c *gin.Context, route *ProxyRoute, session *P
 		// internal-service secret instead. Without this the call is 401'd and
 		// the policy check fails closed (denies all traffic to the route).
 		if s.config.InternalServiceToken != "" {
-			req.Header.Set("X-Internal-Token", s.config.InternalServiceToken)
+			req.Header.Set(middleware.InternalTokenHeader, s.config.InternalServiceToken)
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -3537,6 +3537,14 @@ func (s *Service) logAuditEvent(c *gin.Context, action, targetID, targetType str
 	if org, err := orgctx.From(c.Request.Context()); err == nil {
 		orgSlug = org.Slug
 	}
+	// The audit service writes an event only for an OpenIDX service that
+	// presents the internal service token; nothing else may put words in the
+	// trail. With none configured the event is refused, and the warning below
+	// says so.
+	internalToken := ""
+	if s.config != nil {
+		internalToken = s.config.InternalServiceToken
+	}
 
 	body, _ := json.Marshal(event)
 	go func() {
@@ -3549,6 +3557,9 @@ func (s *Service) logAuditEvent(c *gin.Context, action, targetID, targetType str
 		req.Header.Set("Content-Type", "application/json")
 		if orgSlug != "" {
 			req.Header.Set("X-Org-Slug", orgSlug)
+		}
+		if internalToken != "" {
+			req.Header.Set(middleware.InternalTokenHeader, internalToken)
 		}
 
 		resp, err := http.DefaultClient.Do(req)

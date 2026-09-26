@@ -76,6 +76,10 @@ PAM_GUAC_DB_PASSWORD="$(rand_password)"
 # from APISIX_ADMIN_KEY in its own container environment.
 OPENIDX_APP_PASSWORD="$(rand_password)"
 APISIX_ADMIN_KEY="$(rand_password)"
+# What access-service presents to the audit service (every event it writes
+# into the audit trail) and to governance (its policy checks). Hex, because it
+# travels in a header.
+INTERNAL_SERVICE_TOKEN="$(rand_hex)"
 
 # --- backup existing file ---
 if [ -f "$OUTPUT" ]; then
@@ -125,6 +129,11 @@ ENCRYPTION_KEY=${ENCRYPTION_KEY}
 # it the sealer does not run, audit rows carry no tamper evidence, and
 # ValidateProduction refuses a production start.
 AUDIT_CHAIN_SECRET=${AUDIT_CHAIN_SECRET}
+# The secret the services present to one another on calls no user makes. The
+# audit service writes an event only for a caller presenting it, so nothing
+# outside the platform can put words in the audit trail; access-service and
+# governance hold the same value.
+INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
 
 # ----- OAuth / OIDC -----
 OAUTH_ISSUER=http://localhost:8006
@@ -208,6 +217,7 @@ echo "  OPENIDX_APP_PW     = ${OPENIDX_APP_PASSWORD:0:8}..."
 echo "  APISIX_ADMIN_KEY   = ${APISIX_ADMIN_KEY:0:8}..."
 echo "  ENCRYPTION_KEY     = ${ENCRYPTION_KEY:0:8}..."
 echo "  AUDIT_CHAIN_SECRET = ${AUDIT_CHAIN_SECRET:0:8}..."
+echo "  INTERNAL_SVC_TOKEN = ${INTERNAL_SERVICE_TOKEN:0:8}..."
 echo "  GRAFANA_ADMIN_PW   = ${GRAFANA_ADMIN_PASSWORD:0:8}..."
 echo "  ZITI_PWD           = ${ZITI_PWD:0:8}..."
 echo "  ACCESS_SESSION     = ${ACCESS_SESSION_SECRET:0:8}..."

@@ -143,8 +143,8 @@ allow if {
 #
 # Guarding audit-service is the real fix and it is not a one-line change: its
 # read/export/stream routes authenticate with middleware.Auth, while
-# POST /api/v1/audit/events is deliberately left open for network-isolated
-# service-to-service ingestion (cmd/audit-service/main.go). Putting OPA in front
+# POST /api/v1/audit/events takes the internal service token instead, for
+# service-to-service ingestion (internal/audit/ingest_auth.go). Putting OPA in front
 # of that service means deciding what happens to the ingest path, which is how
 # every credential reveal and posture verdict reaches the trail. Until that is
 # answered, the policy says what it governs.

@@ -289,6 +289,8 @@ services:
       - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-ratelimit:6379
       - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/lite-up.sh}@redis-revocation:6379
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/lite-up.sh}
+      # Shared with access-service: its policy checks (/evaluate) present it.
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN required - run scripts/lite-up.sh}
       - OAUTH_ISSUER=${OPENIDX_PUBLIC_URL:-http://localhost:3000}
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
@@ -398,6 +400,9 @@ services:
       # The HMAC key the audit hash chain seals events with.
       - AUDIT_CHAIN_SECRET=${AUDIT_CHAIN_SECRET:?AUDIT_CHAIN_SECRET required - run scripts/lite-up.sh}
       - AUDIT_CHAIN_INTERVAL=60s
+      # Only a service presenting this may write an audit event
+      # (POST /api/v1/audit/events); access-service holds the same value.
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN required - run scripts/lite-up.sh}
       - TRACING_ENABLED=${OPENIDX_TRACING_ENABLED:-false}
       - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
       - OTEL_SERVICE_NAME=audit-service
@@ -565,6 +570,9 @@ services:
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - GOVERNANCE_URL=http://governance-service:8002
       - AUDIT_URL=http://audit-service:8004
+      # Presented to governance and the audit service on the calls no user
+      # makes; without it the audit service refuses this service's events.
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN required - run scripts/lite-up.sh}
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
       - OPENIDX_ENABLE_RATE_LIMIT=false
       - ACCESS_ASSIGNMENT_ENFORCE=${ACCESS_ASSIGNMENT_ENFORCE:-true}

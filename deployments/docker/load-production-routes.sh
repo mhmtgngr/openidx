@@ -507,10 +507,12 @@ create_route 'provisioning-service-scim-schemas' '{
 }'
 
 # 5. Audit service routes
+# GET only: POST /api/v1/audit/events is the services' own ingestion route,
+# refused at the edge by deny-audit-ingest below.
 create_route 'audit-service-events' '{
     "uris": ["/api/v1/audit/events", "/api/v1/audit/events/*"],
     "name": "audit-service-events",
-    "methods": ["GET", "POST"],
+    "methods": ["GET"],
     "priority": 10,
     "service_id": "audit-service-svc"
 }'
@@ -690,6 +692,25 @@ create_route 'deny-health-metrics' '{
              "/api/v1/admin/health", "/api/v1/access/health", "/oauth/health"],
     "name": "deny-health-metrics",
     "priority": 100,
+    "upstream_id": "admin-api-upstream",
+    "plugins": {
+        "fault-injection": {
+            "abort": {"http_status": 404, "body": "{\"error\":\"not found\"}"}
+        }
+    }
+}'
+
+# Audit event ingestion never leaves the cluster either. POST
+# /api/v1/audit/events is how OpenIDX's own services write to the audit trail,
+# over the internal network with the internal service token; nothing outside
+# has a reason to reach it. Only POST is caught, so the console's GET of the
+# same path still reaches the audit route above.
+# scripts/check-audit-ingest-edges.sh keeps this route in every edge.
+create_route 'deny-audit-ingest' '{
+    "uris": ["/api/v1/audit/events", "/api/v1/audit/events/"],
+    "methods": ["POST"],
+    "name": "deny-audit-ingest",
+    "priority": 90,
     "upstream_id": "admin-api-upstream",
     "plugins": {
         "fault-injection": {

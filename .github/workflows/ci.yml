@@ -311,6 +311,14 @@ jobs:
         run: bash scripts/check-openapi-parses.test.sh
       - name: Every OpenAPI spec must parse and resolve
         run: bash scripts/check-openapi-parses.sh --enforce
+      # POST /api/v1/audit/events writes into any organization's audit trail
+      # and is for the platform's own services only. Every shipped edge refuses
+      # it while still passing the console's GET of the same path; this keeps a
+      # route edit or a new edge config from reopening it.
+      - name: Verify the audit-ingestion edge guard can go red
+        run: bash scripts/check-audit-ingest-edges.test.sh
+      - name: No shipped edge forwards audit event ingestion
+        run: bash scripts/check-audit-ingest-edges.sh --enforce
       - name: The CodeQL alert summary really names the high-severity rule
         run: bash scripts/codeql-alert-summary.test.sh
 
@@ -1732,6 +1740,11 @@ jobs:
           # (30s, a constant), so at the default this test would spend up to a
           # minute and a half sleeping. At 5s it is the grace period plus a tick.
           export AUDIT_CHAIN_INTERVAL=5s
+          # The audit service writes an event only for a service presenting
+          # this, and access-service presents it with every event it posts; the
+          # J5 reveal's audit row and audit_chain_test.go's own event both need
+          # it. Test-only value.
+          export INTERNAL_SERVICE_TOKEN="integration-internal-service-token-0"
 
           /tmp/identity-service > /tmp/identity.log 2>&1 &
           IDENTITY_PID=$!

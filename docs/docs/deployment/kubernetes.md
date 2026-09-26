@@ -130,6 +130,22 @@ helm install openidx deployments/kubernetes/helm/openidx \
   -f values-production.yaml
 ```
 
+The chart generates `INTERNAL_SERVICE_TOKEN`, the secret the services present
+to one another on calls no user makes, into the `<release>-internal-token`
+Secret on the first install and keeps it on every upgrade. Set
+`secrets.internalServiceToken` instead when the chart is rendered without a
+cluster (Argo CD, Flux), because each such render would otherwise make a new
+one. A value stored under the same key in `<release>-secrets` wins.
+
+### The audit service's edge port
+
+The API Ingress sends `/api/v1/audit` to the audit service's `edge` port
+(8014), not its `http` port (8004). The listener behind `edge` serves every
+audit route except event ingestion (`POST /api/v1/audit/events`), which is for
+the platform's own services: an Ingress cannot match on method, so it cannot
+refuse that POST while passing the console's `GET` of the same path. A custom
+Ingress or gateway in front of the audit service should do the same.
+
 ### An external database
 
 `postgresql.enabled=false` points the chart at a database you run. The

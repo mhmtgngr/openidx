@@ -50,7 +50,7 @@ rotates **without a re-encryption flag-day**:
 Generate a key: `openssl rand -base64 32`.
 
 ## Rotating the other secrets
-- **`INTERNAL_SERVICE_TOKEN`** — new value in `common.env` + `run-access.sh`, restart all services together.
+- **`INTERNAL_SERVICE_TOKEN`** — new value in `common.env` + `run-access.sh` (compose: `.env`; Helm: `secrets.internalServiceToken`, or delete the `-internal-token` Secret to have the next upgrade generate a new one), then restart audit-service, access-service and governance-service together. Until all three hold the same value the audit service refuses access-service's events and governance refuses its policy checks.
 - **`GUACAMOLE_ADMIN_PASSWORD`** — update the guac DB admin user + env, restart access-service.
 - **`APISIX_ADMIN_KEY`** — update the APISIX config + the reconciler env, restart edge + access.
 - **`ZITI_ADMIN_PASSWORD`** — update the controller admin + env, restart.

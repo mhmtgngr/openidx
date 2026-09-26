@@ -384,6 +384,59 @@ jobs:
             || { echo "::error::a toleration keyed openidx.io/plane was refused as an address"; exit 1; }
           echo "the chart needs an issuer, refuses the old defaults, and passes a label key"
 
+      # Audit event ingestion (POST /api/v1/audit/events) is for the platform's
+      # own services. An Ingress cannot match on method, so the API Ingress
+      # sends the audit prefix to the audit service's edge port, whose listener
+      # serves every audit route but that one; services post events to the
+      # main port with INTERNAL_SERVICE_TOKEN, which the chart generates once
+      # and keeps. Asserted on the rendered objects rather than the templates:
+      # the Ingress backend, the port the Deployment opens and the listener it
+      # tells the service to start, the Service port, the token Secret and the
+      # three Deployments that mount it -- and an operator's own token wins.
+      - name: The ingress cannot reach audit event ingestion, and the services share a token
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+          }
+          render --set config.oauthIssuer=https://auth.example.com > /tmp/render-audit-edge.yaml
+          render --set config.oauthIssuer=https://auth.example.com --set secrets.internalServiceToken=render-only-operator-token > /tmp/render-audit-token.yaml
+          python3 - /tmp/render-audit-edge.yaml /tmp/render-audit-token.yaml <<'PYEOF'
+          import base64, sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          def one(kind, suffix):
+              found = [d for d in docs if d["kind"] == kind and d["metadata"]["name"].endswith(suffix)]
+              assert len(found) == 1, f"{kind} *{suffix}: {len(found)} rendered"
+              return found[0]
+          ing = one("Ingress", "-api")
+          audit = [p for r in ing["spec"]["rules"] for p in r["http"]["paths"]
+                   if p["backend"]["service"]["name"].endswith("-audit-service")]
+          assert audit, "the API Ingress has no audit path"
+          for p in audit:
+              assert p["backend"]["service"]["port"] == {"name": "edge"}, \
+                  f"{p['path']} goes to {p['backend']['service']['port']}, not the edge port"
+          dep = one("Deployment", "-audit-service")["spec"]["template"]["spec"]["containers"][0]
+          assert {"name": "edge", "containerPort": 8014, "protocol": "TCP"} in dep["ports"], "no edge containerPort"
+          assert {"name": "AUDIT_EDGE_ADDR", "value": ":8014"} in dep["env"], "no edge listener"
+          svc = one("Service", "-audit-service")
+          assert any(p["name"] == "edge" and p["targetPort"] == "edge" for p in svc["spec"]["ports"]), "Service has no edge port"
+          tok = one("Secret", "-internal-token")
+          assert len(base64.b64decode(tok["data"]["INTERNAL_SERVICE_TOKEN"])) >= 32, "the generated token is short"
+          for name in ("-access-service", "-audit-service", "-governance-service"):
+              c = one("Deployment", name)["spec"]["template"]["spec"]["containers"][0]
+              refs = [e["secretRef"]["name"] for e in c["envFrom"] if "secretRef" in e]
+              assert any(r.endswith("-internal-token") for r in refs), f"{name} does not mount the token"
+              assert refs.index(next(r for r in refs if r.endswith("-internal-token"))) < \
+                     refs.index(next(r for r in refs if r.endswith("-secrets"))), f"{name}: -secrets must win"
+          set_docs = [d for d in yaml.safe_load_all(open(sys.argv[2])) if d]
+          tok = [d for d in set_docs if d["kind"] == "Secret" and d["metadata"]["name"].endswith("-internal-token")][0]
+          assert base64.b64decode(tok["data"]["INTERNAL_SERVICE_TOKEN"]) == b"render-only-operator-token", "the operator's token lost"
+          print("audit edge: the Ingress reaches the edge port only; token generated, mounted by all three, and overridable")
+          PYEOF
+
       # The runtime role openidx_app has to exist before migration v53 looks
       # for it, and the migration Job's own role cannot create it. That is
       # ordering, and ordering here is one annotation: a bootstrap hook at a

@@ -9,8 +9,14 @@ The Audit Service provides event logging, compliance reporting, and data export.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/audit/events` | List events (filtered, paginated) |
-| POST | `/api/v1/audit/events` | Log an event |
+| POST | `/api/v1/audit/events` | Log an event (OpenIDX services only; see below) |
 | GET | `/api/v1/audit/events/:id` | Get event details |
+
+`POST /api/v1/audit/events` is how OpenIDX's own services write to the trail.
+It needs the internal service token in `X-Internal-Token` (the value of
+`INTERNAL_SERVICE_TOKEN`) and answers 401 without it, even to an
+administrator's access token. The shipped edges (APISIX, the Helm ingress, the
+lite install's nginx and the gateway service) do not route it at all.
 
 ### Query Parameters
 
