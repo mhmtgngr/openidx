@@ -47,9 +47,13 @@ type retentionPolicyRow struct {
 // RegisterRetentionAdminRoutes mounts the per-org retention CRUD surface.
 // MUST go behind middleware.Auth — the routes resolve org from the
 // requester's auth context.
-func (h *RemoteSupportHandler) RegisterRetentionAdminRoutes(r *gin.RouterGroup) {
+//
+// admin gates the write, for the reason the legal-hold writes carry it:
+// shortening the retention period is what lets the sweep purge recordings.
+// The read stays open; knowing the period grants nothing.
+func (h *RemoteSupportHandler) RegisterRetentionAdminRoutes(r *gin.RouterGroup, admin gin.HandlerFunc) {
 	r.GET("/recording-retention-policy", h.HandleGetRetentionPolicy)
-	r.PUT("/recording-retention-policy", h.HandleSetRetentionPolicy)
+	r.PUT("/recording-retention-policy", withGate(admin, h.HandleSetRetentionPolicy)...)
 }
 
 // HandleGetRetentionPolicy returns the retention policy for the caller's

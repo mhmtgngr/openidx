@@ -40,16 +40,22 @@ func NewKioskAPIHandler(logger *zap.Logger, db *database.PostgresDB, auditAgent 
 
 // RegisterKioskAdminRoutes mounts the admin endpoints under the given group.
 // MUST be mounted behind middleware.Auth — kiosk policy edits are admin ops.
-func (h *KioskAPIHandler) RegisterKioskAdminRoutes(r *gin.RouterGroup) {
+//
+// admin is the role gate on every write: a policy, once assigned to a device,
+// a group or a tag, locks the devices it reaches into the apps it names, so
+// creating, changing, assigning or removing one is administration. The reads
+// stay behind authentication alone; they grant nothing, and they report only
+// whether an exit PIN is set.
+func (h *KioskAPIHandler) RegisterKioskAdminRoutes(r *gin.RouterGroup, admin gin.HandlerFunc) {
 	r.GET("/kiosk/policies", h.HandleListPolicies)
-	r.POST("/kiosk/policies", h.HandleCreatePolicy)
+	r.POST("/kiosk/policies", withGate(admin, h.HandleCreatePolicy)...)
 	r.GET("/kiosk/policies/:id", h.HandleGetPolicy)
-	r.PUT("/kiosk/policies/:id", h.HandleUpdatePolicy)
-	r.DELETE("/kiosk/policies/:id", h.HandleDeletePolicy)
+	r.PUT("/kiosk/policies/:id", withGate(admin, h.HandleUpdatePolicy)...)
+	r.DELETE("/kiosk/policies/:id", withGate(admin, h.HandleDeletePolicy)...)
 
 	r.GET("/kiosk/policies/:id/assignments", h.HandleListAssignments)
-	r.POST("/kiosk/policies/:id/assignments", h.HandleAssignPolicy)
-	r.DELETE("/kiosk/assignments/:assignment_id", h.HandleUnassignPolicy)
+	r.POST("/kiosk/policies/:id/assignments", withGate(admin, h.HandleAssignPolicy)...)
+	r.DELETE("/kiosk/assignments/:assignment_id", withGate(admin, h.HandleUnassignPolicy)...)
 }
 
 // kioskPolicyRow is the wire shape returned to admins and embedded in

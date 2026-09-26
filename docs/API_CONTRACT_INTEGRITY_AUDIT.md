@@ -74,11 +74,14 @@ These are backend design questions; nothing was changed. Verified via the
 service route maps.
 
 1. **Ziti admin routes missing a role gate.** Agent-fleet
-   (`internal/access/agent_api.go`), kiosk (`kiosk_api.go`), and remote-support
+   (`internal/access/agent_api.go`) and remote-support
    (`remote_support_api.go`) admin routes are registered on the authenticated
    `/api/v1/access` group but, unlike the Ziti/BrowZer mutation routes, do
    **not** apply `svc.requireAdminRole()`. Any authenticated caller can reach
-   them. Consider adding the admin gate.
+   them. The console and the remote-support runbook give both surfaces to the
+   `operator` role, which the access service has no gate for, so the decision
+   is which tier they belong to. The kiosk policy writes (`kiosk_api.go`), the
+   recording-retention write and the legal-hold writes carry the admin gate.
 
 2. **Governance & provisioning/SCIM are JWT-only.** `internal/governance` and
    `internal/provisioning` enforce authentication but apply RBAC **only** when

@@ -262,9 +262,9 @@ func defaultSTUNServers() json.RawMessage {
 // MUST go behind middleware.Auth.
 //
 // stepUp is the freshness gate applied to starting a session and admin is the
-// role gate applied to the legal-hold surface. Both are parameters rather than
-// something this file reaches for because each is a method on Service and this
-// handler does not have one.
+// role gate applied to the legal-hold writes and the retention write. Both are
+// parameters rather than something this file reaches for because each is a
+// method on Service and this handler does not have one.
 //
 // WHY STARTING A SESSION IS GATED AND THE REST IS NOT. HandleStartSession opens
 // an INTERACTIVE remote-control session on a named device -- the default mode
@@ -304,7 +304,7 @@ func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGro
 	r.POST("/remote-support/sessions/:id/recording/finalize", h.HandleFinalizeRecording)
 	r.GET("/remote-support/sessions/:id/recording", h.HandleDownloadRecording)
 	// Per-tenant retention policy.
-	h.RegisterRetentionAdminRoutes(r)
+	h.RegisterRetentionAdminRoutes(r, admin)
 	// Legal hold workflow (exempts a session's recording from sweep).
 	h.RegisterLegalHoldAdminRoutes(r, admin)
 }
