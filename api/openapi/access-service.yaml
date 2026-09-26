@@ -85,6 +85,16 @@ paths:
     get:
       tags: [Auth]
       summary: OAuth callback
+      description: >-
+        With `code` and `state`, completes sign-in: it sets the proxy session
+        cookie, which is good on this host only, and redirects to the target
+        the login stored, checked again against the login's rule. With
+        `login_session`, serves a sign-in form for that pending OAuth request,
+        but only for the shape the OAuth service mints (44 characters of
+        padded base64url); anything else is a 400. The form is served under its
+        own Content-Security-Policy: a per-response nonce for its script and
+        style, `connect-src` the OAuth issuer, and `form-action`, `base-uri`,
+        `object-src` and `frame-ancestors` set to `'none'`.
       operationId: oauthCallback
       x-openidx-handler: internal/access.(*Service).handleCallback
       security: []
@@ -97,7 +107,18 @@ paths:
           in: query
           schema:
             type: string
+        - name: login_session
+          in: query
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{43}=$'
       responses:
+        '200':
+          description: The sign-in form for a pending login_session
+          content:
+            text/html:
+              schema:
+                type: string
         '302':
           description: Redirect after successful authentication
         '400':
