@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { isAxiosError } from 'axios'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Plus, Search, MoreHorizontal, Edit, Trash2, Shield, ShieldCheck, Key, ChevronLeft, ChevronRight } from 'lucide-react'
@@ -50,6 +51,13 @@ interface Permission {
   description: string
   resource: string
   action: string
+}
+
+// The identity API refuses the role name super_admin outside the install's
+// default organization, where it would make its holder a platform
+// administrator, and says so with this code.
+function reservedRoleName(error: Error): boolean {
+  return isAxiosError(error) && error.response?.data?.error === 'reserved_role_name'
 }
 
 export function RolesPage() {
@@ -150,7 +158,9 @@ export function RolesPage() {
     onError: (error: Error) => {
       toast({
         title: t('common.error'),
-        description: t('pages.roles.toasts.createFailed', { message: error.message }),
+        description: reservedRoleName(error)
+          ? t('pages.roles.toasts.reservedName')
+          : t('pages.roles.toasts.createFailed', { message: error.message }),
         variant: 'destructive',
       })
     },
@@ -173,7 +183,9 @@ export function RolesPage() {
     onError: (error: Error) => {
       toast({
         title: t('common.error'),
-        description: t('pages.roles.toasts.updateFailed', { message: error.message }),
+        description: reservedRoleName(error)
+          ? t('pages.roles.toasts.reservedName')
+          : t('pages.roles.toasts.updateFailed', { message: error.message }),
         variant: 'destructive',
       })
     },

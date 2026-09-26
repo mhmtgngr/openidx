@@ -90,8 +90,9 @@ type TenantResolverConfig struct {
 	// the X-Org-ID header is honored and whether the platform-admin
 	// marker should be attached to the context. It receives the gin
 	// context and should return true if the actor is a platform admin
-	// (typically: a super_admin role). When nil, the X-Org-ID header is
-	// ignored and the platform-admin marker is never set.
+	// (auth.SuperAdminPredicate: the super_admin role held in the install's
+	// default organization, IsPlatformAdmin). When nil, the X-Org-ID header
+	// is ignored and the platform-admin marker is never set.
 	//
 	// PRECONDITION: the predicate reads the GIN CONTEXT, which means it can
 	// only answer once the auth middleware has populated it. Mount this

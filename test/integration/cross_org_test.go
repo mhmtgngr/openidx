@@ -4,10 +4,13 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -461,6 +464,149 @@ func TestCrossOrgIsolation(t *testing.T) {
 		assert.Equal(t, before, crossOrgAuditCount(t, db, orgB),
 			"a refused crossing must not write a cross-org audit row")
 	})
+
+	// A super_admin role held in another organization is that organization's
+	// role, not the install's. The platform admin is super_admin held in the
+	// default organization (saToken). The identity API refuses the name
+	// outside the default organization, so B's role is written straight into
+	// the database, the way one created before that refusal would be; it makes
+	// B's user an administrator of B and of nothing else.
+	t.Run("a super_admin of another organization is not a platform admin", func(t *testing.T) {
+		const defaultOrgID = "00000000-0000-0000-0000-000000000010"
+
+		status, body := apiRequestWithOrg(t, "POST", identityURL+"/api/v1/identity/roles",
+			`{"name":"super_admin"}`, saToken, slugB)
+		require.Equal(t, 400, status, "the platform admin created super_admin in B: %v", body)
+		assert.Equal(t, "reserved_role_name", body["error"])
+
+		// B's user gets a password from the platform admin, working inside B.
+		const passwordB = "XorgUserB@123"
+		status, body = apiRequestWithOrg(t, "POST", identityURL+"/api/v1/identity/users/"+userB+"/set-password",
+			fmt.Sprintf(`{"password":%q}`, passwordB), saToken, slugB)
+		require.Equal(t, 200, status, "set B's user's password from inside B: %v", body)
+
+		var roleB string
+		bypassQueryRow(t, db, &roleB,
+			`INSERT INTO roles (name, description, org_id) VALUES ('super_admin', 'created by the cross-org integration test', $1) RETURNING id::text`,
+			orgB)
+		t.Cleanup(func() { bypassExec(t, db, `DELETE FROM roles WHERE id = $1`, roleB) })
+		mustExec(t, db, 1, `INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1, $2, $3)`, userB, roleB, orgB)
+
+		// Client ids are unique across the install and the seeded console
+		// belongs to the default organization, so B signs in through a client
+		// of its own.
+		clientB := "xorg-console-" + suffix
+		mustExec(t, db, 1, `
+			INSERT INTO oauth_clients (client_id, name, type, redirect_uris, grant_types, response_types,
+			                           scopes, pkce_required, api_access, org_id)
+			VALUES ($1, $1, 'public', $2::jsonb, '["authorization_code"]'::jsonb, '["code"]'::jsonb,
+			        '["openid", "profile", "email"]'::jsonb, true, true, $3)`,
+			clientB, fmt.Sprintf("[%q]", redirectURI), orgB)
+		t.Cleanup(func() { bypassExec(t, db, `DELETE FROM oauth_clients WHERE client_id = $1`, clientB) })
+
+		tokenB := loginInOrgAndGetToken(t, slugB, clientB, "xorg-user-"+suffix, passwordB)
+		claims := decodeJWTPayload(t, tokenB)
+		require.Equal(t, orgB, claims["org_id"], "the sign-in in B minted a token of another organization")
+		require.Contains(t, claims["roles"], "super_admin", "B's user does not hold B's super_admin role")
+
+		// It works in B, as B's administrator.
+		status, _ = apiRequestWithOrg(t, "GET", url, "", tokenB, slugB)
+		assert.Equal(t, 200, status, "B's super_admin could not read B's user in B")
+
+		// The organization API lists every organization for the platform
+		// admin, and for B's super_admin only the organizations they belong
+		// to: none.
+		orgIDs := func(token string) map[string]bool {
+			t.Helper()
+			status, list := apiRequestList(t, "GET", adminAPIURL+"/api/v1/organizations?limit=1000", "", token)
+			require.Equal(t, 200, status, "list organizations")
+			ids := map[string]bool{}
+			for _, o := range list {
+				if m, ok := o.(map[string]interface{}); ok {
+					id, _ := m["id"].(string)
+					ids[id] = true
+				}
+			}
+			return ids
+		}
+		all := orgIDs(saToken)
+		assert.True(t, all[orgA] && all[orgB] && all[defaultOrgID], "the platform admin's list is missing organizations: %v", all)
+		assert.Empty(t, orgIDs(tokenB), "B's super_admin listed organizations they are not a member of")
+
+		status, body = apiRequest(t, "PUT", adminAPIURL+"/api/v1/organizations/"+orgA,
+			`{"name":"renamed by B","plan":"free","status":"active"}`, tokenB)
+		assert.Equal(t, 403, status, "B's super_admin changed organization A: %v", body)
+
+		// Neither header moves B's super_admin out of B, and nothing is
+		// audited as a crossing.
+		beforeDefault, beforeA := crossOrgAuditCount(t, db, defaultOrgID), crossOrgAuditCount(t, db, orgA)
+		agents := adminAPIURL + "/api/v1/ai-agents"
+		status, body = apiRequestWithOrg(t, "GET", agents, "", tokenB, "default")
+		assert.Equal(t, 403, status, "B's super_admin was scoped to the default organization by X-Org-Slug: %v", body)
+		status, body = apiRequestWithOrgID(t, "GET", agents, "", tokenB, orgA)
+		require.Equal(t, 200, status, "admin-api /ai-agents: %v", body)
+		assert.True(t, listsOrgBAgent(t, body), "B's super_admin was moved out of B by X-Org-ID")
+		assert.Equal(t, beforeDefault, crossOrgAuditCount(t, db, defaultOrgID), "a refused crossing was audited")
+		assert.Equal(t, beforeA, crossOrgAuditCount(t, db, orgA), "a crossing that did not happen was audited")
+
+		status, _ = apiRequestWithOrg(t, "GET", url, "", tokenB, "default")
+		assert.Equal(t, 403, status, "B's super_admin acted in the default organization on identity-service")
+	})
+}
+
+// loginInOrgAndGetToken is loginAndGetToken for a user of the organization slug
+// names, signing in through client, a client of that organization. Every step
+// carries X-Org-Slug, as the gateway sets it from the tenant's host, so the
+// sign-in and the token's org_id are that organization's.
+func loginInOrgAndGetToken(t *testing.T, slug, client, username, password string) string {
+	t.Helper()
+	verifier, challenge := pkcePair()
+	q := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {client},
+		"redirect_uri":          {redirectURI},
+		"scope":                 {"openid profile email"},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+	}
+	req, err := http.NewRequest("GET", oauthURL+"/oauth/authorize?"+q.Encode(), nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Org-Slug", slug)
+	resp, err := httpClient.Do(req)
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	loginSession := extractLoginSession(resp, body)
+	require.NotEmpty(t, loginSession, "authorize in %s: status %d body %s", slug, resp.StatusCode, body)
+
+	status, loginBody := apiRequestWithOrg(t, "POST", oauthURL+"/oauth/login",
+		fmt.Sprintf(`{"username":%q,"password":%q,"login_session":%q}`, username, password, loginSession), "", slug)
+	require.Equal(t, http.StatusOK, status, "login in %s: %v", slug, loginBody)
+	code := extractAuthCode(loginBody)
+	require.NotEmpty(t, code, "login in %s: no authorization code: %v", slug, loginBody)
+
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"client_id":     {client},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {verifier},
+	}
+	req, err = http.NewRequest("POST", oauthURL+"/oauth/token", strings.NewReader(form.Encode()))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Org-Slug", slug)
+	resp, err = httpClient.Do(req)
+	require.NoError(t, err)
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "token in %s: %s", slug, body)
+	var tok map[string]interface{}
+	require.NoError(t, json.Unmarshal(body, &tok))
+	access, _ := tok["access_token"].(string)
+	require.NotEmpty(t, access, "token in %s: %s", slug, body)
+	return access
 }
 
 // seedPlatformAdmin creates a user in the default org holding the super_admin
@@ -481,15 +627,17 @@ func seedPlatformAdmin(t *testing.T, db *pgxpool.Pool, suffix string) (username,
 	userID := createTestUser(t, username, "xorg-super-"+suffix+"@example.test", password)
 	t.Cleanup(func() { deleteTestUser(t, userID) })
 
+	// The default organization's: a role of that name in any other
+	// organization makes nobody a platform admin.
 	var roleID string
 	err := db.QueryRow(context.Background(),
-		`SELECT id FROM roles WHERE name = 'super_admin'`).Scan(&roleID)
+		`SELECT id FROM roles WHERE name = 'super_admin' AND org_id = $1`, defaultOrgID).Scan(&roleID)
 	if err != nil {
 		mustExec(t, db, 1,
 			`INSERT INTO roles (name, description, org_id) VALUES ('super_admin', $1, $2)`,
 			"Platform administrator (created by the cross-org integration test)", defaultOrgID)
 		require.NoError(t, db.QueryRow(context.Background(),
-			`SELECT id FROM roles WHERE name = 'super_admin'`).Scan(&roleID))
+			`SELECT id FROM roles WHERE name = 'super_admin' AND org_id = $1`, defaultOrgID).Scan(&roleID))
 		t.Cleanup(func() {
 			// CASCADE on user_roles.role_id takes the grant with it.
 			bypassExec(t, db, `DELETE FROM roles WHERE id = $1`, roleID)

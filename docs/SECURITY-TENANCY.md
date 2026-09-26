@@ -68,11 +68,20 @@ API validator checks it against the organization the request resolved to:
   the key's own (the default organization for a key that records none).
 - A token with no `org_id` is refused with `401`; signing in again or
   refreshing replaces it.
-- A platform admin (`super_admin`) may act in another organization, by
-  `X-Org-Slug` (the console's organization selector) or `X-Org-ID`. Where the
-  resolver runs after authentication (admin-api), every such crossing writes a
+- A platform admin may act in another organization, by `X-Org-Slug` (the
+  console's organization selector) or `X-Org-ID`. Where the resolver runs
+  after authentication (admin-api), every such crossing writes a
   `platform_admin_cross_org_access` row to the target organization's audit
   trail.
+
+A platform admin is a user holding the `super_admin` role in the install's
+default organization (`00000000-0000-0000-0000-000000000010`): the token's
+signed `org_id` names that organization and its roles include `super_admin`.
+Roles are created per organization, so a `super_admin` role held in any other
+organization is that organization's role and grants nothing outside it; the
+identity API refuses to create a role with that name, or rename one to it,
+outside the default organization. The same rule decides who lists and
+administers every organization through the organization API.
 
 ### 6. A CI linter makes it un-bypassable by construction
 

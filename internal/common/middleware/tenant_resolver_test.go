@@ -236,7 +236,7 @@ func authenticatedIn(orgID string, roles ...string) gin.HandlerFunc {
 func superAdmin(c *gin.Context) bool {
 	roles, _ := c.Get("roles")
 	list, _ := roles.([]string)
-	return IsPlatformAdmin(list)
+	return IsPlatformAdmin(c.GetString("org_id"), list)
 }
 
 func TestTenantResolver_subdomain_agreeing_with_jwt(t *testing.T) {
@@ -294,9 +294,10 @@ func TestTenantResolver_subdomain_naming_another_org_than_the_jwt_is_refused(t *
 	}
 }
 
-// A platform admin switching organizations with the slug -- the console's org
-// selector -- is served, and the crossing is audited under the target org
-// exactly as an X-Org-ID crossing is.
+// A platform admin -- super_admin held in the default organization --
+// switching organizations with the slug, as the console's org selector does,
+// is served, and the crossing is audited under the target org exactly as an
+// X-Org-ID crossing is.
 func TestTenantResolver_platformAdmin_crossesWithTheSlug_audited(t *testing.T) {
 	var hookCalls int
 	var hookTarget orgctx.Org
@@ -313,7 +314,7 @@ func TestTenantResolver_platformAdmin_crossesWithTheSlug_audited(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/whatever", nil)
 	req.Header.Set("X-Org-Slug", "acme")
 
-	rec := runResolver(t, newFakeLookup(), cfg, got, req, authenticatedIn(bigcorpOrgID, "super_admin"))
+	rec := runResolver(t, newFakeLookup(), cfg, got, req, authenticatedIn(defaultOrgID, "super_admin"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -327,8 +328,8 @@ func TestTenantResolver_platformAdmin_crossesWithTheSlug_audited(t *testing.T) {
 
 	// Naming their own organization is no crossing, and nothing is audited.
 	hookCalls = 0
-	req.Header.Set("X-Org-Slug", "bigcorp")
-	rec = runResolver(t, newFakeLookup(), cfg, &capturedRequest{}, req, authenticatedIn(bigcorpOrgID, "super_admin"))
+	req.Header.Set("X-Org-Slug", "default")
+	rec = runResolver(t, newFakeLookup(), cfg, &capturedRequest{}, req, authenticatedIn(defaultOrgID, "super_admin"))
 	if rec.Code != http.StatusOK || hookCalls != 0 {
 		t.Fatalf("own org: status %d, audit calls %d; want 200 and none", rec.Code, hookCalls)
 	}
@@ -854,5 +855,41 @@ func TestTenantResolver_warningNeutralisesAHostilePath(t *testing.T) {
 	}
 	if !strings.Contains(path, "/api/v1/identity/users") {
 		t.Fatalf("path field = %q — cleaning must not cost the operator the route", path)
+	}
+}
+
+// super_admin held in any organization but the default one is that
+// organization's role, not the install's. Its holder is refused another
+// organization's slug like any administrator, X-Org-ID does not move them, and
+// the request carries no platform-admin marker -- the marker the organization
+// service reads to list and administer every organization.
+func TestTenantResolver_anotherOrganizationsSuperAdmin_isNotAPlatformAdmin(t *testing.T) {
+	var hookCalls int
+	cfg := TenantResolverConfig{
+		DefaultOrgFallback:     true,
+		DefaultOrgID:           defaultOrgID,
+		PlatformAdminPredicate: superAdmin,
+		OnPlatformCrossOrg:     func(*gin.Context, orgctx.Org) { hookCalls++ },
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/whatever", nil)
+	req.Header.Set("X-Org-Slug", "acme")
+	rec := runResolver(t, newFakeLookup(), cfg, &capturedRequest{}, req, authenticatedIn(bigcorpOrgID, "super_admin"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("X-Org-Slug acme: status = %d, want 403", rec.Code)
+	}
+
+	got := &capturedRequest{}
+	req = httptest.NewRequest(http.MethodGet, "/whatever", nil)
+	req.Header.Set("X-Org-ID", acmeOrgID)
+	rec = runResolver(t, newFakeLookup(), cfg, got, req, authenticatedIn(bigcorpOrgID, "super_admin"))
+	if rec.Code != http.StatusOK || got.org.ID != bigcorpOrgID {
+		t.Fatalf("X-Org-ID acme: status %d, org %+v; want 200 in bigcorp", rec.Code, got.org)
+	}
+	if got.isPlatformAdmin {
+		t.Fatal("the platform-admin marker was attached for another organization's super_admin")
+	}
+	if hookCalls != 0 {
+		t.Fatalf("audit hook fired %d times for a crossing that did not happen", hookCalls)
 	}
 }

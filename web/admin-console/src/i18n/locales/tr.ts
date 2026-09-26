@@ -1746,6 +1746,8 @@ const tr: typeof en = {
         deleteFailed: 'Rol silinemedi: {{message}}',
         permsUpdated: 'İzinler başarıyla güncellendi!',
         permsUpdateFailed: 'İzinler güncellenemedi: {{message}}',
+        reservedName:
+          '"super_admin" rol adı, varsayılan kuruluşun platform yöneticilerine ayrılmıştır. Başka bir ad seçin.',
       },
     },
     bulkOps: {

@@ -127,7 +127,8 @@ func TestGovernanceBindsATokenToItsOrganization(t *testing.T) {
 	}{
 		{"its own organization", orgA, orgA, "admin", http.StatusOK},
 		{"another organization", orgB, orgA, "admin", http.StatusForbidden},
-		{"a platform admin in another organization", orgB, orgA, "super_admin", http.StatusOK},
+		{"a platform admin in another organization", orgB, middleware.DefaultOrgID, "super_admin", http.StatusOK},
+		{"another organization's super_admin", orgB, orgA, "super_admin", http.StatusForbidden},
 		{"no organization", middleware.DefaultOrgID, "", "admin", http.StatusUnauthorized},
 	} {
 		if got := call(tc.resolved, tc.tokenOrg, tc.role); got != tc.want {

@@ -3157,6 +3157,23 @@ func (s *Service) GetRole(ctx context.Context, roleID string) (*Role, error) {
 	return &role, nil
 }
 
+// ErrReservedRoleName refuses the role name super_admin outside the install's
+// default organization.
+var ErrReservedRoleName = errors.New("the role name super_admin is reserved for the default organization")
+
+// isReservedRoleName reports whether a role of orgID may not be named name.
+//
+// super_admin held in the default organization is what makes a platform admin
+// (middleware.IsPlatformAdmin). Each organization's administrators create and
+// name that organization's roles, so without this any of them could create a
+// role of that name and hold it. The platform-admin rule does not rest on the
+// name; this keeps the name, compared without case or surrounding space, out
+// of every organization where it would not mean what it says.
+func isReservedRoleName(orgID, name string) bool {
+	return orgID != middleware.DefaultOrgID &&
+		strings.EqualFold(strings.TrimSpace(name), middleware.PlatformAdminRole)
+}
+
 // CreateRole creates a new role
 func (s *Service) CreateRole(ctx context.Context, role *Role) error {
 	s.logger.Info("Creating role", zap.String("name", role.Name))
@@ -3164,6 +3181,9 @@ func (s *Service) CreateRole(ctx context.Context, role *Role) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
+	}
+	if isReservedRoleName(org.ID, role.Name) {
+		return ErrReservedRoleName
 	}
 
 	if role.ID == "" {
@@ -3196,6 +3216,9 @@ func (s *Service) UpdateRole(ctx context.Context, role *Role) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
+	}
+	if isReservedRoleName(org.ID, role.Name) {
+		return ErrReservedRoleName
 	}
 
 	result, err := s.db.Pool.Exec(ctx, `
@@ -4473,6 +4496,10 @@ func (s *Service) handleCreateRole(c *gin.Context) {
 
 	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
 	if err := s.CreateRole(ctx, &role); err != nil {
+		if errors.Is(err, ErrReservedRoleName) {
+			c.JSON(400, gin.H{"error": "reserved_role_name", "error_description": err.Error()})
+			return
+		}
 		s.logger.Error("failed to create role", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -4493,6 +4520,10 @@ func (s *Service) handleUpdateRole(c *gin.Context) {
 	role.ID = roleID
 	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
 	if err := s.UpdateRole(ctx, &role); err != nil {
+		if errors.Is(err, ErrReservedRoleName) {
+			c.JSON(400, gin.H{"error": "reserved_role_name", "error_description": err.Error()})
+			return
+		}
 		if err.Error() == "role not found" {
 			c.JSON(404, gin.H{"error": "role not found"})
 			return

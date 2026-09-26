@@ -1755,6 +1755,8 @@ const en = {
         deleteFailed: 'Failed to delete role: {{message}}',
         permsUpdated: 'Permissions updated successfully!',
         permsUpdateFailed: 'Failed to update permissions: {{message}}',
+        reservedName:
+          'The role name "super_admin" is reserved for the platform administrators of the default organization. Choose another name.',
       },
     },
     bulkOps: {

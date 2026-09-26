@@ -107,8 +107,14 @@ func TestAuthBindsATokenToItsOrganization(t *testing.T) {
 		t.Fatalf("another organization: error = %v", p.body["error"])
 	}
 
-	if p := probeOrg(t, []gin.HandlerFunc{resolvedTo(orgB), auth}, tokenIn(t, kid, orgA, "super_admin")); p.status != http.StatusOK {
+	// A platform admin -- super_admin held in the default organization -- may
+	// act in another organization. super_admin held in any other organization
+	// is that organization's role and binds like any other.
+	if p := probeOrg(t, []gin.HandlerFunc{resolvedTo(orgB), auth}, tokenIn(t, kid, DefaultOrgID, "super_admin")); p.status != http.StatusOK {
 		t.Fatalf("a platform admin in another organization: status %d, want 200", p.status)
+	}
+	if p := probeOrg(t, []gin.HandlerFunc{resolvedTo(orgB), auth}, tokenIn(t, kid, orgA, "super_admin")); p.status != http.StatusForbidden || p.reached {
+		t.Fatalf("another organization's super_admin: status %d, handler reached %v; want 403 before the handler", p.status, p.reached)
 	}
 
 	// No organization resolved yet: cmd/admin-api, where the resolver runs
@@ -190,10 +196,36 @@ func TestCheckTokenOrg(t *testing.T) {
 	if _, err := CheckTokenOrg(c, map[string]interface{}{OrgIDClaim: orgA, "roles": []interface{}{"admin"}}); !errors.Is(err, ErrWrongOrganization) {
 		t.Errorf("another org: %v", err)
 	}
-	if org, err := CheckTokenOrg(c, map[string]interface{}{OrgIDClaim: orgA, "roles": []interface{}{"super_admin"}}); err != nil || org != orgA {
+	if org, err := CheckTokenOrg(c, map[string]interface{}{OrgIDClaim: DefaultOrgID, "roles": []interface{}{"super_admin"}}); err != nil || org != DefaultOrgID {
 		t.Errorf("platform admin: %q, %v", org, err)
+	}
+	if _, err := CheckTokenOrg(c, map[string]interface{}{OrgIDClaim: orgA, "roles": []interface{}{"super_admin"}}); !errors.Is(err, ErrWrongOrganization) {
+		t.Errorf("another organization's super_admin: %v", err)
 	}
 	if org, err := CheckTokenOrg(c, map[string]interface{}{OrgIDClaim: orgB}); err != nil || org != orgB {
 		t.Errorf("own org: %q, %v", org, err)
+	}
+}
+
+// A platform admin is the super_admin role held in the install's default
+// organization. The same role held in any other organization is that
+// organization's role, and a look-alike name is no role of the install's.
+func TestIsPlatformAdmin(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		org   string
+		roles []string
+		want  bool
+	}{
+		{"super_admin in the default organization", DefaultOrgID, []string{"admin", "super_admin"}, true},
+		{"super_admin in another organization", orgA, []string{"super_admin"}, false},
+		{"super_admin in no organization", "", []string{"super_admin"}, false},
+		{"admin in the default organization", DefaultOrgID, []string{"admin"}, false},
+		{"look-alikes in the default organization", DefaultOrgID, []string{"Super_Admin", "super_admin "}, false},
+		{"no roles", DefaultOrgID, nil, false},
+	} {
+		if got := IsPlatformAdmin(tc.org, tc.roles); got != tc.want {
+			t.Errorf("%s: IsPlatformAdmin = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

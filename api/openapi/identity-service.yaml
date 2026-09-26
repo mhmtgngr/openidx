@@ -492,6 +492,11 @@ paths:
       responses:
         '201':
           description: Role created
+        '400':
+          description: >-
+            `reserved_role_name`: the name `super_admin` (compared without case
+            or surrounding space) is reserved for the install's default
+            organization, where it makes its holder a platform administrator.
 
   /api/v1/identity/roles/{id}:
     get:
@@ -522,6 +527,10 @@ paths:
       responses:
         '200':
           description: Role updated
+        '400':
+          description: >-
+            `reserved_role_name`: a role outside the install's default
+            organization may not be renamed to `super_admin`.
     delete:
       tags: [Roles]
       summary: Delete role

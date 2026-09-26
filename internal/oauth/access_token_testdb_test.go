@@ -46,6 +46,7 @@ type tokenHarness struct {
 	suffix      string
 	jwksURL     string
 	orgs        middleware.OrgLookup
+	orgService  *organization.Service
 	identityAPI *gin.Engine
 	adminAPI    *gin.Engine
 	oauthAPI    *gin.Engine
@@ -79,7 +80,8 @@ func newTokenHarness(t *testing.T) *tokenHarness {
 		clients: NewPostgresOAuthClientStore(db),
 	}
 
-	h.orgs = organization.NewOrgLookup(organization.NewService(db, rdb, &config.Config{}, zap.NewNop()))
+	h.orgService = organization.NewService(db, rdb, &config.Config{}, zap.NewNop())
+	h.orgs = organization.NewOrgLookup(h.orgService)
 	resolver := middleware.TenantResolver(h.orgs, middleware.TenantResolverConfig{
 		DefaultOrgFallback:     true,
 		DefaultOrgID:           middleware.DefaultOrgID,
