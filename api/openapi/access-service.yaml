@@ -7750,6 +7750,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Submit device posture
+      description: >-
+        Any signed-in user, for their own device. identity_id is one of
+        the calling user's own identities in their organization, by its id
+        or its controller id (the ziti_id /ziti/sync/my-identity returns);
+        any other identity answers 404 and nothing is recorded.
       operationId: submitDevicePosture
       x-openidx-handler: internal/access.(*Service).handleSubmitDevicePosture
       requestBody:
@@ -7773,6 +7778,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
 

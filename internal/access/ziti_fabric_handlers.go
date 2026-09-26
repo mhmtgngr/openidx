@@ -3,11 +3,14 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
@@ -523,6 +526,13 @@ func (s *Service) handleGetPostureSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, summary)
 }
 
+// handleSubmitDevicePosture is a device's report of its own posture, the mobile
+// app's self-report. The results it records are what the proxy's posture
+// checks read for the identity, so the identity has to be the caller's: one of
+// the calling user's own identities in their organization, named by its id or
+// by its controller id (the ziti_id /ziti/sync/my-identity returns). Any other
+// identity -- another user's, another organization's, one that does not exist
+// -- gets the same 404 and nothing is recorded.
 func (s *Service) handleSubmitDevicePosture(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
@@ -537,15 +547,20 @@ func (s *Service) handleSubmitDevicePosture(c *gin.Context) {
 		return
 	}
 
-	report, err := s.ziti().EvaluateDeviceHealth(c.Request.Context(), req.IdentityID, &req.Posture)
+	identityID, ok := s.callersOwnZitiIdentity(c, req.IdentityID)
+	if !ok {
+		return
+	}
+
+	report, err := s.ziti().EvaluateDeviceHealth(c.Request.Context(), identityID, &req.Posture)
 	if err != nil {
 		s.logger.Error("Device posture evaluation failed",
-			zap.String("identity_id", req.IdentityID), zap.Error(err))
+			zap.String("identity_id", identityID), zap.Error(err))
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("submit device posture", err), s.logger)
 		return
 	}
 
-	s.logAuditEvent(c, "device_posture_evaluated", req.IdentityID, "ziti_identity", map[string]interface{}{
+	s.logAuditEvent(c, "device_posture_evaluated", identityID, "ziti_identity", map[string]interface{}{
 		"overall_passed": report.OverallPassed,
 		"score":          report.Score,
 		"critical":       report.Critical,
@@ -553,6 +568,44 @@ func (s *Service) handleSubmitDevicePosture(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, report)
+}
+
+// callersOwnZitiIdentity resolves ref -- an identity's id or its controller id
+// -- to the id of an identity the calling user holds in the organization the
+// request resolved to. Otherwise it writes the refusal and returns false.
+func (s *Service) callersOwnZitiIdentity(c *gin.Context, ref string) (string, bool) {
+	// The caller comes from the verified token only. A credential with no user
+	// behind it -- a service account's API key -- holds no identity.
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return "", false
+	}
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return "", false
+	}
+	notFound := func() (string, bool) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ziti identity not found"})
+		return "", false
+	}
+	if _, err := uuid.Parse(userID); err != nil {
+		return notFound()
+	}
+	var id string
+	err = s.db.Pool.QueryRow(c.Request.Context(), `
+		SELECT id::text FROM ziti_identities
+		 WHERE (id::text = $1 OR ziti_id = $1) AND user_id = $2::uuid AND org_id = $3`,
+		ref, userID, org.ID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return notFound()
+	}
+	if err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("submit device posture", err), s.logger)
+		return "", false
+	}
+	return id, true
 }
 
 // ---------------------------------------------------------------------------

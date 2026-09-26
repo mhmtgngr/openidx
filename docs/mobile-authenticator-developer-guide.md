@@ -453,7 +453,10 @@ The phone can enroll as a managed device and report posture, which drives device
   (`trusted=false` until an admin approves).
 - **Report posture** — `POST /api/v1/access/ziti/posture/device`
   `{ "identity_id":"<ziti_id>", "posture": {…screen-lock, root/jailbreak, os_version…} }`
-  → health report `{ overall_passed, score, … }` (`ziti_fabric_handlers.go:427-457`).
+  → health report `{ overall_passed, score, … }` (`handleSubmitDevicePosture`).
+  `identity_id` is the signed-in user's own identity: the `ziti_id` that
+  `GET ziti/sync/my-identity` returns, or its id. Any other identity gets 404
+  and nothing is recorded.
   The engine collects the signals (`agent/internal/checks`, surfaced through `agent/mobile/mobile.go`'s `Posture()`), shared with desktop.
 - **My devices** — `GET /api/v1/access/my-devices`.
 - Trust is granted admin-side; it flips `known_devices.trusted=true` and re-adds the
