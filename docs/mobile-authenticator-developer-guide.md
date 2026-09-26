@@ -407,21 +407,23 @@ in a `react-native-webview`).
 ### 5.2 BrowZer clientless (browser) access — ✅ implemented, zero native integration
 BrowZer runs the Ziti SDK **in the browser**; the user's OIDC login (which the app
 already does) authorizes the overlay dial (`internal/access/apisix_routes.go:52-108`,
-`ziti_user_sync.go:275-300`). For an HTTP app, just open its BrowZer URL
-(`browzer_domain`/`browzer_path` on a service row, §5.3) in a WebView. A **login-time
+`ziti_user_sync.go:275-300`). For an HTTP app, just open its BrowZer URL (the
+`action.url` of the app in `GET /api/v1/access/my/resources`) in a WebView. A **login-time
 device-trust gate** may apply when `OPENIDX_REQUIRE_DEVICE_TRUST_FOR_CLIENTLESS=true`
 (`internal/oauth/service.go:1624-1634`) — an untrusted device is refused and a
 device-trust request is filed.
 
 ### 5.3 List connectable services — ✅ implemented
-`GET /api/v1/access/ziti/services` **[verified]** (returns 3 on the ref box):
+`GET /api/v1/access/my/ziti/services`: the services the signed-in user can
+reach, with where each one lives.
 ```jsonc
-{ "services": [
-  { "id":"…","ziti_id":"…","name":"acme-server1-ssh","protocol":"tcp",
-    "host":"10.0.5.20","port":22,"enabled":true,
-    "browzer_path":"/apisix","browzer_domain":"apisix.localtest.me" } ] }
+{ "linked": true, "enrolled": true,
+  "services": [
+    { "name":"acme-server1-ssh","host":"192.0.2.20","port":22,"protocol":"tcp" } ] }
 ```
-`name` is the Ziti service a native SDK dials; `browzer_*` gives the clientless URL.
+`name` is the Ziti service a native SDK dials. `GET /api/v1/access/ziti/services`
+is the organization's whole service list, for operators and administrators; a
+plain user gets 403 from it.
 
 ### 5.4 Native overlay dial (Phase 3) — 🚧 scaffolded, the one real code TODO
 Goal: the phone becomes a first-class Ziti endpoint so a native SSH/RDP client (or the
@@ -545,7 +547,7 @@ artifact name and the key that signed it can ever come apart — including if th
 `GET /api/v1/identity/mfa/methods`.
 
 **Access (`/api/v1/access`, access-service, Bearer):**
-`GET ziti/services` · `GET ziti/sync/my-identity` ·
+`GET my/ziti/services` · `GET ziti/sync/my-identity` ·
 `POST agent/enroll/oauth` · `POST ziti/posture/device` · `GET my-devices` ·
 `GET pam/entries` · `POST pam/entries/:id/request` · `POST pam/entries/:id/connect` ·
 `POST pam/sessions/:id/end` · `GET guacamole/my-connections`.

@@ -14,8 +14,16 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
-// handleBrowZerStatus returns the current BrowZer configuration state
+// handleBrowZerStatus returns the current BrowZer configuration state. The
+// configuration exists once for the install; the ids of the controller objects
+// it created (the JWT signer, the auth, dial and edge-router policies) are the
+// install's, so anyone but an install administrator gets whether BrowZer is on
+// and where its bootstrapper answers, and nothing else.
 func (s *Service) handleBrowZerStatus(c *gin.Context) {
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
 	if s.ziti() == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"enabled": false,
@@ -31,6 +39,10 @@ func (s *Service) handleBrowZerStatus(c *gin.Context) {
 			"configured":       false,
 			"bootstrapper_url": "http://localhost:1408",
 		})
+		return
+	}
+	if !view.install {
+		c.JSON(http.StatusOK, gin.H{"enabled": cfg.Enabled, "bootstrapper_url": cfg.BootstrapperURL})
 		return
 	}
 

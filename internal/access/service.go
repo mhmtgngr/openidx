@@ -459,30 +459,43 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// is gated like the route list it summarises.
 		api.GET("/overview", adminOnly, svc.handleAccessOverview)
 
-		// OpenZiti management endpoints
-		api.GET("/ziti/status", svc.handleZitiStatus)
-		// Guided network setup: checklist + install advisor + per-route advice.
-		// The advice names every Ziti route's upstream, like the route list, and
-		// carries the install-wide user sync counts; the console shows it on
-		// the admin-only Network Setup page.
-		api.GET("/ziti/setup/status", adminOnly, svc.handleZitiSetupStatus)
-		api.GET("/ziti/reconciler/status", svc.handleZitiReconcilerStatus)
-		// Ziti management mutations are admin-only: creating identities/services
-		// mints overlay-join credentials and reconfigures the zero-trust fabric,
-		// so a plain authenticated tenant user must NOT reach them. GET reads of
-		// the fabric's own configuration and status stay open to any
-		// authenticated user (org-scoped lists/status). The reads that describe
-		// other users -- their identities, sessions, devices, posture and risk
-		// -- carry `operatorTier`, the tier of the console pages that show them.
-		// The device posture self-report stays open because a device submits
-		// its own posture. `adminOnly` is the shared gate.
+		// OpenZiti management endpoints.
 		//
-		// `platformOnly` follows adminOnly on the routes whose settings exist
-		// once for the whole install -- the OpenZiti controller connection, the
-		// BrowZer domain and certificate, the platform TLS certificate -- which
-		// an organization's admin role cannot authorize on its own. See
+		// One controller serves every organization, and its objects carry no
+		// tenant (ziti_scope.go). So each route here that reads it is one of
+		// three kinds:
+		//
+		//   - a status probe any signed-in user may call, answering whether
+		//     the overlay is up with the organization's own counts and nothing
+		//     that names an address;
+		//   - a read of the organization's own part of the fabric, which needs
+		//     `operatorTier` and shows an install administrator the whole
+		//     controller and anyone else only what their organization owns;
+		//   - a read of something no organization owns -- the routers, the
+		//     metrics, the edge-router and authentication policies, the JWT
+		//     signers, the AI ledger -- which needs `adminOnly, platformOnly`.
+		//
+		// Writes that reconfigure the fabric need `adminOnly`, the shared
+		// gate. The self-service routes (/my/ziti/services,
+		// /ziti/sync/my-identity and the device posture self-report) answer
+		// for the caller only.
+		//
+		// `platformOnly` follows adminOnly on the routes whose object or
+		// setting exists once for the whole install -- the OpenZiti controller
+		// connection, the BrowZer domain and certificate, the platform TLS
+		// certificate, and the controller's install-wide objects -- which an
+		// organization's admin role cannot authorize on its own. See
 		// middleware.RequirePlatformAdmin.
 		platformOnly := svc.requirePlatformAdmin()
+		api.GET("/ziti/status", svc.handleZitiStatus)
+		// Guided network setup: checklist + install advisor + per-route advice.
+		// It reports the controller's address, the identity directory and every
+		// edge router, and carries the install's user sync counts: the setup of
+		// the install's network, not of one organization's part of it.
+		api.GET("/ziti/setup/status", adminOnly, platformOnly, svc.handleZitiSetupStatus)
+		// The reconciler converges every organization's services and reports
+		// each by name.
+		api.GET("/ziti/reconciler/status", adminOnly, platformOnly, svc.handleZitiReconcilerStatus)
 
 		// Upstream pools: the operator's declaration of a route's backend set.
 		// Admin-only like the route list, reads included: a pool's members are
@@ -508,7 +521,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/settings/test", adminOnly, platformOnly, svc.handleTestZitiSettings)
 		api.POST("/ziti/connect", adminOnly, platformOnly, svc.handleZitiConnect)
 		api.POST("/ziti/disconnect", adminOnly, platformOnly, svc.handleZitiDisconnect)
-		api.GET("/ziti/services", svc.handleListZitiServices)
+		// The organization's services, with the internal host and port each
+		// one forwards to.
+		api.GET("/ziti/services", operatorTier, svc.handleListZitiServices)
 		api.POST("/ziti/services", adminOnly, svc.handleCreateZitiService)
 		api.DELETE("/ziti/services/:id", adminOnly, svc.handleDeleteZitiService)
 		// The identity list names every user who has one.
@@ -520,26 +535,32 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/routes/:id/enable", adminOnly, svc.handleEnableZitiOnRoute)
 		api.POST("/ziti/routes/:id/disable", adminOnly, svc.handleDisableZitiOnRoute)
 
-		// Phase 2: Fabric & Router management
-		api.GET("/ziti/fabric/overview", svc.handleGetFabricOverview)
-		api.GET("/ziti/fabric/routers", svc.handleListEdgeRouters)
+		// Phase 2: Fabric & Router management. The overview and the health
+		// are the organization's view of the fabric (orgFabricHealth); the
+		// routers, which name the hosts they run on, and the metrics, which
+		// count every organization's objects, are the install's.
+		api.GET("/ziti/fabric/overview", operatorTier, svc.handleGetFabricOverview)
+		api.GET("/ziti/fabric/routers", adminOnly, platformOnly, svc.handleListEdgeRouters)
 		// One-command router/gateway onboarding: mint an edge-router enrollment
 		// JWT + a copy-paste command; the router joins via the #all bootstrap.
 		api.POST("/ziti/fabric/routers/enroll-token", adminOnly, svc.handleRouterEnrollToken)
-		api.GET("/ziti/fabric/routers/:id", svc.handleGetEdgeRouter)
-		api.GET("/ziti/fabric/health", svc.handleGetHealth)
+		api.GET("/ziti/fabric/routers/:id", adminOnly, platformOnly, svc.handleGetEdgeRouter)
+		api.GET("/ziti/fabric/health", operatorTier, svc.handleGetHealth)
 		api.POST("/ziti/fabric/reconnect", adminOnly, svc.handleReconnect)
-		api.GET("/ziti/fabric/metrics", svc.handleGetMetrics)
-		api.GET("/ziti/fabric/service-policies", svc.handleListServicePolicies)
+		api.GET("/ziti/fabric/metrics", adminOnly, platformOnly, svc.handleGetMetrics)
+		api.GET("/ziti/fabric/service-policies", operatorTier, svc.handleListServicePolicies)
 
-		// Ziti service connectivity test (diagnostic dial; read-like)
-		api.POST("/ziti/services/:id/test", svc.handleTestZitiService)
+		// Ziti service connectivity test: the server dials the service's
+		// upstream and returns the dial errors, which name its address, so it
+		// is gated like the route connection test.
+		api.POST("/ziti/services/:id/test", adminOnly, svc.handleTestZitiService)
 		// Admin "behind the scenes": explain how a resource is wired end to end
 		// and which link is broken, so diagnosis needs no CLI.
 		api.GET("/ziti/services/by-name/:name/explain", adminOnly, svc.handleExplainZitiService)
 
-		// Edge router policy CRUD
-		api.GET("/ziti/edge-router-policies", svc.handleListEdgeRouterPolicies)
+		// Edge router policy CRUD. The policies decide which identities of any
+		// organization may use which routers.
+		api.GET("/ziti/edge-router-policies", adminOnly, platformOnly, svc.handleListEdgeRouterPolicies)
 		api.POST("/ziti/edge-router-policies", adminOnly, svc.handleCreateEdgeRouterPolicy)
 		api.PUT("/ziti/edge-router-policies/:id", adminOnly, svc.handleUpdateEdgeRouterPolicy)
 		api.DELETE("/ziti/edge-router-policies/:id", adminOnly, svc.handleDeleteEdgeRouterPolicy)
@@ -552,10 +573,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Identity attribute management
 		api.PATCH("/ziti/identities/:id/attributes", adminOnly, svc.handlePatchIdentityAttributes)
 
-		// User-to-Ziti identity sync. The status counts the users of the whole
-		// install, the unsynced list names users, and the map pairs each user
-		// with their identity; the console reads them on operator pages (the
-		// dashboard for staff, Users).
+		// User-to-Ziti identity sync. The status counts the organization's
+		// users (an install administrator's, the install's), the unsynced list
+		// names users, and the map pairs each user with their identity; the
+		// console reads them on operator pages (the dashboard for staff, Users).
 		api.GET("/ziti/sync/status", operatorTier, svc.handleGetSyncStatus)
 		api.GET("/ziti/sync/unsynced", operatorTier, svc.handleGetUnsyncedUsers)
 		api.GET("/ziti/sync/user-map", operatorTier, svc.handleGetUserZitiMap)
@@ -593,17 +614,17 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// enriched with connection details. Deliberately not adminOnly.
 		api.GET("/my/ziti/services", svc.handleMyZitiServices)
 
-		// Phase 3: Posture checks. Definitions are admin-managed and readable
-		// by anyone; one identity's posture, and its evaluation, describe that
-		// identity's device, so they carry the operator tier. The device
-		// self-report is data-plane and stays open.
-		api.GET("/ziti/posture/checks", svc.handleListPostureChecks)
+		// Phase 3: Posture checks. Definitions are admin-managed; they, the
+		// summary of the organization's results and one identity's posture and
+		// its evaluation carry the operator tier. The device self-report is
+		// data-plane and stays open.
+		api.GET("/ziti/posture/checks", operatorTier, svc.handleListPostureChecks)
 		api.POST("/ziti/posture/checks", adminOnly, svc.handleCreatePostureCheck)
 		api.PUT("/ziti/posture/checks/:id", adminOnly, svc.handleUpdatePostureCheck)
 		api.DELETE("/ziti/posture/checks/:id", adminOnly, svc.handleDeletePostureCheck)
 		api.GET("/ziti/posture/identities/:id", operatorTier, svc.handleGetIdentityPosture)
 		api.POST("/ziti/posture/identities/:id/evaluate", operatorTier, svc.handleEvaluateIdentityPosture)
-		api.GET("/ziti/posture/summary", svc.handleGetPostureSummary)
+		api.GET("/ziti/posture/summary", operatorTier, svc.handleGetPostureSummary)
 		api.POST("/ziti/posture/device", svc.handleSubmitDevicePosture)
 
 		// EDR/MDM posture sources (CrowdStrike/Intune/Jamf) — ingest external
@@ -630,32 +651,35 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Agent-facing gateway: POST /api/v1/access/mcp/:server/tools/:tool.
 		api.POST("/mcp/:server/tools/:tool", svc.handleMCPInvoke)
 
-		// Phase 3: Policy sync
-		api.GET("/ziti/policy-sync", svc.handleListPolicySyncStates)
+		// Phase 3: Policy sync. policy_sync_state has no organization.
+		api.GET("/ziti/policy-sync", adminOnly, platformOnly, svc.handleListPolicySyncStates)
 		api.POST("/ziti/policy-sync", adminOnly, svc.handleSyncGovernancePolicy)
 		api.POST("/ziti/policy-sync/:id/trigger", adminOnly, svc.handleTriggerPolicySync)
 		api.DELETE("/ziti/policy-sync/:id", adminOnly, svc.handleDeletePolicySyncState)
 
-		// Config types & configs management
-		api.GET("/ziti/config-types", svc.handleListConfigTypes)
-		api.GET("/ziti/configs", svc.handleListConfigs)
+		// Config types & configs management. A host.v1 config names the
+		// internal address its service forwards to.
+		api.GET("/ziti/config-types", adminOnly, platformOnly, svc.handleListConfigTypes)
+		api.GET("/ziti/configs", operatorTier, svc.handleListConfigs)
 		api.POST("/ziti/configs", adminOnly, svc.handleCreateConfig)
 		api.PUT("/ziti/configs/:id", adminOnly, svc.handleUpdateConfig)
 		api.DELETE("/ziti/configs/:id", adminOnly, svc.handleDeleteConfig)
 
-		// Auth policies & JWT signers management
-		api.GET("/ziti/auth-policies", svc.handleListAuthPolicies)
+		// Auth policies & JWT signers management: how every organization's
+		// identities authenticate to the controller.
+		api.GET("/ziti/auth-policies", adminOnly, platformOnly, svc.handleListAuthPolicies)
 		api.POST("/ziti/auth-policies", adminOnly, svc.handleCreateAuthPolicy)
 		api.PUT("/ziti/auth-policies/:id", adminOnly, svc.handleUpdateAuthPolicy)
 		api.DELETE("/ziti/auth-policies/:id", adminOnly, svc.handleDeleteAuthPolicy)
-		api.GET("/ziti/jwt-signers", svc.handleListJWTSigners)
+		api.GET("/ziti/jwt-signers", adminOnly, platformOnly, svc.handleListJWTSigners)
 		api.POST("/ziti/jwt-signers", adminOnly, svc.handleCreateJWTSigner)
 		api.PUT("/ziti/jwt-signers/:id", adminOnly, svc.handleUpdateJWTSigner)
 		api.DELETE("/ziti/jwt-signers/:id", adminOnly, svc.handleDeleteJWTSigner)
 
-		// Terminators management
-		api.GET("/ziti/terminators", svc.handleListTerminators)
-		api.GET("/ziti/terminators/:id", svc.handleGetTerminator)
+		// Terminators management. A terminator names the address a service
+		// is hosted at.
+		api.GET("/ziti/terminators", operatorTier, svc.handleListTerminators)
+		api.GET("/ziti/terminators/:id", operatorTier, svc.handleGetTerminator)
 		api.DELETE("/ziti/terminators/:id", adminOnly, svc.handleDeleteTerminator)
 
 		// Ziti session visibility: who is connected to which service right now.
@@ -667,22 +691,24 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// sessions, anomaly ledger, fused identity risk scores, policy-hygiene
 		// recommendations, and quarantine response. Analysis mutates the
 		// ledger/baselines and quarantine rewrites identity attributes, so
-		// those are admin-only. The reads score and name identities, so they
-		// carry the operator tier.
-		api.GET("/ziti/ai/insights", operatorTier, svc.handleZitiAIInsights)
+		// those are admin-only. The baselines, the ledger and the quarantine
+		// list have no organization, and the risk scores and recommendations
+		// are computed over every identity, service and policy on the
+		// controller, so the reads need an install administrator.
+		api.GET("/ziti/ai/insights", adminOnly, platformOnly, svc.handleZitiAIInsights)
 		api.POST("/ziti/ai/analyze", adminOnly, svc.handleZitiAIAnalyze)
-		api.GET("/ziti/ai/anomalies", operatorTier, svc.handleListZitiAnomalies)
+		api.GET("/ziti/ai/anomalies", adminOnly, platformOnly, svc.handleListZitiAnomalies)
 		api.POST("/ziti/ai/anomalies/:id/status", adminOnly, svc.handleUpdateZitiAnomalyStatus)
-		api.GET("/ziti/ai/identity-risk", operatorTier, svc.handleZitiIdentityRisk)
-		api.GET("/ziti/ai/recommendations", operatorTier, svc.handleZitiAIRecommendations)
+		api.GET("/ziti/ai/identity-risk", adminOnly, platformOnly, svc.handleZitiIdentityRisk)
+		api.GET("/ziti/ai/recommendations", adminOnly, platformOnly, svc.handleZitiAIRecommendations)
 		api.POST("/ziti/ai/identities/:id/quarantine", adminOnly, svc.handleQuarantineZitiIdentity)
 		api.POST("/ziti/ai/identities/:id/unquarantine", adminOnly, svc.handleUnquarantineZitiIdentity)
 		// Controller version / OpenZiti v2.0 feature detection
-		api.GET("/ziti/controller/features", svc.handleZitiControllerFeatures)
+		api.GET("/ziti/controller/features", adminOnly, platformOnly, svc.handleZitiControllerFeatures)
 
-		// Phase 5: Certificates
-		api.GET("/ziti/certificates", svc.handleListCertificates)
-		api.GET("/ziti/certificates/expiry-alerts", svc.handleGetCertExpiryAlerts)
+		// Phase 5: Certificates: the organization's certificate inventory.
+		api.GET("/ziti/certificates", operatorTier, svc.handleListCertificates)
+		api.GET("/ziti/certificates/expiry-alerts", operatorTier, svc.handleGetCertExpiryAlerts)
 		api.POST("/ziti/certificates/:id/rotate", adminOnly, svc.handleRotateCertificate)
 
 		// BrowZer management endpoints
@@ -694,8 +720,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/browzer/services/:id/enable", adminOnly, svc.handleEnableBrowZerOnService)
 		api.POST("/ziti/browzer/services/:id/disable", adminOnly, svc.handleDisableBrowZerOnService)
 
-		// BrowZer bootstrapper management panel endpoints
-		api.GET("/ziti/browzer/management", svc.handleBrowZerManagement)
+		// BrowZer bootstrapper management panel endpoints. The panel shows the
+		// install's bootstrapper, its certificate and every BrowZer target.
+		api.GET("/ziti/browzer/management", adminOnly, platformOnly, svc.handleBrowZerManagement)
 		// The bootstrapper's certificate, key and domain are the install's.
 		api.POST("/ziti/browzer/certificates", adminOnly, platformOnly, svc.handleBrowZerCertUpload)
 		api.DELETE("/ziti/browzer/certificates", adminOnly, platformOnly, svc.handleBrowZerCertRevert)
@@ -849,7 +876,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// PAM OpenZiti reach mode — per-entry zero-trust target hop toggle,
 		// broker capability probe, and the tunneler binding list.
 		api.GET("/pam/broker/status", svc.handlePamBrokerStatus)
-		api.GET("/pam/broker/ziti-bindings", svc.requireAdminRole(), svc.handlePamZitiBindings)
+		// The binding list is install-wide: one broker tunnel serves every
+		// organization's entries.
+		api.GET("/pam/broker/ziti-bindings", svc.requireAdminRole(), platformOnly, svc.handlePamZitiBindings)
 		api.POST("/pam/entries/:id/ziti/enable", svc.requireAdminRole(), svc.handlePamEnableZiti)
 		api.POST("/pam/entries/:id/ziti/disable", svc.requireAdminRole(), svc.handlePamDisableZiti)
 
@@ -927,10 +956,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 		// Ziti discovery and import: discovery lists the controller's services
 		// that no route manages yet, and import turns them into proxy routes.
-		api.GET("/ziti/discover", adminOnly, svc.handleDiscoverZitiServices)
+		// A service no organization owns is the install's (ziti_scope.go).
+		api.GET("/ziti/discover", adminOnly, platformOnly, svc.handleDiscoverZitiServices)
 		api.POST("/ziti/import", adminOnly, svc.handleImportZitiService)
 		api.POST("/ziti/import/bulk", adminOnly, svc.handleBulkImportZitiServices)
-		api.GET("/ziti/unmanaged/count", adminOnly, svc.handleGetUnmanagedServicesCount)
+		api.GET("/ziti/unmanaged/count", adminOnly, platformOnly, svc.handleGetUnmanagedServicesCount)
 
 		// App publishing (register, discover, classify, publish). These are
 		// admin management routes — registering an internal app and publishing

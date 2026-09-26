@@ -138,11 +138,15 @@ func (s *Service) handleBulkImportZitiServices(c *gin.Context) {
 	})
 }
 
+// discoverZitiServices lists the controller's services and marks the ones an
+// organization already manages. The routes that reach it need an install
+// administrator, and "managed" means managed by any organization: a service
+// another organization owns is not one to import.
 func (s *Service) discoverZitiServices(ctx context.Context) (*DiscoveryResult, error) {
-	org, err := orgctx.From(ctx)
-	if err != nil {
+	if _, err := orgctx.From(ctx); err != nil {
 		return nil, err
 	}
+	all := orgctx.WithBypassRLS(ctx)
 
 	// Get all services from Ziti controller
 	zitiServices, err := s.ziti().ListServices(ctx)
@@ -151,8 +155,9 @@ func (s *Service) discoverZitiServices(ctx context.Context) (*DiscoveryResult, e
 	}
 
 	// Get managed services from our database
-	rows, err := s.db.Pool.Query(ctx,
-		`SELECT ziti_id FROM ziti_services WHERE ziti_id IS NOT NULL AND org_id = $1`, org.ID)
+	rows, err := s.db.Pool.Query(all,
+		//orgscope:ignore install-wide discovery behind requirePlatformAdmin: a service any organization manages is not importable
+		`SELECT ziti_id FROM ziti_services WHERE ziti_id IS NOT NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query managed services: %w", err)
 	}
@@ -167,8 +172,9 @@ func (s *Service) discoverZitiServices(ctx context.Context) (*DiscoveryResult, e
 	}
 
 	// Also check proxy_routes for ziti_service_name
-	rows2, err := s.db.Pool.Query(ctx,
-		`SELECT ziti_service_name FROM proxy_routes WHERE ziti_enabled = true AND ziti_service_name IS NOT NULL AND org_id = $1`, org.ID)
+	rows2, err := s.db.Pool.Query(all,
+		//orgscope:ignore install-wide discovery behind requirePlatformAdmin: a service any organization's route names is managed
+		`SELECT ziti_service_name FROM proxy_routes WHERE ziti_enabled = true AND ziti_service_name IS NOT NULL`)
 	if err == nil {
 		defer rows2.Close()
 		for rows2.Next() {

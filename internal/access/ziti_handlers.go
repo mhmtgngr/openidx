@@ -34,52 +34,57 @@ func (s *Service) zitiConsoleURL(ctx context.Context) string {
 	return strings.TrimRight(ctrlURL, "/") + "/zac/"
 }
 
+// handleZitiStatus says whether OpenZiti is configured and reachable, with the
+// organization's own service and identity counts. The controller's version,
+// its management endpoints, the console URL derived from them and the
+// controller's own error text describe the install and can name its internal
+// addresses, so only an install administrator gets them.
 func (s *Service) handleZitiStatus(c *gin.Context) {
-	consoleURL := s.zitiConsoleURL(c.Request.Context())
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
 	if s.ziti() == nil {
-		c.JSON(http.StatusOK, gin.H{
-			"enabled":     false,
-			"message":     "OpenZiti integration is not configured",
-			"sdk_ready":   false,
-			"console_url": consoleURL,
-		})
+		status := gin.H{
+			"enabled":   false,
+			"message":   "OpenZiti integration is not configured",
+			"sdk_ready": false,
+		}
+		if view.install {
+			status["console_url"] = s.zitiConsoleURL(c.Request.Context())
+		}
+		c.JSON(http.StatusOK, status)
 		return
 	}
 
 	status := gin.H{
-		"enabled":     true,
-		"sdk_ready":   s.ziti().IsInitialized(),
-		"console_url": consoleURL,
+		"enabled":   true,
+		"sdk_ready": s.ziti().IsInitialized(),
 	}
 
 	// Check controller connectivity
 	version, err := s.ziti().GetControllerVersion(c.Request.Context())
-	if err != nil {
-		status["controller_reachable"] = false
-		status["controller_error"] = err.Error()
-	} else {
-		status["controller_reachable"] = true
-		status["controller_version"] = version
-	}
-
-	// Management endpoint pool (HA failover state). ha=true when more than one
-	// controller endpoint is configured via ZITI_CTRL_URLS.
-	endpoints := s.ziti().ControllerEndpoints()
-	status["controller_endpoints"] = endpoints
-	status["ha"] = len(endpoints) > 1
-
-	org, oerr := orgctx.From(c.Request.Context())
-	if oerr != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
-		return
+	status["controller_reachable"] = err == nil
+	if view.install {
+		if err != nil {
+			status["controller_error"] = err.Error()
+		} else {
+			status["controller_version"] = version
+		}
+		// Management endpoint pool (HA failover state). ha=true when more than
+		// one controller endpoint is configured via ZITI_CTRL_URLS.
+		endpoints := s.ziti().ControllerEndpoints()
+		status["controller_endpoints"] = endpoints
+		status["ha"] = len(endpoints) > 1
+		status["console_url"] = s.zitiConsoleURL(c.Request.Context())
 	}
 
 	// Count local DB records
 	var serviceCount, identityCount int
-	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_services WHERE org_id = $1", org.ID).Scan(&serviceCount); err != nil {
+	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_services WHERE org_id = $1", view.orgID).Scan(&serviceCount); err != nil {
 		s.logger.Warn("Failed to count ziti services", zap.Error(err))
 	}
-	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_identities WHERE org_id = $1", org.ID).Scan(&identityCount); err != nil {
+	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_identities WHERE org_id = $1", view.orgID).Scan(&identityCount); err != nil {
 		s.logger.Warn("Failed to count ziti identities", zap.Error(err))
 	}
 	status["services_count"] = serviceCount

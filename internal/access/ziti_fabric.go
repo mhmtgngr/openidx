@@ -80,6 +80,14 @@ type ZitiMetric struct {
 	RecordedAt time.Time         `json:"recorded_at"`
 }
 
+// sdkReady reports whether the SDK context this service dials and hosts
+// through is up.
+func (zm *ZitiManager) sdkReady() bool {
+	zm.mu.RLock()
+	defer zm.mu.RUnlock()
+	return zm.initialized && zm.zitiCtx != nil
+}
+
 // ---- Edge Router Management ----
 
 // ListEdgeRouters retrieves all edge routers from the Ziti controller and syncs them to the database
@@ -223,10 +231,7 @@ func (zm *ZitiManager) HealthCheck(ctx context.Context) (*FabricHealthStatus, er
 		}
 	}
 
-	// Check SDK context readiness
-	zm.mu.RLock()
-	status.SDKReady = zm.initialized && zm.zitiCtx != nil
-	zm.mu.RUnlock()
+	status.SDKReady = zm.sdkReady()
 
 	// Check router status
 	if status.ControllerReachable {

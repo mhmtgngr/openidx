@@ -19,8 +19,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-
-	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ChainHop is one link in the path a packet takes from a client to the target.
@@ -53,15 +51,18 @@ type ResourceDiagnosis struct {
 // handleExplainZitiService explains how a Ziti service is wired end to end and
 // where the chain breaks. Admin-only: it intentionally exposes fabric internals,
 // which is the whole point — admins keep the behind-the-scenes view that end
-// users no longer need.
+// users no longer need. The walk reads the whole controller by name, so an
+// organization's admin gets it for their organization's own services only, and
+// the 404 an unknown name gets for any other; an install administrator can
+// explain any name.
 func (s *Service) handleExplainZitiService(c *gin.Context) {
 	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OpenZiti is not configured"})
 		return
 	}
 	ctx := c.Request.Context()
-	if _, err := orgctx.From(ctx); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+	view, ok := s.zitiViewFor(c)
+	if !ok {
 		return
 	}
 
@@ -69,6 +70,18 @@ func (s *Service) handleExplainZitiService(c *gin.Context) {
 	if name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "service name is required"})
 		return
+	}
+	if !view.install {
+		_, own, err := s.ownedZitiServices(ctx, view.orgID)
+		if err != nil {
+			s.logger.Error("explain: could not read the organization's services", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to explain the service"})
+			return
+		}
+		if !own[name] {
+			c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
+			return
+		}
 	}
 
 	d := s.explainService(ctx, name)

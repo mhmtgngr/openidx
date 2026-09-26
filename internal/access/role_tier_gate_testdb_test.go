@@ -75,7 +75,8 @@ func TestOperatorPagesNeedTheOperatorTier(t *testing.T) {
 		{http.MethodPost, "/api/v1/access/agents/" + pending + "/approve", ""},
 		{http.MethodPost, "/api/v1/access/agent/qr", `{"description":"qr-` + f.suffix + `"}`},
 		// Users, Devices, the Ops Cockpit, Network Topology, and the Ziti
-		// pages that show one identity at a time.
+		// pages that show one identity at a time or the organization's part of
+		// the fabric (ziti_org_scope_testdb_test.go drives what each one shows).
 		{http.MethodGet, "/api/v1/access/ziti/identities", ""},
 		{http.MethodGet, "/api/v1/access/ziti/sessions", ""},
 		{http.MethodGet, "/api/v1/access/ziti/sync/status", ""},
@@ -83,10 +84,17 @@ func TestOperatorPagesNeedTheOperatorTier(t *testing.T) {
 		{http.MethodGet, "/api/v1/access/ziti/sync/user-map", ""},
 		{http.MethodGet, "/api/v1/access/ziti/posture/identities/" + identity, ""},
 		{http.MethodPost, "/api/v1/access/ziti/posture/identities/" + identity + "/evaluate", ""},
-		{http.MethodGet, "/api/v1/access/ziti/ai/insights", ""},
-		{http.MethodGet, "/api/v1/access/ziti/ai/anomalies", ""},
-		{http.MethodGet, "/api/v1/access/ziti/ai/identity-risk", ""},
-		{http.MethodGet, "/api/v1/access/ziti/ai/recommendations", ""},
+		{http.MethodGet, "/api/v1/access/ziti/services", ""},
+		{http.MethodGet, "/api/v1/access/ziti/fabric/overview", ""},
+		{http.MethodGet, "/api/v1/access/ziti/fabric/health", ""},
+		{http.MethodGet, "/api/v1/access/ziti/fabric/service-policies", ""},
+		{http.MethodGet, "/api/v1/access/ziti/configs", ""},
+		{http.MethodGet, "/api/v1/access/ziti/terminators", ""},
+		{http.MethodGet, "/api/v1/access/ziti/terminators/term-" + f.suffix, ""},
+		{http.MethodGet, "/api/v1/access/ziti/posture/checks", ""},
+		{http.MethodGet, "/api/v1/access/ziti/posture/summary", ""},
+		{http.MethodGet, "/api/v1/access/ziti/certificates", ""},
+		{http.MethodGet, "/api/v1/access/ziti/certificates/expiry-alerts", ""},
 		{http.MethodGet, "/api/v1/access/devices/enriched", ""},
 	}
 
@@ -225,8 +233,9 @@ func TestNetworkSetupNeedsAnAdmin(t *testing.T) {
 }
 
 // What the tiers leave alone: a user's own devices, enrollment and reach, and
-// the reads of the fabric's own configuration and status that name no other
-// user. A plain user is refused by none of the tier gates here.
+// the status probes that say whether the overlay is up and carry nothing but
+// the organization's own counts. A plain user is refused by none of the tier
+// gates here.
 func TestSelfServiceAndConfigurationReadsStayOpen(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	f := newAdminGateFixture(t)
@@ -242,9 +251,9 @@ func TestSelfServiceAndConfigurationReadsStayOpen(t *testing.T) {
 		{http.MethodGet, "/api/v1/access/agent/enroll/session/00000000-0000-0000-0000-000000000000/status"},
 		{http.MethodGet, "/api/v1/access/agent/apk-info"},
 		{http.MethodGet, "/api/v1/access/ziti/status"},
-		{http.MethodGet, "/api/v1/access/ziti/services"},
-		{http.MethodGet, "/api/v1/access/ziti/posture/checks"},
-		{http.MethodGet, "/api/v1/access/ziti/posture/summary"},
+		{http.MethodGet, "/api/v1/access/ziti/browzer/status"},
+		{http.MethodGet, "/api/v1/access/health/ziti"},
+		{http.MethodGet, "/api/v1/access/health/integrations"},
 		{http.MethodGet, "/api/v1/access/remote-support/sessions/" + session + "/legal-holds"},
 		{http.MethodGet, "/api/v1/access/recording-retention-policy"},
 		{http.MethodGet, "/api/v1/access/kiosk/policies"},

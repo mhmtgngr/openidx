@@ -201,6 +201,33 @@ route serving the request's host. The nginx configuration generated for
 BrowZer takes a route only when its host, path, landing path and upstream are
 plain values that nginx cannot read as syntax
 (`internal/access/browzer_config_values.go`).
+## The OpenZiti controller
+
+One OpenZiti controller serves every organization on an install. Its services,
+identities, policies, configs, terminators and sessions have no organization
+of their own, so the access service decides what each caller sees of it. Three
+mirror tables under the RLS belt record who owns what: `ziti_services` (by the
+controller's id and by name, which the controller keeps unique),
+`ziti_identities` and `ziti_service_policies`. An object that none of them
+gives to an organization is the install's.
+
+- Reading an organization's part of the fabric needs the operator tier. An
+  install administrator, as above, sees the whole controller. Anyone else sees
+  their organization's services, the configs and terminators of those
+  services, its service policies, and the sessions between its identities and
+  its services.
+- Reading what no organization owns needs an install administrator: the edge
+  routers and their policies, the authentication policies and JWT signers, the
+  config types, the fabric metrics, the reconciler and network-setup state,
+  the BrowZer bootstrapper, the AI ledger, discovery of unmanaged services, the
+  governance-policy syncs and the PAM broker's bindings.
+- The status probes (`/ziti/status`, `/health/ziti`, `/health/integrations`
+  and `/ziti/browzer/status`) stay open to any signed-in user. They say whether
+  the overlay is up and count the organization's own services and identities.
+  The controller's version, addresses and error text go to an install
+  administrator only.
+
+The rules are in `internal/access/ziti_scope.go`.
 
 ## What multi-tenancy covers
 

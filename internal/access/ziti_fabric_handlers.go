@@ -1,6 +1,7 @@
 package access
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -26,8 +27,26 @@ func (s *Service) zitiUnavailable(c *gin.Context) bool {
 // Fabric & Router handlers
 // ---------------------------------------------------------------------------
 
+// handleGetFabricOverview is the fabric's health, its routers and its recent
+// metrics for an install administrator, and for anyone else the health their
+// organization may see (orgFabricHealth) with no routers and no metrics: the
+// routers name the hosts they run on, and the metrics count every
+// organization's services and identities.
 func (s *Service) handleGetFabricOverview(c *gin.Context) {
 	if s.zitiUnavailable(c) {
+		return
+	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
+	if !view.install {
+		health, err := s.orgFabricHealth(c.Request.Context(), view.orgID)
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get fabric overview", err), s.logger)
+			return
+		}
+		c.JSON(http.StatusOK, FabricOverview{Health: *health, RecentMetrics: []ZitiMetric{}, Routers: []ZitiEdgeRouterInfo{}})
 		return
 	}
 	overview, err := s.ziti().GetFabricOverview(c.Request.Context())
@@ -36,6 +55,37 @@ func (s *Service) handleGetFabricOverview(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, overview)
+}
+
+// orgFabricHealth is the fabric's health as one organization sees it. Whether
+// the controller answers, whether this service's SDK is up and how many edge
+// routers are online is state every organization's traffic shares and names
+// nothing, so it is kept; the counts are the organization's own, from the
+// mirror, in place of the controller's; and the details, whose errors can
+// carry the controller's address, are left out.
+func (s *Service) orgFabricHealth(ctx context.Context, orgID string) (*FabricHealthStatus, error) {
+	zm := s.ziti()
+	h := &FabricHealthStatus{LastChecked: time.Now(), SDKReady: zm.sdkReady()}
+	if _, err := zm.GetControllerVersion(ctx); err == nil {
+		h.ControllerReachable = true
+		if routers, err := zm.ListEdgeRouters(ctx); err == nil {
+			h.RoutersTotal = len(routers)
+			for _, r := range routers {
+				if r.IsOnline {
+					h.RoutersOnline++
+				}
+			}
+		}
+	}
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM ziti_services WHERE org_id = $1),
+		       (SELECT COUNT(*) FROM ziti_identities WHERE org_id = $1),
+		       (SELECT COUNT(*) FROM ziti_service_policies WHERE org_id = $1)`, orgID).
+		Scan(&h.ServicesCount, &h.IdentitiesCount, &h.PoliciesCount)
+	if err != nil {
+		return nil, err
+	}
+	return h, nil
 }
 
 func (s *Service) handleListEdgeRouters(c *gin.Context) {
@@ -63,8 +113,23 @@ func (s *Service) handleGetEdgeRouter(c *gin.Context) {
 	c.JSON(http.StatusOK, router)
 }
 
+// handleGetHealth is the fabric's health: the controller's for an install
+// administrator, and for anyone else the part their organization may see.
 func (s *Service) handleGetHealth(c *gin.Context) {
 	if s.zitiUnavailable(c) {
+		return
+	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
+	if !view.install {
+		health, err := s.orgFabricHealth(c.Request.Context(), view.orgID)
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get health status", err), s.logger)
+			return
+		}
+		c.JSON(http.StatusOK, health)
 		return
 	}
 	status, err := s.ziti().HealthCheck(c.Request.Context())
@@ -126,14 +191,36 @@ func (s *Service) handleGetMetrics(c *gin.Context) {
 	c.JSON(http.StatusOK, metrics)
 }
 
+// handleListServicePolicies lists the controller's service policies, which
+// name the services and identity attributes they join. An install
+// administrator sees them all; anyone else sees their organization's, as the
+// ziti_service_policies mirror records them.
 func (s *Service) handleListServicePolicies(c *gin.Context) {
 	if s.zitiUnavailable(c) {
+		return
+	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
 		return
 	}
 	policies, err := s.ziti().ListServicePolicies(c.Request.Context())
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to list service policies", err), s.logger)
 		return
+	}
+	if !view.install {
+		own, err := s.ownedZitiPolicies(c.Request.Context(), view.orgID)
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to list service policies", err), s.logger)
+			return
+		}
+		mine := make([]ZitiServicePolicyInfo, 0, len(own))
+		for _, p := range policies {
+			if own[p.ID] {
+				mine = append(mine, p)
+			}
+		}
+		policies = mine
 	}
 	c.JSON(http.StatusOK, policies)
 }
@@ -413,14 +500,25 @@ func (s *Service) handleEvaluateIdentityPosture(c *gin.Context) {
 	})
 }
 
+// handleGetPostureSummary summarizes the organization's posture checks and
+// results. The governance-policy sync counts in it come from policy_sync_state,
+// which has no organization, so only an install administrator gets them.
 func (s *Service) handleGetPostureSummary(c *gin.Context) {
 	if s.zitiUnavailable(c) {
+		return
+	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
 		return
 	}
 	summary, err := s.ziti().GetPostureCheckSummary(c.Request.Context())
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get posture check summary", err), s.logger)
 		return
+	}
+	if !view.install {
+		delete(summary, "total_policy_syncs")
+		delete(summary, "error_policy_syncs")
 	}
 	c.JSON(http.StatusOK, summary)
 }

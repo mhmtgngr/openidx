@@ -13,8 +13,16 @@ import (
 // Ziti Session Visibility handlers
 // ---------------------------------------------------------------------------
 
+// handleListZitiSessions lists the controller's sessions: who is connected to
+// which service. An install administrator sees them all; anyone else sees the
+// sessions between their organization's identities and its services (see
+// ziti_scope.go).
 func (s *Service) handleListZitiSessions(c *gin.Context) {
 	if s.zitiUnavailable(c) {
+		return
+	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
 		return
 	}
 
@@ -41,39 +49,40 @@ func (s *Service) handleListZitiSessions(c *gin.Context) {
 		return
 	}
 
-	type sessionIdentity struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	type sessionService struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	type zitiSession struct {
-		ID        string           `json:"id"`
-		Type      string           `json:"type"`
-		Identity  *sessionIdentity `json:"identity,omitempty"`
-		Service   *sessionService  `json:"service,omitempty"`
-		CreatedAt string           `json:"createdAt"`
-		UpdatedAt string           `json:"updatedAt"`
+	var ownIdentities, ownServices map[string]bool
+	if !view.install {
+		ctx := c.Request.Context()
+		if ownIdentities, err = s.ownedZitiIdentities(ctx, view.orgID); err == nil {
+			ownServices, _, err = s.ownedZitiServices(ctx, view.orgID)
+		}
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("list ziti sessions", err), s.logger)
+			return
+		}
 	}
 
-	// Parse each session; Ziti embeds identity/service as nested _links or inline objects
+	type zitiSession struct {
+		ID        string         `json:"id"`
+		Type      string         `json:"type"`
+		Identity  *zitiEntityRef `json:"identity,omitempty"`
+		Service   *zitiEntityRef `json:"service,omitempty"`
+		CreatedAt string         `json:"createdAt"`
+		UpdatedAt string         `json:"updatedAt"`
+	}
+
 	var results []zitiSession
 	for _, raw := range resp.Data {
 		var entry struct {
-			ID        string          `json:"id"`
-			Type      string          `json:"type"`
-			CreatedAt string          `json:"createdAt"`
-			UpdatedAt string          `json:"updatedAt"`
-			Token     string          `json:"token"`
-			Identity  json.RawMessage `json:"identity,omitempty"`
-			Service   json.RawMessage `json:"service,omitempty"`
-			// Alternative: identityId / serviceId
-			IdentityID string `json:"identityId,omitempty"`
-			ServiceID  string `json:"serviceId,omitempty"`
+			ID        string `json:"id"`
+			Type      string `json:"type"`
+			CreatedAt string `json:"createdAt"`
+			UpdatedAt string `json:"updatedAt"`
 		}
 		if err := json.Unmarshal(raw, &entry); err != nil {
+			continue
+		}
+		identity, service := zitiSessionEnds(raw)
+		if !view.install && (!ownIdentities[identity.ID] || !ownServices[service.ID]) {
 			continue
 		}
 
@@ -83,29 +92,12 @@ func (s *Service) handleListZitiSessions(c *gin.Context) {
 			CreatedAt: entry.CreatedAt,
 			UpdatedAt: entry.UpdatedAt,
 		}
-
-		// Try to parse embedded identity object
-		if len(entry.Identity) > 0 {
-			var ident sessionIdentity
-			if err := json.Unmarshal(entry.Identity, &ident); err == nil && ident.ID != "" {
-				sess.Identity = &ident
-			}
+		if identity.ID != "" {
+			sess.Identity = &identity
 		}
-		if sess.Identity == nil && entry.IdentityID != "" {
-			sess.Identity = &sessionIdentity{ID: entry.IdentityID, Name: entry.IdentityID}
+		if service.ID != "" {
+			sess.Service = &service
 		}
-
-		// Try to parse embedded service object
-		if len(entry.Service) > 0 {
-			var svc sessionService
-			if err := json.Unmarshal(entry.Service, &svc); err == nil && svc.ID != "" {
-				sess.Service = &svc
-			}
-		}
-		if sess.Service == nil && entry.ServiceID != "" {
-			sess.Service = &sessionService{ID: entry.ServiceID, Name: entry.ServiceID}
-		}
-
 		results = append(results, sess)
 	}
 
