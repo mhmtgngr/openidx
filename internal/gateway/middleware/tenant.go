@@ -16,7 +16,7 @@ import (
 // The middleware always strips a client-supplied X-Org-Slug — a
 // caller must never pick its own tenant — and, when baseDomain is
 // configured (TENANT_BASE_DOMAIN), re-injects the header from the
-// request's Host: "acme.openidx.io" → "X-Org-Slug: acme". Only a
+// request's Host: "acme.example.com" → "X-Org-Slug: acme". Only a
 // single label directly under the base domain qualifies; the bare
 // base domain, multi-level subdomains, and unrelated hosts forward
 // with no header, which leaves backends on their default-org
@@ -41,7 +41,7 @@ func OrgSlugHeader(baseDomain string) gin.HandlerFunc {
 }
 
 // tenantLabel extracts the single hostname label directly under the
-// base-domain suffix (".openidx.io"), or "" if the host doesn't match
+// base-domain suffix (".example.com"), or "" if the host doesn't match
 // that shape. Hostnames are case-insensitive; an optional port is
 // ignored.
 func tenantLabel(host, suffix string) string {

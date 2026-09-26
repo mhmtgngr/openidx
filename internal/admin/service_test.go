@@ -112,7 +112,7 @@ func TestSettingsDefaults(t *testing.T) {
 	settings := &Settings{
 		General: GeneralSettings{
 			OrganizationName: "OpenIDX",
-			SupportEmail:     "support@openidx.io",
+			SupportEmail:     "support@example.com",
 			DefaultLanguage:  "en",
 			DefaultTimezone:  "UTC",
 		},

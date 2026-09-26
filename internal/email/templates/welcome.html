@@ -30,13 +30,15 @@
                 <li>Define access policies and governance rules</li>
                 <li>Monitor activity with audit logs</li>
               </ul>
+              {{if .URL}}
               <table cellpadding="0" cellspacing="0" style="margin:0 auto 30px;">
                 <tr>
                   <td style="background-color:#1a56db;border-radius:6px;text-align:center;">
-                    <a href="https://openidx.io/docs" style="display:inline-block;padding:14px 32px;color:#ffffff;text-decoration:none;font-size:16px;font-weight:bold;">Get Started</a>
+                    <a href="{{.URL}}" style="display:inline-block;padding:14px 32px;color:#ffffff;text-decoration:none;font-size:16px;font-weight:bold;">Sign in</a>
                   </td>
                 </tr>
               </table>
+              {{end}}
             </td>
           </tr>
           <tr>

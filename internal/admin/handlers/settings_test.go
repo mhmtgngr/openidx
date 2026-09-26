@@ -571,7 +571,7 @@ func TestResetSettingsHandler(t *testing.T) {
 	// Test default settings values
 	settings := handler.getDefaultSettings()
 	assert.Equal(t, "OpenIDX", settings.General.OrganizationName)
-	assert.Equal(t, "support@openidx.io", settings.General.SupportEmail)
+	assert.Empty(t, settings.General.SupportEmail, "the default names no support address")
 	assert.Equal(t, 12, settings.Security.PasswordPolicy.MinLength)
 }
 
@@ -686,9 +686,9 @@ func TestTOTPSettingsSerialization(t *testing.T) {
 func TestWebAuthnSettingsSerialization(t *testing.T) {
 	webauthn := WebAuthnSettings{
 		Enabled:              true,
-		RelyingPartyID:       "openidx.io",
+		RelyingPartyID:       "login.example.com",
 		RelyingPartyName:     "OpenIDX",
-		RelyingPartyOrigin:   "https://openidx.io",
+		RelyingPartyOrigin:   "https://login.example.com",
 		AuthenticatorTimeout: 60,
 		RequireResidentKey:   false,
 		UserVerification:     "preferred",
@@ -700,7 +700,7 @@ func TestWebAuthnSettingsSerialization(t *testing.T) {
 	var decoded WebAuthnSettings
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
-	assert.Equal(t, "openidx.io", decoded.RelyingPartyID)
+	assert.Equal(t, "login.example.com", decoded.RelyingPartyID)
 	assert.Equal(t, "preferred", decoded.UserVerification)
 }
 
@@ -773,7 +773,9 @@ func TestDefaultSettingsStructure(t *testing.T) {
 	settings := handler.getDefaultSettings()
 
 	assert.Equal(t, "OpenIDX", settings.General.OrganizationName)
-	assert.Equal(t, "support@openidx.io", settings.General.SupportEmail)
+	assert.Empty(t, settings.General.SupportEmail, "the default names no support address")
+	assert.Empty(t, settings.Security.MFA.WebAuthn.RelyingPartyID, "the default names no relying party")
+	assert.Empty(t, settings.Security.MFA.WebAuthn.RelyingPartyOrigin, "the default names no relying party origin")
 	assert.Equal(t, "en", settings.General.DefaultLanguage)
 	assert.Equal(t, "UTC", settings.General.DefaultTimezone)
 	assert.Equal(t, 12, settings.Security.PasswordPolicy.MinLength)

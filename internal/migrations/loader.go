@@ -1490,5 +1490,12 @@ func allMigrations() []*Migration {
 			UpSQL:       oauthClientsTokenExchangeAudiencesUp,
 			DownSQL:     oauthClientsTokenExchangeAudiencesDown,
 		},
+		{
+			Version:     210,
+			Name:        "unowned_domain_defaults",
+			Description: "Clear the settings values that named a domain this project does not own, where they are still the shipped defaults: the support address migration 014 seeded into the system settings document, and the support address and WebAuthn relying party ID and origin the console's settings handler wrote into admin_console_settings when an administrator saved or reset the settings. The project has never owned the domain (SECURITY.md), so anyone may register it, and the defaults are empty now. Each statement matches the exact shipped value, so a value an administrator typed is untouched. None of these can be working: the support address is only displayed, and the WebAuthn fields are not the relying party a passkey is bound to (that is the identity service's WEBAUTHN_RP_ID), so no passkey is invalidated. updated_at and updated_by are left alone, since this is not an administrator's change. Down restores nothing: putting the domain back is what the migration exists to prevent.",
+			UpSQL:       unownedDomainDefaultsUp,
+			DownSQL:     unownedDomainDefaultsDown,
+		},
 	}
 }

@@ -288,7 +288,7 @@ type EmailSender interface {
 	SendVerificationEmail(ctx context.Context, to, userName, token, baseURL string) error
 	SendInvitationEmail(ctx context.Context, to, inviterName, token, baseURL string) error
 	SendPasswordResetEmail(ctx context.Context, to, userName, token, baseURL string) error
-	SendWelcomeEmail(ctx context.Context, to, userName string) error
+	SendWelcomeEmail(ctx context.Context, to, userName, baseURL string) error
 	SendAsync(ctx context.Context, to, subject, templateName string, data map[string]interface{}) error
 }
 
@@ -6628,7 +6628,7 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 
 	// Send welcome email
 	if s.emailService != nil {
-		s.emailService.SendWelcomeEmail(c.Request.Context(), email, req.FirstName)
+		s.emailService.SendWelcomeEmail(c.Request.Context(), email, req.FirstName, s.publicBaseURL())
 	}
 
 	// Publish webhook

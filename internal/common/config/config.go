@@ -255,7 +255,7 @@ type Config struct {
 	AccessAppsDomain string `mapstructure:"access_apps_domain"`
 
 	// Multi-tenancy: the wildcard domain tenants live under
-	// (e.g. "openidx.io" for acme.openidx.io). When set, the gateway
+	// (e.g. "example.com" for acme.example.com). When set, the gateway
 	// derives the X-Org-Slug header from the request's subdomain.
 	// Empty (the default) disables subdomain tenant resolution.
 	TenantBaseDomain string `mapstructure:"tenant_base_domain"`
@@ -1037,6 +1037,16 @@ func Load(serviceName string) (*Config, error) {
 	}
 
 	cfg.ServiceName = serviceName
+
+	// ACCESS_PROXY_DOMAIN present and empty means the install has not said
+	// where the access proxy is reachable: the Helm chart renders it so when
+	// no ingress host is set, and an empty domain makes vendor-access links
+	// refuse at issuance (tempAccessURL). Viper ignores an empty variable and
+	// fell back to the "localhost" default, which ValidateProduction refuses,
+	// so every service of such an install refused to start in production.
+	if env, ok := os.LookupEnv("ACCESS_PROXY_DOMAIN"); ok && strings.TrimSpace(env) == "" {
+		cfg.AccessProxyDomain = ""
+	}
 
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)

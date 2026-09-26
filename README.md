@@ -269,8 +269,15 @@ signature verification):
 
 ```bash
 helm install openidx oci://ghcr.io/mhmtgngr/openidx/charts/openidx \
-  --version <X.Y.Z> --namespace openidx --create-namespace
+  --version <X.Y.Z> --namespace openidx --create-namespace \
+  -f my-values.yaml
 ```
+
+`my-values.yaml` holds the install's own settings. The chart refuses to render
+without `config.oauthIssuer`, the public URL of its OAuth service (for example
+`https://auth.example.com` with your own domain), and without the bundled
+datastores' `secrets.*`; [the Kubernetes guide](docs/docs/deployment/kubernetes.md)
+shows a complete file.
 
 The chart runs database migrations itself (a post-install/pre-upgrade
 hook Job) and deploys OPA with the policy it ships. The services consult

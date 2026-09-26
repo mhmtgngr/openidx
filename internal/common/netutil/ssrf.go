@@ -200,8 +200,11 @@ var KnownPublicAPIs = struct {
 		BlockPrivateIPs: true,
 		BlockLocalhost:  true,
 	},
+	// Google Cloud's APIs are served from googleapis.com. gcp.com was listed
+	// too, and it is not a Google API domain: an allowlist entry for a name
+	// the service does not use admits whoever holds it.
 	GCP: &SSRFProtectedClient{
-		AllowedDomains:  []string{"*.googleapis.com", "googleapis.com", "*.gcp.com", "gcp.com"},
+		AllowedDomains:  []string{"*.googleapis.com", "googleapis.com"},
 		BlockPrivateIPs: true,
 		BlockLocalhost:  true,
 	},

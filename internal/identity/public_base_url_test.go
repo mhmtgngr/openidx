@@ -12,6 +12,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/migrations"
 )
 
 // Password reset, email verification and invitation links were hardcoded to
@@ -59,7 +60,11 @@ func TestPublicBaseURL(t *testing.T) {
 }
 
 // recordingEmailer captures the baseURL each send was given.
-type recordingEmailer struct{ resetBaseURL string }
+type recordingEmailer struct {
+	resetBaseURL   string
+	welcomeBaseURL string
+	welcomeSent    bool
+}
 
 func (r *recordingEmailer) SendVerificationEmail(ctx context.Context, to, userName, token, baseURL string) error {
 	return nil
@@ -74,7 +79,8 @@ func (r *recordingEmailer) SendPasswordResetEmail(ctx context.Context, to, userN
 	return nil
 }
 
-func (r *recordingEmailer) SendWelcomeEmail(ctx context.Context, to, userName string) error {
+func (r *recordingEmailer) SendWelcomeEmail(ctx context.Context, to, userName, baseURL string) error {
+	r.welcomeBaseURL, r.welcomeSent = baseURL, true
 	return nil
 }
 
@@ -120,5 +126,55 @@ func TestForgotPasswordUsesPublicBaseURL(t *testing.T) {
 	}
 	if strings.Contains(mailer.resetBaseURL, "localhost") {
 		t.Errorf("reset link still points at localhost: %q", mailer.resetBaseURL)
+	}
+}
+
+// TestTheWelcomeMailSignsInAtThePublicBaseURL accepts a real invitation. The
+// welcome mail linked every new user to a docs page on a domain the project
+// does not own; its button now signs in at PUBLIC_BASE_URL, the origin the
+// reset and invitation links use, so the mail has to be handed that origin.
+func TestTheWelcomeMailSignsInAtThePublicBaseURL(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	if db == nil {
+		t.SkipNow()
+	}
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
+		t.Fatalf("migrate to latest: %v", err)
+	}
+	const org = "00000000-0000-0000-0000-000000000010" // seeded by migrations
+	const token = "welcome-link-invitation-token"
+	if _, err := db.Pool.Exec(orgctx.WithBypassRLS(ctx), `
+		INSERT INTO user_invitations (email, invited_by, roles, groups, token, status, expires_at, org_id)
+		VALUES ('invitee@example.test', gen_random_uuid(), '{}', '{}', $1, 'pending', NOW() + INTERVAL '1 day', $2::uuid)`,
+		token, org); err != nil {
+		t.Fatalf("seed invitation: %v", err)
+	}
+
+	mailer := &recordingEmailer{}
+	s := NewService(db, nil, &config.Config{PublicBaseURL: "https://id.example.com/"}, zap.NewNop())
+	s.emailService = mailer
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/invitations/"+token+"/accept",
+		strings.NewReader(`{"username":"invitee","password":"Welc0me!Link-2026","first_name":"Ada"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request = c.Request.WithContext(orgctx.With(ctx, orgctx.Org{ID: org}))
+	c.Params = gin.Params{{Key: "token", Value: token}}
+
+	s.handleAcceptInvitation(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("accept invitation: status %d, body %s", w.Code, w.Body.String())
+	}
+	if !mailer.welcomeSent {
+		t.Fatal("no welcome mail was sent")
+	}
+	if mailer.welcomeBaseURL != "https://id.example.com" {
+		t.Errorf("welcome mail baseURL = %q, want https://id.example.com", mailer.welcomeBaseURL)
 	}
 }

@@ -260,6 +260,7 @@ Ziti identity: policies limit what it can dial, and the kill switch severs it.
 | Tampering | Injected code defect | CodeQL (blocking), Semgrep, merge-blocking Required Checks (build, full tests, integration, orgscope) |
 | Info disclosure | Committed secrets | Gitleaks in CI (non-blocking for license reasons — documented); `.env.production` templates use `:?` required-var syntax so compose refuses to start with unset secrets |
 | Tampering | Image substitution | Images built in CI with provenance/SBOM attestation; the release checksums and the Helm chart are signed with keyless cosign; the images are not signed yet ([#960](https://github.com/mhmtgngr/openidx/issues/960)) |
+| Spoofing | A shipped default names a domain, or a registry or GitHub namespace, the project does not own, so whoever registers it receives what installs send there: the Helm chart's issuer and ingress hosts, the console's support address and WebAuthn fields, Alertmanager's addresses, the welcome mail's link, the SCIM documentation link and the Terraform modules' chart source all did, up to v1.38.0 | No default names one. The chart has no issuer default and requires `config.oauthIssuer`, and refuses any value naming a host under the project's name at .io, .org, .com, .net or .dev (`openidx.rejectPlaceholders`, `deployments/kubernetes/helm/openidx/templates/_helpers.tpl`); `scripts/check-unowned-domains.sh` fails CI when one comes back anywhere in the tree; migration v210 cleared the stored copies of the settings defaults |
 
 ## 5. Residual risks and operator obligations
 

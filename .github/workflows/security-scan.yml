@@ -95,7 +95,7 @@ jobs:
 
       # Resolve whether a published image actually exists. Until the
       # image build→push pipeline lands (docker.yml pushing to GHCR), the
-      # ghcr.io/openidx/<service> images don't exist, and Trivy would
+      # ghcr.io/mhmtgngr/openidx/<service> images don't exist, and Trivy would
       # hard-fail trying to scan a missing ref — turning the whole nightly
       # Security Scanning run red. Set an availability flag and gate the
       # scan on it so the job passes cleanly with "no image yet".

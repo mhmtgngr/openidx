@@ -1705,7 +1705,7 @@ func (m *MockEmailSender) SendPasswordResetEmail(ctx context.Context, to, userNa
 	return nil
 }
 
-func (m *MockEmailSender) SendWelcomeEmail(ctx context.Context, to, userName string) error {
+func (m *MockEmailSender) SendWelcomeEmail(ctx context.Context, to, userName, baseURL string) error {
 	return nil
 }
 

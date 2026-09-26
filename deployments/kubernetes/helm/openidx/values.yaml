@@ -65,10 +65,19 @@ global:
 config:
   opaUrl: "http://opa:8281"
   elasticsearchUrl: "http://elasticsearch:9200"
-  oauthIssuer: "https://auth.openidx.io"
+  # Required: the public URL of this install's OAuth service, for example
+  # https://auth.example.com. It is the `iss` of every token and the base of the
+  # discovery document, and browsers, phones and emailed links are sent to it:
+  # the access proxy's sign-in page posts credentials there, magic links and
+  # push-MFA enrollment point there. The chart refuses to render without it.
+  # It used to default to a domain this project does not own.
+  oauthIssuer: ""
   oauthJwksUrl: "http://oauth-service:8006/.well-known/jwks.json"
-  viteApiUrl: "https://api.openidx.io"
-  viteOauthUrl: "https://auth.openidx.io"
+  # Build-time settings of the console image. The published image calls the
+  # origin it is served from and does not read these at runtime; they are
+  # passed through for an image built with them. Empty means same origin.
+  viteApiUrl: ""
+  viteOauthUrl: ""
   viteOauthClientId: "admin-console"
   # Multi-tenancy. Leave tenantBaseDomain empty for single-tenant installs (and
   # set defaultOrgFallback: true). Multi-tenant installs set the base domain and
@@ -532,15 +541,15 @@ adminConsole:
     className: nginx
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Set host to the console's public name, and add a tls entry for it:
+    #   tls: [{ secretName: admin-console-tls, hosts: [admin.example.com] }]
+    # An empty host is a rule for any host name, served without TLS.
     hosts:
-      - host: admin.openidx.io
+      - host: ""
         paths:
           - path: /
             pathType: Prefix
-    tls:
-      - secretName: admin-console-tls
-        hosts:
-          - admin.openidx.io
+    tls: []
   pdb:
     enabled: true
     maxUnavailable: 1
@@ -1345,15 +1354,17 @@ ingress:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+  # Set host to the API's public name, and add a tls entry for it:
+  #   tls: [{ secretName: api-tls, hosts: [api.example.com] }]
+  # An empty host is a rule for any host name, served without TLS. The first
+  # host is also the access proxy's host when config.accessProxyDomain is
+  # empty; with an empty host, vendor-access links are refused until one is set.
   hosts:
-    - host: api.openidx.io
+    - host: ""
       paths:
         - path: /
           pathType: Prefix
-  tls:
-    - secretName: api-tls
-      hosts:
-        - api.openidx.io
+  tls: []
 
 # Service Account
 serviceAccount:

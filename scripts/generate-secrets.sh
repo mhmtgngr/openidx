@@ -169,7 +169,9 @@ SMTP_HOST=
 SMTP_PORT=587
 SMTP_USERNAME=
 SMTP_PASSWORD=
-SMTP_FROM=noreply@openidx.io
+# The address system mail is sent from: set one at a domain you own. Replies,
+# which quote the reset and login links they answer, go there.
+SMTP_FROM=
 EOF
 
 # --- make the file visible to compose -------------------------------------

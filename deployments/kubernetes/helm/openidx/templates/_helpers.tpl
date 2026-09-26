@@ -336,6 +336,17 @@ chaos drill, the image check) pass an override on the command line; that
 override is the one place where "render-only" is written, and it is not a
 values file, so it cannot be installed by mistake.
 
+It also refuses any value that names a host under the project's name at .io,
+.org, .com, .net or .dev. The project owns none of those domains (SECURITY.md),
+and values.yaml used to ship an issuer and ingress hosts under the .io one
+(openidx.io; domain-ok: the old defaults): an install that kept them sent its
+browsers, its sign-in credentials and its emailed login links to whoever
+registers that name. `helm upgrade --reuse-values` carries the old defaults
+forward from the running release, and an operator's own values file may have
+copied them, so the refusal is here rather than only in values.yaml. A value
+that is exactly a label key under that prefix (openidx.io/plane) is a name,
+not an address, and passes.
+
 Called from templates/no-placeholders.yaml with (dict "v" .Values "path" "").
 */}}
 {{- define "openidx.rejectPlaceholders" -}}
@@ -347,6 +358,10 @@ Called from templates/no-placeholders.yaml with (dict "v" .Values "path" "").
 {{- else if kindIs "string" $v -}}
 {{- if contains "REPLACE-WITH" $v -}}
 {{- fail (printf "%s is still the placeholder %q. values-prod.yaml ships it so that the install cannot silently carry a fake value into the cluster: for edge.originVerify.value the Ingress would compare X-Azure-FDID against this literal and answer 403 to every request. Set the real value (for a cell, in deployments/kubernetes/cells/<cell>.yaml or with --set from a secret). A render that never reaches a cluster passes --set <path>=render-only-placeholder-override, as the lint job does." (trimPrefix "." .path) $v) -}}
+{{- end -}}
+{{- $s := lower $v -}}
+{{- if and (regexMatch "(^|[^a-z0-9-])openidx\\.(io|org|com|net|dev)($|[^a-z0-9.-]|\\.($|[^a-z0-9]))" $s) (not (regexMatch "^openidx\\.io/[a-z0-9]([-a-z0-9_.]*[a-z0-9])?$" $s)) -}}
+{{- fail (printf "%s is %q, which names a domain this project does not own. Whoever registers it receives what this install sends there: the issuer and the ingress hosts decide where browsers, sign-in credentials and emailed login links go. Set a name you control, for example config.oauthIssuer=https://auth.example.com with your own domain." (trimPrefix "." .path) $v) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

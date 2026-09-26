@@ -980,10 +980,13 @@ func (s *Service) handleGetResourceType(c *gin.Context) {
 // handleGetServiceProviderConfig says what this server supports (RFC 7643
 // §5), and only that. changePassword and sort used to be advertised as
 // supported, although no password attribute is read and sortBy is ignored.
+// documentationUri is the SCIM guide on the project's documentation site; it
+// named a docs host on a domain the project does not own, which SCIM clients
+// show their administrators as a link.
 func (s *Service) handleGetServiceProviderConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"schemas":          []string{"urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"},
-		"documentationUri": "https://docs.openidx.io/scim",
+		"documentationUri": "https://mhmtgngr.github.io/openidx/guides/SCIM/",
 		"patch":            gin.H{"supported": true},
 		"bulk":             gin.H{"supported": false, "maxOperations": 0, "maxPayloadSize": 0},
 		"filter":           gin.H{"supported": true, "maxResults": scimMaxResults},

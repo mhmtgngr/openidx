@@ -6,7 +6,7 @@ This is the interactive API documentation for the OpenIDX Zero Trust Access Plat
 
 ### Online (GitHub Pages)
 
-The published documentation is available at: `https://openidx.github.io/openidx/api/`
+The published documentation is available at: `https://mhmtgngr.github.io/openidx/api/`
 
 ### Local Development
 

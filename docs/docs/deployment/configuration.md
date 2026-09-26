@@ -92,7 +92,7 @@ postgres://user:password@host:5432/openidx?sslmode=verify-full&pool_max_conns=25
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `OAUTH_ISSUER` | url | - | Token issuer, and the base of the discovery document. |
+| `OAUTH_ISSUER` | url | - | Token issuer, and the base of the discovery document. It must be the install's own public URL: browsers, phones and emailed links are sent to it (the access proxy's sign-in page posts credentials there; magic links and push-MFA enrollment point there). The Helm chart has no default and requires `config.oauthIssuer`. |
 | `OAUTH_JWKS_URL` | url | `<OAUTH_ISSUER>/.well-known/jwks.json` | Where other services fetch the signing keys. |
 | `OAUTH_LOGIN_URL` | url | `<OAUTH_ISSUER>/login` | Where `/oauth/authorize` sends a browser to sign in. Set it when the console is served from a different origin than the issuer; the reference compose stack is exactly that case. Must be absolute. |
 | `DCR_ALLOW_OPEN_REGISTRATION` | bool | `false` | Allow unauthenticated dynamic client registration. |
@@ -300,7 +300,7 @@ TOTP parameters are fixed at the RFC 6238 defaults an authenticator app expects
 | `SMTP_HOST` | string | - | SMTP server. Email is disabled when empty. |
 | `SMTP_PORT` | int | `587` | SMTP port. |
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | string | - | SMTP credentials; the password is encrypted at rest when stored through the console. |
-| `SMTP_FROM` | string | - | From address. |
+| `SMTP_FROM` | string | - | From address of system mail. Use one at a domain you own: replies and bounces go there, and its SPF and DMARC records decide delivery. |
 
 TLS verification is not optional and there is no from-name override; the display
 name comes from the email template.

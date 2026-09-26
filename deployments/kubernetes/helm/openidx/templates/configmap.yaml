@@ -7,10 +7,13 @@ metadata:
 data:
   OPA_URL: {{ .Values.config.opaUrl | default "http://opa:8281" | quote }}
   ELASTICSEARCH_URL: {{ .Values.config.elasticsearchUrl | default "http://elasticsearch:9200" | quote }}
-  OAUTH_ISSUER: {{ .Values.config.oauthIssuer | default "http://oauth-service:8006" | quote }}
+  # No default: the issuer is where browsers, phones and emailed links are sent,
+  # so a value that is not this install's own public URL hands them to whoever
+  # holds that name. The chart shipped one on a domain the project does not own.
+  OAUTH_ISSUER: {{ required "config.oauthIssuer is required: set it to the public URL of this install's OAuth service, for example https://auth.example.com. It is the issuer of every token and the base of the discovery document." .Values.config.oauthIssuer | quote }}
   OAUTH_JWKS_URL: {{ .Values.config.oauthJwksUrl | default "http://oauth-service:8006/.well-known/jwks.json" | quote }}
-  VITE_API_URL: {{ .Values.config.viteApiUrl | default "https://api.openidx.io" | quote }}
-  VITE_OAUTH_URL: {{ .Values.config.viteOauthUrl | default "https://auth.openidx.io" | quote }}
+  VITE_API_URL: {{ .Values.config.viteApiUrl | default "" | quote }}
+  VITE_OAUTH_URL: {{ .Values.config.viteOauthUrl | default "" | quote }}
   VITE_OAUTH_CLIENT_ID: {{ .Values.config.viteOauthClientId | default "admin-console" | quote }}
   # Multi-tenancy (v1.6+). TENANT_BASE_DOMAIN enables per-tenant subdomain/issuer
   # resolution. DEFAULT_ORG_FALLBACK MUST stay false for multi-tenant installs

@@ -118,6 +118,7 @@ jobs:
             --set secrets.postgresPassword=render-only-not-a-credential \
             --set secrets.redisPassword=render-only-not-a-credential \
             --set secrets.encryptionKey=render-only-not-a-credential32b \
+            --set config.oauthIssuer=https://auth.render-only.invalid \
             > /tmp/render-default.yaml
 
       # values-prod.yaml ships edge.originVerify.value as a REPLACE-WITH-
@@ -193,6 +194,7 @@ jobs:
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
               --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set config.oauthIssuer=https://auth.render-only.invalid \
               --set "$svc.replicaCount=0" \
               | grep -c '^  replicas: 0' || true)
             test "$got" -ge 1 || { echo "$svc.replicaCount=0 did not render replicas: 0"; exit 1; }
@@ -211,7 +213,8 @@ jobs:
             helm template openidx "$CHART" \
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
-              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set config.oauthIssuer=https://auth.render-only.invalid "$@"
           }
           grep -q 'AGENT_ENROLLMENT_QUOTA_PER_HOUR: "100"' <<<"$(render)" \
             || { echo "default quota did not render as 100"; exit 1; }
@@ -232,7 +235,8 @@ jobs:
             helm template openidx "$CHART" \
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
-              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set config.oauthIssuer=https://auth.render-only.invalid "$@"
           }
           cm=$(render --show-only templates/opa-policy.yaml)
           grep -q 'name: openidx-opa-policy' <<<"$cm" || { echo "the chart renders no OPA policy ConfigMap"; exit 1; }
@@ -265,7 +269,8 @@ jobs:
             helm template openidx "$CHART" \
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
-              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set config.oauthIssuer=https://auth.render-only.invalid "$@"
           }
           upgrade() {
             render --is-upgrade \
@@ -302,7 +307,8 @@ jobs:
             helm template openidx "$CHART" \
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
-              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set config.oauthIssuer=https://auth.render-only.invalid "$@"
           }
           # grep -q against a here-string, NOT `echo "$x" | grep -q`.
           # `grep -q` exits at the first match and closes the pipe; `echo` then
@@ -323,6 +329,60 @@ jobs:
             echo "a header with no value rendered anyway; the origin would accept any value"; exit 1
           fi
           echo "ingress enforces origin cloaking, and refuses to render half-configured"
+
+      # config.oauthIssuer and the ingress hosts defaulted to names under a
+      # domain this project does not own (openidx.io; domain-ok: the old
+      # defaults). An install that kept them sent browsers, sign-in credentials
+      # and emailed login links to whoever registers it. The issuer now has no
+      # default and is required, and openidx.rejectPlaceholders refuses any
+      # value naming the domain, which is what catches the old defaults when
+      # `helm upgrade --reuse-values` or a copied values file carries them
+      # forward. Both sides: a render with the operator's own issuer succeeds
+      # and names no such domain, and it is refused without one, with the old
+      # issuer, with an old host and with an address there. A label key under
+      # the prefix (openidx.io/plane) is a name, not an address, and renders.
+      - name: The chart needs an issuer, and refuses a domain the project does not own
+        run: |
+          set -euo pipefail
+          render() {
+            helm template openidx "$CHART" \
+              --set secrets.postgresPassword=render-only-not-a-credential \
+              --set secrets.redisPassword=render-only-not-a-credential \
+              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+          }
+          refuses() {
+            local why="$1" want="$2" err; shift 2
+            if err=$(render "$@" 2>&1 >/dev/null); then
+              echo "::error::the chart rendered $why"; exit 1
+            fi
+            grep -qF -- "$want" <<<"$err" \
+              || { echo "::error::the chart refused $why, but not for that reason: $err"; exit 1; }
+          }
+          # The old defaults, as the fixtures they are.
+          old_issuer=https://auth.openidx.io   # domain-ok: fixture, must be refused
+          old_host=api.openidx.io              # domain-ok: fixture, must be refused
+          old_mail=admin@openidx.io            # domain-ok: fixture, must be refused
+          refuses "with no issuer" "config.oauthIssuer is required"
+          refuses "with the old default issuer" "config.oauthIssuer is \"$old_issuer\"" \
+            --set config.oauthIssuer="$old_issuer"
+          refuses "with an old ingress host" "ingress.hosts[0].host is \"$old_host\"" \
+            --set config.oauthIssuer=https://auth.example.com --set "ingress.hosts[0].host=$old_host"
+          refuses "with an address at the domain" "monitoring.alerting.email.to is" \
+            --set config.oauthIssuer=https://auth.example.com --set monitoring.alerting.email.to="$old_mail"
+          got=$(render --set config.oauthIssuer=https://auth.example.com)
+          grep -q 'OAUTH_ISSUER: "https://auth.example.com"' <<<"$got" \
+            || { echo "::error::the issuer did not reach the ConfigMap"; exit 1; }
+          if grep -Eiq 'openidx[.](io|org|com|net|dev)' <<<"$got"; then
+            echo "::error::the default render still names a domain the project does not own"; exit 1
+          fi
+          render --set config.oauthIssuer=https://auth.example.com \
+                 --set identityService.planeSplit.enabled=true \
+                 --set 'identityService.planeSplit.auth.tolerations[0].key=openidx.io/plane' \
+                 --set 'identityService.planeSplit.auth.tolerations[0].operator=Equal' \
+                 --set 'identityService.planeSplit.auth.tolerations[0].value=issue' \
+                 --set 'identityService.planeSplit.auth.tolerations[0].effect=NoSchedule' >/dev/null \
+            || { echo "::error::a toleration keyed openidx.io/plane was refused as an address"; exit 1; }
+          echo "the chart needs an issuer, refuses the old defaults, and passes a label key"
 
       # The runtime role openidx_app has to exist before migration v53 looks
       # for it, and the migration Job's own role cannot create it. That is
@@ -359,7 +419,8 @@ jobs:
             helm template openidx "$CHART" \
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
-              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set config.oauthIssuer=https://auth.render-only.invalid "$@"
           }
 
           # Off by default: the chart must not require a KEDA operator to install.
@@ -444,7 +505,8 @@ jobs:
           set -euo pipefail
           base=(--set secrets.postgresPassword=render-only
                 --set secrets.redisPassword=render-only
-                --set secrets.encryptionKey=render-only-not-a-credential32b)
+                --set secrets.encryptionKey=render-only-not-a-credential32b
+                --set config.oauthIssuer=https://auth.render-only.invalid)
           on=(--set nats.enabled=true --set nats.relayPassword=render-only
               --set nats.consumerPassword=render-only)
           render() { helm template openidx "$CHART" "${base[@]}" "$@"; }
@@ -548,7 +610,8 @@ jobs:
           set -euo pipefail
           base=(--set secrets.postgresPassword=render-only
                 --set secrets.redisPassword=render-only
-                --set secrets.encryptionKey=render-only-not-a-credential32b)
+                --set secrets.encryptionKey=render-only-not-a-credential32b
+                --set config.oauthIssuer=https://auth.render-only.invalid)
           broker=(--set nats.enabled=true --set nats.relayPassword=render-only
                   --set nats.consumerPassword=render-only)
           render() { helm template openidx "$CHART" "${base[@]}" "$@"; }
@@ -624,7 +687,8 @@ jobs:
           set -euo pipefail
           base=(--set secrets.postgresPassword=render-only
                 --set secrets.redisPassword=render-only
-                --set secrets.encryptionKey=render-only-not-a-credential32b)
+                --set secrets.encryptionKey=render-only-not-a-credential32b
+                --set config.oauthIssuer=https://auth.render-only.invalid)
 
           # Off by default: an install that never heard of cells must mint
           # unstamped tokens and refuse nothing.
@@ -683,7 +747,8 @@ jobs:
           set -euo pipefail
           base=(--set secrets.postgresPassword=render-only
                 --set secrets.redisPassword=render-only
-                --set secrets.encryptionKey=render-only-not-a-credential32b)
+                --set secrets.encryptionKey=render-only-not-a-credential32b
+                --set config.oauthIssuer=https://auth.render-only.invalid)
           render() { helm template openidx "$CHART" "${base[@]}" "$@"; }
 
           # 1. Off by default, and off means absent. To a file, because
@@ -841,7 +906,8 @@ jobs:
             helm template openidx "$CHART" \
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
-              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set config.oauthIssuer=https://auth.render-only.invalid "$@"
           }
           safe=(--set config.rlsMode=local --set pgcat.enabled=true
                 --set pgcat.password=render-only --set pgcat.adminPassword=render-only
@@ -977,7 +1043,8 @@ jobs:
             helm template openidx "$CHART" \
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
-              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set config.oauthIssuer=https://auth.render-only.invalid "$@"
           }
           on=(--set database.planeRoles.enabled=true
               --set database.planeRoles.password=render-only-not-a-credential)
@@ -1087,6 +1154,7 @@ jobs:
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
               --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set config.oauthIssuer=https://auth.render-only.invalid \
               --set identityService.planeSplit.enabled=true "$@"
           }
           render > /tmp/render-unpinned.yaml
@@ -1136,6 +1204,7 @@ jobs:
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
               --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set config.oauthIssuer=https://auth.render-only.invalid \
               --set ingress.enabled=true --set ingress.hosts[0].host=openidx.example "$@"
           }
 
@@ -1227,7 +1296,8 @@ jobs:
             helm template openidx "$CHART" \
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
-              --set secrets.encryptionKey=render-only-not-a-credential32b "$@"
+              --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set config.oauthIssuer=https://auth.render-only.invalid "$@"
           }
           # The chain is script -> role -> schema: the ConfigMap must exist
           # before the Job that mounts it, and the role must exist before the
@@ -1280,6 +1350,7 @@ jobs:
               --set secrets.postgresPassword=render-only-not-a-credential \
               --set secrets.redisPassword=render-only-not-a-credential \
               --set secrets.encryptionKey=render-only-not-a-credential32b \
+              --set config.oauthIssuer=https://auth.render-only.invalid \
               --set edge.originVerify.value=render-only-placeholder-override \
               $values \
             | python3 -c '

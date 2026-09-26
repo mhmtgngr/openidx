@@ -33,7 +33,7 @@ advisory. If the link does not work for you, open a public issue titled
 out privately.
 
 There is no security email address and no PGP key. Earlier versions of this
-file listed addresses at `openidx.io`. That domain is not ours, and nothing
+file listed addresses at `openidx.io`. That domain is not ours, and nothing <!-- domain-ok: says the domain is not ours -->
 sent there reaches us.
 
 ### What to include

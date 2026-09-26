@@ -13,7 +13,7 @@ keywords:
   - mfa
 maintainers:
   - name: OpenIDX Team
-    email: team@openidx.io
+    url: https://github.com/mhmtgngr/openidx
 dependencies:
   - name: postgresql
     version: "14.x.x"

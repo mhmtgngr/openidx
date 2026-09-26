@@ -69,7 +69,7 @@ func strs(t *testing.T, doc map[string]interface{}, key string) []string {
 // Every field OpenID Connect Discovery 1.0 §3 marks REQUIRED is present and
 // non-empty. A missing one makes the document unusable to a conforming client.
 func TestDiscoveryDocumentHasEveryRequiredField(t *testing.T) {
-	const issuer = "https://test.openidx.org"
+	const issuer = "https://issuer.example.com"
 	doc, _ := serveDiscovery(t, issuer)
 
 	for _, key := range []string{"issuer", "authorization_endpoint", "token_endpoint", "jwks_uri"} {
@@ -93,7 +93,7 @@ func TestDiscoveryDocumentHasEveryRequiredField(t *testing.T) {
 // converse -- an endpoint routed and not advertised -- is the defect this file
 // was rewritten over, so both directions are named here rather than assumed.
 func TestDiscoveryAdvertisesTheEndpointsTheServerRoutes(t *testing.T) {
-	const issuer = "https://test.openidx.org"
+	const issuer = "https://issuer.example.com"
 	doc, _ := serveDiscovery(t, issuer)
 
 	for key, path := range map[string]string{
@@ -115,7 +115,7 @@ func TestDiscoveryAdvertisesTheEndpointsTheServerRoutes(t *testing.T) {
 
 // The rule this repository keeps returning to: advertised means working.
 func TestDiscoveryAdvertisesOnlyImplementedFlows(t *testing.T) {
-	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	doc, _ := serveDiscovery(t, "https://issuer.example.com")
 
 	responseTypes := strs(t, doc, "response_types_supported")
 	assert.Contains(t, responseTypes, "code")
@@ -142,7 +142,7 @@ func TestDiscoveryAdvertisesOnlyImplementedFlows(t *testing.T) {
 // absent request_uri_parameter_supported as TRUE, so omitting it advertised a
 // capability this server never had.
 func TestDiscoverySaysRequestObjectsAreNotSupported(t *testing.T) {
-	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	doc, _ := serveDiscovery(t, "https://issuer.example.com")
 	for _, key := range []string{"request_parameter_supported", "request_uri_parameter_supported"} {
 		v, present := doc[key]
 		require.True(t, present, "%s is absent; request_uri_parameter_supported defaults to true when omitted", key)
@@ -156,7 +156,7 @@ func TestDiscoverySaysRequestObjectsAreNotSupported(t *testing.T) {
 // Omitting it told every conforming SPA and native client that it had no usable
 // authentication method at this server.
 func TestDiscoveryAdvertisesPublicClientAuthentication(t *testing.T) {
-	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	doc, _ := serveDiscovery(t, "https://issuer.example.com")
 	methods := strs(t, doc, "token_endpoint_auth_methods_supported")
 	assert.Contains(t, methods, "client_secret_basic", "RFC 6749 §2.3.1 requires HTTP Basic")
 	assert.Contains(t, methods, "client_secret_post")
@@ -166,7 +166,7 @@ func TestDiscoveryAdvertisesPublicClientAuthentication(t *testing.T) {
 // Only the subject types the provider honours. pairwise appears when
 // OIDCPairwiseSubjects is on and not before.
 func TestDiscoverySubjectTypesFollowTheConfiguration(t *testing.T) {
-	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	doc, _ := serveDiscovery(t, "https://issuer.example.com")
 	assert.Equal(t, []string{"public"}, strs(t, doc, "subject_types_supported"))
 }
 
@@ -174,12 +174,12 @@ func TestDiscoverySubjectTypesFollowTheConfiguration(t *testing.T) {
 // with. RS256 is what the signer produces; listing RS384/RS512 beside it would
 // invite a client to demand a signature this server cannot make.
 func TestDiscoverySigningAlgorithms(t *testing.T) {
-	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	doc, _ := serveDiscovery(t, "https://issuer.example.com")
 	assert.Equal(t, []string{"RS256"}, strs(t, doc, "id_token_signing_alg_values_supported"))
 }
 
 func TestDiscoveryScopesAndClaims(t *testing.T) {
-	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	doc, _ := serveDiscovery(t, "https://issuer.example.com")
 
 	scopes := strs(t, doc, "scopes_supported")
 	assert.Contains(t, scopes, "openid", "openid is required for OIDC")
@@ -197,7 +197,7 @@ func TestDiscoveryScopesAndClaims(t *testing.T) {
 // client fetches it cross-origin before it can do anything else.
 func TestDiscoveryCachingAndPreflight(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	svc := &Service{issuer: "https://test.openidx.org", logger: zap.NewNop()}
+	svc := &Service{issuer: "https://issuer.example.com", logger: zap.NewNop()}
 	router := gin.New()
 	router.GET("/.well-known/openid-configuration", svc.handleDiscovery)
 	router.OPTIONS("/.well-known/openid-configuration", svc.handleDiscovery)

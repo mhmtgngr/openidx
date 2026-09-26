@@ -39,10 +39,13 @@ Broker web consoles (for debugging): direct `:8086`, ziti `:8087`.
 
 ## Kubernetes (Helm)
 
-Disabled by default. Enable and supply the broker secrets:
+Disabled by default. Enable and supply the broker secrets, on top of the
+install's own values file (`values-production.yaml` here; see
+`docs/docs/deployment/kubernetes.md`):
 
 ```bash
 helm upgrade --install openidx deployments/kubernetes/helm/openidx \
+  -f values-production.yaml \
   --set pamBroker.enabled=true \
   --set secrets.pamGuacDbPassword=<pw> \
   --set secrets.guacamoleAdminPassword=<pw> \

@@ -739,7 +739,7 @@ func (s *Service) GetSettings(ctx context.Context) (*Settings, error) {
 	settings := &Settings{
 		General: GeneralSettings{
 			OrganizationName: "OpenIDX",
-			SupportEmail:     "support@openidx.io",
+			SupportEmail:     "",
 			DefaultLanguage:  "en",
 			DefaultTimezone:  "UTC",
 		},

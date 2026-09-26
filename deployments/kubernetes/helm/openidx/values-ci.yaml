@@ -50,6 +50,12 @@ secrets:
   redisPassword: "ci-redis-password"
   encryptionKey: "ci-encryption-key-exactly-32-byte"
 
+# The chart requires an issuer (it used to default to a domain the project does
+# not own). This cluster has no public name, so it is the in-cluster Service,
+# as values-ci-cell.yaml has it.
+config:
+  oauthIssuer: "http://openidx-oauth-service:8006"
+
 # ----- The claims under test -----
 migrations:
   enabled: true

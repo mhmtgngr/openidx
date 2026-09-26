@@ -528,7 +528,7 @@ func TestDCRCarriesBackchannelLogoutURI(t *testing.T) {
 
 // The advertisement and the capability now agree.
 func TestDiscoveryAdvertisesBackchannelLogoutThatIsImplemented(t *testing.T) {
-	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	doc, _ := serveDiscovery(t, "https://issuer.example.com")
 	if doc["backchannel_logout_supported"] != true || doc["backchannel_logout_session_supported"] != true {
 		t.Fatalf("discovery must advertise back-channel logout with sid: %v", doc)
 	}

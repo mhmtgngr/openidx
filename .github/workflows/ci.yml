@@ -52,6 +52,15 @@ jobs:
             exit 0
           fi
           bash scripts/check-no-internal-topology.sh --range "$base"
+      # The same public-repository hazard, for names: the chart shipped an
+      # issuer and ingress hosts under a domain the project does not own, and
+      # the console settings, Alertmanager, the welcome mail and the SCIM
+      # discovery document pointed there too. Anyone can register it. The
+      # self-test puts each removed default back into the file it came from.
+      - name: Verify the unowned-domain guard can go red
+        run: bash scripts/check-unowned-domains.test.sh
+      - name: Nothing points at a domain or namespace the project does not own
+        run: bash scripts/check-unowned-domains.sh --enforce
 
   # `bash -n` cannot catch this class. A comment in run-fault-matrix.sh lost
   # its leading '#' during an edit; the file stayed syntactically VALID, the

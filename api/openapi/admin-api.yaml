@@ -7663,7 +7663,9 @@ components:
               type: string
             support_email:
               type: string
-              format: email
+              description: >-
+                An email address shown as the support contact, or empty when
+                none is published, which is the default.
             default_language:
               type: string
             default_timezone:
