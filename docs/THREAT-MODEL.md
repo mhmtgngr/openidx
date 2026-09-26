@@ -160,6 +160,7 @@ Evidence: `internal/identity/`, `internal/oauth/`, `internal/risk/`
 | Spoofing | Stolen refresh token used after admin revokes the session | Admin revocation (single and revoke-all) writes `revoked_session:<id>` markers to Redis with a 30-day TTL; the oauth refresh grant checks the marker and refuses (`internal/admin/sessions.go`, `internal/oauth/service.go`) |
 | Spoofing | Stolen **access** token | Bounded exposure: access tokens live ≤ 1 hour and are not re-checked per request (accepted residual risk R2, §5); the per-user **kill switch** exists for incidents — it severs IAM sessions, PAM sessions, and Ziti dial ability together |
 | DoS | Redis down ⇒ revocation silently ineffective | Marker publication failures are surfaced as warnings in the admin API response, not swallowed (`internal/admin/sessions_revoke_test.go` pins this) |
+| Spoofing | Stolen access-proxy session cookie used after an admin revokes the session | The proxy and forward-auth read only the session's Redis blob, and revoking a proxy session deletes that blob through the hash the row stores; the idle window's refresh only rewrites a blob that still exists, so it cannot bring a revoked session back, and a delete Redis refuses is answered 503, not 200 (`handleRevokeSession`, `internal/access/proxy_session_revoke_testdb_test.go`) |
 
 ### 4.3 Tenant isolation (PostgreSQL, FORCE RLS)
 

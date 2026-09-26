@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1802,6 +1803,23 @@ func (s *Service) handleListSessions(c *gin.Context) {
 	c.JSON(http.StatusOK, body)
 }
 
+// handleRevokeSession ends one of the organization's proxy sessions.
+//
+// A live session is the Redis blob under proxy_session:<hash of the cookie>, and
+// the proxy and forward-auth read that and nothing else (getSessionFromRequest).
+// The row keeps the same hash in session_token, so the revocation reaches the
+// blob through the row. It used to mark the row and delete a key named after the
+// row's id -- a key no session is stored under -- so a revoked session went on
+// working until its blob expired, up to twelve hours later, and the answer was
+// 200 whether or not anything had matched.
+//
+// Deleting the blob is the data plane's whole check, and it costs nothing per
+// proxied request: every path that revokes a row deletes its blob (sign-out, the
+// idle timeout, continuous verification, and this one), and the only write that
+// could bring a deleted blob back, the idle window's refresh in
+// updateSessionActivity, only updates a blob that still exists. A revoked marker
+// read on every request would need exactly the same writes and add a round trip
+// to each of them.
 func (s *Service) handleRevokeSession(c *gin.Context) {
 	id := c.Param("id")
 	org, err := orgctx.From(c.Request.Context())
@@ -1809,15 +1827,32 @@ func (s *Service) handleRevokeSession(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	_, err = s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE proxy_sessions SET revoked=true WHERE id=$1 AND org_id=$2", id, org.ID)
+	if _, perr := uuid.Parse(id); perr != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
+	var tokenHash string
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		"UPDATE proxy_sessions SET revoked=true WHERE id=$1 AND org_id=$2 RETURNING session_token",
+		id, org.ID).Scan(&tokenHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
 	if err != nil {
+		s.logger.Error("failed to revoke a proxy session", logsafe.String("session_id", id), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke session"})
 		return
 	}
 
-	// Also remove from Redis
-	s.redis.Client.Del(c.Request.Context(), "proxy_session:"+id)
+	if err := s.redis.Client.Del(c.Request.Context(), "proxy_session:"+tokenHash).Err(); err != nil {
+		// The row reads revoked and the session still works. Say which is
+		// true; a retry finds the row again and deletes the blob.
+		s.logger.Error("a proxy session was marked revoked but its live session could not be deleted; "+
+			"it keeps working until it is", logsafe.String("session_id", id), zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "the session is marked revoked but is still live; retry"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "session revoked"})
 }
@@ -3260,7 +3295,11 @@ func (s *Service) updateSessionActivity(c *gin.Context, session *ProxySession) {
 		ttl = 12 * time.Hour
 	}
 	if nb, mErr := json.Marshal(m); mErr == nil {
-		s.redis.Client.Set(ctx, key, nb, ttl)
+		// SetXX, not Set: a revocation may have deleted the blob between the
+		// read above and this write, and a plain SET would bring the session
+		// back for up to twelve more hours. SetXX only updates a blob that
+		// still exists.
+		s.redis.Client.SetXX(ctx, key, nb, ttl)
 	}
 }
 

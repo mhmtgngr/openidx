@@ -546,8 +546,9 @@ paths:
       tags: [Sessions]
       summary: Revoke session
       description: >-
-        Admin only. A user ends their own proxy session by signing out
-        (`GET /access/.auth/logout`).
+        Admin only. Ends the session at once: the proxy and forward-auth refuse
+        its cookie on the next request. A user ends their own proxy session by
+        signing out (`GET /access/.auth/logout`).
       operationId: revokeSession
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -558,6 +559,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          description: >-
+            The session is marked revoked but its live session could not be
+            deleted, so it still works; retrying finishes the revocation.
 
   # --- Ziti Status ---
   /api/v1/access/ziti/status:
