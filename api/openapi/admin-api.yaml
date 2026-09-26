@@ -82,6 +82,11 @@ tags:
   - name: Social Providers
   - name: System Health
   - name: Tenants
+    description: >-
+      Branding, settings and custom domains of one organization. A route that
+      names an organization other than the one the request resolved to is
+      answered 404, except for a platform admin, and so is a switch to an
+      organization the caller does not belong to.
   - name: Users
   - name: Vault
   - name: Webhooks
@@ -4154,6 +4159,9 @@ paths:
     get:
       tags: [Me]
       summary: Get my organizations
+      description: >-
+        The organizations the calling user is a member of. A credential with
+        no user behind it, such as a service account's API key, gets 403.
       operationId: getMyOrganizations
       x-openidx-handler: internal/organization.(*Service).handleGetMyOrganizations
       responses:
@@ -5026,6 +5034,10 @@ paths:
     post:
       tags: [Organizations]
       summary: Create organization
+      description: >-
+        Only a platform admin (`super_admin` held in the default organization)
+        creates an organization, and becomes its owner; any other caller gets
+        403.
       operationId: createOrganization
       x-openidx-handler: internal/organization.(*Service).handleCreateOrganization
       requestBody:
@@ -5058,6 +5070,9 @@ paths:
     get:
       tags: [Organizations]
       summary: Get organization
+      description: >-
+        Read by a member of the organization, in any role, and by a platform
+        admin. Anyone else gets the 404 an unknown id gets.
       operationId: getOrganization
       x-openidx-handler: internal/organization.(*Service).handleGetOrganization
       responses:
@@ -5113,6 +5128,9 @@ paths:
     get:
       tags: [Organizations]
       summary: List members
+      description: >-
+        Read by a member of the organization, in any role, and by a platform
+        admin. Anyone else gets the 404 an unknown id gets.
       operationId: listMembers
       x-openidx-handler: internal/organization.(*Service).handleListMembers
       responses:

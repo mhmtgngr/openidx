@@ -116,6 +116,90 @@ func TestHandleRemoveMember_NonMemberForbidden(t *testing.T) {
 	}
 }
 
+// TestHandleCreateOrganization_NotPlatformAdminForbidden: creating an
+// organization is the platform admin's. An authenticated caller holding admin
+// without the platform-admin marker is refused before anything is read or
+// written, which a zero-value Service proves: it has no database to write to.
+func TestHandleCreateOrganization_NotPlatformAdminForbidden(t *testing.T) {
+	s := &Service{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/organizations",
+		strings.NewReader(`{"name":"Acme","slug":"acme"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user_id", "11111111-1111-1111-1111-111111111111")
+	c.Set("roles", []string{"admin"})
+
+	s.handleCreateOrganization(c)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d — only a platform admin may create an organization",
+			w.Code, http.StatusForbidden)
+	}
+}
+
+// TestHandleGetOrganization_NonMemberNotFound and
+// TestHandleListMembers_NonMemberNotFound guard the cross-organization read:
+// an organization's record and member list are its members' and the platform
+// admin's, and anyone else gets the 404 an unknown id gets. Neither caller here
+// could be a member -- one has no user, the other asks for an id that is not a
+// UUID -- so the refusal happens before any DB access.
+func TestHandleGetOrganization_NonMemberNotFound(t *testing.T) {
+	for _, tc := range []struct{ name, orgID, userID string }{
+		{"no user", "22222222-2222-2222-2222-222222222222", ""},
+		{"an id that is not a UUID", "org-1", "11111111-1111-1111-1111-111111111111"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Service{}
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Params = gin.Params{{Key: "id", Value: tc.orgID}}
+			c.Request = httptest.NewRequest(http.MethodGet, "/organizations/"+tc.orgID, nil)
+			if tc.userID != "" {
+				c.Set("user_id", tc.userID)
+			}
+
+			s.handleGetOrganization(c)
+
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+			}
+		})
+	}
+}
+
+func TestHandleListMembers_NonMemberNotFound(t *testing.T) {
+	s := &Service{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "id", Value: "22222222-2222-2222-2222-222222222222"}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/organizations/22222222-2222-2222-2222-222222222222/members", nil)
+
+	s.handleListMembers(c)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d — a non-member must not list an organization's members",
+			w.Code, http.StatusNotFound)
+	}
+}
+
+// TestHandleGetMyOrganizations_NoUserForbidden guards the seed-identity
+// fallback: with no user bound this used to answer with the seed admin's
+// organizations. The refusal happens before any DB access.
+func TestHandleGetMyOrganizations_NoUserForbidden(t *testing.T) {
+	s := &Service{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/me/organizations", nil)
+
+	s.handleGetMyOrganizations(c)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d — a caller with no user has no organizations of their own",
+			w.Code, http.StatusForbidden)
+	}
+}
+
 func init() {
 	gin.SetMode(gin.TestMode)
 }

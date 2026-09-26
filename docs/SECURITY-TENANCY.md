@@ -80,8 +80,18 @@ signed `org_id` names that organization and its roles include `super_admin`.
 Roles are created per organization, so a `super_admin` role held in any other
 organization is that organization's role and grants nothing outside it; the
 identity API refuses to create a role with that name, or rename one to it,
-outside the default organization. The same rule decides who lists and
-administers every organization through the organization API.
+outside the default organization. The same rule decides who lists, creates
+and administers every organization through the organization API.
+
+`organizations` and `organization_members` span the install, outside the RLS
+belt, and so do `tenant_branding`, `tenant_settings` and `tenant_domains`,
+which the login page reads before any organization is resolved. The APIs over
+them keep organizations apart themselves. An organization's record and member
+list are read by its members, in any role, and by a platform admin; its
+branding, settings and custom domains (`/api/v1/tenants/{orgId}/...`) by the
+administrators of the organization the request resolved to and by a platform
+admin; anyone else gets the `404` an unknown id gets. Only a platform admin
+creates an organization.
 
 ### 6. A CI linter makes it un-bypassable by construction
 
