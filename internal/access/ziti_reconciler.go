@@ -668,6 +668,53 @@ func (rec *ZitiReconciler) reconcileRoute(ctx context.Context, zm *ZitiManager, 
 	rec.setStatus(d.ServiceName, "synced")
 }
 
+// dropContestedNames leaves out the routes whose service name is not one
+// organization's: one of the install's own services, or a name that routes,
+// mirror rows or PAM entries of more than one organization hold. The
+// reconciler adopts a service by its name and converges it to the route --
+// its host.v1 target, its policies, the mirror's organization -- so converging
+// a contested name would hand one organization's service to whichever claim
+// came last on every pass. The service is left as it is and the conflict is
+// reported in the route's converge state until one claim is renamed.
+func (rec *ZitiReconciler) dropContestedNames(ctx context.Context, desired []DesiredRoute) ([]DesiredRoute, error) {
+	rows, err := rec.db.Pool.Query(orgctx.WithBypassRLS(ctx),
+		//orgscope:ignore install-wide Ziti reconcile: what this looks for is a service name held by more than one organization
+		`SELECT name FROM (
+		     SELECT ziti_service_name AS name, org_id FROM proxy_routes
+		      WHERE ziti_service_name IS NOT NULL AND ziti_service_name != ''
+		     UNION ALL SELECT name, org_id FROM ziti_services
+		     UNION ALL SELECT ziti_service_name, org_id FROM pam_entries WHERE ziti_service_name IS NOT NULL
+		 ) claims
+		 GROUP BY name HAVING COUNT(DISTINCT org_id) > 1`)
+	if err != nil {
+		return nil, err
+	}
+	contested := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		contested[name] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	kept := make([]DesiredRoute, 0, len(desired))
+	for _, d := range desired {
+		if contested[d.ServiceName] || reservedZitiServiceName(d.ServiceName) {
+			rec.setStatus(d.ServiceName, "error: the service name is held by more than one organization, or by the install; rename one claim")
+			rec.logger.Warn("reconcile: not converging a service name that is not one organization's",
+				zap.String("svc", d.ServiceName), zap.String("org", d.OrgID))
+			continue
+		}
+		kept = append(kept, d)
+	}
+	return kept, nil
+}
+
 // reconcileOnce loads desired routes and converges each. No live manager → skip.
 func (rec *ZitiReconciler) reconcileOnce(ctx context.Context) {
 	zm := rec.provider.Get()
@@ -696,6 +743,12 @@ func (rec *ZitiReconciler) reconcileOnce(ctx context.Context) {
 		if desired[i].EffectiveMode() == HostingModeHop {
 			desired[i].HopPort = ports[desired[i].ServiceName]
 		}
+	}
+	// Only after the ports are stamped: the hop config still counts the routes
+	// left out here, so leaving them out first would move every later port.
+	if desired, err = rec.dropContestedNames(ctx, desired); err != nil {
+		rec.logger.Warn("reconcile: could not check who holds each service name; skipping the pass", zap.Error(err))
+		return
 	}
 	for _, d := range desired {
 		rec.reconcileRoute(ctx, zm, d)

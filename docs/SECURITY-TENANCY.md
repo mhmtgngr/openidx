@@ -237,6 +237,18 @@ gives to an organization is the install's.
   authentication and JWT-signer policies, raw configs, the AI analysis, its
   anomalies and quarantine, the governance-policy syncs, and importing a
   service no organization manages.
+- A controller service name belongs to one organization. The reconciler and
+  Add Service reach a service by its name and adopt one that already exists,
+  converging its target and policies to the new claim. So a name another
+  organization holds (a service in its mirror, or one of its routes or PAM
+  entries that names it), or one of the install's own services, cannot be
+  given to a new service or to a route: Add Service and Ziti on a route answer
+  `409`, the Ziti feature `400`, and a bulk route that would name one is not
+  created and is listed in the answer's `name_conflicts`. Add Service also
+  refuses, to anyone but an install administrator, a name already on the
+  controller. The reconciler does not converge a name that more than one
+  organization holds, and reports the conflict in the route's converge state
+  until one of them is renamed.
 
 The rules are in `internal/access/ziti_scope.go`.
 

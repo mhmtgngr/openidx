@@ -681,6 +681,11 @@ paths:
     post:
       tags: [Ziti Services]
       summary: Create Ziti service
+      description: >-
+        Admin role. 409 when the name is another organization's or one of
+        the install's own services, or -- for anyone but an install
+        administrator -- already a service on the controller: the service
+        would be adopted and rewritten.
       operationId: createZitiService
       requestBody:
         required: true
@@ -697,6 +702,16 @@ paths:
                 $ref: '#/components/schemas/ZitiService'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: The service name is another organization's or the install's, or already on the controller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/access/ziti/services/{id}:
     delete:
@@ -789,6 +804,9 @@ paths:
     post:
       tags: [Ziti Services]
       summary: Enable Ziti on route
+      description: >-
+        Admin role. 409 when service_name is another organization's or one
+        of the install's own services.
       operationId: enableZitiOnRoute
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -799,8 +817,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProxyRoute'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: The service name is another organization's or the install's
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/access/ziti/routes/{id}/disable:
     post:
@@ -5814,6 +5842,11 @@ paths:
         already serves, or one host twice, is refused as a whole with 409,
         listing the conflicts; nothing is created. A conflict with another
         organization's route names only the host.
+        Admin role. Creates one route per entry of `routes` and per host of
+        `subnet`. A Ziti route's service is named `openidx-<route name>`; a
+        route whose service name is another organization's or one of the
+        install's own services is not created, and its name is listed in
+        `name_conflicts`.
       operationId: bulkRoutes
       x-openidx-handler: internal/access.(*Service).handleBulkRoutes
       requestBody:
@@ -5831,6 +5864,16 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+                properties:
+                  created:
+                    type: integer
+                  requested:
+                    type: integer
+                  name_conflicts:
+                    type: array
+                    items:
+                      type: string
+                    description: The routes not created because their Ziti service name is taken
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -6133,6 +6176,10 @@ paths:
     post:
       tags: [Services]
       summary: Enable ziti feature
+      description: >-
+        Admin role. 400 when ziti_service_name, or the name derived from
+        the route, is another organization's or one of the install's own
+        services.
       operationId: enableZitiFeature
       x-openidx-handler: internal/access.(*Service).handleEnableZitiFeature
       requestBody:

@@ -170,6 +170,7 @@ func (s *Service) handleBulkRoutes(c *gin.Context) {
 	}
 
 	created := 0
+	var conflicts []string
 	for _, r := range list {
 		name := strings.TrimSpace(r.Name)
 		toURL := strings.TrimSpace(r.ToURL)
@@ -179,6 +180,18 @@ func (s *Service) handleBulkRoutes(c *gin.Context) {
 		svcName := ""
 		if r.Ziti {
 			svcName = "openidx-" + sanitizeZitiName(name)
+			// The reconciler adopts and converges whatever service this name
+			// already names, so it must not be another organization's or the
+			// install's (ziti_scope.go).
+			claimed, err := zitiServiceNameClaimed(c.Request.Context(), s.db, org.ID, svcName)
+			if err != nil {
+				s.logger.Warn("bulk route: could not check the ziti service name", zap.String("name", name), zap.Error(err))
+				continue
+			}
+			if claimed {
+				conflicts = append(conflicts, name)
+				continue
+			}
 		}
 		if _, err := s.db.Pool.Exec(c.Request.Context(),
 			`INSERT INTO proxy_routes (id, name, from_url, to_url, require_auth, enabled, priority,
@@ -194,7 +207,12 @@ func (s *Service) handleBulkRoutes(c *gin.Context) {
 	if created > 0 {
 		s.enqueueReconcile()
 	}
-	c.JSON(http.StatusOK, gin.H{"created": created, "requested": len(list)})
+	resp := gin.H{"created": created, "requested": len(list)}
+	if len(conflicts) > 0 {
+		// The routes left out because their Ziti service name is taken.
+		resp["name_conflicts"] = conflicts
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // handleRouterEnrollToken mints a new edge-router enrollment JWT and returns a

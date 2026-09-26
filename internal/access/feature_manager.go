@@ -654,6 +654,16 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID, orgID s
 		if serviceName == "" {
 			serviceName = fmt.Sprintf("openidx-%s", routeName)
 		}
+		// The reconciler adopts and converges whatever service this name
+		// already names, so it must not be another organization's or the
+		// install's (ziti_scope.go).
+		claimed, err := zitiServiceNameClaimed(ctx, fm.db, orgID, serviceName)
+		if err != nil {
+			return nil, fmt.Errorf("check the ziti service name: %w", err)
+		}
+		if claimed {
+			return nil, fmt.Errorf("a ziti service named %q already exists; choose another ziti_service_name", serviceName)
+		}
 
 		if fm.reconcilerEnabled {
 			// The reconciler owns service/policy/hosting creation. Record only the

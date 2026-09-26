@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -211,6 +212,51 @@ func (s *Service) ownsZitiTerminator(ctx context.Context, orgID, id string) (boo
 		return false, nil
 	}
 	return s.ownsZitiService(ctx, orgID, resp.Data.serviceID())
+}
+
+// A CONTROLLER SERVICE NAME BELONGS TO ONE ORGANIZATION.
+//
+// The controller has one namespace of service names for every organization,
+// and OpenIDX reaches a service by its name: the reconciler, and the admin's
+// Add Service, adopt a service that already exists under the name they were
+// given and converge it -- its host.v1 target, its policies, the mirror's
+// organization -- to the route or request that named it. A name another
+// organization already holds is that organization's service, and one of the
+// install's own services is the install's. So an organization may name neither
+// for a route or a new service, and the reconciler converges a name only for a
+// single organization.
+
+// reservedZitiServiceName reports whether name is one of the services OpenIDX
+// runs for the whole install: the dark-platform surfaces, the remote-support
+// broker and the BrowZer router service.
+func reservedZitiServiceName(name string) bool {
+	if name == remoteSupportZitiService || name == BrowZerRouterServiceName {
+		return true
+	}
+	for _, d := range defaultDarkServices() {
+		if d.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// zitiServiceNameClaimed reports whether a controller service name is not
+// orgID's to take: one of the install's own services, or a name another
+// organization holds -- a service in its mirror, or a proxy route or PAM entry
+// of its that names it.
+func zitiServiceNameClaimed(ctx context.Context, db *database.PostgresDB, orgID, name string) (bool, error) {
+	if reservedZitiServiceName(name) {
+		return true, nil
+	}
+	var claimed bool
+	err := db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
+		//orgscope:ignore a controller service name is install-wide: what this looks for is another organization's claim on it
+		`SELECT EXISTS (SELECT 1 FROM ziti_services WHERE name = $1 AND org_id <> $2)
+		     OR EXISTS (SELECT 1 FROM proxy_routes WHERE ziti_service_name = $1 AND org_id <> $2)
+		     OR EXISTS (SELECT 1 FROM pam_entries WHERE ziti_service_name = $1 AND org_id <> $2)`,
+		name, orgID).Scan(&claimed)
+	return claimed, err
 }
 
 // zitiEntityRef is the {id, name} reference the controller embeds for a

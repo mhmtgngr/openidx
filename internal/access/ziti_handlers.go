@@ -211,11 +211,27 @@ func (s *Service) handleCreateZitiService(c *gin.Context) {
 		return
 	}
 
-	org, oerr := orgctx.From(c.Request.Context())
-	if oerr != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+	view, ok := s.zitiViewFor(c)
+	if !ok {
 		return
 	}
+	// ProvisionDialableService adopts a service that already exists under
+	// this name and rewrites its configs and policies, so the name has to be
+	// free: not another organization's or the install's (ziti_scope.go), and,
+	// for anyone but an install administrator adopting a service no
+	// organization holds, not on the controller at all.
+	if claimed, err := zitiServiceNameClaimed(c.Request.Context(), s.db, view.orgID, req.Name); err != nil || claimed {
+		s.refuseZitiServiceName(c, err)
+		return
+	}
+	if !view.install {
+		existing, err := s.ziti().serviceIDByName(c.Request.Context(), req.Name)
+		if err != nil || existing != "" {
+			s.refuseZitiServiceName(c, err)
+			return
+		}
+	}
+	org := orgctx.Org{ID: view.orgID}
 
 	// Provision the FULL overlay object graph (host.v1 + intercept.v1 + service +
 	// Bind/Dial/service-edge-router policies) so the service is actually dialable.
@@ -577,6 +593,15 @@ func (s *Service) handleEnableZitiOnRoute(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "route not found"})
 		return
 	}
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	if claimed, err := zitiServiceNameClaimed(c.Request.Context(), s.db, org.ID, req.ServiceName); err != nil || claimed {
+		s.refuseZitiServiceName(c, err)
+		return
+	}
 
 	if err := s.ziti().SetupZitiForRoute(c.Request.Context(), routeID, req.ServiceName, req.Host, req.Port); err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to enable Ziti on route", err), s.logger)
@@ -619,4 +644,14 @@ func (s *Service) handleDisableZitiOnRoute(c *gin.Context) {
 	s.logAuditEvent(c, "ziti_disabled_on_route", routeID, "proxy_route", nil)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Ziti disabled on route"})
+}
+
+// refuseZitiServiceName answers a request whose service name is not the
+// caller's organization's to take, or whose check could not run.
+func (s *Service) refuseZitiServiceName(c *gin.Context, err error) {
+	if err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("check the ziti service name", err), s.logger)
+		return
+	}
+	c.JSON(http.StatusConflict, gin.H{"error": "a ziti service with this name already exists"})
 }
