@@ -72,9 +72,29 @@ paths:
     get:
       tags: [Auth]
       summary: Login page
+      description: >-
+        Starts signing in to the proxied application on this host. After
+        sign-in the callback sends the browser to `redirect_url` when it is a
+        path on the same host (one leading slash, not two, and no backslash),
+        or an http(s) URL with no user information whose host is the access
+        service's own (`ACCESS_PROXY_DOMAIN`, with or without the service's
+        port) or the host of one of the organization's enabled proxy routes,
+        compared exactly. Any other target, and a missing one, lands on
+        `/access/.auth/session`; with `idp`, on `/`.
       operationId: loginPage
       x-openidx-handler: internal/access.(*Service).handleLogin
       security: []
+      parameters:
+        - name: redirect_url
+          in: query
+          description: Where to send the browser after sign-in, held to the rule above.
+          schema:
+            type: string
+        - name: idp
+          in: query
+          description: The id of one of the organization's identity providers to sign in with.
+          schema:
+            type: string
       responses:
         '200':
           description: Login page rendered
@@ -128,9 +148,18 @@ paths:
     get:
       tags: [Auth]
       summary: Logout
+      description: >-
+        Ends the proxy session the cookie names, clears the cookie and
+        redirects to `redirect_url` when it passes the login's rule, and to
+        `/access/.auth/login` otherwise.
       operationId: logout
       x-openidx-handler: internal/access.(*Service).handleLogout
       security: []
+      parameters:
+        - name: redirect_url
+          in: query
+          schema:
+            type: string
       responses:
         '302':
           description: Redirect to login after logout

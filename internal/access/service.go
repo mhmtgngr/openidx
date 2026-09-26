@@ -77,6 +77,10 @@ type ProxyRoute struct {
 	UpstreamPoolID string    `json:"upstream_pool_id,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	// OrgID is the organization that owns the route. findRouteByHost fills it
+	// for the data plane, which resolves a request's organization from the
+	// route its host matched; the route API does not return it.
+	OrgID string `json:"-"`
 	// ApplicationID/ApplicationName identify the application (if any) whose
 	// applications.route_id points at this route — the same link appForRoute
 	// (proxy_assignment_cache.go) resolves to decide real access under
@@ -1895,11 +1899,9 @@ func (s *Service) handleLogin(c *gin.Context) {
 	challenge := generateCodeChallenge(verifier)
 	state := generateState()
 
-	// Store verifier and original URL in Redis
-	redirectURL := c.Query("redirect_url")
-	if redirectURL == "" {
-		redirectURL = "/access/.auth/session"
-	}
+	// Store verifier and original URL in Redis. Only a target the proxy may
+	// send a browser to is stored; anything else lands on the session page.
+	redirectURL := s.redirectTarget(c, c.Query("redirect_url"), "/access/.auth/session")
 
 	sessionData, _ := json.Marshal(map[string]string{
 		"verifier":     verifier,
@@ -2036,12 +2038,9 @@ func (s *Service) handleCallback(c *gin.Context) {
 		"email":      session.Email,
 	})
 
-	// Redirect to original URL
-	redirectURL := storedState.RedirectURL
-	if redirectURL == "" {
-		redirectURL = "/"
-	}
-	c.Redirect(http.StatusFound, redirectURL)
+	// Redirect to original URL. It was checked when it was stored, and is
+	// checked again here, where it is followed.
+	c.Redirect(http.StatusFound, s.redirectTarget(c, storedState.RedirectURL, "/"))
 }
 
 func (s *Service) handleLogout(c *gin.Context) {
@@ -2084,11 +2083,8 @@ func (s *Service) handleLogout(c *gin.Context) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	redirectURL := c.Query("redirect_url")
-	if redirectURL == "" {
-		redirectURL = "/access/.auth/login"
-	}
-	c.Redirect(http.StatusFound, redirectURL)
+	// Signing out needs no session, so this redirect is anybody's to write.
+	c.Redirect(http.StatusFound, s.redirectTarget(c, c.Query("redirect_url"), "/access/.auth/login"))
 }
 
 func (s *Service) handleSessionInfo(c *gin.Context) {
@@ -2212,9 +2208,11 @@ func (s *Service) handleProxy(c *gin.Context) {
 			session = s.getSessionFromBearer(c)
 		}
 		if session == nil {
-			// Redirect to login
+			// Redirect to login, back to this path on this host afterwards.
+			// RequestURI and not URL.String(): a request line in absolute form
+			// names a scheme and host of its own, and they are not this one.
 			loginURL := fmt.Sprintf("/access/.auth/login?redirect_url=%s",
-				url.QueryEscape(c.Request.URL.String()))
+				url.QueryEscape(c.Request.URL.RequestURI()))
 			c.Redirect(http.StatusFound, loginURL)
 			return
 		}
@@ -2893,7 +2891,7 @@ func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute
 		        COALESCE(reverify_interval, 0), posture_check_ids, inline_policy,
 		        COALESCE(require_device_trust, false), allowed_countries,
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
-		        created_at, updated_at
+		        created_at, updated_at, org_id::text
 		 FROM proxy_routes WHERE from_url LIKE '%' || $1 || '%' AND enabled=true
 		 ORDER BY priority DESC LIMIT 1`, host).Scan(
 		&r.ID, &r.Name, &desc, &r.FromURL, &r.ToURL, &r.PreserveHost,
@@ -2904,7 +2902,7 @@ func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute
 		&r.ReverifyInterval, &postureCheckIDs, &inlinePolicy,
 		&r.RequireDeviceTrust, &allowedCountries,
 		&r.MaxRiskScore, &guacConnID,
-		&r.CreatedAt, &r.UpdatedAt)
+		&r.CreatedAt, &r.UpdatedAt, &r.OrgID)
 	if err != nil {
 		return nil, err
 	}

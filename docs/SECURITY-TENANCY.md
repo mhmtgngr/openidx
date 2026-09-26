@@ -175,6 +175,15 @@ needs `admin` or `super_admin` held there. Every platform admin can change
 install-wide settings; an `admin` of the default organization without
 `super_admin` can change them and still cannot act in any other organization.
 
+## Shared proxy surfaces
+
+The access proxy serves every organization's applications from one listener,
+and BrowZer from one set of nginx files, so what one organization's
+administrator writes into a route reaches them. The proxy follows a `redirect_url` only to a path
+on the same host, to the access service's own host, or to a host of the
+organization's own routes, where the organization is the one that owns the
+route serving the request's host.
+
 ## What multi-tenancy covers
 
 | Layer | Tenant isolation |

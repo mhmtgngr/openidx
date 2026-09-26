@@ -212,10 +212,7 @@ func (s *Service) handleLoginWithIDP(c *gin.Context, idpID string) {
 	challenge := generateCodeChallenge(verifier)
 	state := generateState()
 
-	redirectURL := c.Query("redirect_url")
-	if redirectURL == "" {
-		redirectURL = "/"
-	}
+	redirectURL := s.redirectTarget(c, c.Query("redirect_url"), "/")
 
 	// Store state with IDP info
 	sessionData, _ := json.Marshal(map[string]string{
@@ -341,10 +338,7 @@ func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifi
 		"idp_id":     idpID,
 	})
 
-	if redirectURL == "" {
-		redirectURL = "/"
-	}
-	c.Redirect(http.StatusFound, redirectURL)
+	c.Redirect(http.StatusFound, s.redirectTarget(c, redirectURL, "/"))
 }
 
 // exchangeCodeWithIDP exchanges an authorization code with an external IDP's token endpoint
