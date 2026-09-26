@@ -7,6 +7,144 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **The APIs accept only access tokens.** An ID token is signed with the same
+  key as an access token and carries the same roles and permissions, and every
+  service accepted it as a bearer token. ID tokens travel to every application
+  a user signs in to, and back in `id_token_hint`. Access tokens are now typed
+  `at+jwt` (RFC 9068), and the services and `/oauth/userinfo` refuse any other
+  token with 401. Access tokens minted before the upgrade are recognised by
+  their `client_id` claim, which no ID token carries. (OPENIDX-2026-007)
+- **A token works only in the organization it was issued in.** The tenant
+  resolver scoped a request to the organization named by `X-Org-Slug`, or by
+  the host name the gateway derives it from. It did not compare that with the
+  token, whose roles are its holder's roles in their own organization. So the
+  administrator of one organization was an administrator of every other.
+  - Access tokens now carry `org_id`, and every API validator refuses a token
+    or API key presented to another organization with 403.
+  - Only a platform admin may cross organizations, and the crossing is
+    audited.
+  - A token with no `org_id` is refused with 401. (OPENIDX-2026-006)
+- **Only applications allowed to may call the OpenIDX API.** An access token
+  issued to any application, including a third-party one a user signs in to,
+  carries the user's roles and worked on OpenIDX's own APIs.
+  - Each application now has a **May call the OpenIDX API** setting, and only
+    access tokens issued to applications with it on are accepted there.
+  - `/oauth/userinfo`, introspection, revocation and logout keep accepting
+    every application's tokens.
+  - Applications that exist at the upgrade keep the setting on, and new ones
+    start with it off. (OPENIDX-2026-010)
+- **A platform admin is `super_admin` held in the default organization.** The
+  role name alone made a caller a platform admin: able to list every
+  organization, administer any of them, and cross into them. Any
+  organization's administrators can create a role with that name.
+  - The role now counts only in the default organization, read from the
+    token's signed `org_id`.
+  - Creating or renaming a role to `super_admin` elsewhere is refused.
+    (OPENIDX-2026-011)
+- **Install-wide settings need an administrator of the default organization.**
+  These routes asked only for `admin`, which each organization grants inside
+  itself:
+  - SMS delivery;
+  - the passwordless defaults;
+  - MFA methods;
+  - the OAuth signing keys;
+  - the IP deny-list and error catalog;
+  - the self-heal controls;
+  - the OpenZiti controller connection and BrowZer;
+  - the platform and APISIX certificates.
+
+  They now need `admin` or `super_admin` held in the default organization
+  (`00000000-0000-0000-0000-000000000010`). The caller's own organization, read
+  from the database, must be that one, and so must the organization of the
+  token or API key they present. `DEFAULT_ORG_ID`, the organization a request
+  with no tenant signal falls back to, does not change who qualifies. Reading
+  the SMS provider or the OpenZiti controller settings, which hold credentials,
+  needs the same. A refused caller gets 403 `platform administrator required`,
+  and the console explains it. (OPENIDX-2026-008)
+- **The access service enforces the console's role tiers.** Many access-service
+  routes asked only for a signed-in user. The routes now carry the tier of the
+  page that shows them, in the console's order (user, auditor, operator, admin,
+  super_admin):
+  - **admin:** proxy routes and sessions, and the route configuration behind
+    them (upstream pools, service features and tests, OpenZiti import,
+    kiosk policies, the recording retention policy);
+  - **operator:** remote support, the agent fleet, and the reads about other
+    users' identities, sessions and devices;
+  - **auditor:** the unified audit trail.
+
+  Remote support also stays inside the caller's organization. A session can
+  only be opened on a device enrolled there, and a recording is served only
+  from a session found there. (OPENIDX-2026-009, OPENIDX-2026-012)
+- **Revoking an access-proxy session ends it.** Revocation deleted a Redis key
+  no session lives under, so a revoked session kept working for up to twelve
+  hours. It now deletes the session's own entry, and the idle refresh no longer
+  writes a deleted entry back. An id matching no session of the caller's
+  organization answers 404. (OPENIDX-2026-013)
+- **Managing OAuth clients, SAML service providers and SSF streams needs the
+  admin role.** `/api/v1/oauth/clients`, `/api/v1/saml/service-providers` and
+  `/ssf/streams` asked only for a signed-in caller. So any user of an
+  organization, or a token with no role at all, could change its applications'
+  redirect URIs and secrets, its SAML service providers' assertion consumer
+  URLs, and where its security events are delivered. Every route of the three
+  APIs now needs `admin` or `super_admin`, and anyone else gets 403. Dynamic
+  client registration keeps its own tokens, and cannot turn on **May call the
+  OpenIDX API**. (OPENIDX-2026-014)
+- **The organization API keeps organizations apart.** Organizations, their
+  members, and their branding, settings and domains span the install, outside
+  row-level security, and some of the routes over them did not check the
+  caller:
+  - any signed-in user could read another organization's record and member
+    list, and create an organization;
+  - an organization's administrator could read and rewrite another
+    organization's login-page branding and settings, and add, verify and
+    delete its custom domains (`/api/v1/tenants/{orgId}/...`).
+
+  An organization's record and members are now read by its members and by a
+  platform admin. Its branding, settings and domains are managed by its own
+  administrators and by a platform admin. Anyone else gets the 404 an unknown
+  id gets. Only a platform admin creates an organization.
+  `GET /me/organizations` for a token with no user behind it answers 403,
+  where it listed the seeded administrator's memberships. (OPENIDX-2026-015,
+  OPENIDX-2026-016)
+
+### Upgrade notes
+- **Everyone signs in once more.** Access tokens minted before the upgrade
+  carry neither `org_id` nor the API claim, and are refused.
+  - The console signs users out and asks them to sign in again.
+  - The desktop and mobile apps may ask their users to sign in again.
+  - A client that refreshes its token gets a new one and notices nothing.
+- **Review the applications marked "May call the OpenIDX API"**
+  (Applications). Migration v205 adds the setting: on for every application
+  that exists at the upgrade, off for new ones. Turn it off for each
+  application that only uses OpenIDX to sign users in. A rollback drops the
+  column.
+- **Some tokens lose access.** Integrations that called these routes with such
+  tokens get 403:
+  - A plain user, or a custom role the console ranks as user, no longer
+    reaches the access service's administration, operator or audit routes.
+  - An organization's administrator on a multi-organization install no longer
+    changes install-wide settings.
+  - Managing OAuth clients, SAML service providers and SSF streams needs an
+    administrator's token. A plain user's token, a client-credentials token
+    or an API key without the admin role is refused, and an SSF receiver can
+    no longer create its own stream with its own token.
+- **Creating an organization needs a platform admin**: a user holding
+  `super_admin` in the default organization. No installer seeds that role.
+  Before creating another organization, create a role named `super_admin` in
+  the default organization (Roles), assign it to an administrator, and have
+  them sign in again.
+- **An administrator of several organizations** manages the branding,
+  settings and custom domains of the organization their token was issued in.
+  To manage another organization's, they sign in there.
+- **`DEFAULT_ORG_ID` no longer chooses the install's administrators.** If it
+  names an organization other than `00000000-0000-0000-0000-000000000010`,
+  install-wide settings now belong to the administrators of that default
+  organization, and those of the organization it names lose them. With it
+  unset or at that value, nothing changes.
+- **Roles named `super_admin` outside the default organization** no longer
+  grant anything beyond an ordinary role, and new ones cannot be created.
+
 ## [1.37.0] - 2026-09-25
 
 ### Removed
