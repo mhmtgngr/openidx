@@ -630,6 +630,7 @@ paths:
     get:
       tags: [Ziti Identities]
       summary: List Ziti identities
+      description: Operator tier or above; the list names every user who has an identity.
       operationId: listZitiIdentities
       responses:
         '200':
@@ -642,6 +643,8 @@ paths:
                   $ref: '#/components/schemas/ZitiIdentity'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       tags: [Ziti Identities]
       summary: Create Ziti identity
@@ -912,6 +915,7 @@ paths:
     get:
       tags: [Posture Checks]
       summary: Get identity posture
+      description: Operator tier or above.
       operationId: getIdentityPosture
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -922,6 +926,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IdentityPosture'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -929,6 +935,7 @@ paths:
     post:
       tags: [Posture Checks]
       summary: Evaluate identity posture
+      description: Operator tier or above.
       operationId: evaluateIdentityPosture
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -939,6 +946,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PostureEvaluation'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 

@@ -536,16 +536,26 @@ func (h *RemoteSupportHandler) HandleFinalizeRecording(c *gin.Context) {
 	})
 }
 
-// HandleDownloadRecording streams the assembled WebM back. Mounted on the
-// auth-protected admin group; downstream this should grow scoping checks
-// (the requester must be an admin in the agent's tenant) once tenant
-// boundaries are enforced on this surface.
+// HandleDownloadRecording streams the assembled WebM back. Mounted behind the
+// operator tier.
+//
+// The store is keyed by session id alone and knows nothing of tenants, so the
+// session is looked up in the caller's organization first -- fetchSession
+// filters on org_id and runs under the request's RLS scope -- and a session of
+// any other organization is not found. Before that lookup a recording was
+// served to anyone who knew its session id. There is no owner check beyond the
+// organization: reviewing another operator's session is what the recording
+// list on the Remote Support page is for.
 func (h *RemoteSupportHandler) HandleDownloadRecording(c *gin.Context) {
 	if h.recordingStore == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "recording not configured"})
 		return
 	}
 	sessionID := c.Param("id")
+	if _, err := h.fetchSession(c.Request.Context(), sessionID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "recording not found"})
+		return
+	}
 	reader, size, err := h.recordingStore.Open(sessionID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "recording not found"})

@@ -135,9 +135,10 @@ func (h *AgentAPIHandler) logAuditEventToDB(ctx context.Context, action, agentID
 // (token / device-credential authenticated) and admin (JWT authenticated)
 // surfaces should use RegisterAgentPublicRoutes and RegisterAgentAdminRoutes
 // instead. Kept for backward compatibility with tests and earlier callers.
-func (h *AgentAPIHandler) RegisterAgentRoutes(r *gin.RouterGroup) {
+// operator is handed to RegisterAgentAdminRoutes.
+func (h *AgentAPIHandler) RegisterAgentRoutes(r *gin.RouterGroup, operator gin.HandlerFunc) {
 	h.RegisterAgentPublicRoutes(r)
-	h.RegisterAgentAdminRoutes(r)
+	h.RegisterAgentAdminRoutes(r, operator)
 }
 
 // RegisterAgentPublicRoutes registers endpoints that agents reach BEFORE they
@@ -155,19 +156,27 @@ func (h *AgentAPIHandler) RegisterAgentPublicRoutes(r *gin.RouterGroup) {
 // OAuth JWT: enrollment-token CRUD, agent listing / approve / revoke, the
 // OAuth-based agent enrollment used by mobile clients, and Android QR /
 // APK-info admin helpers. Mount behind middleware.Auth.
-func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup) {
+//
+// operator is the role gate on the fleet: the console gives Agent Fleet to
+// operators. An enrollment token or QR code admits a device into the
+// organization, approving a device puts it on the network (the response
+// carries its Ziti enrollment JWT), revoking one takes a user's device off it,
+// and the list and posture reads describe every user's devices. A user's own
+// enrollment -- the OAuth path and the enrollment session -- stays open, and
+// the APK info is public.
+func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup, operator gin.HandlerFunc) {
 	r.POST("/agent/enroll/oauth", h.HandleEnrollOAuth)
 	r.POST("/agent/enroll/session", h.HandleCreateEnrollSession)
 	r.GET("/agent/enroll/session/:id/status", h.HandleEnrollSessionStatus)
 	r.DELETE("/agent/enroll/session/:id", h.HandleCancelEnrollSession)
-	r.POST("/agent/tokens", h.HandleGenerateToken)
-	r.GET("/agent/tokens", h.HandleListTokens)
-	r.DELETE("/agent/tokens/:token_id", h.HandleRevokeToken)
-	r.GET("/agents", h.HandleListAgents)
-	r.GET("/agents/:agent_id/posture", h.HandleAgentPosture)
-	r.DELETE("/agents/:agent_id", h.HandleRevokeAgent)
-	r.POST("/agents/:agent_id/approve", h.HandleApproveAgent)
-	r.POST("/agent/qr", h.HandleGenerateQR)
+	r.POST("/agent/tokens", withGate(operator, h.HandleGenerateToken)...)
+	r.GET("/agent/tokens", withGate(operator, h.HandleListTokens)...)
+	r.DELETE("/agent/tokens/:token_id", withGate(operator, h.HandleRevokeToken)...)
+	r.GET("/agents", withGate(operator, h.HandleListAgents)...)
+	r.GET("/agents/:agent_id/posture", withGate(operator, h.HandleAgentPosture)...)
+	r.DELETE("/agents/:agent_id", withGate(operator, h.HandleRevokeAgent)...)
+	r.POST("/agents/:agent_id/approve", withGate(operator, h.HandleApproveAgent)...)
+	r.POST("/agent/qr", withGate(operator, h.HandleGenerateQR)...)
 	r.GET("/agent/apk-info", h.HandleAPKInfo)
 }
 
@@ -1798,7 +1807,7 @@ type agentRecord struct {
 	EnrolledAt       *time.Time `json:"enrolled_at"`
 }
 
-// HandleListAgents returns a JSON array of all enrolled agents (admin endpoint).
+// HandleListAgents returns a JSON array of all enrolled agents (operator tier).
 // When the database is unavailable it returns an empty array.
 func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 	if h.db == nil || h.db.Pool == nil {
@@ -1879,7 +1888,7 @@ type agentPostureResponse struct {
 }
 
 // HandleAgentPosture returns an agent's latest posture result per check plus its
-// current Ziti tier (device-trusted or not). Admin-gated. Read-only.
+// current Ziti tier (device-trusted or not). Operator tier. Read-only.
 func (h *AgentAPIHandler) HandleAgentPosture(c *gin.Context) {
 	agentID := c.Param("agent_id")
 	if agentID == "" {

@@ -91,12 +91,13 @@ func TestTheLegalHoldGateIsTheAdminGateNotTheFreshnessGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `RegisterRemoteSupportAdminRoutes(api, svc.requireFreshMFA("remote_support.start_session"), svc.requireAdminRole())`
+	const want = `RegisterRemoteSupportAdminRoutes(api, svc.requireFreshMFA("remote_support.start_session"), svc.requireAdminRole(), operatorTier)`
 	if !strings.Contains(string(b), want) {
 		t.Fatalf("service.go does not mount the remote-support surface as\n  %s\n"+
 			"The first gate is what a caller needs to START a session (a fresh factor); the second is what a "+
-			"caller needs to place or RELEASE a legal hold (admin authority). Swapped or dropped, a "+
-			"non-admin with a fresh factor can release a hold and the retention sweep purges the evidence.",
+			"caller needs to place or RELEASE a legal hold (admin authority); the third is the operator tier "+
+			"every session route carries. Swapped or dropped, a non-admin with a fresh factor can release a "+
+			"hold and the retention sweep purges the evidence.",
 			want)
 	}
 }

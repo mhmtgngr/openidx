@@ -375,7 +375,9 @@ func TestRegisterAgentRoutes(t *testing.T) {
 	router := gin.New()
 	handler := newTestAgentHandler()
 	group := router.Group("/")
-	handler.RegisterAgentRoutes(group)
+	// The fleet routes' operator gate is not what this test is about; the
+	// public routes below are mounted the same way either way.
+	handler.RegisterAgentRoutes(group, nil)
 
 	// /agent/enroll — requires Authorization header
 	w := httptest.NewRecorder()

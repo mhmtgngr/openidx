@@ -83,7 +83,8 @@ var notPrivilegedLaunch = map[string]string{
 	// The remote-support surface, visible here for the first time. Session
 	// START carries the step-up gate and the two legal-hold WRITES carry
 	// requireAdminRole (see RegisterLegalHoldAdminRoutes for the decision);
-	// these are the rest.
+	// these are the rest. They carry the operator tier (role_tiers.go), which
+	// is a role check, not the freshness this census asks about.
 	"POST /remote-support/sessions/:id/end": "ends a remote-control session. Ending access is never the " +
 		"thing to interrupt for a second factor -- see moderation/:id/end.",
 	"POST /remote-support/sessions/:id/recording/chunk": "uploads a recording chunk for a session that was " +

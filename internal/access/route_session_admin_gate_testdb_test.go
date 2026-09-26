@@ -476,6 +476,7 @@ func (f *adminGateFixture) connectAsAppRole(t *testing.T) *database.PostgresDB {
 // the caller from a header only this test sets.
 type adminGateEngine struct {
 	r       *gin.Engine
+	svc     *Service
 	callers map[string]adminGateCaller
 }
 
@@ -486,12 +487,20 @@ type adminGateCaller struct {
 
 func (f *adminGateFixture) serve(t *testing.T, db *database.PostgresDB) *adminGateEngine {
 	t.Helper()
+	return f.serveWith(t, db, &config.Config{Environment: "production"})
+}
+
+// serveWith is serve with the caller's configuration, for a test that needs a
+// component the default leaves off (the recording store, say).
+func (f *adminGateFixture) serveWith(t *testing.T, db *database.PostgresDB, cfg *config.Config) *adminGateEngine {
+	t.Helper()
 	mini := miniredis.RunT(t)
 	rc := goredis.NewClient(&goredis.Options{Addr: mini.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
-	svc := NewService(db, &database.RedisClient{Client: rc}, &config.Config{Environment: "production"}, zap.NewNop())
+	svc := NewService(db, &database.RedisClient{Client: rc}, cfg, zap.NewNop())
+	svc.SetAuditService(NewUnifiedAuditService(db, zap.NewNop()))
 
-	e := &adminGateEngine{r: gin.New(), callers: map[string]adminGateCaller{}}
+	e := &adminGateEngine{r: gin.New(), svc: svc, callers: map[string]adminGateCaller{}}
 	RegisterRoutes(e.r, svc, func(c *gin.Context) {
 		cl := e.callers[c.GetHeader("X-Test-Caller")]
 		c.Set("user_id", cl.user)

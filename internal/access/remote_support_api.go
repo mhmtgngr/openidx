@@ -258,31 +258,6 @@ func defaultSTUNServers() json.RawMessage {
 	return json.RawMessage(`[{"urls":["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302"]}]`)
 }
 
-// RegisterRemoteSupportAdminRoutes mounts the admin (and admin-WS) surface.
-// MUST go behind middleware.Auth.
-//
-// stepUp is the freshness gate applied to starting a session and admin is the
-// role gate applied to the legal-hold writes and the retention write. Both are
-// parameters rather than something this file reaches for because each is a
-// method on Service and this handler does not have one.
-//
-// WHY STARTING A SESSION IS GATED AND THE REST IS NOT. HandleStartSession opens
-// an INTERACTIVE remote-control session on a named device -- the default mode
-// is "interactive", not "view" -- which is the same kind of thing as
-// POST /pam/apps/:id/launch and is gated the same way, at the same enforcement
-// point. It had no gate at all: the group it is mounted on carries
-// promoteWebSocketBearer and authentication and nothing else, the handler
-// checks tenancy and shape but neither role nor freshness, and the device-side
-// consent that looks like a second control is CHOSEN BY THE CALLER -- consent_required
-// is a field in the start request, and it defaults to false. So any
-// authenticated caller in the tenant could take control of any enrolled device
-// in it.
-//
-// It survived because the census that exists to catch exactly this
-// (stepup_route_census_test.go) could not see it three times over: it read only
-// service.go, matched only registrations on the group named `api`, and looked
-// only at paths beginning /pam/. A guard keyed on a spelling cannot see work
-// that uses none of them.
 // withGate prepends a gate to a handler chain, skipping a nil gate so a test
 // that wants the bare handler can pass nil without gin panicking on it.
 func withGate(gate gin.HandlerFunc, handlers ...gin.HandlerFunc) []gin.HandlerFunc {
@@ -292,17 +267,50 @@ func withGate(gate gin.HandlerFunc, handlers ...gin.HandlerFunc) []gin.HandlerFu
 	return append([]gin.HandlerFunc{gate}, handlers...)
 }
 
-func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGroup, stepUp, admin gin.HandlerFunc) {
-	r.GET("/remote-support/sessions", h.HandleListSessions)
-	r.POST("/remote-support/sessions", withGate(stepUp, h.HandleStartSession)...)
-	r.GET("/remote-support/sessions/:id", h.HandleGetSession)
-	r.POST("/remote-support/sessions/:id/end", h.HandleEndSession)
+// RegisterRemoteSupportAdminRoutes mounts the admin (and admin-WS) surface.
+// MUST go behind middleware.Auth.
+//
+// stepUp is the freshness gate applied to starting a session; admin is the
+// role gate applied to the legal-hold writes and the retention write; operator
+// is the console's operator tier (role_tiers.go), applied to every session
+// route -- start, list, read, end, the viewer socket and the recording. All
+// three are parameters rather than something this file reaches for because
+// each is a method on Service and this handler does not have one.
+//
+// WHY STARTING A SESSION NEEDS A FRESH FACTOR AND THE REST DOES NOT.
+// HandleStartSession opens an INTERACTIVE remote-control session on a named
+// device -- the default mode is "interactive", not "view" -- which is the same
+// kind of thing as POST /pam/apps/:id/launch and is gated the same way, at the
+// same enforcement point. It had no gate at all: the group it is mounted on
+// carries promoteWebSocketBearer and authentication and nothing else, the
+// handler checks tenancy and shape but neither role nor freshness, and the
+// device-side consent that looks like a second control is CHOSEN BY THE CALLER
+// -- consent_required is a field in the start request, and it defaults to
+// false. So any authenticated caller in the tenant could take control of any
+// enrolled device in it.
+//
+// It survived because the census that exists to catch exactly this
+// (stepup_route_census_test.go) could not see it three times over: it read only
+// service.go, matched only registrations on the group named `api`, and looked
+// only at paths beginning /pam/. A guard keyed on a spelling cannot see work
+// that uses none of them.
+//
+// The freshness gate alone did not close it: under the default STEPUP_GATE=off
+// it asks for nothing, and it never asked who the caller is. The operator tier
+// does, on every session route, because the console gives Remote Support to
+// operators and to no one below them. Ending a session and uploading its
+// recording still ask for no fresh factor, for the reasons the census records.
+func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGroup, stepUp, admin, operator gin.HandlerFunc) {
+	r.GET("/remote-support/sessions", withGate(operator, h.HandleListSessions)...)
+	r.POST("/remote-support/sessions", withGate(operator, withGate(stepUp, h.HandleStartSession)...)...)
+	r.GET("/remote-support/sessions/:id", withGate(operator, h.HandleGetSession)...)
+	r.POST("/remote-support/sessions/:id/end", withGate(operator, h.HandleEndSession)...)
 	// Admin-side WebSocket — the browser viewer connects here.
-	r.GET("/remote-support/sessions/:id/ws", h.HandleAdminWS)
+	r.GET("/remote-support/sessions/:id/ws", withGate(operator, h.HandleAdminWS)...)
 	// Recording upload pipeline (Phase 4 follow-up).
-	r.POST("/remote-support/sessions/:id/recording/chunk", h.HandleUploadRecordingChunk)
-	r.POST("/remote-support/sessions/:id/recording/finalize", h.HandleFinalizeRecording)
-	r.GET("/remote-support/sessions/:id/recording", h.HandleDownloadRecording)
+	r.POST("/remote-support/sessions/:id/recording/chunk", withGate(operator, h.HandleUploadRecordingChunk)...)
+	r.POST("/remote-support/sessions/:id/recording/finalize", withGate(operator, h.HandleFinalizeRecording)...)
+	r.GET("/remote-support/sessions/:id/recording", withGate(operator, h.HandleDownloadRecording)...)
 	// Per-tenant retention policy.
 	h.RegisterRetentionAdminRoutes(r, admin)
 	// Legal hold workflow (exempts a session's recording from sweep).
@@ -396,6 +404,24 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 	}
 	if h.db == nil || h.db.Pool == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database unavailable"})
+		return
+	}
+
+	// The device has to be one of this organization's. It finds its session
+	// by agent id alone -- findActiveSessionForAgent runs bypassed, because the
+	// device carries no tenant -- so a session opened here for another
+	// organization's device would be picked up by that device, and the caller
+	// would be looking at a screen in a tenant they do not belong to.
+	var enrolled int
+	if err := h.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT 1 FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
+		req.AgentID, sessionOrg).Scan(&enrolled); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return
+		}
+		h.logger.Error("could not check that the remote-support target belongs to the organization", zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "could not check the agent"})
 		return
 	}
 
@@ -720,6 +746,17 @@ func (h *RemoteSupportHandler) HandleGetSession(c *gin.Context) {
 // HandleEndSession admin-initiated session termination.
 func (h *RemoteSupportHandler) HandleEndSession(c *gin.Context) {
 	id := c.Param("id")
+	// endSession runs bypassed because the device may end a session too; the
+	// administrator's request ends one of their own organization's sessions,
+	// or nothing.
+	if _, err := h.fetchSession(c.Request.Context(), id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("end session", err), h.logger)
+		return
+	}
 	var body struct {
 		Reason string `json:"reason"`
 	}
