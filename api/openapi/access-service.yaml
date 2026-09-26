@@ -168,6 +168,10 @@ paths:
     get:
       tags: [Auth]
       summary: Get current session info
+      description: >-
+        Reports the proxy session the cookie names. A session is good on the
+        host whose sign-in set its cookie, on any port, and nowhere else: on
+        another host the answer is 401.
       operationId: getSessionInfo
       x-openidx-handler: internal/access.(*Service).handleSessionInfo
       security: []
@@ -471,7 +475,13 @@ paths:
     post:
       tags: [Routes]
       summary: Create proxy route
-      description: Admin only.
+      description: >-
+        Admin only. `custom_headers` may not name a header the proxy writes from
+        the signed-in session (`X-Forwarded-User`, `X-Forwarded-Email`,
+        `X-Forwarded-Name`, `X-Forwarded-Roles`, `X-Forwarded-Groups`,
+        `X-Forwarded-Preferred-Username`, `X-Forwarded-Access-Token`,
+        `X-Forwarded-Route`, `X-Risk-Score`, `X-Ziti-Identity` or any
+        `X-Auth-Request-*`), in any case; such a route is refused with 400.
       operationId: createRoute
       requestBody:
         required: true
@@ -515,7 +525,9 @@ paths:
     put:
       tags: [Routes]
       summary: Update proxy route
-      description: Admin only.
+      description: >-
+        Admin only. `custom_headers` is held to the same rule as on create: a
+        header the proxy writes from the signed-in session is refused with 400.
       operationId: updateRoute
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -1209,6 +1221,18 @@ paths:
     post:
       tags: [Auth Decision]
       summary: Auth decision endpoint (POST)
+      description: >-
+        Forward-auth. Allowing, it answers the headers the edge is to put on
+        the upstream request in place of the caller's: `X-Forwarded-User`,
+        `X-Forwarded-Email`, `X-Forwarded-Name`, `X-Forwarded-Roles`,
+        `X-Forwarded-Route` and `X-Risk-Score`, empty where there is no
+        identity; the caller's `Cookie` without the proxy's
+        `_openidx_proxy_session`, when the caller sent it; and an empty
+        `Authorization` when the access service authenticated the request with
+        it. The edge must copy all of them onto the upstream request. A proxy
+        session is accepted for the host in `X-Forwarded-Host` only when it
+        was issued for that host. Refusing sign-in, it redirects to
+        `/access/.auth/login`.
       operationId: authDecidePost
       requestBody:
         required: true
@@ -1230,6 +1254,18 @@ paths:
     get:
       tags: [Auth Decision]
       summary: Auth decision endpoint (GET)
+      description: >-
+        Forward-auth. Allowing, it answers the headers the edge is to put on
+        the upstream request in place of the caller's: `X-Forwarded-User`,
+        `X-Forwarded-Email`, `X-Forwarded-Name`, `X-Forwarded-Roles`,
+        `X-Forwarded-Route` and `X-Risk-Score`, empty where there is no
+        identity; the caller's `Cookie` without the proxy's
+        `_openidx_proxy_session`, when the caller sent it; and an empty
+        `Authorization` when the access service authenticated the request with
+        it. The edge must copy all of them onto the upstream request. A proxy
+        session is accepted for the host in `X-Forwarded-Host` only when it
+        was issued for that host. Refusing sign-in, it redirects to
+        `/access/.auth/login`.
       operationId: authDecideGet
       parameters:
         - name: uri

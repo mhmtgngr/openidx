@@ -430,7 +430,10 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 	// Extract the original request info from headers (set by APISIX forward-auth)
 	originalHost := c.GetHeader("X-Forwarded-Host")
 	if originalHost == "" {
-		originalHost = c.GetHeader("Host")
+		// Not c.GetHeader("Host"): the server moves Host out of the header
+		// map, so that read was always empty, and findRouteByHost matched an
+		// empty host against every route and answered for the first.
+		originalHost = c.Request.Host
 	}
 	originalURI := c.GetHeader("X-Forwarded-Uri")
 	originalMethod := c.GetHeader("X-Forwarded-Method")
@@ -450,15 +453,17 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 		return
 	}
 
-	// If route doesn't require auth, allow
+	// If route doesn't require auth, allow. The identity headers are
+	// answered empty, so the edge replaces the caller's copies rather than
+	// passing them on.
 	if !route.RequireAuth {
-		c.Header("X-Forwarded-Route", route.Name)
+		writeForwardAuthHeaders(c, nil, route.Name, "", forwardAuthConsumedAuthorization(c, nil))
 		c.Status(http.StatusOK)
 		return
 	}
 
 	// Authenticate
-	session := s.getSessionFromRequest(c)
+	session := s.getSessionFromRequest(c, originalHost)
 	// Enforce the route's idle timeout on the cookie session (bearer tokens carry
 	// their own expiry). Mirrors handleProxy.
 	if session != nil && isIdleExpired(route, session, time.Now()) {
@@ -563,13 +568,10 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 	// Update session activity (also slides the idle-timeout window)
 	s.updateSessionActivity(c, session)
 
-	// Set identity headers for the upstream
-	c.Header("X-Forwarded-User", session.UserID)
-	c.Header("X-Forwarded-Email", session.Email)
-	c.Header("X-Forwarded-Name", session.Name)
-	c.Header("X-Forwarded-Roles", strings.Join(session.Roles, ","))
-	c.Header("X-Forwarded-Route", route.Name)
-	c.Header("X-Risk-Score", fmt.Sprintf("%d", decision.RiskScore))
+	// Set identity headers for the upstream, and keep the proxy's own
+	// credentials from it.
+	writeForwardAuthHeaders(c, session, route.Name, fmt.Sprintf("%d", decision.RiskScore),
+		forwardAuthConsumedAuthorization(c, session))
 
 	s.logAuditEvent(c, "proxy_access_allowed", route.ID, "proxy_route", map[string]interface{}{
 		"user_id":    session.UserID,
@@ -603,4 +605,19 @@ func (s *Service) handleValidatePolicy(c *gin.Context) {
 		"valid":   true,
 		"message": "policy expression is valid",
 	})
+}
+
+// forwardAuthConsumedAuthorization reports whether the access service
+// authenticated this forward-auth request with its Authorization header:
+// through its own bearer session, or through the bearer middleware in front of
+// the endpoint, which binds a subject only from a credential it verified.
+// Either way the header is an OpenIDX credential, and not the application's.
+func forwardAuthConsumedAuthorization(c *gin.Context, session *ProxySession) bool {
+	if c.GetHeader("Authorization") == "" {
+		return false
+	}
+	if session != nil && session.bearer != "" {
+		return true
+	}
+	return c.GetString("user_id") != "" || c.GetString("service_account_id") != "" || c.GetString("api_key_id") != ""
 }

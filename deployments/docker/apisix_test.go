@@ -217,3 +217,53 @@ func TestAPISIXCORSIsOneTenantRulePlusProtocolWildcards(t *testing.T) {
 		}
 	}
 }
+
+// TestAPISIXForwardAuthReplacesTheCallersCredentials pins the edge half of the
+// forward-auth contract. APISIX copies onto the upstream request only the
+// headers a forward-auth route lists as upstream_headers, and passes the
+// caller's own copy of every other header. The decide endpoint answers every
+// identity header (empty when there is no identity), the caller's Cookie
+// without the proxy's session cookie, and an empty Authorization when the
+// access service authenticated the request with it. A route that lists fewer
+// hands the application the caller's forged identity, or the user's proxy
+// session and OpenIDX token.
+func TestAPISIXForwardAuthReplacesTheCallersCredentials(t *testing.T) {
+	raw, err := os.ReadFile("apisix/apisix.yaml")
+	if err != nil {
+		t.Fatalf("read apisix.yaml: %v", err)
+	}
+	var doc struct {
+		Routes []struct {
+			Name    string                 `yaml:"name"`
+			Plugins map[string]interface{} `yaml:"plugins"`
+		} `yaml:"routes"`
+	}
+	if err := yaml.Unmarshal([]byte(strings.ReplaceAll(string(raw), "#END", "")), &doc); err != nil {
+		t.Fatalf("parse apisix.yaml: %v", err)
+	}
+	guarded := 0
+	for _, r := range doc.Routes {
+		fa, ok := r.Plugins["forward-auth"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		guarded++
+		listed := map[string]bool{}
+		if hs, ok := fa["upstream_headers"].([]interface{}); ok {
+			for _, h := range hs {
+				if s, ok := h.(string); ok {
+					listed[strings.ToLower(s)] = true
+				}
+			}
+		}
+		for _, want := range []string{"X-Forwarded-User", "X-Forwarded-Email", "X-Forwarded-Name",
+			"X-Forwarded-Roles", "X-Forwarded-Route", "X-Risk-Score", "Cookie", "Authorization"} {
+			if !listed[strings.ToLower(want)] {
+				t.Errorf("forward-auth route %q does not take %s from the decide answer, so the caller's copy reaches the app", r.Name, want)
+			}
+		}
+	}
+	if guarded == 0 {
+		t.Fatal("no forward-auth route found; the reference edge no longer shows the pattern this pins")
+	}
+}

@@ -101,6 +101,7 @@ func TestProxyEnforcesApplicationAssignment(t *testing.T) {
 			"email":       userID + "@example.test",
 			"name":        "Someone",
 			"roles":       []string{},
+			"host":        host,
 			"expires":     time.Now().Add(time.Hour).Unix(),
 			"last_active": time.Now().Unix(),
 		})

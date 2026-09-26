@@ -626,10 +626,11 @@ func zitiProxyRewrite(target *url.URL, callerID, email, name, roles string) func
 
 		// Whatever the caller asserted about itself goes before anything is
 		// written, so a connection with no resolved identity forwards none
-		// rather than the caller's own.
-		for _, h := range proxyOwnedHeaders {
-			pr.Out.Header.Del(h)
-		}
+		// rather than the caller's own. The proxy's session cookie goes too:
+		// a browser that also reaches this host through the proxy holds one,
+		// and it is the proxy's credential, not the application's.
+		deleteProxyOwnedHeaders(pr.Out.Header)
+		stripProxySessionCookie(pr.Out.Header)
 
 		// The overlay peer, as this proxy observed it — not as anyone claimed
 		// it. If the address is not host:port shaped, say nothing rather than

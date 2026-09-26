@@ -133,6 +133,10 @@ type ProxySession struct {
 	// nothing else to go on: proxy_sessions.idp_id was written by the multi-IdP
 	// callback and read by nothing until this field existed.
 	IDPName string `json:"idp_name,omitempty"`
+	// bearer is the Authorization header value the proxy authenticated this
+	// request with, when it came from getSessionFromBearer. The proxy removes
+	// exactly that value before the request goes upstream.
+	bearer string
 }
 
 // Service provides access proxy operations
@@ -1372,6 +1376,12 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		landingPath = "/"
 	}
 
+	if name := identityCustomHeader(req.CustomHeaders); name != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(
+			"custom_headers cannot set %s: the proxy writes it from the signed-in session", name)})
+		return
+	}
+
 	hostingMode, ok := normalizeHostingMode(req.HostingMode)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hosting_mode (expected identity, direct, or hop)"})
@@ -1545,6 +1555,12 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get route"})
+		return
+	}
+
+	if name := identityCustomHeader(req.CustomHeaders); name != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(
+			"custom_headers cannot set %s: the proxy writes it from the signed-in session", name)})
 		return
 	}
 
@@ -2088,7 +2104,7 @@ func (s *Service) handleLogout(c *gin.Context) {
 }
 
 func (s *Service) handleSessionInfo(c *gin.Context) {
-	session := s.getSessionFromRequest(c)
+	session := s.getSessionFromRequest(c, s.browserHost(c))
 	if session == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "no active session"})
 		return
@@ -2191,7 +2207,7 @@ func (s *Service) handleProxy(c *gin.Context) {
 	// Check authentication
 	var session *ProxySession
 	if route.RequireAuth {
-		session = s.getSessionFromRequest(c)
+		session = s.getSessionFromRequest(c, host)
 		// Enforce the route's idle timeout on the cookie session: if it has been
 		// idle longer than idle_timeout, revoke it and re-auth. (Bearer tokens
 		// carry their own JWT expiry, so this only applies to the cookie path.)
@@ -2870,6 +2886,11 @@ func (s *Service) handleQuickCreate(c *gin.Context) {
 }
 
 func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute, error) {
+	// A request that names no host matches no route. The LIKE below would
+	// match an empty host against every route and answer with the first.
+	if strings.TrimSpace(host) == "" {
+		return nil, pgx.ErrNoRows
+	}
 	// Try exact match first, then wildcard
 	var r ProxyRoute
 	var desc, zitiServiceName, idpID, remoteHost, inlinePolicy, guacConnID *string
@@ -3005,7 +3026,9 @@ func (s *Service) createSession(c *gin.Context, claims map[string]interface{}, a
 		return nil, err
 	}
 
-	// Store session data in Redis for fast access
+	// Store session data in Redis for fast access. host binds the session to
+	// the host whose callback set its cookie: getSessionFromRequest refuses it
+	// anywhere else.
 	sessionData, _ := json.Marshal(map[string]interface{}{
 		"id":          id,
 		"user_id":     userID,
@@ -3013,6 +3036,7 @@ func (s *Service) createSession(c *gin.Context, claims map[string]interface{}, a
 		"name":        name,
 		"roles":       roles,
 		"token":       accessToken,
+		"host":        sessionHost(s.browserHost(c)),
 		"expires":     expiresAt.Unix(),
 		"last_active": time.Now().Unix(),
 	})
@@ -3037,8 +3061,18 @@ func (sess *ProxySession) AbsoluteTimeout() int {
 	return int(time.Until(sess.ExpiresAt).Seconds())
 }
 
-func (s *Service) getSessionFromRequest(c *gin.Context) *ProxySession {
-	cookie, err := c.Cookie("_openidx_proxy_session")
+// getSessionFromRequest returns the proxy session the request's cookie names,
+// when it is live and was issued for host, the host the browser addressed.
+//
+// The session cookie is host-only, so a browser only ever sends it to the host
+// it was set on, and every proxied host gets a session of its own. The session
+// was nonetheless looked up by its token alone, and whoever held a copy of the
+// cookie -- an application it was forwarded to, or anyone reading that
+// application's logs -- could present it at any other route and be the user
+// there. A session is now good on the host it was issued for and refused on
+// every other, as is one issued before sessions carried their host.
+func (s *Service) getSessionFromRequest(c *gin.Context, host string) *ProxySession {
+	cookie, err := c.Cookie(proxySessionCookie)
 	if err != nil || cookie == "" {
 		return nil
 	}
@@ -3051,6 +3085,16 @@ func (s *Service) getSessionFromRequest(c *gin.Context) *ProxySession {
 
 	var sessionData map[string]interface{}
 	if err := json.Unmarshal(data, &sessionData); err != nil {
+		return nil
+	}
+
+	issuedFor, _ := sessionData["host"].(string)
+	if issuedFor == "" || issuedFor != sessionHost(host) {
+		if issuedFor != "" {
+			s.logger.Warn("a proxy session was presented on a host it was not issued for; refusing it",
+				logsafe.String("session_id", fmt.Sprint(sessionData["id"])),
+				logsafe.String("issued_for", issuedFor), logsafe.String("host", sessionHost(host)))
+		}
 		return nil
 	}
 
@@ -3142,6 +3186,7 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 		Email:  email,
 		Name:   name,
 		Roles:  roles,
+		bearer: authHeader,
 	}
 }
 
@@ -3476,14 +3521,11 @@ func hasAnyRole(userRoles, requiredRoles []string) bool {
 // connection whose Ziti identity did not resolve, forwarded the caller's own
 // X-Forwarded-User straight through to an upstream that has no reason to
 // doubt it.
-var proxyOwnedHeaders = []string{
-	"X-Forwarded-User",
-	"X-Forwarded-Email",
-	"X-Forwarded-Name",
-	"X-Forwarded-Roles",
-	"X-Ziti-Identity",
-	"X-Real-IP",
-}
+//
+// They are the identity headers (proxyIdentityHeaders, and the
+// X-Auth-Request-* family deleteProxyOwnedHeaders removes by prefix) and
+// X-Real-IP.
+var proxyOwnedHeaders = append(append([]string{}, proxyIdentityHeaders...), "X-Real-IP")
 
 // proxyRewrite builds the ReverseProxy.Rewrite hook for one proxied request.
 //
@@ -3536,9 +3578,20 @@ func proxyRewrite(target *url.URL, route *ProxyRoute, session *ProxySession, cli
 
 		// Identity, from the verified session and nowhere else. The caller's
 		// own copies go first, so an unauthenticated route cannot forward one.
-		for _, h := range proxyOwnedHeaders {
-			pr.Out.Header.Del(h)
+		deleteProxyOwnedHeaders(pr.Out.Header)
+
+		// The proxy's own credentials stay with the proxy. Its session cookie
+		// authenticates the browser to the proxy on this host; forwarded, it
+		// let the application, or anyone reading its logs, replay the user's
+		// session. A bearer the proxy authenticated this request with is an
+		// OpenIDX access token that may call OpenIDX's own APIs. Every other
+		// cookie, and an Authorization header the proxy did not consume, is
+		// the application's own and goes through untouched.
+		stripProxySessionCookie(pr.Out.Header)
+		if session != nil && session.bearer != "" {
+			removeHeaderValue(pr.Out.Header, "Authorization", session.bearer)
 		}
+
 		if session != nil {
 			pr.Out.Header.Set("X-Forwarded-User", session.UserID)
 			pr.Out.Header.Set("X-Forwarded-Email", session.Email)
@@ -3560,8 +3613,14 @@ func proxyRewrite(target *url.URL, route *ProxyRoute, session *ProxySession, cli
 		}
 
 		// Operator-configured headers last, so a route can deliberately
-		// override anything above.
+		// override the provenance above. Not the identity: a route that could
+		// set X-Forwarded-User would name every one of its users as somebody
+		// else, so those are the session's alone (the route API refuses them,
+		// and one stored before it did is skipped here).
 		for k, v := range route.CustomHeaders {
+			if isProxyIdentityHeader(k) {
+				continue
+			}
 			pr.Out.Header.Set(k, v)
 		}
 	}

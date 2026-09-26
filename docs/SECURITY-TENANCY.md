@@ -179,7 +179,9 @@ install-wide settings; an `admin` of the default organization without
 
 The access proxy serves every organization's applications from one listener,
 and BrowZer from one set of nginx files, so what one organization's
-administrator writes into a route reaches them. The proxy follows a `redirect_url` only to a path
+administrator writes into a route reaches them. A proxy session is good on the
+host whose sign-in set its cookie and on no other host, whichever
+organization's route that is. The proxy follows a `redirect_url` only to a path
 on the same host, to the access service's own host, or to a host of the
 organization's own routes, where the organization is the one that owns the
 route serving the request's host.

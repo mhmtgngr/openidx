@@ -50,13 +50,27 @@ const (
 	proxyFlowKid    = "access-proxy-flow"
 )
 
+// newProxyFlow wires /api/v1/access as cmd/access-service does in production,
+// behind middleware.AuthWithAPIKey.
 func newProxyFlow(t *testing.T) *proxyFlow {
+	t.Helper()
+	return newProxyFlowWith(t, true)
+}
+
+// newProxyFlowWith wires /api/v1/access behind AuthWithAPIKey when production
+// is true, and behind middleware.SoftAuth, main.go's development wiring,
+// otherwise.
+func newProxyFlowWith(t *testing.T, production bool) *proxyFlow {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	f := newAdminGateFixture(t)
 	issuer := newProxyIssuer(t)
+	env := "production"
+	if !production {
+		env = "development"
+	}
 	cfg := &config.Config{
-		Environment:       "production",
+		Environment:       env,
 		OAuthIssuer:       issuer.srv.URL,
 		OAuthJWKSURL:      issuer.srv.URL + "/.well-known/jwks.json",
 		AccessProxyDomain: proxyFlowDomain,
@@ -68,25 +82,12 @@ func newProxyFlow(t *testing.T) *proxyFlow {
 	lookup := organization.NewOrgLookup(organization.NewService(f.db, rc, cfg, zap.NewNop()))
 
 	p := &proxyFlow{f: f, svc: svc, issuer: issuer, ownHost: fmt.Sprintf("%s:%d", proxyFlowDomain, proxyFlowPort)}
-	callers := map[string]adminGateCaller{}
-	var mu sync.Mutex
-	p.srv = httptest.NewServer(accessMainChain(t, svc, lookup, func(c *gin.Context) {
-		mu.Lock()
-		cl, ok := callers[c.GetHeader("X-Test-Caller")]
-		mu.Unlock()
-		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
-			return
-		}
-		c.Set("user_id", cl.user)
-		c.Set("org_id", cl.org)
-		c.Set("roles", cl.roles)
-		c.Next()
-	}))
+	auth := middleware.SoftAuth(cfg.OAuthJWKSURL)
+	if production {
+		auth = middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, nil)
+	}
+	p.srv = httptest.NewServer(accessMainChain(t, svc, lookup, auth))
 	t.Cleanup(p.srv.Close)
-	mu.Lock()
-	callers["forward-auth"] = adminGateCaller{user: f.userA, org: f.orgA}
-	mu.Unlock()
 	p.client = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return p
 }
@@ -264,10 +265,14 @@ func (i *proxyIssuer) unsigned() string {
 
 // bearer signs an access token for user in org, allowed to call OpenIDX's own
 // APIs: the only kind the proxy accepts as a bearer.
-func (i *proxyIssuer) bearer(t *testing.T, user, org string) string {
+func (i *proxyIssuer) bearer(t *testing.T, user, org string, roles ...string) string {
 	t.Helper()
+	rs := []interface{}{}
+	for _, r := range roles {
+		rs = append(rs, r)
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"sub": user, "email": user + "@example.test", "name": "Bearer Holder", "roles": []interface{}{"staff"},
+		"sub": user, "email": user + "@example.test", "name": "Bearer Holder", "roles": rs,
 		"client_id": "admin-console", middleware.APIAccessClaim: true, middleware.OrgIDClaim: org,
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
