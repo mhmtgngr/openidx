@@ -964,9 +964,14 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		if e := s.db.Pool.QueryRow(ctx,
 			"SELECT client_id FROM applications WHERE id = $1 AND org_id = $2", id, org.ID).Scan(&clientID); e == nil {
 			ocSet = append(ocSet, "updated_at = NOW()")
-			ocArgs = append(ocArgs, clientID)
-			//orgscope:ignore client_id resolved via the org-scoped applications lookup on the line above; oauth_clients keyed by globally-unique client_id
-			ocQuery := fmt.Sprintf("UPDATE oauth_clients SET %s WHERE client_id = $%d", strings.Join(ocSet, ", "), ocN)
+			ocArgs = append(ocArgs, clientID, org.ID)
+			// The organization, and not only the client_id the application row
+			// names: an administrator creates that row and chooses its
+			// client_id, so it can name another organization's client, and an
+			// edit here would then rewrite that client's redirect URIs. The
+			// row-level-security belt refuses such a write for the service's
+			// own database role; this predicate refuses it for any role.
+			ocQuery := fmt.Sprintf("UPDATE oauth_clients SET %s WHERE client_id = $%d AND org_id = $%d", strings.Join(ocSet, ", "), ocN, ocN+1)
 			if _, e := s.db.Pool.Exec(ctx, ocQuery, ocArgs...); e != nil {
 				s.logger.Warn("update application: failed to sync backing OAuth client",
 					zap.String("client_id", clientID), zap.Error(e))
