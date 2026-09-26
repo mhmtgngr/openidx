@@ -4277,19 +4277,20 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 }
 
 func (s *Service) handleClientCredentialsGrant(c *gin.Context) {
-	clientID, clientSecret, credsOK := clientCredentials(c)
-	if !credsOK {
-		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "use only one client authentication method"})
-		return
-	}
 	scope := c.PostForm("scope")
 
-	// Verify client
-	client, err := s.GetClient(c.Request.Context(), clientID)
-	if err != nil || subtle.ConstantTimeCompare([]byte(client.ClientSecret), []byte(clientSecret)) != 1 {
-		c.JSON(401, gin.H{"error": "invalid_client"})
+	// RFC 6749 §4.4: this grant is for confidential clients only. It used to
+	// compare the stored secret with the presented one and nothing else, so a
+	// public client -- no secret stored, none presented, and a client_id
+	// anyone can read off an authorization URL -- was authenticated by naming
+	// it. The seeded admin console is one, allowed to call OpenIDX's own APIs,
+	// so anyone could mint a token those APIs accept.
+	client, err := s.authenticateConfidentialClient(c)
+	if err != nil {
+		writeClientAuthError(c, err)
 		return
 	}
+	clientID := client.ClientID
 
 	// SECURITY: the requested scope must be registered for this client
 	// (RFC 6749 §3.3). Without this the caller-supplied scope was minted into

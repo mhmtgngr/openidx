@@ -112,13 +112,15 @@ func (c *OAuthClient) isConfidential() bool {
 
 // authenticateConfidentialClient authenticates the caller of a grant that only
 // a confidential client may use: token exchange, which mints a user's token
-// for an audience. The caller must name a confidential client of the
+// for an audience, and client credentials, which mints one for the client
+// itself (RFC 6749 §4.4). The caller must name a confidential client of the
 // request's organization and present its secret by exactly one method.
 //
-// The exchange used to check the secret of a client whose type was the
-// literal "confidential" and nothing else, so a public client, whose
-// client_id is no secret, was authenticated by naming it, and every client the
-// console registers without its secret.
+// Token exchange used to check the secret of a client whose type was the
+// literal "confidential" and nothing else, and client credentials compared
+// the stored secret with the presented one whatever the client was. Either
+// way a public client, whose client_id is no secret, was authenticated by
+// naming it.
 func (s *Service) authenticateConfidentialClient(c *gin.Context) (*OAuthClient, error) {
 	id, secret, ok := clientCredentials(c)
 	if !ok {

@@ -106,8 +106,8 @@ POST /oauth/register
   loopback (`http://localhost`, `http://127.0.0.1`), or a native custom scheme.
 - `token_endpoint_auth_method: none` yields a **public** client (no secret,
   PKCE required); otherwise **confidential** (secret minted). A public client
-  cannot register for the token-exchange grant (`400
-  invalid_client_metadata`).
+  cannot register for the `client_credentials` or token-exchange grant (`400
+  invalid_client_metadata`): both need a client that authenticates.
 - A registered client may not call OpenIDX's own APIs: its access tokens are
   refused by the admin, identity, governance and other OpenIDX APIs and the
   MCP gateway until the application's "May call the OpenIDX API" setting

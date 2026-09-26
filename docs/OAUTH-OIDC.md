@@ -119,6 +119,11 @@ Machine-to-machine authentication.
 
 **Use Case:** Backend services, API clients
 
+Only a confidential client may use it (RFC 6749 §4.4): one registered with a
+secret, and not as a public client or as the console's **Native/Mobile App**
+type, that presents its secret. Every other client is answered
+`401 invalid_client`. The token names no user and carries no role.
+
 ## OpenID Connect Features
 
 ### ID Tokens

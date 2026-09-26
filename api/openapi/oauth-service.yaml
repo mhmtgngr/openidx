@@ -591,9 +591,9 @@ paths:
             organization.
         '401':
           description: >-
-            Invalid client credentials (`invalid_client`). Token exchange
-            answers this to any client that is not confidential or does not
-            present its secret.
+            Invalid client credentials (`invalid_client`). The client
+            credentials and token exchange grants answer this to any client
+            that is not confidential or does not present its secret.
 
   /oauth/introspect:
     post:
