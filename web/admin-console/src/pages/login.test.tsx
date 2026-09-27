@@ -643,6 +643,25 @@ describe('LoginPage', () => {
       expect(screen.queryByLabelText(/verification code/i)).not.toBeInTheDocument()
     })
 
+    // The list arrives in the query string, so what the browser holds is its own
+    // copy of a hint. The authoritative list is pinned to the MFA session, and
+    // the server's mfaMethodPermitted is what refuses a factor the challenge was
+    // not issued for; a name this page does not know is dropped before it can be
+    // offered, rather than rendered as a button labelled with whatever was sent.
+    it('drops a method it does not know from the handed-back list', async () => {
+      window.location.search = '?mfa_session=sso-mfa-3&mfa_methods=totp,push,not-a-factor'
+      renderWithRouter(<LoginPage />)
+      expect(await screen.findByText(/choose verification method/i)).toBeInTheDocument()
+      expect(screen.queryByText(/NOT-A-FACTOR/)).not.toBeInTheDocument()
+    })
+
+    it('a list with nothing it knows asks for the authenticator code', async () => {
+      window.location.search = '?mfa_session=sso-mfa-4&mfa_methods=not-a-factor'
+      renderWithRouter(<LoginPage />)
+      await screen.findByLabelText(/verification code/i)
+      expect(screen.queryByText(/choose verification method/i)).not.toBeInTheDocument()
+    })
+
     it('says why a sign-in was refused', async () => {
       window.location.search = '?error=sso_mfa_enrollment_required'
       renderWithRouter(<LoginPage />)

@@ -323,6 +323,44 @@ substring test is the wrong shape for that question, and the cost of getting it
 wrong is a destructive suite running against a live deployment. Recorded for
 the e2e work, not a product defect.
 
+### `js/user-controlled-bypass` — 7.8 × 3 — **narrowed in code; the rest is not a defect**
+
+`src/pages/login.tsx:790, 790, 792`
+
+New on the branch that cuts v1.39.0: `main` at `588b49aa` raises none of these,
+the branch raises three, and every other JavaScript rule's count is identical to
+main.
+
+The source is the branch's own. A sign-in through an identity provider whose
+user needs a second factor comes back to `/login` with the offered methods in
+the query string, so `selectMfaMethod`'s `if (method === 'sms' || ...)` is, as
+the query says, a condition a user-provided value controls.
+
+**What it is not.** That condition dispatches; it does not authorise. The
+authoritative factor list is pinned into the MFA session when the session is
+created (`allowed_methods`, `internal/oauth/mfa_session.go:35`), and
+`mfaMethodPermitted` refuses anything else at all four endpoints that consume
+the session: `handlers_passwordless.go:118` (send an OTP), `service.go:3033`
+(verify a code), `service.go:3210` (begin WebAuthn) and `service.go:3261` (begin
+push). A browser that rewrites its own hint asks for a factor the challenge was
+not issued for, and the server refuses it — which is the substitution the
+comment on `mfaMethodPermitted` says the pin exists to stop.
+
+**What was worth fixing anyway, and is fixed.** The hint was read straight out
+of the URL, so a value the page did not recognise fell through
+`getMfaMethodInfo`'s default case and rendered a button labelled with whatever
+the parameter said. `login.tsx` now reads it through `KNOWN_MFA_METHODS`,
+keeping the order the server offered and dropping everything else, so what the
+UI branches on is a constant from that file. Two tests pin it: *drops a method
+it does not know from the handed-back list*, and *a list with nothing it knows
+asks for the authenticator code*.
+
+Whether that also clears the three alerts depends on whether the analysis reads
+a vocabulary lookup as a barrier, and that cannot be checked from here. If they
+survive the next analysis, dismiss them as **"false positive"** citing this
+entry: the four server-side refusals are the control, and nothing on a page in
+the user's own browser can be.
+
 ---
 
 ## `go/log-injection` — 6.1 × 759 — **not a defect**, and pinned
@@ -510,9 +548,9 @@ takes.
 The verdicts above are recorded; the alerts are still open in code scanning,
 and closing them is a UI action this branch cannot take. Items 1 to 4 are
 hygiene — an alert list nobody has triaged is an alert list nobody reads, and
-the results check passed on `dec5b493` without them. **Item 5 is not hygiene:
-those five alerts fail the results check on the branch that raises them, so
-until they are dismissed that branch cannot merge.**
+the results check passed on `dec5b493` without them. **Items 5 and 6 are not hygiene:
+those alerts fail the results check on the branch that raises them, so until
+they are cleared that branch cannot merge.**
 
 1. Dismiss as **"used in tests"**: the 13 JS results.
 2. Dismiss as **"false positive"**, citing this file: `go/sql-injection`,
@@ -541,6 +579,13 @@ until they are dismissed that branch cannot merge.**
    check. Read that entry before dismissing — the reason those five appeared is
    that a password stopped being stored in plain text, and the change that
    would clear them without a dismissal is a change that should not be made.
+6. Check whether three `js/user-controlled-bypass` alerts on
+   `web/admin-console/src/pages/login.tsx:790, 792` are still raised. They are
+   also blocking, and they are also new on that branch, but unlike item 5 the
+   code changed under them: the handed-back method list is now read through a
+   known vocabulary. If the analysis still reports them, dismiss as **"false
+   positive"** citing their entry, which names the four server-side refusals
+   that are the actual control.
 
 Item 2 is the one worth doing carefully: a dismissal is keyed to an alert
 fingerprint, so the next refactor that moves one of those lines brings the

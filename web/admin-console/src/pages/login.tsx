@@ -58,6 +58,28 @@ const linkErrors: Record<string, string> = {
   session_expired: 'login.errors.linkSessionExpired',
 }
 
+// The factor names this page knows how to render and to start. A sign-in through
+// an identity provider hands the offered methods back in the query string, so the
+// list the browser reads is the browser's own copy of a hint -- and it is only a
+// hint. The authoritative list is pinned to the MFA session when it is created,
+// and `mfaMethodPermitted` (internal/oauth/mfa_session.go) is what refuses a
+// factor the challenge was not issued for, at all four endpoints that consume it.
+//
+// Reading the hint through this vocabulary is still worth doing: an unrecognised
+// value used to fall through `getMfaMethodInfo` and render a button labelled with
+// whatever the parameter said, and what the UI branches on is now a constant from
+// this file rather than a string out of the URL.
+const KNOWN_MFA_METHODS = ['totp', 'sms', 'email', 'webauthn', 'push', 'backup', 'bypass'] as const
+
+type KnownMfaMethod = (typeof KNOWN_MFA_METHODS)[number]
+
+// knownMfaMethods keeps the order the server offered and drops everything else.
+const knownMfaMethods = (raw: string): KnownMfaMethod[] =>
+  raw
+    .split(',')
+    .map((m) => KNOWN_MFA_METHODS.find((known) => known === m.trim()))
+    .filter((m): m is KnownMfaMethod => m !== undefined)
+
 // AuthResult is the completion shape shared by every authentication path.
 interface AuthResult {
   redirect_url?: string
@@ -302,7 +324,7 @@ export function LoginPage() {
     // and the methods it offers; the step goes on from here.
     const handedMfa = urlParams.get('mfa_session')
     if (handedMfa) {
-      const methods = (urlParams.get('mfa_methods') ?? '').split(',').filter(Boolean)
+      const methods = knownMfaMethods(urlParams.get('mfa_methods') ?? '')
       setMfaRequired(true)
       setMfaSession(handedMfa)
       setMfaCode('')
