@@ -170,7 +170,7 @@ func (s *Service) handleBulkRoutes(c *gin.Context) {
 	}
 
 	created := 0
-	var conflicts []string
+	var nameConflicts []string
 	for _, r := range list {
 		name := strings.TrimSpace(r.Name)
 		toURL := strings.TrimSpace(r.ToURL)
@@ -189,7 +189,7 @@ func (s *Service) handleBulkRoutes(c *gin.Context) {
 				continue
 			}
 			if claimed {
-				conflicts = append(conflicts, name)
+				nameConflicts = append(nameConflicts, name)
 				continue
 			}
 		}
@@ -208,9 +208,9 @@ func (s *Service) handleBulkRoutes(c *gin.Context) {
 		s.enqueueReconcile()
 	}
 	resp := gin.H{"created": created, "requested": len(list)}
-	if len(conflicts) > 0 {
+	if len(nameConflicts) > 0 {
 		// The routes left out because their Ziti service name is taken.
-		resp["name_conflicts"] = conflicts
+		resp["name_conflicts"] = nameConflicts
 	}
 	c.JSON(http.StatusOK, resp)
 }

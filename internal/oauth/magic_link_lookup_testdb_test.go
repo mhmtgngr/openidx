@@ -52,7 +52,7 @@ func (m *linkMailer) SendInvitationEmail(context.Context, string, string, string
 func (m *linkMailer) SendPasswordResetEmail(context.Context, string, string, string, string) error {
 	return nil
 }
-func (m *linkMailer) SendWelcomeEmail(context.Context, string, string) error { return nil }
+func (m *linkMailer) SendWelcomeEmail(context.Context, string, string, string) error { return nil }
 func (m *linkMailer) SendAsync(_ context.Context, _, _, _ string, data map[string]interface{}) error {
 	if link, ok := data["MagicLinkURL"].(string); ok {
 		m.mu.Lock()

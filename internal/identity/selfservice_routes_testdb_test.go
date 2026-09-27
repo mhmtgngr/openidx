@@ -230,7 +230,7 @@ func (m *recordingMailer) SendInvitationEmail(_ context.Context, to, _, _, _ str
 func (m *recordingMailer) SendPasswordResetEmail(_ context.Context, to, _, _, _ string) error {
 	return m.record(to)
 }
-func (m *recordingMailer) SendWelcomeEmail(_ context.Context, to, _ string) error {
+func (m *recordingMailer) SendWelcomeEmail(_ context.Context, to, _, _ string) error {
 	return m.record(to)
 }
 func (m *recordingMailer) SendAsync(_ context.Context, to, _, _ string, data map[string]interface{}) error {
