@@ -1,5 +1,6 @@
 import axios, { AxiosError, AxiosRequestConfig } from 'axios'
 import type { FactorProof } from './factor-proof'
+import { tokenIsPlatformAdmin } from './platform-admin'
 
 // Registerable session-expiry hook. The auth context registers a handler; the
 // 401 interceptor calls notifyAuthExpired so a dead session surfaces ONE re-login
@@ -218,9 +219,12 @@ axiosInstance.interceptors.request.use((config) => {
   }
   // Multi-tenancy: when a platform admin has selected an org, scope every
   // request to it via X-Org-Slug (the signal the backend tenant resolver
-  // honors first). Regular admins never set this — their token's org applies.
+  // honors first). Anyone else's token applies in its own org, and the API
+  // refuses it for another. The selector once showed to every super_admin, so
+  // a selection can be left in storage for a token that is not a platform
+  // admin's; sending it would turn every request into a 403.
   const orgSlug = localStorage.getItem('selected_org_slug')
-  if (orgSlug) {
+  if (orgSlug && tokenIsPlatformAdmin(token)) {
     config.headers['X-Org-Slug'] = orgSlug
   }
   return config

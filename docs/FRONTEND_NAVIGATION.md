@@ -82,12 +82,26 @@ Each item declares a `minRole`. `lib/roles.ts` mirrors the backend hierarchy:
 
 | Level | Role | Sees |
 |---|---|---|
-| 4 | `super_admin` | everything + Tenant Mgmt + tenant selector |
+| 4 | `super_admin` | everything + Tenant Mgmt; the tenant selector only when the role is held in the default organization |
 | 3 | `admin` | everything except super_admin-only entries |
 | 2 | `operator` | day-to-day management (users, groups, devices, sessions, MFA ops, audit) |
 | 1 | `auditor` | Audit & Reporting + personal pages |
 | 1 | `compliance_reader` | audit domain only (matches its backend scoping) |
 | 0 | `user` | personal workspace |
+
+The tenant selector acts in other organizations, which only a platform admin
+may do: `super_admin` held in the default organization, read from the token's
+`org_id` (`lib/platform-admin.ts`, the same rule as
+`middleware.IsPlatformAdmin`). Nobody else sees it, and a selection left in
+storage is not sent with anyone else's requests.
+
+`minRole` hides a menu entry; it does not stop a typed URL. Pages that only
+administrators can use are also wrapped in `AdminRoute` in `App.tsx`:
+Applications, SAML Providers, Proxy Routes and Upstream Pools (whose APIs
+answer administrators only, reads included), Quick Links admin, Vault
+Secrets, Rotation Policies, the PAM dashboard, Guacamole sessions and
+Access 360. Anyone else is sent to the dashboard rather than shown a page of
+refused requests.
 
 ### View modes (console lenses)
 

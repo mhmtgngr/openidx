@@ -69,10 +69,11 @@ API validator checks it against the organization the request resolved to:
 - A token with no `org_id` is refused with `401`; signing in again or
   refreshing replaces it.
 - A platform admin may act in another organization, by `X-Org-Slug` (the
-  console's organization selector) or `X-Org-ID`. Where the resolver runs
-  after authentication (admin-api), every such crossing writes a
-  `platform_admin_cross_org_access` row to the target organization's audit
-  trail.
+  console's organization selector, which the console shows, and whose
+  choice it sends, only for a platform admin's token) or `X-Org-ID`. Where
+  the resolver runs after authentication (admin-api), every such crossing
+  writes a `platform_admin_cross_org_access` row to the target
+  organization's audit trail.
 
 A platform admin is a user holding the `super_admin` role in the install's
 default organization (`00000000-0000-0000-0000-000000000010`): the token's
