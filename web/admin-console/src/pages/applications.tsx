@@ -25,6 +25,7 @@ import { TableSkeleton } from '../components/ui/skeleton'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
+import { OAUTH_CLIENT_ID } from '../lib/auth'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -62,6 +63,10 @@ interface Application {
   // Opt-in OIDC gate: when true, only assigned users and groups can obtain a
   // token for this application. Edited in the Manage Access dialog.
   require_assignment?: boolean
+  // Whether the application's access tokens may call OpenIDX's own APIs. Like
+  // pkce_required it comes from the backing OAuth client, and a tile with no
+  // client behind it has none.
+  api_access?: boolean
   created_at: string
   updated_at: string
 }
@@ -98,6 +103,7 @@ export function ApplicationsPage() {
     pkce_required: true,
     back_channel_logout_uri: '',
     post_logout_redirect_uris: '',
+    api_access: false,
   })
   const [regenerateModal, setRegenerateModal] = useState(false)
   const [regenerateApp, setRegenerateApp] = useState<Application | null>(null)
@@ -153,6 +159,7 @@ export function ApplicationsPage() {
         pkce_required: true,
         back_channel_logout_uri: '',
         post_logout_redirect_uris: '',
+        api_access: false,
       })
     },
     onError: (error: Error) => {
@@ -245,6 +252,7 @@ export function ApplicationsPage() {
       pkce_required: app.pkce_required ?? true,
       back_channel_logout_uri: app.back_channel_logout_uri || '',
       post_logout_redirect_uris: app.post_logout_redirect_uris?.join('\n') || '',
+      api_access: app.api_access ?? false,
     })
     setEditAppModal(true)
   }
@@ -315,6 +323,7 @@ export function ApplicationsPage() {
       pkce_required: formData.pkce_required,
       back_channel_logout_uri: formData.back_channel_logout_uri.trim(),
       post_logout_redirect_uris: formData.post_logout_redirect_uris.split('\n').filter(uri => uri.trim()),
+      api_access: formData.api_access,
       allow_refresh_token: true,
       access_token_lifetime: 3600,
       refresh_token_lifetime: 86400,
@@ -334,6 +343,9 @@ export function ApplicationsPage() {
           pkce_required: formData.pkce_required,
           back_channel_logout_uri: formData.back_channel_logout_uri.trim(),
           post_logout_redirect_uris: formData.post_logout_redirect_uris.split('\n').filter(uri => uri.trim()),
+          // Sent only for an application with an OAuth client behind it, the
+          // only kind that has the setting.
+          ...(selectedApp.api_access !== undefined ? { api_access: formData.api_access } : {}),
         },
       })
     }
@@ -473,9 +485,16 @@ export function ApplicationsPage() {
                         <span className="text-sm text-muted-foreground uppercase">{app.protocol}</span>
                       </TableCell>
                       <TableCell className="p-3">
-                        <Badge variant={app.enabled ? 'default' : 'secondary'}>
-                          {app.enabled ? t('pages.applications.active') : t('pages.applications.disabled')}
-                        </Badge>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <Badge variant={app.enabled ? 'default' : 'secondary'}>
+                            {app.enabled ? t('pages.applications.active') : t('pages.applications.disabled')}
+                          </Badge>
+                          {app.api_access && (
+                            <Badge variant="outline" title={t('pages.applications.apiAccessBadgeTitle')}>
+                              {t('pages.applications.apiAccessBadge')}
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="p-3 text-right">
                         <div className="flex items-center justify-end gap-1">
@@ -689,6 +708,20 @@ export function ApplicationsPage() {
               />
               <Label htmlFor="pkce_required">{t('pages.applications.registerDialog.pkce')}</Label>
             </div>
+            <div className="space-y-1">
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="api_access"
+                  name="api_access"
+                  checked={formData.api_access}
+                  onChange={(e) => setFormData(prev => ({ ...prev, api_access: e.target.checked }))}
+                  className="rounded"
+                />
+                <Label htmlFor="api_access">{t('pages.applications.registerDialog.apiAccess')}</Label>
+              </div>
+              <p className="text-xs text-muted-foreground">{t('pages.applications.registerDialog.apiAccessHint')}</p>
+            </div>
             <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-sm">
               <p className="font-medium text-blue-900 mb-1">{t('pages.applications.registerDialog.afterTitle')}</p>
               <ul className="text-blue-800 space-y-1 list-disc list-inside">
@@ -802,6 +835,27 @@ export function ApplicationsPage() {
               />
               <Label htmlFor="edit_pkce_required">{t('pages.applications.registerDialog.pkce')}</Label>
             </div>
+            {selectedApp?.api_access !== undefined && (
+              <div className="space-y-1">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="edit_api_access"
+                    name="api_access"
+                    checked={formData.api_access}
+                    onChange={(e) => setFormData(prev => ({ ...prev, api_access: e.target.checked }))}
+                    className="rounded"
+                  />
+                  <Label htmlFor="edit_api_access">{t('pages.applications.registerDialog.apiAccess')}</Label>
+                </div>
+                <p className="text-xs text-muted-foreground">{t('pages.applications.registerDialog.apiAccessHint')}</p>
+                {selectedApp.client_id === OAUTH_CLIENT_ID && !formData.api_access && (
+                  <p role="alert" className="text-xs text-red-600">
+                    {t('pages.applications.registerDialog.apiAccessConsoleWarning')}
+                  </p>
+                )}
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-4">
               <Button
                 type="button"

@@ -27,6 +27,47 @@ func VerifyBearerToken(jwksURL, tokenString string) (map[string]interface{}, err
 	return jwksverify.VerifyBearerToken(jwksURL, tokenString)
 }
 
+// AccessTokenType is the "typ" header of an access token (RFC 9068 §2.1).
+const AccessTokenType = jwksverify.AccessTokenType
+
+// ErrNotAccessToken is the refusal for a verified token that is not an access
+// token.
+var ErrNotAccessToken = jwksverify.ErrNotAccessToken
+
+// IsAccessToken reports whether a verified token is an access token. See
+// jwksverify.IsAccessToken for the rule and why a valid signature is not
+// enough.
+func IsAccessToken(header, claims map[string]interface{}) bool {
+	return jwksverify.IsAccessToken(header, claims)
+}
+
+// OrgIDClaim is the claim naming the organization an access token was minted
+// in.
+const OrgIDClaim = jwksverify.OrgIDClaim
+
+// ErrNoOrganization is the refusal for an access token naming no organization.
+var ErrNoOrganization = jwksverify.ErrNoOrganization
+
+// TokenOrgID returns the organization an access token is bound to. See
+// jwksverify.TokenOrgID for why a token without one is refused.
+func TokenOrgID(claims map[string]interface{}) (string, error) {
+	return jwksverify.TokenOrgID(claims)
+}
+
+// APIAccessClaim is the claim marking an access token OpenIDX's own APIs
+// accept.
+const APIAccessClaim = jwksverify.APIAccessClaim
+
+// ErrNoAPIAccess is the refusal for an access token issued to an application
+// that may not call OpenIDX's own APIs.
+var ErrNoAPIAccess = jwksverify.ErrNoAPIAccess
+
+// HasAPIAccess reports whether an access token may call OpenIDX's own APIs.
+// See jwksverify.HasAPIAccess.
+func HasAPIAccess(claims map[string]interface{}) bool {
+	return jwksverify.HasAPIAccess(claims)
+}
+
 // FetchJWKS resolves the signing key for a token against a remote JWKS. Used
 // for ID tokens from external identity providers.
 func FetchJWKS(jwksURL string, token *jwt.Token) (interface{}, error) {

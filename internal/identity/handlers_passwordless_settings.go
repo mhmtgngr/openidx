@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -40,6 +41,15 @@ type PasswordlessSystemSettings struct {
 	QRLoginEnabled         bool `json:"qr_login_enabled"`
 	QRSessionExpiryMinutes int  `json:"qr_session_expiry_minutes"`
 	MaxMagicLinksPerHour   int  `json:"max_magic_links_per_hour"`
+}
+
+// requirePlatformAdmin guards the writes below. These settings are one row of
+// system_settings for the whole install: an organization's administrator who
+// turned magic links off would turn them off for every organization. The rule
+// lives in middleware.RequirePlatformAdmin; this supplies the database, and
+// DEFAULT_ORG_ID -- the tenant resolver's fallback -- has no say in it.
+func (s *Service) requirePlatformAdmin() gin.HandlerFunc {
+	return middleware.RequirePlatformAdmin(s.db, s.logger)
 }
 
 // defaultPasswordlessSettings returns the default passwordless system settings

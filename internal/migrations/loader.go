@@ -1455,5 +1455,12 @@ func allMigrations() []*Migration {
 			UpSQL:       samlSPSigningAndEncryptionUp,
 			DownSQL:     samlSPSigningAndEncryptionDown,
 		},
+		{
+			Version:     205,
+			Name:        "oauth_clients_api_access",
+			Description: "Add oauth_clients.api_access: whether an application's access tokens may call OpenIDX's own APIs. Every client a user signs in to is issued an access token carrying the user's roles; the roles are a fact about the user, and whether a token may exercise them on OpenIDX is a decision about the application, which nothing recorded. The issuer stamps the openidx_api claim on the tokens of a client with api_access, and the API validators refuse a token without it, while UserInfo, introspection, revocation and logout keep accepting any access token. Added DEFAULT true, which fills every row that exists when the migration runs, so every existing client -- and on a fresh install every seeded one -- keeps working; the default is then set to false, so a client registered afterwards may not call the APIs until it is allowed to. Two ALTERs rather than an ADD and an UPDATE, so no row is touched under the row-level-security belt. Down drops the column.",
+			UpSQL:       oauthClientsAPIAccessUp,
+			DownSQL:     oauthClientsAPIAccessDown,
+		},
 	}
 }

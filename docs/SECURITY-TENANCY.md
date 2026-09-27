@@ -55,7 +55,45 @@ order, the request subdomain, the authenticated JWT, or the `X-Org-ID` header,
 and places it in the request's org context (`orgctx`). If none resolves, the
 request has no tenant and RLS yields zero rows — **fail-closed**.
 
-### 5. A CI linter makes it un-bypassable by construction
+### 5. Tokens are bound to their organization
+
+The tenant decides which rows a request sees; the token decides which roles
+the caller holds, and those are their roles in one organization. Every access
+token therefore carries `org_id`, the organization it was minted in, and every
+API validator checks it against the organization the request resolved to:
+
+- A token presented to a request for another organization is refused with
+  `403`, whether that organization came from `X-Org-Slug` or from the
+  default-org fallback. The same holds for an API key, whose organization is
+  the key's own (the default organization for a key that records none).
+- A token with no `org_id` is refused with `401`; signing in again or
+  refreshing replaces it.
+- A platform admin may act in another organization, by `X-Org-Slug` (the
+  console's organization selector) or `X-Org-ID`. Where the resolver runs
+  after authentication (admin-api), every such crossing writes a
+  `platform_admin_cross_org_access` row to the target organization's audit
+  trail.
+
+A platform admin is a user holding the `super_admin` role in the install's
+default organization (`00000000-0000-0000-0000-000000000010`): the token's
+signed `org_id` names that organization and its roles include `super_admin`.
+Roles are created per organization, so a `super_admin` role held in any other
+organization is that organization's role and grants nothing outside it; the
+identity API refuses to create a role with that name, or rename one to it,
+outside the default organization. The same rule decides who lists, creates
+and administers every organization through the organization API.
+
+`organizations` and `organization_members` span the install, outside the RLS
+belt, and so do `tenant_branding`, `tenant_settings` and `tenant_domains`,
+which the login page reads before any organization is resolved. The APIs over
+them keep organizations apart themselves. An organization's record and member
+list are read by its members, in any role, and by a platform admin; its
+branding, settings and custom domains (`/api/v1/tenants/{orgId}/...`) by the
+administrators of the organization the request resolved to and by a platform
+admin; anyone else gets the `404` an unknown id gets. Only a platform admin
+creates an organization.
+
+### 6. A CI linter makes it un-bypassable by construction
 
 `tools/orgscope` is a static analyzer wired as a **merge-blocking required CI
 check**. It fails the build on any query against a tenant table that lacks an
@@ -78,12 +116,42 @@ under an explicit, audited bypass:
 The bypass is deliberate and narrow; the default for all request-path code is
 tenant-scoped and fail-closed.
 
+## Install-wide settings
+
+Some settings exist once for the whole install rather than once per
+organization: the `system_settings` rows (SMS delivery, the passwordless
+defaults, the OpenZiti controller connection, the BrowZer domain, the APISIX TLS
+switch), the OAuth signing keys, the shared IP deny-list and error catalog, the
+platform TLS certificate and key, and the self-heal loop's controls. Changing
+one of them changes it for every organization.
+
+Changing them needs an **administrator of the default organization**: a user
+who holds `admin` or `super_admin` in the install's default organization
+(`00000000-0000-0000-0000-000000000010`). Their own organization
+(`users.org_id`, read from the database rather than from the request) must be
+that organization, and so must the organization of the token or API key they
+present, whose roles hold there only. `DEFAULT_ORG_ID` does not change who that
+is: it names the organization a request with no tenant signal falls back to,
+and nothing else. On a single-organization install that is every
+administrator. An administrator of any other organization is refused with
+`403 {"error": "platform administrator required"}`, and so is a read of the two
+settings that carry credentials, the SMS provider and the OpenZiti controller
+connection. The rule is in `internal/common/middleware/platform_admin.go`.
+
+The default organization carries two rules, and they are not the same one.
+Acting in another organization, listing every organization and creating one
+need `super_admin` held there: a platform admin. Changing an install-wide setting
+needs `admin` or `super_admin` held there. Every platform admin can change
+install-wide settings; an `admin` of the default organization without
+`super_admin` can change them and still cannot act in any other organization.
+
 ## What multi-tenancy covers
 
 | Layer | Tenant isolation |
 |---|---|
 | Database schema | Enforced — `org_id` + FORCE RLS on tenant tables |
 | Application services | Enforced — `app.org_id` stamped per connection; queries carry `org_id` |
+| Tokens and API keys | Bound — accepted only in their own organization, except a platform admin's |
 | Authorization / governance | Scoped — campaigns, certifications, ABAC, SoD, and risk policies carry `org_id` |
 | Audit | Scoped — `audit_events` is org-scoped, including Elasticsearch search |
 | CI / tests | Enforced — `orgscope` merge gate + cross-org integration test |

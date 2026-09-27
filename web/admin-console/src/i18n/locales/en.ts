@@ -286,6 +286,10 @@ const en = {
   queryError: {
     sessionExpired: 'Your session has expired. Please sign in again.',
     noPermission: "You don't have permission to view {{resource}}.",
+    // The backend's "platform administrator required": the setting is shared
+    // by every organization on the install.
+    platformAdminRequired:
+      'This setting applies to every organization on this installation, so only a platform administrator (an administrator of the default organization) can view or change it.',
     loadFailed: 'Failed to load {{resource}}. Please try again.',
     defaultResource: 'data',
   },
@@ -1755,6 +1759,8 @@ const en = {
         deleteFailed: 'Failed to delete role: {{message}}',
         permsUpdated: 'Permissions updated successfully!',
         permsUpdateFailed: 'Failed to update permissions: {{message}}',
+        reservedName:
+          'The role name "super_admin" is reserved for the platform administrators of the default organization. Choose another name.',
       },
     },
     bulkOps: {
@@ -1806,6 +1812,8 @@ const en = {
       },
       active: 'Active',
       disabled: 'Disabled',
+      apiAccessBadge: 'OpenIDX API',
+      apiAccessBadgeTitle: "This application's access tokens may call OpenIDX's own APIs",
       menu: {
         edit: 'Edit Application',
         copyClientId: 'Copy Client ID',
@@ -1840,6 +1848,11 @@ const en = {
         scopesLabel: 'Scopes (comma-separated)',
         scopesHint: 'OAuth/OIDC scopes this client can request',
         pkce: 'Require PKCE (Recommended for mobile/SPA)',
+        apiAccess: 'May call the OpenIDX API',
+        apiAccessHint:
+          "Allow this application's access tokens on OpenIDX's own APIs. The console, desktop and mobile apps need this; third-party apps normally don't.",
+        apiAccessConsoleWarning:
+          "This is the application the console itself signs in with. Without this setting the console cannot call OpenIDX's APIs once its current access token expires.",
         afterTitle: 'After registration:',
         afterReceive: "You'll receive a <b>Client ID</b> and <b>Client Secret</b>",
         afterStore: "Store the Client Secret securely - it won't be shown again",

@@ -8,8 +8,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // TenantBrandingRecord represents organization-level tenant branding configuration in the database
@@ -59,6 +62,27 @@ type TenantDomain struct {
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
+// tenantOrgAllowed holds a /tenants/:orgId route to the organization the
+// request resolved to. tenant_branding, tenant_settings and tenant_domains span
+// the install, outside the RLS belt -- the login page reads branding by slug or
+// domain before any organization is resolved -- so the id in the path was all
+// that scoped these handlers, and an administrator of one organization could
+// read and rewrite another's login-page branding and settings and add, verify
+// and delete its custom domains. A platform admin may still name any
+// organization; anyone else is answered 404 for any organization but their
+// own, as for one that does not exist.
+func tenantOrgAllowed(c *gin.Context, orgID string) bool {
+	ctx := c.Request.Context()
+	if orgctx.IsPlatformAdmin(ctx) {
+		return true
+	}
+	if org, err := orgctx.From(ctx); err == nil && org.ID == orgID {
+		return true
+	}
+	respondError(c, nil, apperrors.NotFound("Organization"))
+	return false
+}
+
 // handleGetTenantBrandingRecord retrieves the branding configuration for a tenant organization
 func (s *Service) handleGetTenantBrandingRecord(c *gin.Context) {
 	if !requireAdmin(c) {
@@ -66,6 +90,9 @@ func (s *Service) handleGetTenantBrandingRecord(c *gin.Context) {
 	}
 
 	orgID := c.Param("orgId")
+	if !tenantOrgAllowed(c, orgID) {
+		return
+	}
 
 	var b TenantBrandingRecord
 	err := s.db.Pool.QueryRow(c.Request.Context(),
@@ -103,6 +130,9 @@ func (s *Service) handleUpdateTenantBrandingRecord(c *gin.Context) {
 	}
 
 	orgID := c.Param("orgId")
+	if !tenantOrgAllowed(c, orgID) {
+		return
+	}
 
 	var req struct {
 		LogoURL            string          `json:"logo_url"`
@@ -155,6 +185,9 @@ func (s *Service) handleGetTenantSettings(c *gin.Context) {
 	}
 
 	orgID := c.Param("orgId")
+	if !tenantOrgAllowed(c, orgID) {
+		return
+	}
 	category := c.Query("category")
 
 	if category != "" {
@@ -201,6 +234,9 @@ func (s *Service) handleUpdateTenantSettings(c *gin.Context) {
 	}
 
 	orgID := c.Param("orgId")
+	if !tenantOrgAllowed(c, orgID) {
+		return
+	}
 
 	var req struct {
 		Category string          `json:"category"`
@@ -240,6 +276,9 @@ func (s *Service) handleListTenantDomains(c *gin.Context) {
 	}
 
 	orgID := c.Param("orgId")
+	if !tenantOrgAllowed(c, orgID) {
+		return
+	}
 
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, org_id, domain, domain_type, verified, verification_token, verified_at,
@@ -274,6 +313,9 @@ func (s *Service) handleCreateTenantDomain(c *gin.Context) {
 	}
 
 	orgID := c.Param("orgId")
+	if !tenantOrgAllowed(c, orgID) {
+		return
+	}
 
 	var req struct {
 		Domain     string `json:"domain"`
@@ -317,6 +359,9 @@ func (s *Service) handleDeleteTenantDomain(c *gin.Context) {
 	}
 
 	orgID := c.Param("orgId")
+	if !tenantOrgAllowed(c, orgID) {
+		return
+	}
 	domainID := c.Param("domainId")
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
@@ -340,6 +385,9 @@ func (s *Service) handleVerifyTenantDomain(c *gin.Context) {
 	}
 
 	orgID := c.Param("orgId")
+	if !tenantOrgAllowed(c, orgID) {
+		return
+	}
 	domainID := c.Param("domainId")
 
 	var req struct {
@@ -389,6 +437,14 @@ func (s *Service) handleSwitchTenant(c *gin.Context) {
 		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
+	// The organization switched to is the caller's own, one they are a member
+	// of, or -- for a platform admin -- any. organizations is outside the RLS
+	// belt, so without this any administrator read any organization's name and
+	// domain by its id; anyone else is answered 404, as for an unknown id.
+	if !s.maySwitchTo(c, req.OrgID) {
+		respondError(c, nil, apperrors.NotFound("Organization"))
+		return
+	}
 
 	var org struct {
 		ID          string  `json:"id"`
@@ -415,6 +471,34 @@ func (s *Service) handleSwitchTenant(c *gin.Context) {
 		"message":      "Tenant switched",
 		"organization": org,
 	})
+}
+
+// maySwitchTo reports whether the caller may switch to orgID: a platform admin
+// always, anyone else to the organization the request resolved to or one
+// organization_members lists them in. A lookup that fails answers no.
+func (s *Service) maySwitchTo(c *gin.Context, orgID string) bool {
+	ctx := c.Request.Context()
+	if orgctx.IsPlatformAdmin(ctx) {
+		return true
+	}
+	if org, err := orgctx.From(ctx); err == nil && org.ID == orgID {
+		return true
+	}
+	userID := c.GetString("user_id")
+	if _, err := uuid.Parse(orgID); err != nil {
+		return false
+	}
+	if _, err := uuid.Parse(userID); err != nil {
+		return false
+	}
+	var member bool
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM organization_members WHERE organization_id = $1 AND user_id = $2)`,
+		orgID, userID).Scan(&member); err != nil {
+		s.logger.Warn("tenant switch: membership lookup failed; refusing", zap.Error(err))
+		return false
+	}
+	return member
 }
 
 // handleGetCurrentTenant retrieves the current tenant organization for the authenticated user

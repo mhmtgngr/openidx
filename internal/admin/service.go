@@ -21,6 +21,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/validation"
 	"github.com/openidx/openidx/internal/sms"
@@ -116,8 +117,14 @@ type Application struct {
 	// would collapse those two into the same omitted key and hide the field
 	// from exactly the applications that need it.
 	PostLogoutRedirectURIs *[]string `json:"post_logout_redirect_uris,omitempty"`
-	CreatedAt              time.Time `json:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at"`
+	// APIAccess mirrors oauth_clients.api_access (v205): whether the
+	// application's access tokens may call OpenIDX's own APIs. A pointer for
+	// the reason PKCERequired is one -- a tile with no OAuth client behind it
+	// has no such setting -- and, like RequireAssignment, left out of the list
+	// for a caller who is not an administrator.
+	APIAccess *bool     `json:"api_access,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ErrInvalidBackChannelLogoutURI is returned by UpdateApplication when the
@@ -398,6 +405,15 @@ func requireAdmin(c *gin.Context) bool {
 	}
 	c.JSON(http.StatusForbidden, gin.H{"error": "admin access required"})
 	return false
+}
+
+// requirePlatformAdmin is the gate for install-wide settings. The rule lives
+// in middleware.RequirePlatformAdmin; this only supplies the database.
+// DEFAULT_ORG_ID is deliberately not passed: it names the tenant resolver's
+// fallback organization, not the organization whose administrators administer
+// the install.
+func (s *Service) requirePlatformAdmin() gin.HandlerFunc {
+	return middleware.RequirePlatformAdmin(s.db, s.logger)
 }
 
 // NewService creates a new admin service
@@ -867,7 +883,12 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		}
 	}
 
-	if len(setParts) == 0 && !hasPKCE && !hasBackChannel && !hasPostLogout {
+	// Whether the application's access tokens may call OpenIDX's own APIs.
+	// Absent from the payload the column is left alone, so an edit of any
+	// other field neither grants nor removes it.
+	apiAccess, hasAPIAccess := updates["api_access"].(bool)
+
+	if len(setParts) == 0 && !hasPKCE && !hasBackChannel && !hasPostLogout && !hasAPIAccess {
 		return fmt.Errorf("no valid fields to update")
 	}
 
@@ -929,6 +950,11 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		ocArgs = append(ocArgs, payload)
 		ocN++
 	}
+	if hasAPIAccess {
+		ocSet = append(ocSet, fmt.Sprintf("api_access = $%d", ocN))
+		ocArgs = append(ocArgs, apiAccess)
+		ocN++
+	}
 	if len(ocSet) > 0 {
 		var clientID string
 		if e := s.db.Pool.QueryRow(ctx,
@@ -965,7 +991,7 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 		SELECT a.id, a.client_id, a.name, COALESCE(a.description, ''), a.type, a.protocol,
 		       COALESCE(a.base_url, ''), a.redirect_uris, a.enabled, a.require_assignment,
 		       oc.pkce_required, oc.back_channel_logout_uri, oc.client_id, oc.post_logout_redirect_uris,
-		       a.created_at, a.updated_at
+		       oc.api_access, a.created_at, a.updated_at
 		FROM applications a
 		LEFT JOIN oauth_clients oc ON oc.client_id = a.client_id AND oc.org_id = a.org_id
 		WHERE a.org_id = $1
@@ -999,7 +1025,7 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 			&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
 			&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.RequireAssignment,
 			&app.PKCERequired, &app.BackChannelLogoutURI, &ocClientID, &postLogoutJSON,
-			&app.CreatedAt, &app.UpdatedAt,
+			&app.APIAccess, &app.CreatedAt, &app.UpdatedAt,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -1136,13 +1162,22 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	admin := router.Group("")
 	admin.Use(RequireAdmin())
 
+	// Install-wide settings -- one value for every organization on the install
+	// -- need an administrator of the default organization, not only the admin
+	// role; see middleware.RequirePlatformAdmin for who that is.
+	platform := svc.requirePlatformAdmin()
+
 	// Dashboard and Settings are now handled by internal/admin/handlers package
 	// to avoid route registration conflicts
 
-	// SMS Settings (separate from main settings due to credential sensitivity)
-	admin.GET("/settings/sms", svc.handleGetSMSSettings)
-	admin.PUT("/settings/sms", svc.handleUpdateSMSSettings)
-	admin.POST("/settings/sms/test", svc.handleTestSMS)
+	// SMS Settings (separate from main settings due to credential sensitivity).
+	// One provider delivers every organization's codes, and the read returns
+	// the provider's account identifiers, so reads are gated with the writes.
+	// The test send is gated too: it merges the stored credentials into a
+	// request that chooses where the message goes.
+	admin.GET("/settings/sms", platform, svc.handleGetSMSSettings)
+	admin.PUT("/settings/sms", platform, svc.handleUpdateSMSSettings)
+	admin.POST("/settings/sms/test", platform, svc.handleTestSMS)
 
 	// Applications
 	admin.POST("/applications", svc.handleCreateApplication)
@@ -1170,9 +1205,11 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	admin.GET("/directories/:id/sync-logs", svc.handleGetSyncLogs)
 	admin.GET("/directories/:id/sync-state", svc.handleGetSyncState)
 
-	// MFA configuration
+	// MFA configuration. The method list is one system_settings row for the
+	// whole install, so changing it needs an administrator of the default
+	// organization.
 	admin.GET("/mfa/methods", svc.handleListMFAMethods)
-	admin.PUT("/mfa/methods", svc.handleUpdateMFAMethods)
+	admin.PUT("/mfa/methods", platform, svc.handleUpdateMFAMethods)
 
 	// Device management (conditional access)
 	admin.GET("/devices", svc.handleListDevices)
@@ -1229,10 +1266,12 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	admin.GET("/security-alerts/:id", svc.handleGetSecurityAlert)
 	admin.PUT("/security-alerts/:id/status", svc.handleUpdateAlertStatus)
 
-	// IP threat management
+	// IP threat management. ip_threat_list is one deny-list for the whole
+	// install, consulted before a tenant is resolved: an entry blocks or
+	// unblocks an address for every organization.
 	admin.GET("/ip-threats", svc.handleListIPThreats)
-	admin.POST("/ip-threats", svc.handleAddIPThreat)
-	admin.DELETE("/ip-threats/:id", svc.handleRemoveIPThreat)
+	admin.POST("/ip-threats", platform, svc.handleAddIPThreat)
+	admin.DELETE("/ip-threats/:id", platform, svc.handleRemoveIPThreat)
 
 	// Service account key rotation
 	admin.POST("/service-accounts/:id/rotate-key", svc.handleRotateServiceAccountKey)
@@ -1275,11 +1314,12 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// System health (Phase 14)
 	admin.GET("/system/health", svc.handleSystemHealth)
 
-	// Error catalog (Phase 14)
+	// Error catalog (Phase 14). One table for the whole install -- it has no
+	// org_id -- so its writes are install-wide.
 	admin.GET("/error-catalog", svc.handleListErrorCatalog)
-	admin.POST("/error-catalog", svc.handleCreateErrorCatalogEntry)
-	admin.PUT("/error-catalog/:code", svc.handleUpdateErrorCatalogEntry)
-	admin.DELETE("/error-catalog/:code", svc.handleDeleteErrorCatalogEntry)
+	admin.POST("/error-catalog", platform, svc.handleCreateErrorCatalogEntry)
+	admin.PUT("/error-catalog/:code", platform, svc.handleUpdateErrorCatalogEntry)
+	admin.DELETE("/error-catalog/:code", platform, svc.handleDeleteErrorCatalogEntry)
 
 	// Phase 15: AI & Intelligence
 
@@ -1383,7 +1423,7 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 
 	// OAuth signing key rotation (install-wide; consumed by the oauth service)
 	admin.GET("/oauth/signing-keys", svc.handleListOAuthSigningKeys)
-	admin.POST("/oauth/signing-keys/rotate", svc.handleRotateOAuthSigningKey)
+	admin.POST("/oauth/signing-keys/rotate", platform, svc.handleRotateOAuthSigningKey)
 
 	// Phase 17: Multi-Tenancy, Privacy, Federation & Notifications
 
@@ -1619,10 +1659,12 @@ func (s *Service) handleListApplications(c *gin.Context) {
 	// This route is intentionally reachable by any authenticated org user (the
 	// end-user Access Requests page reads it), unlike the admin-only detail
 	// endpoint. require_assignment marks which applications are assignment-
-	// gated, so strip it for non-admins rather than disclose that to everyone.
+	// gated, and api_access which may call OpenIDX's own APIs, so strip both
+	// for non-admins rather than disclose them to everyone.
 	if isAdmin, _ := auth.IsAdminInContext(c); !isAdmin {
 		for i := range apps {
 			apps[i].RequireAssignment = nil
+			apps[i].APIAccess = nil
 		}
 	}
 
@@ -1658,7 +1700,7 @@ func (s *Service) handleGetApplication(c *gin.Context) {
 		SELECT a.id, a.client_id, a.name, COALESCE(a.description, ''), a.type, a.protocol,
 		       COALESCE(a.base_url, ''), a.redirect_uris, a.enabled, a.require_assignment,
 		       oc.pkce_required, oc.back_channel_logout_uri, oc.client_id, oc.post_logout_redirect_uris,
-		       a.created_at, a.updated_at
+		       oc.api_access, a.created_at, a.updated_at
 		FROM applications a
 		LEFT JOIN oauth_clients oc ON oc.client_id = a.client_id AND oc.org_id = a.org_id
 		WHERE a.id = $1 AND a.org_id = $2
@@ -1666,7 +1708,7 @@ func (s *Service) handleGetApplication(c *gin.Context) {
 		&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
 		&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.RequireAssignment,
 		&app.PKCERequired, &app.BackChannelLogoutURI, &ocClientID, &postLogoutJSON,
-		&app.CreatedAt, &app.UpdatedAt,
+		&app.APIAccess, &app.CreatedAt, &app.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "Application not found"})

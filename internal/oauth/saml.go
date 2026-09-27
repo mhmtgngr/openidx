@@ -21,6 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
@@ -623,6 +624,24 @@ func (s *Service) extractSAMLUserFromToken(reqCtx context.Context, tokenStr stri
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
 		return nil, fmt.Errorf("invalid token claims")
+	}
+
+	// The bearer has to be an access token. An ID token verifies against the
+	// same key, but it is given to every relying party the user signs in to,
+	// and must not be enough to sign the user in to a service provider here.
+	if !middleware.IsAccessToken(token.Header, claims) {
+		return nil, fmt.Errorf("invalid token: %w", middleware.ErrNotAccessToken)
+	}
+	// And one minted in this organization: the assertion is issued to this
+	// organization's service provider about a user of this organization.
+	if _, err := tokenOrgForRequest(reqCtx, claims); err != nil {
+		return nil, fmt.Errorf("invalid token: %w", err)
+	}
+	// Signing a user in to a service provider is OpenIDX acting for them, so
+	// the token must be one of an application allowed to call OpenIDX's own
+	// APIs, not any relying party's.
+	if !middleware.HasAPIAccess(claims) {
+		return nil, fmt.Errorf("invalid token: %w", middleware.ErrNoAPIAccess)
 	}
 
 	userID, _ := claims["sub"].(string)
@@ -1260,9 +1279,12 @@ func any(key string, value interface{}) zap.Field {
 // mgmtAuth guards the /api/v1/saml/service-providers management API and is
 // ALWAYS required — these endpoints create/modify SAML service providers, so
 // they must never be reachable unauthenticated (a nil here is a programmer
-// error and intentionally panics at request time). The public SAML protocol
-// endpoints under /saml/idp (metadata, SSO, SLO) stay unauthenticated by
-// design — they are consumed by relying parties and browsers.
+// error and intentionally panics at request time). requireAdminRole follows
+// it: registering a service provider, or replacing its certificate, decides
+// whose requests this IdP answers with the organization's users' assertions.
+// The public SAML protocol endpoints under /saml/idp (metadata, SSO, SLO) stay
+// unauthenticated by design — they are consumed by relying parties and
+// browsers.
 func (s *Service) RegisterSAMLIdPRoutes(router *gin.Engine, mgmtAuth gin.HandlerFunc) {
 	// IdP endpoints
 	idp := router.Group("/saml/idp")
@@ -1282,9 +1304,9 @@ func (s *Service) RegisterSAMLIdPRoutes(router *gin.Engine, mgmtAuth gin.Handler
 		idp.POST("/slo", s.handleIdPSLO)
 	}
 
-	// SP management API endpoints — always authenticated.
+	// SP management API endpoints — always authenticated, administrators only.
 	spAPI := router.Group("/api/v1/saml/service-providers")
-	spAPI.Use(mgmtAuth)
+	spAPI.Use(mgmtAuth, requireAdminRole)
 	{
 		// List all SPs with pagination
 		spAPI.GET("", s.handleListSAMLServiceProviders)

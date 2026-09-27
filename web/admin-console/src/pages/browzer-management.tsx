@@ -14,6 +14,7 @@ import { Badge } from '../components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useToast } from '../hooks/use-toast'
 import { QueryError } from '../components/query-error'
+import { isPlatformAdminRequired } from '../lib/platform-admin'
 
 interface BrowZerTarget {
   vhost: string
@@ -65,6 +66,10 @@ export function BrowZerManagementPage() {
     refetchInterval: 10000,
   })
 
+  // One bootstrapper serves every organization on the install, so the backend
+  // lets only a platform administrator change its domain or restart it.
+  const failureText = (err: Error) => (isPlatformAdminRequired(err) ? t('queryError.platformAdminRequired') : err.message)
+
   const domainMutation = useMutation({
     mutationFn: (domain: string) => api.put('/api/v1/access/ziti/browzer/domain', { domain }),
     onSuccess: () => {
@@ -76,7 +81,7 @@ export function BrowZerManagementPage() {
       setNewDomain('')
     },
     onError: (err: Error) => {
-      toast({ title: t('pages.browzerManagement.toast.domainFailed'), description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.browzerManagement.toast.domainFailed'), description: failureText(err), variant: 'destructive' })
     },
   })
 
@@ -89,7 +94,7 @@ export function BrowZerManagementPage() {
       })
     },
     onError: (err: Error) => {
-      toast({ title: t('pages.browzerManagement.toast.restartFailed'), description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.browzerManagement.toast.restartFailed'), description: failureText(err), variant: 'destructive' })
     },
   })
 

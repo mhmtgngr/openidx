@@ -18,6 +18,7 @@ import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { QueryError } from '../components/query-error'
+import { isPlatformAdminRequired } from '../lib/platform-admin'
 import { ConfirmAction } from '../components/confirm-action'
 
 interface SecurityAlert {
@@ -107,8 +108,14 @@ export function SecurityAlertsPage() {
       setBlockOpen(false)
       setNewIP({ ip_address: '', threat_type: 'manual', reason: '', permanent: false })
     },
-    onError: () =>
-      toast({ title: t('pages.securityAlerts.toasts.blockFailed'), variant: 'destructive' }),
+    // The deny-list is one list for the whole install; the backend lets only
+    // a platform administrator add to it or remove from it.
+    onError: (e: Error) =>
+      toast({
+        title: t('pages.securityAlerts.toasts.blockFailed'),
+        description: isPlatformAdminRequired(e) ? t('queryError.platformAdminRequired') : undefined,
+        variant: 'destructive',
+      }),
   })
 
   const removeIPMutation = useMutation({
@@ -117,6 +124,12 @@ export function SecurityAlertsPage() {
       queryClient.invalidateQueries({ queryKey: ['ip-threats'] })
       toast({ title: t('pages.securityAlerts.toasts.ipRemoved') })
     },
+    onError: (e: Error) =>
+      toast({
+        title: t('common.error'),
+        description: isPlatformAdminRequired(e) ? t('queryError.platformAdminRequired') : e.message,
+        variant: 'destructive',
+      }),
   })
 
   const formatDate = (d: string) => new Date(d).toLocaleString()

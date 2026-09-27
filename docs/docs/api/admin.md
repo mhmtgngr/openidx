@@ -78,3 +78,11 @@ Configures: access token lifetime, refresh token lifetime, consent requirements,
 | PUT | `/api/v1/mfa/methods` | Update enabled methods |
 
 Available methods: `totp`, `webauthn`, `sms`, `push`
+
+The list is one setting for the whole install, so `PUT` needs an
+administrator of the default organization: an `admin` or `super_admin` of the
+install's default organization (`00000000-0000-0000-0000-000000000010`),
+whatever `DEFAULT_ORG_ID` names. The same holds for the SMS settings
+(`/api/v1/settings/sms`, including its `GET` and `/test`) and for rotating the
+OAuth signing key. A refused caller gets `403` with
+`"platform administrator required"`.

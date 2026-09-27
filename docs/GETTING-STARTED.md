@@ -154,7 +154,7 @@ A second run changes nothing it was not asked to change. Lost the password?
 `./scripts/lite-up.sh --reset-admin-password`.
 
 **Images.** The published ones, `ghcr.io/mhmtgngr/openidx/<service>`, all at
-one release: `OPENIDX_VERSION`, default `v1.37.0`. v1.37.0 is the first
+one release: `OPENIDX_VERSION`, default `v1.38.0`. v1.37.0 is the first
 release whose console image calls its own origin. To try an unreleased
 `main`, set `OPENIDX_VERSION` in `.env` to the full commit SHA of a `main`
 commit (docker.yml tags every image with it).
@@ -296,11 +296,15 @@ curl -X POST http://localhost:8006/api/v1/oauth/clients \
     "pkce_required": true,
     "allow_refresh_token": true,
     "access_token_lifetime": 3600,
-    "refresh_token_lifetime": 86400
+    "refresh_token_lifetime": 86400,
+    "api_access": true
   }'
 ```
 
-Save the `client_id` and `client_secret` from the response.
+Save the `client_id` and `client_secret` from the response. `api_access` lets
+the console's access tokens call OpenIDX's own APIs; a client registered
+without it can sign users in but its tokens are refused by those APIs (see
+[OAUTH-OIDC.md](OAUTH-OIDC.md#which-applications-may-call-openidxs-apis)).
 
 ### 3. Configure SSO with an External Provider
 

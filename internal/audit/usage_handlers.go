@@ -32,7 +32,11 @@ type UsageSummary struct {
 	To            string           `json:"to"`
 }
 
-// meteringOrgID resolves the caller's org, or "" (all orgs — platform admin).
+// meteringOrgID resolves the caller's org, or "" when none was resolved. That
+// is not a read across organizations, and no platform admin is involved: the
+// tenant resolver attaches an organization to every request here or refuses
+// it, and usage_metering_daily is behind the RLS belt, which shows a request
+// without one nothing.
 func meteringOrgID(c *gin.Context) string {
 	org, err := orgctx.From(c.Request.Context())
 	if err != nil {

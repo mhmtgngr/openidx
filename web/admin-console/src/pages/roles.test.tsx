@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -14,10 +15,12 @@ vi.mock('../lib/api', () => ({
   },
 }))
 
-// Mock toast hook
+// Mock toast hook. One spy for every render, so a test can read what the
+// page told the user.
+const toastMock = vi.hoisted(() => vi.fn())
 vi.mock('../hooks/use-toast', () => ({
   useToast: () => ({
-    toast: vi.fn(),
+    toast: toastMock,
   }),
 }))
 
@@ -122,6 +125,48 @@ describe('RolesPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('admin')).toBeInTheDocument()
+    })
+  })
+
+  // The identity API refuses the role name super_admin outside the install's
+  // default organization. The page says why, rather than "Request failed with
+  // status code 400"; any other failure keeps its own message.
+  describe('the reserved role name', () => {
+    const refusal = (code: string) =>
+      Object.assign(new Error('Request failed with status code 400'), {
+        isAxiosError: true,
+        response: { status: 400, data: { error: code } },
+      })
+
+    const createRole = async (name: string) => {
+      const user = userEvent.setup()
+      render(<RolesPage />, { wrapper: createWrapper() })
+      await user.click(await screen.findByRole('button', { name: /add role/i }))
+      await user.type(await screen.findByLabelText(/role name/i), name)
+      await user.click(screen.getByRole('button', { name: /create role/i }))
+    }
+
+    it('explains a refused super_admin', async () => {
+      vi.mocked(api.post).mockRejectedValue(refusal('reserved_role_name'))
+      await createRole('super_admin')
+
+      await waitFor(() => expect(toastMock).toHaveBeenCalled())
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: 'destructive',
+          description: expect.stringMatching(/reserved for the platform administrators of the default organization/i),
+        }),
+      )
+    })
+
+    it('keeps the generic message for any other failure', async () => {
+      vi.mocked(api.post).mockRejectedValue(refusal('something_else'))
+      await createRole('operations')
+
+      await waitFor(() => expect(toastMock).toHaveBeenCalled())
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ description: 'Failed to create role: Request failed with status code 400' }),
+      )
     })
   })
 })

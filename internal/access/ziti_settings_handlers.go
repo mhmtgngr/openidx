@@ -12,6 +12,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -70,6 +71,18 @@ func (s *Service) requireAdminRole() gin.HandlerFunc {
 		}
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "admin access required"})
 	}
+}
+
+// requirePlatformAdmin guards what exists once per install -- the controller
+// connection, the BrowZer bootstrap and certificate, the platform TLS
+// certificate -- behind an administrator of the default organization. The rule
+// lives in middleware.RequirePlatformAdmin; this supplies the database, and
+// DEFAULT_ORG_ID -- the tenant resolver's fallback -- has no say in it. It
+// carries no DevAdminBypass: that convenience makes every caller an admin of
+// their organization, which is not the same thing as an administrator of the
+// install.
+func (s *Service) requirePlatformAdmin() gin.HandlerFunc {
+	return middleware.RequirePlatformAdmin(s.db, s.logger)
 }
 
 // buildZitiConnParams resolves the effective connection: DB settings win, else

@@ -9,7 +9,7 @@ info:
     live route table in both directions. Operations carry an `x-openidx-handler`
     extension naming the Go handler that serves them; where a payload shape is not
     yet pinned the body is shown as a free-form JSON object rather than invented.
-  version: 1.37.0
+  version: 1.38.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -492,6 +492,12 @@ paths:
       responses:
         '201':
           description: Role created
+        '400':
+          description: >-
+            `reserved_role_name`: the name `super_admin` (compared without case
+            or surrounding space) is reserved for the install's default
+            organization, where it makes its holder a platform admin, who may
+            act in every organization.
 
   /api/v1/identity/roles/{id}:
     get:
@@ -522,6 +528,10 @@ paths:
       responses:
         '200':
           description: Role updated
+        '400':
+          description: >-
+            `reserved_role_name`: a role outside the install's default
+            organization may not be renamed to `super_admin`.
     delete:
       tags: [Roles]
       summary: Delete role

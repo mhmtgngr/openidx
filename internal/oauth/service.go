@@ -88,6 +88,20 @@ type OAuthClient struct {
 	// authorization itself: past it the chain is revoked whatever it has been
 	// doing (v187).
 	RefreshTokenMaxLifetime int `json:"refresh_token_max_lifetime,omitempty"`
+
+	// APIAccess says whether this application's access tokens may call
+	// OpenIDX's own APIs (v205, middleware.HasAPIAccess). A pointer because a
+	// write that leaves it out must leave it alone: the console's client
+	// editor, RFC 7592's client update and every other writer that predates
+	// the field send nothing for it, and reading that as false would take API
+	// access away from the console itself on its next edit.
+	APIAccess *bool `json:"api_access,omitempty"`
+}
+
+// MayCallAPI reports whether access tokens issued to this client carry the
+// claim OpenIDX's own APIs require.
+func (c *OAuthClient) MayCallAPI() bool {
+	return c != nil && c.APIAccess != nil && *c.APIAccess
 }
 
 // defaultAccessTokenLifetimeSeconds is what a client gets when it asks for
@@ -1393,9 +1407,7 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 	}
 
 	kid, signKey := s.signingKey()
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	token.Header["kid"] = kid
-	return token.SignedString(signKey)
+	return newAccessToken(claims, kid, org.ID, s.clientMayCallAPI(ctx, clientID)).SignedString(signKey)
 }
 
 // GenerateIDToken generates an OIDC ID token.
@@ -1621,17 +1633,33 @@ func VerifyPKCE(codeVerifier, codeChallenge, method string) bool {
 
 // HTTP Handlers
 
-// RegisterRoutes registers OAuth/OIDC routes.
-// authMiddleware is optional; when provided it protects the client management API and consent endpoint.
+// requireAdminRole admits only an administrator -- admin or super_admin, the
+// rule of every other admin surface -- to the management APIs this service
+// serves: OAuth clients, SAML service providers and SSF streams. clientMgmtAuth
+// in front of it authenticates and nothing more, and each of these APIs decides
+// how the organization's users sign in elsewhere or who learns about them: a
+// client's redirect URIs and secret decide who receives and redeems its
+// authorization codes, its api_access whether its tokens open OpenIDX's own
+// APIs, a service provider's certificate whose requests this IdP trusts, and a
+// stream's endpoint where the organization's security events are delivered.
+// Anyone else -- a signed-in user without either role, a machine credential
+// that holds none -- is refused with 403. The roles are the token's, held in
+// the token's organization, and the validator refuses the token in any other
+// unless its holder is a platform admin; the handlers keep each read and write
+// to the organization the request resolved to.
+var requireAdminRole = middleware.RequireRoles("admin", "super_admin")
+
 // RegisterRoutes wires the oauth-service HTTP routes.
 //
-// clientMgmtAuth guards the /api/v1/oauth/clients management API and is
-// ALWAYS required — these endpoints create and modify OAuth clients, so they
-// must be authenticated in every environment (a nil here is a programmer error
-// and intentionally panics at request time rather than silently exposing the
-// API). The variadic flowAuth is applied to the interactive OIDC flow
-// endpoints (consent, step-up) only when supplied; callers omit it in
-// development to keep the local login flow friction-free.
+// clientMgmtAuth authenticates the management APIs -- /api/v1/oauth/clients,
+// the SAML service-provider API and SSF stream management -- and is ALWAYS
+// required: these endpoints create and modify OAuth clients, so they must be
+// authenticated in every environment (a nil here is a programmer error and
+// intentionally panics at request time rather than silently exposing the API).
+// requireAdminRole follows it on every one of those routes. The variadic
+// flowAuth is applied to the interactive OIDC flow endpoints (consent,
+// step-up) only when supplied; callers omit it in development to keep the
+// local login flow friction-free.
 func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.HandlerFunc, flowAuth ...gin.HandlerFunc) {
 	// OIDC Discovery - include OPTIONS for CORS preflight (required for BrowZer and browser-based OIDC clients)
 	router.GET("/.well-known/openid-configuration", svc.handleDiscovery)
@@ -1653,9 +1681,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 	// delivery_endpoint that receives this org's security events (session
 	// revoked, credential change), so an unauthenticated caller must never be
 	// able to enumerate, create or delete one. Gated with the same middleware
-	// as the client-management API.
+	// as the client-management API, and like it held to administrators.
 	ssfAdmin := router.Group("/ssf")
-	ssfAdmin.Use(clientMgmtAuth)
+	ssfAdmin.Use(clientMgmtAuth, requireAdminRole)
 	{
 		ssfAdmin.GET("/streams", svc.handleListSSFStreams)
 		ssfAdmin.POST("/streams", svc.handleCreateSSFStream)
@@ -1836,9 +1864,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 	}
 
 	// Client management API — always authenticated (creates/modifies OAuth
-	// clients, so it must never be reachable unauthenticated in any env).
+	// clients, so it must never be reachable unauthenticated in any env), and
+	// administrators only. Dynamic client registration (/oauth/register above)
+	// is a different door: an initial access token opens it, and a client
+	// registered through it cannot set api_access.
 	clients := router.Group("/api/v1/oauth/clients")
-	clients.Use(clientMgmtAuth)
+	clients.Use(clientMgmtAuth, requireAdminRole)
 	{
 		clients.GET("", svc.handleListClients)
 		clients.POST("", svc.handleCreateClient)
@@ -1849,7 +1880,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 	}
 
 	// SAML IdP and Service Provider endpoints (SP management shares the
-	// always-on client-management auth; public /saml/idp endpoints stay open).
+	// always-on client-management auth and the admin role behind it; public
+	// /saml/idp endpoints stay open).
 	svc.RegisterSAMLIdPRoutes(router, clientMgmtAuth)
 
 	// Social login endpoints
@@ -4352,6 +4384,22 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 		return
 	}
 
+	// This endpoint answers for the tokens a resource server is handed: access
+	// tokens and refresh tokens. An ID token is signed with the same key, and
+	// reporting one as an active access_token would tell a resource server
+	// that relies on introspection to accept it as a bearer.
+	if !middleware.IsAccessToken(parsed.Header, claims) {
+		c.JSON(200, gin.H{"active": false})
+		return
+	}
+	// Nor for an access token bound to no organization, or to another one than
+	// the organization the calling client belongs to -- the token the API
+	// validators would refuse.
+	if _, err := tokenOrgForRequest(c.Request.Context(), claims); err != nil {
+		c.JSON(200, gin.H{"active": false})
+		return
+	}
+
 	// Honor revocation: a signature-valid access token may have been revoked via
 	// /oauth/revoke or /oauth/logout(-all). RFC 7662 §2.2 — a revoked token (or
 	// one whose revocation state can't be verified) introspects as active:false
@@ -4453,6 +4501,13 @@ func (s *Service) handleRevoke(c *gin.Context) {
 // for the OIDC id_token_hint, which the spec permits to be expired — while STILL requiring a valid
 // signature.
 func (s *Service) parseVerifiedClaims(tokenString string, allowExpired bool) (jwt.MapClaims, error) {
+	_, claims, err := s.parseVerifiedToken(tokenString, allowExpired)
+	return claims, err
+}
+
+// parseVerifiedToken is parseVerifiedClaims returning the verified token as
+// well, for a caller that has to read its header.
+func (s *Service) parseVerifiedToken(tokenString string, allowExpired bool) (*jwt.Token, jwt.MapClaims, error) {
 	keyfunc := func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
@@ -4465,13 +4520,13 @@ func (s *Service) parseVerifiedClaims(tokenString string, allowExpired bool) (jw
 	}
 	token, err := jwt.NewParser(opts...).Parse(tokenString, keyfunc)
 	if err != nil || !token.Valid {
-		return nil, fmt.Errorf("token signature verification failed: %w", err)
+		return nil, nil, fmt.Errorf("token signature verification failed: %w", err)
 	}
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return nil, errors.New("invalid token claims")
+		return nil, nil, errors.New("invalid token claims")
 	}
-	return claims, nil
+	return token, claims, nil
 }
 
 func (s *Service) handleUserInfo(c *gin.Context) {
@@ -4490,17 +4545,12 @@ func (s *Service) handleUserInfo(c *gin.Context) {
 
 	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
-	// Parse and validate JWT
-	token, err := jwt.Parse(tokenString, s.verificationKeyfunc)
-
-	if err != nil || !token.Valid {
-		c.JSON(401, gin.H{"error": "invalid_token"})
-		return
-	}
-
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		c.JSON(401, gin.H{"error": "invalid_token"})
+	// Parse and validate JWT. OIDC Core §5.3 has this endpoint take an access
+	// token, and parseAccessToken refuses an ID token: every relying party the
+	// user signed in to holds one.
+	claims, err := s.parseAccessToken(c.Request.Context(), tokenString)
+	if err != nil {
+		c.JSON(401, invalidTokenBody(err))
 		return
 	}
 
@@ -5090,9 +5140,9 @@ func (s *Service) handleLogoutAll(c *gin.Context) {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	claims, err := s.parseVerifiedClaims(tokenStr, false)
+	claims, err := s.parseAPIToken(c.Request.Context(), tokenStr)
 	if err != nil {
-		c.JSON(401, gin.H{"error": "invalid_token"})
+		c.JSON(401, invalidTokenBody(err))
 		return
 	}
 
@@ -5133,9 +5183,9 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	claims, err := s.parseVerifiedClaims(tokenStr, false)
+	claims, err := s.parseAPIToken(c.Request.Context(), tokenStr)
 	if err != nil {
-		c.JSON(401, gin.H{"error": "invalid_token"})
+		c.JSON(401, invalidTokenBody(err))
 		return
 	}
 
@@ -5154,7 +5204,14 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, clientID string, scopes []string) (*TokenFlowResponse, error) {
 	now := time.Now()
 	accessLifetime := 1 * time.Hour
-	org, _ := orgctx.From(ctx) // best-effort: per-tenant issuer when subdomain tenancy is on
+	// The organization the sign-in resolved to: it picks the per-tenant issuer
+	// when subdomain tenancy is on, and the access token is bound to it. A
+	// token bound to no organization is refused by every API, so there is no
+	// point minting one.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Generate access token
 	accessToken := generateRandomToken(32)
@@ -5203,9 +5260,7 @@ func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, cli
 	}
 
 	signKid, signKey := s.signingKey()
-	jwtToken := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	jwtToken.Header["kid"] = signKid
-	signedToken, err := jwtToken.SignedString(signKey)
+	signedToken, err := newAccessToken(claims, signKid, org.ID, s.clientMayCallAPI(ctx, clientID)).SignedString(signKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign access token: %w", err)
 	}

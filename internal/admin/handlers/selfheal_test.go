@@ -89,6 +89,41 @@ func TestSelfHealAdminWithoutManageCannotMutate(t *testing.T) {
 	}
 }
 
+// The install gates (cmd/admin-api passes the platform-administrator gate)
+// guard the mutations and nothing else: a refusing gate leaves every read open
+// and stops every write before the handler runs.
+func TestSelfHealInstallGateGuardsOnlyMutations(t *testing.T) {
+	audits := 0
+	h := NewSelfHealHandler(zap.NewNop(), t.TempDir(), t.TempDir(), func(*gin.Context, string, interface{}, interface{}) { audits++ })
+	pass := func(c *gin.Context) { c.Next() }
+	refuse := func(c *gin.Context) {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "platform administrator required"})
+	}
+	r := gin.New()
+	SelfHealRoutes(r.Group("/api/v1"), h, pass, pass, refuse)
+
+	for _, path := range []string{"/api/v1/selfheal/status", "/api/v1/selfheal/findings", "/api/v1/selfheal/history"} {
+		if w := doJSON(r, "GET", path, ""); w.Code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200: the install gate must not guard reads", path, w.Code)
+		}
+	}
+	for _, m := range []struct{ method, path, body string }{
+		{"PUT", "/api/v1/selfheal/mode", `{"mode":"tier0"}`},
+		{"POST", "/api/v1/selfheal/kill-switch", `{"enabled":true}`},
+		{"POST", "/api/v1/selfheal/sweep", ""},
+	} {
+		if w := doJSON(r, m.method, m.path, m.body); w.Code != http.StatusForbidden {
+			t.Errorf("%s %s = %d, want 403 from the install gate", m.method, m.path, w.Code)
+		}
+	}
+	if mode, _ := h.store.Mode(); mode != "observe" {
+		t.Errorf("mode changed to %q through a refusing gate", mode)
+	}
+	if audits != 0 {
+		t.Errorf("%d mutation(s) audited through a refusing gate", audits)
+	}
+}
+
 func TestSelfHealPutModeValidation(t *testing.T) {
 	r, h, audits := buildSelfHealRouter(t, []string{"admin"}, true)
 

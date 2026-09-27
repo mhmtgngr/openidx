@@ -155,7 +155,8 @@ func apiRequestWithOrg(t *testing.T, method, url, body, token, orgSlug string) (
 }
 
 // apiRequestWithOrgID scopes the request to an org via the X-Org-ID header,
-// which the resolver only honors for platform admins (super_admin).
+// which the resolver only honors for platform admins (super_admin held in the
+// default organization).
 func apiRequestWithOrgID(t *testing.T, method, url, body, token, orgID string) (int, map[string]interface{}) {
 	return apiRequestWithHeaders(t, method, url, body, token, map[string]string{"X-Org-ID": orgID})
 }

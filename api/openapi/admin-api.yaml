@@ -21,7 +21,7 @@ info:
     objects are documented at the route level only: the endpoint, its method,
     its path parameters and its status codes are exact, the payload shape is
     not yet pinned. That is stated rather than guessed.
-  version: 1.37.0
+  version: 1.38.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -82,6 +82,11 @@ tags:
   - name: Social Providers
   - name: System Health
   - name: Tenants
+    description: >-
+      Branding, settings and custom domains of one organization. A route that
+      names an organization other than the one the request resolved to is
+      answered 404, except for a platform admin, and so is a switch to an
+      organization the caller does not belong to.
   - name: Users
   - name: Vault
   - name: Webhooks
@@ -4154,6 +4159,9 @@ paths:
     get:
       tags: [Me]
       summary: Get my organizations
+      description: >-
+        The organizations the calling user is a member of. A credential with
+        no user behind it, such as a service account's API key, gets 403.
       operationId: getMyOrganizations
       x-openidx-handler: internal/organization.(*Service).handleGetMyOrganizations
       responses:
@@ -5026,6 +5034,10 @@ paths:
     post:
       tags: [Organizations]
       summary: Create organization
+      description: >-
+        Only a platform admin (`super_admin` held in the default organization)
+        creates an organization, and becomes its owner; any other caller gets
+        403.
       operationId: createOrganization
       x-openidx-handler: internal/organization.(*Service).handleCreateOrganization
       requestBody:
@@ -5058,6 +5070,9 @@ paths:
     get:
       tags: [Organizations]
       summary: Get organization
+      description: >-
+        Read by a member of the organization, in any role, and by a platform
+        admin. Anyone else gets the 404 an unknown id gets.
       operationId: getOrganization
       x-openidx-handler: internal/organization.(*Service).handleGetOrganization
       responses:
@@ -5113,6 +5128,9 @@ paths:
     get:
       tags: [Organizations]
       summary: List members
+      description: >-
+        Read by a member of the organization, in any role, and by a platform
+        admin. Anyone else gets the 404 an unknown id gets.
       operationId: listMembers
       x-openidx-handler: internal/organization.(*Service).handleListMembers
       responses:
@@ -7665,6 +7683,13 @@ components:
             origin against its redirect URIs; the key is omitted entirely only
             for a tile with no OAuth client behind it. The two are different
             answers and the console renders them differently.
+        api_access:
+          type: boolean
+          description: >-
+            From the backing OAuth client: whether the application's access
+            tokens may call OpenIDX's own APIs. Omitted for a tile with no
+            OAuth client behind it, and in the list for a caller who is not
+            an administrator.
         created_at:
           type: string
           format: date-time
@@ -7700,9 +7725,10 @@ components:
       type: object
       description: >-
         Fields absent from the payload are left alone. `pkce_required`,
-        `back_channel_logout_uri` and `post_logout_redirect_uris` are written
-        to the backing OAuth client (the row the OAuth flow enforces),
-        `redirect_uris`, `name` and `description` to both.
+        `back_channel_logout_uri`, `post_logout_redirect_uris` and
+        `api_access` are written to the backing OAuth client (the row the
+        OAuth flow enforces), `redirect_uris`, `name` and `description` to
+        both.
       properties:
         name:
           type: string
@@ -7737,6 +7763,11 @@ components:
             entries are dropped. An entry that is not an absolute URI with a
             scheme and host could never be matched at logout and is refused
             with 400, with nothing written.
+        api_access:
+          type: boolean
+          description: >-
+            Allow the application's access tokens on OpenIDX's own APIs. It
+            takes effect at the application's next token.
 
     ApplicationSSOSettings:
       type: object

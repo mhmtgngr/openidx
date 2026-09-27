@@ -90,13 +90,14 @@ func (r *PostgresOAuthClientStore) GetByClientID(ctx context.Context, clientID s
 	// can pick up — carry a family cap (v187).
 	var refreshTokenMaxLifetime *int
 
+	var apiAccess bool
 	err = r.db.Pool.QueryRow(dbCtx, `
 		SELECT id, client_id, client_secret, name, description, type,
 		       redirect_uris, grant_types, response_types, scopes,
 		       logo_uri, policy_uri, tos_uri, pkce_required,
 		       allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
 		       refresh_token_max_lifetime, back_channel_logout_uri,
-		       post_logout_redirect_uris, created_at, updated_at
+		       post_logout_redirect_uris, api_access, created_at, updated_at
 		FROM oauth_clients WHERE client_id = $1 AND org_id = $2
 	`, clientID, org.ID).Scan(
 		&client.ID, &client.ClientID, &clientSecret, &client.Name, &description,
@@ -104,7 +105,7 @@ func (r *PostgresOAuthClientStore) GetByClientID(ctx context.Context, clientID s
 		&logoURI, &policyURI, &tosURI, &client.PKCERequired,
 		&client.AllowRefreshToken, &client.AccessTokenLifetime, &client.RefreshTokenLifetime,
 		&refreshTokenMaxLifetime, &backChannelLogoutURI,
-		&postLogoutRedirectURIsJSON, &client.CreatedAt, &client.UpdatedAt,
+		&postLogoutRedirectURIsJSON, &apiAccess, &client.CreatedAt, &client.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -134,6 +135,7 @@ func (r *PostgresOAuthClientStore) GetByClientID(ctx context.Context, clientID s
 	if backChannelLogoutURI != nil {
 		client.BackChannelLogoutURI = *backChannelLogoutURI
 	}
+	client.APIAccess = &apiAccess
 	json.Unmarshal(redirectURIsJSON, &client.RedirectURIs)
 	json.Unmarshal(grantTypesJSON, &client.GrantTypes)
 	json.Unmarshal(responseTypesJSON, &client.ResponseTypes)
@@ -161,7 +163,7 @@ func (r *PostgresOAuthClientStore) List(ctx context.Context, offset, limit int) 
 	}
 
 	rows, err := r.db.Reader().Query(dbCtx, `
-		SELECT id, client_id, name, description, type, created_at, updated_at
+		SELECT id, client_id, name, description, type, api_access, created_at, updated_at
 		FROM oauth_clients
 		WHERE org_id = $3
 		ORDER BY created_at DESC
@@ -176,12 +178,14 @@ func (r *PostgresOAuthClientStore) List(ctx context.Context, offset, limit int) 
 	for rows.Next() {
 		var c OAuthClient
 		var desc *string
-		if err := rows.Scan(&c.ID, &c.ClientID, &c.Name, &desc, &c.Type, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		var apiAccess bool
+		if err := rows.Scan(&c.ID, &c.ClientID, &c.Name, &desc, &c.Type, &apiAccess, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan oauth client: %w", err)
 		}
 		if desc != nil {
 			c.Description = *desc
 		}
+		c.APIAccess = &apiAccess
 		clients = append(clients, c)
 	}
 	return clients, total, rows.Err()
@@ -246,6 +250,11 @@ func (r *PostgresOAuthClientStore) Create(ctx context.Context, client *OAuthClie
 	dbCtx, cancel := r.withTimeout(ctx)
 	defer cancel()
 
+	// A client registered without saying may not call OpenIDX's own APIs:
+	// that is the column default (v205), and the right answer for a
+	// third-party application, which is what most registrations are.
+	apiAccess := client.MayCallAPI()
+	client.APIAccess = &apiAccess
 	_, err = r.db.Pool.Exec(dbCtx, `
 		INSERT INTO oauth_clients (
 			id, client_id, client_secret, name, description, type,
@@ -253,14 +262,14 @@ func (r *PostgresOAuthClientStore) Create(ctx context.Context, client *OAuthClie
 			logo_uri, policy_uri, tos_uri, pkce_required,
 			allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
 			created_at, updated_at, org_id, back_channel_logout_uri,
-			post_logout_redirect_uris
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NULLIF($21, ''), $22)
+			post_logout_redirect_uris, api_access
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NULLIF($21, ''), $22, $23)
 	`, client.ID, client.ClientID, client.ClientSecret, client.Name, client.Description,
 		client.Type, redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON,
 		client.LogoURI, client.PolicyURI, client.TOSUri, client.PKCERequired,
 		client.AllowRefreshToken, client.AccessTokenLifetime, client.RefreshTokenLifetime,
 		client.CreatedAt, client.UpdatedAt, org.ID, strings.TrimSpace(client.BackChannelLogoutURI),
-		postLogoutRedirectURIsJSON)
+		postLogoutRedirectURIsJSON, apiAccess)
 	if err != nil {
 		return fmt.Errorf("create oauth client: %w", err)
 	}
@@ -300,6 +309,9 @@ func (r *PostgresOAuthClientStore) Update(ctx context.Context, clientID string, 
 	// would quietly remove the family cap from a native client the first time
 	// anyone renamed it. The cap is set by migration; changing it is a
 	// deliberate SQL change, not a side effect of editing a description.
+	//
+	// api_access is written only when the caller sent it, for the same
+	// reason: a nil APIAccess leaves the column as it is.
 	result, err := r.db.Pool.Exec(dbCtx, `
 		UPDATE oauth_clients
 		SET name = $2, description = $3, redirect_uris = $4, grant_types = $5,
@@ -307,12 +319,13 @@ func (r *PostgresOAuthClientStore) Update(ctx context.Context, clientID string, 
 		    allow_refresh_token = $9, access_token_lifetime = $10,
 		    refresh_token_lifetime = $11, updated_at = $12,
 		    back_channel_logout_uri = NULLIF($14, ''),
-		    post_logout_redirect_uris = $15
+		    post_logout_redirect_uris = $15,
+		    api_access = COALESCE($16, api_access)
 		WHERE client_id = $1 AND org_id = $13
 	`, clientID, client.Name, client.Description, redirectURIsJSON, grantTypesJSON,
 		responseTypesJSON, scopesJSON, client.PKCERequired, client.AllowRefreshToken,
 		client.AccessTokenLifetime, client.RefreshTokenLifetime, now, org.ID,
-		strings.TrimSpace(client.BackChannelLogoutURI), postLogoutRedirectURIsJSON)
+		strings.TrimSpace(client.BackChannelLogoutURI), postLogoutRedirectURIsJSON, client.APIAccess)
 	if err != nil {
 		return fmt.Errorf("update oauth client: %w", err)
 	}

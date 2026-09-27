@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -410,57 +411,92 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.Use(authMiddleware...)
 	}
 	{
-		api.GET("/routes", svc.handleListRoutes)
-		api.POST("/routes", svc.handleCreateRoute)
+		// `adminOnly` is the shared admin gate; see the comment on the Ziti
+		// routes below for what stays open and why.
+		adminOnly := svc.requireAdminRole()
+		// `operatorTier` and `auditTier` hold a route to the tier the console
+		// shows its page at, for the pages it gives to operators and auditors
+		// (role_tiers.go). They check roles only.
+		operatorTier := svc.requireOperatorTier()
+		auditTier := svc.requireAuditTier()
+
+		// The proxy route table and the proxy sessions are administration,
+		// reads included. A route decides who may reach which upstream, with
+		// which headers, and whether signing in is needed at all, and its
+		// definition names the internal address behind it. The session list
+		// names every user of every route, and revoking a session ends somebody
+		// else's access. No end-user page reads either: a user's own reachable
+		// apps come from /my/resources and /my/ziti/services.
+		api.GET("/routes", adminOnly, svc.handleListRoutes)
+		api.POST("/routes", adminOnly, svc.handleCreateRoute)
 		// Bulk / subnet resource onboarding (admin-only): create many routes at
 		// once (explicit list and/or a CIDR expansion) and converge the overlay.
 		api.POST("/routes/bulk", svc.requireAdminRole(), svc.handleBulkRoutes)
-		api.GET("/routes/:id", svc.handleGetRoute)
-		api.PUT("/routes/:id", svc.handleUpdateRoute)
-		api.DELETE("/routes/:id", svc.handleDeleteRoute)
-		api.GET("/sessions", svc.handleListSessions)
-		api.DELETE("/sessions/:id", svc.handleRevokeSession)
+		api.GET("/routes/:id", adminOnly, svc.handleGetRoute)
+		api.PUT("/routes/:id", adminOnly, svc.handleUpdateRoute)
+		api.DELETE("/routes/:id", adminOnly, svc.handleDeleteRoute)
+		api.GET("/sessions", adminOnly, svc.handleListSessions)
+		api.DELETE("/sessions/:id", adminOnly, svc.handleRevokeSession)
 
-		// Unified Zero Trust Access overview (resource spine + coverage gaps).
-		api.GET("/overview", svc.handleAccessOverview)
+		// Unified Zero Trust Access overview (resource spine + coverage gaps):
+		// every route's upstream and which of its controls are missing, so it
+		// is gated like the route list it summarises.
+		api.GET("/overview", adminOnly, svc.handleAccessOverview)
 
 		// OpenZiti management endpoints
 		api.GET("/ziti/status", svc.handleZitiStatus)
-		// Guided network setup: checklist + install advisor + per-route advice
-		api.GET("/ziti/setup/status", svc.handleZitiSetupStatus)
+		// Guided network setup: checklist + install advisor + per-route advice.
+		// The advice names every Ziti route's upstream, like the route list, and
+		// carries the install-wide user sync counts; the console shows it on
+		// the admin-only Network Setup page.
+		api.GET("/ziti/setup/status", adminOnly, svc.handleZitiSetupStatus)
 		api.GET("/ziti/reconciler/status", svc.handleZitiReconcilerStatus)
 		// Ziti management mutations are admin-only: creating identities/services
 		// mints overlay-join credentials and reconfigures the zero-trust fabric,
-		// so a plain authenticated tenant user must NOT reach them. GET reads stay
-		// open to any authenticated user (org-scoped lists/status), and genuine
-		// data-plane POSTs (device posture self-report, posture evaluate) stay open
-		// because a device submits its own posture. `adminOnly` is the shared gate.
-		adminOnly := svc.requireAdminRole()
+		// so a plain authenticated tenant user must NOT reach them. GET reads of
+		// the fabric's own configuration and status stay open to any
+		// authenticated user (org-scoped lists/status). The reads that describe
+		// other users -- their identities, sessions, devices, posture and risk
+		// -- carry `operatorTier`, the tier of the console pages that show them.
+		// The device posture self-report stays open because a device submits
+		// its own posture. `adminOnly` is the shared gate.
+		//
+		// `platformOnly` follows adminOnly on the routes whose settings exist
+		// once for the whole install -- the OpenZiti controller connection, the
+		// BrowZer domain and certificate, the platform TLS certificate -- which
+		// an organization's admin role cannot authorize on its own. See
+		// middleware.RequirePlatformAdmin.
+		platformOnly := svc.requirePlatformAdmin()
 
 		// Upstream pools: the operator's declaration of a route's backend set.
-		// Reads are open to any authenticated tenant user like the route list;
-		// every mutation is admin-only, because adding a member or draining one
-		// moves production traffic between backends.
-		api.GET("/upstream-pools", svc.handleListUpstreamPools)
+		// Admin-only like the route list, reads included: a pool's members are
+		// the internal addresses behind a route, and adding a member or
+		// draining one moves production traffic between backends.
+		api.GET("/upstream-pools", adminOnly, svc.handleListUpstreamPools)
 		api.POST("/upstream-pools", adminOnly, svc.handleCreateUpstreamPool)
-		api.GET("/upstream-pools/:id", svc.handleGetUpstreamPool)
+		api.GET("/upstream-pools/:id", adminOnly, svc.handleGetUpstreamPool)
 		api.PUT("/upstream-pools/:id", adminOnly, svc.handleUpdateUpstreamPool)
 		api.DELETE("/upstream-pools/:id", adminOnly, svc.handleDeleteUpstreamPool)
 		api.POST("/upstream-pools/:id/members", adminOnly, svc.handleAddUpstreamPoolMember)
 		api.PUT("/upstream-pools/:id/members/:memberId", adminOnly, svc.handleUpdateUpstreamPoolMember)
 		api.DELETE("/upstream-pools/:id/members/:memberId", adminOnly, svc.handleDeleteUpstreamPoolMember)
 
-		// Runtime connection control (admin-only): configure + connect/disconnect
-		// the OpenZiti controller from the admin panel with no restart.
-		api.GET("/ziti/settings", adminOnly, svc.handleGetZitiSettings)
-		api.PUT("/ziti/settings", adminOnly, svc.handlePutZitiSettings)
-		api.POST("/ziti/settings/test", adminOnly, svc.handleTestZitiSettings)
-		api.POST("/ziti/connect", adminOnly, svc.handleZitiConnect)
-		api.POST("/ziti/disconnect", adminOnly, svc.handleZitiDisconnect)
+		// Runtime connection control: configure + connect/disconnect the
+		// OpenZiti controller from the admin panel with no restart. One
+		// controller serves every organization, so this is for platform
+		// administrators only. The read returns the controller's admin account,
+		// and the test dials a caller-chosen controller with the stored
+		// password, so both are gated like the writes.
+		api.GET("/ziti/settings", adminOnly, platformOnly, svc.handleGetZitiSettings)
+		api.PUT("/ziti/settings", adminOnly, platformOnly, svc.handlePutZitiSettings)
+		api.POST("/ziti/settings/test", adminOnly, platformOnly, svc.handleTestZitiSettings)
+		api.POST("/ziti/connect", adminOnly, platformOnly, svc.handleZitiConnect)
+		api.POST("/ziti/disconnect", adminOnly, platformOnly, svc.handleZitiDisconnect)
 		api.GET("/ziti/services", svc.handleListZitiServices)
 		api.POST("/ziti/services", adminOnly, svc.handleCreateZitiService)
 		api.DELETE("/ziti/services/:id", adminOnly, svc.handleDeleteZitiService)
-		api.GET("/ziti/identities", svc.handleListZitiIdentities)
+		// The identity list names every user who has one.
+		api.GET("/ziti/identities", operatorTier, svc.handleListZitiIdentities)
 		api.POST("/ziti/identities", adminOnly, svc.handleCreateZitiIdentity)
 		api.DELETE("/ziti/identities/:id", adminOnly, svc.handleDeleteZitiIdentity)
 		// Enrollment JWT is a bearer network-join credential — admin-only read.
@@ -500,18 +536,22 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Identity attribute management
 		api.PATCH("/ziti/identities/:id/attributes", adminOnly, svc.handlePatchIdentityAttributes)
 
-		// User-to-Ziti identity sync
-		api.GET("/ziti/sync/status", svc.handleGetSyncStatus)
-		api.GET("/ziti/sync/unsynced", svc.handleGetUnsyncedUsers)
-		api.GET("/ziti/sync/user-map", svc.handleGetUserZitiMap)
+		// User-to-Ziti identity sync. The status counts the users of the whole
+		// install, the unsynced list names users, and the map pairs each user
+		// with their identity; the console reads them on operator pages (the
+		// dashboard for staff, Users).
+		api.GET("/ziti/sync/status", operatorTier, svc.handleGetSyncStatus)
+		api.GET("/ziti/sync/unsynced", operatorTier, svc.handleGetUnsyncedUsers)
+		api.GET("/ziti/sync/user-map", operatorTier, svc.handleGetUserZitiMap)
 		api.GET("/ziti/sync/my-identity", svc.handleGetMyZitiIdentity)
 		api.POST("/ziti/sync/users", adminOnly, svc.handleSyncAllUsers)
 		api.POST("/ziti/sync/users/:userId", adminOnly, svc.handleSyncSingleUser)
 		api.POST("/ziti/sync/groups", adminOnly, svc.handleSyncAllGroups)
 		api.POST("/ziti/sync/device-trust/:userId", adminOnly, svc.handleSyncDeviceTrust)
 
-		// Enriched device management (unified view)
-		api.GET("/devices/enriched", svc.handleGetEnrichedDevices)
+		// Enriched device management (unified view): every user's devices, with
+		// their addresses and fingerprints, shown on the operator Devices page.
+		api.GET("/devices/enriched", operatorTier, svc.handleGetEnrichedDevices)
 
 		// Cross-pillar user correlation (IAM ⇄ PAM ⇄ Ziti): one map of
 		// everything a user can reach, and one switch that severs it all.
@@ -537,14 +577,16 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// enriched with connection details. Deliberately not adminOnly.
 		api.GET("/my/ziti/services", svc.handleMyZitiServices)
 
-		// Phase 3: Posture checks (definitions are admin-managed; device
-		// self-report + evaluate are data-plane and stay open).
+		// Phase 3: Posture checks. Definitions are admin-managed and readable
+		// by anyone; one identity's posture, and its evaluation, describe that
+		// identity's device, so they carry the operator tier. The device
+		// self-report is data-plane and stays open.
 		api.GET("/ziti/posture/checks", svc.handleListPostureChecks)
 		api.POST("/ziti/posture/checks", adminOnly, svc.handleCreatePostureCheck)
 		api.PUT("/ziti/posture/checks/:id", adminOnly, svc.handleUpdatePostureCheck)
 		api.DELETE("/ziti/posture/checks/:id", adminOnly, svc.handleDeletePostureCheck)
-		api.GET("/ziti/posture/identities/:id", svc.handleGetIdentityPosture)
-		api.POST("/ziti/posture/identities/:id/evaluate", svc.handleEvaluateIdentityPosture)
+		api.GET("/ziti/posture/identities/:id", operatorTier, svc.handleGetIdentityPosture)
+		api.POST("/ziti/posture/identities/:id/evaluate", operatorTier, svc.handleEvaluateIdentityPosture)
 		api.GET("/ziti/posture/summary", svc.handleGetPostureSummary)
 		api.POST("/ziti/posture/device", svc.handleSubmitDevicePosture)
 
@@ -600,8 +642,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/ziti/terminators/:id", svc.handleGetTerminator)
 		api.DELETE("/ziti/terminators/:id", adminOnly, svc.handleDeleteTerminator)
 
-		// Ziti session visibility
-		api.GET("/ziti/sessions", svc.handleListZitiSessions)
+		// Ziti session visibility: who is connected to which service right now.
+		api.GET("/ziti/sessions", operatorTier, svc.handleListZitiSessions)
 		api.DELETE("/ziti/sessions/:id", adminOnly, svc.handleDeleteZitiSession)
 		api.POST("/ziti/sessions/batch-terminate", adminOnly, svc.handleBatchDeleteZitiSessions)
 
@@ -609,13 +651,14 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// sessions, anomaly ledger, fused identity risk scores, policy-hygiene
 		// recommendations, and quarantine response. Analysis mutates the
 		// ledger/baselines and quarantine rewrites identity attributes, so
-		// those are admin-only; reads stay open to authenticated users.
-		api.GET("/ziti/ai/insights", svc.handleZitiAIInsights)
+		// those are admin-only. The reads score and name identities, so they
+		// carry the operator tier.
+		api.GET("/ziti/ai/insights", operatorTier, svc.handleZitiAIInsights)
 		api.POST("/ziti/ai/analyze", adminOnly, svc.handleZitiAIAnalyze)
-		api.GET("/ziti/ai/anomalies", svc.handleListZitiAnomalies)
+		api.GET("/ziti/ai/anomalies", operatorTier, svc.handleListZitiAnomalies)
 		api.POST("/ziti/ai/anomalies/:id/status", adminOnly, svc.handleUpdateZitiAnomalyStatus)
-		api.GET("/ziti/ai/identity-risk", svc.handleZitiIdentityRisk)
-		api.GET("/ziti/ai/recommendations", svc.handleZitiAIRecommendations)
+		api.GET("/ziti/ai/identity-risk", operatorTier, svc.handleZitiIdentityRisk)
+		api.GET("/ziti/ai/recommendations", operatorTier, svc.handleZitiAIRecommendations)
 		api.POST("/ziti/ai/identities/:id/quarantine", adminOnly, svc.handleQuarantineZitiIdentity)
 		api.POST("/ziti/ai/identities/:id/unquarantine", adminOnly, svc.handleUnquarantineZitiIdentity)
 		// Controller version / OpenZiti v2.0 feature detection
@@ -628,24 +671,28 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 		// BrowZer management endpoints
 		api.GET("/ziti/browzer/status", svc.handleBrowZerStatus)
-		api.POST("/ziti/browzer/enable", adminOnly, svc.handleEnableBrowZer)
-		api.POST("/ziti/browzer/disable", adminOnly, svc.handleDisableBrowZer)
+		// BrowZer's bootstrap (ziti_browzer_config, the external JWT signer) is
+		// one per install; the per-service toggles below it are per route.
+		api.POST("/ziti/browzer/enable", adminOnly, platformOnly, svc.handleEnableBrowZer)
+		api.POST("/ziti/browzer/disable", adminOnly, platformOnly, svc.handleDisableBrowZer)
 		api.POST("/ziti/browzer/services/:id/enable", adminOnly, svc.handleEnableBrowZerOnService)
 		api.POST("/ziti/browzer/services/:id/disable", adminOnly, svc.handleDisableBrowZerOnService)
 
 		// BrowZer bootstrapper management panel endpoints
 		api.GET("/ziti/browzer/management", svc.handleBrowZerManagement)
-		api.POST("/ziti/browzer/certificates", adminOnly, svc.handleBrowZerCertUpload)
-		api.DELETE("/ziti/browzer/certificates", adminOnly, svc.handleBrowZerCertRevert)
-		api.PUT("/ziti/browzer/domain", adminOnly, svc.handleBrowZerDomainChange)
-		api.POST("/ziti/browzer/restart", adminOnly, svc.handleBrowZerRestart)
+		// The bootstrapper's certificate, key and domain are the install's.
+		api.POST("/ziti/browzer/certificates", adminOnly, platformOnly, svc.handleBrowZerCertUpload)
+		api.DELETE("/ziti/browzer/certificates", adminOnly, platformOnly, svc.handleBrowZerCertRevert)
+		api.PUT("/ziti/browzer/domain", adminOnly, platformOnly, svc.handleBrowZerDomainChange)
+		api.POST("/ziti/browzer/restart", adminOnly, platformOnly, svc.handleBrowZerRestart)
 
-		// Platform certificate management
+		// Platform certificate management. One certificate and key serve every
+		// organization's traffic; the reads return only the public certificate.
 		api.GET("/certificates/platform", svc.handleGetPlatformCert)
-		api.POST("/certificates/platform", adminOnly, svc.handleUploadPlatformCert)
-		api.DELETE("/certificates/platform", adminOnly, svc.handleRevertPlatformCert)
-		api.POST("/certificates/apisix/enable", adminOnly, svc.handleEnableAPISIXSSL)
-		api.POST("/certificates/apisix/disable", adminOnly, svc.handleDisableAPISIXSSL)
+		api.POST("/certificates/platform", adminOnly, platformOnly, svc.handleUploadPlatformCert)
+		api.DELETE("/certificates/platform", adminOnly, platformOnly, svc.handleRevertPlatformCert)
+		api.POST("/certificates/apisix/enable", adminOnly, platformOnly, svc.handleEnableAPISIXSSL)
+		api.POST("/certificates/apisix/disable", adminOnly, platformOnly, svc.handleDisableAPISIXSSL)
 		api.GET("/certificates/status", svc.handleGetCertStatus)
 
 		// Forward-auth endpoint for APISIX
@@ -828,36 +875,46 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.DELETE("/temp-access/:id", adminOnly, svc.handleRevokeTempAccess)
 		api.GET("/temp-access/:id/usage", adminOnly, svc.handleGetTempAccessUsage)
 
-		// Quick service creation (route + Ziti + BrowZer in one call)
-		api.POST("/services/quick-create", svc.handleQuickCreate)
+		// Quick service creation (route + Ziti + BrowZer in one call): a route
+		// create, gated like POST /routes.
+		api.POST("/services/quick-create", adminOnly, svc.handleQuickCreate)
 
-		// Service feature management endpoints
-		api.GET("/services/:id/features", svc.handleGetServiceFeatures)
-		api.GET("/services/:id/status", svc.handleGetServiceStatus)
-		api.GET("/services/status", svc.handleGetAllServicesStatus)
-		api.POST("/services/:id/features/ziti/enable", svc.handleEnableZitiFeature)
-		api.POST("/services/:id/features/ziti/disable", svc.handleDisableZitiFeature)
-		api.POST("/services/:id/features/browzer/enable", svc.handleEnableBrowZerFeature)
-		api.POST("/services/:id/features/browzer/disable", svc.handleDisableBrowZerFeature)
-		api.POST("/services/:id/features/guacamole/enable", svc.handleEnableGuacamoleFeature)
-		api.POST("/services/:id/features/guacamole/disable", svc.handleDisableGuacamoleFeature)
+		// Service feature management endpoints. A service here is a proxy
+		// route: the toggles publish it over Ziti, BrowZer or Guacamole, and the
+		// status reads return each feature's stored configuration, which holds
+		// the Guacamole target and its credentials.
+		api.GET("/services/:id/features", adminOnly, svc.handleGetServiceFeatures)
+		api.GET("/services/:id/status", adminOnly, svc.handleGetServiceStatus)
+		api.GET("/services/status", adminOnly, svc.handleGetAllServicesStatus)
+		api.POST("/services/:id/features/ziti/enable", adminOnly, svc.handleEnableZitiFeature)
+		api.POST("/services/:id/features/ziti/disable", adminOnly, svc.handleDisableZitiFeature)
+		api.POST("/services/:id/features/browzer/enable", adminOnly, svc.handleEnableBrowZerFeature)
+		api.POST("/services/:id/features/browzer/disable", adminOnly, svc.handleDisableBrowZerFeature)
+		api.POST("/services/:id/features/guacamole/enable", adminOnly, svc.handleEnableGuacamoleFeature)
+		api.POST("/services/:id/features/guacamole/disable", adminOnly, svc.handleDisableGuacamoleFeature)
 
-		// Health check endpoints
+		// Health check endpoints. The integration checks say whether the
+		// controller, Guacamole and BrowZer answer; they name no route, and the
+		// operator dashboards read them. The per-service check dials one
+		// route's upstream and returns the dial error, which names the upstream
+		// address, so it is gated like the route itself.
 		api.GET("/health/integrations", svc.handleHealthIntegrations)
 		api.GET("/health/ziti", svc.handleHealthZiti)
 		api.GET("/health/guacamole", svc.handleHealthGuacamole)
 		api.GET("/health/browzer", svc.handleHealthBrowZer)
-		api.GET("/services/:id/health", svc.handleHealthService)
+		api.GET("/services/:id/health", adminOnly, svc.handleHealthService)
 
-		// Connection test endpoints
-		api.POST("/services/:id/test-connection", svc.handleTestConnection)
-		api.GET("/services/:id/test-history", svc.handleGetConnectionTestHistory)
+		// Connection test endpoints: the server dials a route's upstream and
+		// keeps the result, an operation on the route table.
+		api.POST("/services/:id/test-connection", adminOnly, svc.handleTestConnection)
+		api.GET("/services/:id/test-history", adminOnly, svc.handleGetConnectionTestHistory)
 
-		// Ziti discovery and import
-		api.GET("/ziti/discover", svc.handleDiscoverZitiServices)
-		api.POST("/ziti/import", svc.handleImportZitiService)
-		api.POST("/ziti/import/bulk", svc.handleBulkImportZitiServices)
-		api.GET("/ziti/unmanaged/count", svc.handleGetUnmanagedServicesCount)
+		// Ziti discovery and import: discovery lists the controller's services
+		// that no route manages yet, and import turns them into proxy routes.
+		api.GET("/ziti/discover", adminOnly, svc.handleDiscoverZitiServices)
+		api.POST("/ziti/import", adminOnly, svc.handleImportZitiService)
+		api.POST("/ziti/import/bulk", adminOnly, svc.handleBulkImportZitiServices)
+		api.GET("/ziti/unmanaged/count", adminOnly, svc.handleGetUnmanagedServicesCount)
 
 		// App publishing (register, discover, classify, publish). These are
 		// admin management routes — registering an internal app and publishing
@@ -893,22 +950,27 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/health/relations", adminOnly, svc.handleHealthRelations)
 		api.POST("/health/fix/:checkId", adminOnly, svc.handleHealthFix)
 
-		// Unified audit log
-		api.GET("/audit/unified", svc.handleGetUnifiedAuditEvents)
-		api.GET("/audit/unified/services/:id", svc.handleGetServiceAuditEvents)
-		api.POST("/audit/unified/sync", svc.handleSyncExternalAuditEvents)
-		api.GET("/audit/unified/summary", svc.handleGetAuditEventsSummary)
+		// Unified audit log. The reads are the organization's audit trail, at
+		// the tier of the console's Unified Audit page.
+		api.GET("/audit/unified", auditTier, svc.handleGetUnifiedAuditEvents)
+		api.GET("/audit/unified/services/:id", auditTier, svc.handleGetServiceAuditEvents)
+		// The sync is the administrator's trigger for the background import,
+		// which runs under the RLS bypass across every tenant.
+		api.POST("/audit/unified/sync", adminOnly, svc.handleSyncExternalAuditEvents)
+		api.GET("/audit/unified/summary", auditTier, svc.handleGetAuditEventsSummary)
 
 		// Agent admin surface (enrollment-token CRUD, agent list / approve /
 		// revoke, OAuth-based mobile enrollment, Android QR helpers). Inherits
-		// the auth middleware applied to `api`.
+		// the auth middleware applied to `api`; the fleet routes take the
+		// operator tier of the console's Agent Fleet page, and a user's own
+		// enrollment stays open.
 		agentHandler := NewAgentAPIHandler(svc.logger, svc.db, svc.ziti(), svc.config)
 		// Redis lets enrollment mint a push-enrollment ticket so a freshly-enrolled
 		// device self-registers as a push-MFA approver in one step (FastPass).
 		if svc.redis != nil {
 			agentHandler.SetRedis(svc.redis.Client)
 		}
-		agentHandler.RegisterAgentAdminRoutes(api)
+		agentHandler.RegisterAgentAdminRoutes(api, operatorTier)
 		agentHandler.StartGracePeriodEnforcer(context.Background(), 5*time.Minute)
 		svc.agentHandler = agentHandler
 
@@ -936,7 +998,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Kiosk policy admin surface (Phase 3). Audits ride the agent handler
 		// so kiosk + enrollment events appear together in unified_audit_events.
 		kioskHandler := NewKioskAPIHandler(svc.logger, svc.db, agentHandler)
-		kioskHandler.RegisterKioskAdminRoutes(api)
+		kioskHandler.RegisterKioskAdminRoutes(api, adminOnly)
 
 		// Remote-support session admin + signaling broker (Phase 4). Admin
 		// HTTP + WS endpoints land here behind auth; the agent-side WS is
@@ -944,7 +1006,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		remoteSupport := NewRemoteSupportHandler(svc.logger, svc.db, agentHandler)
 		// The step-up gate goes on session start, at the same enforcement point as
 		// the PAM launch: taking interactive control of a device is that same act.
-		remoteSupport.RegisterRemoteSupportAdminRoutes(api, svc.requireFreshMFA("remote_support.start_session"), svc.requireAdminRole())
+		// The operator tier goes on the session routes: the console gives Remote
+		// Support to operators.
+		remoteSupport.RegisterRemoteSupportAdminRoutes(api, svc.requireFreshMFA("remote_support.start_session"), svc.requireAdminRole(), operatorTier)
 		remoteSupport.StartJanitor(context.Background(), 5*time.Minute, time.Minute)
 		if svc.guacamoleClient != nil {
 			remoteSupport.SetGuacamoleClient(svc.guacamoleClient)
@@ -1739,6 +1803,23 @@ func (s *Service) handleListSessions(c *gin.Context) {
 	c.JSON(http.StatusOK, body)
 }
 
+// handleRevokeSession ends one of the organization's proxy sessions.
+//
+// A live session is the Redis blob under proxy_session:<hash of the cookie>, and
+// the proxy and forward-auth read that and nothing else (getSessionFromRequest).
+// The row keeps the same hash in session_token, so the revocation reaches the
+// blob through the row. It used to mark the row and delete a key named after the
+// row's id -- a key no session is stored under -- so a revoked session went on
+// working until its blob expired, up to twelve hours later, and the answer was
+// 200 whether or not anything had matched.
+//
+// Deleting the blob is the data plane's whole check, and it costs nothing per
+// proxied request: every path that revokes a row deletes its blob (sign-out, the
+// idle timeout, continuous verification, and this one), and the only write that
+// could bring a deleted blob back, the idle window's refresh in
+// updateSessionActivity, only updates a blob that still exists. A revoked marker
+// read on every request would need exactly the same writes and add a round trip
+// to each of them.
 func (s *Service) handleRevokeSession(c *gin.Context) {
 	id := c.Param("id")
 	org, err := orgctx.From(c.Request.Context())
@@ -1746,15 +1827,32 @@ func (s *Service) handleRevokeSession(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	_, err = s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE proxy_sessions SET revoked=true WHERE id=$1 AND org_id=$2", id, org.ID)
+	if _, perr := uuid.Parse(id); perr != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
+	var tokenHash string
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		"UPDATE proxy_sessions SET revoked=true WHERE id=$1 AND org_id=$2 RETURNING session_token",
+		id, org.ID).Scan(&tokenHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
 	if err != nil {
+		s.logger.Error("failed to revoke a proxy session", logsafe.String("session_id", id), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke session"})
 		return
 	}
 
-	// Also remove from Redis
-	s.redis.Client.Del(c.Request.Context(), "proxy_session:"+id)
+	if err := s.redis.Client.Del(c.Request.Context(), "proxy_session:"+tokenHash).Err(); err != nil {
+		// The row reads revoked and the session still works. Say which is
+		// true; a retry finds the row again and deletes the blob.
+		s.logger.Error("a proxy session was marked revoked but its live session could not be deleted; "+
+			"it keeps working until it is", logsafe.String("session_id", id), zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "the session is marked revoked but is still live; retry"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "session revoked"})
 }
@@ -3123,6 +3221,14 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 	// exactly as a missing cookie does. Never build a ProxySession from
 	// unverified claims. If JWKS is unconfigured, verification fails → no
 	// session (fail-closed: bearer auth is unavailable, never forgeable).
+	//
+	// The token must also name the organization it was minted in, which
+	// VerifyBearerToken enforces. It is not compared with the organization
+	// the tenant resolver chose for this request, as the API validators
+	// compare it: a proxied request is resolved by the route its host
+	// matched (findRouteByHost reads across organizations), not by
+	// X-Org-Slug, so the resolver's answer says nothing about which tenant's
+	// application is being reached.
 	claims, err := middleware.VerifyBearerToken(s.oauthJWKSURL, token)
 	if err != nil {
 		s.logger.Debug("bearer token rejected", zap.Error(err))
@@ -3189,7 +3295,11 @@ func (s *Service) updateSessionActivity(c *gin.Context, session *ProxySession) {
 		ttl = 12 * time.Hour
 	}
 	if nb, mErr := json.Marshal(m); mErr == nil {
-		s.redis.Client.Set(ctx, key, nb, ttl)
+		// SetXX, not Set: a revocation may have deleted the blob between the
+		// read above and this write, and a plain SET would bring the session
+		// back for up to twelve more hours. SetXX only updates a blob that
+		// still exists.
+		s.redis.Client.SetXX(ctx, key, nb, ttl)
 	}
 }
 

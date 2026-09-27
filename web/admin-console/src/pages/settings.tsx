@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { QueryError } from '../components/query-error'
+import { isPlatformAdminRequired } from '../lib/platform-admin'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -155,8 +156,11 @@ export function SettingsPage() {
   const [newDomain, setNewDomain] = useState('')
   const [newCountry, setNewCountry] = useState('')
 
-  // SMS settings (separate query/state)
-  const { data: smsSettingsData } = useQuery({
+  // SMS settings (separate query/state). The provider is shared by every
+  // organization on the install, so the backend answers an organization's own
+  // admin with 403 "platform administrator required"; the tab says so rather
+  // than waiting forever for data that will not come.
+  const { data: smsSettingsData, isError: smsIsError, error: smsError } = useQuery({
     queryKey: ['sms-settings'],
     queryFn: () => api.get<SMSSettings>('/api/v1/settings/sms'),
   })
@@ -196,7 +200,13 @@ export function SettingsPage() {
       toast({ title: t('pages.settings.toast.smsSaved'), description: t('pages.settings.toast.smsSavedDesc') })
     },
     onError: (error: Error) => {
-      toast({ title: t('common.error'), description: error.message || t('pages.settings.toast.smsSaveFailed'), variant: 'destructive' })
+      toast({
+        title: t('common.error'),
+        description: isPlatformAdminRequired(error)
+          ? t('queryError.platformAdminRequired')
+          : error.message || t('pages.settings.toast.smsSaveFailed'),
+        variant: 'destructive',
+      })
     },
   })
 
@@ -207,13 +217,21 @@ export function SettingsPage() {
       toast({ title: t('pages.settings.toast.testSent'), description: t('pages.settings.toast.testSentDesc') })
     },
     onError: (error: Error) => {
-      toast({ title: t('pages.settings.toast.testFailed'), description: error.message || t('pages.settings.toast.testFailedDesc'), variant: 'destructive' })
+      toast({
+        title: t('pages.settings.toast.testFailed'),
+        description: isPlatformAdminRequired(error)
+          ? t('queryError.platformAdminRequired')
+          : error.message || t('pages.settings.toast.testFailedDesc'),
+        variant: 'destructive',
+      })
     },
   })
 
+  // On the SMS tab Save means the SMS settings and nothing else: with no SMS
+  // settings loaded it does nothing, rather than quietly saving another tab.
   const handleSave = () => {
-    if (activeTab === 'sms' && smsFormData) {
-      updateSMSMutation.mutate(smsFormData)
+    if (activeTab === 'sms') {
+      if (smsFormData) updateSMSMutation.mutate(smsFormData)
     } else if (formData) {
       updateMutation.mutate(formData)
     }
@@ -305,7 +323,7 @@ export function SettingsPage() {
           <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.settings')}</h1>
           <p className="text-muted-foreground">{t('pages.settings.subtitle')}</p>
         </div>
-        <Button onClick={handleSave} disabled={isSaving}>
+        <Button onClick={handleSave} disabled={isSaving || (activeTab === 'sms' && !smsFormData)}>
           <Save className="mr-2 h-4 w-4" />
           {isSaving ? t('pages.settings.saving') : t('pages.settings.save')}
         </Button>
@@ -988,7 +1006,11 @@ export function SettingsPage() {
             </div>
           )}
 
-          {activeTab === 'sms' && !smsFormData && (
+          {activeTab === 'sms' && !smsFormData && smsIsError && (
+            <QueryError error={smsError} resource={t('pages.settings.tabs.sms')} />
+          )}
+
+          {activeTab === 'sms' && !smsFormData && !smsIsError && (
             <p className="text-center py-8">{t('pages.settings.sms.loading')}</p>
           )}
 

@@ -25,6 +25,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/migrations"
 )
@@ -89,11 +90,14 @@ func newSCIMHarness(t *testing.T) *scimHarness {
 
 func (h *scimHarness) mint(key *rsa.PrivateKey, issuer string) string {
 	h.t.Helper()
-	tok, err := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iss": issuer, "sub": "scim-client", "exp": time.Now().Add(time.Hour).Unix(),
-	}).SignedString(key)
+		middleware.OrgIDClaim: scimTestOrg, middleware.APIAccessClaim: true,
+	})
+	tok.Header["typ"] = middleware.AccessTokenType
+	signed, err := tok.SignedString(key)
 	require.NoError(h.t, err)
-	return tok
+	return signed
 }
 
 type scimResp struct {

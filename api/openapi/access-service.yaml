@@ -9,7 +9,7 @@ info:
     live route table in both directions. Operations carry an `x-openidx-handler`
     extension naming the Go handler that serves them; where a payload shape is not
     yet pinned the body is shown as a free-form JSON object rather than invented.
-  version: 1.37.0
+  version: 1.38.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -154,6 +154,7 @@ paths:
       tags: [Upstream Pools]
       summary: List upstream pools
       description: >-
+        Admin only: a pool's members are the addresses behind the routes on it.
         Every pool in the caller's organization, with its backends, how many
         routes point at it, and whether it is actually serving. A pool with no
         usable backend is not rendered into the data plane — an upstream with no
@@ -174,7 +175,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/UpstreamPool'
                   total: { type: integer }
-        '403': { description: Organization context required }
+        '403': { description: Not an admin, or no organization context }
     post:
       tags: [Upstream Pools]
       summary: Create an upstream pool
@@ -225,6 +226,7 @@ paths:
     get:
       tags: [Upstream Pools]
       summary: Get an upstream pool
+      description: Admin only, like the list.
       operationId: getUpstreamPool
       responses:
         '200':
@@ -233,6 +235,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UpstreamPool'
+        '403': { description: Not an admin }
         '404': { description: Not found in this organization }
     put:
       tags: [Upstream Pools]
@@ -383,6 +386,9 @@ paths:
     get:
       tags: [Routes]
       summary: List proxy routes
+      description: >-
+        Admin only, like every route below. A route's definition names its
+        upstream, the headers it adds and the rules that decide who reaches it.
       operationId: listRoutes
       parameters:
         - name: offset
@@ -410,9 +416,12 @@ paths:
                   $ref: '#/components/schemas/ProxyRoute'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       tags: [Routes]
       summary: Create proxy route
+      description: Admin only.
       operationId: createRoute
       requestBody:
         required: true
@@ -431,11 +440,14 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/routes/{id}:
     get:
       tags: [Routes]
       summary: Get proxy route
+      description: Admin only.
       operationId: getRoute
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -446,11 +458,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProxyRoute'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
     put:
       tags: [Routes]
       summary: Update proxy route
+      description: Admin only.
       operationId: updateRoute
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -469,17 +484,22 @@ paths:
                 $ref: '#/components/schemas/ProxyRoute'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
     delete:
       tags: [Routes]
       summary: Delete proxy route
+      description: Admin only.
       operationId: deleteRoute
       parameters:
         - $ref: '#/components/parameters/IdPath'
       responses:
         '204':
           description: Route deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -488,6 +508,9 @@ paths:
     get:
       tags: [Sessions]
       summary: List active sessions
+      description: >-
+        Admin only. Every live proxy session in the caller's organization, with
+        the user it belongs to.
       operationId: listSessions
       parameters:
         - name: offset
@@ -515,19 +538,31 @@ paths:
                   $ref: '#/components/schemas/ProxySession'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/sessions/{id}:
     delete:
       tags: [Sessions]
       summary: Revoke session
+      description: >-
+        Admin only. Ends the session at once: the proxy and forward-auth refuse
+        its cookie on the next request. A user ends their own proxy session by
+        signing out (`GET /access/.auth/logout`).
       operationId: revokeSession
       parameters:
         - $ref: '#/components/parameters/IdPath'
       responses:
         '204':
           description: Session revoked
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          description: >-
+            The session is marked revoked but its live session could not be
+            deleted, so it still works; retrying finishes the revocation.
 
   # --- Ziti Status ---
   /api/v1/access/ziti/status:
@@ -600,6 +635,7 @@ paths:
     get:
       tags: [Ziti Identities]
       summary: List Ziti identities
+      description: Operator tier or above; the list names every user who has an identity.
       operationId: listZitiIdentities
       responses:
         '200':
@@ -612,6 +648,8 @@ paths:
                   $ref: '#/components/schemas/ZitiIdentity'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       tags: [Ziti Identities]
       summary: Create Ziti identity
@@ -882,6 +920,7 @@ paths:
     get:
       tags: [Posture Checks]
       summary: Get identity posture
+      description: Operator tier or above.
       operationId: getIdentityPosture
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -892,6 +931,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IdentityPosture'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -899,6 +940,7 @@ paths:
     post:
       tags: [Posture Checks]
       summary: Evaluate identity posture
+      description: Operator tier or above.
       operationId: evaluateIdentityPosture
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -909,6 +951,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PostureEvaluation'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 

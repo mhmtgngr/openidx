@@ -4,6 +4,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/jackc/pgx/v5"
 	"net/http"
@@ -131,6 +132,21 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 				})
 				return
 			}
+			// The key's org, or the default org for a key that records
+			// none. It is the API-key analog of the JWT org_id claim: the
+			// tenant resolver scopes the request to it where it runs after
+			// this middleware, and where it ran before, the key may only be
+			// used in the organization it belongs to.
+			keyOrg := keyInfo.OrgID
+			if keyOrg == "" {
+				keyOrg = DefaultOrgID
+			}
+			if !CredentialOrgAllowed(c, keyOrg, nil) {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"error": ErrWrongOrganization.Error(),
+				})
+				return
+			}
 			// Set context from API key
 			if keyInfo.UserID != "" {
 				c.Set("user_id", keyInfo.UserID)
@@ -138,15 +154,7 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 			if keyInfo.ServiceAccountID != "" {
 				c.Set("service_account_id", keyInfo.ServiceAccountID)
 			}
-			// Carry the key's org so the tenant resolver scopes the
-			// request to it — the API-key analog of the JWT org_id
-			// claim. Falls back to the default org when unset, matching
-			// the JWT path below.
-			if keyInfo.OrgID != "" {
-				c.Set("org_id", keyInfo.OrgID)
-			} else {
-				c.Set("org_id", "00000000-0000-0000-0000-000000000010")
-			}
+			c.Set("org_id", keyOrg)
 			c.Set("api_key_id", keyInfo.KeyID)
 			c.Set("scopes", keyInfo.Scopes)
 			c.Set("auth_method", "api_key")
@@ -221,6 +229,32 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 			}
 		}
 
+		// The key that signs access tokens also signs ID tokens, so a verified
+		// signature does not make this a token the API may be called with.
+		if !IsAccessToken(token.Header, claims) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": fmt.Sprintf("invalid token: %v", ErrNotAccessToken),
+			})
+			return
+		}
+
+		// Nor does an access token issued to an application that may not call
+		// this API; see HasAPIAccess.
+		if !HasAPIAccess(claims) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": fmt.Sprintf("invalid token: %v", ErrNoAPIAccess),
+			})
+			return
+		}
+
+		// The token's roles hold in the organization it was minted in, and
+		// only there. See CheckTokenOrg.
+		orgID, err := CheckTokenOrg(c, claims)
+		if err != nil {
+			AbortForTokenOrg(c, err)
+			return
+		}
+
 		// Set user context
 		if sub, ok := claims["sub"].(string); ok {
 			c.Set("user_id", sub)
@@ -260,19 +294,17 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 			c.Set("scope", scope)
 		}
 
-		// Extract org_id from claims, default to default org
-		if orgID, ok := claims["org_id"].(string); ok && orgID != "" {
-			c.Set("org_id", orgID)
-		} else {
-			c.Set("org_id", DefaultOrgID)
-		}
+		c.Set("org_id", orgID)
 
 		c.Next()
 	}
 }
 
 // SoftAuth parses JWT if present but does not block unauthenticated requests.
-// Used in dev mode so endpoints can optionally identify the caller.
+// Used in dev mode so endpoints can optionally identify the caller. The one
+// token it does block is an access token of another organization than the one
+// the request resolved to (CheckTokenOrg), which is a credential presented in
+// the wrong place rather than an absent one.
 func SoftAuth(jwksURL string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -319,6 +351,29 @@ func SoftAuth(jwksURL string) gin.HandlerFunc {
 			return
 		}
 
+		// An ID token is not a credential for the API, here any more than in
+		// Auth, and neither is the access token of an application that may not
+		// call it; like every other token SoftAuth cannot accept, they leave
+		// the request unauthenticated.
+		if !IsAccessToken(token.Header, claims) || !HasAPIAccess(claims) {
+			c.Next()
+			return
+		}
+
+		// So does a token naming no organization. A token of another
+		// organization is refused outright, as Auth refuses it: the request
+		// resolved to an organization its roles do not hold in, and the
+		// routes behind SoftAuth act on that organization's rows.
+		orgID, err := CheckTokenOrg(c, claims)
+		if errors.Is(err, ErrWrongOrganization) {
+			AbortForTokenOrg(c, err)
+			return
+		}
+		if err != nil {
+			c.Next()
+			return
+		}
+
 		if sub, ok := claims["sub"].(string); ok {
 			c.Set("user_id", sub)
 		}
@@ -354,11 +409,7 @@ func SoftAuth(jwksURL string) gin.HandlerFunc {
 		if scope, ok := claims["scope"].(string); ok && scope != "" {
 			c.Set("scope", scope)
 		}
-		if orgID, ok := claims["org_id"].(string); ok && orgID != "" {
-			c.Set("org_id", orgID)
-		} else {
-			c.Set("org_id", DefaultOrgID)
-		}
+		c.Set("org_id", orgID)
 
 		c.Next()
 	}

@@ -1,6 +1,8 @@
 package oauth
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,10 +12,29 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
-// mintTestToken signs a token with the test service's key so validateExchangeToken
-// accepts it (same key = same issuer for the unit path).
+// exchangeTestOrg is the organization the exchange tests run in.
+const exchangeTestOrg = "55555555-5555-5555-5555-555555555555"
+
+// exchangeContext is a gin context for a request resolved to exchangeTestOrg,
+// as TenantResolver leaves it.
+func exchangeContext() *gin.Context {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/oauth/token", nil)
+	c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: exchangeTestOrg}))
+	return c
+}
+
+// mintTestToken signs an access token with the test service's key so
+// validateExchangeToken accepts it (same key = same issuer for the unit path).
+// It is typed "at+jwt" and bound to exchangeTestOrg unless the claims name
+// another organization, as newAccessToken types and binds every bearer this
+// package mints.
 func mintTestToken(t *testing.T, svc *Service, claims jwt.MapClaims) string {
 	t.Helper()
 	if _, ok := claims["exp"]; !ok {
@@ -22,7 +43,14 @@ func mintTestToken(t *testing.T, svc *Service, claims jwt.MapClaims) string {
 	if _, ok := claims["iat"]; !ok {
 		claims["iat"] = time.Now().Unix()
 	}
+	if _, ok := claims[middleware.OrgIDClaim]; !ok {
+		claims[middleware.OrgIDClaim] = exchangeTestOrg
+	}
+	if _, ok := claims[middleware.APIAccessClaim]; !ok {
+		claims[middleware.APIAccessClaim] = true
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["typ"] = middleware.AccessTokenType
 	signed, err := tok.SignedString(svc.privateKey)
 	if err != nil {
 		t.Fatalf("sign test token: %v", err)
@@ -63,13 +91,13 @@ func TestValidateExchangeTokenRejectsBadSig(t *testing.T) {
 	defer other.Cleanup()
 	bad := mintTestToken(t, other.Service, jwt.MapClaims{"sub": "u1"})
 
-	if _, err := ctx.Service.validateExchangeToken(bad); err == nil {
+	if _, err := ctx.Service.validateExchangeToken(context.Background(), bad); err == nil {
 		t.Fatal("expected validation to reject a foreign-signed token")
 	}
 
 	// A token signed by our key passes.
 	good := mintTestToken(t, ctx.Service, jwt.MapClaims{"sub": "u1", "scope": "read"})
-	claims, err := ctx.Service.validateExchangeToken(good)
+	claims, err := ctx.Service.validateExchangeToken(context.Background(), good)
 	if err != nil {
 		t.Fatalf("expected valid token, got %v", err)
 	}
@@ -84,7 +112,7 @@ func TestValidateExchangeTokenRejectsExpired(t *testing.T) {
 	expired := mintTestToken(t, ctx.Service, jwt.MapClaims{
 		"sub": "u1", "exp": time.Now().Add(-time.Hour).Unix(),
 	})
-	if _, err := ctx.Service.validateExchangeToken(expired); err == nil {
+	if _, err := ctx.Service.validateExchangeToken(context.Background(), expired); err == nil {
 		t.Fatal("expected expired token to be rejected")
 	}
 }
@@ -94,8 +122,7 @@ func TestIssueExchangedTokenDelegation(t *testing.T) {
 	defer ctx.Cleanup()
 	svc := ctx.Service
 
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c := exchangeContext()
 
 	client := &OAuthClient{ClientID: "svc-a", AccessTokenLifetime: 1200}
 	subjectClaims := jwt.MapClaims{"sub": "alice", "scope": "read write", "email": "alice@corp.com"}
@@ -110,7 +137,7 @@ func TestIssueExchangedTokenDelegation(t *testing.T) {
 	}
 
 	// Verify the issued token: subject preserved, audience set, act claim present.
-	claims, err := svc.validateExchangeToken(tok)
+	claims, err := svc.validateExchangeToken(context.Background(), tok)
 	if err != nil {
 		t.Fatalf("issued token should validate: %v", err)
 	}
@@ -122,6 +149,9 @@ func TestIssueExchangedTokenDelegation(t *testing.T) {
 	}
 	if claims["scope"] != "read" {
 		t.Errorf("expected narrowed scope read, got %v", claims["scope"])
+	}
+	if claims[middleware.OrgIDClaim] != exchangeTestOrg {
+		t.Errorf("expected the token bound to the request's organization, got %v", claims[middleware.OrgIDClaim])
 	}
 	act, ok := claims["act"].(map[string]interface{})
 	if !ok {
@@ -140,7 +170,7 @@ func TestIssueExchangedTokenChainedDelegation(t *testing.T) {
 	ctx := NewTestOIDCContext(t)
 	defer ctx.Cleanup()
 	svc := ctx.Service
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c := exchangeContext()
 
 	client := &OAuthClient{ClientID: "svc-b", AccessTokenLifetime: 600}
 	// Subject token already has an act (svc-a acted for alice); svc-b now acts.
@@ -152,7 +182,7 @@ func TestIssueExchangedTokenChainedDelegation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issueExchangedToken: %v", err)
 	}
-	claims, _ := svc.validateExchangeToken(tok)
+	claims, _ := svc.validateExchangeToken(context.Background(), tok)
 	act, _ := claims["act"].(map[string]interface{})
 	if act["sub"] != "svc-b" {
 		t.Fatalf("expected outer act svc-b, got %v", act["sub"])
@@ -187,5 +217,75 @@ func TestSupportedTokenType(t *testing.T) {
 	}
 	if isSupportedTokenType("urn:ietf:params:oauth:token-type:saml2") {
 		t.Error("saml2 token type should not be supported")
+	}
+}
+
+// An exchanged token is bound to the organization the exchange was requested
+// in, and the subject token has to come from that same organization: its roles
+// are what the issued token carries. A subject token of another organization,
+// or of none, is refused, and there is no token to issue without an
+// organization to bind it to.
+func TestTokenExchangeIsBoundToTheRequestsOrganization(t *testing.T) {
+	ctx := NewTestOIDCContext(t)
+	defer ctx.Cleanup()
+	svc := ctx.Service
+
+	elsewhere := mintTestToken(t, svc, jwt.MapClaims{"sub": "alice", middleware.OrgIDClaim: "66666666-6666-6666-6666-666666666666"})
+	if _, err := svc.validateExchangeToken(exchangeContext().Request.Context(), elsewhere); !errors.Is(err, middleware.ErrWrongOrganization) {
+		t.Errorf("a subject token of another organization: err = %v, want ErrWrongOrganization", err)
+	}
+	unbound := mintTestToken(t, svc, jwt.MapClaims{"sub": "alice", middleware.OrgIDClaim: ""})
+	if _, err := svc.validateExchangeToken(exchangeContext().Request.Context(), unbound); !errors.Is(err, middleware.ErrNoOrganization) {
+		t.Errorf("a subject token naming no organization: err = %v, want ErrNoOrganization", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/oauth/token", nil)
+	if _, _, err := svc.issueExchangedToken(c, "alice", "aud", "read", jwt.MapClaims{"sub": "alice"}, nil,
+		&OAuthClient{ClientID: "svc-a"}); err == nil {
+		t.Error("a token was issued with no organization to bind it to")
+	}
+}
+
+// Whether an exchanged token may call OpenIDX's own APIs follows the client
+// that asked for the exchange, and an exchange never grants it from a subject
+// token that did not carry it: that would turn a third-party application's
+// token into one the APIs accept.
+func TestAnExchangedTokenCallsTheAPIOnlyIfItsClientAndItsSubjectMay(t *testing.T) {
+	ctx := NewTestOIDCContext(t)
+	defer ctx.Cleanup()
+	svc := ctx.Service
+
+	allowed, refused := true, false
+	for _, tc := range []struct {
+		name       string
+		client     *bool
+		subjectAPI bool
+		want       bool
+	}{
+		{"a client allowed to call the API, exchanging a token that may", &allowed, true, true},
+		{"a client not allowed to, exchanging a token that may", &refused, true, false},
+		{"a client that says nothing, exchanging a token that may", nil, true, false},
+		{"a client allowed to, exchanging a token that may not", &allowed, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &OAuthClient{ClientID: "svc-a", APIAccess: tc.client}
+			subject := jwt.MapClaims{"sub": "alice", "scope": "read"}
+			if tc.subjectAPI {
+				subject[middleware.APIAccessClaim] = true
+			}
+			tok, _, err := svc.issueExchangedToken(exchangeContext(), "alice", "https://api.example.com", "read", subject, nil, client)
+			if err != nil {
+				t.Fatalf("issueExchangedToken: %v", err)
+			}
+			claims, err := svc.validateExchangeToken(orgctx.With(context.Background(), orgctx.Org{ID: exchangeTestOrg}), tok)
+			if err != nil {
+				t.Fatalf("validate the issued token: %v", err)
+			}
+			if got := middleware.HasAPIAccess(claims); got != tc.want {
+				t.Fatalf("issued token may call the API = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

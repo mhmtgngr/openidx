@@ -5,6 +5,8 @@ import (
 	"errors"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/openidx/openidx/internal/common/middleware"
 )
 
 var (
@@ -188,18 +190,28 @@ func IsAdminInContext(c *gin.Context) (bool, error) {
 	return false, nil
 }
 
-// IsSuperAdminInContext checks if the user in context has super_admin role
+// IsSuperAdminInContext checks if the user in context has super_admin role.
+// It reads the role name alone, in whichever organization the role is held,
+// so it does not say whether the user is a platform admin: SuperAdminPredicate
+// does.
 func IsSuperAdminInContext(c *gin.Context) (bool, error) {
 	return HasRoleInContext(c, RoleSuperAdmin)
 }
 
 // SuperAdminPredicate is the platform-admin predicate for the tenant
-// resolver: a super_admin is treated as a platform admin (may cross org
-// boundaries via the X-Org-ID header, with a mandatory audit entry).
-// Errors resolving the role are treated as "not a platform admin".
+// resolver: middleware.IsPlatformAdmin over the roles and the organization of
+// the credential that the auth middleware bound into the gin context. A
+// platform admin -- super_admin held in the install's default organization --
+// may cross org boundaries via the X-Org-ID and X-Org-Slug headers, with a
+// mandatory audit entry; super_admin held in any other organization is that
+// organization's role and no more. Errors resolving the roles are treated as
+// "not a platform admin".
 func SuperAdminPredicate(c *gin.Context) bool {
-	ok, _ := IsSuperAdminInContext(c)
-	return ok
+	roles, err := GetRolesFromContext(c)
+	if err != nil {
+		return false
+	}
+	return middleware.IsPlatformAdmin(c.GetString("org_id"), roles)
 }
 
 // SetUserInContext sets user information in the Gin context

@@ -623,13 +623,29 @@ PUT /api/v1/oauth/clients/:id
 DELETE /api/v1/oauth/clients/:id
 ```
 
+These routes need the `admin` or `super_admin` role in the organization the
+request is for. Any other caller gets `403`: a signed-in user without either
+role, and a credential that holds no role, such as a client-credentials token
+or a service account's API key. The SAML service-provider API
+(`/api/v1/saml/service-providers`) and SSF stream management (`/ssf/streams`)
+follow the same rule. Dynamic client registration (`POST /oauth/register`) is
+opened by the initial access token set in `DCR_INITIAL_ACCESS_TOKEN` instead,
+and cannot set `api_access`.
+
 ## Token Types
 
 ### Access Token (JWT)
-Signed JWT containing:
+Signed JWT, typed `at+jwt` in its header (RFC 9068 §2.1), containing:
 - `sub`: User ID
 - `client_id`: OAuth client ID
 - `scope`: Granted scopes
+- `org_id`: The organization the token was minted in. OpenIDX's APIs accept
+  the token only for requests in that organization, except a platform
+  admin's, and refuse a token without it (see
+  [SECURITY-TENANCY.md](SECURITY-TENANCY.md))
+- `openidx_api`: `true` when the application the token was issued to may call
+  OpenIDX's own APIs, absent otherwise (see
+  [Which applications may call OpenIDX's APIs](#which-applications-may-call-openidxs-apis))
 - `iss`: Issuer (OpenIDX URL)
 - `iat`: Issued at timestamp
 - `exp`: Expiration timestamp
@@ -639,6 +655,44 @@ Signed JWT containing:
   [What a logout revokes](#what-a-logout-revokes))
 
 **Signature:** RS256 (RSA-SHA256)
+
+ID tokens, logout tokens and Security Event Tokens are signed with the same
+key, so a valid signature does not make a token a bearer. OpenIDX's APIs and
+its UserInfo endpoint accept only an access token as a bearer and answer any
+other token with `401`; token exchange refuses any other token as subject or
+actor, and introspection reports it inactive. An access token is recognised by
+its `at+jwt` type or, for a token minted before that header was added, by its
+`client_id` claim, which an ID token never carries.
+
+### Which applications may call OpenIDX's APIs
+Every application a user signs in to is issued an access token carrying that
+user's roles. OpenIDX's own APIs accept it only from an application whose
+**May call the OpenIDX API** setting is on: `api_access` on
+`POST /api/v1/oauth/clients` and `PUT …/{id}` and on
+`PUT /api/v1/applications/{id}`, a checkbox in the console's application
+editor, and an "OpenIDX API" marker in the console's applications list. The
+issuer then adds `"openidx_api": true` to that application's access tokens.
+
+- **Required** by every OpenIDX API that takes a bearer — the admin,
+  identity, governance, provisioning and access APIs, the MCP gateway, device
+  enrolment, the audit stream and bearer access through the access proxy —
+  and by this service's account endpoints: `/oauth/logout-all`,
+  `/oauth/session-info`, social account linking and the SAML IdP's bearer
+  sign-in. A token without the claim is answered `401`
+  (`this application may not call the OpenIDX API`).
+- **Not required** by the endpoints a relying party calls: `/oauth/userinfo`,
+  introspection, revocation and logout accept any valid access token. API keys
+  are not access tokens and are unaffected.
+- **Token exchange** issues the claim only when the requesting client has the
+  setting and the subject token carried the claim.
+- The setting is read when a token is minted, so a change takes effect at the
+  application's next token.
+- Clients that existed when the setting was introduced (migration v205),
+  including the console, desktop and mobile apps, keep it on. A client
+  registered afterwards starts with it off, and dynamic client registration
+  (`POST /oauth/register`) cannot set it. Access tokens minted before the
+  upgrade carry no claim and are refused once; clients refresh or sign in
+  again.
 
 ### ID Token (JWT)
 OpenID Connect identity token containing:

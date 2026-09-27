@@ -455,6 +455,18 @@ func (s *Service) handleListOrganizations(c *gin.Context) {
 }
 
 func (s *Service) handleCreateOrganization(c *gin.Context) {
+	// A new organization is a new tenant of the install, and whoever creates
+	// it becomes its owner. That is the install's decision, so it belongs to
+	// the platform admin -- super_admin held in the default organization, the
+	// marker the tenant resolver attaches -- and not to the admin role, which
+	// each organization grants inside itself. Nothing creates an organization
+	// for its own users either: there is no self-service sign-up, and the
+	// console's Organizations page is the only caller.
+	if !orgctx.IsPlatformAdmin(c.Request.Context()) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "error_description": "only a platform admin can create an organization"})
+		return
+	}
+
 	var req struct {
 		Name            string `json:"name" binding:"required"`
 		Slug            string `json:"slug" binding:"required"`
@@ -497,6 +509,9 @@ func (s *Service) handleCreateOrganization(c *gin.Context) {
 
 func (s *Service) handleGetOrganization(c *gin.Context) {
 	orgID := c.Param("id")
+	if !s.requireOrgMember(c, orgID) {
+		return
+	}
 
 	org, err := s.GetOrganization(c.Request.Context(), orgID)
 	if err != nil {
@@ -535,6 +550,9 @@ func (s *Service) handleUpdateOrganization(c *gin.Context) {
 
 func (s *Service) handleListMembers(c *gin.Context) {
 	orgID := c.Param("id")
+	if !s.requireOrgMember(c, orgID) {
+		return
+	}
 
 	offset := 0
 	if o := c.Query("offset"); o != "" {
@@ -605,10 +623,16 @@ func (s *Service) handleRemoveMember(c *gin.Context) {
 }
 
 func (s *Service) handleGetMyOrganizations(c *gin.Context) {
+	// The caller's own memberships, so the caller has to be a user. With no
+	// user bound -- a service account's API key, a client-credentials token,
+	// an unauthenticated request under SoftAuth -- this used to answer with
+	// the seed admin's memberships instead: the default organization and
+	// every organization created from that account, whichever tenant asked.
 	userID, _ := c.Get("user_id")
 	uid, _ := userID.(string)
 	if uid == "" {
-		uid = "00000000-0000-0000-0000-000000000001"
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "error_description": "authentication required to list your organizations"})
+		return
 	}
 
 	orgs, err := s.GetUserOrganizations(c.Request.Context(), uid)
@@ -649,6 +673,44 @@ func (s *Service) requireOrgAdmin(c *gin.Context, orgID string) bool {
 		return false
 	}
 	return true
+}
+
+// requireOrgMember authorizes a read of one organization's record or member
+// list: the caller must be a platform admin, or a member of orgID in any role.
+// organizations and organization_members span the install, outside the RLS
+// belt, so without this check any authenticated caller of any organization
+// could read another's name, plan, limits and settings, and who its members
+// are and in which role.
+//
+// Anyone else is answered 404, exactly as an id that names no organization is,
+// so the answer does not tell a caller which organizations exist -- the answer
+// a cross-organization read of a tenant table gets from the belt. An id or a
+// subject that is not a UUID cannot name a membership and is answered the same
+// way rather than handed to the database. The write checks in requireOrgAdmin
+// answer 403 as before; they too answer it whether or not the organization
+// exists.
+func (s *Service) requireOrgMember(c *gin.Context, orgID string) bool {
+	ctx := c.Request.Context()
+	if orgctx.IsPlatformAdmin(ctx) {
+		return true
+	}
+	uid, _ := c.Get("user_id")
+	callerID, _ := uid.(string)
+	if _, err := uuid.Parse(orgID); err == nil {
+		if _, err := uuid.Parse(callerID); err == nil {
+			role, err := s.GetMemberRole(ctx, orgID, callerID)
+			if err != nil {
+				s.logger.Error("failed to check organization membership", zap.Error(err))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+				return false
+			}
+			if role != "" {
+				return true
+			}
+		}
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
+	return false
 }
 
 // RegisterRoutes registers organization HTTP routes on the given router group

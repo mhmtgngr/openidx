@@ -15,6 +15,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 import { useToast } from '../hooks/use-toast'
 import { ConfirmAction } from '../components/confirm-action'
 import { QueryError } from '../components/query-error'
+import { isPlatformAdminRequired } from '../lib/platform-admin'
 
 interface PlatformCertConsumer {
   name: string
@@ -92,6 +93,10 @@ export function CertificatesPage() {
   })
   const zitiCerts: ZitiCertificate[] = Array.isArray(zitiCertsRaw) ? zitiCertsRaw : []
 
+  // The platform certificate and APISIX's TLS serve every organization on the
+  // install, so the backend lets only a platform administrator change them.
+  const failureText = (err: Error) => (isPlatformAdminRequired(err) ? t('queryError.platformAdminRequired') : err.message)
+
   const uploadMutation = useMutation({
     mutationFn: async () => {
       const certInput = certFileRef.current
@@ -114,7 +119,7 @@ export function CertificatesPage() {
       if (keyFileRef.current) keyFileRef.current.value = ''
     },
     onError: (err: Error) => {
-      toast({ title: t('pages.certificates.platform.uploadFailed'), description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.certificates.platform.uploadFailed'), description: failureText(err), variant: 'destructive' })
     },
   })
 
@@ -125,7 +130,7 @@ export function CertificatesPage() {
       queryClient.invalidateQueries({ queryKey: ['certificates-status'] })
     },
     onError: (err: Error) => {
-      toast({ title: t('pages.certificates.platform.revertFailed'), description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.certificates.platform.revertFailed'), description: failureText(err), variant: 'destructive' })
     },
   })
 
@@ -139,7 +144,7 @@ export function CertificatesPage() {
       queryClient.invalidateQueries({ queryKey: ['certificates-status'] })
     },
     onError: (err: Error) => {
-      toast({ title: t('pages.certificates.apisix.enableFailed'), description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.certificates.apisix.enableFailed'), description: failureText(err), variant: 'destructive' })
     },
   })
 
@@ -150,7 +155,7 @@ export function CertificatesPage() {
       queryClient.invalidateQueries({ queryKey: ['certificates-status'] })
     },
     onError: (err: Error) => {
-      toast({ title: t('pages.certificates.apisix.disableFailed'), description: err.message, variant: 'destructive' })
+      toast({ title: t('pages.certificates.apisix.disableFailed'), description: failureText(err), variant: 'destructive' })
     },
   })
 

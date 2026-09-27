@@ -56,6 +56,7 @@ func (f *refreshGrantFixture) accessTokenFor(t *testing.T, clientID string) stri
 		"sub":       grantUser,
 		"aud":       clientID,
 		"client_id": clientID,
+		"org_id":    grantOrg,
 		"scope":     "openid",
 		"iss":       "https://refresh-grant.test",
 		"iat":       time.Now().Unix(),

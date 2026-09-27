@@ -217,6 +217,13 @@ func (s *Service) handleMCPInvoke(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 		return
 	}
+	// The server and its allowlist are looked up in the organization this
+	// request resolved to, and the token's roles hold in its own; the two
+	// have to be the same organization.
+	if _, err := middleware.CheckTokenOrg(c, claims); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
 	clientID, _ := claims["client_id"].(string)
 	subject, _ := claims["sub"].(string)
 	roles := claimStrings(claims["roles"])

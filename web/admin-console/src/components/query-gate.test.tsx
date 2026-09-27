@@ -18,6 +18,16 @@ describe('QueryGate', () => {
     expect(screen.queryByText('rows')).toBeNull()
   })
 
+  // An organization's admin can open the pages of install-wide settings; the
+  // backend's refusal has to read as "this belongs to the whole install", not
+  // as a generic permission error on a page they manage every day.
+  it('explains a refusal of an install-wide setting', () => {
+    const error = { response: { status: 403, data: { error: 'platform administrator required' } } }
+    render(<QueryGate query={q({ isError: true, error })} resource="SMS / OTP">{() => <div>rows</div>}</QueryGate>)
+    expect(screen.getByText(/applies to every organization on this installation/i)).toBeInTheDocument()
+    expect(screen.queryByText(/don't have permission/i)).toBeNull()
+  })
+
   it('renders the empty fallback when data is an empty array', () => {
     render(<QueryGate query={q({ data: [] })} resource="users" empty={<div>none</div>}>{() => <div>rows</div>}</QueryGate>)
     expect(screen.getByText('none')).toBeInTheDocument()

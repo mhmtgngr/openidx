@@ -347,6 +347,31 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 			}
 		}
 
+		// Only an access token may call this API. The issuer signs its ID
+		// tokens with the same key; see middleware.IsAccessToken.
+		if !middleware.IsAccessToken(token.Header, claims) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid token: " + middleware.ErrNotAccessToken.Error(),
+			})
+			return
+		}
+
+		// And only one issued to an application allowed to call OpenIDX's
+		// own APIs; see middleware.HasAPIAccess.
+		if !middleware.HasAPIAccess(claims) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid token: " + middleware.ErrNoAPIAccess.Error(),
+			})
+			return
+		}
+
+		// And only in the organization it was minted in, whose roles it
+		// carries; see middleware.CheckTokenOrg.
+		if _, err := middleware.CheckTokenOrg(c, claims); err != nil {
+			middleware.AbortForTokenOrg(c, err)
+			return
+		}
+
 		// Validate issuer
 		if iss, ok := claims["iss"].(string); ok {
 			expectedIssuer := s.config.OAuthIssuer
