@@ -67,16 +67,19 @@ func (s *Service) applyGlobalMiddleware() {
 
 // registerUtilityRoutes registers utility endpoints
 func (s *Service) registerUtilityRoutes() {
-	// Health check endpoint
-	s.router.GET("/health", func(c *gin.Context) {
+	// Health check endpoint. HEAD as well as GET: the image's HEALTHCHECK and
+	// the compose health check probe with `wget --spider`, which sends HEAD.
+	health := func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "ok",
 			"service": "gateway",
 		})
-	})
+	}
+	s.router.GET("/health", health)
+	s.router.HEAD("/health", health)
 
 	// Readiness check
-	s.router.GET("/ready", func(c *gin.Context) {
+	ready := func(c *gin.Context) {
 		// Check Redis if rate limiting is enabled
 		if s.config.IsRateLimitEnabled() && s.config.Redis != nil {
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
@@ -96,7 +99,9 @@ func (s *Service) registerUtilityRoutes() {
 		c.JSON(http.StatusOK, gin.H{
 			"status": "ready",
 		})
-	})
+	}
+	s.router.GET("/ready", ready)
+	s.router.HEAD("/ready", ready)
 }
 
 // Shutdown gracefully shuts down the gateway service
