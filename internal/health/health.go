@@ -200,14 +200,22 @@ func (h *HealthService) LiveHandler() gin.HandlerFunc {
 	}
 }
 
-// RegisterStandardRoutes registers the standard health endpoints on the given router
+// RegisterStandardRoutes registers the standard health endpoints on the given
+// router, for HEAD as well as GET: the images' HEALTHCHECK and the compose
+// health checks probe with `wget --spider`, which sends HEAD, and a probe
+// answered 404 marks a serving container unhealthy.
 func (h *HealthService) RegisterStandardRoutes(router *gin.Engine, prefix string) {
 	if prefix == "" {
 		prefix = "/health"
 	}
-	router.GET(prefix, h.Handler())
-	router.GET(prefix+"/ready", h.ReadyHandler())
-	router.GET(prefix+"/live", h.LiveHandler())
+	for path, handler := range map[string]gin.HandlerFunc{
+		prefix:            h.Handler(),
+		prefix + "/ready": h.ReadyHandler(),
+		prefix + "/live":  h.LiveHandler(),
+	} {
+		router.GET(path, handler)
+		router.HEAD(path, handler)
+	}
 }
 
 // formatDuration produces a human-readable duration string
