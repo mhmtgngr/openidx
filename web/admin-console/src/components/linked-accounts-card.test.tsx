@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -136,5 +136,71 @@ describe('LinkedAccountsCard', () => {
 
     renderCard()
     expect(await screen.findByText('Google')).toBeInTheDocument()
+  })
+
+  // Connecting or removing a sign-in account needs the account holder: when the
+  // server asks for the password, the card asks for it and sends it.
+  const refusal = {
+    response: { status: 403, data: { error: 'reauthentication_required', accepts: ['current_password'] } },
+  }
+  const connected = [
+    {
+      id: 'link-1',
+      provider_id: 'p-1',
+      provider_name: 'Google',
+      external_email: 'ayse@example.com',
+      display_name: null,
+      linked_at: '2026-01-01T00:00:00Z',
+      last_used_at: null,
+    },
+  ]
+
+  it('asks for the password to remove an account, and sends it', async () => {
+    const user = userEvent.setup()
+    mockReads(connected, [])
+    ;(api.delete as ReturnType<typeof vi.fn>).mockImplementation(
+      (_url: string, config?: { data?: { current_password?: string } }) =>
+        config?.data?.current_password ? Promise.resolve({}) : Promise.reject(refusal),
+    )
+    renderCard()
+    await user.click(await screen.findByRole('button', { name: /remove/i }))
+    const prompt = await screen.findByRole('dialog')
+    await user.type(within(prompt).getByLabelText('Current password'), 'secret-pw')
+    await user.click(within(prompt).getByRole('button', { name: 'Confirm' }))
+    await waitFor(() =>
+      expect(api.delete).toHaveBeenLastCalledWith('/api/v1/identity/users/me/identity-links/link-1', {
+        data: { current_password: 'secret-pw' },
+      }),
+    )
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('asks for the password to connect an account, and sends it', async () => {
+    const user = userEvent.setup()
+    mockReads([], [{ id: 'p-2', name: 'Microsoft' }])
+    ;(api.post as ReturnType<typeof vi.fn>).mockImplementation(
+      (_url: string, body?: { current_password?: string }) =>
+        body?.current_password ? Promise.resolve({ authorization_url: '' }) : Promise.reject(refusal),
+    )
+    renderCard()
+    await user.click(await screen.findByRole('button', { name: /connect microsoft/i }))
+    const prompt = await screen.findByRole('dialog')
+    await user.type(within(prompt).getByLabelText('Current password'), 'secret-pw')
+    await user.click(within(prompt).getByRole('button', { name: 'Confirm' }))
+    await waitFor(() =>
+      expect(api.post).toHaveBeenLastCalledWith('/oauth/social/link/p-2/start', { current_password: 'secret-pw' }),
+    )
+  })
+
+  it('closing the prompt removes nothing', async () => {
+    const user = userEvent.setup()
+    mockReads(connected, [])
+    ;(api.delete as ReturnType<typeof vi.fn>).mockRejectedValue(refusal)
+    renderCard()
+    await user.click(await screen.findByRole('button', { name: /remove/i }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(api.delete).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Google')).toBeInTheDocument()
   })
 })

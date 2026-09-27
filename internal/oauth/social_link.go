@@ -93,6 +93,14 @@ func (s *Service) handleSocialLinkStart(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required to link an account"})
 		return
 	}
+	// A linked account is a way to sign in, added with the token alone: a
+	// token read out of the console's localStorage could attach an account of
+	// the thief's and keep a way in after it expired. An account with a
+	// password or a second factor now needs the password, or a current TOTP
+	// code, in this request's body, as a change to its factors does.
+	if !s.identityService.RequireSignInMethodProof(c, userID) {
+		return
+	}
 
 	providerID := c.Param("provider_id")
 	provider, err := s.loadSocialProviderConfig(c.Request.Context(), providerID)

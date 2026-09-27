@@ -62,6 +62,12 @@ const (
 	// when one is verified; otherwise the enrollment is pending until its
 	// verification, which is addsFactor's.
 	changesPhoneCall
+	// changesSignInMethod links or unlinks an external account (a social
+	// provider) that signs in to this one. It adds or removes a way in as
+	// surely as a factor does, so an account that has a password or a second
+	// factor to protect needs the password, or a current TOTP code; an account
+	// with neither has nothing it could give.
+	changesSignInMethod
 )
 
 // factorProof is the proof a request carries, read from its JSON body.
@@ -164,6 +170,17 @@ func (s *Service) factorProofNeeded(ctx context.Context, userID string, change f
 			                WHERE user_id = $1 AND org_id = $2 AND verified AND enabled)`,
 			userID, org.ID).Scan(&verified)
 		return proofNeed{required: verified}, err
+	case changesSignInMethod:
+		hasPassword, err := s.hasCheckablePassword(ctx, userID)
+		if err != nil {
+			return proofNeed{}, err
+		}
+		hasFactor, err := s.hasSecondFactor(ctx, userID)
+		if err != nil {
+			return proofNeed{}, err
+		}
+		totp, err := s.totpEnabled(ctx, userID)
+		return proofNeed{required: hasPassword || hasFactor, totp: totp}, err
 	}
 	// An unknown kind is a programming error; demand the strongest proof.
 	return proofNeed{required: true}, nil

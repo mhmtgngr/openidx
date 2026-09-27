@@ -4013,7 +4013,7 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 
 		// Identity links self-service (Phase 17C)
 		identity.GET("/users/me/identity-links", svc.handleGetMyIdentityLinks)
-		identity.DELETE("/users/me/identity-links/:linkId", svc.handleUnlinkMyIdentity)
+		identity.DELETE("/users/me/identity-links/:linkId", svc.requireFactorProof(changesSignInMethod), svc.handleUnlinkMyIdentity)
 
 		// User management
 		identity.GET("/users", svc.handleListUsers)

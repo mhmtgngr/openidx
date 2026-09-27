@@ -119,7 +119,7 @@ var selfServiceIdentityRoutes = map[string]string{
 	"DELETE /api/v1/identity/users/me/tokens/:id":                    "revokes one of the caller's own personal access tokens; the target is bounded by the ownership check below",
 	"DELETE /api/v1/identity/users/me/consents/:client_id":           "withdraws the caller's own authorization of an OAuth client; the target is bounded by the ownership check below",
 	"DELETE /api/v1/identity/users/me/privacy/consents/:consentType": "withdraws one of the caller's own GDPR consents; the target is bounded by the ownership check below",
-	"DELETE /api/v1/identity/users/me/identity-links/:linkId":        "unlinks one of the caller's own external identities; the target is bounded by the ownership check below",
+	"DELETE /api/v1/identity/users/me/identity-links/:linkId":        "unlinks one of the caller's own external identities, with the password or a TOTP code when the account has either (factor_proof.go); the target is bounded by the ownership check below",
 	"POST /api/v1/identity/users/me/mfa/setup":                       "starts MFA enrollment on the caller's own account; a user must be able to add a factor without an administrator",
 	"POST /api/v1/identity/users/me/mfa/enable":                      "enables MFA on the caller's own account after they have proved the new factor; replacing an enabled credential, or adding one to an account that has a factor, needs proof from the account holder (factor_proof.go)",
 	"POST /api/v1/identity/users/me/mfa/disable":                     "disables MFA on the caller's own account, with a current code from the credential or the password (factor_proof.go)",

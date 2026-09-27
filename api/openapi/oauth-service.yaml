@@ -2110,6 +2110,16 @@ paths:
     post:
       tags: [Social Login]
       summary: Social link start
+      description: |
+        Starts linking an account of the provider to the caller's account, and
+        answers the provider's authorization URL. A linked account signs in to
+        this one, so an account with a password or a second factor must send
+        `current_password`, or `totp_code` (a current code, accepted once)
+        when it has TOTP. Without it, or with a wrong one, the answer is 403
+        with `error` `reauthentication_required`, `reauthentication_failed`,
+        `reauthentication_locked` or `reauthentication_unavailable`, and
+        `accepts`, as for a change to the account's second factors. A wrong
+        password counts against the sign-in lockout.
       operationId: socialLinkStart
       x-openidx-handler: internal/oauth.(*Service).handleSocialLinkStart
       requestBody:
@@ -2118,7 +2128,11 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                current_password:
+                  type: string
+                totp_code:
+                  type: string
       responses:
         '200':
           description: Success

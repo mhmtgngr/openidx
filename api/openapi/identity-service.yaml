@@ -1379,6 +1379,10 @@ paths:
     delete:
       tags: [Self-Service]
       summary: Unlink identity
+      description: |
+        Removes a linked external account, which then no longer signs in to
+        this one. An account with a password or a second factor must send
+        the proof in the body, as for a change to its second factors.
       operationId: unlinkMyIdentity
       parameters:
         - name: linkId
@@ -1386,9 +1390,19 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FactorProof'
       responses:
-        '204':
+        '200':
           description: Identity unlinked
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
+        '404':
+          description: No such link of the caller's
 
   # --- User Role Assignments (with time bounds) ---
   /api/v1/identity/users/{id}/role-assignments:

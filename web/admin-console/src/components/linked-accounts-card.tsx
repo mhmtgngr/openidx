@@ -5,6 +5,8 @@ import { Button } from './ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { api } from '../lib/api'
 import { useTranslation } from 'react-i18next'
+import { useFactorProof } from '../hooks/use-factor-proof'
+import { ProofCancelled, proofRefusalMessageKey } from '../lib/factor-proof'
 
 // Linked sign-in accounts.
 //
@@ -46,6 +48,15 @@ export function LinkedAccountsCard() {
   const queryClient = useQueryClient()
   const [busyProvider, setBusyProvider] = useState<string | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
+  // Connecting or removing an account changes how this account can be signed
+  // in to, so the server asks for the password (or a current code) when the
+  // account has one; the prompt collects it and the request is sent again.
+  const { withProof, dialog } = useFactorProof()
+  const failure = (err: unknown, fallback: string) => {
+    if (err instanceof ProofCancelled) return
+    const refused = proofRefusalMessageKey(err)
+    setProblem(t(refused ?? fallback))
+  }
 
   const { data: links, isLoading } = useQuery({
     queryKey: ['my-identity-links'],
@@ -78,12 +89,12 @@ export function LinkedAccountsCard() {
 
   const unlink = useMutation({
     mutationFn: async (linkId: string) =>
-      api.delete(`/api/v1/identity/users/me/identity-links/${linkId}`),
+      withProof((proof) => api.delete(`/api/v1/identity/users/me/identity-links/${linkId}`, { data: proof })),
     onSuccess: () => {
       setProblem(null)
       queryClient.invalidateQueries({ queryKey: ['my-identity-links'] })
     },
-    onError: () => setProblem(t('components.linkedAccounts.removeFailed')),
+    onError: (err) => failure(err, 'components.linkedAccounts.removeFailed'),
   })
 
   // Starting a link hands back an authorization URL rather than redirecting, so
@@ -92,17 +103,16 @@ export function LinkedAccountsCard() {
     setBusyProvider(providerId)
     setProblem(null)
     try {
-      const res = await api.post<{ authorization_url: string }>(
-        `/oauth/social/link/${providerId}/start`,
-        {},
+      const res = await withProof((proof) =>
+        api.post<{ authorization_url: string }>(`/oauth/social/link/${providerId}/start`, { ...proof }),
       )
       if (res?.authorization_url) {
         window.location.href = res.authorization_url
         return
       }
       setProblem(t('components.linkedAccounts.startFailed'))
-    } catch {
-      setProblem(t('components.linkedAccounts.startFailed'))
+    } catch (err) {
+      failure(err, 'components.linkedAccounts.startFailed')
     } finally {
       setBusyProvider(null)
     }
@@ -114,6 +124,7 @@ export function LinkedAccountsCard() {
 
   return (
     <Card>
+      {dialog}
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Link2 className="h-4 w-4" />

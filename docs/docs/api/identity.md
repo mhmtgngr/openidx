@@ -86,6 +86,7 @@ carry proof that the account holder is making it, in its JSON body:
 | Add a factor | `POST /mfa/webauthn/register/finish`, `POST /mfa/push/devices`, `POST /mfa/push/register`, `POST /mfa/push/enroll/start`, `POST /mfa/sms/verify`, `POST /mfa/email/enroll`, `POST /mfa/phone/verify`, `POST /mfa/totp/enroll` | password, when the account already has a second factor |
 | Regenerate backup codes, remember a browser | `POST /mfa/backup/generate`, `POST /trusted-browsers` | password, when the account already has a second factor |
 | Move a verified phone-call number | `POST /mfa/phone/enroll` | password |
+| Link or unlink an external sign-in account | `POST /oauth/social/link/:provider_id/start` (oauth service), `DELETE /users/me/identity-links/:linkId` | password or TOTP code, when the account has a password or a second factor |
 | Change the account's address | `PUT /users/me` with a new `email` | password |
 
 Routes are under `/api/v1/identity`. The first factor of an account that has
