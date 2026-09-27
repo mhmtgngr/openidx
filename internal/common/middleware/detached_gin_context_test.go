@@ -42,6 +42,19 @@ import (
 // The guard reads the tree rather than a list of remembered sites, for the reason
 // the query-parameter census in this package gives: a list cannot cover what
 // nobody remembered.
+//
+// What it does NOT catch, said here rather than left to be discovered: a bare
+// `c` handed to something that will read it later -- `go func(){ handler(c) }()`
+// -- because the guard looks for a selector on the parameter. One place in the
+// tree has that shape, `handlers.WithTimeout`
+// (`internal/common/handlers/decorator.go:362`), and it is worse than the nine
+// above: it runs the whole handler in a goroutine and, on timeout, writes a 504
+// from the outer one while the handler is still writing to the same Context and
+// ResponseWriter. It is also dead -- nothing in the tree calls it, tests
+// included -- so it is recorded as a follow-up rather than fixed or allowlisted
+// here. Deleting it or giving it a real cancellation is a decision, and a guard
+// with an allowlist entry over a live defect is a guard that reads green while
+// the defect stands.
 func TestNoDetachedGoroutineReadsAGinContext(t *testing.T) {
 	root := censusRepoRoot(t)
 	fset := token.NewFileSet()
