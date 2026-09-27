@@ -61,7 +61,11 @@ func presenceFinding(checkID, domain string, count int) Finding {
 func orphanOpenidxServices(controller []string, desired map[string]bool) []string {
 	var out []string
 	for _, n := range controller {
-		if strings.HasPrefix(n, "openidx-") && !desired[n] {
+		// The install's own services -- the dark-platform surfaces and the
+		// remote-support broker -- are named like a route's and no route names
+		// them. They are not orphans, and tearing one down cuts off every
+		// organization.
+		if strings.HasPrefix(n, "openidx-") && !desired[n] && !reservedZitiServiceName(n) {
 			out = append(out, n)
 		}
 	}

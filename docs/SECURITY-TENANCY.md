@@ -153,7 +153,10 @@ organization: the `system_settings` rows (SMS delivery, the passwordless
 defaults, the OpenZiti controller connection, the BrowZer domain, the APISIX TLS
 switch), the OAuth signing keys, the shared IP deny-list and error catalog, the
 platform TLS certificate and key, and the self-heal loop's controls. Changing
-one of them changes it for every organization.
+one of them changes it for every organization. The Relations & Integrity
+Doctor (`/api/v1/access/health/relations` and `/health/fix/:checkId`) is held to
+the same rule: it reads and repairs every organization's routes, applications
+and Ziti services under the RLS opt-out.
 
 Changing them needs an **administrator of the default organization**: a user
 who holds `admin` or `super_admin` in the install's default organization

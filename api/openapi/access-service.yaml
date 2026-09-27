@@ -4719,6 +4719,12 @@ paths:
     post:
       tags: [Integration Health]
       summary: Health fix
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Applies one of the Relations & Integrity Doctor's
+        repairs, which act on every organization's routes, applications and
+        Ziti services. An organization's admin gets 403 platform
+        administrator required.
       operationId: healthFix
       x-openidx-handler: internal/access.(*Service).handleHealthFix
       requestBody:
@@ -4797,6 +4803,12 @@ paths:
     get:
       tags: [Integration Health]
       summary: Health relations
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The Relations & Integrity Doctor's report over every
+        organization's routes, applications and Ziti services; with
+        heal=safe it also applies every safe repair across them. An
+        organization's admin gets 403 platform administrator required.
       operationId: healthRelations
       x-openidx-handler: internal/access.(*Service).handleHealthRelations
       responses:

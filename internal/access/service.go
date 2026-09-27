@@ -1009,8 +1009,14 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// assumed an admin ("an org-scoped admin request must see all rows");
 		// this is the guard that comment assumed. Pinned by
 		// health_doctor_gate_test.go against the real route table.
-		api.GET("/health/relations", adminOnly, svc.handleHealthRelations)
-		api.POST("/health/fix/:checkId", adminOnly, svc.handleHealthFix)
+		//
+		// The admin role of one organization cannot authorize what the doctor
+		// does to the others, so both routes also need an install
+		// administrator (`platformOnly`), like the other install-wide Ziti
+		// routes; health_doctor_platform_testdb_test.go drives that with the
+		// middleware chain.
+		api.GET("/health/relations", adminOnly, platformOnly, svc.handleHealthRelations)
+		api.POST("/health/fix/:checkId", adminOnly, platformOnly, svc.handleHealthFix)
 
 		// Unified audit log. The reads are the organization's audit trail, at
 		// the tier of the console's Unified Audit page.
