@@ -43,6 +43,7 @@ type selfServiceHarness struct {
 	issuer string
 	suffix string
 	redis  *miniredis.Miniredis
+	mailer *recordingMailer
 }
 
 const harnessPassword = "correct horse battery staple 42"
@@ -68,7 +69,8 @@ func newSelfServiceHarness(t *testing.T) *selfServiceHarness {
 	cfg.PushMFA.Enabled = true
 	cfg.WebAuthn = config.WebAuthnConfig{RPID: "localhost", RPOrigins: []string{"http://localhost:3000"}, Timeout: 300}
 	svc := NewService(db, rdb, cfg, zap.NewNop())
-	svc.SetEmailService(&recordingMailer{})
+	mailer := &recordingMailer{}
+	svc.SetEmailService(mailer)
 	svc.SetPhoneCallProvider(&recordingCaller{})
 
 	r := gin.New()
@@ -83,7 +85,7 @@ func newSelfServiceHarness(t *testing.T) *selfServiceHarness {
 
 	return &selfServiceHarness{
 		t: t, db: db, svc: svc, router: r, issuer: cfg.OAuthIssuer,
-		suffix: fmt.Sprintf("%d", time.Now().UnixNano()), redis: mini,
+		suffix: fmt.Sprintf("%d", time.Now().UnixNano()), redis: mini, mailer: mailer,
 	}
 }
 
@@ -194,10 +196,12 @@ func totpCode(t *testing.T, secret string, at time.Time) string {
 	return code
 }
 
-// recordingMailer stands in for the SMTP service: it accepts every message.
+// recordingMailer stands in for the SMTP service: it accepts every message,
+// and keeps the one-time codes it is asked to send.
 type recordingMailer struct {
-	mu   sync.Mutex
-	sent []string
+	mu    sync.Mutex
+	sent  []string
+	codes []string
 }
 
 func (m *recordingMailer) record(to string) error {
@@ -205,6 +209,16 @@ func (m *recordingMailer) record(to string) error {
 	defer m.mu.Unlock()
 	m.sent = append(m.sent, to)
 	return nil
+}
+
+// lastCode is the code in the latest one-time-code message.
+func (m *recordingMailer) lastCode() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.codes) == 0 {
+		return ""
+	}
+	return m.codes[len(m.codes)-1]
 }
 
 func (m *recordingMailer) SendVerificationEmail(_ context.Context, to, _, _, _ string) error {
@@ -219,7 +233,12 @@ func (m *recordingMailer) SendPasswordResetEmail(_ context.Context, to, _, _, _ 
 func (m *recordingMailer) SendWelcomeEmail(_ context.Context, to, _ string) error {
 	return m.record(to)
 }
-func (m *recordingMailer) SendAsync(_ context.Context, to, _, _ string, _ map[string]interface{}) error {
+func (m *recordingMailer) SendAsync(_ context.Context, to, _, _ string, data map[string]interface{}) error {
+	if code, ok := data["Code"].(string); ok {
+		m.mu.Lock()
+		m.codes = append(m.codes, code)
+		m.mu.Unlock()
+	}
 	return m.record(to)
 }
 

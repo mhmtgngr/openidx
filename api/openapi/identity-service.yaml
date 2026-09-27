@@ -1727,6 +1727,14 @@ paths:
     post:
       tags: [MFA - SMS, MFA - Email]
       summary: Verify OTP code (works for SMS or Email)
+      description: |
+        Verifies a code against the caller's latest pending challenge for the
+        method. A challenge takes at most its `max_attempts` guesses (3 by
+        default), however they are sent: each guess is counted, and refused
+        at the limit, before the code is compared, and the challenge is closed
+        when its guesses are used up. The right code verifies the challenge
+        once. The sign-in's and step-up's SMS and email steps use the same
+        verifier.
       operationId: verifyOTP
       requestBody:
         required: true
@@ -1734,8 +1742,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [code]
+              required: [method, code]
               properties:
+                method:
+                  type: string
+                  enum: [sms, email]
                 code:
                   type: string
                   minLength: 6
@@ -1744,7 +1755,10 @@ paths:
         '200':
           description: OTP verified
         '400':
-          description: Invalid OTP
+          description: |
+            Refused. `error` is `invalid OTP code, N attempts remaining` for a
+            wrong code, `maximum attempts exceeded` once the challenge's
+            guesses are used up, or `no pending challenge found`.
 
   /api/v1/identity/mfa/methods:
     get:

@@ -99,6 +99,19 @@ can then set a password (`POST /users/:id/set-password`) or issue an MFA bypass
 code (`POST /mfa/bypass-codes`); both need the admin role. A new address is
 unverified until the link sent to it is followed.
 
+## MFA — SMS and email codes
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/identity/mfa/sms/challenge` | Send a code by SMS |
+| POST | `/api/v1/identity/mfa/email/challenge` | Send a code by email |
+| POST | `/api/v1/identity/mfa/otp/verify` | Verify a code (`method` is `sms` or `email`) |
+
+A challenge takes at most its `max_attempts` guesses (3 by default), however
+they are sent: each guess is counted, and refused at the limit, before the code
+is compared, and the right code verifies the challenge once. The sign-in's and
+step-up's SMS and email steps use the same verifier.
+
 ## MFA — WebAuthn
 
 | Method | Path | Description |

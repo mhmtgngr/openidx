@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -582,31 +584,48 @@ func (s *Service) verifyOTPCode(ctx context.Context, userID, method, code string
 		return nil, fmt.Errorf("OTP code expired")
 	}
 
-	if challenge.Attempts >= challenge.MaxAttempts {
-		challenge.Status = "failed"
-		s.updateOTPChallengeStatus(ctx, challenge)
+	// Count this guess, and only while the challenge is under its limit, in
+	// the statement that counts it.
+	//
+	// The limit was a read of attempts, a comparison in Go and a separate
+	// increment whose error was discarded, so guesses sent together all read
+	// the same count and all passed the comparison: one challenge took many
+	// more guesses than max_attempts. The row lock serialises the increments
+	// now, and a guess that finds the challenge spent, failed or at its limit
+	// gets no row and is refused before the code is looked at.
+	attempts, err := s.claimOTPAttempt(ctx, challenge.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		s.failOTPChallenge(ctx, challenge.ID)
 		return nil, fmt.Errorf("maximum attempts exceeded")
 	}
-
-	// Increment attempts
-	challenge.Attempts++
-	s.incrementOTPChallengeAttempts(ctx, challenge.ID)
+	if err != nil {
+		s.logger.Error("could not count an OTP verification attempt; refusing it", zap.Error(err))
+		return nil, fmt.Errorf("could not record the verification attempt")
+	}
+	challenge.Attempts = attempts
 
 	// Verify code
-	if hashOTPCode(code) != challenge.CodeHash {
-		if challenge.Attempts >= challenge.MaxAttempts {
-			challenge.Status = "failed"
-			s.updateOTPChallengeStatus(ctx, challenge)
+	if subtle.ConstantTimeCompare([]byte(hashOTPCode(code)), []byte(challenge.CodeHash)) != 1 {
+		if attempts >= challenge.MaxAttempts {
+			s.failOTPChallenge(ctx, challenge.ID)
 			return nil, fmt.Errorf("invalid OTP code, maximum attempts exceeded")
 		}
-		return nil, fmt.Errorf("invalid OTP code, %d attempts remaining", challenge.MaxAttempts-challenge.Attempts)
+		return nil, fmt.Errorf("invalid OTP code, %d attempts remaining", challenge.MaxAttempts-attempts)
 	}
 
-	// Mark as verified
-	now := time.Now()
+	// Spend the challenge. The status write decides it, so two requests
+	// carrying the right code verify it once: it was an unconditional UPDATE
+	// whose error was discarded, and both were told the code was good.
+	verifiedAt, err := s.spendOTPChallenge(ctx, challenge.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("no pending challenge found")
+	}
+	if err != nil {
+		s.logger.Error("could not spend an OTP challenge; refusing the verification", zap.Error(err))
+		return nil, fmt.Errorf("could not record the verification")
+	}
 	challenge.Status = "verified"
-	challenge.VerifiedAt = &now
-	s.updateOTPChallengeStatus(ctx, challenge)
+	challenge.VerifiedAt = &verifiedAt
 
 	return challenge, nil
 }
@@ -735,11 +754,39 @@ func (s *Service) updateOTPChallengeStatus(ctx context.Context, challenge *OTPCh
 	return err
 }
 
-func (s *Service) incrementOTPChallengeAttempts(ctx context.Context, challengeID string) error {
+// claimOTPAttempt counts one guess against a pending challenge that is under
+// its limit, and returns the count including it. pgx.ErrNoRows means the
+// challenge is not pending or its guesses are used up.
+func (s *Service) claimOTPAttempt(ctx context.Context, challengeID string) (int, error) {
 	//orgscope:ignore challenge id came from getLatestOTPChallenge, which is scoped by the session user's org
-	query := `UPDATE mfa_otp_challenges SET attempts = attempts + 1 WHERE id = $1`
-	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query, challengeID)
-	return err
+	query := `UPDATE mfa_otp_challenges SET attempts = attempts + 1
+	          WHERE id = $1 AND status = 'pending' AND attempts < max_attempts
+	          RETURNING attempts`
+	var attempts int
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), query, challengeID).Scan(&attempts)
+	return attempts, err
+}
+
+// failOTPChallenge closes a pending challenge whose guesses are used up. It is
+// bookkeeping: claimOTPAttempt refuses such a challenge whatever its status.
+func (s *Service) failOTPChallenge(ctx context.Context, challengeID string) {
+	//orgscope:ignore challenge id came from getLatestOTPChallenge, which is scoped by the session user's org
+	query := `UPDATE mfa_otp_challenges SET status = 'failed'
+	          WHERE id = $1 AND status = 'pending' AND attempts >= max_attempts`
+	//silentwrite:ok the refusal is claimOTPAttempt's, which counts against max_attempts on every guess; this row only labels a challenge already refused for good
+	s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), query, challengeID)
+}
+
+// spendOTPChallenge marks a pending, unexpired challenge verified and returns
+// when. pgx.ErrNoRows means another request spent it first, or it expired.
+func (s *Service) spendOTPChallenge(ctx context.Context, challengeID string) (time.Time, error) {
+	//orgscope:ignore challenge id came from getLatestOTPChallenge, which is scoped by the session user's org
+	query := `UPDATE mfa_otp_challenges SET status = 'verified', verified_at = NOW()
+	          WHERE id = $1 AND status = 'pending' AND expires_at > NOW()
+	          RETURNING verified_at`
+	var at time.Time
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), query, challengeID).Scan(&at)
+	return at, err
 }
 
 func (s *Service) countRecentOTPChallenges(ctx context.Context, userID, method string, window time.Duration) (int, error) {
