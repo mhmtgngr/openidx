@@ -137,6 +137,10 @@ type ProxySession struct {
 	// request with, when it came from getSessionFromBearer. The proxy removes
 	// exactly that value before the request goes upstream.
 	bearer string
+	// orgID is the organization of the route the session was signed in on,
+	// which is where its roles hold: a proxy session is accepted only on that
+	// organization's routes (sessionOnRoute).
+	orgID string
 }
 
 // Service provides access proxy operations
@@ -2037,7 +2041,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 	}
 
 	// Create proxy session
-	session, err := s.createSession(c, claims, tokenResp.AccessToken)
+	session, err := s.createSession(c, claims)
 	if err != nil {
 		s.logger.Error("Failed to create session", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
@@ -2217,7 +2221,7 @@ func (s *Service) handleProxy(c *gin.Context) {
 	// Check authentication
 	var session *ProxySession
 	if route.RequireAuth {
-		session = s.getSessionFromRequest(c, host)
+		session = sessionOnRoute(s.getSessionFromRequest(c, host), route)
 		// Enforce the route's idle timeout on the cookie session: if it has been
 		// idle longer than idle_timeout, revoke it and re-auth. (Bearer tokens
 		// carry their own JWT expiry, so this only applies to the cookie path.)
@@ -3008,7 +3012,7 @@ func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute
 	return &r, nil
 }
 
-func (s *Service) createSession(c *gin.Context, claims map[string]interface{}, accessToken string) (*ProxySession, error) {
+func (s *Service) createSession(c *gin.Context, claims map[string]interface{}) (*ProxySession, error) {
 	id := uuid.New().String()
 	token := generateSessionToken()
 	tokenHash := hashToken(token)
@@ -3025,39 +3029,53 @@ func (s *Service) createSession(c *gin.Context, claims map[string]interface{}, a
 
 	expiresAt := time.Now().Add(12 * time.Hour)
 
-	// Proxy data-plane login: the session belongs to the org of the route the user
-	// authenticated against. The org is taken from context when present, with a
-	// default-org fallback so the data-plane never fails to mint a session.
+	// Proxy data-plane login: the session belongs to the route the user signed
+	// in on -- the one holding the host whose callback this is -- and to that
+	// route's organization. It used to take the organization the tenant
+	// resolver chose, which for a proxied host is the default organization, and
+	// no route at all: the session was listed and revocable under the wrong
+	// organization, and continuous verification, which joins a session to its
+	// route to find reverify_interval, never saw one. A callback on a host no
+	// route holds (the access service's own) keeps the resolver's organization,
+	// with a default-org fallback so the data-plane never fails to mint a
+	// session.
 	orgID := "00000000-0000-0000-0000-000000000010"
 	if org, oerr := orgctx.From(c.Request.Context()); oerr == nil {
 		orgID = org.ID
 	}
+	var routeID *string
+	if route, rerr := s.findRouteByHost(c.Request.Context(), s.browserHost(c)); rerr == nil && route != nil && route.OrgID != "" {
+		orgID, routeID = route.OrgID, &route.ID
+	}
 
-	_, err := s.db.Pool.Exec(c.Request.Context(),
-		`INSERT INTO proxy_sessions (id, user_id, session_token, ip_address, user_agent, expires_at, org_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		id, userID, tokenHash, c.ClientIP(), c.Request.UserAgent(), expiresAt, orgID)
+	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
+		//orgscope:ignore proxy data-plane login; the row is written with the organization of the route the callback's host resolves to, which may not be the request's resolved organization
+		`INSERT INTO proxy_sessions (id, user_id, session_token, ip_address, user_agent, expires_at, org_id, route_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		id, userID, tokenHash, c.ClientIP(), c.Request.UserAgent(), expiresAt, orgID, routeID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Store session data in Redis for fast access. host binds the session to
 	// the host whose callback set its cookie: getSessionFromRequest refuses it
-	// anywhere else.
+	// anywhere else. org_id is the organization its roles hold in. The user's
+	// OpenIDX access token is not kept: nothing read it back, and a copy in
+	// Redis is a credential for OpenIDX's own APIs.
 	sessionData, _ := json.Marshal(map[string]interface{}{
 		"id":          id,
 		"user_id":     userID,
 		"email":       email,
 		"name":        name,
 		"roles":       roles,
-		"token":       accessToken,
+		"org_id":      orgID,
 		"host":        sessionHost(s.browserHost(c)),
 		"expires":     expiresAt.Unix(),
 		"last_active": time.Now().Unix(),
 	})
 	s.redis.Client.Set(c.Request.Context(), "proxy_session:"+tokenHash, sessionData, 12*time.Hour)
 
-	return &ProxySession{
+	session := &ProxySession{
 		ID:           id,
 		UserID:       userID,
 		SessionToken: token,
@@ -3069,7 +3087,24 @@ func (s *Service) createSession(c *gin.Context, claims map[string]interface{}, a
 		StartedAt:    time.Now(),
 		LastActiveAt: time.Now(),
 		ExpiresAt:    expiresAt,
-	}, nil
+		orgID:        orgID,
+	}
+	if routeID != nil {
+		session.RouteID = *routeID
+	}
+	return session, nil
+}
+
+// sessionOnRoute returns session when it may be used on route: a session signed
+// in on one organization's route carries that organization's roles, and is not
+// accepted on another organization's route, even on the same host -- a host
+// can pass from one organization to another once the first disables its
+// route. A bearer session carries its token's own organization binding.
+func sessionOnRoute(session *ProxySession, route *ProxyRoute) *ProxySession {
+	if session == nil || route == nil || session.orgID == "" || session.orgID == route.OrgID {
+		return session
+	}
+	return nil
 }
 
 func (sess *ProxySession) AbsoluteTimeout() int {
@@ -3137,6 +3172,7 @@ func (s *Service) getSessionFromRequest(c *gin.Context, host string) *ProxySessi
 		lastActive = time.Unix(int64(la), 0)
 	}
 
+	orgID, _ := sessionData["org_id"].(string)
 	return &ProxySession{
 		ID:           fmt.Sprint(sessionData["id"]),
 		UserID:       fmt.Sprint(sessionData["user_id"]),
@@ -3145,6 +3181,7 @@ func (s *Service) getSessionFromRequest(c *gin.Context, host string) *ProxySessi
 		Roles:        roles,
 		LastActiveAt: lastActive,
 		ExpiresAt:    expiresAt,
+		orgID:        orgID,
 	}
 }
 

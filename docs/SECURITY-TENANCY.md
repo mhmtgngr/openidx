@@ -191,7 +191,10 @@ organization can hold a host before its owner routes it, and an operator
 settles that by disabling the route (migration v211, `internal/access/route_host.go`).
 A proxy session is good on the
 host whose sign-in set its cookie and on no other host, whichever
-organization's route that is. The proxy follows a `redirect_url` only to a path
+organization's route that is, and it belongs to the route it was signed in on
+and that route's organization: it is listed, revoked and continuously verified
+there, and it is not accepted on another organization's route should the host
+pass to one. The proxy follows a `redirect_url` only to a path
 on the same host, to the access service's own host, or to a host of the
 organization's own routes, where the organization is the one that owns the
 route serving the request's host. The nginx configuration generated for

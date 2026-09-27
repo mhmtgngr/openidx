@@ -463,7 +463,7 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 	}
 
 	// Authenticate
-	session := s.getSessionFromRequest(c, originalHost)
+	session := sessionOnRoute(s.getSessionFromRequest(c, originalHost), route)
 	// Enforce the route's idle timeout on the cookie session (bearer tokens carry
 	// their own expiry). Mirrors handleProxy.
 	if session != nil && isIdleExpired(route, session, time.Now()) {
