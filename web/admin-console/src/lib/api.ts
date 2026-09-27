@@ -1,4 +1,5 @@
 import axios, { AxiosError, AxiosRequestConfig } from 'axios'
+import type { FactorProof } from './factor-proof'
 
 // Registerable session-expiry hook. The auth context registers a handler; the
 // 401 interceptor calls notifyAuthExpired so a dead session surfaces ONE re-login
@@ -416,12 +417,17 @@ export const api = {
     return api.post<unknown>('/api/v1/identity/mfa/webauthn/register/begin')
   },
 
-  finishWebAuthnRegistration: async (data: unknown): Promise<WebAuthnCredential> => {
-    return api.post<WebAuthnCredential>('/api/v1/identity/mfa/webauthn/register/finish', data)
+  // The changes below carry the proof a change to the account's second factors
+  // needs (lib/factor-proof.ts) in the request body, when there is one.
+  finishWebAuthnRegistration: async (data: unknown, proof?: FactorProof): Promise<WebAuthnCredential> => {
+    return api.post<WebAuthnCredential>('/api/v1/identity/mfa/webauthn/register/finish', {
+      ...(data as Record<string, unknown>),
+      ...proof,
+    })
   },
 
-  deleteWebAuthnCredential: async (credentialId: string): Promise<void> => {
-    await api.delete<void>(`/api/v1/identity/mfa/webauthn/credentials/${credentialId}`)
+  deleteWebAuthnCredential: async (credentialId: string, proof?: FactorProof): Promise<void> => {
+    await api.delete<void>(`/api/v1/identity/mfa/webauthn/credentials/${credentialId}`, { data: proof })
   },
 
   // Push MFA API
@@ -429,18 +435,18 @@ export const api = {
     return api.get<PushMFADevice[]>('/api/v1/identity/mfa/push/devices')
   },
 
-  registerPushDevice: async (data: PushMFAEnrollment): Promise<PushMFADevice> => {
-    return api.post<PushMFADevice>('/api/v1/identity/mfa/push/devices', data)
+  registerPushDevice: async (data: PushMFAEnrollment, proof?: FactorProof): Promise<PushMFADevice> => {
+    return api.post<PushMFADevice>('/api/v1/identity/mfa/push/devices', { ...data, ...proof })
   },
 
   // startPushEnrollment mints a QR enrollment ticket so an authenticator app can
   // scan and bind itself as a push device (Google/MS-Authenticator style).
-  startPushEnrollment: async (): Promise<PushEnrollmentTicket> => {
-    return api.post<PushEnrollmentTicket>('/api/v1/identity/mfa/push/enroll/start')
+  startPushEnrollment: async (proof?: FactorProof): Promise<PushEnrollmentTicket> => {
+    return api.post<PushEnrollmentTicket>('/api/v1/identity/mfa/push/enroll/start', proof ?? {})
   },
 
-  deletePushDevice: async (deviceId: string): Promise<void> => {
-    await api.delete<void>(`/api/v1/identity/mfa/push/devices/${deviceId}`)
+  deletePushDevice: async (deviceId: string, proof?: FactorProof): Promise<void> => {
+    await api.delete<void>(`/api/v1/identity/mfa/push/devices/${deviceId}`, { data: proof })
   },
 
   // Audit stream WebSocket helpers

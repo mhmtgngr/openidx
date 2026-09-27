@@ -2668,7 +2668,8 @@ func (s *Service) GetTOTPStatus(ctx context.Context, userID string) (*MFATOTP, e
 	return &totp, nil
 }
 
-// GenerateBackupCodes generates backup codes for MFA
+// GenerateBackupCodes generates a set of backup codes for MFA, replacing the
+// user's unused ones.
 func (s *Service) GenerateBackupCodes(ctx context.Context, userID string, count int) ([]string, error) {
 	s.logger.Info("Generating backup codes", zap.String("user_id", userID), zap.Int("count", count))
 
@@ -2697,6 +2698,15 @@ func (s *Service) GenerateBackupCodes(ctx context.Context, userID string, count 
 		return nil, fmt.Errorf("failed to store backup codes: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	// A new set replaces the old one. The sets used to accumulate, so a user
+	// who regenerated because a printed list went astray still had every code
+	// on it working. Used codes stay as the record of their use.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM mfa_backup_codes WHERE user_id = $1 AND org_id = $2 AND used = false`,
+		userID, org.ID); err != nil {
+		return nil, fmt.Errorf("failed to retire the previous backup codes: %w", err)
+	}
 
 	for i := 0; i < count; i++ {
 		// Generate random 8-character alphanumeric code
@@ -3978,8 +3988,10 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.GET("/users/me/password-info", svc.handleGetPasswordInfo)
 		identity.POST("/users/me/change-password", svc.handleChangePassword)
 		identity.POST("/users/me/mfa/setup", svc.handleSetupUserMFA)
-		identity.POST("/users/me/mfa/enable", svc.handleEnableUserMFA)
-		identity.POST("/users/me/mfa/disable", svc.handleDisableUserMFA)
+		// Every route that changes the caller's second factors asks the
+		// account holder for proof in its own body: see factor_proof.go.
+		identity.POST("/users/me/mfa/enable", svc.requireFactorProof(enrollsTOTP), svc.handleEnableUserMFA)
+		identity.POST("/users/me/mfa/disable", svc.requireFactorProof(removesTOTP), svc.handleDisableUserMFA)
 		identity.GET("/users/me/mfa/status", svc.handleGetMyMFAStatus)
 		identity.GET("/users/me/sessions", svc.handleGetMySessions)
 
@@ -4057,50 +4069,50 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 
 		// MFA management
 		identity.POST("/mfa/totp/setup", svc.handleSetupTOTP)
-		identity.POST("/mfa/totp/enroll", svc.handleEnrollTOTP)
+		identity.POST("/mfa/totp/enroll", svc.requireFactorProof(enrollsTOTP), svc.handleEnrollTOTP)
 		identity.POST("/mfa/totp/verify", svc.handleVerifyTOTP)
 		identity.GET("/mfa/totp/status", svc.handleGetTOTPStatus)
-		identity.DELETE("/mfa/totp", svc.handleDisableTOTP)
-		identity.POST("/mfa/backup/generate", svc.handleGenerateBackupCodes)
+		identity.DELETE("/mfa/totp", svc.requireFactorProof(removesTOTP), svc.handleDisableTOTP)
+		identity.POST("/mfa/backup/generate", svc.requireFactorProof(addsFactor), svc.handleGenerateBackupCodes)
 		identity.POST("/mfa/backup/verify", svc.handleVerifyBackupCode)
 		identity.GET("/mfa/backup/count", svc.handleGetBackupCodeCount)
 
 		// WebAuthn (Passwordless) MFA
 		identity.POST("/mfa/webauthn/register/begin", svc.handleBeginWebAuthnRegistration)
-		identity.POST("/mfa/webauthn/register/finish", svc.handleFinishWebAuthnRegistration)
+		identity.POST("/mfa/webauthn/register/finish", svc.requireFactorProof(addsFactor), svc.handleFinishWebAuthnRegistration)
 		identity.POST("/mfa/webauthn/authenticate/begin", svc.handleBeginWebAuthnAuthentication)
 		identity.POST("/mfa/webauthn/authenticate/finish", svc.handleFinishWebAuthnAuthentication)
 		identity.GET("/mfa/webauthn/credentials", svc.handleGetWebAuthnCredentials)
-		identity.DELETE("/mfa/webauthn/credentials/:credential_id", svc.handleDeleteWebAuthnCredential)
+		identity.DELETE("/mfa/webauthn/credentials/:credential_id", svc.requireFactorProof(removesFactor), svc.handleDeleteWebAuthnCredential)
 
 		// Push MFA
-		identity.POST("/mfa/push/register", svc.handleRegisterPushDevice)
+		identity.POST("/mfa/push/register", svc.requireFactorProof(addsFactor), svc.handleRegisterPushDevice)
 		// Alias: the admin console posts enrollments to /mfa/push/devices (REST-style,
 		// matching the GET/DELETE on the same collection). Same handler + payload as
 		// /mfa/push/register, so both work and the console's "Enroll Device" stops 404ing.
-		identity.POST("/mfa/push/devices", svc.handleRegisterPushDevice)
+		identity.POST("/mfa/push/devices", svc.requireFactorProof(addsFactor), svc.handleRegisterPushDevice)
 		identity.GET("/mfa/push/devices", svc.handleGetPushDevices)
-		identity.DELETE("/mfa/push/devices/:device_id", svc.handleDeletePushDevice)
+		identity.DELETE("/mfa/push/devices/:device_id", svc.requireFactorProof(removesFactor), svc.handleDeletePushDevice)
 		// QR self-enrollment: the signed-in user mints a ticket (start), then an
 		// authenticator scans the QR and binds itself (complete, on the public
 		// group — the single-use ticket is the authorization).
-		identity.POST("/mfa/push/enroll/start", svc.handleStartPushEnrollment)
+		identity.POST("/mfa/push/enroll/start", svc.requireFactorProof(addsFactor), svc.handleStartPushEnrollment)
 		identity.POST("/mfa/push/challenge", svc.handleCreatePushChallenge)
 		identity.POST("/mfa/push/verify", svc.handleVerifyPushChallenge)
 		identity.GET("/mfa/push/challenge/:challenge_id", svc.handleGetPushChallenge)
 
 		// SMS OTP MFA
 		identity.POST("/mfa/sms/enroll", svc.handleEnrollSMS)
-		identity.POST("/mfa/sms/verify", svc.handleVerifySMSEnrollment)
+		identity.POST("/mfa/sms/verify", svc.requireFactorProof(addsFactor), svc.handleVerifySMSEnrollment)
 		identity.GET("/mfa/sms/status", svc.handleGetSMSStatus)
-		identity.DELETE("/mfa/sms", svc.handleDeleteSMS)
+		identity.DELETE("/mfa/sms", svc.requireFactorProof(removesFactor), svc.handleDeleteSMS)
 		identity.POST("/mfa/sms/challenge", svc.handleCreateSMSChallenge)
 
 		// Email OTP MFA
-		identity.POST("/mfa/email/enroll", svc.handleEnrollEmailOTP)
+		identity.POST("/mfa/email/enroll", svc.requireFactorProof(addsFactor), svc.handleEnrollEmailOTP)
 		identity.POST("/mfa/email/verify", svc.handleVerifyEmailOTPEnrollment)
 		identity.GET("/mfa/email/status", svc.handleGetEmailOTPStatus)
-		identity.DELETE("/mfa/email", svc.handleDeleteEmailOTP)
+		identity.DELETE("/mfa/email", svc.requireFactorProof(removesFactor), svc.handleDeleteEmailOTP)
 		identity.POST("/mfa/email/challenge", svc.handleCreateEmailOTPChallenge)
 
 		// Common OTP verification (works for both SMS and Email)
@@ -4110,7 +4122,7 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.GET("/mfa/methods", svc.handleGetMFAMethods)
 
 		// Trusted browsers (remember this device)
-		identity.POST("/trusted-browsers", svc.handleTrustBrowser)
+		identity.POST("/trusted-browsers", svc.requireFactorProof(addsFactor), svc.handleTrustBrowser)
 		identity.GET("/trusted-browsers", svc.handleGetTrustedBrowsers)
 		identity.DELETE("/trusted-browsers/:browser_id", svc.handleRevokeTrustedBrowser)
 		identity.DELETE("/trusted-browsers", svc.handleRevokeAllTrustedBrowsers)
@@ -4149,10 +4161,10 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.POST("/mfa/hardware-token/verify", svc.handleVerifyHardwareToken)
 
 		// Phone Call MFA
-		identity.POST("/mfa/phone/enroll", svc.handleEnrollPhoneCall)
-		identity.POST("/mfa/phone/verify", svc.handleVerifyPhoneCallEnrollment)
+		identity.POST("/mfa/phone/enroll", svc.requireFactorProof(changesPhoneCall), svc.handleEnrollPhoneCall)
+		identity.POST("/mfa/phone/verify", svc.requireFactorProof(addsFactor), svc.handleVerifyPhoneCallEnrollment)
 		identity.GET("/mfa/phone/status", svc.handleGetPhoneCallStatus)
-		identity.DELETE("/mfa/phone", svc.handleDeletePhoneCall)
+		identity.DELETE("/mfa/phone", svc.requireFactorProof(removesFactor), svc.handleDeletePhoneCall)
 		identity.POST("/mfa/phone/callback", svc.handleRequestCallback)
 
 		// Device Trust Approval (Admin)
@@ -5209,11 +5221,20 @@ func (s *Service) handleUpdateCurrentUser(c *gin.Context) {
 		return
 	}
 
+	// A field the request leaves out keeps its value. They were plain values,
+	// so a field left out was taken as its zero value. The console's "Update"
+	// sends the names and the address but not `enabled`, so it handed
+	// UpdateUser a disabled user, and UpdateUser deprovisions one: every
+	// profile update ended the user's sessions and revoked their access
+	// tokens, API keys and PAM grants (the row itself stayed enabled). Its
+	// "account enabled" switch, which sends only that, blanked the names and
+	// the address.
 	var req struct {
-		FirstName string `json:"firstName"`
-		LastName  string `json:"lastName"`
-		Email     string `json:"email"`
-		Enabled   bool   `json:"enabled"`
+		FirstName *string `json:"firstName"`
+		LastName  *string `json:"lastName"`
+		Email     *string `json:"email"`
+		Enabled   *bool   `json:"enabled"`
+		factorProof
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -5228,16 +5249,38 @@ func (s *Service) handleUpdateCurrentUser(c *gin.Context) {
 		return
 	}
 
-	// Update allowed fields
-	user.SetFirstName(req.FirstName)
-	user.SetLastName(req.LastName)
-	user.SetEmail(req.Email)
-	user.Enabled = req.Enabled
+	// The address is where a password reset and a sign-in link are sent, so
+	// changing it is a way to the password: with it, whoever holds only the
+	// token could reset the password and then give it as the proof a factor
+	// change asks for. It needs the password too. And the new address has not
+	// been verified: email_verified goes back to false, which the ID token and
+	// UserInfo report, until the link sent to it is followed.
+	emailChanged := req.Email != nil && !strings.EqualFold(strings.TrimSpace(*req.Email), strings.TrimSpace(user.GetEmail()))
+	if emailChanged {
+		if !s.checkFactorProof(c, userID, proofNeed{required: true}, req.factorProof) {
+			return
+		}
+		user.SetEmail(strings.TrimSpace(*req.Email))
+		user.EmailVerified = false
+	}
+	if req.FirstName != nil {
+		user.SetFirstName(*req.FirstName)
+	}
+	if req.LastName != nil {
+		user.SetLastName(*req.LastName)
+	}
+	if req.Enabled != nil {
+		user.Enabled = *req.Enabled
+	}
 
 	if err := s.UpdateUser(auditCtx(c), user); err != nil {
 		s.logger.Error("failed to update current user", zap.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
+	}
+
+	if emailChanged {
+		s.sendAddressVerification(c.Request.Context(), user)
 	}
 
 	c.JSON(200, gin.H{
@@ -5250,6 +5293,30 @@ func (s *Service) handleUpdateCurrentUser(c *gin.Context) {
 		"emailVerified": user.EmailVerified,
 		"createdAt":     user.CreatedAt,
 	})
+}
+
+// sendAddressVerification sends a verification link to the user's current
+// address, as creating the user does. Best-effort: with no email service, or
+// a token that cannot be stored, the address stays unverified until the user
+// asks again (POST /resend-verification).
+func (s *Service) sendAddressVerification(ctx context.Context, user *User) {
+	if s.emailService == nil {
+		return
+	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return
+	}
+	token := uuid.New().String()
+	if _, err := s.db.Pool.Exec(ctx,
+		"INSERT INTO email_verification_tokens (user_id, token, expires_at, org_id) VALUES ($1, $2, NOW() + INTERVAL '24 hours', $3)",
+		user.ID, token, org.ID); err != nil {
+		s.logger.Warn("could not store a verification token for a changed address", zap.Error(err))
+		return
+	}
+	if err := s.emailService.SendVerificationEmail(ctx, user.GetEmail(), user.GetFirstName(), token, s.publicBaseURL()); err != nil {
+		s.logger.Warn("could not send the verification email for a changed address", zap.Error(err))
+	}
 }
 
 func (s *Service) handleChangePassword(c *gin.Context) {

@@ -6,7 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { useToast } from '../hooks/use-toast'
+import { useFactorProof } from '../hooks/use-factor-proof'
 import { api, WebAuthnCredential } from '../lib/api'
+import { ProofCancelled, proofRefusalMessageKey } from '../lib/factor-proof'
 import {
   decodeCredentialCreationOptions,
   serializeAttestationResponse,
@@ -21,6 +23,9 @@ export function SecurityKeysPage() {
   const [showRegisterForm, setShowRegisterForm] = useState(false)
   const [keyName, setKeyName] = useState('')
   const [deleting, setDeleting] = useState<string | null>(null)
+  // Adding a key to an account that has a second factor, and removing one,
+  // ask for the account's password (lib/factor-proof.ts).
+  const { withProof, dialog: proofDialog } = useFactorProof()
 
   const fetchCredentials = async () => {
     try {
@@ -61,16 +66,19 @@ export function SecurityKeysPage() {
       }
 
       // Step 3: Send credential to server
-      const attestationJSON = serializeAttestationResponse(credential)
-      await api.finishWebAuthnRegistration(JSON.parse(attestationJSON))
+      const attestation = JSON.parse(serializeAttestationResponse(credential))
+      await withProof((proof) => api.finishWebAuthnRegistration(attestation, proof))
 
       toast({ title: t('common.success'), description: t('pages.securityKeys.toasts.registered') })
       setShowRegisterForm(false)
       setKeyName('')
       fetchCredentials()
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : t('pages.securityKeys.toasts.registerFailed')
+      if (err instanceof ProofCancelled) return
+      const refused = proofRefusalMessageKey(err)
+      const message = refused
+        ? t(refused)
+        : err instanceof Error ? err.message : t('pages.securityKeys.toasts.registerFailed')
       toast({ title: t('common.error'), description: message, variant: 'destructive' })
     } finally {
       setRegistering(false)
@@ -80,13 +88,15 @@ export function SecurityKeysPage() {
   const handleDelete = async (credentialId: string) => {
     try {
       setDeleting(credentialId)
-      await api.deleteWebAuthnCredential(credentialId)
+      await withProof((proof) => api.deleteWebAuthnCredential(credentialId, proof))
       toast({ title: t('common.success'), description: t('pages.securityKeys.toasts.removed') })
       setCredentials(credentials.filter(c => c.id !== credentialId))
-    } catch {
+    } catch (err) {
+      if (err instanceof ProofCancelled) return
+      const refused = proofRefusalMessageKey(err)
       toast({
         title: t('common.error'),
-        description: t('pages.securityKeys.toasts.removeFailed'),
+        description: refused ? t(refused) : t('pages.securityKeys.toasts.removeFailed'),
         variant: 'destructive',
       })
     } finally {
@@ -98,6 +108,7 @@ export function SecurityKeysPage() {
 
   return (
     <div className="space-y-6">
+      {proofDialog}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.securityKeys')}</h1>
@@ -216,6 +227,7 @@ export function SecurityKeysPage() {
                     className="text-red-600 hover:text-red-700 hover:bg-red-50"
                     onClick={() => handleDelete(cred.id)}
                     disabled={deleting === cred.id}
+                    aria-label={t('pages.securityKeys.remove')}
                   >
                     {deleting === cred.id ? (
                       <Loader2 className="h-4 w-4 animate-spin" />

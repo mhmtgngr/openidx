@@ -287,7 +287,12 @@ The number is **2 digits (10–99)**; the challenge times out after
 ```
 Re-registering the same `device_token` updates the row (idempotent). Until real push is
 wired, the app registers a stable per-install UUID as `device_token`
-(`client/lib/mobile/push_token_service.dart`).
+(`client/lib/mobile/push_token_service.dart`). On an account that already has a second
+factor, the request must carry the account's password (`"current_password"`), or it is
+refused with 403 `reauthentication_required`. The ticket a device enrollment hands the
+phone binds it only as the account's first factor, or re-registers a phone the account
+already has; otherwise the user adds the phone from Push Devices, which asks for the
+password.
 
 **Approve/deny a challenge (number-match)** —
 `POST /api/v1/identity/mfa/push/verify` (`handlers_mfa.go:272`):

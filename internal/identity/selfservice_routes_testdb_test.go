@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,7 +63,13 @@ func newSelfServiceHarness(t *testing.T) *selfServiceHarness {
 
 	jwks := jwksServer(t)
 	cfg := &config.Config{Environment: "production", OAuthIssuer: "https://issuer.test", OAuthJWKSURL: jwks.URL}
+	// Every factor the routes enroll is available: push, passkeys for the
+	// console's origin, and (below) email and phone-call delivery.
+	cfg.PushMFA.Enabled = true
+	cfg.WebAuthn = config.WebAuthnConfig{RPID: "localhost", RPOrigins: []string{"http://localhost:3000"}, Timeout: 300}
 	svc := NewService(db, rdb, cfg, zap.NewNop())
+	svc.SetEmailService(&recordingMailer{})
+	svc.SetPhoneCallProvider(&recordingCaller{})
 
 	r := gin.New()
 	r.Use(middleware.TenantResolver(
@@ -144,7 +151,12 @@ func (h *selfServiceHarness) count(query string, args ...interface{}) int {
 // bearer mints the access token a sign-in to the console gives userID.
 func (h *selfServiceHarness) bearer(userID string) string {
 	h.t.Helper()
-	return token(h.t, h.issuer, jwt.MapClaims{"sub": userID, "roles": []string{"user"}})
+	return h.bearerWithRoles(userID, "user")
+}
+
+func (h *selfServiceHarness) bearerWithRoles(userID string, roles ...string) string {
+	h.t.Helper()
+	return token(h.t, h.issuer, jwt.MapClaims{"sub": userID, "roles": roles})
 }
 
 // do sends one request through the route table and decodes a JSON answer.
@@ -181,3 +193,38 @@ func totpCode(t *testing.T, secret string, at time.Time) string {
 	}
 	return code
 }
+
+// recordingMailer stands in for the SMTP service: it accepts every message.
+type recordingMailer struct {
+	mu   sync.Mutex
+	sent []string
+}
+
+func (m *recordingMailer) record(to string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sent = append(m.sent, to)
+	return nil
+}
+
+func (m *recordingMailer) SendVerificationEmail(_ context.Context, to, _, _, _ string) error {
+	return m.record(to)
+}
+func (m *recordingMailer) SendInvitationEmail(_ context.Context, to, _, _, _ string) error {
+	return m.record(to)
+}
+func (m *recordingMailer) SendPasswordResetEmail(_ context.Context, to, _, _, _ string) error {
+	return m.record(to)
+}
+func (m *recordingMailer) SendWelcomeEmail(_ context.Context, to, _ string) error {
+	return m.record(to)
+}
+func (m *recordingMailer) SendAsync(_ context.Context, to, _, _ string, _ map[string]interface{}) error {
+	return m.record(to)
+}
+
+// recordingCaller stands in for the telephony provider: every call connects.
+type recordingCaller struct{}
+
+func (recordingCaller) InitiateCall(_, _, _ string) (string, error) { return "CA-test", nil }
+func (recordingCaller) GetCallStatus(string) (string, error)        { return "completed", nil }

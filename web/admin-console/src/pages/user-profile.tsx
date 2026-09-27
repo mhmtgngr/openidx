@@ -11,7 +11,9 @@ import { Badge } from '../components/ui/badge'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '../components/ui/alert-dialog'
 import { useToast } from '../hooks/use-toast'
+import { useFactorProof } from '../hooks/use-factor-proof'
 import { api, UserProfile, MFASetupResponse, MFAEnableResponse } from '../lib/api'
+import { ProofCancelled, proofRefusalMessageKey } from '../lib/factor-proof'
 import { resolveOAuthURL } from '../lib/oauth-url'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
@@ -113,6 +115,23 @@ export function UserProfilePage() {
   const queryClient = useQueryClient()
   const { t } = useTranslation()
 
+  // Changing the account's second factors or its address asks for proof that
+  // the account holder is making the change (lib/factor-proof.ts): withProof
+  // runs the change, asks for the password or a code when the server wants
+  // one, and runs it again with it.
+  const { withProof, dialog: proofDialog } = useFactorProof()
+
+  // proofFailure handles a change that failed on its proof, and reports
+  // whether it did: nothing to say when the user closed the prompt, and the
+  // reason when the proof cannot be given here (a lockout, no password).
+  const proofFailure = (err: unknown): boolean => {
+    if (err instanceof ProofCancelled) return true
+    const refused = proofRefusalMessageKey(err)
+    if (!refused) return false
+    toast({ title: t('common.error'), description: t(refused), variant: 'destructive' })
+    return true
+  }
+
   const { data: profile, isLoading, isError, error } = useQuery({
     queryKey: ['user-profile'],
     queryFn: () => api.get<UserProfile>('/api/v1/identity/users/me'),
@@ -129,12 +148,13 @@ export function UserProfilePage() {
 
   const updateProfileMutation = useMutation({
     mutationFn: (updates: Partial<UserProfile>) =>
-      api.put<UserProfile>('/api/v1/identity/users/me', updates),
+      withProof((proof) => api.put<UserProfile>('/api/v1/identity/users/me', { ...updates, ...proof })),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-profile'] })
       toast({ title: t('common.success'), description: t('pages.profile.toasts.profileUpdated') })
     },
-    onError: () => {
+    onError: (e: unknown) => {
+      if (proofFailure(e)) return
       toast({ title: t('common.error'), description: t('pages.profile.toasts.profileUpdateFailed'), variant: 'destructive' })
     },
   })
@@ -151,7 +171,7 @@ export function UserProfilePage() {
 
   const enableMFAMutation = useMutation({
     mutationFn: (code: string) =>
-      api.post<MFAEnableResponse>('/api/v1/identity/users/me/mfa/enable', { code }),
+      withProof((proof) => api.post<MFAEnableResponse>('/api/v1/identity/users/me/mfa/enable', { code, ...proof })),
     onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ['user-profile'] })
       setMfaSetup(prev => prev ? { ...prev, backupCodes: response.backupCodes || [] } : null)
@@ -159,6 +179,7 @@ export function UserProfilePage() {
       toast({ title: t('common.success'), description: t('pages.profile.toasts.mfaEnabled') })
     },
     onError: (e: unknown) => {
+      if (proofFailure(e)) return
       // Surface the backend's real reason so the user can tell "expired setup,
       // start again" apart from "wrong code, try the next one".
       const msg = e instanceof Error ? e.message : ''
@@ -174,12 +195,13 @@ export function UserProfilePage() {
   })
 
   const disableMFAMutation = useMutation({
-    mutationFn: () => api.post<void>('/api/v1/identity/users/me/mfa/disable'),
+    mutationFn: () => withProof((proof) => api.post<void>('/api/v1/identity/users/me/mfa/disable', proof)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-profile'] })
       toast({ title: t('common.success'), description: t('pages.profile.toasts.mfaDisabled') })
     },
-    onError: () => {
+    onError: (e: unknown) => {
+      if (proofFailure(e)) return
       toast({ title: t('common.error'), description: t('pages.profile.toasts.mfaDisableFailed'), variant: 'destructive' })
     },
   })
@@ -247,7 +269,7 @@ export function UserProfilePage() {
 
   const verifySMSMutation = useMutation({
     mutationFn: (code: string) =>
-      api.post('/api/v1/identity/mfa/sms/verify', { code }),
+      withProof((proof) => api.post('/api/v1/identity/mfa/sms/verify', { code, ...proof })),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mfa-methods'] })
       setSmsEnrollStep('idle')
@@ -255,30 +277,33 @@ export function UserProfilePage() {
       setSmsVerifyCode('')
       toast({ title: t('pages.profile.toasts.smsEnabled'), description: t('pages.profile.toasts.smsEnabledDesc') })
     },
-    onError: () => {
+    onError: (e: unknown) => {
+      if (proofFailure(e)) return
       toast({ title: t('common.error'), description: t('pages.profile.toasts.invalidCode'), variant: 'destructive' })
     },
   })
 
   const deleteSMSMutation = useMutation({
-    mutationFn: () => api.delete('/api/v1/identity/mfa/sms'),
+    mutationFn: () => withProof((proof) => api.delete('/api/v1/identity/mfa/sms', { data: proof })),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mfa-methods'] })
       toast({ title: t('pages.profile.toasts.smsDisabled'), description: t('pages.profile.toasts.smsDisabledDesc') })
     },
-    onError: () => {
+    onError: (e: unknown) => {
+      if (proofFailure(e)) return
       toast({ title: t('common.error'), description: t('pages.profile.toasts.smsDisableFailed'), variant: 'destructive' })
     },
   })
 
   // Email OTP mutations
   const enrollEmailOTPMutation = useMutation({
-    mutationFn: () => api.post('/api/v1/identity/mfa/email/enroll'),
+    mutationFn: () => withProof((proof) => api.post('/api/v1/identity/mfa/email/enroll', proof)),
     onSuccess: () => {
       setEmailOtpEnrollStep('verify')
       toast({ title: t('pages.profile.toasts.codeSent'), description: t('pages.profile.toasts.codeSentEmail') })
     },
-    onError: () => {
+    onError: (e: unknown) => {
+      if (proofFailure(e)) return
       toast({ title: t('common.error'), description: t('pages.profile.toasts.codeSendFailed'), variant: 'destructive' })
     },
   })
@@ -298,12 +323,13 @@ export function UserProfilePage() {
   })
 
   const deleteEmailOTPMutation = useMutation({
-    mutationFn: () => api.delete('/api/v1/identity/mfa/email'),
+    mutationFn: () => withProof((proof) => api.delete('/api/v1/identity/mfa/email', { data: proof })),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mfa-methods'] })
       toast({ title: t('pages.profile.toasts.emailDisabled'), description: t('pages.profile.toasts.emailDisabledDesc') })
     },
-    onError: () => {
+    onError: (e: unknown) => {
+      if (proofFailure(e)) return
       toast({ title: t('common.error'), description: t('pages.profile.toasts.emailDisableFailed'), variant: 'destructive' })
     },
   })
@@ -450,6 +476,7 @@ export function UserProfilePage() {
 
   return (
     <div className="space-y-6">
+      {proofDialog}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">{t('nav.items.myProfile')}</h1>

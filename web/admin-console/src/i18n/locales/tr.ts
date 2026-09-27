@@ -112,6 +112,21 @@ const tr: typeof en = {
     userLink: {
       title: 'Bu kullanıcının Access 360 görünümünü aç (IAM · PAM · Ağ)',
     },
+    factorProof: {
+      title: 'Kimliğinizi doğrulayın',
+      descriptionPassword: 'Bu değişikliği yapmak için mevcut parolanızı girin.',
+      descriptionCode: 'Bu değişikliği yapmak için kimlik doğrulayıcı uygulamanızdaki bir kodu girin.',
+      descriptionEither:
+        'Bu değişikliği yapmak için mevcut parolanızı ya da kimlik doğrulayıcı uygulamanızdaki bir kodu girin.',
+      passwordLabel: 'Mevcut parola',
+      codeLabel: 'Doğrulama kodu',
+      confirm: 'Onayla',
+      failedPassword: 'Parola doğru değil.',
+      failedEither: 'Parola ya da kod doğru değil. Bir kod yalnızca bir kez geçerlidir; bir sonrakini bekleyin.',
+      locked: 'Çok fazla deneme yapıldı. Birkaç dakika bekleyip yeniden deneyin.',
+      unavailable:
+        'Bu değişiklik parolanızı gerektiriyor ve hesabınızın burada bir parolası yok. Değişikliği bir yöneticiden isteyin.',
+    },
     confirmAction: {
       confirm: 'Onayla',
       reasonLabel: 'Gerekçe (zorunlu)',
@@ -3359,6 +3374,7 @@ const tr: typeof en = {
       registered: '{{date}} tarihinde kaydedildi',
       lastUsed: 'Son kullanım {{date}}',
       usedTimes: '{{n}} kez kullanıldı',
+      remove: 'Güvenlik anahtarını kaldır',
       toasts: {
         loadFailed: 'Güvenlik anahtarları yüklenemedi',
         registered: 'Güvenlik anahtarı başarıyla kaydedildi',
@@ -3407,6 +3423,7 @@ const tr: typeof en = {
       trusted: 'Güvenilen',
       enrolled: '{{date}} tarihinde kaydedildi',
       lastUsed: 'Son kullanım {{date}}',
+      remove: 'Cihazı kaldır',
       toasts: {
         loadFailed: 'Anlık bildirim cihazları yüklenemedi',
         enrolled: 'Anlık bildirim cihazı başarıyla kaydedildi',

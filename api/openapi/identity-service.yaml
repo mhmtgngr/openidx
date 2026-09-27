@@ -112,16 +112,22 @@ paths:
     put:
       tags: [Self-Service]
       summary: Update current user profile
+      description: |
+        Changes the fields the body carries. Changing the address needs the
+        account's password (`current_password`): the address is where a
+        password reset is sent.
       operationId: updateCurrentUser
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UserUpdate'
+              $ref: '#/components/schemas/ProfileUpdate'
       responses:
         '200':
           description: Profile updated
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   /api/v1/identity/users/me/change-password:
     post:
@@ -169,17 +175,25 @@ paths:
     post:
       tags: [Self-Service]
       summary: Enable MFA with verification code
+      description: |
+        Stores the secret `/users/me/mfa/setup` cached, confirmed by `code`
+        from it, in place of the caller's TOTP credential. Replacing an enabled
+        credential needs a current code from it (`totp_code`) or the password;
+        adding TOTP to an account that has another second factor needs the
+        password; a first factor needs neither.
       operationId: enableMFA
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [code]
-              properties:
-                code:
-                  type: string
+              allOf:
+                - type: object
+                  required: [code]
+                  properties:
+                    code:
+                      type: string
+                - $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: MFA enabled, returns backup codes
@@ -194,15 +208,26 @@ paths:
                     type: array
                     items:
                       type: string
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   /api/v1/identity/users/me/mfa/disable:
     post:
       tags: [Self-Service]
       summary: Disable MFA for current user
+      description: Needs a current code from the TOTP credential (`totp_code`) or the account's password.
       operationId: disableMFA
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: MFA disabled
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   # --- User Management ---
   /api/v1/identity/users:
@@ -811,20 +836,32 @@ paths:
     post:
       tags: [MFA - TOTP]
       summary: Enroll TOTP with verification
+      description: |
+        Stores `secret`, confirmed by `code` from it, in place of the caller's
+        TOTP credential. Replacing an enabled credential needs a current code
+        from it (`totp_code`) or the password; adding TOTP to an account that
+        has another second factor needs the password; a first factor needs
+        neither.
       operationId: enrollTOTP
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [code]
-              properties:
-                code:
-                  type: string
+              allOf:
+                - type: object
+                  required: [secret, code]
+                  properties:
+                    secret:
+                      type: string
+                    code:
+                      type: string
+                - $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: TOTP enrolled
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   /api/v1/identity/mfa/totp/verify:
     post:
@@ -875,16 +912,33 @@ paths:
     delete:
       tags: [MFA - TOTP]
       summary: Disable TOTP
+      description: Needs a current code from the credential (`totp_code`) or the account's password.
       operationId: disableTOTP
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: TOTP disabled
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   /api/v1/identity/mfa/backup/generate:
     post:
       tags: [MFA - TOTP]
       summary: Generate backup codes
+      description: |
+        Replaces the caller's unused backup codes with a new set. Needs the account's password (`current_password`) when the account already has a second factor; a first factor needs none.
       operationId: generateBackupCodes
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: New backup codes
@@ -893,10 +947,12 @@ paths:
               schema:
                 type: object
                 properties:
-                  codes:
+                  backup_codes:
                     type: array
                     items:
                       type: string
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   /api/v1/identity/mfa/backup/verify:
     post:
@@ -942,10 +998,21 @@ paths:
     post:
       tags: [MFA - WebAuthn]
       summary: Complete WebAuthn registration
+      description: |
+        The body is the authenticator's attestation response; the proof, when
+        needed, goes in the same object. Needs the account's password (`current_password`) when the account already has a second factor; a first factor needs none.
       operationId: finishWebAuthnRegistration
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FactorProof'
       responses:
-        '200':
+        '201':
           description: Credential registered
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   /api/v1/identity/mfa/webauthn/authenticate/begin:
     post:
@@ -978,6 +1045,7 @@ paths:
     delete:
       tags: [MFA - WebAuthn]
       summary: Delete WebAuthn credential
+      description: Needs the account's password (`current_password`).
       operationId: deleteWebAuthnCredential
       parameters:
         - name: credential_id
@@ -985,19 +1053,38 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FactorProof'
       responses:
         '204':
           description: Credential deleted
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   # --- MFA Push ---
   /api/v1/identity/mfa/push/register:
     post:
       tags: [MFA - Push]
       summary: Register push MFA device
+      description: Needs the account's password (`current_password`) when the account already has a second factor; a first factor needs none.
       operationId: registerPushDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/PushDeviceEnrollment'
+                - $ref: '#/components/schemas/FactorProof'
       responses:
-        '200':
+        '201':
           description: Device registered
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   /api/v1/identity/mfa/push/devices:
     get:
@@ -1007,11 +1094,42 @@ paths:
       responses:
         '200':
           description: List of devices
+    post:
+      tags: [MFA]
+      summary: Register push device
+      description: Needs the account's password (`current_password`) when the account already has a second factor; a first factor needs none.
+      operationId: registerPushDevice2
+      x-openidx-handler: internal/identity.(*Service).handleRegisterPushDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/PushDeviceEnrollment'
+                - $ref: '#/components/schemas/FactorProof'
+      responses:
+        '201':
+          description: Device registered
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
+        '500':
+          $ref: '#/components/responses/ServerError'
 
   /api/v1/identity/mfa/push/devices/{device_id}:
     delete:
       tags: [MFA - Push]
       summary: Delete push MFA device
+      description: Needs the account's password (`current_password`).
       operationId: deletePushDevice
       parameters:
         - name: device_id
@@ -1019,9 +1137,17 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FactorProof'
       responses:
         '204':
           description: Device deleted
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   /api/v1/identity/mfa/push/challenge:
     post:
@@ -1456,22 +1582,29 @@ paths:
     post:
       tags: [MFA - SMS]
       summary: Verify SMS enrollment
+      description: |
+        Confirms the number with the code sent to it, which makes it a second
+        factor. Needs the account's password (`current_password`) when the account already has a second factor; a first factor needs none.
       operationId: verifySMSEnrollment
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [code]
-              properties:
-                code:
-                  type: string
+              allOf:
+                - type: object
+                  required: [code]
+                  properties:
+                    code:
+                      type: string
+                - $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: SMS verified
         '400':
           description: Invalid code
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   /api/v1/identity/mfa/sms/status:
     get:
@@ -1495,10 +1628,19 @@ paths:
     delete:
       tags: [MFA - SMS]
       summary: Delete SMS MFA
+      description: Needs the account's password (`current_password`).
       operationId: deleteSMS
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: SMS MFA removed
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   /api/v1/identity/mfa/sms/challenge:
     post:
@@ -1514,20 +1656,26 @@ paths:
     post:
       tags: [MFA - Email]
       summary: Enroll in Email OTP MFA
+      description: |
+        The address is a second factor from enrollment. Needs the account's password (`current_password`) when the account already has a second factor; a first factor needs none.
       operationId: enrollEmailOTP
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                email:
-                  type: string
-                  format: email
+              allOf:
+                - type: object
+                  properties:
+                    email:
+                      type: string
+                      format: email
+                - $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: Email OTP enrollment initiated
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   /api/v1/identity/mfa/email/status:
     get:
@@ -1551,10 +1699,19 @@ paths:
     delete:
       tags: [MFA - Email]
       summary: Delete Email OTP MFA
+      description: Needs the account's password (`current_password`).
       operationId: deleteEmailOTP
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: Email OTP removed
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
 
   /api/v1/identity/mfa/email/challenge:
     post:
@@ -1617,22 +1774,30 @@ paths:
     post:
       tags: [Self-Service]
       summary: Trust current browser
+      description: |
+        A trusted browser skips the second factor at sign-in, so this needs the
+        account's password (`current_password`) when the account has a second
+        factor. The sign-in's own "trust this browser", made after a second
+        factor, needs nothing more.
       operationId: trustBrowser
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                name:
-                  type: string
-                duration_days:
-                  type: integer
-                  default: 30
+              allOf:
+                - type: object
+                  properties:
+                    name:
+                      type: string
+                    browser_hash:
+                      type: string
+                - $ref: '#/components/schemas/FactorProof'
       responses:
-        '201':
+        '200':
           description: Browser trusted
+        '403':
+          $ref: '#/components/responses/FactorProofRefused'
     get:
       tags: [Self-Service]
       summary: Get trusted browsers
@@ -1646,6 +1811,14 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/TrustedBrowser'
+    delete:
+      tags: [Self-Service]
+      summary: Revoke all trusted browsers
+      operationId: revokeAllTrustedBrowsers
+      requestBody: {}
+      responses:
+        '204':
+          description: All browser trusts revoked
 
   /api/v1/identity/trusted-browsers/{browser_id}:
     delete:
@@ -1661,16 +1834,6 @@ paths:
       responses:
         '204':
           description: Browser trust revoked
-
-  /api/v1/identity/trusted-browsers:
-    delete:
-      tags: [Self-Service]
-      summary: Revoke all trusted browsers
-      operationId: revokeAllTrustedBrowsers
-      requestBody: {}
-      responses:
-        '204':
-          description: All browser trusts revoked
 
   /api/v1/identity/trusted-browsers/check:
     get:
@@ -2956,8 +3119,15 @@ paths:
     delete:
       tags: [MFA]
       summary: Delete phone call
+      description: Needs the account's password (`current_password`).
       operationId: deletePhoneCall
       x-openidx-handler: internal/identity.(*Service).handleDeletePhoneCall
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: Success
@@ -2971,7 +3141,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/FactorProofRefused'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -3009,6 +3179,9 @@ paths:
     post:
       tags: [MFA]
       summary: Enroll phone call
+      description: |
+        Enrolling again moves a verified number to the new one, which needs the
+        account's password (`current_password`).
       operationId: enrollPhoneCall
       x-openidx-handler: internal/identity.(*Service).handleEnrollPhoneCall
       requestBody:
@@ -3016,8 +3189,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              allOf:
+                - type: object
+                  properties:
+                    phone_number:
+                      type: string
+                    country_code:
+                      type: string
+                - $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: Success
@@ -3031,7 +3210,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/FactorProofRefused'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -3060,6 +3239,9 @@ paths:
     post:
       tags: [MFA]
       summary: Verify phone call enrollment
+      description: |
+        Confirms the number with the code the call read out, which makes it a
+        second factor. Needs the account's password (`current_password`) when the account already has a second factor; a first factor needs none.
       operationId: verifyPhoneCallEnrollment
       x-openidx-handler: internal/identity.(*Service).handleVerifyPhoneCallEnrollment
       requestBody:
@@ -3067,8 +3249,12 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              allOf:
+                - type: object
+                  properties:
+                    code:
+                      type: string
+                - $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: Success
@@ -3082,37 +3268,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
-        '500':
-          $ref: '#/components/responses/ServerError'
-
-  /api/v1/identity/mfa/push/devices:
-    post:
-      tags: [MFA]
-      summary: Register push device
-      operationId: registerPushDevice2
-      x-openidx-handler: internal/identity.(*Service).handleRegisterPushDevice
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/FactorProofRefused'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -3150,6 +3306,8 @@ paths:
     post:
       tags: [MFA]
       summary: Start push enrollment
+      description: |
+        Mints the ticket the scanned QR completes with. Needs the account's password (`current_password`) when the account already has a second factor; a first factor needs none.
       operationId: startPushEnrollment
       x-openidx-handler: internal/identity.(*Service).handleStartPushEnrollment
       requestBody:
@@ -3157,8 +3315,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: '#/components/schemas/FactorProof'
       responses:
         '200':
           description: Success
@@ -3172,7 +3329,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/FactorProofRefused'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -4633,6 +4790,19 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    FactorProofRefused:
+      description: |
+        The change needs proof from the account holder, and the request carried
+        none, or a wrong one. `accepts` lists the proofs this account can give
+        for this change; resend the request with one of them in the body.
+        `reauthentication_locked` means too many wrong attempts (the password's
+        refusals count against the sign-in lockout, a code's against the TOTP
+        lockout); `reauthentication_unavailable` means the change needs a
+        password the account does not have here, which an administrator can set.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FactorProofRefusal'
     NotFound:
       description: No such resource in the caller's organization
       content:
@@ -4716,6 +4886,73 @@ components:
         enabled:
           type: boolean
           default: true
+
+    FactorProof:
+      type: object
+      description: |
+        Proof that the account holder is making a change to their second
+        factors or their address. One is checked per request: the password
+        when given, otherwise a TOTP code where the change accepts one (it
+        removes or replaces the TOTP credential). A code is accepted once.
+      properties:
+        current_password:
+          type: string
+          format: password
+        totp_code:
+          type: string
+          pattern: '^[0-9]{6}$'
+
+    PushDeviceEnrollment:
+      type: object
+      required: [device_token, platform]
+      properties:
+        device_token:
+          type: string
+        platform:
+          type: string
+          enum: [ios, android, web]
+        device_name:
+          type: string
+        device_model:
+          type: string
+        os_version:
+          type: string
+        app_version:
+          type: string
+
+    FactorProofRefusal:
+      type: object
+      properties:
+        error:
+          type: string
+          enum: [reauthentication_required, reauthentication_failed, reauthentication_locked, reauthentication_unavailable]
+        error_description:
+          type: string
+        accepts:
+          type: array
+          items:
+            type: string
+            enum: [current_password, totp_code]
+
+    ProfileUpdate:
+      type: object
+      description: |
+        A field left out keeps its value. A new `email` needs
+        `current_password`, and leaves the address unverified until the link
+        sent to it is followed.
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+          format: email
+        enabled:
+          type: boolean
+        current_password:
+          type: string
+          format: password
 
     UserUpdate:
       type: object

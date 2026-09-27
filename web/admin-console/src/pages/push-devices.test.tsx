@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -11,8 +11,9 @@ vi.mock('../lib/api', () => ({
   },
 }))
 
+const { toastMock } = vi.hoisted(() => ({ toastMock: vi.fn() }))
 vi.mock('../hooks/use-toast', () => ({
-  useToast: () => ({ toast: vi.fn() }),
+  useToast: () => ({ toast: toastMock }),
 }))
 
 import { PushDevicesPage } from './push-devices'
@@ -123,5 +124,54 @@ describe('PushDevicesPage', () => {
     expect(
       screen.getByText(/enroll a device to use push notifications for mfa verification/i),
     ).toBeInTheDocument()
+  })
+
+  // Removing a device is a change to the account's second factors, which the
+  // identity service allows only with the account's password.
+  it('asks for the password before removing a device, and sends it', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.deletePushDevice).mockImplementation((_id: string, proof?: { current_password?: string }) =>
+      proof?.current_password
+        ? Promise.resolve()
+        : Promise.reject({
+            response: { status: 403, data: { error: 'reauthentication_required', accepts: ['current_password'] } },
+          }),
+    )
+    render(
+      <MemoryRouter>
+        <PushDevicesPage />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Alice iPhone')
+
+    await user.click(screen.getAllByRole('button', { name: 'Remove device' })[0])
+    const prompt = await screen.findByRole('dialog')
+    await user.type(within(prompt).getByLabelText('Current password'), 'my-password')
+    await user.click(within(prompt).getByRole('button', { name: 'Confirm' }))
+
+    await waitFor(() => expect(screen.queryByText('Alice iPhone')).not.toBeInTheDocument())
+    expect(api.deletePushDevice).toHaveBeenLastCalledWith('d-1', { current_password: 'my-password' })
+  })
+
+  it('reports a lockout clearly instead of asking again', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.deletePushDevice).mockRejectedValue({
+      response: { status: 403, data: { error: 'reauthentication_locked', accepts: ['current_password'] } },
+    })
+    render(
+      <MemoryRouter>
+        <PushDevicesPage />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Alice iPhone')
+
+    await user.click(screen.getAllByRole('button', { name: 'Remove device' })[0])
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ description: 'Too many attempts. Wait a few minutes and try again.' }),
+      ),
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Alice iPhone')).toBeInTheDocument()
   })
 })

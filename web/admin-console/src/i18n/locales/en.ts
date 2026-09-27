@@ -114,6 +114,21 @@ const en = {
     userLink: {
       title: "Open this user's Access 360 (IAM · PAM · Network)",
     },
+    factorProof: {
+      title: 'Confirm it is you',
+      descriptionPassword: 'Enter your current password to make this change.',
+      descriptionCode: 'Enter a code from your authenticator app to make this change.',
+      descriptionEither:
+        'Enter your current password, or a code from your authenticator app, to make this change.',
+      passwordLabel: 'Current password',
+      codeLabel: 'Authenticator code',
+      confirm: 'Confirm',
+      failedPassword: 'That password is not correct.',
+      failedEither: 'That password or code is not correct. A code works once, so wait for the next one.',
+      locked: 'Too many attempts. Wait a few minutes and try again.',
+      unavailable:
+        'This change needs your password, and your account has none here. Ask an administrator to make the change.',
+    },
     confirmAction: {
       confirm: 'Confirm',
       reasonLabel: 'Reason (required)',
@@ -3367,6 +3382,7 @@ const en = {
       registered: 'Registered {{date}}',
       lastUsed: 'Last used {{date}}',
       usedTimes: 'Used {{n}} times',
+      remove: 'Remove security key',
       toasts: {
         loadFailed: 'Failed to load security keys',
         registered: 'Security key registered successfully',
@@ -3415,6 +3431,7 @@ const en = {
       trusted: 'Trusted',
       enrolled: 'Enrolled {{date}}',
       lastUsed: 'Last used {{date}}',
+      remove: 'Remove device',
       toasts: {
         loadFailed: 'Failed to load push devices',
         enrolled: 'Push device enrolled successfully',
