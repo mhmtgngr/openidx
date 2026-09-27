@@ -10,6 +10,12 @@ info:
     `x-openidx-handler` extension naming the Go handler that serves them; where a
     payload shape is not yet pinned the body is shown as a free-form JSON object
     rather than invented.
+
+    Every /api/v1/provisioning route -- the provisioning rules and the
+    outbound SCIM targets, their connection test and their sync -- needs the
+    admin or super_admin role, held in the token's organization; any other
+    caller gets 403. The /scim/v2 routes take an OpenIDX bearer token, as the
+    upstream identity provider's SCIM client presents it.
   version: 1.38.0
   license:
     name: Apache 2.0
@@ -316,6 +322,10 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ProvisioningRule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       tags: [Provisioning Rules]
       summary: Create provisioning rule
@@ -329,6 +339,10 @@ paths:
       responses:
         '201':
           description: Rule created
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/provisioning/rules/{id}:
     get:
@@ -344,6 +358,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProvisioningRule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     put:
       tags: [Provisioning Rules]
       summary: Update provisioning rule
@@ -359,6 +377,10 @@ paths:
       responses:
         '200':
           description: Rule updated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     delete:
       tags: [Provisioning Rules]
       summary: Delete provisioning rule
@@ -368,6 +390,10 @@ paths:
       responses:
         '204':
           description: Rule deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/provisioning/targets:
     get:

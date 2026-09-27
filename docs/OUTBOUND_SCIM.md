@@ -105,7 +105,11 @@ the target.
 
 ## Admin API
 
-All under `/api/v1/provisioning/targets` (authenticated, org-scoped):
+All under `/api/v1/provisioning/targets`, scoped to the caller's organization.
+Each route needs the `admin` or `super_admin` role; any other caller, a
+machine credential that holds neither included, gets `403`. A target decides
+where the organization's directory is sent, so it is an administrator's to
+set, test and sync.
 
 | Method | Path             | Purpose                                             |
 |--------|------------------|-----------------------------------------------------|

@@ -996,6 +996,23 @@ func (s *Service) listSCIMUsers(ctx context.Context, startIndex, count int, pred
 	}, nil
 }
 
+// requireAdminRole admits only an administrator -- admin or super_admin, the
+// tier the console gives the Provisioning Rules page -- to /api/v1/provisioning.
+// The routes behind it decide what the organization's directory becomes and
+// where it goes: rules that change users as they are provisioned, and outbound
+// SCIM targets, to which the worker sends every user and group, with the
+// target's credentials, at the base URL the target names; /sync sends the
+// whole directory at once. They asked only for a signed-in user, so anyone the
+// organization had given an account could point a target at a server of their
+// own and have the directory delivered there -- unless ENABLE_OPA_AUTHZ was
+// on, and it is off by default. Anyone else -- a signed-in user without either
+// role, an operator, an auditor, a machine credential that holds neither -- is
+// refused with 403. The roles are the token's, held in the token's
+// organization (openIDXAuthMiddleware refuses a token of another), and the
+// handlers keep every read and write to the organization the request resolved
+// to.
+var requireAdminRole = middleware.RequireRoles("admin", "super_admin")
+
 // RegisterRoutes registers provisioning service routes
 func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.HandlerFunc) {
 	// SCIM 2.0 endpoints
@@ -1030,9 +1047,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		scim.GET("/ServiceProviderConfig", svc.handleGetServiceProviderConfig)
 	}
 
-	// Internal provisioning API
+	// Internal provisioning API: the organization's provisioning rules and its
+	// outbound SCIM targets. Administrators only, behind the same
+	// authentication; see requireAdminRole. The SCIM server above keeps its
+	// bearer-token authentication as it is: its callers are the upstream
+	// identity providers an organization points at it.
 	prov := router.Group("/api/v1/provisioning")
-	prov.Use(svc.openIDXAuthMiddleware())
+	prov.Use(svc.openIDXAuthMiddleware(), requireAdminRole)
 	for _, mw := range extraMiddleware {
 		prov.Use(mw)
 	}
