@@ -735,6 +735,9 @@ export interface PamEntry {
   renderer?: string
   ziti_enabled: boolean
   favorite: boolean
+  // The grant actions the caller holds on the entry ('view', 'connect',
+  // 'reveal', 'edit'), sent by the entry list. An administrator holds all.
+  actions?: string[]
   last_connected_at?: string
   connect_count: number
   created_at: string

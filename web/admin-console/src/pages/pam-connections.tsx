@@ -459,6 +459,10 @@ export function PamConnectionsPage() {
               {entries.map((entry) => {
                 const Icon = typeIcon(entry.entry_type)
                 const launchable = entry.kind === 'session'
+                // Connect only where the API will allow it: an entry is listed on
+                // a grant of any action, and connect needs the connect action
+                // (#1010). A server that sends no actions keeps the button.
+                const mayConnect = !entry.actions || entry.actions.includes('connect')
                 // Under PAM_REQUIRE_ZTNA=enforce the server refuses this launch. Say
                 // so on the button rather than firing a call whose 403 is the first
                 // the operator hears of it.
@@ -515,7 +519,7 @@ export function PamConnectionsPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        {launchable && (
+                        {launchable && mayConnect && (
                           <Button
                             size="sm"
                             onClick={() => launch(entry)}

@@ -144,6 +144,21 @@ describe('PamConnectionsPage', () => {
     expect(sendButtons).toHaveLength(1)
   })
 
+  it('offers Connect only on an entry whose grant allows connecting (#1010)', async () => {
+    pam.listEntries.mockResolvedValue({
+      entries: [
+        { ...rdpEntry, actions: ['connect', 'view'] },
+        { ...gatedEntry, require_approval: false, actions: ['view'] },
+      ],
+    })
+    renderPage()
+    const connectable = (await screen.findByText('DC01')).closest('[class*="rounded"]') as HTMLElement
+    const viewOnly = screen.getByText('prod-bastion').closest('[class*="rounded"]') as HTMLElement
+    expect(within(connectable).getByRole('button', { name: /connect/i })).toBeInTheDocument()
+    // The view-only entry is still listed, without a Connect the API would refuse.
+    expect(within(viewOnly).queryByRole('button', { name: /connect/i })).not.toBeInTheDocument()
+  })
+
   it('renders the RDM import action', async () => {
     renderPage()
     expect(await screen.findByRole('button', { name: /import from rdm/i })).toBeInTheDocument()

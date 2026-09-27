@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"time"
@@ -249,10 +250,15 @@ type PamEntry struct {
 	Renderer            string                 `json:"renderer"`
 	ZitiEnabled         bool                   `json:"ziti_enabled"`
 	Favorite            bool                   `json:"favorite"`
-	LastConnectedAt     *time.Time             `json:"last_connected_at,omitempty"`
-	ConnectCount        int                    `json:"connect_count"`
-	CreatedAt           time.Time              `json:"created_at"`
-	UpdatedAt           time.Time              `json:"updated_at"`
+	// Actions are the grant actions the caller holds on the entry, set by
+	// the entry list so the console offers only what the API will allow.
+	// An administrator, whom the grant checks do not apply to, holds every
+	// action.
+	Actions         []string   `json:"actions,omitempty"`
+	LastConnectedAt *time.Time `json:"last_connected_at,omitempty"`
+	ConnectCount    int        `json:"connect_count"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // pamEntryUpsertReq is the create/update request body. Secret is write-only:
@@ -566,12 +572,15 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 		 WHERE e.org_id = $1`
 	args := []interface{}{org.ID, userID}
 
-	if !s.pamCallerIsAdmin(c) {
-		roles := pamCallerRoles(c)
+	isAdmin := s.pamCallerIsAdmin(c)
+	var roles, groups []string
+	if !isAdmin {
+		roles = pamCallerRoles(c)
 		if roles == nil {
 			roles = []string{}
 		}
-		groups, gerr := s.userGroupIDs(ctx, org.ID, userID)
+		var gerr error
+		groups, gerr = s.userGroupIDs(ctx, org.ID, userID)
 		if gerr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve access"})
 			return
@@ -655,7 +664,69 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 		return
 	}
 
+	// Say which actions the caller holds on each entry. The list admits an
+	// entry on a grant of any action, and connect, reveal and edit each check
+	// their own, so a view-only grant would otherwise be offered a Connect
+	// that answers 403 (#1010).
+	if isAdmin {
+		for i := range entries {
+			entries[i].Actions = pamAllGrantActions()
+		}
+	} else {
+		held, herr := s.pamHeldActions(ctx, org.ID, userID, roles, groups)
+		if herr != nil {
+			s.logger.Error("handlePamListEntries: actions query failed", zap.Error(herr))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list entries"})
+			return
+		}
+		for i := range entries {
+			entries[i].Actions = held[entries[i].ID]
+			if entries[i].Actions == nil {
+				entries[i].Actions = []string{}
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"entries": entries})
+}
+
+// pamAllGrantActions lists every grant action, sorted.
+func pamAllGrantActions() []string {
+	all := make([]string, 0, len(pamGrantActions))
+	for a := range pamGrantActions {
+		all = append(all, a)
+	}
+	sort.Strings(all)
+	return all
+}
+
+// pamHeldActions returns, per entry, the actions the user's live grants give
+// them: their own grants and those of their roles and groups, as
+// pamEntryAllowed matches them.
+func (s *Service) pamHeldActions(ctx context.Context, orgID, userID string, roles, groups []string) (map[string][]string, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT g.entry_id::text, array_agg(DISTINCT a ORDER BY a)
+		  FROM pam_entry_grants g, unnest(g.actions) a
+		 WHERE g.org_id = $1
+		   AND (g.expires_at IS NULL OR g.expires_at > NOW())
+		   AND ((g.principal_type = 'user' AND g.principal_id = $2)
+		     OR (g.principal_type = 'role' AND g.principal_id = ANY($3))
+		     OR (g.principal_type = 'group' AND g.principal_id = ANY($4)))
+		 GROUP BY g.entry_id`, orgID, userID, roles, groups)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	held := map[string][]string{}
+	for rows.Next() {
+		var entryID string
+		var actions []string
+		if err := rows.Scan(&entryID, &actions); err != nil {
+			return nil, err
+		}
+		held[entryID] = actions
+	}
+	return held, rows.Err()
 }
 
 // handlePamGetEntry — GET /pam/entries/:id (view grant or admin). Never

@@ -115,46 +115,65 @@ func TestPamConnectFollowsTheGrant(t *testing.T) {
 		}
 	}
 
-	listed := func(userID string) bool {
+	// listed says whether the entry is in the user's list, and whether the
+	// list offers to connect to it: the console shows Connect only for an
+	// entry whose actions include connect.
+	listed := func(userID string, roles ...string) (shown, offersConnect bool) {
 		t.Helper()
-		code, body := call(as(userID), http.MethodGet, "/pam/entries", "")
+		code, body := call(as(userID, roles...), http.MethodGet, "/pam/entries", "")
 		if code != http.StatusOK {
 			t.Fatalf("list entries as %s: %d %v", userID, code, body)
 		}
 		entries, _ := body["entries"].([]interface{})
 		for _, e := range entries {
-			if m, ok := e.(map[string]interface{}); ok && m["id"] == entry {
-				return true
+			m, ok := e.(map[string]interface{})
+			if !ok || m["id"] != entry {
+				continue
 			}
+			actions, _ := m["actions"].([]interface{})
+			for _, a := range actions {
+				if a == "connect" {
+					return true, true
+				}
+			}
+			return true, false
 		}
-		return false
+		return false, false
 	}
-	connect := func(userID string) (int, map[string]interface{}) {
+	connect := func(userID string, roles ...string) (int, map[string]interface{}) {
 		t.Helper()
-		return call(as(userID), http.MethodPost, "/pam/entries/"+entry+"/connect", "")
+		return call(as(userID, roles...), http.MethodPost, "/pam/entries/"+entry+"/connect", "")
 	}
 
 	for _, tc := range []struct {
 		name       string
 		user       string
+		roles      []string
 		wantListed bool
 		wantCode   int
 	}{
-		{"a user granted connect sees the entry and connects", granted, true, http.StatusOK},
-		{"a member of a granted group sees the entry and connects", member, true, http.StatusOK},
-		{"a user with no grant neither sees it nor connects", stranger, false, http.StatusForbidden},
-		{"a lapsed grant is neither shown nor honoured", lapsed, false, http.StatusForbidden},
+		{"a user granted connect sees the entry and connects", granted, nil, true, http.StatusOK},
+		{"a member of a granted group sees the entry and connects", member, nil, true, http.StatusOK},
+		{"a user with no grant neither sees it nor connects", stranger, nil, false, http.StatusForbidden},
+		{"a lapsed grant is neither shown nor honoured", lapsed, nil, false, http.StatusForbidden},
 		// The list shows entries held under any action, and connect needs the
-		// connect action. The console's connect button is not gated on it.
-		{"a view-only grant shows the entry and refuses the connect", viewer, true, http.StatusForbidden},
+		// connect action, so the list must not offer it (#1010).
+		{"a view-only grant shows the entry, offers no connect and refuses one", viewer, nil, true, http.StatusForbidden},
+		// The grant checks do not apply to an administrator.
+		{"an administrator sees the entry and connects", admin, []string{"admin"}, true, http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := listed(tc.user); got != tc.wantListed {
-				t.Errorf("listed = %v, want %v", got, tc.wantListed)
+			shown, offered := listed(tc.user, tc.roles...)
+			if shown != tc.wantListed {
+				t.Errorf("listed = %v, want %v", shown, tc.wantListed)
 			}
-			code, body := connect(tc.user)
+			code, body := connect(tc.user, tc.roles...)
 			if code != tc.wantCode {
 				t.Fatalf("connect = %d %v, want %d", code, body, tc.wantCode)
+			}
+			// What the list offers is what connect does.
+			if shown && offered != (code == http.StatusOK) {
+				t.Errorf("the list offers connect = %v, but connect answered %d", offered, code)
 			}
 			if code == http.StatusOK && (body["launch_type"] != "url" || body["url"] != "https://payroll.example.test") {
 				t.Errorf("a granted connect must hand back the entry's URL: %v", body)

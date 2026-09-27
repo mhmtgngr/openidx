@@ -9050,6 +9050,13 @@ components:
         renderer: {type: string, enum: [guacamole, wasm-ssh, novnc, support]}
         ziti_enabled: {type: boolean}
         favorite: {type: boolean}
+        actions:
+          type: array
+          items: {type: string, enum: [view, connect, reveal, edit]}
+          description: >-
+            The grant actions the caller holds on the entry, sent by the entry
+            list. An administrator holds all four. Connect, reveal and edit each
+            need their own action, so a client offers only what is listed here.
         last_connected_at: {type: string, format: date-time}
         connect_count: {type: integer}
         created_at: {type: string, format: date-time}
