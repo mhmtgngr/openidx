@@ -77,7 +77,13 @@ function noInlineScript(): Plugin {
       for (const name of fs.readdirSync(dir).filter((f) => f.endsWith('.html'))) {
         const html = fs.readFileSync(path.join(dir, name), 'utf8')
         const found: string[] = []
-        for (const [, attrs, body] of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+        // `<\/script\b[^>]*>`, not `<\/script\s*>`: HTML closes a script element
+        // on `</script` followed by whitespace, `/` or `>`, and then ignores
+        // whatever attribute-shaped text precedes the `>`. So a browser ends the
+        // element at `</script\t\nfoo>` while the narrower pattern does not, and
+        // an inline script written that way would pass this guard and then be
+        // refused by the policy at run time.
+        for (const [, attrs, body] of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi)) {
           if (!/\ssrc\s*=/i.test(attrs) || body.trim() !== '') found.push('an inline <script>')
         }
         if (/<[^>]*\son[a-z]+\s*=/i.test(html)) found.push('an on* event-handler attribute')

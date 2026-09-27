@@ -20,7 +20,16 @@ const auditIngestPath = "/api/v1/audit/events"
 // is compared cleaned, so a doubled or trailing slash does not walk around it;
 // every other method on the path, and every other audit route, is forwarded
 // as before.
+//
+// Clean here normalises a URL path for one equality comparison against the
+// constant above. It is not sanitising a file name: nothing in this package
+// opens a file, so semgrep's filepath-clean-misuse, which is about path
+// traversal in file reads, does not apply. What Clean has to survive is an
+// equivalent spelling of the route reaching the audit service anyway, and
+// TestTheGatewayRefusesEventIngestionHoweverItIsSpelled pins that: a doubled,
+// trailing, dotted, percent-encoded or %2F-encoded spelling is refused.
 func isEventIngestion(r *http.Request) bool {
+	// nosemgrep: go.lang.security.filepath-clean-misuse.filepath-clean-misuse
 	return r.Method == http.MethodPost && path.Clean(r.URL.Path) == auditIngestPath
 }
 
