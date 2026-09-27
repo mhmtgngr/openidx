@@ -1,5 +1,9 @@
 # Multi-stage build for OpenIDX Endpoint Agent
-FROM golang:1.26-alpine AS builder
+# Build on the runner's own platform and cross-compile for the image's: the
+# arm64 image carried amd64 binaries while GOARCH was fixed (#960).
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+ARG TARGETOS
+ARG TARGETARCH
 
 RUN apk add --no-cache git ca-certificates
 WORKDIR /app
@@ -12,7 +16,7 @@ COPY agent/ ./
 
 ARG VERSION=dev
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build \
     -ldflags="-w -s -X main.Version=${VERSION}" \
     -trimpath \
