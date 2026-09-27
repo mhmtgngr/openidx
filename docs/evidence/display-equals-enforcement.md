@@ -42,7 +42,7 @@ one is not verified automatically yet; #957 tracks closing that.
 | ABAC policy | `TestEvaluateAgainstTheMigratedSchema` (the evaluator), `TestABACGateAtAuthorization` (the token endpoint), `TestABACGateAtTheProxy` (the proxy) | the unit jobs, against a migrated Postgres |
 | Role at an admin route | `TestARealTokenOpensAnAdminRouteOnlyForAMember`. The issuer mints the token from `user_roles` and publishes its key at its JWKS. `middleware.Auth` verifies the token against that JWKS, and `RequireRoles` reads the claim. Covered: a member, a non-member, a lapsed time-bound role, a role removed before minting, and a forged token | the unit job for `internal/oauth`, against a migrated Postgres |
 | Vault / PAM grant at reveal | `TestPrivilegedCredentialRevealIsGranted`, both halves | the integration job |
-| Vault / PAM grant at connect | `TestPamConnectFollowsTheGrant`: for each user, the entry list beside the connect handler. It covers a user grant, a group grant, no grant, a lapsed grant and a view-only grant | the unit job for `internal/access`, against a migrated Postgres |
+| Vault / PAM grant at connect | `TestPamConnectFollowsTheGrant`: for each user, the entry list and the Connect it offers beside the connect handler. It covers a user grant, a group grant, no grant, a lapsed grant, a view-only grant and an administrator | the unit job for `internal/access`, against a migrated Postgres |
 | JIT elevation | `TestJITElevationEndsAtTheKillSwitch`: the grant listed by User Access 360 and counted by the portal, then the kill switch through its route, with another user's elevation left alone | the unit job for `internal/access`, against a migrated Postgres |
 | Device trust at the dial | `TestPostureDecidesWhoDialsTheAdminPlane`, with `POSTURE_DEVICE_TRUST_GATE=enforce` and the dark-service tiers on (both are off by default). A compliant posture report grants `#device-trusted` and the admin plane is dialable. A failing report removes it and the dial is denied, while Tier 1 stays. In `observe`, nothing changes | the unit job for `internal/access`, against a migrated Postgres and a fake controller |
 | Session | `TestAnEndedSessionCannotRefresh`: a session is created the way login creates it and ended the way the Sessions page ends it (`identity.TerminateSession`). Its refresh then fails, with Redis up and with Redis down. The user's other session keeps refreshing. The same test for every other path that ends a session: `TestAPasswordChangeEndsEveryOtherSession` (the session the change was made from keeps refreshing), `TestAPasswordResetEndsEverySession`, `TestLifecycleRevokeSessionsEndsTheRefreshPath`, `TestASessionOAuthEndedStaysEndedAfterItsMarkerExpires` (the expiry, absolute-timeout and inactivity sweeps, eviction, force-login and sign-out, once the 25-hour marker has expired), `TestARefreshReplayEndsEveryChainOfItsSession`, `TestAnAdministratorEndingSessionsStopsTheirRefresh` (revoke, revoke all, breach containment, the kill switch, the device revoke) and `TestRiskRemediationRevokingSessionsStopsTheirRefresh`. `TestTheRefreshGrantRequiresALiveSession`: a token whose session is revoked with no marker, expired but not yet swept, deleted, or another organization's is refused and revoked; a live session and a token bound to no session refresh; a session row that cannot be read mints nothing; a refresh moves the session's `last_seen_at`. `TestForceLoginEndsOnlyASessionOfTheUserSigningIn` | the unit job for `internal/oauth`, against a migrated Postgres and an in-memory Redis |
@@ -60,10 +60,14 @@ the upstream, or is left out of the Dial policy. With it off, the unassigned
 user gets through and the gap is recorded. Each negative half in this table
 was mutation-checked: removing the control turns it red.
 
-The PAM test records one gap in the display. The entry list shows an entry held
-under any action, and the Connections page offers Connect on it. A view-only
-grant therefore shows a Connect button that answers 403. That is closed in the
-safe direction, but the button should follow the grant.
+The PAM test found one gap in the display (#1010). The entry list shows an
+entry held under any action, and the Connections page offered Connect on it,
+so a view-only grant showed a Connect button that answered 403. That failed
+closed, but the button did not follow the grant. The list now says which
+actions the caller holds on each entry, and the page offers Connect only when
+`connect` is among them. For each user the test checks that the list offers
+Connect exactly when connect succeeds, an administrator included, and a page
+test checks the button.
 
 The JIT test found a display defect on its first step (#988): on the migrated
 schema User Access 360 answered 500 for every user, and had since v1.35.0.
