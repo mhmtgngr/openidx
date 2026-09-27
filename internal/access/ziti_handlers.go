@@ -255,6 +255,14 @@ func (s *Service) handleCreateZitiService(c *gin.Context) {
 		}
 		dialRoles = append(dialRoles, r)
 	}
+	// The dial roles, attributes and intercept address reach other
+	// organizations' identities, policies and clients (ziti_roles.go).
+	if !view.install {
+		if err := s.checkNewServiceRoles(c.Request.Context(), view.orgID, dialRoles, req.Attributes, interceptAddr); err != nil {
+			s.writeZitiRoleError(c, "check the service's roles", err)
+			return
+		}
+	}
 	zitiID, err := s.ziti().ProvisionDialableService(c.Request.Context(), DialableServiceSpec{
 		Name:              req.Name,
 		TargetHost:        req.Host,
@@ -444,6 +452,9 @@ func (s *Service) handleCreateZitiIdentity(c *gin.Context) {
 	org, oerr := orgctx.From(c.Request.Context())
 	if oerr != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	if !s.zitiIdentityAttributesAllowed(c, "", req.Attributes) {
 		return
 	}
 

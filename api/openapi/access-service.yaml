@@ -685,7 +685,14 @@ paths:
         Admin role. 409 when the name is another organization's or one of
         the install's own services, or -- for anyone but an install
         administrator -- already a service on the controller: the service
-        would be adopted and rewritten.
+        would be adopted and rewritten. For anyone but an install
+        administrator, 409 too when intercept_address is one a service
+        another organization or the install holds intercepts; 403 when
+        dial_roles name identities of another organization or an
+        attribute OpenIDX gives users of every organization, or when
+        attributes are managed by OpenIDX, another organization's or the
+        install's service name, or named by a policy the organization does
+        not own.
       operationId: createZitiService
       requestBody:
         required: true
@@ -749,6 +756,12 @@ paths:
     post:
       tags: [Ziti Identities]
       summary: Create Ziti identity
+      description: >-
+        Admin role. For anyone but an install administrator, an attribute
+        OpenIDX manages (access-proxy-clients, browzer-users,
+        enrolled-users, device-trusted, quarantined, org- and app- markers
+        and the like) cannot be added or removed, and an attribute that a
+        policy the organization does not own grants cannot be added: 403.
       operationId: createZitiIdentity
       requestBody:
         required: true
@@ -7530,6 +7543,12 @@ paths:
     patch:
       tags: [OpenZiti Overlay]
       summary: Patch identity attributes
+      description: >-
+        Admin role. For anyone but an install administrator, an attribute
+        OpenIDX manages (access-proxy-clients, browzer-users,
+        enrolled-users, device-trusted, quarantined, org- and app- markers
+        and the like) cannot be added or removed, and an attribute that a
+        policy the organization does not own grants cannot be added: 403.
       operationId: patchIdentityAttributes
       x-openidx-handler: internal/access.(*Service).handlePatchIdentityAttributes
       requestBody:
@@ -8034,6 +8053,15 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Create service policy
+      description: >-
+        Admin role. For anyone but an install administrator (admin or
+        super_admin of the default organization), service_roles name only
+        the organization's own services (@id, @name, or an #attribute its
+        services alone carry) and identity_roles only its own identities or
+        the install's (routers, the access proxy); #all, and attributes
+        OpenIDX gives users of every organization (#browzer-users,
+        #enrolled-users, app- and other organizations' org- markers), are
+        403. A role that is not #attribute or @id is 400.
       operationId: createServicePolicy
       x-openidx-handler: internal/access.(*Service).handleCreateServicePolicy
       requestBody:
@@ -8089,6 +8117,15 @@ paths:
     put:
       tags: [OpenZiti Overlay]
       summary: Update service policy
+      description: >-
+        Admin role. For anyone but an install administrator (admin or
+        super_admin of the default organization), service_roles name only
+        the organization's own services (@id, @name, or an #attribute its
+        services alone carry) and identity_roles only its own identities or
+        the install's (routers, the access proxy); #all, and attributes
+        OpenIDX gives users of every organization (#browzer-users,
+        #enrolled-users, app- and other organizations' org- markers), are
+        403. A role that is not #attribute or @id is 400.
       operationId: updateServicePolicy
       x-openidx-handler: internal/access.(*Service).handleUpdateServicePolicy
       requestBody:

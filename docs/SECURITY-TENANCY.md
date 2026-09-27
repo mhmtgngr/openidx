@@ -253,7 +253,36 @@ gives to an organization is the install's.
   organization holds, and reports the conflict in the route's converge state
   until one of them is renamed.
 
-The rules are in `internal/access/ziti_scope.go`.
+- Roles and attributes are one namespace on the controller, so an
+  organization's admin may use only its own. A service policy's service roles
+  name only the organization's services, and its identity roles only its
+  identities or the install's (routers, the access proxy); `#all` and the
+  attributes OpenIDX gives users of every organization (`#browzer-users`,
+  `#enrolled-users`, `#device-trusted`, `app-` and other organizations' `org-`
+  markers) are refused with `403`. The attributes OpenIDX manages cannot be
+  added to or removed from an identity, and neither can an attribute that
+  another organization's or the install's policy grants. Add Service refuses
+  another organization's or the install's intercept address (`409`), and dial
+  roles and attributes under the same rules (`403`). An install administrator
+  is not held to these.
+- These checks are made when a policy, an identity or a service is written.
+  The attributes user sync gives identities from group names are the group's
+  bare name unless `ZITI_PER_ORG_ATTRIBUTES` is on, and then `org-<id>-<name>`.
+  With it off, two organizations' groups of the same name give their users the
+  same attribute, so a policy of one organization on that attribute also
+  reaches the other's users -- to the policy organization's own services only,
+  since its service roles are checked. That namespacing of group attributes is
+  what the overlay still depends on `ZITI_PER_ORG_ATTRIBUTES` for.
+- The reconciler's Dial policy for a route grants `#browzer-users` (BrowZer and
+  router-hosted routes) or `#access-proxy-clients` (identity mode), which the
+  users or tunnelers of every organization hold. `ZITI_PER_ORG_ATTRIBUTES` adds
+  an organization-only Dial policy beside it and does not remove it; only
+  `ACCESS_ASSIGNMENT_ENFORCE`, for a route with an application behind it,
+  replaces it with the application's marker. Otherwise a route's service is
+  dialable on the overlay by other organizations' users, and the route's own
+  sign-in is what keeps them out.
+
+The rules are in `internal/access/ziti_scope.go` and `internal/access/ziti_roles.go`.
 
 ## What multi-tenancy covers
 

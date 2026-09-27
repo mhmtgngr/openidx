@@ -37,7 +37,12 @@ CREATE TABLE IF NOT EXISTS ziti_service_policies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     ziti_id VARCHAR(255), name VARCHAR(255), policy_type VARCHAR(16),
     service_roles JSONB DEFAULT '[]', identity_roles JSONB DEFAULT '[]',
-    is_system BOOLEAN DEFAULT false, org_id UUID);`
+    is_system BOOLEAN DEFAULT false, org_id UUID);
+-- The organization's service the policy updates name: an organization's
+-- admin may name only its own (ziti_roles.go).
+CREATE TABLE IF NOT EXISTS ziti_services (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ziti_id VARCHAR(255), name VARCHAR(255), org_id UUID);`
 
 const (
 	identOrg    = "00000000-0000-0000-0000-000000000101"
@@ -69,6 +74,8 @@ func identityFixture(t *testing.T) (*Service, *zitiStub, *database.PostgresDB, c
 		{`INSERT INTO ziti_service_policies (id, ziti_id, name, policy_type, service_roles, identity_roles, org_id)
 		  VALUES ($1::uuid, 'pol-1', 'a-policy', 'Dial', '["#old-svc"]'::jsonb, '["#old-id"]'::jsonb, $2::uuid)`,
 			[]any{policyRow, identOrg}},
+		{`INSERT INTO ziti_services (ziti_id, name, org_id) VALUES ('svc-1', 'new-svc', $1::uuid)`,
+			[]any{identOrg}},
 	} {
 		if _, err := db.Pool.Exec(ctx, seed.sql, seed.args...); err != nil {
 			cleanup()
@@ -86,6 +93,12 @@ func identityFixture(t *testing.T) (*Service, *zitiStub, *database.PostgresDB, c
 	stub.on("PUT /edge/management/v1/service-policies", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	// What the role checks read: the organization's service carrying #new-svc,
+	// the identity's current attributes, and no other policies.
+	stub.ok("GET /edge/management/v1/services", `{"data":[{"id":"svc-1","name":"new-svc","roleAttributes":["new-svc"]}]}`)
+	stub.ok("GET /edge/management/v1/identities", `{"data":[{"id":"`+identZitiID+`","name":"a-device","roleAttributes":["old-attr"]}]}`)
+	stub.ok("GET /edge/management/v1/identities/"+identZitiID, `{"data":{"id":"`+identZitiID+`","roleAttributes":["old-attr"]}}`)
+	stub.ok("GET /edge/management/v1/service-policies", `{"data":[]}`)
 
 	svc := &Service{
 		db:           db,

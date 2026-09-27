@@ -715,6 +715,9 @@ func (s *Service) handleCreateServicePolicy(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
+	if !s.zitiPolicyRolesAllowed(c, req.ServiceRoles, req.IdentityRoles) {
+		return
+	}
 
 	zitiID, err := s.ziti().CreateServicePolicy(c.Request.Context(), req.Name, req.Type, req.ServiceRoles, req.IdentityRoles)
 	if err != nil {
@@ -784,6 +787,9 @@ func (s *Service) handleUpdateServicePolicy(c *gin.Context) {
 	}
 	if isSystem {
 		c.JSON(http.StatusForbidden, gin.H{"error": "cannot modify system-managed policies"})
+		return
+	}
+	if !s.zitiPolicyRolesAllowed(c, req.ServiceRoles, req.IdentityRoles) {
 		return
 	}
 
@@ -894,6 +900,9 @@ func (s *Service) handlePatchIdentityAttributes(c *gin.Context) {
 		"SELECT ziti_id FROM ziti_identities WHERE id=$1 AND org_id=$2", id, org.ID).Scan(&zitiID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ziti identity not found"})
+		return
+	}
+	if !s.zitiIdentityAttributesAllowed(c, zitiID, req.Attributes) {
 		return
 	}
 
