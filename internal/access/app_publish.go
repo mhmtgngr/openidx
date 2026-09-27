@@ -526,7 +526,20 @@ func (s *Service) resolveAppPublicHost(explicit, appName string) (string, error)
 // (delete-then-insert keyed by from_url, so re-publishing the same host is
 // idempotent). from_url is always a bare host (no path) — Ziti/BrowZer and the
 // data-plane route match are per-host. Returns the route id.
+//
+// A host is served by one enabled route in the whole installation (migration
+// v211). The route this replaces is the one the delete below removes: this
+// organization's route with the same from_url. Any other enabled route on the
+// host, another organization's or another of this organization's, refuses the
+// publish with a *routeHostTakenError, before anything is deleted.
 func (s *Service) ensureHostRoute(ctx context.Context, orgID, appName, fromURL, targetURL string, preserveHost bool) (string, error) {
+	holder, err := s.enabledRouteOnHost(ctx, fromURL)
+	if err != nil {
+		return "", fmt.Errorf("check who serves %s: %w", fromURL, err)
+	}
+	if holder != nil && (holder.OrgID != orgID || holder.FromURL != fromURL) {
+		return "", &routeHostTakenError{Holder: holder}
+	}
 	// from_url carries only a non-unique index, so a delete that silently failed
 	// left the old route in place and the insert below added a second one for
 	// the same host -- two routes matching the same request, and which one the
@@ -536,7 +549,7 @@ func (s *Service) ensureHostRoute(ctx context.Context, orgID, appName, fromURL, 
 		return "", fmt.Errorf("clear the existing route for %s: %w", fromURL, err)
 	}
 	routeID := uuid.New().String()
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO proxy_routes (id, name, description, from_url, to_url,
 			preserve_host, require_auth, allowed_roles, enabled, priority, route_type,
 			inline_policy, require_device_trust, max_risk_score,
@@ -547,6 +560,9 @@ func (s *Service) ensureHostRoute(ctx context.Context, orgID, appName, fromURL, 
 			'[]', '[]', '[]', '{}', '[]', '[]', 900, 43200, $7)`,
 		routeID, appName, fmt.Sprintf("Published app %q", appName),
 		fromURL, strings.TrimSuffix(targetURL, "/"), preserveHost, orgID)
+	if isRouteHostTaken(err) {
+		return "", s.routeHostTaken(ctx, fromURL)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -640,6 +656,9 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 
 	// ONE host route for the whole app.
 	appRouteID, err := s.ensureHostRoute(ctx, org.ID, appName, fromURL, targetURL, true)
+	if s.answerRouteHostTaken(c, org.ID, fromURL, err) {
+		return
+	}
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to create app route", err), s.logger)
 		return
@@ -793,6 +812,9 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 	publicURL := fromURL + landingPath
 
 	routeID, err := s.ensureHostRoute(ctx, org.ID, appName, fromURL, targetURL, preserveHost)
+	if s.answerRouteHostTaken(c, org.ID, fromURL, err) {
+		return
+	}
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to create route", err), s.logger)
 		return
@@ -1380,6 +1402,9 @@ func (s *Service) handleConsolidateApp(c *gin.Context) {
 		userID = uid.(string)
 	}
 	routeID, paths, err := s.consolidateApp(c.Request.Context(), org.ID, appID, userID)
+	if s.answerRouteHostTaken(c, org.ID, "", err) {
+		return
+	}
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("consolidate app", err), s.logger)
 		return

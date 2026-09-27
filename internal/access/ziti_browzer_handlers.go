@@ -98,6 +98,50 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 	_ = c.ShouldBindJSON(&body)
 	browzerPath := strings.TrimSpace(body.Path)
 	browzerDomain := strings.TrimSpace(body.Domain)
+	if browzerPath != "" && !strings.HasPrefix(browzerPath, "/") {
+		browzerPath = "/" + browzerPath
+	}
+	pathFromURL := ""
+	if browzerPath != "" {
+		domain := "browzer.localtest.me"
+		if s.browzerTargetManager != nil {
+			if d := s.browzerTargetManager.GetDomain(); d != "" {
+				domain = d
+			}
+		}
+		pathFromURL = fmt.Sprintf("http://%s%s", domain, browzerPath)
+	}
+	vhostFromURL := ""
+	if browzerDomain != "" {
+		vhostFromURL = fmt.Sprintf("http://%s/", browzerDomain)
+	}
+
+	// A host is served by one enabled route in the whole installation. The
+	// routes this may create are checked before anything changes: a host held
+	// by another organization, or by a route of this organization other than
+	// this service's own BrowZer route (which is replaced below), refuses the
+	// request.
+	if pathFromURL != "" || vhostFromURL != "" {
+		var serviceName string
+		if err := s.db.Pool.QueryRow(c.Request.Context(),
+			`SELECT name FROM ziti_services WHERE ziti_id = $1 AND org_id = $2`, zitiServiceID, org.ID,
+		).Scan(&serviceName); err == nil {
+			for _, fromURL := range []string{pathFromURL, vhostFromURL} {
+				if fromURL == "" {
+					continue
+				}
+				holder, herr := s.enabledRouteOnHost(c.Request.Context(), fromURL)
+				if herr != nil {
+					apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to check the BrowZer route's host", herr), s.logger)
+					return
+				}
+				if holder != nil && !(holder.OrgID == org.ID && holder.BrowZer && holder.ZitiServiceName == serviceName) {
+					respondRouteHostTaken(c, org.ID, &routeHostTakenError{Holder: holder})
+					return
+				}
+			}
+		}
+	}
 
 	// Get current attributes
 	attrs, err := s.ziti().GetServiceRoleAttributes(c.Request.Context(), zitiServiceID)
@@ -126,9 +170,6 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 	// If a path was provided, create/update a proxy_route for path-based BrowZer routing
 	var routePath string
 	if browzerPath != "" {
-		if !strings.HasPrefix(browzerPath, "/") {
-			browzerPath = "/" + browzerPath
-		}
 		routePath = browzerPath
 
 		// Look up the service details from the database
@@ -140,14 +181,7 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		if err != nil {
 			s.logger.Warn("Could not look up service details for BrowZer path route", zap.Error(err))
 		} else {
-			domain := "browzer.localtest.me"
-			if s.browzerTargetManager != nil {
-				if d := s.browzerTargetManager.GetDomain(); d != "" {
-					domain = d
-				}
-			}
-
-			fromURL := fmt.Sprintf("http://%s%s", domain, browzerPath)
+			fromURL := pathFromURL
 			toURL := fmt.Sprintf("http://%s:%d", serviceHost, servicePort)
 			routeName := fmt.Sprintf("browzer-%s", serviceName)
 
@@ -172,6 +206,10 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 				 VALUES ($1, $2, $3, $4, true, true, 10, true, $5, true, $6)`,
 				routeName, fmt.Sprintf("BrowZer path route for %s", serviceName), fromURL, toURL, serviceName, org.ID,
 			)
+			if isRouteHostTaken(dbErr) {
+				respondRouteHostTaken(c, org.ID, s.routeHostTaken(c.Request.Context(), fromURL))
+				return
+			}
 			if dbErr != nil {
 				s.logger.Warn("Failed to create BrowZer path route", zap.Error(dbErr))
 			} else {
@@ -194,7 +232,7 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		if err != nil {
 			s.logger.Warn("Could not look up service details for BrowZer vhost route", zap.Error(err))
 		} else {
-			fromURL := fmt.Sprintf("http://%s/", browzerDomain)
+			fromURL := vhostFromURL
 			toURL := fmt.Sprintf("http://%s:%d", serviceHost, servicePort)
 			routeName := fmt.Sprintf("browzer-vhost-%s", serviceName)
 
@@ -214,6 +252,10 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 				 VALUES ($1, $2, $3, $4, true, true, 10, true, $5, true, $6)`,
 				routeName, fmt.Sprintf("BrowZer vhost route for %s", serviceName), fromURL, toURL, serviceName, org.ID,
 			)
+			if isRouteHostTaken(dbErr) {
+				respondRouteHostTaken(c, org.ID, s.routeHostTaken(c.Request.Context(), fromURL))
+				return
+			}
 			if dbErr != nil {
 				s.logger.Warn("Failed to create BrowZer vhost route", zap.Error(dbErr))
 			} else {

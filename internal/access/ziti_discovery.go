@@ -82,6 +82,9 @@ func (s *Service) handleImportZitiService(c *gin.Context) {
 	}
 
 	result, err := s.importZitiService(c.Request.Context(), &req)
+	if org, oerr := orgctx.From(c.Request.Context()); oerr == nil && s.answerRouteHostTaken(c, org.ID, req.FromURL, err) {
+		return
+	}
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to import Ziti service", err), s.logger)
 		return
@@ -265,6 +268,9 @@ func (s *Service) importZitiService(ctx context.Context, req *ImportServiceReque
 		                          ziti_enabled, ziti_service_name, enabled, require_auth, org_id)
 		VALUES ($1, $2, $3, $4, $5, true, $6, true, true, $7)
 	`, routeID, routeName, description, fromURL, toURL, service.Name, org.ID)
+	if isRouteHostTaken(err) {
+		return nil, s.routeHostTaken(ctx, fromURL)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proxy route: %w", err)
 	}

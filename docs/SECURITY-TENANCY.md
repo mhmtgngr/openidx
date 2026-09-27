@@ -179,7 +179,17 @@ install-wide settings; an `admin` of the default organization without
 
 The access proxy serves every organization's applications from one listener,
 and BrowZer from one set of nginx files, so what one organization's
-administrator writes into a route reaches them. A proxy session is good on the
+administrator writes into a route reaches them. A host belongs to the one
+enabled route that serves it, in the whole installation: the proxy,
+forward-auth, the BrowZer configuration and the edge routes all find a route by
+its host exactly, and every API that puts a route on a host (routes, quick
+create, bulk create, app publishing, Ziti import, BrowZer on a service, the
+BrowZer domain) answers 409 when another enabled route already serves it. The
+first organization to route a host holds it; another organization is told only
+that the host is routed elsewhere. There is no proof of domain ownership, so an
+organization can hold a host before its owner routes it, and an operator
+settles that by disabling the route (migration v211, `internal/access/route_host.go`).
+A proxy session is good on the
 host whose sign-in set its cookie and on no other host, whichever
 organization's route that is. The proxy follows a `redirect_url` only to a path
 on the same host, to the access service's own host, or to a host of the

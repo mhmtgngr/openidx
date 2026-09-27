@@ -12,6 +12,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/testsupport"
+	"github.com/openidx/openidx/internal/migrations"
 )
 
 // setupTestDB creates a throwaway PostgreSQL container for DB-backed tests.
@@ -96,4 +97,21 @@ func setupTestDB(t *testing.T) (*database.PostgresDB, func()) {
 	}
 
 	return db, cleanup
+}
+
+// addRouteHost gives a proxy_routes table a test built by hand what migration
+// v211 gives the real one: the host column, the proxy_route_host() function
+// that fills it, and the unique index over the enabled routes' hosts. It runs
+// the migration's own SQL, so these fixtures read hosts as the product does.
+func addRouteHost(ctx context.Context, t *testing.T, db *database.PostgresDB) {
+	t.Helper()
+	for _, m := range migrations.All() {
+		if m.Version == 211 {
+			if _, err := db.Pool.Exec(ctx, m.UpSQL); err != nil {
+				t.Fatalf("apply migration v211 to the hand-built schema: %v", err)
+			}
+			return
+		}
+	}
+	t.Fatal("migration v211 is not registered")
 }

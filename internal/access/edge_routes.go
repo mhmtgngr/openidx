@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
-	"strings"
 
 	"go.uber.org/zap"
 
@@ -25,20 +24,14 @@ import (
 
 // edgeRoute is one row of desired edge state.
 type edgeRoute struct {
-	name     string
-	fromURL  string
+	name string
+	// host is the route's host as migration v211 stores it: from_url's host,
+	// normalized by proxy_route_host(), and held by this route alone among
+	// the enabled routes.
+	host     string
 	toURL    string
 	poolID   string // empty when the route uses to_url
 	priority int
-}
-
-// hostFromURL extracts the hostname a client connects to.
-func hostFromURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return ""
-	}
-	return u.Hostname()
 }
 
 // upstreamFromToURL renders the pre-pool behaviour: a single node taken from
@@ -79,9 +72,9 @@ func upstreamFromToURL(raw string) (map[string]interface{}, error) {
 // alternative would silently black-hole the route, which is a worse outcome
 // than "the pool is not in effect yet".
 func buildEdgeRoute(r edgeRoute, pools map[string]*UpstreamPool, logger *zap.Logger) (name string, body []byte, err error) {
-	host := hostFromURL(r.fromURL)
+	host := r.host
 	if host == "" {
-		return "", nil, fmt.Errorf("route %q has no usable hostname in %q", r.name, r.fromURL)
+		return "", nil, fmt.Errorf("route %q has no host", r.name)
 	}
 
 	var upstream map[string]interface{}
@@ -140,26 +133,24 @@ func edgeRouteName(routeName string) string {
 func queryEdgeRoutes(ctx context.Context, db *database.PostgresDB) ([]edgeRoute, error) {
 	rows, err := db.Pool.Query(ctx,
 		//orgscope:ignore install-wide reconciler pass: renders desired edge state for every org into the shared data plane, mirroring queryBrowZerRoutes
-		`SELECT name, from_url, to_url, COALESCE(upstream_pool_id::text, ''), COALESCE(priority, 0)
+		`SELECT name, host, to_url, COALESCE(upstream_pool_id::text, ''), COALESCE(priority, 0)
 		 FROM proxy_routes
 		 WHERE enabled = true
 		   AND COALESCE(browzer_enabled, false) = false
+		   AND host IS NOT NULL
 		 ORDER BY priority DESC, name`)
 	if err != nil {
 		return nil, fmt.Errorf("query edge routes: %w", err)
 	}
 	defer rows.Close()
 
+	// A route whose from_url names no host cannot be served by host, and has
+	// none (host IS NULL): it is left out rather than failing the whole pass.
 	var out []edgeRoute
 	for rows.Next() {
 		var r edgeRoute
-		if err := rows.Scan(&r.name, &r.fromURL, &r.toURL, &r.poolID, &r.priority); err != nil {
+		if err := rows.Scan(&r.name, &r.host, &r.toURL, &r.poolID, &r.priority); err != nil {
 			return nil, fmt.Errorf("scan edge route: %w", err)
-		}
-		// A route whose from_url is not a real hostname cannot be served; skip
-		// it here rather than failing the whole pass.
-		if strings.TrimSpace(r.fromURL) == "" || hostFromURL(r.fromURL) == "" {
-			continue
 		}
 		out = append(out, r)
 	}

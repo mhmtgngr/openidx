@@ -281,7 +281,7 @@ type browzerRouteInfo struct {
 func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browzerRouteInfo, error) {
 	rows, err := tm.db.Pool.Query(ctx,
 		//orgscope:ignore install-wide BrowZer bootstrapper config generation; the shared bootstrapper serves every ziti+browzer-enabled route across all orgs into one config file
-		`SELECT from_url, to_url, ziti_service_name, COALESCE(landing_path, '/'), COALESCE(hosting_mode, 'identity')
+		`SELECT from_url, COALESCE(host, ''), to_url, ziti_service_name, COALESCE(landing_path, '/'), COALESCE(hosting_mode, 'identity')
 		 FROM proxy_routes
 		 WHERE ziti_enabled = true
 		   AND browzer_enabled = true
@@ -296,8 +296,8 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 
 	var routes []browzerRouteInfo
 	for rows.Next() {
-		var fromURL, toURL, serviceName, landingPath, hostingMode string
-		if err := rows.Scan(&fromURL, &toURL, &serviceName, &landingPath, &hostingMode); err != nil {
+		var fromURL, host, toURL, serviceName, landingPath, hostingMode string
+		if err := rows.Scan(&fromURL, &host, &toURL, &serviceName, &landingPath, &hostingMode); err != nil {
 			tm.logger.Warn("Failed to scan route row", zap.Error(err))
 			continue
 		}
@@ -306,7 +306,9 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 			fromURL:     fromURL,
 			toURL:       toURL,
 			serviceName: serviceName,
-			hostname:    fromURL,
+			// The route's host as migration v211 stores it, and as the unique
+			// index over enabled routes holds it: one route per host here too.
+			hostname:    host,
 			pathPrefix:  "/",
 			landingPath: landingPath,
 			// Resolve to the EFFECTIVE mode (these are all browzer_enabled), so the
@@ -317,11 +319,14 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 			hostingMode: effectiveHostingMode(hostingMode, true, toURL),
 		}
 
-		if parsed, err := url.Parse(fromURL); err == nil && parsed.Host != "" {
-			info.hostname = parsed.Hostname()
-			if parsed.Path != "" && parsed.Path != "/" {
-				info.pathPrefix = parsed.Path
-			}
+		// The path comes from the same from_url, which proxy_route_host()
+		// also reads without a scheme: host[:port]/path.
+		parsed, err := url.Parse(fromURL)
+		if err != nil || parsed.Host == "" {
+			parsed, err = url.Parse("//" + fromURL)
+		}
+		if err == nil && parsed.Host != "" && parsed.Path != "" && parsed.Path != "/" {
+			info.pathPrefix = parsed.Path
 		}
 
 		// Everything generated from these routes is nginx configuration shared

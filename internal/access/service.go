@@ -1464,6 +1464,11 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		req.RequireDeviceTrust, countriesJSON, req.MaxRiskScore, landingPath, hostingMode, org.ID,
 		poolID)
 	if err != nil {
+		// Another enabled route, in this organization or any other, already
+		// serves the host from_url names.
+		if s.answerRouteHostTaken(c, org.ID, req.FromURL, err) {
+			return
+		}
 		s.logger.Error("Failed to create route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route"})
 		return
@@ -1709,6 +1714,11 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		existing.RequireDeviceTrust, countriesJSON, existing.MaxRiskScore,
 		existing.LandingPath, existing.HostingMode, poolID, id, org.ID)
 	if err != nil {
+		// A new from_url, or enabling the route, puts it on a host another
+		// enabled route already serves.
+		if s.answerRouteHostTaken(c, org.ID, existing.FromURL, err) {
+			return
+		}
 		s.logger.Error("Failed to update route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update route"})
 		return
@@ -2814,6 +2824,9 @@ func (s *Service) handleQuickCreate(c *gin.Context) {
 		routeID, req.Name, fromURL, req.TargetURL, requireAuth,
 		req.RouteType, rolesJSON, groupsJSON, org.ID)
 	if err != nil {
+		if s.answerRouteHostTaken(c, org.ID, fromURL, err) {
+			return
+		}
 		s.logger.Error("Failed to create route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route"})
 		return
@@ -2886,22 +2899,24 @@ func (s *Service) handleQuickCreate(c *gin.Context) {
 }
 
 func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute, error) {
-	// A request that names no host matches no route. The LIKE below would
-	// match an empty host against every route and answer with the first.
+	// A request that names no host matches no route.
 	if strings.TrimSpace(host) == "" {
 		return nil, pgx.ErrNoRows
 	}
-	// Try exact match first, then wildcard
 	var r ProxyRoute
 	var desc, zitiServiceName, idpID, remoteHost, inlinePolicy, guacConnID *string
 	var remotePort *int
 	var allowedRoles, allowedGroups, policyIDs, corsOrigins, customHeaders, postureCheckIDs, allowedCountries []byte
 
-	// Match from_url containing the host.
+	// The route whose host is the request's, exactly: proxy_route_host()
+	// normalizes both (migration v211), and the unique index on the enabled
+	// routes' hosts makes the answer the one route that holds the host, in
+	// whichever organization. It was from_url LIKE '%' || host || '%', highest
+	// priority first, so another organization's route containing the host
+	// anywhere in its from_url and given a higher priority took the host's
+	// traffic.
 	// Bypass RLS: route resolution runs before the org is known — the host IS
-	// what resolves the tenant. Hosts are globally unique across tenants (a
-	// subdomain maps to exactly one org), so the priority-ordered LIMIT 1 stays
-	// unambiguous even with cross-org visibility.
+	// what resolves the tenant.
 	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore proxy data-plane route resolution; the reverse proxy matches an inbound request to its route by host before any user/org is resolved
 		`SELECT id, name, description, from_url, to_url, preserve_host, require_auth,
@@ -2913,8 +2928,8 @@ func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute
 		        COALESCE(require_device_trust, false), allowed_countries,
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
 		        created_at, updated_at, org_id::text
-		 FROM proxy_routes WHERE from_url LIKE '%' || $1 || '%' AND enabled=true
-		 ORDER BY priority DESC LIMIT 1`, host).Scan(
+		 FROM proxy_routes WHERE host = proxy_route_host($1) AND enabled = true
+		 LIMIT 1`, host).Scan(
 		&r.ID, &r.Name, &desc, &r.FromURL, &r.ToURL, &r.PreserveHost,
 		&r.RequireAuth, &allowedRoles, &allowedGroups, &policyIDs,
 		&r.IdleTimeout, &r.AbsoluteTimeout, &corsOrigins, &customHeaders,

@@ -482,6 +482,8 @@ paths:
         `X-Forwarded-Preferred-Username`, `X-Forwarded-Access-Token`,
         `X-Forwarded-Route`, `X-Risk-Score`, `X-Ziti-Identity` or any
         `X-Auth-Request-*`), in any case; such a route is refused with 400.
+        A host is served by one enabled route in the whole installation: a
+        `from_url` whose host another enabled route serves is refused with 409.
       operationId: createRoute
       requestBody:
         required: true
@@ -502,6 +504,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
 
   /api/v1/access/routes/{id}:
     get:
@@ -528,6 +532,8 @@ paths:
       description: >-
         Admin only. `custom_headers` is held to the same rule as on create: a
         header the proxy writes from the signed-in session is refused with 400.
+        A new `from_url`, or enabling the route, is held to the same rule: 409
+        when another enabled route serves the host.
       operationId: updateRoute
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -550,6 +556,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
     delete:
       tags: [Routes]
       summary: Delete proxy route
@@ -1194,6 +1202,10 @@ paths:
     post:
       tags: [BrowZer]
       summary: Enable BrowZer on service
+      description: >-
+        The path route is created on the BrowZer domain and the vhost route on
+        `domain`; a host another enabled route serves, other than this service's
+        own BrowZer route, is refused with 409 before the controller is changed.
       operationId: enableBrowzerOnService
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -1202,6 +1214,8 @@ paths:
           description: BrowZer enabled on service
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
 
   /api/v1/access/ziti/browzer/services/{id}/disable:
     post:
@@ -3686,6 +3700,9 @@ paths:
     post:
       tags: [Published Applications]
       summary: Consolidate app
+      description: >-
+        The app's one route is created on its public host, and is refused with
+        409 when an enabled route other than the app's own serves that host.
       operationId: consolidateApp
       x-openidx-handler: internal/access.(*Service).handleConsolidateApp
       requestBody:
@@ -3711,6 +3728,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -3834,6 +3853,9 @@ paths:
     post:
       tags: [Published Applications]
       summary: Publish paths
+      description: >-
+        The app's route is created on its public host, and is refused with 409
+        when an enabled route other than the app's own serves that host.
       operationId: publishPaths
       x-openidx-handler: internal/access.(*Service).handlePublishPaths
       requestBody:
@@ -3859,6 +3881,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -3872,6 +3896,9 @@ paths:
     post:
       tags: [Published Applications]
       summary: Publish app
+      description: >-
+        The app's route is created on its public host, and is refused with 409
+        when an enabled route other than the app's own serves that host.
       operationId: publishApp
       x-openidx-handler: internal/access.(*Service).handlePublishApp
       requestBody:
@@ -3897,6 +3924,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -5615,6 +5644,11 @@ paths:
     post:
       tags: [Proxy Routes]
       summary: Bulk routes
+      description: >-
+        Every route is created enabled. A list naming a host an enabled route
+        already serves, or one host twice, is refused as a whole with 409,
+        listing the conflicts; nothing is created. A conflict with another
+        organization's route names only the host.
       operationId: bulkRoutes
       x-openidx-handler: internal/access.(*Service).handleBulkRoutes
       requestBody:
@@ -5638,6 +5672,27 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Hosts the list cannot have; nothing was created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  conflicts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        host:
+                          type: string
+                        reason:
+                          type: string
+                        route:
+                          type: string
+                          description: The caller's own route that serves the host; absent for another organization's
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -5645,6 +5700,9 @@ paths:
     post:
       tags: [Services]
       summary: Quick create
+      description: >-
+        The route is created on `domain`, and is refused with 409 when another
+        enabled route serves that host.
       operationId: quickCreate
       x-openidx-handler: internal/access.(*Service).handleQuickCreate
       requestBody:
@@ -5668,6 +5726,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -6670,6 +6730,10 @@ paths:
     put:
       tags: [OpenZiti Overlay]
       summary: Brow zer domain change
+      description: >-
+        Platform admin. The BrowZer routes whose host is the old domain move to
+        the new one, keeping their path. The domain must be a plain host name
+        (400) that no enabled route serves (409).
       operationId: browZerDomainChange
       x-openidx-handler: internal/access.(*Service).handleBrowZerDomainChange
       requestBody:
@@ -6693,6 +6757,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -7150,6 +7216,9 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Import ziti service
+      description: >-
+        A `from_url` whose host another enabled route serves is refused with
+        409.
       operationId: importZitiService
       x-openidx-handler: internal/access.(*Service).handleImportZitiService
       requestBody:
@@ -7173,6 +7242,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -8314,6 +8385,16 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    RouteHostTaken:
+      description: >-
+        Another enabled route already serves the host this route's `from_url`
+        names. A host is served by one enabled route in the whole
+        installation. When that route is the caller's own organization's, the
+        answer names it; another organization's route is not described.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RouteHostConflict'
 
   schemas:
     Error:
@@ -8334,6 +8415,18 @@ components:
           type: string
         details:
           type: object
+    RouteHostConflict:
+      type: object
+      properties:
+        error:
+          type: string
+        host:
+          type: string
+          description: The host as the route table holds it, lowercased and without a port
+        route_id:
+          type: string
+          format: uuid
+          description: The caller's own route that serves the host; absent when another organization's does
 
     # --- Auth ---
     SessionInfo:

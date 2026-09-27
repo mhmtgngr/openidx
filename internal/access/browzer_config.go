@@ -335,12 +335,39 @@ func (s *Service) handleBrowZerDomainChange(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "Domain unchanged", "domain": newDomain})
 		return
 	}
+	// The domain becomes the host of this organization's BrowZer routes and a
+	// server name in the generated BrowZer configuration.
+	if !browzerHostPattern.MatchString(newDomain) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "domain must be a plain host name"})
+		return
+	}
 
-	// Update proxy_routes: replace old domain in from_url
+	// The routes move from the old domain's host to the new one's. A host is
+	// served by one enabled route in the whole installation, so a new domain
+	// that any route already serves is refused before anything changes.
+	holder, err := s.enabledRouteOnHost(ctx, "http://"+newDomain+"/")
+	if err != nil {
+		s.logger.Error("Failed to check the new BrowZer domain's host", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to change the domain"})
+		return
+	}
+	if holder != nil {
+		respondRouteHostTaken(c, org.ID, &routeHostTakenError{Holder: holder})
+		return
+	}
+
+	// Update proxy_routes: the BrowZer routes whose host is the old domain --
+	// exactly, not every from_url containing it -- get the new domain as their
+	// host, and keep their scheme, user information, port and path.
 	_, err = s.db.Pool.Exec(ctx,
-		`UPDATE proxy_routes SET from_url = REPLACE(from_url, $1, $2), updated_at = NOW()
-		 WHERE from_url LIKE '%' || $1 || '%' AND browzer_enabled = true AND org_id = $3`,
+		`UPDATE proxy_routes
+		    SET from_url = regexp_replace(from_url, '^([A-Za-z][A-Za-z0-9+.-]*://([^/?#]*@)?)?[^/?#:@]*', '\1' || $2),
+		        updated_at = NOW()
+		  WHERE host = proxy_route_host($1) AND browzer_enabled = true AND org_id = $3`,
 		oldDomain, newDomain, org.ID)
+	if s.answerRouteHostTaken(c, org.ID, "http://"+newDomain+"/", err) {
+		return
+	}
 	if err != nil {
 		s.logger.Warn("Failed to update proxy_routes domains", zap.Error(err))
 	}

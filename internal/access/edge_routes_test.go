@@ -26,7 +26,7 @@ func decodeUpstream(t *testing.T, body []byte) map[string]interface{} {
 }
 
 func TestRouteWithoutPoolRendersItsSingleTarget(t *testing.T) {
-	r := edgeRoute{name: "App One", fromURL: "https://app.example.test", toURL: "http://10.0.0.9:8080"}
+	r := edgeRoute{name: "App One", host: "app.example.test", toURL: "http://10.0.0.9:8080"}
 	name, body, err := buildEdgeRoute(r, nil, zap.NewNop())
 	if err != nil {
 		t.Fatalf("buildEdgeRoute: %v", err)
@@ -69,7 +69,7 @@ func TestRouteWithPoolRendersEveryMember(t *testing.T) {
 			},
 		},
 	}
-	r := edgeRoute{name: "App", fromURL: "https://app.example.test", toURL: "http://10.0.0.9:8080", poolID: "pool-1"}
+	r := edgeRoute{name: "App", host: "app.example.test", toURL: "http://10.0.0.9:8080", poolID: "pool-1"}
 	_, body, err := buildEdgeRoute(r, pools, zap.NewNop())
 	if err != nil {
 		t.Fatalf("buildEdgeRoute: %v", err)
@@ -95,7 +95,7 @@ func TestUnusablePoolFallsBackInsteadOfBlackHoling(t *testing.T) {
 			{Host: "10.0.0.1", Port: 8080, Weight: 1, Enabled: false},
 		}},
 	}
-	r := edgeRoute{name: "App", fromURL: "https://app.example.test", toURL: "http://10.0.0.9:8080", poolID: "pool-1"}
+	r := edgeRoute{name: "App", host: "app.example.test", toURL: "http://10.0.0.9:8080", poolID: "pool-1"}
 	_, body, err := buildEdgeRoute(r, pools, zap.NewNop())
 	if err != nil {
 		t.Fatalf("an unusable pool must not fail the route: %v", err)
@@ -108,7 +108,7 @@ func TestUnusablePoolFallsBackInsteadOfBlackHoling(t *testing.T) {
 
 // A dangling pool reference (deleted pool, stale id) must behave the same way.
 func TestUnknownPoolFallsBack(t *testing.T) {
-	r := edgeRoute{name: "App", fromURL: "https://app.example.test", toURL: "http://10.0.0.9:8080", poolID: "gone"}
+	r := edgeRoute{name: "App", host: "app.example.test", toURL: "http://10.0.0.9:8080", poolID: "gone"}
 	_, body, err := buildEdgeRoute(r, map[string]*UpstreamPool{}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("a dangling pool reference must not fail the route: %v", err)
@@ -121,10 +121,8 @@ func TestUnknownPoolFallsBack(t *testing.T) {
 
 // A route we cannot address must be reported, not rendered as a broken object.
 func TestRouteWithoutHostnameIsRefused(t *testing.T) {
-	for _, from := range []string{"", "not a url", "https://"} {
-		if _, _, err := buildEdgeRoute(edgeRoute{name: "x", fromURL: from, toURL: "http://10.0.0.9:8080"}, nil, zap.NewNop()); err == nil {
-			t.Errorf("fromURL %q should be refused", from)
-		}
+	if _, _, err := buildEdgeRoute(edgeRoute{name: "x", toURL: "http://10.0.0.9:8080"}, nil, zap.NewNop()); err == nil {
+		t.Error("a route with no host should be refused")
 	}
 }
 

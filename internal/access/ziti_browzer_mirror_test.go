@@ -71,6 +71,7 @@ func browzerFixture(t *testing.T) (*Service, *zitiStub, *database.PostgresDB, co
 		cleanup()
 		t.Fatalf("schema: %v", err)
 	}
+	addRouteHost(ctx, t, db)
 	for _, seed := range []struct {
 		sql  string
 		args []any

@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS proxy_routes (
     browzer_enabled BOOLEAN DEFAULT false, ziti_enabled BOOLEAN DEFAULT false,
     ziti_service_name TEXT, landing_path TEXT DEFAULT '/',
     hosting_mode TEXT DEFAULT 'identity',
+    created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
     upstream_pool_id UUID REFERENCES upstream_pools(id) ON DELETE SET NULL);`
 
 const (
@@ -86,6 +87,7 @@ func poolFixture(t *testing.T) (*Service, *database.PostgresDB, context.Context,
 		cleanup()
 		t.Fatalf("schema: %v", err)
 	}
+	addRouteHost(ctx, t, db)
 	return &Service{db: db, logger: zap.NewNop()}, db, ctx, cleanup
 }
 
