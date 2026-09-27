@@ -116,7 +116,7 @@ with `POST /api/v1/admin/oauth/signing-keys/rotate`.
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `ENCRYPTION_KEY` | string | - | 32-byte key protecting encrypted-at-rest fields: the OAuth signing key, identity-provider client secrets, SMTP credentials. Required in production. Losing it costs every outstanding token. |
+| `ENCRYPTION_KEY` | string | - | 32-byte key protecting encrypted-at-rest fields: the OAuth signing key, identity-provider client secrets, SMTP credentials, and the directories' credentials (LDAP bind passwords, Azure AD client secrets, HR API keys). Required in production. Every service needs the same one: admin-api seals the directory credentials, and identity-service and oauth-service open them to sign users in. Losing it costs every outstanding token. |
 | `ENCRYPTION_KEYS` | string | - | Comma-separated `id:key` pairs for staged rotation. |
 | `ENCRYPTION_ACTIVE_KEK_ID` | string | - | Which key in `ENCRYPTION_KEYS` new writes use. |
 | `ACCESS_SESSION_SECRET` | string | - | Signs the access proxy's session cookies. Required in production. |

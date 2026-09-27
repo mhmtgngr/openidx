@@ -263,26 +263,31 @@ func main() {
 	emailService := email.NewService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, redis, log)
 	identityService.SetEmailService(emailService)
 
+	// One ENCRYPTION_KEY cipher for what this service keeps sealed at rest:
+	// the directories' credentials, which the directory service opens to sign
+	// in with, and the webhooks' signing secrets.
+	secretCipher, err := secretcrypt.New(cfg.EncryptionKey)
+	if err != nil {
+		log.Warn("directory credentials and webhook signing secrets will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
+		secretCipher = secretcrypt.NewNoop()
+	}
+
 	// Wire the directory service so LDAP / Active Directory users can log in
 	// against their directory (bind check) at /oauth/login. Without this,
 	// directory-sourced users fall through to a local bcrypt check against the
 	// sync-time placeholder hash and can never authenticate ("invalid username
 	// or password"). We construct the directory service for auth only and do NOT
 	// call Start() — the sync scheduler is owned by identity-service; here we
-	// just need the per-directory bind (AuthenticateUser).
-	dirService := directory.NewService(db, log)
+	// just need the per-directory bind (AuthenticateUser), which opens the
+	// stored bind password with the cipher.
+	dirService := directory.NewService(db, log, secretCipher)
 	identityService.SetDirectoryService(dirService)
 
 	// Initialize risk service (conditional access)
 	riskService := risk.NewService(db, redis, log)
 
 	// Initialize webhook service
-	webhookSecretCipher, err := secretcrypt.New(cfg.EncryptionKey)
-	if err != nil {
-		log.Warn("webhook signing secrets will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
-		webhookSecretCipher = secretcrypt.NewNoop()
-	}
-	webhookService := webhooks.NewService(db, redis, log, webhookSecretCipher)
+	webhookService := webhooks.NewService(db, redis, log, secretCipher)
 	ctx, cancelWorkers := context.WithCancel(context.Background())
 	go webhookService.ProcessDeliveries(ctx)
 	go webhookService.ProcessRetries(ctx)
