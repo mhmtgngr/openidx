@@ -82,6 +82,11 @@ func outboundGuard(logger *zap.Logger) *netutil.OutboundGuard {
 	return guard
 }
 
+// requireWebhookAdmin admits admin and super_admin to the webhook
+// subscription routes; anyone else the JWT middleware let through -- a user,
+// an auditor, a machine credential holding neither role -- gets 403.
+var requireWebhookAdmin = middleware.RequireRoles("admin", "super_admin")
+
 // SetJWKSURL enables JWT auth on the audit stream (REST routes via middleware,
 // WebSocket via the access_token_<jwt> subprotocol validated at upgrade).
 func (es *EventStreamer) SetJWKSURL(url string) {
@@ -218,9 +223,16 @@ func (es *EventStreamer) RegisterRoutes(r *gin.RouterGroup) {
 		}
 	}
 
+	// A webhook subscription is where the organization's audit events are to
+	// be delivered, at a URL its registrant chooses; the SOC 2 report counts
+	// the enabled ones as evidence of security-event notification, and the
+	// test route posts to the URL from inside the platform. Registering,
+	// listing, testing and deleting one is an administrator's: admin or
+	// super_admin, as on every other admin surface. These routes asked only
+	// for a signed-in user. The console has no page for them; they are an API.
 	webhooks := r.Group("/webhooks")
 	if es.jwksURL != "" {
-		webhooks.Use(middleware.Auth(es.jwksURL))
+		webhooks.Use(middleware.Auth(es.jwksURL), requireWebhookAdmin)
 	}
 	{
 		webhooks.POST("", es.handleRegisterWebhook)
