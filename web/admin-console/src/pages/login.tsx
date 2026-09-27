@@ -43,9 +43,14 @@ interface EnrollmentDue {
   overdue?: boolean
 }
 
-// linkErrors maps the reasons a sign-in link is sent back to this page with
-// (handleMagicLinkVerify) to what the page says.
+// linkErrors maps the reasons a sign-in link (handleMagicLinkVerify), or a
+// sign-in through a social or enterprise identity provider
+// (externalSignInNeedsMore), is sent back to this page with to what the page
+// says.
 const linkErrors: Record<string, string> = {
+  sso_mfa_enrollment_required: 'login.errors.ssoNeedsEnrollment',
+  sso_high_risk_login: 'login.errors.ssoRefusedRisk',
+  sso_sign_in_failed: 'login.errors.ssoFailed',
   mfa_required: 'login.errors.linkNeedsSecondFactor',
   mfa_enrollment_required: 'login.errors.linkNeedsEnrollment',
   high_risk_login: 'login.errors.linkRefusedRisk',
@@ -292,7 +297,25 @@ export function LoginPage() {
     if (linkError) {
       setError(t(linkError))
     }
-    if (fromUrl || linkError) {
+    // A sign-in through an identity provider whose user needs a second factor
+    // comes back with the MFA session the password step would have opened,
+    // and the methods it offers; the step goes on from here.
+    const handedMfa = urlParams.get('mfa_session')
+    if (handedMfa) {
+      const methods = (urlParams.get('mfa_methods') ?? '').split(',').filter(Boolean)
+      setMfaRequired(true)
+      setMfaSession(handedMfa)
+      setMfaCode('')
+      setMfaMethods(methods.length ? methods : ['totp'])
+      setCanTrustBrowser(urlParams.get('can_trust_browser') === '1')
+      setTrustBrowserChoice(false)
+      if (methods.length > 1 || (methods.length === 1 && methods[0] !== 'totp')) {
+        setMfaMethodSelectionStep(true)
+      } else {
+        setSelectedMfaMethod('totp')
+      }
+    }
+    if (fromUrl || linkError || handedMfa) {
       // Clear the URL parameters without reloading (the session now lives in storage).
       window.history.replaceState({}, '', '/login')
     }
@@ -1135,7 +1158,9 @@ export function LoginPage() {
     )
   }
 
-  if (mfaRequired && loginSession && mfaMethodSelectionStep) {
+  // The MFA screens need no login_session of their own: a sign-in through an
+  // identity provider hands over its MFA session with no pending login_session.
+  if (mfaRequired && mfaMethodSelectionStep) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
         <div className="absolute top-4 right-4">
@@ -1215,7 +1240,7 @@ export function LoginPage() {
   }
 
   // Show MFA verification form
-  if (mfaRequired && loginSession) {
+  if (mfaRequired) {
     const methodInfo = getMfaMethodInfo(selectedMfaMethod || 'totp')
     const isWebAuthn = selectedMfaMethod === 'webauthn'
     const isPush = selectedMfaMethod === 'push'

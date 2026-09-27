@@ -445,6 +445,19 @@ paths:
     get:
       tags: [Authorization]
       summary: OAuth callback handler
+      description: |
+        Where an enterprise identity provider (the console's SSO buttons,
+        `/oauth/authorize?idp_hint=`) returns. A user who needs nothing more
+        is redirected to the application with a code, which carries the
+        request's PKCE challenge.
+        The provider proves one factor. The sign-in then asks the password
+        login's second-factor decision: a user it would challenge is
+        redirected to `/login?mfa_session=...&mfa_methods=...` (plus
+        `can_trust_browser=1` when the browser is not remembered), where
+        `POST /oauth/mfa-verify` completes the pending request; a user whose
+        MFA policy grace period is over is redirected to
+        `/login?error=sso_mfa_enrollment_required`, and a sign-in the risk
+        engine denies to `/login?error=sso_high_risk_login`.
       operationId: callback
       security: []
       parameters:
@@ -2035,6 +2048,20 @@ paths:
     get:
       tags: [Social Login]
       summary: Social login callback
+      description: |
+        Where a social provider returns. With a pending request
+        (`login_session`), a user who needs nothing more gets the code
+        response; without one, tokens, and a user who would need more gets
+        403 (`mfa_required`, `sso_mfa_enrollment_required` or
+        `sso_high_risk_login`) and no tokens.
+        The provider proves one factor. The sign-in then asks the password
+        login's second-factor decision: a user it would challenge is
+        redirected to `/login?mfa_session=...&mfa_methods=...` (plus
+        `can_trust_browser=1` when the browser is not remembered), where
+        `POST /oauth/mfa-verify` completes the pending request; a user whose
+        MFA policy grace period is over is redirected to
+        `/login?error=sso_mfa_enrollment_required`, and a sign-in the risk
+        engine denies to `/login?error=sso_high_risk_login`.
       operationId: socialLoginCallback
       x-openidx-handler: internal/oauth.(*Service).handleSocialLoginCallback
       responses:

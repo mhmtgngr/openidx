@@ -503,6 +503,10 @@ const en = {
       linkRefusedRisk: 'This sign-in link cannot be used from here. Sign in with your password.',
       linkInvalid: 'This sign-in link is invalid, expired or already used. Request a new one.',
       linkSessionExpired: 'This sign-in request has expired. Start again from the application.',
+      ssoNeedsEnrollment:
+        'Your organization requires a sign-in method you have not added, and the time to add one has passed. Ask an administrator for a bypass code.',
+      ssoRefusedRisk: 'This sign-in was refused from here. Try again from a device you have used before, or ask an administrator.',
+      ssoFailed: 'This sign-in could not be completed. Try again.',
     },
     resume: {
       checking: 'Checking your existing session…',

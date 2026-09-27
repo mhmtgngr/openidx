@@ -3560,18 +3560,37 @@ func (s *Service) handleCallback(c *gin.Context) {
 	s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "success",
 		user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String()})
 
+	// The identity provider proved one factor. The password login's own
+	// decision says whether that is enough (external_signin_mfa.go); a second
+	// factor continues on the login page with the pending request.
+	pending := make(map[string]string, len(originalParams))
+	for k, v := range originalParams {
+		if k != "idp_id" {
+			pending[k] = v
+		}
+	}
+	if s.externalSignInNeedsMore(c, user.ID, pending, "", "sso") {
+		return
+	}
+
 	if !s.assignmentGateAllows(c, originalParams["client_id"], user.ID) {
 		return
 	}
 
+	// The PKCE challenge travels with the code. It was dropped here, so a
+	// public client's code carried no challenge and the token endpoint refused
+	// it ("PKCE required for public clients"): the console's SSO buttons could
+	// never finish.
 	authCode := &AuthorizationCode{
-		Code:        GenerateRandomToken(32),
-		ClientID:    originalParams["client_id"],
-		UserID:      user.ID,
-		RedirectURI: originalParams["redirect_uri"],
-		Scope:       originalParams["scope"],
-		State:       originalParams["state"],
-		Nonce:       originalParams["nonce"],
+		Code:                GenerateRandomToken(32),
+		ClientID:            originalParams["client_id"],
+		UserID:              user.ID,
+		RedirectURI:         originalParams["redirect_uri"],
+		Scope:               originalParams["scope"],
+		State:               originalParams["state"],
+		Nonce:               originalParams["nonce"],
+		CodeChallenge:       originalParams["code_challenge"],
+		CodeChallengeMethod: originalParams["code_challenge_method"],
 	}
 	s.CreateAuthorizationCode(c.Request.Context(), authCode)
 

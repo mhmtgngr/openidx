@@ -592,6 +592,71 @@ describe('LoginPage', () => {
     })
   })
 
+  // A sign-in through a social or enterprise identity provider whose user needs
+  // a second factor comes back with the MFA session the password step opens,
+  // and the page goes on to the second factor; a refusal says why.
+  describe('an identity-provider sign-in handed back', () => {
+    const fetchMock = vi.fn()
+
+    beforeEach(() => {
+      fetchMock.mockReset()
+      vi.stubGlobal('fetch', fetchMock)
+    })
+
+    afterEach(() => {
+      sessionStorage.clear()
+      window.location.search = ''
+      vi.unstubAllGlobals()
+    })
+
+    it('asks for the second factor and completes it with the session it was given', async () => {
+      window.location.search = '?mfa_session=sso-mfa-1&mfa_methods=totp&can_trust_browser=1'
+      const user = userEvent.setup()
+      renderWithRouter(<LoginPage />)
+      await screen.findByLabelText(/verification code/i)
+      expect(screen.getByRole('checkbox', { name: /trust this browser/i })).toBeInTheDocument()
+
+      fetchMock.mockImplementationOnce(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ redirect_url: 'https://app.example.com/callback?code=abc' }),
+        } as Response)
+      )
+      await user.type(screen.getByLabelText(/verification code/i), '123456')
+      await user.click(screen.getByRole('button', { name: /^verify$/i }))
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      })
+      const [url, init] = fetchMock.mock.calls[0]
+      expect(String(url)).toContain('/oauth/mfa-verify')
+      expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({
+        mfa_session: 'sso-mfa-1',
+        code: '123456',
+      })
+    })
+
+    it('offers the methods the evaluation allowed', async () => {
+      window.location.search = '?mfa_session=sso-mfa-2&mfa_methods=totp,push'
+      renderWithRouter(<LoginPage />)
+      expect(await screen.findByText(/choose verification method/i)).toBeInTheDocument()
+      expect(screen.queryByLabelText(/verification code/i)).not.toBeInTheDocument()
+    })
+
+    it('says why a sign-in was refused', async () => {
+      window.location.search = '?error=sso_mfa_enrollment_required'
+      renderWithRouter(<LoginPage />)
+      expect(await screen.findByText(/ask an administrator for a bypass code/i)).toBeInTheDocument()
+    })
+
+    it('without an MFA session shows the password form (control)', () => {
+      window.location.search = ''
+      renderWithRouter(<LoginPage />)
+      expect(screen.queryByLabelText(/verification code/i)).not.toBeInTheDocument()
+      expect(screen.getByText(/Sign in to access your OpenIDX admin console/i)).toBeInTheDocument()
+    })
+  })
+
   // /oauth/authorize appends resume=1 when the browser holds a live session
   // that could not be carried straight to a code because this page has a
   // screen to show. The page then completes the pending request from that

@@ -496,6 +496,10 @@ const tr: typeof en = {
       linkRefusedRisk: 'Bu oturum açma bağlantısı buradan kullanılamaz. Parolanızla oturum açın.',
       linkInvalid: 'Bu oturum açma bağlantısı geçersiz, süresi dolmuş veya kullanılmış. Yeni bir bağlantı isteyin.',
       linkSessionExpired: 'Bu oturum açma isteğinin süresi doldu. Uygulamadan yeniden başlayın.',
+      ssoNeedsEnrollment:
+        'Kuruluşunuz eklemediğiniz bir oturum açma yöntemi gerektiriyor ve ekleme süresi doldu. Bir yöneticiden atlama kodu isteyin.',
+      ssoRefusedRisk: 'Bu oturum açma buradan reddedildi. Daha önce kullandığınız bir cihazdan deneyin veya bir yöneticiye başvurun.',
+      ssoFailed: 'Bu oturum açma tamamlanamadı. Yeniden deneyin.',
     },
     resume: {
       checking: 'Mevcut oturumunuz denetleniyor…',
