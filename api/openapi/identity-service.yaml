@@ -3718,6 +3718,11 @@ paths:
     post:
       tags: [Passwordless]
       summary: Verify magic link
+      description: |
+        Spends a magic link of the request's organization, found by the
+        SHA-256 of its token, and answers its user and purpose. A link of
+        another organization, an expired or used one, and one sent before
+        this version answer 400 `invalid or expired magic link`.
       operationId: verifyMagicLink
       x-openidx-handler: internal/identity.(*Service).handleVerifyMagicLink
       requestBody:
@@ -3938,6 +3943,10 @@ paths:
     get:
       tags: [Passwordless]
       summary: Get passwordless settings
+      description: |
+        The passwordless settings are installation-wide: one row of
+        system_settings, which the magic-link and QR sign-in of every
+        organization obey.
       operationId: getPasswordlessSettings
       x-openidx-handler: internal/identity.(*Service).handleGetPasswordlessSettings
       responses:
@@ -3957,6 +3966,12 @@ paths:
     patch:
       tags: [Passwordless]
       summary: Patch passwordless settings
+      description: |
+        The passwordless settings are installation-wide: one row of
+        system_settings, which the magic-link and QR sign-in of every
+        organization obey. Only a platform administrator (`admin` or
+        `super_admin` of the default organization) may change them; anyone
+        else gets 403.
       operationId: patchPasswordlessSettings
       x-openidx-handler: internal/identity.(*Service).handlePatchPasswordlessSettings
       requestBody:
@@ -3985,6 +4000,12 @@ paths:
     put:
       tags: [Passwordless]
       summary: Update passwordless settings
+      description: |
+        The passwordless settings are installation-wide: one row of
+        system_settings, which the magic-link and QR sign-in of every
+        organization obey. Only a platform administrator (`admin` or
+        `super_admin` of the default organization) may change them; anyone
+        else gets 403.
       operationId: updatePasswordlessSettings
       x-openidx-handler: internal/identity.(*Service).handleUpdatePasswordlessSettings
       requestBody:

@@ -40,6 +40,7 @@ func TestHandleCreateMagicLink_DoesNotLeakToken(t *testing.T) {
 			user_id UUID NOT NULL,
 			email VARCHAR(255) NOT NULL,
 			token_hash TEXT NOT NULL,
+			token_lookup VARCHAR(64) UNIQUE,
 			purpose VARCHAR(50) NOT NULL,
 			redirect_url TEXT,
 			ip_address VARCHAR(45),

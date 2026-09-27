@@ -1497,6 +1497,12 @@ paths:
     post:
       tags: [Passwordless]
       summary: O auth magic link
+      description: |
+        Emails a sign-in link for the pending sign-in `login_session` to the
+        user of the request's organization with address `email`. The answer
+        is the same whether or not the address belongs to a user. The link
+        points at the organization's own host (`https://<slug>.<base>` under
+        subdomain tenancy), where it is verified.
       operationId: oAuthMagicLink
       x-openidx-handler: internal/oauth.(*Service).handleOAuthMagicLink
       requestBody:
@@ -1527,6 +1533,15 @@ paths:
     get:
       tags: [Passwordless]
       summary: Magic link verify
+      description: |
+        Completes the pending sign-in `login_session` with the link `token`,
+        and redirects to the application with a code. The link is found by
+        the SHA-256 of its token, in the organization the request resolves
+        to, and spent once; the pending sign-in must be for an application of
+        that organization. Otherwise, and for a link that expired, was used,
+        or was sent before this version, the redirect is to
+        `/login?error=invalid_magic_link`, and a link refused because the
+        request is not in its organization is not spent.
       operationId: magicLinkVerify
       x-openidx-handler: internal/oauth.(*Service).handleMagicLinkVerify
       responses:

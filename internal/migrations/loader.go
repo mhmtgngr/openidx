@@ -1476,5 +1476,12 @@ func allMigrations() []*Migration {
 			UpSQL:       totpLastStepUp,
 			DownSQL:     totpLastStepDown,
 		},
+		{
+			Version:     208,
+			Name:        "magic_link_lookup",
+			Description: "Add magic_links.token_lookup, the SHA-256 of the token (hex), with a unique index. A magic link's token was stored only as a bcrypt hash, so VerifyMagicLink read every pending link of every organization and bcrypt-compared the token with each: a quarter of a second of CPU per pending link in the install on every unauthenticated GET /oauth/magic-link-verify, and a match taken from whichever organization it belonged to. The verifier now finds the one candidate by this column, in the request's organization, and bcrypt-compares only it. The token is 32 random bytes, so the digest discloses nothing. Links minted before the migration have no lookup and are not found: they stop working and are asked for again (fifteen minutes by default), because a fallback scan would keep the amplifier reachable for that long. No row is rewritten; the unique index admits their NULLs. Down drops the index and the column.",
+			UpSQL:       magicLinkLookupUp,
+			DownSQL:     magicLinkLookupDown,
+		},
 	}
 }

@@ -15,6 +15,9 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // validUUIDPattern validates UUID format only (RFC 4122)
@@ -422,8 +425,17 @@ func (s *Service) handleOAuthMagicLink(c *gin.Context) {
 	clientIP := c.ClientIP()
 	userAgent := c.GetHeader("User-Agent")
 
+	// The link goes back to this organization's own host. It is verified in
+	// the organization its request resolves to (VerifyMagicLink), which in a
+	// subdomain deployment is the host's: a link to the install's shared
+	// issuer would land in the default organization and not be found.
+	base := s.issuer
+	if org, err := orgctx.From(ctx); err == nil {
+		base = s.issuerForOrg(org)
+	}
+
 	// Build the redirect URL that the magic link will point to
-	redirectURL := s.issuer + "/oauth/magic-link-verify?login_session=" + url.QueryEscape(req.LoginSession)
+	redirectURL := base + "/oauth/magic-link-verify?login_session=" + url.QueryEscape(req.LoginSession)
 
 	magicLink, err := s.identityService.CreateMagicLink(ctx, req.Email, "login", redirectURL, clientIP, userAgent)
 	if err != nil {
@@ -434,7 +446,7 @@ func (s *Service) handleOAuthMagicLink(c *gin.Context) {
 	}
 
 	// Build the one-time verify URL that carries the magic-link token.
-	verifyURL := s.issuer + "/oauth/magic-link-verify?token=" + url.QueryEscape(magicLink.Token) + "&login_session=" + url.QueryEscape(req.LoginSession)
+	verifyURL := base + "/oauth/magic-link-verify?token=" + url.QueryEscape(magicLink.Token) + "&login_session=" + url.QueryEscape(req.LoginSession)
 
 	// Deliver the link by email. Failures are logged but never surfaced to the
 	// caller, so we don't leak whether the account exists.
@@ -490,6 +502,21 @@ func (s *Service) handleMagicLinkVerify(c *gin.Context) {
 
 	var oauthParams map[string]string
 	if err := json.Unmarshal([]byte(paramsJSON), &oauthParams); err != nil {
+		c.Redirect(302, "/login?error=invalid_magic_link")
+		return
+	}
+
+	// The pending sign-in is for an application of the organization this
+	// request resolved to, as the link must be (VerifyMagicLink looks it up
+	// there and nowhere else). A login session is a random id in a store every
+	// organization shares and does not say whose it is, and the link was
+	// accepted from whichever organization had minted it, so a link, a
+	// request and an application of three organizations made one sign-in.
+	// Checked before the link is looked at, so a link presented on the wrong
+	// host is not spent.
+	if _, err := s.GetClient(ctx, oauthParams["client_id"]); err != nil {
+		s.logger.Warn("Magic link refused: the pending sign-in is not for an application of this organization",
+			zap.String("client_id", logsafe.Clean(oauthParams["client_id"])))
 		c.Redirect(302, "/login?error=invalid_magic_link")
 		return
 	}
