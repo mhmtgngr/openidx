@@ -407,33 +407,45 @@ jobs:
           set -uo pipefail
           canary=".gitleaks-canary.tmp"
           # Every credential below is ASSEMBLED AT RUN TIME. Writing them as
-          # literals here would plant three scannable secrets in a file the
-          # scanner reads, and this step would fail the job it is meant to
-          # protect. The prefixes are split for the same reason.
+          # literals here would plant scannable secrets in a file the scanner
+          # reads, and this step would fail the job it is meant to protect.
+          # The prefixes are split for the same reason.
           rnd() { head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c "$1"; }
+          num() { head -c 2000 /dev/urandom | tr -dc '0-9' | head -c "$1"; }
+          hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
           {
             printf 'token = %s_%s\n'  'gh''p' "$(rnd 36)"
-            printf 'slack = %s-%s-%s-%s\n' 'xo''xb' "$(rnd 12)" "$(rnd 13)" "$(rnd 24)"
+            # The bot-token rule wants digits in the first two parts; letters
+            # there were never matched, which "any finding" hid.
+            printf 'slack = %s-%s-%s-%s\n' 'xo''xb' "$(num 12)" "$(num 13)" "$(rnd 24)"
             printf -- '-----%s RSA PRIVATE KEY-----\n' 'BEGIN'
             rnd 64
             printf -- '\n-----%s RSA PRIVATE KEY-----\n' 'END'
+            # A fresh OpenIDX API key: the allowlist once matched this whole
+            # shape, and so every real key (#967).
+            printf 'key = %s_%s\n' 'oi''dx' "$(hex 32)"
           } > "$canary"
-          # Three shapes, so one upstream rule change cannot quietly retire the
-          # check. (An AWS access key id is deliberately not one of them: the
-          # default ruleset does not flag one on its own.)
+          # Four shapes, and each must be caught by its own rule: an allowlist
+          # widened over any one of them fails the step, not only one widened
+          # over all. (An AWS access key id is deliberately not one of them:
+          # the default ruleset does not flag one on its own.)
           # `|| rc=$?`, not a bare call: GitHub runs `run:` under `bash -e`, so
           # gitleaks exiting non-zero — which is the whole point here — would
           # abort the step before the check below could read it.
           rc=0
           gitleaks dir . --config .gitleaks.toml --no-banner --redact \
             --report-format json --report-path canary-report.json >/dev/null 2>&1 || rc=$?
-          found=$(jq 'length' canary-report.json 2>/dev/null || echo 0)
+          rules=$(jq -r '[.[] | select(.File | endswith(".gitleaks-canary.tmp")) | .RuleID] | unique | join(" ")' canary-report.json 2>/dev/null || true)
           rm -f "$canary" canary-report.json
-          if [ "$rc" -eq 0 ]; then
-            echo "::error::gitleaks found none of three planted credentials — .gitleaks.toml has been widened until the scan cannot fail"
+          missing=""
+          for want in github-pat slack-bot-token private-key openidx-api-key; do
+            case " $rules " in *" $want "*) ;; *) missing="$missing $want" ;; esac
+          done
+          if [ "$rc" -eq 0 ] || [ -n "$missing" ]; then
+            echo "::error::gitleaks missed planted credentials:${missing:- all} — .gitleaks.toml has been widened over a real secret's shape"
             exit 1
           fi
-          echo "allowlist still goes red: $found finding(s) on the planted credentials"
+          echo "allowlist still goes red on every planted credential: $rules"
 
       - name: Upload Gitleaks report
         if: always()
