@@ -23,6 +23,16 @@ title = "OpenIDX"
 [extend]
 useDefault = true
 
+# OpenIDX's own API keys: "oidx_" and 64 hex digits (internal/apikeys). The
+# default ruleset has no rule for them, so a leaked key would pass the scan.
+# Only the two counting-sequence fixtures below are allowlisted, by value: an
+# allowlist by this shape would match every real key too (#967).
+[[rules]]
+id = "openidx-api-key"
+description = "OpenIDX API key"
+regex = '''\boidx_[0-9a-f]{64}\b'''
+keywords = ["oidx_"]
+
 [[allowlists]]
 description = "Documentation and code-sample placeholders. These are the literal strings a reader is told to replace; they authenticate nothing."
 regexTarget = "line"
@@ -56,7 +66,7 @@ regexes = [
   '''^oidx_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$''',
   '''^vault-integration-test-kek-00000$''',
   '''^test-family-123$''',
-  '''^oidx_[0-9a-f]{64}$''',
+  '''^oidx_fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210$''',
   '''^abcd1234efgh5678$''',
 ]
 
