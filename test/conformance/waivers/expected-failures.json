@@ -1,1 +1,90 @@
-[]
+[
+  {
+    "test-name": "oidcc-server",
+    "variant": "*",
+    "configuration-filename": "*openidx-basic.json",
+    "current-block": "",
+    "condition": "EnsureIdTokenDoesNotContainNonRequestedClaims",
+    "expected-result": "warning",
+    "comment": "ID tokens carry roles, groups and permissions whatever the scope. A recorded design choice: applications authorize on them without a UserInfo call (docs/OAUTH-OIDC.md, \"What a scope actually buys\").",
+    "waived-on": "2026-09-27",
+    "tracking": "https://github.com/mhmtgngr/openidx/issues/958"
+  },
+  {
+    "test-name": "oidcc-scope-email",
+    "variant": "*",
+    "configuration-filename": "*openidx-basic.json",
+    "current-block": "Verify authorization endpoint response",
+    "condition": "EnsureIdTokenDoesNotContainEmailForScopeEmail",
+    "expected-result": "warning",
+    "comment": "When the email scope is granted, the ID token carries email and email_verified as well as UserInfo. Core §5.4 lets the server return them from UserInfo; putting them in the ID token too is a recorded choice (docs/OAUTH-OIDC.md, Known deviations).",
+    "waived-on": "2026-09-27",
+    "tracking": "https://github.com/mhmtgngr/openidx/issues/958"
+  },
+  {
+    "test-name": "oidcc-alternate-happy-flow",
+    "variant": "*",
+    "configuration-filename": "*openidx-basic.json",
+    "current-block": "Verify authorization endpoint response",
+    "condition": "EnsureIdTokenDoesNotContainEmailForScopeEmail",
+    "expected-result": "warning",
+    "comment": "The same choice as oidcc-scope-email: with the email scope, the ID token carries email and email_verified.",
+    "waived-on": "2026-09-27",
+    "tracking": "https://github.com/mhmtgngr/openidx/issues/958"
+  },
+  {
+    "test-name": "oidcc-scope-profile",
+    "variant": "*",
+    "configuration-filename": "*openidx-basic.json",
+    "current-block": "",
+    "condition": "VerifyScopesReturnedInUserInfoClaims",
+    "expected-result": "warning",
+    "comment": "The profile scope returns name, given_name, family_name and preferred_username, not the other standard profile claims (picture, locale, zoneinfo and the rest), which OpenIDX does not store (docs/OAUTH-OIDC.md, Known deviations).",
+    "waived-on": "2026-09-27",
+    "tracking": "https://github.com/mhmtgngr/openidx/issues/958"
+  },
+  {
+    "test-name": "oidcc-claims-essential",
+    "variant": "*",
+    "configuration-filename": "*openidx-basic.json",
+    "current-block": "",
+    "condition": "EnsureUserInfoContainsName",
+    "expected-result": "warning",
+    "comment": "OpenIDX does not support the claims request parameter, which Core §5.5 makes optional, so an essential claim it asks for is not added (docs/OAUTH-OIDC.md, Known deviations).",
+    "waived-on": "2026-09-27",
+    "tracking": "https://github.com/mhmtgngr/openidx/issues/958"
+  },
+  {
+    "test-name": "oidcc-userinfo-post-body",
+    "variant": "*",
+    "configuration-filename": "*openidx-basic.json",
+    "current-block": "",
+    "condition": "UserInfoEndpointWithAccessTokenInBodyNotSupported",
+    "expected-result": "warning",
+    "comment": "UserInfo accepts the access token only in the Authorization header. Accepting it in a form body (RFC 6750 §2.2) is to be added; remove this entry with that fix.",
+    "waived-on": "2026-09-27",
+    "tracking": "https://github.com/mhmtgngr/openidx/issues/1013"
+  },
+  {
+    "test-name": "oidcc-ensure-request-with-acr-values-succeeds",
+    "variant": "*",
+    "configuration-filename": "*openidx-basic.json",
+    "current-block": "Verify authorization endpoint response",
+    "condition": "ValidateIdTokenACRClaimAgainstAcrValuesRequest",
+    "expected-result": "warning",
+    "comment": "No acr claim is returned when acr_values is sent (Core §3.1.2.1 says SHOULD). To be added; remove this entry with that fix.",
+    "waived-on": "2026-09-27",
+    "tracking": "https://github.com/mhmtgngr/openidx/issues/1013"
+  },
+  {
+    "test-name": "oidcc-codereuse-30seconds",
+    "variant": "*",
+    "configuration-filename": "*openidx-basic.json",
+    "current-block": "Testing if access token was revoked after authorization code reuse (the AS 'should' have revoked the access token)",
+    "condition": "EnsureHttpStatusCodeIs4xx",
+    "expected-result": "warning",
+    "comment": "A replayed code is refused, but the access token already issued from it is not revoked (RFC 6749 §4.1.2 says SHOULD). To be added; remove this entry with that fix.",
+    "waived-on": "2026-09-27",
+    "tracking": "https://github.com/mhmtgngr/openidx/issues/1013"
+  }
+]
