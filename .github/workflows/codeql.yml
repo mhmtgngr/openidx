@@ -14,8 +14,51 @@ permissions:
   security-events: write
 
 jobs:
+  # A pull request analyses only the languages it changes (#967). Pushes to
+  # main and dev and the weekly schedule analyse both, so main's alerts stay
+  # complete. A skipped analysis reports "skipped", which a required check
+  # accepts.
+  changes:
+    name: Code changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.changes.outputs.go }}
+      javascript: ${{ steps.changes.outputs.javascript }}
+    steps:
+      # Full history: the diff below compares two arbitrary commits.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Detect what changed
+        id: changes
+        run: |
+          # Only a pull request is filtered. A push, a tag, a schedule or a
+          # manual run always runs everything, as does a diff base that
+          # cannot be resolved: over-running is safe, under-running is not.
+          if [[ "${{ github.event_name }}" != "pull_request" ]] ||
+             ! git cat-file -e "${{ github.event.pull_request.base.sha }}^{commit}" 2>/dev/null; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+            echo "javascript=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}")
+          # A change to this workflow re-runs both.
+          if echo "$files" | grep -qE '\.(go|mod|sum)$|^\.github/workflows/codeql\.yml$'; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$files" | grep -qE '\.(js|jsx|ts|tsx|mjs|cjs)$|^web/|^\.github/workflows/codeql\.yml$'; then
+            echo "javascript=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "javascript=false" >> "$GITHUB_OUTPUT"
+          fi
+
   analyze-go:
     name: Analyze Go
+    needs: [changes]
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -63,6 +106,8 @@ jobs:
 
   analyze-javascript:
     name: Analyze JavaScript/TypeScript
+    needs: [changes]
+    if: needs.changes.outputs.javascript == 'true'
     runs-on: ubuntu-latest
 
     steps:

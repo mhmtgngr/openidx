@@ -29,7 +29,42 @@ env:
   IMAGE_PREFIX: ghcr.io/mhmtgngr/openidx
 
 jobs:
+  # A pull request that changes only documentation builds no image (#967):
+  # every image is built from the repository, and docs/, *.md and *.txt go
+  # into none of them. The jobs report "skipped", which a required check
+  # accepts, and Docker Build Status below passes on that skip.
+  changes:
+    name: Image inputs changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      images: ${{ steps.changes.outputs.images }}
+    steps:
+      # Full history: the diff below compares two arbitrary commits.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Detect what changed
+        id: changes
+        run: |
+          # Only a pull request is filtered. A push, a tag, a schedule or a
+          # manual run always runs everything, as does a diff base that
+          # cannot be resolved: over-running is safe, under-running is not.
+          if [[ "${{ github.event_name }}" != "pull_request" ]] ||
+             ! git cat-file -e "${{ github.event.pull_request.base.sha }}^{commit}" 2>/dev/null; then
+            echo "images=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}")
+          if echo "$files" | grep -qvE '^docs/|\.(md|txt)$'; then
+            echo "images=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "images=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: [changes]
+    if: needs.changes.outputs.images == 'true'
     name: build (${{ matrix.service }})
     runs-on: ubuntu-latest
     strategy:
@@ -338,12 +373,16 @@ jobs:
   docker-status-check:
     name: Docker Build Status
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [changes, build]
     if: always()
     timeout-minutes: 5
     steps:
       - name: Check build result
         run: |
+          if [[ "${{ needs.changes.outputs.images }}" == "false" && "${{ needs.build.result }}" == "skipped" ]]; then
+            echo "Documentation-only change: no image to build"
+            exit 0
+          fi
           if [[ "${{ needs.build.result }}" != "success" ]]; then
             echo "Docker builds failed"
             exit 1
