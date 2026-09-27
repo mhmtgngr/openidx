@@ -212,6 +212,90 @@ for, the transport takes the flag's value, and
 `TestProbeVerifiesCertificatesUnlessAsked` pins it. That one was a real
 finding — see the `[Unreleased]` entry in `CHANGELOG.md`.
 
+### `go/clear-text-logging` — 7.5 × 6 — **not a defect**, and the first entry here that blocks a merge
+
+**Snapshot:** `main` at `588b49aa` carries **one** result for this rule; the
+branch that cuts v1.39.0 carries **six**. Only the five it adds matter, because
+the results check compares a pull request against its base — and unlike every
+other verdict in this file, these five fail that check. The dismissal below is
+not hygiene; it is the merge.
+
+`internal/access/app_publish.go:705, 1556`, `internal/access/feature_handlers.go:136`,
+`internal/access/service.go:2919, 2931`
+
+**Not one of those five lines is written or changed by the branch that raises
+them.** `git blame` puts every one on `main`, in commits `92c7e42c`, `2be9062b`
+and `b52d502d`. Each is the same shape — a provisioning call failed and the
+service says so:
+
+```go
+if err := s.featureManager.EnableFeature(ctx, appRouteID, FeatureZiti, &fc, userID); err != nil {
+    s.logger.Warn("Failed to enable Ziti on app route", zap.Error(err))
+}
+```
+
+What changed is the *type* those errors come out of. This release seals the
+Guacamole connection password at rest — it used to be written to
+`service_features.config` in plain text, readable by anything that could read
+the table or a backup of it (`CHANGELOG.md`, v1.39.0, "Stored credentials") —
+and the value it seals now has a home in the struct:
+`FeatureConfig.GuacamolePassword` (`internal/access/feature_manager.go:89`).
+The query is name-driven, so a type that names a password makes every error out
+of a function taking that type a candidate. Three of these five call sites pass
+a config with no password in it at all: two Ziti configs and an empty one.
+
+**The password reaches no error message.** Every read of the field, and where
+its errors go:
+
+- `EnableFeature` returns either a bare inner `err` or a constant prefix and
+  `%w` — `"dependency check failed"`, `"failed to seal the feature's secrets"`,
+  `"failed to provision feature"`. It never formats the config.
+- `feature_manager.go:874-875` puts the password in `connParams` for
+  `GuacamoleClient.CreateConnection`. That path's errors are `"failed to create
+  guacamole connection: %w"` (wrapping `apiRequest`, whose own errors name a
+  URL, a status or an I/O failure), the status error quoting the broker's
+  **response** body, and a parse error. The request body reaches none of them.
+- `openSecret` (`:1048`) is handed the **sealed** value, and `secretcrypt`'s
+  refusals name a KEK id, a key length or a base64 offset — never the value.
+- `storedConfigJSON` (`:1066`) replaces the field with the sealed value before
+  it marshals.
+
+**And that is checked, not asserted.** Per this file's own rule — a verdict is
+worth less than a test — two tests in `internal/access` hold it, both DB-free
+and both verified by removing what they check and watching them fail:
+
+- `TestSealingAFeatureConfigKeepsThePasswordOutOfItsJSONAndItsErrors` fails if
+  the stored config carries the password in the clear, if the sealed value will
+  not open again, or if a wrong-key refusal quotes the secret.
+- `TestABrokerRefusalNeverQuotesTheConnectionPassword` drives a refused create
+  against an `httptest` broker, first proving the request really carried the
+  password, then that the error quotes the broker's reason and not the
+  credential.
+
+**Why the alerts are not made to go away instead.** Three options, and none of
+them is an improvement:
+
+1. *Redact at the five sinks.* It deletes the operator's only signal that
+   provisioning failed, and it would not even work: a message built from the
+   secret still derives from it, so the flow the query follows survives.
+2. *Rename the field.* `guacamole_password` is the JSON the console posts. A
+   name chosen to miss a heuristic is a worse name and a breaking change.
+3. *Return a constant error at whichever hop the query's path runs through.*
+   That would break the flow — but the path is not visible from here. The
+   code-scanning API is not readable by the workflow token (it answers
+   `Resource not accessible by integration`), and
+   `scripts/codeql-alert-summary.sh` prints rule, file and line, not the flow.
+   One guess per CI cycle is not a method.
+
+So the verdict is recorded here and the UI is where it is applied, exactly as
+for the nine vendored integer conversions.
+
+> **Rule.** A `go/clear-text-logging` alert on a line that logs an error
+> returned by a function taking a `*FeatureConfig` is a false positive, closed
+> by this entry. One on a line that puts a config **field** into a log — a
+> `zap.String` of a password, a message with the value interpolated — is a
+> defect. Read the line rather than looking the number up here.
+
 ---
 
 ## JavaScript/TypeScript — 13 results ≥ 7.0
@@ -424,9 +508,11 @@ takes.
 ## What the maintainer needs to do
 
 The verdicts above are recorded; the alerts are still open in code scanning,
-and closing them is a UI action this branch cannot take. **None of it blocks
-the merge** — the results check passes on `dec5b493`. This is hygiene: an
-alert list nobody has triaged is an alert list nobody reads.
+and closing them is a UI action this branch cannot take. Items 1 to 4 are
+hygiene — an alert list nobody has triaged is an alert list nobody reads, and
+the results check passed on `dec5b493` without them. **Item 5 is not hygiene:
+those five alerts fail the results check on the branch that raises them, so
+until they are dismissed that branch cannot merge.**
 
 1. Dismiss as **"used in tests"**: the 13 JS results.
 2. Dismiss as **"false positive"**, citing this file: `go/sql-injection`,
@@ -446,6 +532,15 @@ alert list nobody has triaged is an alert list nobody reads.
    be made.
 4. Nothing to do for `go/insecure-hostkeycallback`: it is no longer raised.
    Read its entry anyway before concluding the unpinned path went away.
+5. Dismiss as **"false positive"**, citing this file: the five
+   `go/clear-text-logging` alerts on `internal/access/app_publish.go:705, 1556`,
+   `internal/access/feature_handlers.go:136` and
+   `internal/access/service.go:2919, 2931`. **This one is blocking**, and it is
+   the only item here that is: the branch cutting v1.39.0 cannot merge while
+   they are open, because a single new alert at 7.0 or higher fails the results
+   check. Read that entry before dismissing — the reason those five appeared is
+   that a password stopped being stored in plain text, and the change that
+   would clear them without a dismissal is a change that should not be made.
 
 Item 2 is the one worth doing carefully: a dismissal is keyed to an alert
 fingerprint, so the next refactor that moves one of those lines brings the
