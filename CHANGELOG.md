@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.39.0] - 2026-09-27
+
 ### Security
 - **Organizations stay apart on shared surfaces.**
   - **Domains:** a custom domain is verified only by its DNS TXT record
@@ -11741,7 +11743,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.38.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.39.0...HEAD
+[1.39.0]: https://github.com/mhmtgngr/openidx/compare/v1.38.0...v1.39.0
 [1.38.0]: https://github.com/mhmtgngr/openidx/compare/v1.37.0...v1.38.0
 [1.37.0]: https://github.com/mhmtgngr/openidx/compare/v1.36.0...v1.37.0
 [1.36.0]: https://github.com/mhmtgngr/openidx/compare/v1.35.0...v1.36.0
