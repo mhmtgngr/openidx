@@ -13,7 +13,8 @@ Removing, replacing or adding a user's own second factor needs proof from the
 account holder in the same request: `current_password`, or where the change
 removes or replaces the TOTP credential, a current `totp_code` from it. A first
 factor on an account with none needs neither. The rule and the routes it covers
-are in the [identity API reference](docs/api/identity.md#changing-your-own-second-factors).
+are in the identity API reference,
+[`docs/docs/api/identity.md`](https://github.com/mhmtgngr/openidx/blob/main/docs/docs/api/identity.md#changing-your-own-second-factors).
 
 ---
 
