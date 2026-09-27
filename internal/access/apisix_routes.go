@@ -12,6 +12,9 @@ type apisixRouteOpts struct {
 	bootstrapperNode string   // e.g. "127.0.0.1:8445"
 	hopBasePort      int      // base for assignHopPorts
 	oidcCallbacks    []string // form_post callback suffixes (hop-mode only)
+	// forwardAuthURI is the access service's decide endpoint as APISIX
+	// reaches it; pool-backed routes that require sign-in carry it.
+	forwardAuthURI string
 }
 
 // apisixRoute is a single Admin API route object: PUT .../routes/<name> with body.
@@ -21,8 +24,9 @@ type apisixRoute struct {
 }
 
 // APISIXRouteOpts builds the route options from exported inputs (main.go wiring).
-func APISIXRouteOpts(bootstrapperNode string, hopBasePort int, oidcCallbacks []string) apisixRouteOpts {
-	return apisixRouteOpts{bootstrapperNode: bootstrapperNode, hopBasePort: hopBasePort, oidcCallbacks: oidcCallbacks}
+func APISIXRouteOpts(bootstrapperNode string, hopBasePort int, oidcCallbacks []string, forwardAuthURI string) apisixRouteOpts {
+	return apisixRouteOpts{bootstrapperNode: bootstrapperNode, hopBasePort: hopBasePort, oidcCallbacks: oidcCallbacks,
+		forwardAuthURI: forwardAuthURI}
 }
 
 var apisixSlugNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)

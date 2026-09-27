@@ -37,6 +37,27 @@ var proxyIdentityHeaders = []string{
 
 const proxyIdentityHeaderPrefix = "X-Auth-Request-"
 
+// oauth2ProxyIdentityHeaders are the X-Auth-Request-* headers oauth2-proxy
+// writes and reads. Configuration the access service generates for another
+// proxy -- an APISIX route, an nginx location -- cannot remove a header by
+// prefix, so it names these.
+var oauth2ProxyIdentityHeaders = []string{
+	"X-Auth-Request-User",
+	"X-Auth-Request-Email",
+	"X-Auth-Request-Preferred-Username",
+	"X-Auth-Request-Groups",
+	"X-Auth-Request-Access-Token",
+	"X-Auth-Request-Redirect",
+}
+
+// namedIdentityHeaders is every identity header by name: proxyIdentityHeaders
+// and the X-Auth-Request-* ones oauth2-proxy uses. It is the list generated
+// edge and BrowZer configuration removes from a caller's request, where
+// isProxyIdentityHeader's prefix cannot be written.
+func namedIdentityHeaders() []string {
+	return append(append([]string{}, proxyIdentityHeaders...), oauth2ProxyIdentityHeaders...)
+}
+
 // isProxyIdentityHeader reports whether name, in any case, is one of the
 // headers only the proxy may write.
 func isProxyIdentityHeader(name string) bool {

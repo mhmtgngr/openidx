@@ -359,7 +359,7 @@ func TestTheEdgeAndBrowZerRenderTheRoutesOwnHost(t *testing.T) {
 	route(f.orgB, "mention", "https://attacker-"+f.suffix+".example.test/?"+shop, false, pool)
 	route(f.orgA, "portal", "http://Portal-"+f.suffix+".Example.Test/", true, nil)
 
-	objs, err := BuildEdgeRoutesForPools(ctx, f.db, zap.NewNop())
+	objs, err := BuildEdgeRoutesForPools(ctx, f.db, zap.NewNop(), "http://access-service:8007/api/v1/access/auth/decide")
 	if err != nil {
 		t.Fatalf("render the edge: %v", err)
 	}

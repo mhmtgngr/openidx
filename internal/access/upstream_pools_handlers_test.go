@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS upstream_pool_members (
 CREATE TABLE IF NOT EXISTS proxy_routes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID, name TEXT NOT NULL, from_url TEXT, to_url TEXT,
-    enabled BOOLEAN DEFAULT true, priority INT DEFAULT 0,
+    enabled BOOLEAN DEFAULT true, priority INT DEFAULT 0, require_auth BOOLEAN DEFAULT true,
     browzer_enabled BOOLEAN DEFAULT false, ziti_enabled BOOLEAN DEFAULT false,
     ziti_service_name TEXT, landing_path TEXT DEFAULT '/',
     hosting_mode TEXT DEFAULT 'identity',
@@ -527,21 +527,24 @@ func TestWhatTheHandlersWriteIsWhatTheEdgeRendererReads(t *testing.T) {
 			{"host": "203.0.113.2", "port": 8080, "weight": 4},
 		},
 	})
-	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO proxy_routes (org_id, name, from_url, to_url, upstream_pool_id)
-		 VALUES ($1::uuid, 'shop', 'https://shop.example', 'http://203.0.113.1:8080', $2::uuid)`,
-		poolOrg, id); err != nil {
+	// A route that needs no sign-in: the forward-auth half is
+	// edge_auth_testdb_test.go's.
+	var routeID string
+	if err := db.Pool.QueryRow(ctx,
+		`INSERT INTO proxy_routes (org_id, name, from_url, to_url, upstream_pool_id, require_auth)
+		 VALUES ($1::uuid, 'shop', 'https://shop.example', 'http://203.0.113.1:8080', $2::uuid, false) RETURNING id::text`,
+		poolOrg, id).Scan(&routeID); err != nil {
 		t.Fatalf("link a route: %v", err)
 	}
 
-	objs, err := BuildEdgeRoutesForPools(context.Background(), db, zap.NewNop())
+	objs, err := BuildEdgeRoutesForPools(context.Background(), db, zap.NewNop(), "")
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if len(objs) != 1 {
 		t.Fatalf("want one rendered route, got %d", len(objs))
 	}
-	if objs[0].name != "oidx-route-shop" {
+	if objs[0].name != "oidx-route-"+routeID {
 		t.Fatalf("route name: %q", objs[0].name)
 	}
 
@@ -564,7 +567,7 @@ func TestWhatTheHandlersWriteIsWhatTheEdgeRendererReads(t *testing.T) {
 	if _, err := db.Pool.Exec(ctx, `UPDATE upstream_pool_members SET enabled = false`); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
-	objs, err = BuildEdgeRoutesForPools(context.Background(), db, zap.NewNop())
+	objs, err = BuildEdgeRoutesForPools(context.Background(), db, zap.NewNop(), "")
 	if err != nil {
 		t.Fatalf("render after drain: %v", err)
 	}
@@ -631,10 +634,13 @@ func TestReconcileSendsPoolBackedRoutesToTheDataPlane(t *testing.T) {
 		"name":    "reconciled",
 		"members": []map[string]any{{"host": "203.0.113.11", "port": 9000}, {"host": "203.0.113.12", "port": 9000}},
 	})
-	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO proxy_routes (org_id, name, from_url, to_url, upstream_pool_id)
-		 VALUES ($1::uuid, 'orders', 'https://orders.example', 'http://203.0.113.11:9000', $2::uuid)`,
-		poolOrg, id); err != nil {
+	// A route that needs no sign-in: the forward-auth half is
+	// edge_auth_testdb_test.go's.
+	var routeID string
+	if err := db.Pool.QueryRow(ctx,
+		`INSERT INTO proxy_routes (org_id, name, from_url, to_url, upstream_pool_id, require_auth)
+		 VALUES ($1::uuid, 'orders', 'https://orders.example', 'http://203.0.113.11:9000', $2::uuid, false) RETURNING id::text`,
+		poolOrg, id).Scan(&routeID); err != nil {
 		t.Fatalf("link a route: %v", err)
 	}
 
@@ -652,7 +658,7 @@ func TestReconcileSendsPoolBackedRoutesToTheDataPlane(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	body, ok := f.put["oidx-route-orders"]
+	body, ok := f.put["oidx-route-"+routeID]
 	if !ok {
 		t.Fatalf("the pool-backed route never reached the data plane; PUT %v", f.put)
 	}

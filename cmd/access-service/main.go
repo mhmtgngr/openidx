@@ -352,7 +352,8 @@ func main() {
 		apisixClient := access.NewAPISIXClient(cfg.APISIXAdminURL, cfg.APISIXAdminKey)
 		_, apisixHopPort := access.ParseHopAddr(cfg.ZitiBrowZerHopAddr)
 		apisixRec := access.NewAPISIXReconciler(db, log, apisixClient, browzerTargetManager,
-			access.APISIXRouteOpts(cfg.APISIXBootstrapperNode, apisixHopPort, access.SplitCSV(cfg.BrowZerOIDCCallbackPaths)))
+			access.APISIXRouteOpts(cfg.APISIXBootstrapperNode, apisixHopPort, access.SplitCSV(cfg.BrowZerOIDCCallbackPaths),
+				cfg.APISIXForwardAuthURI))
 		browzerTargetManager.SetAPISIXReconciler(apisixRec)
 		go func() {
 			if err := apisixRec.Reconcile(bgCtx); err != nil {

@@ -719,6 +719,12 @@ type Config struct {
 	APISIXAdminURL         string `mapstructure:"apisix_admin_url"`
 	APISIXAdminKey         string `mapstructure:"apisix_admin_key"`
 	APISIXBootstrapperNode string `mapstructure:"apisix_bootstrapper_node"`
+	// APISIXForwardAuthURI is the access service's forward-auth decide
+	// endpoint as APISIX reaches it, e.g.
+	// http://access-service:8007/api/v1/access/auth/decide. A pool-backed
+	// edge route that requires sign-in carries a forward-auth plugin that
+	// asks it; with it empty such a route is not rendered at all.
+	APISIXForwardAuthURI string `mapstructure:"apisix_forward_auth_uri"`
 
 	// RequireDeviceTrustForClientless gates clientless (BrowZer) OIDC logins on
 	// device trust: an untrusted device is refused a BrowZer session and a
@@ -1268,6 +1274,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("require_device_trust_for_clientless", false)
 	v.SetDefault("apisix_admin_url", "http://127.0.0.1:9180")
 	v.SetDefault("apisix_bootstrapper_node", "127.0.0.1:8445")
+	v.SetDefault("apisix_forward_auth_uri", "")
 
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
@@ -1494,6 +1501,7 @@ func bindEnvVars(v *viper.Viper) {
 		"apisix_admin_url":                    "APISIX_ADMIN_URL",
 		"apisix_admin_key":                    "APISIX_ADMIN_KEY",
 		"apisix_bootstrapper_node":            "APISIX_BOOTSTRAPPER_NODE",
+		"apisix_forward_auth_uri":             "APISIX_FORWARD_AUTH_URI",
 		"enable_opa_authz":                    "ENABLE_OPA_AUTHZ",
 		"encryption_key":                      "ENCRYPTION_KEY",
 		"vault_kek":                           "VAULT_KEK",

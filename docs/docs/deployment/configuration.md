@@ -357,6 +357,7 @@ Archival, not here: they are per organization.
 | `APISIX_ADMIN_URL` | string | `http://localhost:9180` | APISIX admin API. |
 | `APISIX_ADMIN_KEY` | string | - | APISIX admin key. |
 | `APISIX_EDGE_ENABLED` | bool | `false` | Reconcile edge routes into APISIX. |
+| `APISIX_FORWARD_AUTH_URI` | url | - | The access service's forward-auth endpoint as APISIX reaches it, e.g. `http://access-service:8007/api/v1/access/auth/decide`. A pool-backed edge route that requires sign-in carries a `forward-auth` plugin asking it; with this empty such a route is not rendered. |
 | `APISIX_CONFIG_PATH` | path | - | APISIX config file the bootstrapper writes. |
 | `BROWZER_ENABLED` | bool | `false` | Manage a BrowZer bootstrapper for clientless access. |
 | `BROWZER_CLIENT_ID` | string | `browzer-client` | OAuth client BrowZer uses. |
