@@ -332,7 +332,8 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 		// Everything generated from these routes is nginx configuration shared
 		// by every organization; see browzer_config_values.go.
 		if reason := browzerRouteUnsafe(info); reason != "" {
-			tm.logger.Warn("a BrowZer route is left out of the generated configuration: "+reason,
+			tm.logger.Warn("a BrowZer route is left out of the generated configuration",
+				zap.String("reason", reason),
 				logsafe.String("from_url", fromURL), logsafe.String("service", serviceName))
 			continue
 		}
