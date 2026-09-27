@@ -9,7 +9,11 @@
 # ============================================
 # Stage 1: Build
 # ============================================
-FROM golang:1.26-alpine AS builder
+# Build on the runner's own platform and cross-compile for the image's: the
+# arm64 image carried amd64 binaries while GOARCH was fixed (#960).
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+ARG TARGETOS
+ARG TARGETARCH
 
 # Install build dependencies and setup in a single layer
 RUN apk add --no-cache git ca-certificates gcc musl-dev && \
@@ -25,7 +29,7 @@ RUN go mod download && go mod verify
 COPY . .
 
 # Build with optimization flags
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build \
     -a \
     -ldflags="-w -s" \
