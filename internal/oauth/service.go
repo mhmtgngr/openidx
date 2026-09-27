@@ -5204,11 +5204,15 @@ func (s *Service) handleLogout(c *gin.Context) {
 		s.logger.Info("Single-session logout for user", zap.String("user_id", userID))
 
 		// Log audit event in background with timeout
+		// gin pools the Context and resets it for the next request as soon as
+		// the handler returns, so a detached goroutine must read the address
+		// before it starts -- see TestNoDetachedGoroutineReadsAGinContext.
+		clientIP := c.ClientIP()
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			s.logAuditEvent(ctx, "authentication", "security", "logout", "success",
-				userID, c.ClientIP(), userID, "user",
+				userID, clientIP, userID, "user",
 				map[string]interface{}{"method": "logout_endpoint"})
 		}()
 	}
@@ -5271,11 +5275,12 @@ func (s *Service) handleLogoutAll(c *gin.Context) {
 	s.logger.Info("Logout-all for user", zap.String("user_id", userID))
 
 	// Log audit event in background with timeout
+	clientIP := c.ClientIP()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.logAuditEvent(ctx, "authentication", "security", "logout_all", "success",
-			userID, c.ClientIP(), userID, "user",
+			userID, clientIP, userID, "user",
 			map[string]interface{}{"method": "logout_all_endpoint"})
 	}()
 

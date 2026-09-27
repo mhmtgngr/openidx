@@ -539,11 +539,15 @@ func (s *Service) completeSAMLSSO(c *gin.Context, sp *SAMLServiceProvider, authn
 	}
 
 	// Log the successful SSO in background with timeout
+	// gin pools the Context and resets it for the next request as soon as
+	// the handler returns, so a detached goroutine must read the address
+	// before it starts -- see TestNoDetachedGoroutineReadsAGinContext.
+	clientIP := c.ClientIP()
 	go func() {
 		bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.logAuditEvent(bg, "authentication", "saml_idp", action, "success",
-			user.ID, c.ClientIP(), sp.EntityID, "service_provider",
+			user.ID, clientIP, sp.EntityID, "service_provider",
 			map[string]interface{}{
 				"sp_entity_id":  sp.EntityID,
 				"sp_name":       sp.Name,

@@ -282,11 +282,15 @@ func (s *Service) handleSocialLinkCallback(c *gin.Context) {
 		return
 	}
 
+	// gin pools the Context and resets it for the next request as soon as
+	// the handler returns, so a detached goroutine must read the address
+	// before it starts -- see TestNoDetachedGoroutineReadsAGinContext.
+	clientIP := c.ClientIP()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.logAuditEvent(ctx, "authentication", "social_link", "link", "success",
-			userID, c.ClientIP(), providerID, "identity_provider",
+			userID, clientIP, providerID, "identity_provider",
 			map[string]interface{}{
 				"provider_type": provider.ProviderType,
 				"social_id":     userInfo.ID,

@@ -98,6 +98,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Shipped defaults:** no shipped default names `openidx.io`, and the chart
     requires `config.oauthIssuer` (v210). (OPENIDX-2026-037)
 
+### Fixed
+- **An audit event could name the wrong client address.** Nine handlers wrote
+  their audit event from a detached goroutine and read `ClientIP()` inside it.
+  gin pools its request context and resets it for the next request as soon as
+  the handler returns, so that read raced the next request and could take its
+  address instead. Affected: SAML IdP sign-in and SP-initiated logout, social
+  sign-in and account linking, the three step-up events, and both logout
+  events. The address is now read before the goroutine starts, and
+  `TestNoDetachedGoroutineReadsAGinContext` fails if any handler goes back to
+  reading a pooled context after detaching. Rows already written cannot be
+  corrected; a wrong address, where it happened, is the address of whichever
+  request arrived next on the same worker.
+
 ### Upgrade notes
 - **Helm:**
   - Set `config.oauthIssuer`. The chart refuses to render without it, and
