@@ -19,7 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Privileged Access lists a route only for users who may launch it, and the
   Privileged Sessions request queue holds the entry's requests. No grants are
   invented: until an administrator grants connect on a route's entry (PAM
-  pages), only administrators can launch it.
+  pages), only administrators can launch it. A route launch's credential
+  injection is audited as `pam.credential_injected` now;
+  `guacamole_credential_injected` is no longer written.
 - **Approval policies enforce their step order, `min_approvals` and
   `max_wait_hours`.** All three were stored and shown and decided nothing:
   every approver had to approve whatever a step said, every step's approvers
