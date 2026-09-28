@@ -456,9 +456,10 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 		     WHERE requester_id = $1 AND org_id = $2 AND `+jitgrant.ActiveForUserPredicate+`),
 		   (SELECT COUNT(*) FROM guacamole_sessions
 		     WHERE user_id = $1 AND org_id = $2 AND status = 'active'),
-		   (SELECT COUNT(*) FROM guacamole_session_requests
-		     WHERE requester_id = $1 AND org_id = $2 AND status = 'pending'
-		       AND (expires_at IS NULL OR expires_at > NOW()))`,
+		   (SELECT COUNT(*) FROM pam_entry_access_requests r
+		     JOIN pam_entries e ON e.id = r.entry_id AND e.org_id = r.org_id
+		     WHERE r.requester_id = $1 AND r.org_id = $2 AND e.proxy_route_id IS NOT NULL
+		       AND r.status = 'pending' AND (r.expires_at IS NULL OR r.expires_at > NOW()))`,
 		userID, org.ID,
 	).Scan(&overview.Privileged.VaultGrants, &overview.Privileged.ActiveCheckouts,
 		&overview.Privileged.ActiveJITGrants, &overview.Privileged.ActiveSessions,
