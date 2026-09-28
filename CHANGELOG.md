@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Temporary access link events are in the audit trail.** Issuing, using,
+  refusing and revoking a link, and a launch that fails, now land in the
+  unified audit trail under the issuing organization, with the reason for a
+  refusal and the redeemer's address; before, they were service log lines
+  only. The Guacamole legal-hold events were log lines too and are recorded
+  the same way.
 - **Backup codes and administrator bypass codes are offered at sign-in again.**
   The risk engine's list of allowed methods names primary factors only, and
   the login intersected the offer with it, so neither recovery factor was ever
