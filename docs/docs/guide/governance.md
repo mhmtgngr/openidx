@@ -54,7 +54,13 @@ Approvers see their queue at **Governance → Access Requests**, or
 Who approves what is an **approval policy** (`/approval-policies`): match on
 the resource, name the approvers, and require one step or several. A
 multi-step policy advances only when each step is satisfied, so
-"manager, then application owner" means both.
+"manager, then application owner" means both, in that order: an approver of a
+later step does not see the request until it reaches them. A step's
+`min_approvals` is how many of its approvers must say yes (one when unset);
+the rest are skipped once it is met. A request nobody answers within the
+policy's `max_wait_hours` expires, with an audit event. A policy whose step
+cannot reach its `min_approvals` refuses the request with the reason rather
+than filing one nobody can approve.
 
 ## Certification campaigns
 

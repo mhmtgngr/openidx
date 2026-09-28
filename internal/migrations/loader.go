@@ -1504,5 +1504,12 @@ func allMigrations() []*Migration {
 			UpSQL:       proxyRouteHostUp,
 			DownSQL:     proxyRouteHostDown,
 		},
+		{
+			Version:     212,
+			Name:        "approval_policy_fields",
+			Description: "Record the approval terms a request was filed under, so an approval policy's step order, min_approvals and max_wait_hours can decide anything: access_request_approvals.step_min_approvals (how many approvals the row's step needs, copied from the policy step onto every row of the step; DEFAULT 1 fills existing rows, which is the documented step semantics and the reading their approvers were shown) and access_requests.answer_by (when an unanswered request expires, set from max_wait_hours at creation; NULL for existing requests and for requests no policy governs, which keep waiting). The three fields were stored and shown and decided nothing: every row had to approve, every step's rows were live at once, and an unanswered request never expired. Down drops both columns.",
+			UpSQL:       approvalPolicyFieldsUp,
+			DownSQL:     approvalPolicyFieldsDown,
+		},
 	}
 }
