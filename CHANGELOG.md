@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The kill switch now ends the PAM entry surface too.** It expires the
+  user's own PAM connection grants, revokes their pending and approved launch
+  approvals, releases their exclusive leases, ends their live PAM entry
+  sessions on the broker, revokes the temporary access links they issued and
+  ends their brokered SSH and cloud sessions in the ledger, and its response
+  and audit event count each. Brokered SSH certificates and cloud credentials
+  cannot be recalled and expire by their TTL; the response says so.
 - **Backup codes and administrator bypass codes are offered at sign-in again.**
   The risk engine's list of allowed methods names primary factors only, and
   the login intersected the offer with it, so neither recovery factor was ever

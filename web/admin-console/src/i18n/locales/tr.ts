@@ -6951,7 +6951,7 @@ const tr: typeof en = {
       kill: {
         dialogTitle: 'Acil Kesme — {{username}}',
         dialogDesc:
-          'Bu işlem kullanıcının canlı erişimini üç sütunda birden keser: IAM oturumları geri alınır, kasa alımları ve JIT yükseltmeleri iptal edilir, canlı ayrıcalıklı oturumlar sonlandırılır ve Ziti ağ oturumları denetleyicide kesilir.',
+          'Bu işlem kullanıcının canlı erişimini üç sütunda birden keser: IAM oturumları geri alınır, kasa alımları ve JIT yükseltmeleri iptal edilir, PAM bağlantı yetkileri, başlatma onayları ve kullanıcının oluşturduğu geçici erişim bağlantıları iptal edilir, canlı ayrıcalıklı oturumlar sonlandırılır ve Ziti ağ oturumları denetleyicide kesilir.',
         willSever:
           'Şimdi kesilecek: {{iamSessions}} IAM oturumu, {{checkouts}} alım, {{jit}} JIT yetkisi, {{privSessions}} ayrıcalıklı oturum.',
         willSeverWithZiti:
@@ -6972,6 +6972,8 @@ const tr: typeof en = {
         partCheckouts: '{{n}} alım',
         partJit: '{{n}} JIT yetkisi',
         partPrivSessions: '{{n}} ayrıcalıklı oturum',
+        partPamGrants: '{{n}} PAM bağlantı yetkisi',
+        partTempLinks: '{{n}} geçici erişim bağlantısı',
         partNetwork: '{{n}} ağ oturumu',
       },
     },
