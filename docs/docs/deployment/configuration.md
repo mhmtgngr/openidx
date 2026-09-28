@@ -92,11 +92,12 @@ postgres://user:password@host:5432/openidx?sslmode=verify-full&pool_max_conns=25
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `OAUTH_ISSUER` | url | - | Token issuer, and the base of the discovery document. |
+| `OAUTH_ISSUER` | url | - | Token issuer, and the base of the discovery document. It must be the install's own public URL: browsers, phones and emailed links are sent to it (the access proxy's sign-in page posts credentials there; magic links and push-MFA enrollment point there). The Helm chart has no default and requires `config.oauthIssuer`. |
 | `OAUTH_JWKS_URL` | url | `<OAUTH_ISSUER>/.well-known/jwks.json` | Where other services fetch the signing keys. |
 | `OAUTH_LOGIN_URL` | url | `<OAUTH_ISSUER>/login` | Where `/oauth/authorize` sends a browser to sign in. Set it when the console is served from a different origin than the issuer; the reference compose stack is exactly that case. Must be absolute. |
 | `DCR_ALLOW_OPEN_REGISTRATION` | bool | `false` | Allow unauthenticated dynamic client registration. |
 | `DCR_INITIAL_ACCESS_TOKEN` | string | - | Bearer required for dynamic client registration when open registration is off. |
+| `DCR_ORG_ID` | string | `DEFAULT_ORG_ID` | The one organization dynamic client registration creates clients in. A registration request that resolves to any other organization (by `X-Org-Slug` or a tenant's host) is refused with `401`. |
 | `SSF_RECEIVER_ISSUER` | string | - | Expected issuer for inbound SSF/CAEP events. |
 | `SSF_RECEIVER_JWKS_URL` | url | - | JWKS for verifying inbound SSF/CAEP events. |
 
@@ -115,7 +116,7 @@ with `POST /api/v1/admin/oauth/signing-keys/rotate`.
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `ENCRYPTION_KEY` | string | - | 32-byte key protecting encrypted-at-rest fields: the OAuth signing key, identity-provider client secrets, SMTP credentials. Required in production. Losing it costs every outstanding token. |
+| `ENCRYPTION_KEY` | string | - | 32-byte key protecting encrypted-at-rest fields: the OAuth signing key, identity-provider client secrets, SMTP credentials, and the directories' credentials (LDAP bind passwords, Azure AD client secrets, HR API keys). Required in production. Every service needs the same one: admin-api seals the directory credentials, and identity-service and oauth-service open them to sign users in. Losing it costs every outstanding token. |
 | `ENCRYPTION_KEYS` | string | - | Comma-separated `id:key` pairs for staged rotation. |
 | `ENCRYPTION_ACTIVE_KEK_ID` | string | - | Which key in `ENCRYPTION_KEYS` new writes use. |
 | `ACCESS_SESSION_SECRET` | string | - | Signs the access proxy's session cookies. Required in production. |
@@ -129,7 +130,7 @@ with `POST /api/v1/admin/oauth/signing-keys/rotate`.
 | `BAO_TOKEN` | string | - | Token for that server. |
 | `BAO_KEK_PATH` | string | - | Path to the KEK secret. |
 | `BAO_CACERT` | path | - | CA bundle for that server. |
-| `INTERNAL_SERVICE_TOKEN` | string | - | Shared bearer for service-to-service calls that do not carry a user token. |
+| `INTERNAL_SERVICE_TOKEN` | string | - | What the services present to one another, in `X-Internal-Token`, on calls no user makes: access-service's policy checks against governance, and every audit event it posts. The audit service writes an event only for a caller presenting it; unset, it accepts none and warns at startup. Set the same value on audit-service, access-service and governance-service. `scripts/generate-secrets.sh` and `scripts/lite-up.sh` write one; the Helm chart generates one and keeps it across upgrades (`secrets.internalServiceToken` overrides it). |
 
 ### Network security
 
@@ -140,6 +141,7 @@ with `POST /api/v1/admin/oauth/signing-keys/rotate`.
 | `CSRF_ENABLED` | bool | `false` | Enable CSRF protection. Production requires `true`. There is no separate CSRF secret — the token is derived. |
 | `CSRF_TRUSTED_DOMAIN` | string | - | Parent domain trusted for CSRF when the console and API differ by subdomain. |
 | `OIDX_TRUSTED_PROXIES` | strings | - | Proxies whose `X-Forwarded-For` is believed. Empty means trust none, so the client IP is the peer address. |
+| `OIDX_OUTBOUND_ALLOWLIST` | strings | - | Internal destinations that URLs an organization's administrator types in may reach anyway: comma-separated CIDRs, IP addresses and host names (`*.corp.example` matches its subdomains). Those URLs -- webhook subscriptions, audit-stream webhooks, outbound SCIM targets, SSF stream delivery endpoints and SAML metadata URLs -- are requested from inside your network, so they reach public addresses only: one that names or resolves to a loopback, private (RFC 1918, `fc00::/7`), link-local (the cloud metadata address `169.254.169.254` included), shared (`100.64.0.0/10`), unspecified, multicast or reserved address, in any spelling, is refused when it is saved (400) and again at every connection, and redirects are not followed. Empty, the default, allows nothing internal. It applies to every organization on the install, so name the receiver, never the network the services run on. An entry that does not parse is logged at startup, and the list then allows nothing. Read by admin-api, audit-service, provisioning-service and oauth-service; Helm value `config.outboundAllowlist`. |
 | `TLS_ENABLED` | bool | `false` | Serve HTTPS directly rather than behind a terminating proxy. |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` / `TLS_CA_FILE` | path | - | Certificate, key and CA for that listener. |
 
@@ -188,7 +190,7 @@ gate without seeing which gates are open.
 | `PAM_SSH_REQUIRE_HOST_KEY` | bool | `false` | Refuse an SSH session to a host whose key is not pinned. |
 | `PAM_REQUIRE_ZTNA` | string | `off` | `off`, `observe` or `enforce` for whether a privileged session may reach its target off the overlay. In `enforce`, a launch is refused unless the entry's `reach_mode` is `ziti`, and a website entry — which returns a raw URL and brokers nothing — is refused outright. `observe` refuses nothing and audits every launch that `enforce` would refuse, so the affected entries can be counted first. **`enforce` also refuses to start** unless `GUACAMOLE_ZITI_PUBLIC_URL` is set and differs from `GUACAMOLE_PUBLIC_URL`: the broker&rarr;target leg is this service's decision, but the user&rarr;broker leg is closed by the overlay broker being published at an overlay address and nowhere else, and that is the configuration it needs. The mode is reported to the launcher as `require_ztna` on `GET /pam/broker/status`, so the console disables Connect on an entry `enforce` would refuse instead of firing a request that returns `403`; what is reported is what the service will do, so an unrecognised value reads `off` there too. |
 | `POSTURE_DEVICE_TRUST_GATE` | string | `off` | `off`, `observe` or `enforce` for the device-trust posture check. |
-| `STEPUP_GATE` | string | `off` | `off`, `observe` or `enforce` for MFA freshness. In `enforce`, a PAM launch or credential reveal, and any write made with admin authority, is refused with `step_up_required` when the session's last verified second factor is older than the window. Reads are never gated; API keys, service accounts and client-credentials tokens are never gated. |
+| `STEPUP_GATE` | string | `off` | `off`, `observe` or `enforce` for MFA freshness. In `enforce`, a PAM launch or credential reveal, and any write made with admin authority, is refused with `step_up_required` when the session's last verified second factor is older than the window. Reads are never gated; API keys, service accounts and client-credentials tokens are never gated. Read by admin-api, access-service and oauth-service (OAuth client, SAML service-provider and SSF stream management); set it on all three. |
 | `STEPUP_MAX_AGE` | duration | `15m` | The freshness window `STEPUP_GATE` applies. The console's Security &rarr; re-authentication interval (`security.reauth_interval`, in seconds) overrides it when set above zero. |
 | `SHOW_ALL_APPS_WHEN_UNASSIGNED` | bool | `false` | Show every application to a user with no assignments. A convenience for a fresh install; it is not an authorization decision. |
 | `DEV_ADMIN_BYPASS` | bool | `false` | Development-only administrator bypass. Production refuses to start with it on. |
@@ -299,7 +301,7 @@ TOTP parameters are fixed at the RFC 6238 defaults an authenticator app expects
 | `SMTP_HOST` | string | - | SMTP server. Email is disabled when empty. |
 | `SMTP_PORT` | int | `587` | SMTP port. |
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | string | - | SMTP credentials; the password is encrypted at rest when stored through the console. |
-| `SMTP_FROM` | string | - | From address. |
+| `SMTP_FROM` | string | - | From address of system mail. Use one at a domain you own: replies and bounces go there, and its SPF and DMARC records decide delivery. |
 
 TLS verification is not optional and there is no from-name override; the display
 name comes from the email template.
@@ -330,6 +332,7 @@ neither has a switch, so there is nothing to turn off by accident.
 | `AUDIT_SIEM_BATCH_SIZE` | int | `100` | Events per batch. |
 | `AUDIT_SIEM_POLL_SECONDS` | int | `10` | How often the forwarder sweeps. |
 | `AUDIT_SIEM_HOSTNAME` | string | - | Hostname stamped on forwarded events. |
+| `AUDIT_EDGE_ADDR` | string | - | A second audit-service listener (for example `:8014`) serving every route except event ingestion, which answers 404 there. For an edge that cannot refuse `POST /api/v1/audit/events` while passing the `GET`: the Helm chart routes the audit prefix of its Ingress here. Empty: one listener. |
 
 Retention and archival are configured in the admin console under Audit →
 Archival, not here: they are per organization.
@@ -356,6 +359,7 @@ Archival, not here: they are per organization.
 | `APISIX_ADMIN_URL` | string | `http://localhost:9180` | APISIX admin API. |
 | `APISIX_ADMIN_KEY` | string | - | APISIX admin key. |
 | `APISIX_EDGE_ENABLED` | bool | `false` | Reconcile edge routes into APISIX. |
+| `APISIX_FORWARD_AUTH_URI` | url | - | The access service's forward-auth endpoint as APISIX reaches it, e.g. `http://access-service:8007/api/v1/access/auth/decide`. A pool-backed edge route that requires sign-in carries a `forward-auth` plugin asking it; with this empty such a route is not rendered. |
 | `APISIX_CONFIG_PATH` | path | - | APISIX config file the bootstrapper writes. |
 | `BROWZER_ENABLED` | bool | `false` | Manage a BrowZer bootstrapper for clientless access. |
 | `BROWZER_CLIENT_ID` | string | `browzer-client` | OAuth client BrowZer uses. |
@@ -441,7 +445,7 @@ version of this page grow rows the product never had.
 | Setting | Where it lives |
 |---|---|
 | Password policy — minimum length, character classes, history, expiry | Admin console → Settings → Security. Stored per organization and enforced by `POST /api/v1/admin/validate-password`. |
-| Session idle timeout, absolute timeout, concurrent-session limit | Admin console → Settings → Security. Read by the session policy on every refresh, and by the console's idle-timeout dialog. |
+| Session idle timeout, absolute timeout, concurrent-session limit | The install's settings document (`system_settings`, key `system`): `security.idle_timeout` and `security.absolute_timeout` in seconds, and per application in `application_sso_settings`. Read by the session sweep, on every refresh, and by the console's idle-timeout dialog. `0` turns a timeout off; a value the document does not carry keeps the default, 30 minutes idle and 24 hours absolute. Admin console → Settings → Security shows them, but its Session Policies card does not save them yet. |
 | Access, refresh and ID token lifetimes | Per OAuth client, on the application in Applications → the app. |
 | OTP code length, lifetime, attempt ceiling | Admin console → Settings → SMS. Applied without a restart by the identity service's config watcher. |
 | Certification campaign duration and reminders | Per campaign, when the campaign is created. |

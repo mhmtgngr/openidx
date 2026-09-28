@@ -1,7 +1,10 @@
 package oauth
 
 import (
+	"crypto/subtle"
 	"encoding/base64"
+	"errors"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -77,4 +80,76 @@ func basicClientAuth(c *gin.Context) (id, secret string, ok bool) {
 		return "", "", false
 	}
 	return decodedName, decodedPass, true
+}
+
+// errTwoClientAuthMethods and errClientNotAuthenticated are the two ways
+// authenticateConfidentialClient refuses a caller; writeClientAuthError maps
+// them to their RFC 6749 §5.2 answers. Any other error is a lookup that could
+// not be made.
+var (
+	errTwoClientAuthMethods   = errors.New("use only one client authentication method")
+	errClientNotAuthenticated = errors.New("client authentication failed")
+)
+
+// isConfidential reports whether this client can authenticate at the token
+// endpoint (RFC 6749 §2.1): it holds a secret, and it was not registered as a
+// client that cannot keep one. Dynamic registration and the seeds name such a
+// client "public"; the console's application types are web, native and
+// service, and it describes native -- a mobile or desktop application -- as a
+// public client with PKCE, although the management API mints it a secret like
+// the others. A secret shipped inside an application proves nothing about who
+// is calling.
+func (c *OAuthClient) isConfidential() bool {
+	if c == nil || c.ClientSecret == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Type)) {
+	case "public", "native":
+		return false
+	}
+	return true
+}
+
+// authenticateConfidentialClient authenticates the caller of a grant that only
+// a confidential client may use: token exchange, which mints a user's token
+// for an audience, and client credentials, which mints one for the client
+// itself (RFC 6749 §4.4). The caller must name a confidential client of the
+// request's organization and present its secret by exactly one method.
+//
+// Token exchange used to check the secret of a client whose type was the
+// literal "confidential" and nothing else, and client credentials compared
+// the stored secret with the presented one whatever the client was. Either
+// way a public client, whose client_id is no secret, was authenticated by
+// naming it.
+func (s *Service) authenticateConfidentialClient(c *gin.Context) (*OAuthClient, error) {
+	id, secret, ok := clientCredentials(c)
+	if !ok {
+		return nil, errTwoClientAuthMethods
+	}
+	if id == "" || secret == "" {
+		return nil, errClientNotAuthenticated
+	}
+	client, err := s.GetClient(c.Request.Context(), id)
+	if errors.Is(err, ErrOAuthClientNotFound) {
+		return nil, errClientNotAuthenticated
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !client.isConfidential() || subtle.ConstantTimeCompare([]byte(client.ClientSecret), []byte(secret)) != 1 {
+		return nil, errClientNotAuthenticated
+	}
+	return client, nil
+}
+
+// writeClientAuthError answers a caller authenticateConfidentialClient refused.
+func writeClientAuthError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errTwoClientAuthMethods):
+		c.JSON(http.StatusBadRequest, gin.H{"error": ErrorInvalidRequest, "error_description": err.Error()})
+	case errors.Is(err, errClientNotAuthenticated):
+		c.JSON(http.StatusUnauthorized, gin.H{"error": ErrorInvalidClient, "error_description": err.Error()})
+	default:
+		writeServerOrUnavailable(c, err)
+	}
 }

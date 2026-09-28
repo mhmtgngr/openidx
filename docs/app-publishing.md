@@ -239,7 +239,7 @@ server {
    host, so the app echoes its internal address (e.g.
    `http://10.0.0.5:8088/ui/`) in `Location` and the user leaks off the public
    hostname. Toggle it on the Proxy Routes page or
-   `UPDATE proxy_routes SET preserve_host = true WHERE from_url LIKE '%<host>%'`.
+   `UPDATE proxy_routes SET preserve_host = true WHERE host = '<host>'`.
 
 3. **Redirect the bare root** (`location = / { return 302 /ui/; }`) when the app
    serves its UI under a sub-path — the upstream root often 404s. The redirect
@@ -286,6 +286,11 @@ Request body (all optional):
 If `public_host` is a bare label, the server appends `ACCESS_APPS_DOMAIN`
 (e.g. `apps.tdv.org` → `netgraph.apps.tdv.org`). Re-publishing the same app is
 idempotent (route keyed by `from_url`, tile keyed by `client_id=proxy-app-<id>`).
+
+A host is served by one enabled route in the whole installation. Publishing
+onto a host that another enabled route serves -- another organization's, or a
+route of your own other than the app's -- is refused with 409 before anything
+changes; another organization's route is not named.
 
 ### Wildcard edge (one cert for every app)
 

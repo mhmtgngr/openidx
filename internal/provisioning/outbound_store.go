@@ -103,6 +103,12 @@ func (s *Service) CreateTargetApp(ctx context.Context, orgID string, in *TargetA
 	if in.Name == "" || in.BaseURL == "" {
 		return nil, fmt.Errorf("name and base_url are required")
 	}
+	// The worker will send this organization's users and the target's token
+	// to base_url from inside the platform's network: it must be a public
+	// address, or one the operator allowlisted.
+	if err := s.outboundGuard().CheckURL(ctx, in.BaseURL); err != nil {
+		return nil, fmt.Errorf("base_url is not allowed: %w", err)
+	}
 	if in.AuthType == "" {
 		in.AuthType = "bearer"
 	}
@@ -200,6 +206,9 @@ func (s *Service) UpdateTargetApp(ctx context.Context, orgID, id string, in *Tar
 	}
 	if in.BaseURL == "" {
 		in.BaseURL = existing.BaseURL
+	}
+	if err := s.outboundGuard().CheckURL(ctx, in.BaseURL); err != nil {
+		return nil, fmt.Errorf("base_url is not allowed: %w", err)
 	}
 	if in.AuthType == "" {
 		in.AuthType = existing.AuthType

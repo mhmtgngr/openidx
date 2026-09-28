@@ -233,8 +233,10 @@ Order is by risk, and each item is independently shippable.
    registered: `sandbox_enabled` on the developer-settings API (stored,
    returned, round-tripped by a console that never rendered it, enabling no
    sandbox) and the entire system-wide passwordless settings object, where an
-   administrator could turn magic links off for the organization and keep
-   handing them out because only the per-user preference was ever asked.
+   administrator could turn magic links off for the installation (the settings
+   are one row every organization shares, and only a platform administrator
+   may write them) and keep handing them out because only the per-user
+   preference was ever asked.
 
 Each item needs a red proof, as everything else on this branch has.
 

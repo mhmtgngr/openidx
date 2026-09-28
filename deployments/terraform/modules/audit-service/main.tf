@@ -8,7 +8,7 @@
 resource "helm_release" "audit_service" {
   count      = var.enabled ? 1 : 0
   name       = "openidx-audit-service"
-  repository = "oci://ghcr.io/openidx/helm"
+  repository = "oci://ghcr.io/mhmtgngr/openidx/charts"
   chart      = "openidx"
   namespace  = "openidx"
   version    = "1.0.0"

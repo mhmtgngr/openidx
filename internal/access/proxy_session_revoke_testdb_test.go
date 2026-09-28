@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -203,18 +204,23 @@ func TestTheIdleRefreshCannotBringARevokedSessionBack(t *testing.T) {
 }
 
 // liveProxySession is a proxy session as createSession leaves it: a row and
-// the blob the data plane reads.
+// the blob the data plane reads, bound to the host of the route it is for.
 type liveProxySession struct{ id, token string }
 
 func (f *adminGateFixture) seedLiveProxySession(t *testing.T, e *adminGateEngine, org, user, route string) liveProxySession {
 	t.Helper()
 	token := "cookie-" + user + "-" + route
-	var id string
+	var id, fromURL string
 	if err := f.db.Pool.QueryRow(f.ctx, `
 		INSERT INTO proxy_sessions (org_id, user_id, route_id, session_token, ip_address, user_agent, expires_at)
 		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, '203.0.113.9', 'test', NOW() + INTERVAL '1 hour')
-		RETURNING id::text`, org, user, route, hashToken(token)).Scan(&id); err != nil {
+		RETURNING id::text, (SELECT from_url FROM proxy_routes WHERE id = $3::uuid)`,
+		org, user, route, hashToken(token)).Scan(&id, &fromURL); err != nil {
 		t.Fatalf("seed proxy session: %v", err)
+	}
+	routeURL, err := url.Parse(fromURL)
+	if err != nil {
+		t.Fatalf("route %s from_url %q: %v", route, fromURL, err)
 	}
 	blob, err := json.Marshal(map[string]interface{}{
 		"id":          id,
@@ -222,6 +228,7 @@ func (f *adminGateFixture) seedLiveProxySession(t *testing.T, e *adminGateEngine
 		"email":       user + "@example.test",
 		"name":        "Someone",
 		"roles":       []string{},
+		"host":        sessionHost(routeURL.Host),
 		"expires":     time.Now().Add(time.Hour).Unix(),
 		"last_active": time.Now().Unix(),
 	})

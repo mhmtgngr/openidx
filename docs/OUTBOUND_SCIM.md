@@ -39,6 +39,14 @@ OpenIDX already ships a SCIM 2.0 **server** (be provisioned *into*, in
     state, `POST /targets/{id}/test` to check credentials without writing, and
     `POST /targets/{id}/sync` to force a reconciliation.
 
+    `base_url` must be on the internet. The worker sends your users and the
+    target's credentials to it from inside the platform's network, so a URL
+    that names or resolves to a loopback, private, link-local, shared or
+    reserved address is refused with 400 when it is saved, and every
+    connection is checked again (`internal/common/netutil/outbound.go`). A
+    SCIM service on your own network needs its host in
+    `OIDX_OUTBOUND_ALLOWLIST`.
+
 ## Architecture
 
 ```
@@ -97,7 +105,11 @@ the target.
 
 ## Admin API
 
-All under `/api/v1/provisioning/targets` (authenticated, org-scoped):
+All under `/api/v1/provisioning/targets`, scoped to the caller's organization.
+Each route needs the `admin` or `super_admin` role; any other caller, a
+machine credential that holds neither included, gets `403`. A target decides
+where the organization's directory is sent, so it is an administrator's to
+set, test and sync.
 
 | Method | Path             | Purpose                                             |
 |--------|------------------|-----------------------------------------------------|

@@ -17,6 +17,7 @@ import { useAuth } from '../lib/auth'
 import { api } from '../lib/api'
 import { useAppStore } from '../lib/store'
 import { roleLevel, ROLE_LEVELS } from '../lib/roles'
+import { isPlatformAdmin } from '../lib/platform-admin'
 import { filterNavigation, type ViewMode } from '../config/navigation'
 import { CommandPalette } from './command-palette'
 import { LanguageSwitcher } from './language-switcher'
@@ -128,7 +129,7 @@ function ViewModeSwitcher({ level }: { level: number }) {
 
 export function Layout() {
   const { t } = useTranslation()
-  const { user, logout, hasRole } = useAuth()
+  const { user, logout } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -144,7 +145,11 @@ export function Layout() {
 
   const groups = filterNavigation({ roles, viewMode: effectiveViewMode, query })
 
-  const isPlatformAdmin = level >= ROLE_LEVELS.super_admin || hasRole('super_admin')
+  // The organization selector is a platform admin's: super_admin held in the
+  // default organization. It used to show for any super_admin, and a
+  // super_admin of another organization who picked one got a console whose
+  // every request the API refused.
+  const platformAdmin = isPlatformAdmin(user)
   const isAdmin = level >= ROLE_LEVELS.admin
 
   const initials = user?.name
@@ -378,7 +383,7 @@ export function Layout() {
             <Menu className="h-5 w-5" />
           </Button>
           <div className="flex-1" />
-          {isPlatformAdmin && <TenantSelector />}
+          {platformAdmin && <TenantSelector />}
           {isAdmin && <ZitiStatusIndicator />}
           <LanguageSwitcher />
           <ThemeToggle />

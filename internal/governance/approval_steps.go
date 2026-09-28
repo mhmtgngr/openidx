@@ -34,7 +34,7 @@ import (
 //     is filed so a policy edited afterwards does not move it.
 //
 // The per-row minimum and the deadline are recorded on the rows (migration
-// v206), not looked up from the policy at decision time: a request keeps the
+// v212), not looked up from the policy at decision time: a request keeps the
 // terms it was filed under.
 
 // chainError says why a policy's chain cannot be built for this request. It is

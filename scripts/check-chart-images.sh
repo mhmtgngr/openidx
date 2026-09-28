@@ -64,12 +64,14 @@ $out"
 
 # The chart `required`s the datastore passwords whenever the bundled
 # PostgreSQL/Redis are enabled — an empty one used to install a stack that
-# could not authenticate. Rendering therefore has to supply them; these are
-# placeholders for a template that is thrown away, not credentials.
+# could not authenticate — and the issuer, which has no default. Rendering
+# therefore has to supply them; these are placeholders for a template that is
+# thrown away, not credentials or a real name.
 PLACEHOLDER_SECRETS=(
   --set secrets.postgresPassword=render-only-not-a-credential
   --set secrets.redisPassword=render-only-not-a-credential
   --set secrets.encryptionKey=render-only-not-a-credential32b
+  --set config.oauthIssuer=https://auth.render-only.invalid
 )
 
 render_and_check "values.yaml" "${PLACEHOLDER_SECRETS[@]}"

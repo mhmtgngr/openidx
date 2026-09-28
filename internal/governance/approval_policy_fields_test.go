@@ -16,7 +16,7 @@ import (
 // The three approval-policy fields the console has always shown and the
 // workflow never read: a step's min_approvals, the order of the steps, and
 // the policy's max_wait_hours. Each is driven through the real handlers on
-// the fixture schema with the v206 columns, both ways: the case the field
+// the fixture schema with the v212 columns, both ways: the case the field
 // allows and the case it refuses.
 
 const (

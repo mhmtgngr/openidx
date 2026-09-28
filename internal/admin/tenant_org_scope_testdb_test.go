@@ -20,6 +20,13 @@ import (
 	"github.com/openidx/openidx/internal/organization"
 )
 
+// publishedEverywhere answers every TXT lookup with the same records.
+type publishedEverywhere []string
+
+func (p publishedEverywhere) LookupTXT(context.Context, string) ([]string, error) {
+	return p, nil
+}
+
 // THE TENANT ROUTES STAY IN THE CALLER'S ORGANIZATION.
 //
 // tenant_branding, tenant_settings and tenant_domains span the install, outside
@@ -67,6 +74,9 @@ func TestTenantRoutesStayInTheCallersOrganization(t *testing.T) {
 	scalar(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'admin') RETURNING id::text`, orgC, adminA)
 
 	svc := NewService(db, &database.RedisClient{}, &config.Config{}, zap.NewNop())
+	// Every seeded claim's record is published: verification is by DNS, and
+	// what this test decides is only whose claims a caller reaches.
+	svc.SetTXTResolver(publishedEverywhere{"openidx-domain-verification=seeded-token"})
 	lookup := organization.NewOrgLookup(organization.NewService(db, &database.RedisClient{}, &config.Config{}, zap.NewNop()))
 
 	type caller struct {
@@ -159,7 +169,7 @@ func TestTenantRoutesStayInTheCallersOrganization(t *testing.T) {
 		}},
 		{http.MethodPost, "/tenants/:orgId/domains/:domainId/verify", func(org string, n int) (string, string, string, func() string) {
 			id, _ := seedDomain(org, n)
-			return "/api/v1/tenants/" + org + "/domains/" + id + "/verify", `{"token":"seeded-token"}`,
+			return "/api/v1/tenants/" + org + "/domains/" + id + "/verify", "",
 				"", read(`SELECT COALESCE(verified, false)::text FROM tenant_domains WHERE id = $1::uuid`, id)
 		}},
 	}

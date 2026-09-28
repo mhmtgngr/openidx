@@ -7,7 +7,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { useToast } from '../hooks/use-toast'
+import { useFactorProof } from '../hooks/use-factor-proof'
 import { api, PushMFADevice, PushMFAEnrollment } from '../lib/api'
+import { ProofCancelled, proofRefusalMessageKey } from '../lib/factor-proof'
 
 export function PushDevicesPage() {
   const { t } = useTranslation()
@@ -17,6 +19,9 @@ export function PushDevicesPage() {
   const [showEnrollForm, setShowEnrollForm] = useState(false)
   const [enrolling, setEnrolling] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
+  // Adding a device to an account that has a second factor, and removing one,
+  // ask for the account's password (lib/factor-proof.ts).
+  const { withProof, dialog: proofDialog } = useFactorProof()
 
   // QR self-enrollment state (Google/MS-Authenticator style).
   const [qrPayload, setQrPayload] = useState<string | null>(null)
@@ -60,17 +65,19 @@ export function PushDevicesPage() {
         device_name: deviceName,
         device_model: deviceModel || undefined,
       }
-      await api.registerPushDevice(enrollment)
+      await withProof((proof) => api.registerPushDevice(enrollment, proof))
       toast({ title: t('common.success'), description: t('pages.pushDevices.toasts.enrolled') })
       setShowEnrollForm(false)
       setDeviceName('')
       setDeviceModel('')
       setDeviceToken('')
       fetchDevices()
-    } catch {
+    } catch (err) {
+      if (err instanceof ProofCancelled) return
+      const refused = proofRefusalMessageKey(err)
       toast({
         title: t('common.error'),
-        description: t('pages.pushDevices.toasts.enrollFailed'),
+        description: refused ? t(refused) : t('pages.pushDevices.toasts.enrollFailed'),
         variant: 'destructive',
       })
     } finally {
@@ -85,13 +92,15 @@ export function PushDevicesPage() {
     try {
       setQrLoading(true)
       setShowEnrollForm(false)
-      const ticket = await api.startPushEnrollment()
+      const ticket = await withProof((proof) => api.startPushEnrollment(proof))
       setQrPayload(ticket.qr_payload)
       setQrExpiresAt(Date.now() + ticket.expires_in * 1000)
-    } catch {
+    } catch (err) {
+      if (err instanceof ProofCancelled) return
+      const refused = proofRefusalMessageKey(err)
       toast({
         title: t('common.error'),
-        description: t('pages.pushDevices.toasts.qrFailed'),
+        description: refused ? t(refused) : t('pages.pushDevices.toasts.qrFailed'),
         variant: 'destructive',
       })
     } finally {
@@ -137,13 +146,15 @@ export function PushDevicesPage() {
   const handleDelete = async (deviceId: string) => {
     try {
       setDeleting(deviceId)
-      await api.deletePushDevice(deviceId)
+      await withProof((proof) => api.deletePushDevice(deviceId, proof))
       toast({ title: t('common.success'), description: t('pages.pushDevices.toasts.removed') })
       setDevices(devices.filter(d => d.id !== deviceId))
-    } catch {
+    } catch (err) {
+      if (err instanceof ProofCancelled) return
+      const refused = proofRefusalMessageKey(err)
       toast({
         title: t('common.error'),
-        description: t('pages.pushDevices.toasts.removeFailed'),
+        description: refused ? t(refused) : t('pages.pushDevices.toasts.removeFailed'),
         variant: 'destructive',
       })
     } finally {
@@ -162,6 +173,7 @@ export function PushDevicesPage() {
 
   return (
     <div className="space-y-6">
+      {proofDialog}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">{t('pages.pushDevices.title')}</h1>
@@ -346,6 +358,7 @@ export function PushDevicesPage() {
                     className="text-red-600 hover:text-red-700 hover:bg-red-50"
                     onClick={() => handleDelete(device.id)}
                     disabled={deleting === device.id}
+                    aria-label={t('pages.pushDevices.remove')}
                   >
                     {deleting === device.id ? (
                       <Loader2 className="h-4 w-4 animate-spin" />

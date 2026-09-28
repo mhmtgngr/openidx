@@ -45,6 +45,10 @@ GET /scim/v2/Users?filter=userName eq "john"&startIndex=1&count=20
 
 ## Provisioning Rules
 
+These routes, like the outbound SCIM targets under `/api/v1/provisioning/targets`
+([OUTBOUND_SCIM.md](https://github.com/mhmtgngr/openidx/blob/main/docs/OUTBOUND_SCIM.md)),
+need the `admin` or `super_admin` role. Any other caller gets `403`.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/provisioning/rules` | List rules |

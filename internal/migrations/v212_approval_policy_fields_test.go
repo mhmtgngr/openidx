@@ -7,11 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// v206 records the terms a request was filed under. The per-row minimum
+// v212 records the terms a request was filed under. The per-row minimum
 // arrives with DEFAULT 1, which is both the documented step semantics and the
 // only reading under which every open request keeps advancing; the deadline
 // arrives NULL so nothing already pending is expired by the upgrade itself.
-func TestV206FillsExistingRowsWithOneAndNoDeadline(t *testing.T) {
+func TestV212FillsExistingRowsWithOneAndNoDeadline(t *testing.T) {
 	up := approvalPolicyFieldsUp
 	require.Contains(t, up, "ADD COLUMN IF NOT EXISTS step_min_approvals INTEGER NOT NULL DEFAULT 1",
 		"an open request's rows must read as needing one approval, the reading their approvers were shown")
@@ -21,12 +21,12 @@ func TestV206FillsExistingRowsWithOneAndNoDeadline(t *testing.T) {
 	require.NotContains(t, up, "UPDATE", "no row is rewritten under the RLS belt")
 }
 
-func TestV206DownRemovesBothColumns(t *testing.T) {
+func TestV212DownRemovesBothColumns(t *testing.T) {
 	require.Contains(t, approvalPolicyFieldsDown, "DROP COLUMN IF EXISTS answer_by")
 	require.Contains(t, approvalPolicyFieldsDown, "DROP COLUMN IF EXISTS step_min_approvals")
 }
 
-func TestV206SplitsCleanly(t *testing.T) {
+func TestV212SplitsCleanly(t *testing.T) {
 	m := &Migrator{}
 	var stmts []string
 	for _, s := range m.splitSQL(approvalPolicyFieldsUp) {

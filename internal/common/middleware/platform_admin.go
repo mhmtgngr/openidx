@@ -123,6 +123,20 @@ func RequirePlatformAdmin(db *database.PostgresDB, logger *zap.Logger) gin.Handl
 	}
 }
 
+// IsInstallAdministrator is the decision RequirePlatformAdmin enforces, for a
+// handler that answers every caller its gates admit but shows an install
+// administrator more: the whole of something every organization shares, where
+// anyone else sees their own organization's part of it. It returns an error
+// only when it could not look, and a handler must then refuse rather than fall
+// back to either view. db may be nil, as for RequirePlatformAdmin.
+func IsInstallAdministrator(c *gin.Context, db *database.PostgresDB) (bool, error) {
+	var q userOrgQuerier
+	if db != nil && db.Pool != nil {
+		q = db.Pool
+	}
+	return isInstallAdministrator(c, q)
+}
+
 // isInstallAdministrator is the decision behind RequirePlatformAdmin. It is not
 // IsPlatformAdmin, which decides who may cross organizations; see the comment
 // at the top of this file for how the two relate. It returns an error only when

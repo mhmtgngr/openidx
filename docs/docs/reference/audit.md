@@ -18,13 +18,25 @@ func NewService(db *database.PostgresDB, es *database.ElasticsearchClient, cfg *
 func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.HandlerFunc)
 ```
 
-`POST /api/v1/audit/events` is the ingestion endpoint and is deliberately outside
-the authenticated group: it is the server-to-server write path (access-service
-posts proxy-access events with no user token) and is protected by network
-isolation. Everything else reads or exports the trail and carries the JWT
-middleware passed as `extraMiddleware`: `GET /events`, `GET /events/:id`,
+`POST /api/v1/audit/events` is the ingestion endpoint: the server-to-server
+write path, which access-service uses to post PAM and proxy events with no user
+token. It takes the internal service token instead: `X-Internal-Token` must
+equal `INTERNAL_SERVICE_TOKEN`, compared in constant time, or the answer is 401
+and nothing is written. A user's access token does not count, whatever its
+roles; nothing in the product writes events on a user's behalf. With
+`INTERNAL_SERVICE_TOKEN` unset the endpoint accepts no events, and the service
+warns at startup. The shipped edges refuse the route outright.
+
+Everything else reads or exports the trail and carries the JWT middleware
+passed as `extraMiddleware`: `GET /events`, `GET /events/:id`,
 `GET /events/search`, `GET /event-types`, `GET /chain/verify`,
 `GET /statistics`, `GET /usage`, the `/reports` group and `POST /export`.
+
+`AUDIT_EDGE_ADDR` (for example `:8014`) starts a second listener that serves
+every route except ingestion, which answers 404 there. It is for an edge that
+cannot refuse `POST /api/v1/audit/events` while passing the `GET` of the same
+path: a Kubernetes Ingress cannot match on method, so the Helm chart routes the
+audit prefix to this listener.
 
 ## Audit Events
 

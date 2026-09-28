@@ -12,6 +12,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/common/ssfsignal"
 )
 
@@ -36,6 +37,11 @@ type SyncEngine struct {
 	// token live. The census in internal/revocation is what keeps nil from
 	// becoming the normal case.
 	revoke func(ctx context.Context, userID, why string)
+
+	// cipher opens the credential the sync signs in with, which is stored
+	// sealed (secrets.go). NewService sets it; without one, a sealed
+	// credential fails the run with the reason recorded, and nothing is sent.
+	cipher *secretcrypt.Cipher
 }
 
 // NewSyncEngine creates a new sync engine
@@ -363,6 +369,15 @@ func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, dirType st
 }
 
 func (e *SyncEngine) doSync(ctx context.Context, directoryID, orgID, dirType string, configBytes []byte, fullSync bool, result *SyncResult) error {
+	// The credential is stored sealed. Opened here, after the run's log row
+	// exists, so a credential this service cannot open fails the run with
+	// the reason on the sync history, rather than with a log line nobody
+	// reads, and nothing is sent: sent sealed, it would be a wrong password,
+	// which a directory server counts toward the service account's lockout.
+	configBytes, err := OpenSecrets(e.cipher, configBytes)
+	if err != nil {
+		return err
+	}
 	switch dirType {
 	case "ldap", "active_directory":
 		var cfg LDAPConfig

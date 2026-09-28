@@ -62,10 +62,16 @@ Doğrulama uç noktası ve uygulamaya iletilen kimlik başlıkları projede tan�
 |---|---|
 | Karar uç noktası | `POST/GET /api/v1/access/auth/decide` |
 | OpenIDX'e iletilen | `Authorization`, `Cookie`, `X-Forwarded-For`, `X-Real-IP` |
-| Uygulamaya eklenen | `X-Forwarded-User`, `X-Forwarded-Email`, `X-Forwarded-Name`, `X-Forwarded-Roles`, `X-Risk-Score` |
+| Uygulamaya eklenen | `X-Forwarded-User`, `X-Forwarded-Email`, `X-Forwarded-Name`, `X-Forwarded-Roles`, `X-Forwarded-Route`, `X-Risk-Score` (kimlik yoksa boş) |
+| İstemcininkinin yerine konan | `Cookie` (OpenIDX'in `_openidx_proxy_session` çerezi çıkarılmış), `Authorization` (OpenIDX isteği bu başlıkla doğruladıysa boş) |
 
 > Kaynak: `deployments/docker/apisix/apisix.yaml` (forward-auth örneği) ve
 > `internal/access/service.go` (`/auth/decide` rota kaydı).
+
+LB, karar yanıtındaki bu başlıkların hepsini uygulamaya giden istekte
+istemcinin gönderdiklerinin yerine koymalıdır. Koymazsa istemcinin yazdığı
+kimlik başlıkları, kullanıcının OpenIDX oturum çerezi ve erişim belirteci
+uygulamaya ulaşır.
 
 - **Artı:** trafik yolu **değişmez**, en az müdahale; uygulama kodu değişmez
   (kimlik başlık olarak gelir).

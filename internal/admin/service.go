@@ -22,8 +22,11 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/netutil"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/common/validation"
+	"github.com/openidx/openidx/internal/directory"
 	"github.com/openidx/openidx/internal/sms"
 	"github.com/openidx/openidx/internal/webhooks"
 )
@@ -389,6 +392,14 @@ type Service struct {
 	webhookService   WebhookManager
 	securityService  SecurityService
 	aiClient         *ai.Client
+
+	// txtResolver looks up the TXT records that verify a tenant domain;
+	// nil means net.DefaultResolver (see SetTXTResolver).
+	txtResolver TXTResolver
+	// dirSecrets seals the directories' credentials before they are stored
+	// and opens them for the connection test and the diagnostics; see
+	// internal/directory/secrets.go.
+	dirSecrets *secretcrypt.Cipher
 }
 
 // requireAdmin checks if the authenticated user has admin or super_admin role.
@@ -418,13 +429,24 @@ func (s *Service) requirePlatformAdmin() gin.HandlerFunc {
 
 // NewService creates a new admin service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger) *Service {
+	log := logger.With(zap.String("service", "admin"))
+	encKey := ""
+	if cfg != nil {
+		encKey = cfg.EncryptionKey
+	}
+	dirSecrets, err := secretcrypt.New(encKey)
+	if err != nil {
+		log.Warn("directory credentials will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
+		dirSecrets = secretcrypt.NewNoop()
+	}
 	return &Service{
-		db:       db,
-		redis:    redis,
-		config:   cfg,
-		logger:   logger.With(zap.String("service", "admin")),
-		settings: NewPostgresSettingsRepository(db),
-		aiClient: ai.NewClient(cfg, logger),
+		db:         db,
+		redis:      redis,
+		config:     cfg,
+		logger:     log,
+		settings:   NewPostgresSettingsRepository(db),
+		aiClient:   ai.NewClient(cfg, logger),
+		dirSecrets: dirSecrets,
 	}
 }
 
@@ -735,7 +757,7 @@ func (s *Service) GetSettings(ctx context.Context) (*Settings, error) {
 	settings := &Settings{
 		General: GeneralSettings{
 			OrganizationName: "OpenIDX",
-			SupportEmail:     "support@openidx.io",
+			SupportEmail:     "",
 			DefaultLanguage:  "en",
 			DefaultTimezone:  "UTC",
 		},
@@ -960,9 +982,14 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		if e := s.db.Pool.QueryRow(ctx,
 			"SELECT client_id FROM applications WHERE id = $1 AND org_id = $2", id, org.ID).Scan(&clientID); e == nil {
 			ocSet = append(ocSet, "updated_at = NOW()")
-			ocArgs = append(ocArgs, clientID)
-			//orgscope:ignore client_id resolved via the org-scoped applications lookup on the line above; oauth_clients keyed by globally-unique client_id
-			ocQuery := fmt.Sprintf("UPDATE oauth_clients SET %s WHERE client_id = $%d", strings.Join(ocSet, ", "), ocN)
+			ocArgs = append(ocArgs, clientID, org.ID)
+			// The organization, and not only the client_id the application row
+			// names: an administrator creates that row and chooses its
+			// client_id, so it can name another organization's client, and an
+			// edit here would then rewrite that client's redirect URIs. The
+			// row-level-security belt refuses such a write for the service's
+			// own database role; this predicate refuses it for any role.
+			ocQuery := fmt.Sprintf("UPDATE oauth_clients SET %s WHERE client_id = $%d AND org_id = $%d", strings.Join(ocSet, ", "), ocN, ocN+1)
 			if _, e := s.db.Pool.Exec(ctx, ocQuery, ocArgs...); e != nil {
 				s.logger.Warn("update application: failed to sync backing OAuth client",
 					zap.String("client_id", clientID), zap.Error(e))
@@ -1788,6 +1815,8 @@ func (s *Service) handleListDirectories(c *gin.Context) {
 				s.logger.Warn("Failed to parse directory config", zap.String("id", d.ID), zap.Error(err))
 			}
 		}
+		// The credential never leaves the server, sealed or not.
+		directory.RedactSecrets(d.Config)
 		dirs = append(dirs, d)
 	}
 	if dirs == nil {
@@ -1890,6 +1919,11 @@ func (s *Service) handleCreateDirectory(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+	directory.StripSecretFlags(dir.Config)
+	if verrs := directory.SealedInput(dir.Config); len(verrs) > 0 {
+		c.JSON(400, gin.H{"error": "validation failed", "fields": verrs})
+		return
+	}
 
 	if verrs := validateDirectoryIntegration(dir); len(verrs) > 0 {
 		c.JSON(400, gin.H{"error": "validation failed", "fields": verrs})
@@ -1901,6 +1935,12 @@ func (s *Service) handleCreateDirectory(c *gin.Context) {
 	dir.CreatedAt = time.Now()
 	dir.UpdatedAt = time.Now()
 
+	// Sealed before it is stored; see internal/directory/secrets.go.
+	if err := directory.SealSecrets(s.dirSecrets, dir.Config); err != nil {
+		s.logger.Error("could not seal a directory's credential", zap.Error(err))
+		c.JSON(500, gin.H{"error": "Failed to create directory integration"})
+		return
+	}
 	configBytes, _ := json.Marshal(dir.Config)
 
 	_, err = s.db.Pool.Exec(c.Request.Context(), `
@@ -1912,6 +1952,7 @@ func (s *Service) handleCreateDirectory(c *gin.Context) {
 		return
 	}
 
+	directory.RedactSecrets(dir.Config)
 	c.JSON(201, dir)
 }
 
@@ -1935,6 +1976,7 @@ func (s *Service) handleGetDirectory(c *gin.Context) {
 	if len(configBytes) > 0 {
 		json.Unmarshal(configBytes, &d.Config)
 	}
+	directory.RedactSecrets(d.Config)
 	c.JSON(200, d)
 }
 
@@ -1950,12 +1992,48 @@ func (s *Service) handleUpdateDirectory(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+	directory.StripSecretFlags(dir.Config)
+	if verrs := directory.SealedInput(dir.Config); len(verrs) > 0 {
+		c.JSON(400, gin.H{"error": "validation failed", "fields": verrs})
+		return
+	}
+	if dir.Config == nil {
+		dir.Config = map[string]interface{}{}
+	}
 
-	if verrs := validateDirectoryIntegration(dir); len(verrs) > 0 {
+	// No read returns the credential, so a client cannot send it back: an
+	// update that leaves it out keeps the stored one, for the same target
+	// only (directory.KeepStoredSecret).
+	var storedType string
+	var storedConfig []byte
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT type, config FROM directory_integrations WHERE id = $1 AND org_id = $2`, id, org.ID).Scan(&storedType, &storedConfig); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(404, gin.H{"error": "Directory not found"})
+			return
+		}
+		s.logger.Error("could not read the stored directory", logsafe.String("id", id), zap.Error(err))
+		c.JSON(500, gin.H{"error": "Failed to update directory"})
+		return
+	}
+	keepErrs := directory.KeepStoredSecret(s.dirSecrets, storedType, storedConfig, dir.Type, dir.Config)
+
+	verrs := validateDirectoryIntegration(dir)
+	for field, msg := range keepErrs {
+		verrs[field] = msg
+	}
+	if len(verrs) > 0 {
 		c.JSON(400, gin.H{"error": "validation failed", "fields": verrs})
 		return
 	}
 
+	// Sealed before it is stored, including one an earlier release stored in
+	// plaintext and this update kept.
+	if err := directory.SealSecrets(s.dirSecrets, dir.Config); err != nil {
+		s.logger.Error("could not seal a directory's credential", logsafe.String("id", id), zap.Error(err))
+		c.JSON(500, gin.H{"error": "Failed to update directory"})
+		return
+	}
 	configBytes, _ := json.Marshal(dir.Config)
 
 	result, err := s.db.Pool.Exec(c.Request.Context(), `
@@ -2064,6 +2142,12 @@ func (s *Service) handleTestConnection(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "Directory not found"})
 		return
 	}
+	// The test signs in with the stored credential, which is stored sealed.
+	// One this service cannot open is refused, not sent.
+	if configBytes, err = directory.OpenSecrets(s.dirSecrets, configBytes); err != nil {
+		c.JSON(400, gin.H{"error": err.Error(), "success": false})
+		return
+	}
 
 	// Same shape, same lie: with no directory service there is nothing to test
 	// against, and answering "Connection test successful" told an operator
@@ -2113,6 +2197,15 @@ func (s *Service) handleDiagnoseDirectory(c *gin.Context) {
 		if dirType == "" {
 			dirType = "ldap"
 		}
+		// Used as it came: a sealed credential in a request body is refused,
+		// so this cannot open one sealed for another directory.
+		var inline map[string]interface{}
+		if json.Unmarshal(body.Config, &inline) == nil {
+			if verrs := directory.SealedInput(inline); len(verrs) > 0 {
+				c.JSON(400, gin.H{"error": "validation failed", "fields": verrs})
+				return
+			}
+		}
 		configBytes = body.Config
 	} else {
 		id := c.Param("id")
@@ -2126,6 +2219,14 @@ func (s *Service) handleDiagnoseDirectory(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Directory not found"})
 			return
 		}
+		// The diagnostics bind with the stored credential, which is stored
+		// sealed.
+		opened, err := directory.OpenSecrets(s.dirSecrets, configBytes)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		configBytes = opened
 	}
 
 	result, err := s.directoryService.Diagnose(c.Request.Context(), dirType, configBytes)
@@ -2665,19 +2766,24 @@ func (s *Service) handleCreateWebhook(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "webhook URL must use HTTPS"})
 		return
 	}
-	// Block internal/private IPs (SSRF prevention)
-	host := parsedURL.Hostname()
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0.0.0.0" ||
-		strings.HasPrefix(host, "10.") || strings.HasPrefix(host, "192.168.") || strings.HasPrefix(host, "172.") {
-		c.JSON(400, gin.H{"error": "webhook URL must not point to internal addresses"})
-		return
-	}
 
 	userID, _ := c.Get("user_id")
 	createdBy, _ := userID.(string)
 
+	// Where the URL may point is the webhook service's decision (the outbound
+	// guard in internal/common/netutil): it resolves the name and refuses
+	// loopback, private, link-local, shared and reserved addresses, in every
+	// spelling, before anything is stored -- and again at every delivery.
 	sub, err := s.webhookService.CreateSubscription(c.Request.Context(), req.Name, req.URL, req.Secret, req.Events, createdBy)
 	if err != nil {
+		var refused *netutil.DestinationError
+		if errors.As(err, &refused) {
+			c.JSON(400, gin.H{
+				"error": "webhook URL is not allowed: " + refused.Error(),
+				"hint":  "webhooks are delivered to public addresses only; an operator can allow internal ones with " + netutil.OutboundAllowlistEnv,
+			})
+			return
+		}
 		s.logger.Error("failed to create webhook", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return

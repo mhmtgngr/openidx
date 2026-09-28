@@ -3,6 +3,7 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -232,10 +233,13 @@ func (s *Service) DeleteSSFStream(ctx context.Context, orgID, id string) error {
 		return err
 	}
 	if ct.RowsAffected() == 0 {
-		return fmt.Errorf("stream not found")
+		return errSSFStreamNotFound
 	}
 	return nil
 }
+
+// errSSFStreamNotFound: the organization has no stream with that id.
+var errSSFStreamNotFound = errors.New("stream not found")
 
 // --- helpers ---
 

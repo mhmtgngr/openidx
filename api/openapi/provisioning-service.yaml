@@ -10,7 +10,13 @@ info:
     `x-openidx-handler` extension naming the Go handler that serves them; where a
     payload shape is not yet pinned the body is shown as a free-form JSON object
     rather than invented.
-  version: 1.38.0
+
+    Every /api/v1/provisioning route -- the provisioning rules and the
+    outbound SCIM targets, their connection test and their sync -- needs the
+    admin or super_admin role, held in the token's organization; any other
+    caller gets 403. The /scim/v2 routes take an OpenIDX bearer token, as the
+    upstream identity provider's SCIM client presents it.
+  version: 1.39.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -316,6 +322,10 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ProvisioningRule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       tags: [Provisioning Rules]
       summary: Create provisioning rule
@@ -329,6 +339,10 @@ paths:
       responses:
         '201':
           description: Rule created
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/provisioning/rules/{id}:
     get:
@@ -344,6 +358,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProvisioningRule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     put:
       tags: [Provisioning Rules]
       summary: Update provisioning rule
@@ -359,6 +377,10 @@ paths:
       responses:
         '200':
           description: Rule updated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     delete:
       tags: [Provisioning Rules]
       summary: Delete provisioning rule
@@ -368,6 +390,10 @@ paths:
       responses:
         '204':
           description: Rule deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/provisioning/targets:
     get:
@@ -392,6 +418,15 @@ paths:
     post:
       tags: [Outbound SCIM Targets]
       summary: Create target
+      description: |
+        base_url is where the worker sends this organization's users, with the
+        target's credentials, so it must point at the internet: its host is resolved, and a URL that names or resolves to a loopback,
+        private, link-local (169.254.169.254 included), shared (100.64.0.0/10),
+        unspecified, multicast or reserved address -- in any spelling, IPv4-mapped,
+        NAT64 and 6to4 included -- is refused with 400 and nothing is stored.
+        The same check is made at every connection, and redirects are not
+        followed. OIDX_OUTBOUND_ALLOWLIST (docs/docs/deployment/configuration.md)
+        is the operator's list of internal destinations allowed anyway.
       operationId: createTarget
       x-openidx-handler: internal/provisioning.(*Service).handleCreateTarget
       requestBody:
@@ -468,6 +503,9 @@ paths:
     put:
       tags: [Outbound SCIM Targets]
       summary: Update target
+      description: |
+        A new base_url is held to the rule of POST /api/v1/provisioning/targets:
+        an internal destination is refused with 400 and the target is unchanged.
       operationId: updateTarget
       x-openidx-handler: internal/provisioning.(*Service).handleUpdateTarget
       requestBody:
@@ -561,6 +599,11 @@ paths:
     post:
       tags: [Outbound SCIM Targets]
       summary: Test target
+      description: |
+        Probes the target's /ServiceProviderConfig. A target whose base_url the
+        outbound rule refuses (one saved before it existed, or a name that now
+        resolves inward) is not contacted; the answer is ok false with the
+        refusal as the error.
       operationId: testTarget
       x-openidx-handler: internal/provisioning.(*Service).handleTestTarget
       requestBody:

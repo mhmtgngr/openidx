@@ -32,6 +32,12 @@ import (
 // LOGIN DOCUMENT -- not in the static-asset block, which serves no document
 // and keeps the narrower policy.
 //
+// Since then every config that serves the console sets a policy that refuses
+// inline script, the image's own and the lite install's included, because
+// the console keeps its tokens in localStorage (scripts/check-console-csp.sh
+// holds them to it). Each is listed below, so none of them can shut the
+// challenge out.
+//
 // The guard is derived in both directions: the allowance must exist while the
 // console uses Turnstile, and the console's use of it is read from the console
 // rather than assumed, so removing the widget makes this test say the
@@ -44,6 +50,9 @@ const challengeOrigin = "https://challenges.cloudflare.com"
 var documentCSPConfigs = []string{
 	"oidx-nginx/nginx.conf",
 	"nginx/conf.d/openidx.tdv.org.conf",
+	"nginx/admin-console.conf",
+	"nginx/admin-console.lite.conf",
+	"../../web/admin-console/nginx.conf",
 }
 
 func consoleUsesTurnstile(t *testing.T) bool {
@@ -126,26 +135,51 @@ func TestTheChallengeAllowanceIsNotLeftBehind(t *testing.T) {
 	}
 }
 
-// And the block that must NOT have been widened. The static-asset location
+// And the blocks that must NOT have been widened. The static-asset location
 // serves javascript and images, never the login document, so it keeps the
 // narrow policy -- widening it would buy nothing and cost the distinction.
 func TestTheStaticAssetPolicyStaysNarrow(t *testing.T) {
-	b, err := os.ReadFile("oidx-nginx/nginx.conf")
-	if err != nil {
-		t.Fatalf("read oidx-nginx/nginx.conf: %v", err)
-	}
-	src := string(b)
+	for _, rel := range documentCSPConfigs {
+		b, err := os.ReadFile(rel)
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		src := string(b)
 
-	i := strings.Index(src, `location ~* \.(js|css|png`)
-	if i < 0 {
-		t.Fatal("the static-asset location is no longer recognisable; this guard is checking nothing")
+		i := strings.Index(src, `location ~* \.(js|css|png`)
+		if i < 0 {
+			t.Fatalf("%s: the static-asset location is no longer recognisable; this guard is checking nothing", rel)
+		}
+		body, ok := braceBlock(src[i:])
+		if !ok {
+			t.Fatalf("%s: could not find the end of the static-asset location", rel)
+		}
+		if strings.Contains(body, challengeOrigin) {
+			t.Errorf("%s: the static-asset location now allows %s. It serves no document and renders no widget; "+
+				"the allowance belongs only where the login page is served.", rel, challengeOrigin)
+		}
 	}
-	end := strings.Index(src[i:], "\n    }")
-	if end < 0 {
-		t.Fatal("could not find the end of the static-asset location")
+}
+
+// braceBlock returns s from its first "{" to the brace that closes it. The
+// configs nest the static-asset location at different depths, so its end is
+// found by counting braces rather than by indentation.
+func braceBlock(s string) (string, bool) {
+	open := strings.Index(s, "{")
+	if open < 0 {
+		return "", false
 	}
-	if strings.Contains(src[i:i+end], challengeOrigin) {
-		t.Errorf("the static-asset location now allows %s. It serves no document and renders no widget; "+
-			"the allowance belongs only where the login page is served.", challengeOrigin)
+	depth := 0
+	for j := open; j < len(s); j++ {
+		switch s[j] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[open : j+1], true
+			}
+		}
 	}
+	return "", false
 }

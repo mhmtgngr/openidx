@@ -43,6 +43,7 @@ CREATE TABLE magic_links (
 	user_id UUID NOT NULL,
 	email TEXT NOT NULL,
 	token_hash TEXT NOT NULL,
+	token_lookup VARCHAR(64) UNIQUE,
 	purpose TEXT NOT NULL,
 	redirect_url TEXT,
 	ip_address TEXT,

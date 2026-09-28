@@ -114,6 +114,21 @@ const en = {
     userLink: {
       title: "Open this user's Access 360 (IAM · PAM · Network)",
     },
+    factorProof: {
+      title: 'Confirm it is you',
+      descriptionPassword: 'Enter your current password to make this change.',
+      descriptionCode: 'Enter a code from your authenticator app to make this change.',
+      descriptionEither:
+        'Enter your current password, or a code from your authenticator app, to make this change.',
+      passwordLabel: 'Current password',
+      codeLabel: 'Authenticator code',
+      confirm: 'Confirm',
+      failedPassword: 'That password is not correct.',
+      failedEither: 'That password or code is not correct. A code works once, so wait for the next one.',
+      locked: 'Too many attempts. Wait a few minutes and try again.',
+      unavailable:
+        'This change needs your password, and your account has none here. Ask an administrator to make the change.',
+    },
     confirmAction: {
       confirm: 'Confirm',
       reasonLabel: 'Reason (required)',
@@ -488,6 +503,10 @@ const en = {
       linkRefusedRisk: 'This sign-in link cannot be used from here. Sign in with your password.',
       linkInvalid: 'This sign-in link is invalid, expired or already used. Request a new one.',
       linkSessionExpired: 'This sign-in request has expired. Start again from the application.',
+      ssoNeedsEnrollment:
+        'Your organization requires a sign-in method you have not added, and the time to add one has passed. Ask an administrator for a bypass code.',
+      ssoRefusedRisk: 'This sign-in was refused from here. Try again from a device you have used before, or ask an administrator.',
+      ssoFailed: 'This sign-in could not be completed. Try again.',
     },
     resume: {
       checking: 'Checking your existing session…',
@@ -3369,6 +3388,7 @@ const en = {
       registered: 'Registered {{date}}',
       lastUsed: 'Last used {{date}}',
       usedTimes: 'Used {{n}} times',
+      remove: 'Remove security key',
       toasts: {
         loadFailed: 'Failed to load security keys',
         registered: 'Security key registered successfully',
@@ -3417,6 +3437,7 @@ const en = {
       trusted: 'Trusted',
       enrolled: 'Enrolled {{date}}',
       lastUsed: 'Last used {{date}}',
+      remove: 'Remove device',
       toasts: {
         loadFailed: 'Failed to load push devices',
         enrolled: 'Push device enrolled successfully',
@@ -7969,7 +7990,7 @@ const en = {
       },
       domains: {
         title: 'Custom Domains',
-        desc: 'Manage domains for this tenant',
+        desc: 'The sign-in page served at a verified domain shows this organization\'s branding.',
         add: 'Add Domain',
         adding: 'Adding...',
         emptyTitle: 'No domains configured',
@@ -7987,10 +8008,13 @@ const en = {
           subdomain: 'Subdomain',
           custom: 'Custom Domain',
         },
-        verifyTitle: 'Verify this domain?',
-        verifyDesc:
-          'This marks {{domain}} as a verified, trusted domain for this tenant. Verified domains are trusted for branded URLs and identity binding.',
-        verifyConfirm: 'Verify',
+        verify: 'Verify',
+        verifyAria: 'Verify {{domain}}',
+        recordHint:
+          'Publish this TXT record in the DNS of {{domain}}, then verify. The record proves that this organization controls the domain.',
+        recordType: 'Type',
+        recordName: 'Name',
+        recordValue: 'Value',
         deleteTitle: 'Delete this domain?',
         deleteDesc:
           'This removes {{domain}} from the tenant. Any branded URLs relying on it will stop working.',
@@ -8004,11 +8028,17 @@ const en = {
         settingsFailed: 'Failed to save settings',
         domainAdded: 'Domain added',
         domainAddFailed: 'Failed to add domain',
+        domainInvalid: 'Enter a DNS name such as login.example.com.',
+        domainConflict:
+          'This organization has already added the domain, or another organization has verified it.',
         domainVerified: 'Domain verified',
         verifyFailed: 'Verification failed',
+        recordNotFound:
+          'OpenIDX did not find the TXT record. Publish it, allow time for DNS to update, and try again.',
+        verifiedElsewhere: 'Another organization has verified this domain.',
+        lookupFailed: 'The DNS lookup failed. Try again later.',
         domainRemoved: 'Domain removed',
         domainDeleteFailed: 'Failed to delete domain',
-        tokenCopied: 'Token copied',
       },
     },
     // Admin device inventory (the operator view; `myDevices` is the
@@ -8421,10 +8451,16 @@ const en = {
         createFailed: 'Failed to create organization',
         updated: 'Organization updated',
         updateFailed: 'Failed to update organization',
+        platformAdminFields:
+          'Only a platform administrator can change an organization\'s plan, status or limits.',
         deleted: 'Organization deleted',
         memberAdded: 'Member added',
         memberAddFailed: 'Failed to add member',
+        memberInvalid: 'Enter the ID of a user.',
+        memberNotFound: 'No user with this ID belongs to this organization.',
+        lastOwner: 'An organization must keep at least one owner.',
         memberRemoved: 'Member removed',
+        memberRemoveFailed: 'Failed to remove member',
       },
     },
     // Audit archival. Byte-size units (B/KB/MB/GB) are unit symbols and stay
@@ -8975,6 +9011,7 @@ const en = {
         htmlBody: 'HTML Body',
         textBody: 'Plain Text Body',
         previewLabel: 'Preview',
+        previewFrame: 'Email preview',
         empty: 'Select a template from the left to edit',
       },
     },

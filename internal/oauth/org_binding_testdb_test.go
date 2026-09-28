@@ -22,8 +22,10 @@ import (
 // adminAPIAfterAuth is the chain cmd/admin-api mounts on /api/v1: the bearer is
 // authenticated first and the tenant resolver runs after it, with the
 // platform-admin predicate and the mandatory cross-org audit hook live. The
-// route answers with the organization the request was scoped to.
-func (h *tokenHarness) adminAPIAfterAuth() *gin.Engine {
+// route answers with the organization the request was scoped to. mounts add
+// further route tables to the same group, as cmd/admin-api adds the admin
+// service's beside the organization API's.
+func (h *tokenHarness) adminAPIAfterAuth(mounts ...func(*gin.RouterGroup)) *gin.Engine {
 	r := gin.New()
 	v1 := r.Group("/api/v1")
 	v1.Use(middleware.AuthWithAPIKey(h.jwksURL, nil))
@@ -38,6 +40,9 @@ func (h *tokenHarness) adminAPIAfterAuth() *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"org_id": org.ID})
 	})
 	organization.RegisterRoutes(v1, h.orgService)
+	for _, mount := range mounts {
+		mount(v1)
+	}
 	return r
 }
 

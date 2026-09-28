@@ -216,16 +216,18 @@ func (s *Service) handlePreviewEmailTemplate(c *gin.Context) {
 		return
 	}
 
-	// Sample data for preview
+	// Sample data for preview. The links are on a reserved name that never
+	// resolves (RFC 6761): they are examples, and they used to point at a
+	// domain the project does not own, one click from an administrator.
 	sampleData := map[string]string{
 		"FirstName":     "John",
 		"LastName":      "Doe",
 		"Username":      "jdoe",
 		"Email":         "jdoe@example.com",
-		"LoginURL":      "https://app.openidx.io/login",
-		"ResetLink":     "https://app.openidx.io/reset?token=sample",
-		"VerifyLink":    "https://app.openidx.io/verify?token=sample",
-		"InviteLink":    "https://app.openidx.io/invite?token=sample",
+		"LoginURL":      "https://app.example.invalid/login",
+		"ResetLink":     "https://app.example.invalid/reset?token=sample",
+		"VerifyLink":    "https://app.example.invalid/verify?token=sample",
+		"InviteLink":    "https://app.example.invalid/invite?token=sample",
 		"InviterName":   "Admin User",
 		"ExpiryDate":    time.Now().Add(72 * time.Hour).Format("January 2, 2006"),
 		"ExpiryMinutes": "15",

@@ -19,7 +19,7 @@ SAML messages OpenIDX does receive: AuthnRequests and LogoutRequests.
 | `GET /saml/idp/sso`, `POST /saml/idp/sso` | HTTP-Redirect, HTTP-POST | SP-initiated sign-on (AuthnRequest in, Response out over HTTP-POST) |
 | `GET /saml/idp/sso/unsolicited?sp_entity_id=<id>&RelayState=<state>` | | IdP-initiated sign-on to a registered service provider |
 | `GET /saml/idp/slo`, `POST /saml/idp/slo` | HTTP-Redirect, HTTP-POST | Single Logout: a LogoutRequest from an SP, or a request from the signed-in user to log out everywhere |
-| `/api/v1/saml/service-providers` | | Management API: register, update, import metadata, rotate certificates. Needs the `admin` or `super_admin` role; any other caller gets `403` |
+| `/api/v1/saml/service-providers` | | Management API: register, update, import metadata, rotate certificates. Needs the `admin` or `super_admin` role; any other caller gets `403`. With `STEPUP_GATE` on, a write also needs a recently verified second factor, as admin-api's writes do (`403 step_up_required`) |
 
 The code is in `internal/oauth/saml.go`, `internal/oauth/saml_slo.go`,
 `internal/oauth/saml_sp.go` and `internal/oauth/saml_metadata.go`.
@@ -105,6 +105,13 @@ the SP's metadata. It reads the signing and encryption `KeyDescriptor`s, the
 HTTP-POST ACS URL, the HTTP-Redirect SLO URL, and `AuthnRequestsSigned`.
 Migration 204 (`internal/migrations/sql_v204.go`) adds `encryption_certificate`
 and `require_signed_authn_requests`.
+
+A `metadata_url` is fetched from inside your network, so it goes through the
+outbound guard (`internal/common/netutil/outbound.go`): a URL that names or
+resolves to a loopback, private, link-local, shared or reserved address, or
+redirects to one, is refused with 400 and nothing is registered. A service
+provider that publishes its metadata on an internal host needs that host in
+`OIDX_OUTBOUND_ALLOWLIST`, or its metadata pasted as `metadata_xml`.
 
 ## Interoperability testing
 

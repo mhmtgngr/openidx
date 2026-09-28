@@ -108,7 +108,8 @@ Behavior (implemented in `internal/access/ziti_endpoints.go`):
   today's behavior, and errors surface unchanged.
 - The state is visible in **Admin Console → Ziti Network → Connection**
   ("HA controller cluster: n/m healthy") and on
-  `GET /api/v1/access/ziti/status` (`ha`, `controller_endpoints`).
+  `GET /api/v1/access/ziti/status` (`ha`, `controller_endpoints`), which an
+  install administrator (an admin of the default organization) gets.
 
 The SDK data plane needs no such list: an enrolled identity file carries every
 controller address and `sdk-golang` fails over on its own.

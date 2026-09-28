@@ -27,7 +27,7 @@ decision.
 ### M0 — Clean-up and definition (week of 2026-09-21) · [#978](https://github.com/mhmtgngr/openidx/issues/978)
 
 - [x] SECURITY.md sends reports through GitHub private vulnerability reporting.
-  The dead `openidx.io` addresses and the bounty and SLA promises are removed.
+  The dead `openidx.io` addresses and the bounty and SLA promises are removed. <!-- domain-ok: records their removal -->
 - [x] The README links work, and the status note is honest.
 - [x] Product defaults no longer name the maintainer's own site
   ([#977](https://github.com/mhmtgngr/openidx/issues/977) covers the rest).

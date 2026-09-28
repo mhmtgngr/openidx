@@ -10,6 +10,8 @@ and without holding a user's long-lived credentials.
 `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` on the token
 endpoint. A client trades a token it holds (the **subject token**) for a new
 one, optionally recording the acting party (the **actor token**) for delegation.
+The new token is the subject's: it carries the subject's user, roles and
+groups, for the audience the exchange issues it for.
 
 ### Request
 
@@ -29,18 +31,44 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 
 ### Semantics
 
+- **Client authentication** — the requesting client must be a confidential
+  client and present its secret, in the form (`client_secret_post`) or as
+  HTTP Basic (`client_secret_basic`), not both. A public client, a client
+  without a secret, and a client the console registered as **Native/Mobile
+  App** are refused with `401 invalid_client`, since the secret of an
+  application installed on a device proves nothing about who is calling.
+- **Client authorization** — the requesting client must be registered with the
+  `urn:ietf:params:oauth:grant-type:token-exchange` grant; otherwise
+  `400 unauthorized_client`.
 - **Subject validation** — the subject token must be a live, RS256 access
-  token OpenIDX issued (own `kid`). An ID token is refused, as subject or as
-  actor. Cross-issuer federation is out of scope.
+  token OpenIDX issued (own `kid`), bound to the organization the request is
+  for, and not revoked: not by `/oauth/revoke` or a sign-out, and not by the
+  user's revocation cutoff (sign-out everywhere, the kill switch,
+  deprovisioning). An ID token is refused, as subject or as actor, and so is a
+  token of another organization. Cross-issuer federation is out of scope.
+- **Audience** — `audience` or `resource`, else the requesting client. The
+  audience must be the requesting client itself or one listed in its
+  `token_exchange_audiences`, which an administrator sets through
+  `POST`/`PUT /api/v1/oauth/clients`. Anything else, or two different targets
+  in one request, is refused with `400 invalid_target`. A client lists no
+  audience until an administrator gives it one; dynamic registration cannot.
 - **Scope narrowing** — the issued token's scope is the intersection of the
   requested scope with the subject's. Requesting a scope the subject lacks drops
   it; it never escalates. Empty request keeps the subject's scope.
-- **Audience** — from `audience`/`resource`, else the requesting client.
+- **Roles and organization** — the issued token carries the subject token's
+  roles, groups, email and name, and is bound to the same organization.
+- **Lifetime** — the requesting client's access-token lifetime, but never
+  past the subject token's own expiry. Exchanging an exchanged token does not
+  extend it either.
+- **Revocation** — the issued token dates from its subject token's grant
+  (`granted_at_us`), so a revocation cutoff that revokes the subject token
+  revokes it too. Revoking only the subject token with `/oauth/revoke`, after
+  the exchange, does not revoke the issued token; it expires with the subject
+  token at the latest.
 - **Delegation** — when an `actor_token` is present, the issued token carries an
-  `act` claim `{sub, client_id}` (RFC 8693 §4.1). A prior `act` on the subject
-  token is nested for chained delegation.
-- **Client authorization** — the requesting client must be registered with the
-  `urn:ietf:params:oauth:grant-type:token-exchange` grant.
+  `act` claim `{sub, client_id}` (RFC 8693 §4.1). The actor token is held to the
+  subject token's rules. A prior `act` on the subject token is nested for
+  chained delegation.
 - **OpenIDX API access** — the issued token carries the `openidx_api` claim,
   which OpenIDX's own APIs require, only when the requesting client may call
   those APIs and the subject token carried the claim (see
@@ -77,7 +105,9 @@ POST /oauth/register
   machine grants (`client_credentials`/`token-exchange`). URIs must be `https`,
   loopback (`http://localhost`, `http://127.0.0.1`), or a native custom scheme.
 - `token_endpoint_auth_method: none` yields a **public** client (no secret,
-  PKCE required); otherwise **confidential** (secret minted).
+  PKCE required); otherwise **confidential** (secret minted). A public client
+  cannot register for the `client_credentials` or token-exchange grant (`400
+  invalid_client_metadata`): both need a client that authenticates.
 - A registered client may not call OpenIDX's own APIs: its access tokens are
   refused by the admin, identity, governance and other OpenIDX APIs and the
   MCP gateway until the application's "May call the OpenIDX API" setting
@@ -101,13 +131,28 @@ POST /oauth/register
 
 ### Gating
 
-Registration is **open by default** (dev/first-run). Set
-`DCR_INITIAL_ACCESS_TOKEN` to require a bearer initial access token:
+Registration is **closed by default**. Set `DCR_INITIAL_ACCESS_TOKEN` to open
+it to holders of that bearer initial access token:
 
 ```
 POST /oauth/register
 Authorization: Bearer <initial-access-token>
 ```
+
+With no token set, `DCR_ALLOW_OPEN_REGISTRATION=true` opens it to anyone.
+
+### Organization
+
+A registration creates its client in one organization: `DCR_ORG_ID`, or
+`DEFAULT_ORG_ID` when that is not set. The initial access token is one for the
+whole install, so it is not allowed to choose the organization. A registration
+request that resolves to any other organization, by `X-Org-Slug` or by a
+tenant's host, is answered `401 invalid_token`, like one without the token,
+and creates nothing. A request that names no organization resolves to
+`DEFAULT_ORG_ID`.
+
+An organization other than the one `DCR_ORG_ID` names registers clients through
+`/api/v1/oauth/clients`, as its administrators.
 
 ## Client management (RFC 7592)
 
@@ -132,4 +177,7 @@ All require `Authorization: Bearer <registration_access_token>`.
 ## Persistence
 
 Migration **v97** adds `oauth_registration_tokens` (one hashed registration
-access token per client). Token exchange is stateless — no schema.
+access token per client). Migration **v209** adds
+`oauth_clients.token_exchange_audiences`, the audiences each client may obtain
+through token exchange; it is empty for every client that existed before it.
+Token exchange itself is stateless.

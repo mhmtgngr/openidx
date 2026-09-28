@@ -15,6 +15,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/revocation"
 )
 
 // exchangeTestOrg is the organization the exchange tests run in.
@@ -287,5 +288,117 @@ func TestAnExchangedTokenCallsTheAPIOnlyIfItsClientAndItsSubjectMay(t *testing.T
 				t.Fatalf("issued token may call the API = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// An exchanged token lives no longer than its subject token, and dates from
+// the subject token's grant: the two halves of "never more than the subject
+// token had" that are about time rather than content.
+func TestAnExchangedTokenEndsWithItsSubjectAndDatesFromItsGrant(t *testing.T) {
+	ctx := NewTestOIDCContext(t)
+	defer ctx.Cleanup()
+	svc := ctx.Service
+	client := &OAuthClient{ClientID: "svc-a", AccessTokenLifetime: 3600}
+
+	iat := time.Now().Add(-time.Minute)
+	subject := jwt.MapClaims{
+		"sub": "alice", "scope": "read",
+		"iat": float64(iat.Unix()), "exp": float64(time.Now().Add(90 * time.Second).Unix()),
+		revocation.GrantedAtClaim: float64(iat.UnixMicro()),
+	}
+	tok, expiresIn, err := svc.issueExchangedToken(exchangeContext(), "alice", "svc-a", "read", subject, nil, client)
+	if err != nil {
+		t.Fatalf("issueExchangedToken: %v", err)
+	}
+	if expiresIn > 90 {
+		t.Errorf("expires_in %d, beyond the subject token's remaining 90 seconds", expiresIn)
+	}
+	claims, err := svc.validateExchangeToken(orgctx.With(context.Background(), orgctx.Org{ID: exchangeTestOrg}), tok)
+	if err != nil {
+		t.Fatalf("validate the issued token: %v", err)
+	}
+	if exp, _ := claims.GetExpirationTime(); exp == nil || exp.Unix() > int64(subject["exp"].(float64)) {
+		t.Errorf("issued exp %v, after the subject token's", exp)
+	}
+	if got := claims[revocation.GrantedAtClaim]; got != float64(iat.UnixMicro()) {
+		t.Errorf("issued %s = %v, want the subject token's %d", revocation.GrantedAtClaim, got, iat.UnixMicro())
+	}
+
+	// A subject token with no grant time of its own dates from the start of
+	// its iat second, which is how the revocation cutoff reads it.
+	delete(subject, revocation.GrantedAtClaim)
+	tok, _, err = svc.issueExchangedToken(exchangeContext(), "alice", "svc-a", "read", subject, nil, client)
+	if err != nil {
+		t.Fatalf("issueExchangedToken: %v", err)
+	}
+	claims, _ = svc.validateExchangeToken(orgctx.With(context.Background(), orgctx.Org{ID: exchangeTestOrg}), tok)
+	if got := claims[revocation.GrantedAtClaim]; got != float64(iat.Unix()*1e6) {
+		t.Errorf("issued %s = %v, want the start of the subject token's second %d", revocation.GrantedAtClaim, got, iat.Unix()*1e6)
+	}
+}
+
+// The audience list an administrator gives a client is checked and stored
+// trimmed and without duplicates; nil means "leave it as it is" and empty
+// means "none".
+func TestTokenExchangeAudienceLists(t *testing.T) {
+	list := func(v ...string) *[]string { return &v }
+	for _, bad := range []*[]string{list(""), list("  "), list(strings.Repeat("a", maxTokenExchangeAudienceLength+1))} {
+		if err := validateTokenExchangeAudiences(bad); !errors.Is(err, ErrInvalidTokenExchangeAudiences) {
+			t.Errorf("validate %q: %v, want ErrInvalidTokenExchangeAudiences", *bad, err)
+		}
+	}
+	tooMany := make([]string, maxTokenExchangeAudiences+1)
+	for i := range tooMany {
+		tooMany[i] = "https://aud.example.test/" + strings.Repeat("x", i)
+	}
+	if err := validateTokenExchangeAudiences(&tooMany); !errors.Is(err, ErrInvalidTokenExchangeAudiences) {
+		t.Errorf("validate %d entries: %v", len(tooMany), err)
+	}
+	for _, ok := range []*[]string{nil, list(), list("https://payroll.example.test", "svc-b")} {
+		if err := validateTokenExchangeAudiences(ok); err != nil {
+			t.Errorf("validate %v: %v", ok, err)
+		}
+	}
+	if got := marshalTokenExchangeAudiences(nil); got != nil {
+		t.Errorf("nil list stored as %s, want NULL", got)
+	}
+	if got := string(marshalTokenExchangeAudiences(list())); got != "[]" {
+		t.Errorf("empty list stored as %s, want []", got)
+	}
+	if got := string(marshalTokenExchangeAudiences(list(" svc-b ", "svc-b", "https://payroll.example.test"))); got != `["svc-b","https://payroll.example.test"]` {
+		t.Errorf("stored as %s", got)
+	}
+
+	client := &OAuthClient{ClientID: "svc-a", TokenExchangeAudiences: list("svc-b")}
+	for aud, want := range map[string]bool{"svc-a": true, "svc-b": true, "svc-c": false, "": false} {
+		if got := client.mayExchangeFor(aud); got != want {
+			t.Errorf("mayExchangeFor(%q) = %v, want %v", aud, got, want)
+		}
+	}
+	if (&OAuthClient{ClientID: "svc-a"}).mayExchangeFor("svc-b") {
+		t.Error("a client that lists nothing may exchange for another audience")
+	}
+}
+
+// A client that can keep a secret is one registered with a secret and not as
+// a client that cannot: the dynamic registration's and the seeds' "public",
+// and the console's "native".
+func TestWhichClientsAreConfidential(t *testing.T) {
+	for _, tc := range []struct {
+		typ, secret string
+		want        bool
+	}{
+		{"confidential", "s", true},
+		{"web", "s", true},
+		{"service", "s", true},
+		{"confidential", "", false},
+		{"public", "s", false},
+		{"Public", "s", false},
+		{"native", "s", false},
+		{"web", "", false},
+	} {
+		if got := (&OAuthClient{Type: tc.typ, ClientSecret: tc.secret}).isConfidential(); got != tc.want {
+			t.Errorf("type %q secret %q: confidential = %v, want %v", tc.typ, tc.secret, got, tc.want)
+		}
 	}
 }

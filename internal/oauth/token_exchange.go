@@ -2,6 +2,8 @@ package oauth
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/openidx/openidx/internal/common/cell"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/revocation"
 )
 
 // Token Exchange (RFC 8693).
@@ -28,6 +31,21 @@ import (
 // token): urn:ietf:params:oauth:token-type:access_token and :jwt. OpenIDX only
 // validates tokens it issued (RS256, its own kid), so cross-issuer federation is
 // intentionally out of scope for this build.
+//
+// WHO MAY ASK, AND FOR WHAT. The token this mints is a user's token -- their
+// subject, roles and groups -- for an audience the request names, so the grant
+// is held to three rules. The caller is a confidential client that proves it
+// with its secret (authenticateConfidentialClient) and is registered for the
+// grant: a public client's id is no secret, and anyone holding a user's token
+// could otherwise trade it through one. The audience is the client itself or
+// one an administrator listed for it (token_exchange_audiences): a token issued
+// to one application does not become a token for another because a request
+// named it. And the issued token carries no more than its subject token --
+// the same organization, a subset of its scope, the same roles, OpenIDX API
+// access only if both it and the client had it, and no longer a life. A
+// revoked subject or actor token is refused, and the issued token dates from
+// its subject token's grant, so the revocations that reach the one reach the
+// other.
 
 const (
 	grantTypeTokenExchange = "urn:ietf:params:oauth:grant-type:token-exchange"
@@ -38,12 +56,11 @@ const (
 
 // handleTokenExchangeGrant implements RFC 8693 §2.
 func (s *Service) handleTokenExchangeGrant(c *gin.Context) {
+	ctx := c.Request.Context()
 	subjectToken := c.PostForm("subject_token")
 	subjectTokenType := c.PostForm("subject_token_type")
 	actorToken := c.PostForm("actor_token")
 	actorTokenType := c.PostForm("actor_token_type")
-	requestedAudience := c.PostForm("audience")
-	requestedResource := c.PostForm("resource")
 	requestedScope := c.PostForm("scope")
 
 	if subjectToken == "" {
@@ -54,13 +71,16 @@ func (s *Service) handleTokenExchangeGrant(c *gin.Context) {
 		teError(c, "invalid_request", "unsupported subject_token_type")
 		return
 	}
+	if actorToken != "" && actorTokenType != "" && !isSupportedTokenType(actorTokenType) {
+		teError(c, "invalid_request", "unsupported actor_token_type")
+		return
+	}
 
-	// Authenticate the requesting client. Token exchange must be done by a
-	// registered client (confidential clients present a secret; public clients
-	// are allowed but must be registered with the token-exchange grant).
-	client, ok := s.authenticateExchangeClient(c)
-	if !ok {
-		teError(c, "invalid_client", "client authentication failed")
+	// The client first: nothing about the tokens is looked at for a caller that
+	// has not proven which client it is.
+	client, err := s.authenticateConfidentialClient(c)
+	if err != nil {
+		writeClientAuthError(c, err)
 		return
 	}
 	if !contains(client.GrantTypes, grantTypeTokenExchange) {
@@ -68,26 +88,45 @@ func (s *Service) handleTokenExchangeGrant(c *gin.Context) {
 		return
 	}
 
+	audience, ok := exchangeAudience(c, client)
+	if !ok {
+		teError(c, "invalid_target", "the requested audience is not one this client may obtain tokens for")
+		return
+	}
+
 	// Validate the subject token: it must be a live access token this service
-	// issued, in the organization this request is for.
-	subjectClaims, err := s.validateExchangeToken(c.Request.Context(), subjectToken)
+	// issued, in the organization this request is for, and not revoked.
+	subjectClaims, err := s.validateExchangeToken(ctx, subjectToken)
 	if err != nil {
 		teError(c, "invalid_grant", "subject_token is invalid or expired")
+		return
+	}
+	if revoked, err := s.presentedTokenRevoked(ctx, subjectToken, subjectClaims); err != nil {
+		s.logger.Warn("token exchange: revocation check failed", zap.Error(err))
+		writeServerOrUnavailable(c, err)
+		return
+	} else if revoked {
+		teError(c, "invalid_grant", "subject_token has been revoked")
 		return
 	}
 	subject, _ := subjectClaims["sub"].(string)
 
 	// Optional actor token (delegation). When present, it identifies the party
-	// acting on the subject's behalf and is recorded in the `act` claim.
+	// acting on the subject's behalf and is recorded in the `act` claim, so it
+	// is held to the subject token's rules.
 	var actorClaims jwt.MapClaims
 	if actorToken != "" {
-		if actorTokenType != "" && !isSupportedTokenType(actorTokenType) {
-			teError(c, "invalid_request", "unsupported actor_token_type")
-			return
-		}
-		actorClaims, err = s.validateExchangeToken(c.Request.Context(), actorToken)
+		actorClaims, err = s.validateExchangeToken(ctx, actorToken)
 		if err != nil {
 			teError(c, "invalid_grant", "actor_token is invalid or expired")
+			return
+		}
+		if revoked, err := s.presentedTokenRevoked(ctx, actorToken, actorClaims); err != nil {
+			s.logger.Warn("token exchange: revocation check failed", zap.Error(err))
+			writeServerOrUnavailable(c, err)
+			return
+		} else if revoked {
+			teError(c, "invalid_grant", "actor_token has been revoked")
 			return
 		}
 	}
@@ -97,9 +136,6 @@ func (s *Service) handleTokenExchangeGrant(c *gin.Context) {
 	// request keeps the subject's scope.
 	subjectScope, _ := subjectClaims["scope"].(string)
 	grantedScope := narrowScope(subjectScope, requestedScope)
-
-	// Audience: prefer the explicit audience/resource, else the requesting client.
-	audience := firstNonEmptyStr(requestedAudience, requestedResource, client.ClientID)
 
 	issued, expiresIn, err := s.issueExchangedToken(c, subject, audience, grantedScope, subjectClaims, actorClaims, client)
 	if err != nil {
@@ -124,29 +160,94 @@ func (s *Service) handleTokenExchangeGrant(c *gin.Context) {
 	})
 }
 
-// authenticateExchangeClient resolves + authenticates the requesting client
-// from client_id/client_secret (form or Basic).
-func (s *Service) authenticateExchangeClient(c *gin.Context) (*OAuthClient, bool) {
-	clientID := c.PostForm("client_id")
-	clientSecret := c.PostForm("client_secret")
-	if clientID == "" {
-		if id, secret, ok := c.Request.BasicAuth(); ok {
-			clientID, clientSecret = id, secret
+// exchangeAudience is the audience of the token an exchange issues: the one
+// target the request names in audience or resource (RFC 8693 §2.1), or the
+// requesting client when it names none. ok is false when the request names a
+// target the client may not obtain tokens for, or names more than one: the
+// issued token carries a single audience, and choosing one of several would
+// silently drop the others (RFC 8693 §2.2.2, invalid_target).
+func exchangeAudience(c *gin.Context, client *OAuthClient) (string, bool) {
+	var target string
+	for _, v := range append(c.PostFormArray("audience"), c.PostFormArray("resource")...) {
+		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		if target != "" && v != target {
+			return "", false
+		}
+		target = v
+	}
+	if target == "" {
+		return client.ClientID, true
+	}
+	return target, client.mayExchangeFor(target)
+}
+
+// mayExchangeFor reports whether token exchange may issue this client a token
+// for audience: its own client id, or one an administrator listed.
+func (c *OAuthClient) mayExchangeFor(audience string) bool {
+	if audience == c.ClientID {
+		return true
+	}
+	return c.TokenExchangeAudiences != nil && contains(*c.TokenExchangeAudiences, audience)
+}
+
+// maxTokenExchangeAudiences and maxTokenExchangeAudienceLength bound the list
+// an administrator gives a client. Both are generous for a list typed by hand;
+// they exist so the column cannot grow without limit.
+const (
+	maxTokenExchangeAudiences      = 50
+	maxTokenExchangeAudienceLength = 512
+)
+
+// ErrInvalidTokenExchangeAudiences refuses a list with an empty entry, an
+// entry too long, or too many entries. The client management API answers 400
+// on it.
+var ErrInvalidTokenExchangeAudiences = errors.New(
+	"token_exchange_audiences must hold at most 50 non-empty entries of at most 512 characters each")
+
+func validateTokenExchangeAudiences(audiences *[]string) error {
+	if audiences == nil {
+		return nil
+	}
+	if len(*audiences) > maxTokenExchangeAudiences {
+		return ErrInvalidTokenExchangeAudiences
+	}
+	for _, a := range *audiences {
+		if a = strings.TrimSpace(a); a == "" || len(a) > maxTokenExchangeAudienceLength {
+			return ErrInvalidTokenExchangeAudiences
 		}
 	}
-	if clientID == "" {
-		return nil, false
+	return nil
+}
+
+// marshalTokenExchangeAudiences renders the list for storage, trimmed and
+// without duplicates. A nil list is nil -- SQL NULL, which the update keeps
+// the stored value on -- and an empty one is `[]`, which clears it.
+func marshalTokenExchangeAudiences(audiences *[]string) []byte {
+	if audiences == nil {
+		return nil
 	}
-	client, err := s.GetClient(c.Request.Context(), clientID)
+	cleaned := make([]string, 0, len(*audiences))
+	for _, a := range *audiences {
+		if a = strings.TrimSpace(a); a != "" && !contains(cleaned, a) {
+			cleaned = append(cleaned, a)
+		}
+	}
+	out, err := json.Marshal(cleaned)
 	if err != nil {
-		return nil, false
+		return []byte("[]")
 	}
-	if client.Type == "confidential" {
-		if clientSecret == "" || client.ClientSecret != clientSecret {
-			return nil, false
-		}
-	}
-	return client, true
+	return out
+}
+
+// presentedTokenRevoked reports whether a token presented to the exchange was
+// revoked: by /oauth/revoke or a sign-out, or by the per-user cutoff a
+// sign-out-everywhere, a kill switch or a deprovisioning writes. An error means
+// the question could not be answered, and the exchange issues nothing.
+func (s *Service) presentedTokenRevoked(ctx context.Context, token string, claims jwt.MapClaims) (bool, error) {
+	userID, _ := claims["sub"].(string)
+	return s.IsAccessTokenRevoked(ctx, token, userID, tokenIssuedAt(claims))
 }
 
 // validateExchangeToken parses + verifies a token this service issued and
@@ -192,8 +293,17 @@ func (s *Service) issueExchangedToken(c *gin.Context, subject, audience, scope s
 	}
 	now := time.Now()
 	expiresIn := client.EffectiveAccessTokenLifetime()
-	if expiresIn <= 0 {
-		expiresIn = 3600
+	// No longer than the subject token lives. Minting a fresh lifetime made
+	// every exchange an extension, and an exchanged token is itself an access
+	// token that can be exchanged again: a token that never had to end.
+	if exp, err := subjectClaims.GetExpirationTime(); err == nil && exp != nil {
+		remaining := int(exp.Unix() - now.Unix())
+		if remaining <= 0 {
+			return "", 0, jwt.ErrTokenExpired
+		}
+		if remaining < expiresIn {
+			expiresIn = remaining
+		}
 	}
 
 	claims := jwt.MapClaims{
@@ -210,6 +320,14 @@ func (s *Service) issueExchangedToken(c *gin.Context, subject, audience, scope s
 		if v, ok := subjectClaims[k]; ok {
 			claims[k] = v
 		}
+	}
+
+	// The issued token dates from its subject token's grant, not from now
+	// (revocation.GrantedAtClaim): a per-user cutoff that revokes the subject
+	// token -- a sign-out everywhere, a kill switch, a deprovisioning, even one
+	// written between the check above and this line -- revokes this one too.
+	if from := tokenIssuedAt(subjectClaims); from.Seconds > 0 {
+		claims[revocation.GrantedAtClaim] = from.EarliestMicros()
 	}
 
 	// Delegation: record the acting party. If the subject token already carried

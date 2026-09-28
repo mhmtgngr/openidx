@@ -13,9 +13,9 @@ variable "namespace" {
 }
 
 variable "chart_repository" {
-  description = "Helm repository hosting the openidx chart."
+  description = "Helm repository hosting the openidx chart: where the release workflow publishes it."
   type        = string
-  default     = "oci://ghcr.io/openidx/helm"
+  default     = "oci://ghcr.io/mhmtgngr/openidx/charts"
 }
 
 variable "chart_version" {

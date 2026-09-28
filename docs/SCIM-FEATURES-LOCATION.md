@@ -88,7 +88,7 @@ curl http://localhost:8003/scim/v2/ServiceProviderConfig
 ```json
 {
   "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
-  "documentationUri": "https://github.com/openidx/openidx/docs/SCIM.md",
+  "documentationUri": "https://mhmtgngr.github.io/openidx/guides/SCIM/",
   "patch": {"supported": true},
   "bulk": {"supported": false},
   "filter": {"supported": true, "maxResults": 200},

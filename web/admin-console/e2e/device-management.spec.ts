@@ -13,7 +13,7 @@ test.describe('Unified Device Management', () => {
               id: 'dev-1', fingerprint: 'abc123def456', name: 'Work Laptop',
               ip_address: '192.168.1.10', user_agent: 'Mozilla/5.0 Windows', location: 'New York',
               trusted: true, last_seen_at: '2024-06-01T10:00:00Z', created_at: '2024-01-01T00:00:00Z',
-              user_id: 'user-1', username: 'admin', email: 'admin@openidx.io',
+              user_id: 'user-1', username: 'admin', email: 'admin@example.com',
               first_name: 'Admin', last_name: 'User',
               ziti_id: 'zi-1', ziti_enrolled: true, ziti_attributes: ['Administrators', 'device-trusted'],
             },
@@ -21,7 +21,7 @@ test.describe('Unified Device Management', () => {
               id: 'dev-2', fingerprint: 'xyz789abc012', name: 'Personal Phone',
               ip_address: '10.0.0.5', user_agent: 'Mozilla/5.0 iPhone Mobile', location: 'London',
               trusted: false, last_seen_at: '2024-06-01T09:00:00Z', created_at: '2024-02-01T00:00:00Z',
-              user_id: 'user-2', username: 'jsmith', email: 'jsmith@openidx.io',
+              user_id: 'user-2', username: 'jsmith', email: 'jsmith@example.com',
               first_name: 'John', last_name: 'Smith',
               ziti_id: 'zi-2', ziti_enrolled: true, ziti_attributes: ['Developers'],
             },
@@ -29,7 +29,7 @@ test.describe('Unified Device Management', () => {
               id: 'dev-3', fingerprint: 'nnn000mmm111', name: 'New Device',
               ip_address: '172.16.0.1', user_agent: 'Mozilla/5.0 Linux', location: 'Berlin',
               trusted: false, last_seen_at: '2024-06-01T08:00:00Z', created_at: '2024-05-01T00:00:00Z',
-              user_id: 'user-3', username: 'newuser', email: 'newuser@openidx.io',
+              user_id: 'user-3', username: 'newuser', email: 'newuser@example.com',
               first_name: '', last_name: '',
               ziti_id: '', ziti_enrolled: false, ziti_attributes: [],
             },
@@ -73,7 +73,7 @@ test.describe('Unified Device Management', () => {
     await page.goto('/devices');
     await expect(page.getByRole('columnheader', { name: 'User' })).toBeVisible();
     await expect(page.getByText('Admin User')).toBeVisible();
-    await expect(page.getByText('admin@openidx.io')).toBeVisible();
+    await expect(page.getByText('admin@example.com')).toBeVisible();
   });
 
   test('should show Ziti Status column with enrollment badges', async ({ page }) => {
@@ -201,7 +201,7 @@ test.describe('Device Trust Approval - Ziti Integration', () => {
         contentType: 'application/json',
         body: JSON.stringify({
           requests: [
-            { id: 'req-1', user_id: 'user-2', user_email: 'jsmith@openidx.io', user_name: 'John Smith', device_name: 'Work Laptop', device_type: 'desktop', ip_address: '192.168.1.10', justification: 'Need for daily work', status: 'pending', created_at: '2024-06-01T00:00:00Z' },
+            { id: 'req-1', user_id: 'user-2', user_email: 'jsmith@example.com', user_name: 'John Smith', device_name: 'Work Laptop', device_type: 'desktop', ip_address: '192.168.1.10', justification: 'Need for daily work', status: 'pending', created_at: '2024-06-01T00:00:00Z' },
           ],
           total: 1,
         }),

@@ -13,6 +13,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
 
 // FeatureName represents a toggleable feature
@@ -79,13 +80,21 @@ type FeatureConfig struct {
 	ZitiHost        string `json:"ziti_host,omitempty"`
 	ZitiPort        int    `json:"ziti_port,omitempty"`
 
-	// Guacamole config
+	// Guacamole config. The password is stored sealed (storedConfigJSON) and
+	// never returned (redactFeatureConfig).
 	GuacamoleProtocol string `json:"guacamole_protocol,omitempty"`
 	GuacamoleHost     string `json:"guacamole_host,omitempty"`
 	GuacamolePort     int    `json:"guacamole_port,omitempty"`
 	GuacamoleUsername string `json:"guacamole_username,omitempty"`
 	GuacamolePassword string `json:"guacamole_password,omitempty"`
 }
+
+// The keys a stored feature config carries its secret under, and the flag a
+// reader gets in its place.
+const (
+	guacamolePasswordKey    = "guacamole_password"
+	guacamolePasswordSetKey = "guacamole_password_set"
+)
 
 // FeatureManager handles feature toggle operations
 type FeatureManager struct {
@@ -100,6 +109,10 @@ type FeatureManager struct {
 	// leaves convergence to the reconciler (the handler triggers it via
 	// enqueueReconcile). See SetReconcilerEnabled.
 	reconcilerEnabled bool
+	// cipher seals the secret a stored feature config carries (the Guacamole
+	// password). It is the access service's ENCRYPTION_KEY cipher, set by
+	// Service.SetFeatureManager; nil stores the secret as given.
+	cipher *secretcrypt.Cipher
 }
 
 // ziti returns the live OpenZiti manager (nil when disconnected).
@@ -128,6 +141,9 @@ func (fm *FeatureManager) SetZitiManager(zm *ZitiManager) {
 func (fm *FeatureManager) SetGuacamoleClient(gc *GuacamoleClient) {
 	fm.guacamoleClient = gc
 }
+
+// SetSecretCipher sets the cipher stored feature secrets are sealed with.
+func (fm *FeatureManager) SetSecretCipher(c *secretcrypt.Cipher) { fm.cipher = c }
 
 // SetBrowZerTargetManager sets the BrowZer target manager for config file generation
 func (fm *FeatureManager) SetBrowZerTargetManager(btm *BrowZerTargetManager) {
@@ -191,6 +207,18 @@ func (fm *FeatureManager) EnableFeature(ctx context.Context, routeID string, fea
 		return nil
 	}
 
+	if feature == FeatureGuacamole {
+		if config, err = fm.prepareGuacamoleConfig(ctx, routeID, orgID, featureRecord.ID, config); err != nil {
+			return err
+		}
+	}
+	// Sealed before anything is provisioned, so a failure here leaves no
+	// broker connection behind that the record does not describe.
+	configJSON, err := fm.storedConfigJSON(config)
+	if err != nil {
+		return fmt.Errorf("failed to seal the feature's secrets: %w", err)
+	}
+
 	// Set status to pending while provisioning
 	if err := fm.updateFeatureStatus(ctx, featureRecord.ID, orgID, FeatureStatusPending, ""); err != nil {
 		return err
@@ -204,7 +232,6 @@ func (fm *FeatureManager) EnableFeature(ctx context.Context, routeID string, fea
 	}
 
 	// Update feature record
-	configJSON, _ := json.Marshal(config)
 	resourceJSON, _ := json.Marshal(resourceIDs)
 	now := time.Now()
 
@@ -425,6 +452,7 @@ func (fm *FeatureManager) GetServiceStatus(ctx context.Context, routeID string) 
 		}
 
 		json.Unmarshal(configJSON, &f.Config)
+		redactFeatureConfig(f.Config)
 		json.Unmarshal(resourceJSON, &f.ResourceIDs)
 
 		status.Features[f.FeatureName] = &f
@@ -541,6 +569,7 @@ func (fm *FeatureManager) getFeature(ctx context.Context, routeID, orgID string,
 	}
 
 	json.Unmarshal(configJSON, &f.Config)
+	redactFeatureConfig(f.Config)
 	json.Unmarshal(resourceJSON, &f.ResourceIDs)
 
 	return &f, nil
@@ -624,6 +653,16 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID, orgID s
 		serviceName := config.ZitiServiceName
 		if serviceName == "" {
 			serviceName = fmt.Sprintf("openidx-%s", routeName)
+		}
+		// The reconciler adopts and converges whatever service this name
+		// already names, so it must not be another organization's or the
+		// install's (ziti_scope.go).
+		claimed, err := zitiServiceNameClaimed(ctx, fm.db, orgID, serviceName)
+		if err != nil {
+			return nil, fmt.Errorf("check the ziti service name: %w", err)
+		}
+		if claimed {
+			return nil, fmt.Errorf("a ziti service named %q already exists; choose another ziti_service_name", serviceName)
 		}
 
 		if fm.reconcilerEnabled {
@@ -824,18 +863,8 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID, orgID s
 		}
 
 		// Determine connection details
-		host := config.GuacamoleHost
-		port := config.GuacamolePort
-		protocol := config.GuacamoleProtocol
-		if host == "" && remoteHost != nil {
-			host = *remoteHost
-		}
-		if port == 0 && remotePort != nil {
-			port = *remotePort
-		}
-		if protocol == "" {
-			protocol = "ssh"
-		}
+		target := resolveGuacamoleTarget(config, remoteHost, remotePort)
+		host, port, protocol := target.GuacamoleHost, target.GuacamolePort, target.GuacamoleProtocol
 
 		// Create Guacamole connection
 		connParams := map[string]string{}
@@ -946,4 +975,204 @@ func (fm *FeatureManager) syncRouteFlags(ctx context.Context, routeID, orgID str
 		return err
 	}
 	return nil
+}
+
+// resolveGuacamoleTarget is the connection an enable makes: the config's
+// protocol, host, port and user, with the route's remote host and port and the
+// ssh protocol for what it leaves out.
+func resolveGuacamoleTarget(config *FeatureConfig, remoteHost *string, remotePort *int) FeatureConfig {
+	var t FeatureConfig
+	if config != nil {
+		t = FeatureConfig{
+			GuacamoleProtocol: config.GuacamoleProtocol,
+			GuacamoleHost:     config.GuacamoleHost,
+			GuacamolePort:     config.GuacamolePort,
+			GuacamoleUsername: config.GuacamoleUsername,
+		}
+	}
+	if t.GuacamoleHost == "" && remoteHost != nil {
+		t.GuacamoleHost = *remoteHost
+	}
+	if t.GuacamolePort == 0 && remotePort != nil {
+		t.GuacamolePort = *remotePort
+	}
+	if t.GuacamoleProtocol == "" {
+		t.GuacamoleProtocol = "ssh"
+	}
+	return t
+}
+
+// prepareGuacamoleConfig resolves what a Guacamole enable connects to, and
+// with which password.
+//
+// The target is resolved as provisioning always has, and stored that way, so
+// a later enable can tell whether it names the same one.
+//
+// The password is never returned to a client (redactFeatureConfig), so an
+// enable that leaves it out keeps the stored one, as a form that leaves the
+// field blank means "unchanged" -- but only for the same protocol, host, port
+// and user. A password belongs to the account it was entered for; carried to a
+// target the caller chose, it would be handed to whoever answers there. A
+// config stored before targets were recorded may not name a complete one, and
+// then keeps no password.
+func (fm *FeatureManager) prepareGuacamoleConfig(ctx context.Context, routeID, orgID, featureID string, req *FeatureConfig) (*FeatureConfig, error) {
+	var remoteHost *string
+	var remotePort *int
+	if err := fm.db.Pool.QueryRow(ctx,
+		`SELECT remote_host, remote_port FROM proxy_routes WHERE id = $1 AND org_id = $2`,
+		routeID, orgID).Scan(&remoteHost, &remotePort); err != nil {
+		return nil, fmt.Errorf("route not found: %w", err)
+	}
+	cfg := resolveGuacamoleTarget(req, remoteHost, remotePort)
+	if req != nil && req.GuacamolePassword != "" {
+		cfg.GuacamolePassword = req.GuacamolePassword
+		return &cfg, nil
+	}
+
+	var raw []byte
+	if err := fm.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(config, '{}'::jsonb) FROM service_features WHERE id = $1 AND org_id = $2`,
+		featureID, orgID).Scan(&raw); err != nil {
+		return nil, fmt.Errorf("failed to read the feature's stored config: %w", err)
+	}
+	var stored FeatureConfig
+	if json.Unmarshal(raw, &stored) != nil || stored.GuacamolePassword == "" {
+		return &cfg, nil
+	}
+	sameTarget := stored.GuacamoleProtocol != "" && stored.GuacamoleHost != "" && stored.GuacamolePort != 0 &&
+		stored.GuacamoleProtocol == cfg.GuacamoleProtocol && stored.GuacamoleHost == cfg.GuacamoleHost &&
+		stored.GuacamolePort == cfg.GuacamolePort && stored.GuacamoleUsername == cfg.GuacamoleUsername
+	if !sameTarget {
+		return &cfg, nil
+	}
+	password, err := fm.openSecret(stored.GuacamolePassword)
+	if err != nil {
+		return nil, fmt.Errorf("the stored Guacamole password cannot be decrypted with this service's ENCRYPTION_KEY; send it again: %w", err)
+	}
+	cfg.GuacamolePassword = password
+	return &cfg, nil
+}
+
+// storedConfigJSON is the form a feature's config is written in. The password
+// is sealed with the access service's ENCRYPTION_KEY cipher; it used to be
+// written in plaintext, readable by anything that could read the table or a
+// backup of it. The sealed value is tagged, so cmd/rekey reaches it inside the
+// JSON when a key is rotated out.
+func (fm *FeatureManager) storedConfigJSON(config *FeatureConfig) ([]byte, error) {
+	if config == nil {
+		return json.Marshal(config)
+	}
+	stored := *config
+	sealed, err := fm.sealSecret(stored.GuacamolePassword)
+	if err != nil {
+		return nil, err
+	}
+	stored.GuacamolePassword = sealed
+	return json.Marshal(stored)
+}
+
+func (fm *FeatureManager) sealSecret(plaintext string) (string, error) {
+	if plaintext == "" || fm.cipher == nil {
+		return plaintext, nil
+	}
+	return fm.cipher.Encrypt(plaintext)
+}
+
+// openSecret reads a stored secret. One written before sealing was added is
+// untagged and comes back as it is: it keeps working, and it is sealed at the
+// next enable or by SealStoredSecrets. A sealed value the cipher cannot open is
+// an error, not a password: sent to the broker, the ciphertext would be a
+// wrong credential that nothing reports.
+func (fm *FeatureManager) openSecret(stored string) (string, error) {
+	if stored == "" {
+		return "", nil
+	}
+	if fm.cipher == nil {
+		if secretcrypt.IsEncrypted(stored) {
+			return "", fmt.Errorf("the value is sealed and no cipher is configured")
+		}
+		return stored, nil
+	}
+	plaintext, err := fm.cipher.Decrypt(stored)
+	if err != nil {
+		return "", err
+	}
+	if secretcrypt.IsEncrypted(plaintext) {
+		// A cipher without a key (no ENCRYPTION_KEY) hands a sealed value back.
+		return "", fmt.Errorf("the value is sealed and the configured ENCRYPTION_KEY cannot open it")
+	}
+	return plaintext, nil
+}
+
+// redactFeatureConfig takes the secret out of a feature config before it is
+// returned: the Guacamole password, sealed or, from before sealing, in
+// plaintext. guacamole_password_set says whether one is stored.
+func redactFeatureConfig(cfg map[string]interface{}) {
+	password, ok := cfg[guacamolePasswordKey]
+	if !ok {
+		return
+	}
+	delete(cfg, guacamolePasswordKey)
+	if s, _ := password.(string); s != "" {
+		cfg[guacamolePasswordSetKey] = true
+	}
+}
+
+// SealStoredSecrets seals the Guacamole passwords written in plaintext before
+// sealing was added, so none of them waits for its feature's next enable.
+// cmd/access-service runs it at startup, where the key is. Without a key
+// (no ENCRYPTION_KEY) there is nothing to seal with, and it does nothing. A row
+// is updated only while it still holds the plaintext that was read, so
+// replicas starting together seal each row once. It returns how many it sealed.
+func (fm *FeatureManager) SealStoredSecrets(ctx context.Context) (int, error) {
+	if fm.cipher == nil {
+		return 0, nil
+	}
+	if probe, err := fm.cipher.Encrypt("probe"); err != nil || !secretcrypt.IsEncrypted(probe) {
+		return 0, nil
+	}
+	ctx = orgctx.WithBypassRLS(ctx)
+
+	type legacy struct{ id, orgID, password string }
+	var found []legacy
+	//orgscope:ignore startup sweep over every organization's features; each row is then updated under its own org_id
+	rows, err := fm.db.Pool.Query(ctx, `
+		SELECT id::text, org_id::text, config ->> 'guacamole_password'
+		  FROM service_features
+		 WHERE COALESCE(config ->> 'guacamole_password', '') <> ''
+		   AND config ->> 'guacamole_password' NOT LIKE 'encv1:%'
+		   AND config ->> 'guacamole_password' NOT LIKE 'encv2:%'`)
+	if err != nil {
+		return 0, fmt.Errorf("failed to find plaintext feature secrets: %w", err)
+	}
+	for rows.Next() {
+		var l legacy
+		if err := rows.Scan(&l.id, &l.orgID, &l.password); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("failed to read a plaintext feature secret: %w", err)
+		}
+		found = append(found, l)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("failed to read the plaintext feature secrets: %w", err)
+	}
+
+	sealed := 0
+	for _, l := range found {
+		value, err := fm.cipher.Encrypt(l.password)
+		if err != nil {
+			return sealed, fmt.Errorf("failed to seal a feature secret: %w", err)
+		}
+		tag, err := fm.db.Pool.Exec(ctx, `
+			UPDATE service_features
+			   SET config = jsonb_set(config, '{guacamole_password}', to_jsonb($1::text))
+			 WHERE id = $2 AND org_id = $3 AND config ->> 'guacamole_password' = $4`,
+			value, l.id, l.orgID, l.password)
+		if err != nil {
+			return sealed, fmt.Errorf("failed to store a sealed feature secret: %w", err)
+		}
+		sealed += int(tag.RowsAffected())
+	}
+	return sealed, nil
 }

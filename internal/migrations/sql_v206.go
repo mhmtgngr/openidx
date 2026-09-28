@@ -1,39 +1,55 @@
 package migrations
 
-// Migration v206 -- the two columns that let an approval policy's step order,
-// min_approvals and max_wait_hours decide anything.
+// Migration v206 -- a tenant domain is verified by a DNS record, and an
+// unverified claim to a domain blocks no one.
 //
-// approval_policies has stored max_wait_hours since v1, and each step in its
-// approval_steps JSON has carried order and min_approvals, and the console has
-// shown all three. None of them decided anything: every approver row had to
-// approve whatever a step said, the rows of every step were live at once, and
-// a request nobody answered stayed pending forever. The workflow now enforces
-// them, and it needs two facts recorded at the moment a request is created,
-// because a policy may be edited while a request is open and the request must
-// keep the terms it was filed under:
+// A verified row in tenant_domains tells the public login-branding endpoint
+// which organization's branding -- logo, texts, custom CSS -- the login page
+// served at that host shows. Verification proved nothing: the verify route
+// compared the token in the request with the one the domain list had just shown
+// the same administrator, so an administrator of any organization could mark
+// any host verified, the install's own login host included. The admin API now
+// marks a claim verified only when the TXT record _openidx-challenge.<domain>
+// holds openidx-domain-verification=<the claim's token>.
 //
-//   - access_request_approvals.step_min_approvals: how many approvals the
-//     row's step needs, copied from the policy step onto every row of that
-//     step. DEFAULT 1 fills every row that exists: the old behaviour required
-//     every row, and the documented step semantics ("any user with the role")
-//     are one, so an open request keeps advancing under the reading its
-//     approvers were shown.
-//   - access_requests.answer_by: when an unanswered request expires, set from
-//     the policy's max_wait_hours at creation. NULL for requests filed before
-//     this and for requests no policy governs, which keep waiting as they
-//     always have.
+// UNIQUENESS MOVES TO VERIFIED CLAIMS. v38 declared domain UNIQUE across the
+// install, verified or not, so the first organization to type a name held it
+// and a squatter's unverified claim kept the domain's real owner from adding it
+// at all. The rule now: an organization claims a domain once ((org_id, domain)
+// unique); any number of organizations may hold an unverified claim to the same
+// domain; at most one claim to a domain is verified (a partial unique index);
+// and verifying a claim deletes the other organizations' unverified claims to
+// that domain.
 //
-// Down drops both columns; an install rolling back to v205 runs code that
-// reads neither.
+// EXISTING ROWS. A verified domain stays verified. A NULL verified is read as
+// unverified, as every reader already read it, and the column becomes NOT NULL
+// so the partial index's predicate means what it says. An unverified row with
+// no token -- rows written by hand carry none -- is given one, so that every
+// pending claim has a record its organization can publish. The token is
+// gen_random_uuid()'s 122 random bits in hex, the length and alphabet of the
+// ones the API issues; it binds a record to one claim and is published in DNS,
+// so it needs to be unguessable only in the sense that no other claim may share
+// it. Tokens a claim already has are kept.
+//
+// Down restores v38's install-wide UNIQUE on domain, which is the one statement
+// that can fail: once two organizations have each claimed the same domain -- the
+// point of this migration -- the constraint cannot be recreated and the rollback
+// stops. Refusing beats deleting an organization's claim to make a rollback
+// succeed. The tokens given here are left in place; v38's code shows them.
 
-var approvalPolicyFieldsUp = `-- Migration 206: record the approval terms a request was filed under.
-ALTER TABLE access_request_approvals ADD COLUMN IF NOT EXISTS step_min_approvals INTEGER NOT NULL DEFAULT 1;
-ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS answer_by TIMESTAMP WITH TIME ZONE;
-CREATE INDEX IF NOT EXISTS idx_access_requests_answer_by ON access_requests(answer_by) WHERE status = 'pending' AND answer_by IS NOT NULL;
+var tenantDomainDNSProofUp = `-- Migration 206: tenant domains are verified by DNS, and uniqueness is among verified claims.
+ALTER TABLE tenant_domains DROP CONSTRAINT IF EXISTS tenant_domains_domain_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_domains_org_domain ON tenant_domains(org_id, domain);
+UPDATE tenant_domains SET verified = false WHERE verified IS NULL;
+ALTER TABLE tenant_domains ALTER COLUMN verified SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_domains_verified_domain ON tenant_domains(domain) WHERE verified;
+UPDATE tenant_domains SET verification_token = replace(gen_random_uuid()::text, '-', '')
+ WHERE NOT verified AND COALESCE(verification_token, '') = '';
 `
 
-var approvalPolicyFieldsDown = `-- Migration 206 down: drop the recorded approval terms.
-DROP INDEX IF EXISTS idx_access_requests_answer_by;
-ALTER TABLE access_requests DROP COLUMN IF EXISTS answer_by;
-ALTER TABLE access_request_approvals DROP COLUMN IF EXISTS step_min_approvals;
+var tenantDomainDNSProofDown = `-- Migration 206 down: one claim per domain across the install again.
+DROP INDEX IF EXISTS idx_tenant_domains_verified_domain;
+ALTER TABLE tenant_domains ALTER COLUMN verified DROP NOT NULL;
+DROP INDEX IF EXISTS idx_tenant_domains_org_domain;
+ALTER TABLE tenant_domains ADD CONSTRAINT tenant_domains_domain_key UNIQUE (domain);
 `

@@ -218,6 +218,24 @@ if [ "$code" = "401" ]; then
 else
   fail "bad token" "GET /api/v1/identity/users with a malformed token answered $code"
 fi
+# Writing into the audit trail is for the platform's own services: the console
+# edge refuses the ingestion route, with or without an administrator's token,
+# while the GET above still reaches the audit service.
+code="$(status_of POST /api/v1/audit/events -H 'Content-Type: application/json' --data '{"action":"smoke.forged"}')"
+if [ "$code" = "403" ]; then
+  pass "POST /api/v1/audit/events is refused at the console edge (403)"
+else
+  fail "audit ingestion" "POST /api/v1/audit/events answered $code at the console edge, expected 403"
+fi
+if [ -n "$TOKEN" ]; then
+  code="$(status_of POST /api/v1/audit/events -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $TOKEN" --data '{"action":"smoke.forged"}')"
+  if [ "$code" = "403" ]; then
+    pass "POST /api/v1/audit/events with the admin token is refused at the console edge (403)"
+  else
+    fail "audit ingestion" "POST /api/v1/audit/events with the admin token answered $code at the console edge, expected 403"
+  fi
+fi
 echo
 
 containers_visible() {

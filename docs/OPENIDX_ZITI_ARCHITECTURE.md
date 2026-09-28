@@ -280,6 +280,11 @@ BROWZER_ROUTER_PORT=8094
 
 > `ZITI_RECONCILER` (default ON) gates the desired-state reconciler. Set it to
 > `false` to fall back to the legacy imperative hosting path on startup.
+>
+> The reconciler converges a route's `ziti_service_name` only when one
+> organization holds that name. A name that routes, services or PAM entries of
+> two organizations hold, or that is one of the install's own services, is left
+> as it is on the controller, and the route's converge state says why.
 
 ---
 

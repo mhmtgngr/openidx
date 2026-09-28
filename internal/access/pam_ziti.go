@@ -188,7 +188,7 @@ func (s *Service) provisionEntryZitiService(ctx context.Context, zm *ZitiManager
 // name-filter endpoint (pagination-safe, unlike GetServiceByName). Returns ""
 // when absent.
 func (s *Service) pamZitiServiceID(ctx context.Context, zm *ZitiManager, serviceName string) (string, error) {
-	path := fmt.Sprintf(`/edge/management/v1/services?filter=name="%s"`, serviceName)
+	path := "/edge/management/v1/services?filter=" + zitiFilterEquals("name", serviceName)
 	data, status, err := zm.mgmtRequest("GET", path, nil)
 	if err != nil {
 		return "", fmt.Errorf("lookup service: %w", err)

@@ -85,7 +85,7 @@ checked against the code, the tests and the docs on `main` on 2026-09-24.
 | MFA: TOTP, WebAuthn and passkeys, push, SMS and email codes | Beta (GA candidate) | Each factor is tested. SMS, email and push need a provider you configure, and no delivery has been recorded on a live install. | [MFA guide](docs/MFA_IMPLEMENTATION_GUIDE.md), [operational controls][ops] |
 | MFA policies | Beta | Required methods and a per-user grace period are enforced at password sign-in, tested both ways. Conditions are refused. | [display = enforcement][dee] |
 | OATH hardware tokens | Experimental | Tokens can be registered and verified through the identity API, but sign-in does not accept them. FIDO2 security keys work, through WebAuthn. | [`hardware_token.go`](internal/identity/hardware_token.go) |
-| Passwordless: magic link and QR sign-in | Beta | The organization and user settings are enforced; tested against the running services. | [`passwordless_test.go`](test/integration/passwordless_test.go) |
+| Passwordless: magic link and QR sign-in | Beta | The installation-wide and per-user settings are enforced; tested against the running services. A link works only in the organization it was sent for. | [`passwordless_test.go`](test/integration/passwordless_test.go) |
 | Risk-based MFA and step-up | Beta | Risk-scored MFA at sign-in is on by default. The step-up gate for privileged actions (`STEPUP_GATE`) is off by default. | [configuration][cfg-gates], [`stepup_test.go`](test/integration/stepup_test.go) |
 | Social sign-in and external identity providers | Experimental | The sign-in round trip has no test. A generic OIDC provider is called at Keycloak's endpoint paths, not through discovery, and a SAML provider can be configured but nothing signs a user in through it. | [`social_login.go`](internal/oauth/social_login.go) |
 | Directory sync: LDAP and Active Directory | Beta | Scheduled user and group sync; referrals are followed, and a lost group loses its access. Tested against a fake directory. | [`ldap_referral_test.go`](internal/directory/ldap_referral_test.go) |
@@ -147,7 +147,7 @@ checked against the code, the tests and the docs on `main` on 2026-09-24.
 | API keys and service accounts | Beta | Keys are stored as hashes, expire and can be revoked; tested. With OPA authorization on, a key is refused ([#980]). | [`apikeys_test.go`](internal/apikeys/apikeys_test.go) |
 | Rate limiting and the API gateway | Beta | Per-route limits in the services and at the APISIX edge; tested. | [configuration][cfg-rate] |
 | Service TLS and mTLS | Beta | A service asks for client certificates once it is given a CA; tested. Inter-service TLS is off in the Helm chart by default (`serviceTLS.enabled`). | [`tlsutil_test.go`](internal/common/tlsutil/tlsutil_test.go) |
-| Admin console and end-user portal | Beta | English and Turkish. Unit tests run in CI, and 12 of the 50 browser specs run against a live stack. The refresh token is kept in `localStorage`, and there is no CSP yet ([#965]). | [`e2e/suite.txt`](web/admin-console/e2e/suite.txt), [#965] |
+| Admin console and end-user portal | Beta | English and Turkish. Unit tests run in CI, and 12 of the 50 browser specs run against a live stack. The access and refresh tokens are kept in `localStorage` ([#965]). Every nginx configuration that serves the console sends a Content-Security-Policy that refuses inline script, so injected markup cannot run to read them. | [`e2e/suite.txt`](web/admin-console/e2e/suite.txt), [#965] |
 | AI-agent registry | Experimental | Agents and their credentials are stored, and nothing verifies the credentials, so no agent can act through it. | [`tablewriters/known.go`](tools/tablewriters/known.go) |
 | Outbox and event relay | Experimental | The relay drains a table that nothing writes to. | [`outbox_has_producer_test.go`](internal/common/events/outbox_has_producer_test.go) |
 
@@ -269,8 +269,15 @@ signature verification):
 
 ```bash
 helm install openidx oci://ghcr.io/mhmtgngr/openidx/charts/openidx \
-  --version <X.Y.Z> --namespace openidx --create-namespace
+  --version <X.Y.Z> --namespace openidx --create-namespace \
+  -f my-values.yaml
 ```
+
+`my-values.yaml` holds the install's own settings. The chart refuses to render
+without `config.oauthIssuer`, the public URL of its OAuth service (for example
+`https://auth.example.com` with your own domain), and without the bundled
+datastores' `secrets.*`; [the Kubernetes guide](docs/docs/deployment/kubernetes.md)
+shows a complete file.
 
 The chart runs database migrations itself (a post-install/pre-upgrade
 hook Job) and deploys OPA with the policy it ships. The services consult

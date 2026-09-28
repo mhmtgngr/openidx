@@ -1,10 +1,16 @@
+# Alertmanager for the full compose stack (docker-compose.yml and
+# docker-compose.infra.yml).
+#
+# Alertmanager does not expand ${VAR} in its configuration, so mail settings
+# cannot come from the environment here. This file used to write them as
+# ${SMTP_HOST:-localhost}-style placeholders, which Alertmanager refuses to
+# load, and their fallbacks mailed alerts from and to addresses at a domain
+# the project does not own. Critical alerts go to the webhook below. To mail
+# them as well, give the critical-alerts receiver an email_configs entry with
+# literal values: your smarthost, a From address at a domain you own, and
+# your recipients.
 global:
   resolve_timeout: 5m
-  smtp_from: '${SMTP_FROM:-alertmanager@openidx.io}'
-  smtp_smarthost: '${SMTP_HOST:-localhost}:${SMTP_PORT:-587}'
-  smtp_auth_username: '${SMTP_USERNAME:-}'
-  smtp_auth_password: '${SMTP_PASSWORD:-}'
-  smtp_require_tls: false
 
 route:
   receiver: webhook-default
@@ -32,11 +38,6 @@ receivers:
     webhook_configs:
       - url: 'http://admin-api:8005/api/v1/alerts/webhook'
         send_resolved: true
-    email_configs:
-      - to: '${ALERT_EMAIL:-admin@openidx.io}'
-        send_resolved: true
-        headers:
-          Subject: '[OpenIDX CRITICAL] {{ .GroupLabels.alertname }}'
 
 inhibit_rules:
   - source_match:

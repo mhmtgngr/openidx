@@ -241,9 +241,11 @@ type Config struct {
 	AuditURL      string `mapstructure:"audit_url"`
 
 	// InternalServiceToken is a shared secret for trusted service-to-service
-	// calls (the access-proxy authenticating its policy /evaluate call to the
-	// governance service). Empty disables the internal-auth path, leaving only
-	// user JWT auth. Set the same value on every service that participates.
+	// calls: the access-proxy authenticating its policy /evaluate call to the
+	// governance service, and the audit events it posts to the audit service.
+	// Empty disables the internal-auth path: governance then takes only user
+	// JWTs, and the audit service accepts no events at all. Set the same value
+	// on every service that participates.
 	InternalServiceToken string `mapstructure:"internal_service_token"`
 	AccessSessionSecret  string `mapstructure:"access_session_secret"`
 	AccessProxyDomain    string `mapstructure:"access_proxy_domain"`
@@ -255,7 +257,7 @@ type Config struct {
 	AccessAppsDomain string `mapstructure:"access_apps_domain"`
 
 	// Multi-tenancy: the wildcard domain tenants live under
-	// (e.g. "openidx.io" for acme.openidx.io). When set, the gateway
+	// (e.g. "example.com" for acme.example.com). When set, the gateway
 	// derives the X-Org-Slug header from the request's subdomain.
 	// Empty (the default) disables subdomain tenant resolution.
 	TenantBaseDomain string `mapstructure:"tenant_base_domain"`
@@ -271,6 +273,15 @@ type Config struct {
 	// clients (a phishing/token-theft vector). Set it true only for a deliberately
 	// open registration deployment.
 	DCRAllowOpenRegistration bool `mapstructure:"dcr_allow_open_registration"`
+
+	// DCROrgID is the one organization dynamic client registration creates
+	// clients in. The initial access token is one for the whole install, and a
+	// registration used to land in whichever organization the request resolved
+	// to, so the token's holder could register a client in any organization by
+	// naming it in X-Org-Slug or calling its host. A registration resolved to
+	// any other organization is refused like one without the token. Empty
+	// means DEFAULT_ORG_ID, where a request naming no organization lands.
+	DCROrgID string `mapstructure:"dcr_org_id"`
 
 	// SSFReceiverIssuer / SSFReceiverJWKSURL trust an upstream SSF transmitter
 	// for inbound SET (RFC 8417) validation on POST /ssf/events. Empty leaves the
@@ -710,6 +721,12 @@ type Config struct {
 	APISIXAdminURL         string `mapstructure:"apisix_admin_url"`
 	APISIXAdminKey         string `mapstructure:"apisix_admin_key"`
 	APISIXBootstrapperNode string `mapstructure:"apisix_bootstrapper_node"`
+	// APISIXForwardAuthURI is the access service's forward-auth decide
+	// endpoint as APISIX reaches it, e.g.
+	// http://access-service:8007/api/v1/access/auth/decide. A pool-backed
+	// edge route that requires sign-in carries a forward-auth plugin that
+	// asks it; with it empty such a route is not rendered at all.
+	APISIXForwardAuthURI string `mapstructure:"apisix_forward_auth_uri"`
 
 	// RequireDeviceTrustForClientless gates clientless (BrowZer) OIDC logins on
 	// device trust: an untrusted device is refused a BrowZer session and a
@@ -749,6 +766,13 @@ type Config struct {
 	// covered; longer costs less. The verification response reports the
 	// unsealed count so the window is visible either way.
 	AuditChainInterval time.Duration `mapstructure:"audit_chain_interval"`
+
+	// AuditEdgeAddr, when set, is a second listener for the audit service
+	// (":8014") that serves every route except event ingestion. It is for an
+	// edge that cannot tell GET /api/v1/audit/events from POST -- a Kubernetes
+	// Ingress cannot match on method -- so that it can route the audit prefix
+	// to a listener with no ingestion on it. Empty: one listener, as before.
+	AuditEdgeAddr string `mapstructure:"audit_edge_addr"`
 
 	// Redis Sentinel configuration
 	RedisSentinelEnabled    bool   `mapstructure:"redis_sentinel_enabled"`
@@ -1029,6 +1053,16 @@ func Load(serviceName string) (*Config, error) {
 
 	cfg.ServiceName = serviceName
 
+	// ACCESS_PROXY_DOMAIN present and empty means the install has not said
+	// where the access proxy is reachable: the Helm chart renders it so when
+	// no ingress host is set, and an empty domain makes vendor-access links
+	// refuse at issuance (tempAccessURL). Viper ignores an empty variable and
+	// fell back to the "localhost" default, which ValidateProduction refuses,
+	// so every service of such an install refused to start in production.
+	if env, ok := os.LookupEnv("ACCESS_PROXY_DOMAIN"); ok && strings.TrimSpace(env) == "" {
+		cfg.AccessProxyDomain = ""
+	}
+
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
@@ -1177,6 +1211,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("tenant_base_domain", "")
 	v.SetDefault("dcr_initial_access_token", "")
 	v.SetDefault("dcr_allow_open_registration", false)
+	v.SetDefault("dcr_org_id", "")
 	v.SetDefault("ssf_receiver_issuer", "")
 	v.SetDefault("ssf_receiver_jwks_url", "")
 	v.SetDefault("ziti_per_org_attributes", false)
@@ -1248,6 +1283,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("require_device_trust_for_clientless", false)
 	v.SetDefault("apisix_admin_url", "http://127.0.0.1:9180")
 	v.SetDefault("apisix_bootstrapper_node", "127.0.0.1:8445")
+	v.SetDefault("apisix_forward_auth_uri", "")
 
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
@@ -1410,6 +1446,7 @@ func bindEnvVars(v *viper.Viper) {
 		"tenant_base_domain":                  "TENANT_BASE_DOMAIN",
 		"dcr_initial_access_token":            "DCR_INITIAL_ACCESS_TOKEN",
 		"dcr_allow_open_registration":         "DCR_ALLOW_OPEN_REGISTRATION",
+		"dcr_org_id":                          "DCR_ORG_ID",
 		"ssf_receiver_issuer":                 "SSF_RECEIVER_ISSUER",
 		"ssf_receiver_jwks_url":               "SSF_RECEIVER_JWKS_URL",
 		"ziti_per_org_attributes":             "ZITI_PER_ORG_ATTRIBUTES",
@@ -1473,6 +1510,7 @@ func bindEnvVars(v *viper.Viper) {
 		"apisix_admin_url":                    "APISIX_ADMIN_URL",
 		"apisix_admin_key":                    "APISIX_ADMIN_KEY",
 		"apisix_bootstrapper_node":            "APISIX_BOOTSTRAPPER_NODE",
+		"apisix_forward_auth_uri":             "APISIX_FORWARD_AUTH_URI",
 		"enable_opa_authz":                    "ENABLE_OPA_AUTHZ",
 		"encryption_key":                      "ENCRYPTION_KEY",
 		"vault_kek":                           "VAULT_KEK",
@@ -1602,6 +1640,7 @@ func bindEnvVars(v *viper.Viper) {
 		"recordings_s3_use_ssl":             "RECORDINGS_S3_USE_SSL",
 		"audit_chain_secret":                "AUDIT_CHAIN_SECRET",
 		"audit_chain_interval":              "AUDIT_CHAIN_INTERVAL",
+		"audit_edge_addr":                   "AUDIT_EDGE_ADDR",
 	}
 
 	for key, env := range envMappings {

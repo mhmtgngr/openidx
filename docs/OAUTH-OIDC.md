@@ -119,6 +119,11 @@ Machine-to-machine authentication.
 
 **Use Case:** Backend services, API clients
 
+Only a confidential client may use it (RFC 6749 §4.4): one registered with a
+secret, and not as a public client or as the console's **Native/Mobile App**
+type, that presents its secret. Every other client is answered
+`401 invalid_client`. The token names no user and carries no role.
+
 ## OpenID Connect Features
 
 ### ID Tokens
@@ -343,10 +348,15 @@ when the refresh began, not when its refresh token was issued. Some cutoffs
 leave refresh tokens valid on purpose: losing a role cuts the access tokens
 that carry it, and the next refresh mints one with the roles the user has now.
 
+An access token from token exchange carries the claim of the token it was
+exchanged from: the moment that token dates from. A cutoff that revokes the
+subject token revokes the exchanged one as well, even if the exchange came
+after the cutoff.
+
 A token without the claim is compared at whole-second precision: it is
 refused if its `iat` is in the same second as the cutoff or earlier. That
-covers tokens from earlier releases, from the device and token-exchange
-grants, and from the SAML fallback. A cutoff written by an
+covers tokens from earlier releases, from the device grant, and from the SAML
+fallback. A cutoff written by an
 earlier release is whole seconds and reaches to the end of its second. In
 both cases a token that could have been minted before the logout is refused.
 
@@ -630,7 +640,19 @@ or a service account's API key. The SAML service-provider API
 (`/api/v1/saml/service-providers`) and SSF stream management (`/ssf/streams`)
 follow the same rule. Dynamic client registration (`POST /oauth/register`) is
 opened by the initial access token set in `DCR_INITIAL_ACCESS_TOKEN` instead,
-and cannot set `api_access`.
+registers clients only in the organization `DCR_ORG_ID` names (by default
+`DEFAULT_ORG_ID`), and cannot set `api_access`.
+
+A route that names one client, service provider or stream answers `404` when
+the organization the request is for has none by that id, whether it does not
+exist or belongs to another organization. The client routes answer it before
+they read the request body or change anything.
+
+With `STEPUP_GATE` set to `enforce`, a write on any of these APIs also needs a
+second factor verified within `STEPUP_MAX_AGE`, as every admin-api write does.
+Otherwise the answer is `403 step_up_required` with the endpoint that clears
+it. `observe` records the writes it would have refused. Reads, API keys,
+service accounts and client-credentials tokens are never gated.
 
 ## Token Types
 
@@ -649,9 +671,9 @@ Signed JWT, typed `at+jwt` in its header (RFC 9068 §2.1), containing:
 - `iss`: Issuer (OpenIDX URL)
 - `iat`: Issued at timestamp
 - `exp`: Expiration timestamp
-- `granted_at_us`: from the authorization-code and refresh grants. The
-  microsecond the code was issued or the refresh began, compared with a
-  logout's revocation cutoff (see
+- `granted_at_us`: from the authorization-code, refresh and token-exchange
+  grants. The microsecond the code was issued, the refresh began, or the
+  exchanged token dates from, compared with a logout's revocation cutoff (see
   [What a logout revokes](#what-a-logout-revokes))
 
 **Signature:** RS256 (RSA-SHA256)

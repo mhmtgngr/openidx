@@ -2,12 +2,14 @@ package identity
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -163,15 +165,37 @@ func (s *Service) handleUnlinkMyIdentity(c *gin.Context) {
 		return
 	}
 
-	tag, err := s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM user_identity_links WHERE id = $1 AND user_id = $2 AND org_id = $3", linkID, userID, org.ID)
+	// Both link tables, in one transaction. The social sign-in finds its
+	// account through social_account_links; this handler deleted only the
+	// user_identity_links row the profile screen lists, so an account the user
+	// had removed kept signing them in.
+	tx, err := s.db.Pool.Begin(c.Request.Context())
 	if err != nil {
 		s.logger.Error("Failed to unlink identity", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unlink identity"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(c.Request.Context()) //nolint:errcheck // no-op once committed
+	var providerID, externalID string
+	err = tx.QueryRow(c.Request.Context(),
+		`DELETE FROM user_identity_links WHERE id = $1 AND user_id = $2 AND org_id = $3
+		 RETURNING provider_id::text, external_id`, linkID, userID, org.ID).Scan(&providerID, &externalID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Identity link not found"})
+		return
+	}
+	if err == nil {
+		_, err = tx.Exec(c.Request.Context(),
+			`DELETE FROM social_account_links
+			 WHERE provider_id = $1::uuid AND external_id = $2 AND user_id = $3 AND org_id = $4`,
+			providerID, externalID, userID, org.ID)
+	}
+	if err == nil {
+		err = tx.Commit(c.Request.Context())
+	}
+	if err != nil {
+		s.logger.Error("Failed to unlink identity", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unlink identity"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Identity unlinked"})

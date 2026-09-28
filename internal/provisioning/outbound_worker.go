@@ -495,7 +495,7 @@ func (w *outboundWorker) clientFor(ctx context.Context, targetID string) (*scimc
 	if err != nil {
 		return nil, "", fmt.Errorf("resolve token for target %s: %w", targetID, err)
 	}
-	client, err := scimclient.New(scimclient.Config{BaseURL: baseURL, Bearer: token})
+	client, err := w.svc.scimClient(baseURL, token)
 	if err != nil {
 		return nil, "", err
 	}

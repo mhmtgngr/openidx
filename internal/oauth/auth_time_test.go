@@ -132,7 +132,7 @@ func TestIDTokenWithoutASessionHasNoAuthTime(t *testing.T) {
 // A claim the token carries is a claim the discovery document advertises:
 // auth_time and amr both.
 func TestDiscoveryAdvertisesAuthTimeAndAmr(t *testing.T) {
-	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	doc, _ := serveDiscovery(t, "https://issuer.example.com")
 	claims := strs(t, doc, "claims_supported")
 	for _, c := range []string{"auth_time", "amr"} {
 		found := false

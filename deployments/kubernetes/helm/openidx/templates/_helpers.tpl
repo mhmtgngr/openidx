@@ -336,6 +336,17 @@ chaos drill, the image check) pass an override on the command line; that
 override is the one place where "render-only" is written, and it is not a
 values file, so it cannot be installed by mistake.
 
+It also refuses any value that names a host under the project's name at .io,
+.org, .com, .net or .dev. The project owns none of those domains (SECURITY.md),
+and values.yaml used to ship an issuer and ingress hosts under the .io one
+(openidx.io; domain-ok: the old defaults): an install that kept them sent its
+browsers, its sign-in credentials and its emailed login links to whoever
+registers that name. `helm upgrade --reuse-values` carries the old defaults
+forward from the running release, and an operator's own values file may have
+copied them, so the refusal is here rather than only in values.yaml. A value
+that is exactly a label key under that prefix (openidx.io/plane) is a name,
+not an address, and passes.
+
 Called from templates/no-placeholders.yaml with (dict "v" .Values "path" "").
 */}}
 {{- define "openidx.rejectPlaceholders" -}}
@@ -347,6 +358,10 @@ Called from templates/no-placeholders.yaml with (dict "v" .Values "path" "").
 {{- else if kindIs "string" $v -}}
 {{- if contains "REPLACE-WITH" $v -}}
 {{- fail (printf "%s is still the placeholder %q. values-prod.yaml ships it so that the install cannot silently carry a fake value into the cluster: for edge.originVerify.value the Ingress would compare X-Azure-FDID against this literal and answer 403 to every request. Set the real value (for a cell, in deployments/kubernetes/cells/<cell>.yaml or with --set from a secret). A render that never reaches a cluster passes --set <path>=render-only-placeholder-override, as the lint job does." (trimPrefix "." .path) $v) -}}
+{{- end -}}
+{{- $s := lower $v -}}
+{{- if and (regexMatch "(^|[^a-z0-9-])openidx\\.(io|org|com|net|dev)($|[^a-z0-9.-]|\\.($|[^a-z0-9]))" $s) (not (regexMatch "^openidx\\.io/[a-z0-9]([-a-z0-9_.]*[a-z0-9])?$" $s)) -}}
+{{- fail (printf "%s is %q, which names a domain this project does not own. Whoever registers it receives what this install sends there: the issuer and the ingress hosts decide where browsers, sign-in credentials and emailed login links go. Set a name you control, for example config.oauthIssuer=https://auth.example.com with your own domain." (trimPrefix "." .path) $v) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -381,6 +396,32 @@ Usage: include "openidx.installDefault" (dict "ctx" $ "key" "ENV_NAME" "value" .
 {{- $live -}}
 {{- else -}}
 {{- .upgrade -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+openidx.internalServiceToken is INTERNAL_SERVICE_TOKEN, the secret the
+services present to one another where no user is behind a call: access-service
+to governance for its policy checks, and to the audit service for every event
+it writes into the audit trail. In order of precedence:
+  1. secrets.internalServiceToken, when the operator set one;
+  2. the value the release's own -internal-token Secret already holds, so an
+     upgrade keeps the token every running pod was started with;
+  3. a new random value, on the first install that renders this.
+lookup sees no cluster under `helm template`, so a GitOps tool that renders
+with it gets a new value on every render and pods restarted at different times
+would disagree. Set secrets.internalServiceToken there.
+*/}}
+{{- define "openidx.internalServiceToken" -}}
+{{- if .Values.secrets.internalServiceToken -}}
+{{- .Values.secrets.internalServiceToken -}}
+{{- else -}}
+{{- $s := lookup "v1" "Secret" .Release.Namespace (printf "%s-internal-token" (include "openidx.fullname" .)) -}}
+{{- if and $s (hasKey $s "data") $s.data (hasKey $s.data "INTERNAL_SERVICE_TOKEN") -}}
+{{- index $s.data "INTERNAL_SERVICE_TOKEN" | b64dec -}}
+{{- else -}}
+{{- randAlphaNum 48 -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

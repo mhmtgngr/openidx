@@ -179,6 +179,40 @@ func TestPlatformAdminLookupFailureIsAnError(t *testing.T) {
 	}
 }
 
+// The exported decision, for handlers that show an install administrator more,
+// fails the same way the middleware does when it has no database: a caller it
+// cannot refuse on roles is an error, never a quiet "no" that a handler might
+// read as the organization's view and never a "yes".
+func TestIsInstallAdministratorWithoutADatabase(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name    string
+		roles   []string
+		wantErr bool
+	}{
+		{"a plain user is not one, without a lookup", []string{"user"}, false},
+		{"an admin cannot be decided", []string{"admin"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				ok  bool
+				err error
+			)
+			r := gin.New()
+			r.GET("/", func(c *gin.Context) {
+				c.Set("user_id", platformTestUser)
+				c.Set("roles", tc.roles)
+				ok, err = IsInstallAdministrator(c, nil)
+				c.Status(http.StatusNoContent)
+			})
+			r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+			if ok || (err != nil) != tc.wantErr {
+				t.Fatalf("got (%v, %v), want (false, error=%v)", ok, err, tc.wantErr)
+			}
+		})
+	}
+}
+
 // The middleware itself, with no database behind it: every caller it cannot
 // refuse on roles alone is refused because it cannot look, and nobody reaches
 // the handler.

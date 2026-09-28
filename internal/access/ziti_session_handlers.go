@@ -3,7 +3,9 @@ package access
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
@@ -13,14 +15,32 @@ import (
 // Ziti Session Visibility handlers
 // ---------------------------------------------------------------------------
 
+// zitiSessionTypes are the controller's session types, the only values the
+// session list's type filter takes. The filter is the controller's query
+// language, so a value outside this list could rewrite the query itself.
+var zitiSessionTypes = map[string]string{"dial": "Dial", "bind": "Bind"}
+
+// handleListZitiSessions lists the controller's sessions: who is connected to
+// which service. An install administrator sees them all; anyone else sees the
+// sessions between their organization's identities and its services (see
+// ziti_scope.go).
 func (s *Service) handleListZitiSessions(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
 	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
 
 	path := "/edge/management/v1/sessions?limit=200"
-	if sessionType := c.Query("type"); sessionType != "" {
-		path += "&filter=type%3D%22" + sessionType + "%22"
+	if raw := c.Query("type"); raw != "" {
+		sessionType, ok := zitiSessionTypes[strings.ToLower(raw)]
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "type must be Dial or Bind"})
+			return
+		}
+		path += "&filter=" + url.QueryEscape(`type="`+sessionType+`"`)
 	}
 
 	respData, statusCode, err := s.ziti().MgmtRequest("GET", path, nil)
@@ -41,39 +61,40 @@ func (s *Service) handleListZitiSessions(c *gin.Context) {
 		return
 	}
 
-	type sessionIdentity struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	type sessionService struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	type zitiSession struct {
-		ID        string           `json:"id"`
-		Type      string           `json:"type"`
-		Identity  *sessionIdentity `json:"identity,omitempty"`
-		Service   *sessionService  `json:"service,omitempty"`
-		CreatedAt string           `json:"createdAt"`
-		UpdatedAt string           `json:"updatedAt"`
+	var ownIdentities, ownServices map[string]bool
+	if !view.install {
+		ctx := c.Request.Context()
+		if ownIdentities, err = s.ownedZitiIdentities(ctx, view.orgID); err == nil {
+			ownServices, _, err = s.ownedZitiServices(ctx, view.orgID)
+		}
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("list ziti sessions", err), s.logger)
+			return
+		}
 	}
 
-	// Parse each session; Ziti embeds identity/service as nested _links or inline objects
+	type zitiSession struct {
+		ID        string         `json:"id"`
+		Type      string         `json:"type"`
+		Identity  *zitiEntityRef `json:"identity,omitempty"`
+		Service   *zitiEntityRef `json:"service,omitempty"`
+		CreatedAt string         `json:"createdAt"`
+		UpdatedAt string         `json:"updatedAt"`
+	}
+
 	var results []zitiSession
 	for _, raw := range resp.Data {
 		var entry struct {
-			ID        string          `json:"id"`
-			Type      string          `json:"type"`
-			CreatedAt string          `json:"createdAt"`
-			UpdatedAt string          `json:"updatedAt"`
-			Token     string          `json:"token"`
-			Identity  json.RawMessage `json:"identity,omitempty"`
-			Service   json.RawMessage `json:"service,omitempty"`
-			// Alternative: identityId / serviceId
-			IdentityID string `json:"identityId,omitempty"`
-			ServiceID  string `json:"serviceId,omitempty"`
+			ID        string `json:"id"`
+			Type      string `json:"type"`
+			CreatedAt string `json:"createdAt"`
+			UpdatedAt string `json:"updatedAt"`
 		}
 		if err := json.Unmarshal(raw, &entry); err != nil {
+			continue
+		}
+		identity, service := zitiSessionEnds(raw)
+		if !view.install && (!ownIdentities[identity.ID] || !ownServices[service.ID]) {
 			continue
 		}
 
@@ -83,41 +104,42 @@ func (s *Service) handleListZitiSessions(c *gin.Context) {
 			CreatedAt: entry.CreatedAt,
 			UpdatedAt: entry.UpdatedAt,
 		}
-
-		// Try to parse embedded identity object
-		if len(entry.Identity) > 0 {
-			var ident sessionIdentity
-			if err := json.Unmarshal(entry.Identity, &ident); err == nil && ident.ID != "" {
-				sess.Identity = &ident
-			}
+		if identity.ID != "" {
+			sess.Identity = &identity
 		}
-		if sess.Identity == nil && entry.IdentityID != "" {
-			sess.Identity = &sessionIdentity{ID: entry.IdentityID, Name: entry.IdentityID}
+		if service.ID != "" {
+			sess.Service = &service
 		}
-
-		// Try to parse embedded service object
-		if len(entry.Service) > 0 {
-			var svc sessionService
-			if err := json.Unmarshal(entry.Service, &svc); err == nil && svc.ID != "" {
-				sess.Service = &svc
-			}
-		}
-		if sess.Service == nil && entry.ServiceID != "" {
-			sess.Service = &sessionService{ID: entry.ServiceID, Name: entry.ServiceID}
-		}
-
 		results = append(results, sess)
 	}
 
 	c.JSON(http.StatusOK, results)
 }
 
+// handleDeleteZitiSession ends one controller session. An organization's admin
+// ends the organization's own sessions (ownsZitiSession) and gets the 404 an
+// unknown id gets for any other; an install administrator ends any.
 func (s *Service) handleDeleteZitiSession(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
 	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/sessions/"+id, nil)
+	if !view.install {
+		owned, err := s.ownsZitiSession(c.Request.Context(), view.orgID, id)
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete ziti session", err), s.logger)
+			return
+		}
+		if !owned {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+			return
+		}
+	}
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/sessions/"+url.PathEscape(id), nil)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete ziti session", err), s.logger)
 		return
@@ -134,8 +156,15 @@ func (s *Service) handleDeleteZitiSession(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "session terminated"})
 }
 
+// handleBatchDeleteZitiSessions ends every session one identity holds. An
+// organization's admin names one of the organization's identities, and gets
+// the 404 an unknown one gets for any other; an install administrator any.
 func (s *Service) handleBatchDeleteZitiSessions(c *gin.Context) {
 	if s.zitiUnavailable(c) {
+		return
+	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
 		return
 	}
 
@@ -145,6 +174,17 @@ func (s *Service) handleBatchDeleteZitiSessions(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if !view.install {
+		owned, err := s.ownsZitiIdentity(c.Request.Context(), view.orgID, req.IdentityID)
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("terminate ziti sessions", err), s.logger)
+			return
+		}
+		if !owned {
+			c.JSON(http.StatusNotFound, gin.H{"error": "ziti identity not found"})
+			return
+		}
 	}
 
 	// List all sessions
@@ -185,7 +225,7 @@ func (s *Service) handleBatchDeleteZitiSessions(c *gin.Context) {
 		}
 
 		if matchedIdentity == req.IdentityID {
-			_, sc, delErr := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/sessions/"+entry.ID, nil)
+			_, sc, delErr := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/sessions/"+url.PathEscape(entry.ID), nil)
 			if delErr == nil && (sc == http.StatusOK || sc == http.StatusNoContent) {
 				terminated++
 			}

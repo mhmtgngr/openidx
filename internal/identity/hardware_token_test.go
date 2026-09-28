@@ -109,6 +109,33 @@ func newHardwareTokenService(t *testing.T) (*Service, context.Context) {
 		orgctx.With(ctx, orgctx.Org{ID: hwOrg})
 }
 
+// newMigratedHardwareTokenService is newHardwareTokenService over the schema
+// the migrations create, with hwUser and hwOther in the default organization.
+func newMigratedHardwareTokenService(t *testing.T) (*Service, context.Context) {
+	t.Helper()
+
+	db, cleanup := setupMigratedDB(t)
+	if db == nil {
+		t.SkipNow()
+	}
+	t.Cleanup(cleanup)
+
+	seedCtx := orgctx.WithBypassRLS(context.Background())
+	for id, name := range map[string]string{hwUser: "alice", hwOther: "bob"} {
+		if _, err := db.Pool.Exec(seedCtx,
+			`INSERT INTO users (id, org_id, username, email, enabled) VALUES ($1, $2, $3, $4, true)`,
+			id, hwOrg, "hw-"+name, "hw-"+name+"@example.test"); err != nil {
+			t.Fatalf("seed user %s: %v", name, err)
+		}
+	}
+	cipher, err := secretcrypt.New("hardware-token-test-key-32-bytes")
+	if err != nil {
+		t.Fatalf("cipher: %v", err)
+	}
+	return &Service{db: db, cfg: &config.Config{}, logger: zap.NewNop(), idpCipher: cipher},
+		orgctx.With(context.Background(), orgctx.Org{ID: hwOrg})
+}
+
 // issueToken registers a token with a known seed and assigns it, returning the
 // token id and the raw base32 seed so the test can compute valid codes.
 func issueToken(t *testing.T, s *Service, ctx context.Context, serial, tokenType, assignTo string) (string, []byte) {
@@ -196,6 +223,72 @@ func TestHardwareTokenLookAheadAdvancesPastTheMatch(t *testing.T) {
 		if ok, _ := s.VerifyHardwareToken(ctx, hwUser, generateHOTP(seed, i), "203.0.113.7", "ua"); ok {
 			t.Fatalf("code for counter %d still verifies after the window moved", i)
 		}
+	}
+}
+
+// A TOTP token has no counter of its own, and its counter column was left where
+// it was on every use, so a code stayed valid for its whole window -- its step
+// and one either side. The column now records the step each accepted code
+// belongs to, and a code is accepted only for a later step.
+//
+// These two run against the migrated schema, where hardware_tokens carries the
+// organization and the row-level-security belt.
+func TestAHardwareTOTPCodeIsAcceptedOnce(t *testing.T) {
+	s, ctx := newMigratedHardwareTokenService(t)
+	tokenID, seed := issueToken(t, s, ctx, "HW-TOTP-ONCE", "oath-totp", hwUser)
+
+	now := time.Now().Unix() / 30
+	code := generateHOTP(seed, now)
+
+	ok, err := s.VerifyHardwareToken(ctx, hwUser, code, "203.0.113.7", "ua")
+	if err != nil || !ok {
+		t.Fatalf("first use: ok=%v err=%v, want true/nil", ok, err)
+	}
+	if got := tokenColumn[int64](t, s, ctx, tokenID, "counter"); got != now {
+		t.Errorf("counter = %d after one use, want the step %d", got, now)
+	}
+	if ok, err := s.VerifyHardwareToken(ctx, hwUser, code, "203.0.113.7", "ua"); ok || err != nil {
+		t.Errorf("the same code again: ok=%v err=%v, want false/nil", ok, err)
+	}
+	if ok, err := s.VerifyHardwareToken(ctx, hwUser, generateHOTP(seed, now+1), "203.0.113.7", "ua"); err != nil || !ok {
+		t.Errorf("the next step's code: ok=%v err=%v, want true/nil", ok, err)
+	}
+}
+
+// The counter was read, compared in Go and written back unconditionally, so
+// requests carrying one code that arrived together all read the old counter
+// and were all accepted. The comparison is now in the UPDATE.
+func TestConcurrentUsesOfOneHardwareTokenCodeAdmitExactlyOne(t *testing.T) {
+	for _, tokenType := range []string{"oath-hotp", "oath-totp"} {
+		t.Run(tokenType, func(t *testing.T) {
+			s, ctx := newMigratedHardwareTokenService(t)
+			_, seed := issueToken(t, s, ctx, "HW-RACE-"+tokenType, tokenType, hwUser)
+			code := generateHOTP(seed, 0)
+			if tokenType == "oath-totp" {
+				code = generateHOTP(seed, time.Now().Unix()/30)
+			}
+
+			const n = 10
+			start := make(chan struct{})
+			results := make(chan bool, n)
+			for i := 0; i < n; i++ {
+				go func() {
+					<-start
+					ok, _ := s.VerifyHardwareToken(ctx, hwUser, code, "203.0.113.7", "ua")
+					results <- ok
+				}()
+			}
+			close(start)
+			admitted := 0
+			for i := 0; i < n; i++ {
+				if <-results {
+					admitted++
+				}
+			}
+			if admitted != 1 {
+				t.Fatalf("%d concurrent uses of one code admitted %d, want exactly 1", n, admitted)
+			}
+		})
 	}
 }
 

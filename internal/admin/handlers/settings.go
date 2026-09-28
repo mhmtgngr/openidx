@@ -78,10 +78,12 @@ type Settings struct {
 	Branding  BrandingSection `json:"branding"`
 }
 
-// GeneralSection contains general system settings
+// GeneralSection contains general system settings. SupportEmail is optional,
+// and empty means none is published: it used to default to an address at a
+// domain this project does not own.
 type GeneralSection struct {
 	OrganizationName string `json:"organization_name" binding:"required,min=1,max=255"`
-	SupportEmail     string `json:"support_email" binding:"required,email"`
+	SupportEmail     string `json:"support_email" binding:"omitempty,email"`
 	DefaultLanguage  string `json:"default_language" binding:"required"`
 	DefaultTimezone  string `json:"default_timezone" binding:"required"`
 	SessionTimeout   int    `json:"session_timeout" binding:"required,min=60,max=86400"`
@@ -132,7 +134,12 @@ type SMSSettings struct {
 	Provider string `json:"provider"`
 }
 
-// WebAuthnSettings defines WebAuthn-specific settings
+// WebAuthnSettings defines WebAuthn-specific settings.
+//
+// Nothing reads these to run a ceremony: the relying party a passkey is bound
+// to is the identity service's WEBAUTHN_RP_ID and WEBAUTHN_RP_ORIGINS. So the
+// ID and origin default to empty rather than to a guess; they used to default
+// to a domain this project does not own.
 type WebAuthnSettings struct {
 	Enabled              bool   `json:"enabled"`
 	RelyingPartyID       string `json:"relying_party_id"`
@@ -488,9 +495,6 @@ func (h *SettingsHandler) ValidateSettings(settings *Settings) error {
 	if settings.General.OrganizationName == "" {
 		return fmt.Errorf("organization_name is required")
 	}
-	if settings.General.SupportEmail == "" {
-		return fmt.Errorf("support_email is required")
-	}
 
 	// Validate security section
 	if settings.Security.PasswordPolicy.MinLength < 8 {
@@ -678,7 +682,7 @@ func (h *SettingsHandler) getDefaultSettings() Settings {
 		UpdatedBy: "system",
 		General: GeneralSection{
 			OrganizationName: "OpenIDX",
-			SupportEmail:     "support@openidx.io",
+			SupportEmail:     "",
 			DefaultLanguage:  "en",
 			DefaultTimezone:  "UTC",
 			SessionTimeout:   3600,
@@ -712,9 +716,9 @@ func (h *SettingsHandler) getDefaultSettings() Settings {
 				},
 				WebAuthn: WebAuthnSettings{
 					Enabled:              false,
-					RelyingPartyID:       "openidx.io",
+					RelyingPartyID:       "",
 					RelyingPartyName:     "OpenIDX",
-					RelyingPartyOrigin:   "https://openidx.io",
+					RelyingPartyOrigin:   "",
 					AuthenticatorTimeout: 60,
 					RequireResidentKey:   false,
 					UserVerification:     "preferred",
@@ -853,7 +857,7 @@ func (h *SettingsHandler) getPasswordPolicy(ctx context.Context) PasswordPolicyS
 func (h *SettingsHandler) getDefaultGeneralSection() GeneralSection {
 	return GeneralSection{
 		OrganizationName: "OpenIDX",
-		SupportEmail:     "support@openidx.io",
+		SupportEmail:     "",
 		DefaultLanguage:  "en",
 		DefaultTimezone:  "UTC",
 		SessionTimeout:   3600,
@@ -891,9 +895,9 @@ func (h *SettingsHandler) getDefaultSecuritySection() SecuritySection {
 			},
 			WebAuthn: WebAuthnSettings{
 				Enabled:              false,
-				RelyingPartyID:       "openidx.io",
+				RelyingPartyID:       "",
 				RelyingPartyName:     "OpenIDX",
-				RelyingPartyOrigin:   "https://openidx.io",
+				RelyingPartyOrigin:   "",
 				AuthenticatorTimeout: 60,
 				RequireResidentKey:   false,
 				UserVerification:     "preferred",

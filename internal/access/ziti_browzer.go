@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"go.uber.org/zap"
 )
@@ -261,7 +262,7 @@ func (zm *ZitiManager) PatchServiceRoleAttributes(ctx context.Context, zitiServi
 	})
 
 	_, statusCode, err := zm.mgmtRequest("PATCH",
-		fmt.Sprintf("/edge/management/v1/services/%s", zitiServiceID), body)
+		"/edge/management/v1/services/"+url.PathEscape(zitiServiceID), body)
 	if err != nil {
 		return fmt.Errorf("failed to patch service role attributes: %w", err)
 	}
@@ -274,7 +275,7 @@ func (zm *ZitiManager) PatchServiceRoleAttributes(ctx context.Context, zitiServi
 // GetServiceRoleAttributes retrieves current role attributes for a service
 func (zm *ZitiManager) GetServiceRoleAttributes(ctx context.Context, zitiServiceID string) ([]string, error) {
 	respData, statusCode, err := zm.mgmtRequest("GET",
-		fmt.Sprintf("/edge/management/v1/services/%s", zitiServiceID), nil)
+		"/edge/management/v1/services/"+url.PathEscape(zitiServiceID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +351,7 @@ func (zm *ZitiManager) EnsureBrowZerIdentity(ctx context.Context, externalID, au
 // findIdentityByExternalID looks up a Ziti identity by its externalId field
 func (zm *ZitiManager) findIdentityByExternalID(externalID string) string {
 	respData, statusCode, err := zm.mgmtRequest("GET",
-		fmt.Sprintf("/edge/management/v1/identities?filter=externalId=\"%s\"", externalID), nil)
+		"/edge/management/v1/identities?filter="+zitiFilterEquals("externalId", externalID), nil)
 	if err != nil || statusCode != http.StatusOK {
 		return ""
 	}
@@ -409,7 +410,7 @@ func (zm *ZitiManager) DisableBrowZer(ctx context.Context) error {
 // findResourceByName queries the Ziti management API for a named resource and returns its ID
 func (zm *ZitiManager) findResourceByName(resourceType, name string) string {
 	respData, statusCode, err := zm.mgmtRequest("GET",
-		fmt.Sprintf("/edge/management/v1/%s?filter=name=\"%s\"", resourceType, name), nil)
+		"/edge/management/v1/"+resourceType+"?filter="+zitiFilterEquals("name", name), nil)
 	if err != nil || statusCode != http.StatusOK {
 		return ""
 	}

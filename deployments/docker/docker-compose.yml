@@ -13,6 +13,13 @@ version: '3.9'
 # your .env. It is left unset here rather than widened to the whole network,
 # because published ports make the docker bridge gateway a hop too, and trusting
 # it would let anything on the host set its own client IP. See .env.example.
+#
+# OIDX_OUTBOUND_ALLOWLIST, also empty by default, is the other direction: the
+# internal addresses that URLs an organization's administrator types in --
+# webhooks, audit-stream webhooks, outbound SCIM targets, SSF receivers, SAML
+# metadata -- may reach anyway. Empty, they reach public addresses only; name a
+# receiver on your own network there (a CIDR, an address or a host name), never
+# this compose network's subnet, which would open every service in it.
 services:
   #---------------------------------------------------------------------------
   # Infrastructure Services
@@ -342,6 +349,9 @@ services:
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      # Shared with access-service: its policy checks (/evaluate) present it.
+      # Written by scripts/generate-secrets.sh.
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
       - RLS_MODE=${RLS_MODE:-session}
       - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
       - REDIS_REVOCATION_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-revocation:6379
@@ -385,6 +395,7 @@ services:
     environment:
       - APP_ENV=development
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OIDX_OUTBOUND_ALLOWLIST=${OIDX_OUTBOUND_ALLOWLIST:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
@@ -437,6 +448,7 @@ services:
     environment:
       - APP_ENV=development
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OIDX_OUTBOUND_ALLOWLIST=${OIDX_OUTBOUND_ALLOWLIST:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
@@ -452,6 +464,10 @@ services:
       # claiming an intact chain over nothing.
       - AUDIT_CHAIN_SECRET=${AUDIT_CHAIN_SECRET:-}
       - AUDIT_CHAIN_INTERVAL=${AUDIT_CHAIN_INTERVAL:-60s}
+      # Only a service presenting this may write an audit event
+      # (POST /api/v1/audit/events); access-service holds the same value.
+      # Written by scripts/generate-secrets.sh. Empty refuses every event.
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
       - TRACING_ENABLED=${TRACING_ENABLED:-false}
       - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
       - OTEL_SERVICE_NAME=audit-service
@@ -483,6 +499,7 @@ services:
     environment:
       - APP_ENV=development
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OIDX_OUTBOUND_ALLOWLIST=${OIDX_OUTBOUND_ALLOWLIST:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
@@ -595,6 +612,7 @@ services:
       - ACCESS_ASSIGNMENT_ENFORCE=${ACCESS_ASSIGNMENT_ENFORCE:-false}
       - ABAC_ENFORCE=${ABAC_ENFORCE:-off}
       - OIDX_TRUSTED_PROXIES=${OIDX_TRUSTED_PROXIES:-}
+      - OIDX_OUTBOUND_ALLOWLIST=${OIDX_OUTBOUND_ALLOWLIST:-}
       # Single-tenant install: attach the seeded default org when no tenant
       # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
@@ -1311,6 +1329,9 @@ services:
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - GOVERNANCE_URL=http://governance-service:8002
       - AUDIT_URL=http://audit-service:8004
+      # Presented to governance and the audit service on the calls no user
+      # makes; without it the audit service refuses this service's events.
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
       - ACCESS_SESSION_SECRET=${ACCESS_SESSION_SECRET:?ACCESS_SESSION_SECRET required - run scripts/generate-secrets.sh}
       - ACCESS_PROXY_DOMAIN=localhost
       - ZITI_ENABLED=${ZITI_ENABLED:-true}

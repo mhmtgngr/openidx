@@ -288,7 +288,7 @@ type EmailSender interface {
 	SendVerificationEmail(ctx context.Context, to, userName, token, baseURL string) error
 	SendInvitationEmail(ctx context.Context, to, inviterName, token, baseURL string) error
 	SendPasswordResetEmail(ctx context.Context, to, userName, token, baseURL string) error
-	SendWelcomeEmail(ctx context.Context, to, userName string) error
+	SendWelcomeEmail(ctx context.Context, to, userName, baseURL string) error
 	SendAsync(ctx context.Context, to, subject, templateName string, data map[string]interface{}) error
 }
 
@@ -2373,32 +2373,53 @@ func (s *Service) GenerateTOTPSecret(ctx context.Context, userID string) (*TOTPE
 	}, nil
 }
 
-// validateTOTPWithSkew validates a TOTP code allowing a +/- 1 period (30s)
-// clock-skew window, matching what Google/Microsoft Authenticator and most
-// verifiers accept. The default totp.Validate uses skew=0, so a user whose
-// phone clock drifts by even a few seconds across a period boundary gets a
-// spurious "invalid code" during enrollment/verification. Skew=1 fixes the most
-// common "my code doesn't work" failure without meaningfully weakening the OTP.
-func validateTOTPWithSkew(code, secret string) bool {
+// totpPeriod is the length of one TOTP time step, in seconds, for every
+// credential this service enrolls.
+const totpPeriod = 30
+
+// totpCodeOpts are the parameters every enrolled authenticator was given.
+var totpCodeOpts = totp.ValidateOpts{
+	Period:    totpPeriod,
+	Digits:    otp.DigitsSix,
+	Algorithm: otp.AlgorithmSHA1,
+}
+
+// totpStepOf reports which time step a TOTP code belongs to, within a +/- 1
+// period (30s) clock-skew window, matching what Google/Microsoft Authenticator
+// and most verifiers accept. A window of the current step alone gives a user
+// whose phone clock drifts by a few seconds across a boundary a spurious
+// "invalid code"; one step either side fixes that without meaningfully
+// weakening the OTP.
+//
+// The step, and not only a yes, is what the verifiers need: a code is accepted
+// once, for a step later than the last one its credential accepted (RFC 6238
+// section 5.2). The latest matching step is returned, so a code that happens to
+// be valid for two steps counts as the later.
+func totpStepOf(code, secret string, now time.Time) (int64, bool) {
 	code = strings.TrimSpace(code)
-	valid, err := totp.ValidateCustom(code, secret, time.Now().UTC(), totp.ValidateOpts{
-		Period:    30,
-		Skew:      1,
-		Digits:    otp.DigitsSix,
-		Algorithm: otp.AlgorithmSHA1,
-	})
-	if err != nil {
-		return false
+	if len(code) != totpCodeOpts.Digits.Length() {
+		return 0, false
 	}
-	return valid
+	current := now.Unix() / totpPeriod
+	for step := current + 1; step >= current-1; step-- {
+		want, err := totp.GenerateCodeCustom(secret, time.Unix(step*totpPeriod, 0).UTC(), totpCodeOpts)
+		if err != nil {
+			return 0, false
+		}
+		if subtle.ConstantTimeCompare([]byte(want), []byte(code)) == 1 {
+			return step, true
+		}
+	}
+	return 0, false
 }
 
 // EnrollTOTP enrolls a user with TOTP MFA after verification
 func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCode string) error {
 	s.logger.Info("Enrolling TOTP for user", zap.String("user_id", userID))
 
-	// Verify the code first
-	valid := validateTOTPWithSkew(verificationCode, secret)
+	// Verify the code first. Its step is stored with the credential, so the
+	// code that confirmed the enrollment cannot then sign in.
+	step, valid := totpStepOf(verificationCode, secret, time.Now())
 	if !valid {
 		return fmt.Errorf("invalid TOTP verification code")
 	}
@@ -2430,9 +2451,9 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCo
 
 	// Insert TOTP record
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO mfa_totp (id, user_id, secret, enabled, enrolled_at, created_at, updated_at, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, totpID, userID, secret, true, now, now, now, org.ID); err != nil {
+		INSERT INTO mfa_totp (id, user_id, secret, enabled, enrolled_at, created_at, updated_at, org_id, last_step)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, totpID, userID, secret, true, now, now, now, org.ID, step); err != nil {
 		return fmt.Errorf("failed to enroll TOTP: %w", err)
 	}
 
@@ -2485,26 +2506,60 @@ func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, er
 		return false, ErrTOTPLockedOut
 	}
 
-	if validateTOTPWithSkew(code, secret) {
-		// Success clears the counter and the lock in one statement.
-		if _, err := s.db.Pool.Exec(ctx, `
-			UPDATE mfa_totp
-			SET last_used_at = NOW(), updated_at = NOW(),
-			    failed_attempts = 0, last_failed_at = NULL, locked_until = NULL
-			WHERE user_id = $1 AND org_id = $2
-		`, userID, org.ID); err != nil {
-			s.logger.Warn("Failed to update TOTP state after success", zap.Error(err))
-		}
-		return true, nil
+	step, ok := totpStepOf(code, secret, time.Now())
+	if !ok {
+		s.recordFailedTOTP(ctx, userID, org.ID)
+		return false, nil
 	}
 
-	s.recordFailedTOTP(ctx, userID, org.ID)
+	// Accept the code by recording its step, and only for a step later than the
+	// last one this credential accepted.
+	//
+	// A code is valid for about 90 seconds (its step and one either side), and
+	// this used to accept it for all of them: last_used_at was written and never
+	// read, so the code a user had just signed in with -- seen over a shoulder,
+	// in a proxy log, or relayed by a phishing page -- signed in again. The
+	// comparison is in the statement that records the step, so two requests
+	// carrying one code cannot both pass: the row lock serialises them and the
+	// second finds last_step already at the step. The lock is re-checked here
+	// for the same reason, so a code arriving while a concurrent failure locks
+	// the factor is refused. Success clears the failure counter and the lock.
+	var accepted int64
+	err = s.db.Pool.QueryRow(ctx, `
+		UPDATE mfa_totp
+		SET last_step = $3, last_used_at = NOW(), updated_at = NOW(),
+		    failed_attempts = 0, last_failed_at = NULL, locked_until = NULL
+		WHERE user_id = $1 AND org_id = $2 AND enabled AND last_step < $3
+		  AND (locked_until IS NULL OR locked_until <= NOW())
+		RETURNING last_step
+	`, userID, org.ID, step).Scan(&accepted)
+	if err == nil {
+		return true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		// The write is the acceptance: a code whose use cannot be recorded
+		// could be presented again, so it is not accepted.
+		return false, fmt.Errorf("failed to record TOTP use: %w", err)
+	}
+
+	// No row: locked by a concurrent failure, or the step was already used. A
+	// replay is refused without counting as a guess -- the code is known, so
+	// counting it bounds nothing, and it would lock out a user whose browser
+	// submitted the form twice.
+	var nowLocked *time.Time
+	if rerr := s.db.Pool.QueryRow(ctx,
+		`SELECT locked_until FROM mfa_totp WHERE user_id = $1 AND org_id = $2`,
+		userID, org.ID).Scan(&nowLocked); rerr == nil && nowLocked != nil && time.Now().Before(*nowLocked) {
+		return false, ErrTOTPLockedOut
+	}
+	s.logger.Warn("TOTP code refused: its time step was already used",
+		zap.String("user_id", logsafe.Clean(userID)), zap.Int64("step", step))
 	return false, nil
 }
 
 // TOTP verification throttling.
 //
-// A TOTP code is six digits and validateTOTPWithSkew accepts a ±1 step window,
+// A TOTP code is six digits and totpStepOf accepts a ±1 step window,
 // so roughly 3 of 10^6 values are valid at any instant. Unthrottled, an
 // attacker expects a hit in the low hundreds of thousands of requests — minutes
 // of sustained traffic against an endpoint that otherwise looks healthy. The
@@ -2613,7 +2668,8 @@ func (s *Service) GetTOTPStatus(ctx context.Context, userID string) (*MFATOTP, e
 	return &totp, nil
 }
 
-// GenerateBackupCodes generates backup codes for MFA
+// GenerateBackupCodes generates a set of backup codes for MFA, replacing the
+// user's unused ones.
 func (s *Service) GenerateBackupCodes(ctx context.Context, userID string, count int) ([]string, error) {
 	s.logger.Info("Generating backup codes", zap.String("user_id", userID), zap.Int("count", count))
 
@@ -2642,6 +2698,15 @@ func (s *Service) GenerateBackupCodes(ctx context.Context, userID string, count 
 		return nil, fmt.Errorf("failed to store backup codes: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	// A new set replaces the old one. The sets used to accumulate, so a user
+	// who regenerated because a printed list went astray still had every code
+	// on it working. Used codes stay as the record of their use.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM mfa_backup_codes WHERE user_id = $1 AND org_id = $2 AND used = false`,
+		userID, org.ID); err != nil {
+		return nil, fmt.Errorf("failed to retire the previous backup codes: %w", err)
+	}
 
 	for i := 0; i < count; i++ {
 		// Generate random 8-character alphanumeric code
@@ -3923,8 +3988,10 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.GET("/users/me/password-info", svc.handleGetPasswordInfo)
 		identity.POST("/users/me/change-password", svc.handleChangePassword)
 		identity.POST("/users/me/mfa/setup", svc.handleSetupUserMFA)
-		identity.POST("/users/me/mfa/enable", svc.handleEnableUserMFA)
-		identity.POST("/users/me/mfa/disable", svc.handleDisableUserMFA)
+		// Every route that changes the caller's second factors asks the
+		// account holder for proof in its own body: see factor_proof.go.
+		identity.POST("/users/me/mfa/enable", svc.requireFactorProof(enrollsTOTP), svc.handleEnableUserMFA)
+		identity.POST("/users/me/mfa/disable", svc.requireFactorProof(removesTOTP), svc.handleDisableUserMFA)
 		identity.GET("/users/me/mfa/status", svc.handleGetMyMFAStatus)
 		identity.GET("/users/me/sessions", svc.handleGetMySessions)
 
@@ -3946,7 +4013,7 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 
 		// Identity links self-service (Phase 17C)
 		identity.GET("/users/me/identity-links", svc.handleGetMyIdentityLinks)
-		identity.DELETE("/users/me/identity-links/:linkId", svc.handleUnlinkMyIdentity)
+		identity.DELETE("/users/me/identity-links/:linkId", svc.requireFactorProof(changesSignInMethod), svc.handleUnlinkMyIdentity)
 
 		// User management
 		identity.GET("/users", svc.handleListUsers)
@@ -4002,50 +4069,50 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 
 		// MFA management
 		identity.POST("/mfa/totp/setup", svc.handleSetupTOTP)
-		identity.POST("/mfa/totp/enroll", svc.handleEnrollTOTP)
+		identity.POST("/mfa/totp/enroll", svc.requireFactorProof(enrollsTOTP), svc.handleEnrollTOTP)
 		identity.POST("/mfa/totp/verify", svc.handleVerifyTOTP)
 		identity.GET("/mfa/totp/status", svc.handleGetTOTPStatus)
-		identity.DELETE("/mfa/totp", svc.handleDisableTOTP)
-		identity.POST("/mfa/backup/generate", svc.handleGenerateBackupCodes)
+		identity.DELETE("/mfa/totp", svc.requireFactorProof(removesTOTP), svc.handleDisableTOTP)
+		identity.POST("/mfa/backup/generate", svc.requireFactorProof(addsFactor), svc.handleGenerateBackupCodes)
 		identity.POST("/mfa/backup/verify", svc.handleVerifyBackupCode)
 		identity.GET("/mfa/backup/count", svc.handleGetBackupCodeCount)
 
 		// WebAuthn (Passwordless) MFA
 		identity.POST("/mfa/webauthn/register/begin", svc.handleBeginWebAuthnRegistration)
-		identity.POST("/mfa/webauthn/register/finish", svc.handleFinishWebAuthnRegistration)
+		identity.POST("/mfa/webauthn/register/finish", svc.requireFactorProof(addsFactor), svc.handleFinishWebAuthnRegistration)
 		identity.POST("/mfa/webauthn/authenticate/begin", svc.handleBeginWebAuthnAuthentication)
 		identity.POST("/mfa/webauthn/authenticate/finish", svc.handleFinishWebAuthnAuthentication)
 		identity.GET("/mfa/webauthn/credentials", svc.handleGetWebAuthnCredentials)
-		identity.DELETE("/mfa/webauthn/credentials/:credential_id", svc.handleDeleteWebAuthnCredential)
+		identity.DELETE("/mfa/webauthn/credentials/:credential_id", svc.requireFactorProof(removesFactor), svc.handleDeleteWebAuthnCredential)
 
 		// Push MFA
-		identity.POST("/mfa/push/register", svc.handleRegisterPushDevice)
+		identity.POST("/mfa/push/register", svc.requireFactorProof(addsFactor), svc.handleRegisterPushDevice)
 		// Alias: the admin console posts enrollments to /mfa/push/devices (REST-style,
 		// matching the GET/DELETE on the same collection). Same handler + payload as
 		// /mfa/push/register, so both work and the console's "Enroll Device" stops 404ing.
-		identity.POST("/mfa/push/devices", svc.handleRegisterPushDevice)
+		identity.POST("/mfa/push/devices", svc.requireFactorProof(addsFactor), svc.handleRegisterPushDevice)
 		identity.GET("/mfa/push/devices", svc.handleGetPushDevices)
-		identity.DELETE("/mfa/push/devices/:device_id", svc.handleDeletePushDevice)
+		identity.DELETE("/mfa/push/devices/:device_id", svc.requireFactorProof(removesFactor), svc.handleDeletePushDevice)
 		// QR self-enrollment: the signed-in user mints a ticket (start), then an
 		// authenticator scans the QR and binds itself (complete, on the public
 		// group — the single-use ticket is the authorization).
-		identity.POST("/mfa/push/enroll/start", svc.handleStartPushEnrollment)
+		identity.POST("/mfa/push/enroll/start", svc.requireFactorProof(addsFactor), svc.handleStartPushEnrollment)
 		identity.POST("/mfa/push/challenge", svc.handleCreatePushChallenge)
 		identity.POST("/mfa/push/verify", svc.handleVerifyPushChallenge)
 		identity.GET("/mfa/push/challenge/:challenge_id", svc.handleGetPushChallenge)
 
 		// SMS OTP MFA
 		identity.POST("/mfa/sms/enroll", svc.handleEnrollSMS)
-		identity.POST("/mfa/sms/verify", svc.handleVerifySMSEnrollment)
+		identity.POST("/mfa/sms/verify", svc.requireFactorProof(addsFactor), svc.handleVerifySMSEnrollment)
 		identity.GET("/mfa/sms/status", svc.handleGetSMSStatus)
-		identity.DELETE("/mfa/sms", svc.handleDeleteSMS)
+		identity.DELETE("/mfa/sms", svc.requireFactorProof(removesFactor), svc.handleDeleteSMS)
 		identity.POST("/mfa/sms/challenge", svc.handleCreateSMSChallenge)
 
 		// Email OTP MFA
-		identity.POST("/mfa/email/enroll", svc.handleEnrollEmailOTP)
+		identity.POST("/mfa/email/enroll", svc.requireFactorProof(addsFactor), svc.handleEnrollEmailOTP)
 		identity.POST("/mfa/email/verify", svc.handleVerifyEmailOTPEnrollment)
 		identity.GET("/mfa/email/status", svc.handleGetEmailOTPStatus)
-		identity.DELETE("/mfa/email", svc.handleDeleteEmailOTP)
+		identity.DELETE("/mfa/email", svc.requireFactorProof(removesFactor), svc.handleDeleteEmailOTP)
 		identity.POST("/mfa/email/challenge", svc.handleCreateEmailOTPChallenge)
 
 		// Common OTP verification (works for both SMS and Email)
@@ -4055,7 +4122,7 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.GET("/mfa/methods", svc.handleGetMFAMethods)
 
 		// Trusted browsers (remember this device)
-		identity.POST("/trusted-browsers", svc.handleTrustBrowser)
+		identity.POST("/trusted-browsers", svc.requireFactorProof(addsFactor), svc.handleTrustBrowser)
 		identity.GET("/trusted-browsers", svc.handleGetTrustedBrowsers)
 		identity.DELETE("/trusted-browsers/:browser_id", svc.handleRevokeTrustedBrowser)
 		identity.DELETE("/trusted-browsers", svc.handleRevokeAllTrustedBrowsers)
@@ -4094,10 +4161,10 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.POST("/mfa/hardware-token/verify", svc.handleVerifyHardwareToken)
 
 		// Phone Call MFA
-		identity.POST("/mfa/phone/enroll", svc.handleEnrollPhoneCall)
-		identity.POST("/mfa/phone/verify", svc.handleVerifyPhoneCallEnrollment)
+		identity.POST("/mfa/phone/enroll", svc.requireFactorProof(changesPhoneCall), svc.handleEnrollPhoneCall)
+		identity.POST("/mfa/phone/verify", svc.requireFactorProof(addsFactor), svc.handleVerifyPhoneCallEnrollment)
 		identity.GET("/mfa/phone/status", svc.handleGetPhoneCallStatus)
-		identity.DELETE("/mfa/phone", svc.handleDeletePhoneCall)
+		identity.DELETE("/mfa/phone", svc.requireFactorProof(removesFactor), svc.handleDeletePhoneCall)
 		identity.POST("/mfa/phone/callback", svc.handleRequestCallback)
 
 		// Device Trust Approval (Admin)
@@ -5154,11 +5221,20 @@ func (s *Service) handleUpdateCurrentUser(c *gin.Context) {
 		return
 	}
 
+	// A field the request leaves out keeps its value. They were plain values,
+	// so a field left out was taken as its zero value. The console's "Update"
+	// sends the names and the address but not `enabled`, so it handed
+	// UpdateUser a disabled user, and UpdateUser deprovisions one: every
+	// profile update ended the user's sessions and revoked their access
+	// tokens, API keys and PAM grants (the row itself stayed enabled). Its
+	// "account enabled" switch, which sends only that, blanked the names and
+	// the address.
 	var req struct {
-		FirstName string `json:"firstName"`
-		LastName  string `json:"lastName"`
-		Email     string `json:"email"`
-		Enabled   bool   `json:"enabled"`
+		FirstName *string `json:"firstName"`
+		LastName  *string `json:"lastName"`
+		Email     *string `json:"email"`
+		Enabled   *bool   `json:"enabled"`
+		factorProof
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -5173,16 +5249,38 @@ func (s *Service) handleUpdateCurrentUser(c *gin.Context) {
 		return
 	}
 
-	// Update allowed fields
-	user.SetFirstName(req.FirstName)
-	user.SetLastName(req.LastName)
-	user.SetEmail(req.Email)
-	user.Enabled = req.Enabled
+	// The address is where a password reset and a sign-in link are sent, so
+	// changing it is a way to the password: with it, whoever holds only the
+	// token could reset the password and then give it as the proof a factor
+	// change asks for. It needs the password too. And the new address has not
+	// been verified: email_verified goes back to false, which the ID token and
+	// UserInfo report, until the link sent to it is followed.
+	emailChanged := req.Email != nil && !strings.EqualFold(strings.TrimSpace(*req.Email), strings.TrimSpace(user.GetEmail()))
+	if emailChanged {
+		if !s.checkFactorProof(c, userID, proofNeed{required: true}, req.factorProof) {
+			return
+		}
+		user.SetEmail(strings.TrimSpace(*req.Email))
+		user.EmailVerified = false
+	}
+	if req.FirstName != nil {
+		user.SetFirstName(*req.FirstName)
+	}
+	if req.LastName != nil {
+		user.SetLastName(*req.LastName)
+	}
+	if req.Enabled != nil {
+		user.Enabled = *req.Enabled
+	}
 
 	if err := s.UpdateUser(auditCtx(c), user); err != nil {
 		s.logger.Error("failed to update current user", zap.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
+	}
+
+	if emailChanged {
+		s.sendAddressVerification(c.Request.Context(), user)
 	}
 
 	c.JSON(200, gin.H{
@@ -5195,6 +5293,30 @@ func (s *Service) handleUpdateCurrentUser(c *gin.Context) {
 		"emailVerified": user.EmailVerified,
 		"createdAt":     user.CreatedAt,
 	})
+}
+
+// sendAddressVerification sends a verification link to the user's current
+// address, as creating the user does. Best-effort: with no email service, or
+// a token that cannot be stored, the address stays unverified until the user
+// asks again (POST /resend-verification).
+func (s *Service) sendAddressVerification(ctx context.Context, user *User) {
+	if s.emailService == nil {
+		return
+	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return
+	}
+	token := uuid.New().String()
+	if _, err := s.db.Pool.Exec(ctx,
+		"INSERT INTO email_verification_tokens (user_id, token, expires_at, org_id) VALUES ($1, $2, NOW() + INTERVAL '24 hours', $3)",
+		user.ID, token, org.ID); err != nil {
+		s.logger.Warn("could not store a verification token for a changed address", zap.Error(err))
+		return
+	}
+	if err := s.emailService.SendVerificationEmail(ctx, user.GetEmail(), user.GetFirstName(), token, s.publicBaseURL()); err != nil {
+		s.logger.Warn("could not send the verification email for a changed address", zap.Error(err))
+	}
 }
 
 func (s *Service) handleChangePassword(c *gin.Context) {
@@ -6506,7 +6628,7 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 
 	// Send welcome email
 	if s.emailService != nil {
-		s.emailService.SendWelcomeEmail(c.Request.Context(), email, req.FirstName)
+		s.emailService.SendWelcomeEmail(c.Request.Context(), email, req.FirstName, s.publicBaseURL())
 	}
 
 	// Publish webhook

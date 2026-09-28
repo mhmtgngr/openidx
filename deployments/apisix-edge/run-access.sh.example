@@ -21,7 +21,8 @@ export DEFAULT_ORG_FALLBACK=true
 export CORS_ALLOWED_ORIGINS="https://openidx.tdv.org"
 export LOG_LEVEL=info
 # MUST equal INTERNAL_SERVICE_TOKEN in ~/.config/oidx/common.env — the proxy
-# presents it to the governance /evaluate endpoint (service-to-service auth).
+# presents it to the governance /evaluate endpoint and with every audit event
+# it posts (service-to-service auth); the audit service refuses events without it.
 export INTERNAL_SERVICE_TOKEN="CHANGE_ME_INTERNAL_TOKEN"
 
 # --- Access-proxy domains ---------------------------------------------------
@@ -54,6 +55,10 @@ export APISIX_EDGE_ENABLED=true
 export APISIX_ADMIN_URL=http://127.0.0.1:9280
 export APISIX_ADMIN_KEY=CHANGE_ME_ADMIN_KEY    # must equal config.yaml's admin_key
 export APISIX_BOOTSTRAPPER_NODE=127.0.0.1:8445
+# The access service's forward-auth endpoint as APISIX reaches it. A route with
+# an upstream pool that requires sign-in is rendered behind it, and is not
+# rendered at all while this is empty.
+export APISIX_FORWARD_AUTH_URI=http://127.0.0.1:8007/api/v1/access/auth/decide
 
 mkdir -p /tmp/oidx-logs
 exec /home/cmit/oidx-runtime/bin/oidx-access-service > /tmp/oidx-logs/access.log 2>&1

@@ -324,16 +324,20 @@ func TestMFATOTPFlow(t *testing.T) {
 		mfaEnabled, _ := profile["mfaEnabled"].(bool)
 		assert.True(t, mfaEnabled, "expected mfaEnabled=true; got profile=%v", profile)
 
-		// Clean up - disable MFA
-		apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/disable", "", token)
+		// Clean up - disable MFA. Turning a factor off needs proof from the
+		// account holder; without it the next subtests would start enrolled.
+		status, _ = apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/disable",
+			fmt.Sprintf(`{"current_password":%q}`, password), token)
+		require.Equal(t, http.StatusOK, status)
 	})
 
 	t.Run("TOTP enable with invalid code fails", func(t *testing.T) {
 		// Setup first
 		apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/setup", "", token)
 
-		// Try invalid code
-		enableData := `{"code":"000000"}`
+		// Try invalid code. The first subtest left unused backup codes,
+		// which are a second factor, so the password comes with it.
+		enableData := fmt.Sprintf(`{"code":"000000","current_password":%q}`, password)
 		status, body := apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/enable", enableData, token)
 
 		assert.Equal(t, http.StatusBadRequest, status)
@@ -348,12 +352,18 @@ func TestMFATOTPFlow(t *testing.T) {
 		secret, _ := setupBody["secret"].(string)
 		validCode := generateTOTPCode(secret, time.Now())
 
-		enableData := fmt.Sprintf(`{"code":%q}`, validCode)
+		enableData := fmt.Sprintf(`{"code":%q,"current_password":%q}`, validCode, password)
 		status, _ = apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/enable", enableData, token)
 		require.Equal(t, http.StatusOK, status)
 
-		// Now disable
-		status, _ = apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/disable", "", token)
+		// A token alone does not turn the factor off
+		status, body := apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/disable", "", token)
+		assert.Equal(t, http.StatusForbidden, status)
+		assert.Equal(t, "reauthentication_required", body["error"])
+
+		// The password does
+		status, _ = apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/disable",
+			fmt.Sprintf(`{"current_password":%q}`, password), token)
 		assert.Equal(t, http.StatusOK, status)
 
 		// Verify disabled

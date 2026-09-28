@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -279,7 +281,7 @@ type browzerRouteInfo struct {
 func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browzerRouteInfo, error) {
 	rows, err := tm.db.Pool.Query(ctx,
 		//orgscope:ignore install-wide BrowZer bootstrapper config generation; the shared bootstrapper serves every ziti+browzer-enabled route across all orgs into one config file
-		`SELECT from_url, to_url, ziti_service_name, COALESCE(landing_path, '/'), COALESCE(hosting_mode, 'identity')
+		`SELECT from_url, COALESCE(host, ''), to_url, ziti_service_name, COALESCE(landing_path, '/'), COALESCE(hosting_mode, 'identity')
 		 FROM proxy_routes
 		 WHERE ziti_enabled = true
 		   AND browzer_enabled = true
@@ -294,8 +296,8 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 
 	var routes []browzerRouteInfo
 	for rows.Next() {
-		var fromURL, toURL, serviceName, landingPath, hostingMode string
-		if err := rows.Scan(&fromURL, &toURL, &serviceName, &landingPath, &hostingMode); err != nil {
+		var fromURL, host, toURL, serviceName, landingPath, hostingMode string
+		if err := rows.Scan(&fromURL, &host, &toURL, &serviceName, &landingPath, &hostingMode); err != nil {
 			tm.logger.Warn("Failed to scan route row", zap.Error(err))
 			continue
 		}
@@ -304,7 +306,9 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 			fromURL:     fromURL,
 			toURL:       toURL,
 			serviceName: serviceName,
-			hostname:    fromURL,
+			// The route's host as migration v211 stores it, and as the unique
+			// index over enabled routes holds it: one route per host here too.
+			hostname:    host,
 			pathPrefix:  "/",
 			landingPath: landingPath,
 			// Resolve to the EFFECTIVE mode (these are all browzer_enabled), so the
@@ -315,11 +319,23 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 			hostingMode: effectiveHostingMode(hostingMode, true, toURL),
 		}
 
-		if parsed, err := url.Parse(fromURL); err == nil && parsed.Host != "" {
-			info.hostname = parsed.Hostname()
-			if parsed.Path != "" && parsed.Path != "/" {
-				info.pathPrefix = parsed.Path
-			}
+		// The path comes from the same from_url, which proxy_route_host()
+		// also reads without a scheme: host[:port]/path.
+		parsed, err := url.Parse(fromURL)
+		if err != nil || parsed.Host == "" {
+			parsed, err = url.Parse("//" + fromURL)
+		}
+		if err == nil && parsed.Host != "" && parsed.Path != "" && parsed.Path != "/" {
+			info.pathPrefix = parsed.Path
+		}
+
+		// Everything generated from these routes is nginx configuration shared
+		// by every organization; see browzer_config_values.go.
+		if reason := browzerRouteUnsafe(info); reason != "" {
+			tm.logger.Warn("a BrowZer route is left out of the generated configuration",
+				zap.String("reason", reason),
+				logsafe.String("from_url", fromURL), logsafe.String("service", serviceName))
+			continue
 		}
 
 		routes = append(routes, info)
@@ -614,7 +630,7 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 			b.WriteString("        proxy_http_version 1.1;\n")
 			b.WriteString("        proxy_set_header Host $host;\n")
 			b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
-			b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+			writeBrowZerCallerHeaders(&b)
 			b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
 			b.WriteString("        proxy_read_timeout 86400s;\n")
 			b.WriteString("        proxy_send_timeout 86400s;\n")
@@ -638,7 +654,7 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 				b.WriteString("        proxy_http_version 1.1;\n")
 				fmt.Fprintf(&b, "        proxy_set_header Host %s;\n", parsed.Host)
 				b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
-				b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+				writeBrowZerCallerHeaders(&b)
 				b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
 				b.WriteString("        proxy_ssl_server_name on;\n")
 				b.WriteString("        proxy_ssl_verify off;\n")
@@ -662,7 +678,7 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 				b.WriteString("        proxy_ssl_server_name on;\n")
 				b.WriteString("        proxy_ssl_verify off;\n")
 				b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
-				b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+				writeBrowZerCallerHeaders(&b)
 				b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
 				b.WriteString("        proxy_set_header Accept-Encoding \"\";\n")
 				b.WriteString("        sub_filter_once off;\n")
@@ -687,7 +703,7 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 				b.WriteString("        proxy_http_version 1.1;\n")
 				b.WriteString("        proxy_set_header Host $host;\n")
 				b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
-				b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+				writeBrowZerCallerHeaders(&b)
 				b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
 				b.WriteString("        proxy_set_header Accept-Encoding \"\";\n")
 				b.WriteString("        sub_filter_once off;\n")
@@ -719,8 +735,10 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 	b.WriteString("a:hover{background:#e0e0e0}</style></head><body>")
 	b.WriteString("<h1>OpenIDX BrowZer Services</h1><p>Available services:</p>")
 	for _, m := range mappings {
+		// queryBrowZerRoutes admits no character that is markup or nginx
+		// syntax into a path; escaping here keeps the page safe on its own.
 		label := strings.TrimPrefix(m.pathPrefix, "/")
-		fmt.Fprintf(&b, "<a href=\"%s\">%s</a>", m.pathPrefix, label)
+		fmt.Fprintf(&b, "<a href=\"%s\">%s</a>", html.EscapeString(m.pathPrefix), html.EscapeString(label))
 	}
 	b.WriteString("</body></html>';\n")
 	b.WriteString("    }\n")
@@ -758,7 +776,7 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 		b.WriteString("        proxy_http_version 1.1;\n")
 		b.WriteString("        proxy_set_header Host $host;\n")
 		b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
-		b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+		writeBrowZerCallerHeaders(&b)
 		b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
 		b.WriteString("        proxy_set_header Upgrade $http_upgrade;\n")
 		b.WriteString("        proxy_set_header Connection $connection_upgrade;\n")
@@ -865,14 +883,13 @@ func buildBrowZerHopConfig(routes []browzerRouteInfo, basePort int) string {
 		b.WriteString("        proxy_redirect off;\n")
 		fmt.Fprintf(&b, "        proxy_set_header Host %s;\n", r.hostname)
 		b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
-		b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+		writeBrowZerCallerHeaders(&b)
 		// The browser's page scheme is https regardless of the plain-HTTP hop leg.
 		b.WriteString("        proxy_set_header X-Forwarded-Proto https;\n")
 		b.WriteString("        proxy_http_version 1.1;\n")
 		b.WriteString("        proxy_set_header Upgrade $http_upgrade;\n")
 		b.WriteString("        proxy_set_header Connection \"upgrade\";\n")
 		b.WriteString("        proxy_read_timeout 86400s;\n")
-		b.WriteString("        proxy_set_header Remote-User $http_remote_user;\n")
 		b.WriteString("    }\n}\n")
 	}
 	return b.String()
@@ -1035,4 +1052,30 @@ func writeFileAtomic(path string, data []byte) error {
 		return fmt.Errorf("failed to rename config: %w", err)
 	}
 	return nil
+}
+
+// writeBrowZerCallerHeaders writes, into a location that proxies to an
+// application, the request headers that say who the caller is, and what they
+// are set to: nothing a caller can choose.
+//
+// nginx passes a request's headers on as the caller sent them, and nothing in
+// front of these locations removes identity headers: the BrowZer runtime
+// carries the browser's request over the overlay, so an application that
+// trusts X-Forwarded-User, X-Auth-Request-User or Remote-User -- because it
+// sits behind OpenIDX -- believed whatever the caller wrote. The hop even set
+// Remote-User from the caller's own header, and X-Forwarded-For was the
+// caller's chain with the peer appended. Every identity header the proxy
+// strips (namedIdentityHeaders, the list proxy_credentials.go keeps) and
+// Remote-User are set empty, which nginx does by not sending them, and
+// X-Forwarded-For is the peer's address alone.
+func writeBrowZerCallerHeaders(b *strings.Builder) {
+	b.WriteString("        proxy_set_header X-Forwarded-For $remote_addr;\n")
+	for _, h := range browzerBlankedHeaders() {
+		fmt.Fprintf(b, "        proxy_set_header %s \"\";\n", h)
+	}
+}
+
+// browzerBlankedHeaders is what writeBrowZerCallerHeaders sets empty.
+func browzerBlankedHeaders() []string {
+	return append(namedIdentityHeaders(), "Remote-User")
 }

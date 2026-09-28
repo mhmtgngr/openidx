@@ -471,7 +471,9 @@ func (s *Service) getSessionManagementMetrics(ctx context.Context) (SessionManag
 	// read ever returned anything.
 	if settings, err := syssettings.Load(ctx, s.db.Pool); err == nil {
 		metrics.SessionTimeoutMins = settings.Security.SessionTimeout
-		metrics.IdleTimeoutMins = settings.Security.IdleTimeout / 60
+		if idle := settings.Security.IdleTimeout; idle != nil {
+			metrics.IdleTimeoutMins = *idle / 60
+		}
 	}
 
 	if metrics.SessionTimeoutMins == 0 {

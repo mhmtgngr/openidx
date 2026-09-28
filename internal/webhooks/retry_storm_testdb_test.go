@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/netutil"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
@@ -91,9 +92,8 @@ func openWebhookRedis(t *testing.T) *goredis.Client {
 	return c
 }
 
-// seedWebhooks builds the two tables the delivery path touches and one active
-// subscription pointing at the given URL.
-func seedWebhooks(t *testing.T, pool *pgxpool.Pool, rdb *goredis.Client, url string) (*Service, string) {
+// createWebhookTables builds the two tables the delivery path touches.
+func createWebhookTables(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
 		CREATE TABLE webhook_subscriptions (
@@ -110,22 +110,36 @@ func seedWebhooks(t *testing.T, pool *pgxpool.Pool, rdb *goredis.Client, url str
 			next_retry_at timestamptz, queued_at timestamptz, org_id uuid,
 			created_at timestamptz DEFAULT NOW(), delivered_at timestamptz);`)
 	require.NoError(t, err)
+}
+
+// seedWebhooks builds the tables and one active subscription pointing at the
+// given URL. The receivers in these tests are local servers, so the service's
+// outbound guard allows loopback, the way an operator's
+// OIDX_OUTBOUND_ALLOWLIST would.
+func seedWebhooks(t *testing.T, pool *pgxpool.Pool, rdb *goredis.Client, url string) (*Service, string) {
+	t.Helper()
+	createWebhookTables(t, pool)
 
 	org := uuid.NewString()
 	subID := uuid.NewString()
-	_, err = pool.Exec(context.Background(), `
+	_, err := pool.Exec(context.Background(), `
 		INSERT INTO webhook_subscriptions (id, name, url, secret, events, status, org_id)
 		VALUES ($1, 'test', $2, 'shh', ARRAY['user.created'], 'active', $3)`, subID, url, org)
 	require.NoError(t, err)
 
-	svc := &Service{
-		db:     &database.PostgresDB{Pool: database.NewScopedPool(pool)},
-		redis:  &database.RedisClient{Client: rdb},
-		logger: zap.NewNop(),
-		client: NewService(nil, nil, zap.NewNop(), nil).client,
-		cipher: secretcrypt.NewNoop(),
-	}
+	svc := NewService(&database.PostgresDB{Pool: database.NewScopedPool(pool)},
+		&database.RedisClient{Client: rdb}, zap.NewNop(), secretcrypt.NewNoop())
+	svc.SetOutboundGuard(loopbackAllowed(t))
 	return svc, org
+}
+
+// loopbackAllowed is an outbound guard with 127.0.0.0/8 allowlisted and no
+// proxy, for tests whose receiver is a local server.
+func loopbackAllowed(t *testing.T) *netutil.OutboundGuard {
+	t.Helper()
+	allow, err := netutil.ParseAllowlist("127.0.0.0/8")
+	require.NoError(t, err)
+	return netutil.NewOutboundGuard(allow).WithProxy(nil)
 }
 
 // receiver counts what actually reaches the customer's endpoint.

@@ -12,7 +12,7 @@ import (
 func TestIssuerForOrg(t *testing.T) {
 	const global = "https://idp.example.com"
 
-	tenant := &Service{issuer: global, tenantBaseDomain: "openidx.io"}
+	tenant := &Service{issuer: global, tenantBaseDomain: "example.com"}
 	single := &Service{issuer: global, tenantBaseDomain: ""}
 
 	cases := []struct {
@@ -21,7 +21,7 @@ func TestIssuerForOrg(t *testing.T) {
 		org  orgctx.Org
 		want string
 	}{
-		{"tenant org gets subdomain issuer", tenant, orgctx.Org{ID: "x", Slug: "acme"}, "https://acme.openidx.io"},
+		{"tenant org gets subdomain issuer", tenant, orgctx.Org{ID: "x", Slug: "acme"}, "https://acme.example.com"},
 		{"default org keeps global issuer", tenant, orgctx.Org{ID: "x", Slug: "default"}, global},
 		{"empty slug keeps global issuer", tenant, orgctx.Org{ID: "x", Slug: ""}, global},
 		{"no base domain keeps global issuer", single, orgctx.Org{ID: "x", Slug: "acme"}, global},

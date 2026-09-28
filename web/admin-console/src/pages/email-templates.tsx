@@ -8,6 +8,7 @@ import { Button } from '../components/ui/button'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 import { SelectableRow } from '../components/selectable-row'
+import { EmailPreviewFrame } from '../components/email-preview-frame'
 import { Mail, Eye, RotateCcw, Save, Palette } from 'lucide-react'
 
 interface EmailTemplate {
@@ -310,13 +311,14 @@ export function EmailTemplatesPage() {
                     value={editText} onChange={e => setEditText(e.target.value)} />
                 </div>
 
-                {/* Preview */}
+                {/* Preview, in a frame that runs none of the template's
+                    script (components/email-preview-frame.tsx). */}
                 {previewHtml && (
                   <div>
                     <label className="text-sm font-medium">
                       {t('pages.emailTemplates.editor.previewLabel')}
                     </label>
-                    <div className="border rounded p-4 mt-1 bg-background" dangerouslySetInnerHTML={{ __html: previewHtml }} />
+                    <EmailPreviewFrame html={previewHtml} />
                   </div>
                 )}
               </div>

@@ -1,9 +1,11 @@
 package oauth
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
@@ -142,8 +144,21 @@ func (s *Service) handleDeleteSSFStream(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := s.DeleteSSFStream(c.Request.Context(), orgID, c.Param("id")); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	// A stream id that is not a UUID names no stream. It used to reach the
+	// DELETE, and the database's complaint about the cast came back as the
+	// body of a 404.
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "stream not found"})
+		return
+	}
+	if err := s.DeleteSSFStream(c.Request.Context(), orgID, id); err != nil {
+		if errors.Is(err, errSSFStreamNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "stream not found"})
+			return
+		}
+		s.logger.Error("delete ssf stream failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})

@@ -126,11 +126,15 @@ func (s *Service) handleStepUpChallenge(c *gin.Context) {
 	}
 
 	// Log audit event in background with timeout
+	// gin pools the Context and resets it for the next request as soon as
+	// the handler returns, so a detached goroutine must read the address
+	// before it starts -- see TestNoDetachedGoroutineReadsAGinContext.
+	clientIP := c.ClientIP()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.logAuditEvent(ctx, "authentication", "security", "step_up_challenge_created", "success",
-			userID, c.ClientIP(), userID, "user",
+			userID, clientIP, userID, "user",
 			map[string]interface{}{"challenge_id": challengeID, "reason": req.Reason})
 	}()
 
@@ -256,11 +260,12 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 		// tenant (the row would fall back to the default org) and leaves
 		// app.org_id empty, which the policy refuses outright.
 		auditCtx := orgctx.With(context.Background(), orgctx.Org{ID: auditOrgID(c.Request.Context())})
+		clientIP := c.ClientIP()
 		go func() {
 			ctx, cancel := context.WithTimeout(auditCtx, 5*time.Second)
 			defer cancel()
 			s.logAuditEvent(ctx, "authentication", "security", "step_up_failed", "failure",
-				userID, c.ClientIP(), userID, "user",
+				userID, clientIP, userID, "user",
 				map[string]interface{}{"challenge_id": req.ChallengeID, "method": req.Method})
 		}()
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -327,11 +332,12 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 	}
 
 	// Log audit event in background with timeout
+	clientIP := c.ClientIP()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.logAuditEvent(ctx, "authentication", "security", "step_up_verified", "success",
-			userID, c.ClientIP(), userID, "user",
+			userID, clientIP, userID, "user",
 			map[string]interface{}{"challenge_id": req.ChallengeID, "method": req.Method})
 	}()
 

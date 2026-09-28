@@ -277,7 +277,25 @@ func main() {
 	router.GET("/ready", healthService.ReadyHandler())
 
 	// Initialize directory service
-	dirService := directory.NewService(db, log)
+	// One ENCRYPTION_KEY cipher for what this service keeps sealed at rest:
+	// the directories' credentials, which the directory service opens to sign
+	// in with, and the webhooks' signing secrets.
+	secretCipher, err := secretcrypt.New(cfg.EncryptionKey)
+	if err != nil {
+		log.Warn("directory credentials and webhook signing secrets will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
+		secretCipher = secretcrypt.NewNoop()
+	}
+	dirService := directory.NewService(db, log, secretCipher)
+	// Seal what earlier releases stored in plaintext. Here, not in a
+	// migration: the migration runner has no key. Each value that is left
+	// keeps working and is sealed when its directory is next saved.
+	sealCtx, cancelSeal := context.WithTimeout(context.Background(), 30*time.Second)
+	if n, err := dirService.SealStoredSecrets(sealCtx); err != nil {
+		log.Warn("could not seal the directories' stored credentials; each is sealed when its directory is next saved", zap.Error(err))
+	} else if n > 0 {
+		log.Info("sealed directory credentials stored in plaintext", zap.Int("directories", n))
+	}
+	cancelSeal()
 	if redis != nil {
 		dirService.SetRedis(redis.Client) // leader-gate the sync tick across replicas
 		// And cut the tokens of anyone a sync deprovisions. The sync engine
@@ -302,12 +320,7 @@ func main() {
 	apiKeyService := apikeys.NewService(db, redis, log)
 
 	// Initialize webhook service
-	webhookSecretCipher, err := secretcrypt.New(cfg.EncryptionKey)
-	if err != nil {
-		log.Warn("webhook signing secrets will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
-		webhookSecretCipher = secretcrypt.NewNoop()
-	}
-	webhookService := webhooks.NewService(db, redis, log, webhookSecretCipher)
+	webhookService := webhooks.NewService(db, redis, log, secretCipher)
 
 	// Start background workers
 	ctx, cancelWorkers := context.WithCancel(context.Background())

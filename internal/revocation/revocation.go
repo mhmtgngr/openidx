@@ -137,7 +137,8 @@ type IssuedAt struct {
 	GrantedMicros int64
 }
 
-// earliestMicros is the earliest instant the token may date from.
+// EarliestMicros is the earliest instant the token may date from, in
+// microseconds since the epoch.
 //
 // Without GrantedAtClaim, the start of its `iat` second: the token was minted
 // somewhere inside that second, and assuming the earliest point is what keeps
@@ -145,7 +146,10 @@ type IssuedAt struct {
 // the claim -- unless the claim lies after the end of the `iat` second, which
 // no minter here produces; a token that says so is read by its `iat` instead,
 // never by the later of the two.
-func (t IssuedAt) earliestMicros() int64 {
+//
+// Token exchange stamps it on the token it issues as that token's
+// GrantedAtClaim, so the exchanged token dates from its subject token's grant.
+func (t IssuedAt) EarliestMicros() int64 {
 	start := t.Seconds * 1e6
 	if t.GrantedMicros > 0 && t.GrantedMicros < start+1e6 {
 		return t.GrantedMicros
@@ -162,7 +166,7 @@ func (t IssuedAt) earliestMicros() int64 {
 // carry microseconds does a token minted later in the same second survive, and
 // then only because it provably came after.
 func (c Cutoff) Revokes(t IssuedAt) bool {
-	return t.Seconds > 0 && c.lastRevokedMicros > 0 && t.earliestMicros() <= c.lastRevokedMicros
+	return t.Seconds > 0 && c.lastRevokedMicros > 0 && t.EarliestMicros() <= c.lastRevokedMicros
 }
 
 // RevokeUserTokens writes the cutoff that stops every access token this user

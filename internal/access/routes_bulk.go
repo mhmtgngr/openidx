@@ -1,6 +1,7 @@
 package access
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -150,7 +151,26 @@ func (s *Service) handleBulkRoutes(c *gin.Context) {
 		return
 	}
 
+	// A host is served by one enabled route in the whole installation, and
+	// every route here is created enabled: a list naming a host another route
+	// already serves, or naming one host twice, is refused as a whole before
+	// anything is created.
+	conflicts, err := s.bulkRouteHostConflicts(c.Request.Context(), org.ID, list)
+	if err != nil {
+		s.logger.Error("bulk routes: could not check the hosts", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create routes"})
+		return
+	}
+	if len(conflicts) > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":     "some hosts are already served by an enabled route, or listed twice; nothing was created",
+			"conflicts": conflicts,
+		})
+		return
+	}
+
 	created := 0
+	var nameConflicts []string
 	for _, r := range list {
 		name := strings.TrimSpace(r.Name)
 		toURL := strings.TrimSpace(r.ToURL)
@@ -160,6 +180,18 @@ func (s *Service) handleBulkRoutes(c *gin.Context) {
 		svcName := ""
 		if r.Ziti {
 			svcName = "openidx-" + sanitizeZitiName(name)
+			// The reconciler adopts and converges whatever service this name
+			// already names, so it must not be another organization's or the
+			// install's (ziti_scope.go).
+			claimed, err := zitiServiceNameClaimed(c.Request.Context(), s.db, org.ID, svcName)
+			if err != nil {
+				s.logger.Warn("bulk route: could not check the ziti service name", zap.String("name", name), zap.Error(err))
+				continue
+			}
+			if claimed {
+				nameConflicts = append(nameConflicts, name)
+				continue
+			}
 		}
 		if _, err := s.db.Pool.Exec(c.Request.Context(),
 			`INSERT INTO proxy_routes (id, name, from_url, to_url, require_auth, enabled, priority,
@@ -175,7 +207,12 @@ func (s *Service) handleBulkRoutes(c *gin.Context) {
 	if created > 0 {
 		s.enqueueReconcile()
 	}
-	c.JSON(http.StatusOK, gin.H{"created": created, "requested": len(list)})
+	resp := gin.H{"created": created, "requested": len(list)}
+	if len(nameConflicts) > 0 {
+		// The routes left out because their Ziti service name is taken.
+		resp["name_conflicts"] = nameConflicts
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // handleRouterEnrollToken mints a new edge-router enrollment JWT and returns a
@@ -228,4 +265,59 @@ func (s *Service) handleRouterEnrollToken(c *gin.Context) {
 		"controller":      ctrl,
 		"onboard_command": onboard,
 	})
+}
+
+// bulkHostConflict is one host a bulk request cannot have.
+type bulkHostConflict struct {
+	Host   string `json:"host"`
+	Reason string `json:"reason"`
+	// Route is the caller's own organization's route that serves the host;
+	// another organization's route is not named.
+	Route string `json:"route,omitempty"`
+}
+
+// bulkRouteHostConflicts returns the hosts, among the routes handleBulkRoutes
+// would create, that an enabled route already serves or that the list names
+// more than once.
+func (s *Service) bulkRouteHostConflicts(ctx context.Context, orgID string, list []bulkRoute) ([]bulkHostConflict, error) {
+	var fromURLs []string
+	for _, r := range list {
+		if strings.TrimSpace(r.Name) == "" || strings.TrimSpace(r.ToURL) == "" {
+			continue
+		}
+		fromURLs = append(fromURLs, strings.TrimSpace(r.FromURL))
+	}
+	if len(fromURLs) == 0 {
+		return nil, nil
+	}
+	rows, err := s.db.Pool.Query(orgctx.WithBypassRLS(ctx),
+		//orgscope:ignore a host is held across organizations (migration v211); the holder's organization decides what the 409 may say about it
+		`SELECT COALESCE(proxy_route_host(i.u), ''), COALESCE(r.org_id::text, ''), COALESCE(r.name, '')
+		   FROM unnest($1::text[]) WITH ORDINALITY AS i(u, n)
+		   LEFT JOIN proxy_routes r ON r.enabled = true AND r.host = proxy_route_host(i.u)
+		  ORDER BY i.n`, fromURLs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []bulkHostConflict
+	seen := map[string]bool{}
+	for rows.Next() {
+		var host, holderOrg, holderName string
+		if err := rows.Scan(&host, &holderOrg, &holderName); err != nil {
+			return nil, err
+		}
+		switch {
+		case host == "":
+			continue
+		case holderOrg == orgID:
+			out = append(out, bulkHostConflict{Host: host, Reason: "served by a route in this organization", Route: holderName})
+		case holderOrg != "":
+			out = append(out, bulkHostConflict{Host: host, Reason: "routed by another organization"})
+		case seen[host]:
+			out = append(out, bulkHostConflict{Host: host, Reason: "listed more than once"})
+		}
+		seen[host] = true
+	}
+	return out, rows.Err()
 }

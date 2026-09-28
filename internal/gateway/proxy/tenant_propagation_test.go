@@ -38,11 +38,11 @@ func TestOrgSlugHeader_propagatesThroughProxy(t *testing.T) {
 	}
 
 	r := gin.New()
-	r.Use(gwmiddleware.OrgSlugHeader("openidx.io"))
+	r.Use(gwmiddleware.OrgSlugHeader("example.com"))
 	r.GET("/api/v1/identity/users", rp.ServeHTTP)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/identity/users", nil)
-	req.Host = "acme.openidx.io"
+	req.Host = "acme.example.com"
 	// A client trying to spoof the tenant must not win.
 	req.Header.Set("X-Org-Slug", "victim-org")
 	rec := httptest.NewRecorder()

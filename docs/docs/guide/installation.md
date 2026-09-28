@@ -51,8 +51,12 @@ helm install openidx oci://ghcr.io/mhmtgngr/openidx/charts/openidx \
   --namespace openidx \
   --create-namespace \
   --set postgresql.enabled=true \
-  --set redis.enabled=true
+  --set redis.enabled=true \
+  --set config.oauthIssuer=https://auth.example.com
 ```
+
+`config.oauthIssuer` is required and has no default: set it to the public URL
+of your install's OAuth service, on a domain you own.
 
 See [Kubernetes Deployment](../deployment/kubernetes.md) for detailed configuration.
 
@@ -166,8 +170,8 @@ elasticsearch:
   url: "http://localhost:9200"
 
 oauth:
-  issuer: "https://your-domain.com"
-  jwks_url: "https://your-domain.com/.well-known/jwks.json"
+  issuer: "https://auth.example.com"
+  jwks_url: "https://auth.example.com/.well-known/jwks.json"
 
 logging:
   level: "info"

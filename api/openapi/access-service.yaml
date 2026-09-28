@@ -9,7 +9,7 @@ info:
     live route table in both directions. Operations carry an `x-openidx-handler`
     extension naming the Go handler that serves them; where a payload shape is not
     yet pinned the body is shown as a free-form JSON object rather than invented.
-  version: 1.38.0
+  version: 1.39.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -72,9 +72,29 @@ paths:
     get:
       tags: [Auth]
       summary: Login page
+      description: >-
+        Starts signing in to the proxied application on this host. After
+        sign-in the callback sends the browser to `redirect_url` when it is a
+        path on the same host (one leading slash, not two, and no backslash),
+        or an http(s) URL with no user information whose host is the access
+        service's own (`ACCESS_PROXY_DOMAIN`, with or without the service's
+        port) or the host of one of the organization's enabled proxy routes,
+        compared exactly. Any other target, and a missing one, lands on
+        `/access/.auth/session`; with `idp`, on `/`.
       operationId: loginPage
       x-openidx-handler: internal/access.(*Service).handleLogin
       security: []
+      parameters:
+        - name: redirect_url
+          in: query
+          description: Where to send the browser after sign-in, held to the rule above.
+          schema:
+            type: string
+        - name: idp
+          in: query
+          description: The id of one of the organization's identity providers to sign in with.
+          schema:
+            type: string
       responses:
         '200':
           description: Login page rendered
@@ -85,6 +105,16 @@ paths:
     get:
       tags: [Auth]
       summary: OAuth callback
+      description: >-
+        With `code` and `state`, completes sign-in: it sets the proxy session
+        cookie, which is good on this host only, and redirects to the target
+        the login stored, checked again against the login's rule. With
+        `login_session`, serves a sign-in form for that pending OAuth request,
+        but only for the shape the OAuth service mints (44 characters of
+        padded base64url); anything else is a 400. The form is served under its
+        own Content-Security-Policy: a per-response nonce for its script and
+        style, `connect-src` the OAuth issuer, and `form-action`, `base-uri`,
+        `object-src` and `frame-ancestors` set to `'none'`.
       operationId: oauthCallback
       x-openidx-handler: internal/access.(*Service).handleCallback
       security: []
@@ -97,7 +127,18 @@ paths:
           in: query
           schema:
             type: string
+        - name: login_session
+          in: query
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{43}=$'
       responses:
+        '200':
+          description: The sign-in form for a pending login_session
+          content:
+            text/html:
+              schema:
+                type: string
         '302':
           description: Redirect after successful authentication
         '400':
@@ -107,9 +148,18 @@ paths:
     get:
       tags: [Auth]
       summary: Logout
+      description: >-
+        Ends the proxy session the cookie names, clears the cookie and
+        redirects to `redirect_url` when it passes the login's rule, and to
+        `/access/.auth/login` otherwise.
       operationId: logout
       x-openidx-handler: internal/access.(*Service).handleLogout
       security: []
+      parameters:
+        - name: redirect_url
+          in: query
+          schema:
+            type: string
       responses:
         '302':
           description: Redirect to login after logout
@@ -118,6 +168,10 @@ paths:
     get:
       tags: [Auth]
       summary: Get current session info
+      description: >-
+        Reports the proxy session the cookie names. A session is good on the
+        host whose sign-in set its cookie, on any port, and nowhere else: on
+        another host the answer is 401.
       operationId: getSessionInfo
       x-openidx-handler: internal/access.(*Service).handleSessionInfo
       security: []
@@ -421,7 +475,15 @@ paths:
     post:
       tags: [Routes]
       summary: Create proxy route
-      description: Admin only.
+      description: >-
+        Admin only. `custom_headers` may not name a header the proxy writes from
+        the signed-in session (`X-Forwarded-User`, `X-Forwarded-Email`,
+        `X-Forwarded-Name`, `X-Forwarded-Roles`, `X-Forwarded-Groups`,
+        `X-Forwarded-Preferred-Username`, `X-Forwarded-Access-Token`,
+        `X-Forwarded-Route`, `X-Risk-Score`, `X-Ziti-Identity` or any
+        `X-Auth-Request-*`), in any case; such a route is refused with 400.
+        A host is served by one enabled route in the whole installation: a
+        `from_url` whose host another enabled route serves is refused with 409.
       operationId: createRoute
       requestBody:
         required: true
@@ -442,6 +504,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
 
   /api/v1/access/routes/{id}:
     get:
@@ -465,7 +529,11 @@ paths:
     put:
       tags: [Routes]
       summary: Update proxy route
-      description: Admin only.
+      description: >-
+        Admin only. `custom_headers` is held to the same rule as on create: a
+        header the proxy writes from the signed-in session is refused with 400.
+        A new `from_url`, or enabling the route, is held to the same rule: 409
+        when another enabled route serves the host.
       operationId: updateRoute
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -488,6 +556,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
     delete:
       tags: [Routes]
       summary: Delete proxy route
@@ -569,6 +639,12 @@ paths:
     get:
       tags: [Ziti Status]
       summary: Get Ziti controller status
+      description: >-
+        Any signed-in user. Whether OpenZiti is configured and the
+        controller answers, with the organization's own service and
+        identity counts. The controller's version, management endpoints,
+        console URL and error text go to an install administrator (admin
+        or super_admin of the default organization) only.
       operationId: getZitiStatus
       responses:
         '200':
@@ -585,6 +661,9 @@ paths:
     get:
       tags: [Ziti Services]
       summary: List Ziti services
+      description: >-
+        Operator tier or above. The organization's Ziti services, with the
+        internal host and port each one forwards to.
       operationId: listZitiServices
       responses:
         '200':
@@ -597,9 +676,23 @@ paths:
                   $ref: '#/components/schemas/ZitiService'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       tags: [Ziti Services]
       summary: Create Ziti service
+      description: >-
+        Admin role. 409 when the name is another organization's or one of
+        the install's own services, or -- for anyone but an install
+        administrator -- already a service on the controller: the service
+        would be adopted and rewritten. For anyone but an install
+        administrator, 409 too when intercept_address is one a service
+        another organization or the install holds intercepts; 403 when
+        dial_roles name identities of another organization or an
+        attribute OpenIDX gives users of every organization, or when
+        attributes are managed by OpenIDX, another organization's or the
+        install's service name, or named by a policy the organization does
+        not own.
       operationId: createZitiService
       requestBody:
         required: true
@@ -616,6 +709,16 @@ paths:
                 $ref: '#/components/schemas/ZitiService'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: The service name is another organization's or the install's, or already on the controller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/access/ziti/services/{id}:
     delete:
@@ -653,6 +756,12 @@ paths:
     post:
       tags: [Ziti Identities]
       summary: Create Ziti identity
+      description: >-
+        Admin role. For anyone but an install administrator, an attribute
+        OpenIDX manages (access-proxy-clients, browzer-users,
+        enrolled-users, device-trusted, quarantined, org- and app- markers
+        and the like) cannot be added or removed, and an attribute that a
+        policy the organization does not own grants cannot be added: 403.
       operationId: createZitiIdentity
       requestBody:
         required: true
@@ -708,6 +817,9 @@ paths:
     post:
       tags: [Ziti Services]
       summary: Enable Ziti on route
+      description: >-
+        Admin role. 409 when service_name is another organization's or one
+        of the install's own services.
       operationId: enableZitiOnRoute
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -718,8 +830,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProxyRoute'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: The service name is another organization's or the install's
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/access/ziti/routes/{id}/disable:
     post:
@@ -743,6 +865,13 @@ paths:
     get:
       tags: [Ziti Fabric]
       summary: Get fabric overview
+      description: >-
+        Operator tier or above. An install administrator gets the
+        controller's health, its edge routers and the recent fabric
+        metrics. Anyone else gets the health their organization may see --
+        whether the controller answers, the router counts, and the
+        organization's own service, identity and policy counts -- with no
+        routers and no metrics.
       operationId: getFabricOverview
       responses:
         '200':
@@ -753,11 +882,18 @@ paths:
                 $ref: '#/components/schemas/FabricOverview'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/ziti/fabric/routers:
     get:
       tags: [Ziti Fabric]
       summary: List edge routers
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The edge routers carry every organization's traffic
+        and name the hosts they run on. An organization's admin gets 403
+        platform administrator required.
       operationId: listEdgeRouters
       responses:
         '200':
@@ -768,11 +904,20 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/EdgeRouter'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/ziti/fabric/routers/{id}:
     get:
       tags: [Ziti Fabric]
       summary: Get edge router
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The edge routers carry every organization's traffic
+        and name the hosts they run on. An organization's admin gets 403
+        platform administrator required.
       operationId: getEdgeRouter
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -783,6 +928,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EdgeRouter'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -790,6 +939,10 @@ paths:
     get:
       tags: [Ziti Fabric]
       summary: Get fabric health
+      description: >-
+        Operator tier or above. The controller's health for an install
+        administrator; for anyone else, reachability, the router counts
+        and the organization's own counts.
       operationId: getFabricHealth
       responses:
         '200':
@@ -798,11 +951,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FabricHealth'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/ziti/fabric/reconnect:
     post:
       tags: [Ziti Fabric]
       summary: Reconnect to Ziti controller
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The controller connection serves every organization.
+        An organization's admin gets 403 platform administrator required.
       operationId: reconnectFabric
       responses:
         '200':
@@ -816,11 +977,19 @@ paths:
                     type: string
                   message:
                     type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/ziti/fabric/metrics:
     get:
       tags: [Ziti Fabric]
       summary: Get fabric metrics
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The metrics count every organization's objects. An
+        organization's admin gets 403 platform administrator required.
       operationId: getFabricMetrics
       responses:
         '200':
@@ -829,11 +998,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FabricMetrics'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/ziti/fabric/service-policies:
     get:
       tags: [Ziti Fabric]
       summary: List service policies
+      description: >-
+        Operator tier or above. An install administrator gets every
+        service policy on the controller; anyone else gets their
+        organization's, as the ziti_service_policies mirror records them.
       operationId: listServicePolicies
       responses:
         '200':
@@ -844,12 +1021,18 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ServicePolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   # --- Posture Checks ---
   /api/v1/access/ziti/posture/checks:
     get:
       tags: [Posture Checks]
       summary: List posture checks
+      description: >-
+        Operator tier or above. The organization's posture checks.
       operationId: listPostureChecks
       responses:
         '200':
@@ -862,6 +1045,8 @@ paths:
                   $ref: '#/components/schemas/PostureCheck'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       tags: [Posture Checks]
       summary: Create posture check
@@ -960,6 +1145,9 @@ paths:
     get:
       tags: [Posture Checks]
       summary: Get posture summary
+      description: >-
+        Operator tier or above. The governance-policy sync counts in it go
+        to an install administrator only.
       operationId: getPostureSummary
       responses:
         '200':
@@ -968,12 +1156,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PostureSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   # --- Policy Sync ---
   /api/v1/access/ziti/policy-sync:
     get:
       tags: [Policy Sync]
       summary: List policy sync states
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Governance-policy syncs have no organization. An
+        organization's admin gets 403 platform administrator required.
       operationId: listPolicySyncStates
       responses:
         '200':
@@ -986,9 +1182,15 @@ paths:
                   $ref: '#/components/schemas/PolicySyncState'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       tags: [Policy Sync]
       summary: Sync governance policy to Ziti
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Governance-policy syncs have no organization. An
+        organization's admin gets 403 platform administrator required.
       operationId: syncGovernancePolicy
       requestBody:
         required: true
@@ -1005,11 +1207,19 @@ paths:
                 $ref: '#/components/schemas/PolicySyncState'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/ziti/policy-sync/{id}/trigger:
     post:
       tags: [Policy Sync]
       summary: Trigger policy sync
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Governance-policy syncs have no organization. An
+        organization's admin gets 403 platform administrator required.
       operationId: triggerPolicySync
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -1020,6 +1230,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PolicySyncState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1027,12 +1241,20 @@ paths:
     delete:
       tags: [Policy Sync]
       summary: Delete policy sync state
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Governance-policy syncs have no organization. An
+        organization's admin gets 403 platform administrator required.
       operationId: deletePolicySyncState
       parameters:
         - $ref: '#/components/parameters/IdPath'
       responses:
         '204':
           description: Policy sync state deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1041,6 +1263,8 @@ paths:
     get:
       tags: [Certificates]
       summary: List certificates
+      description: >-
+        Operator tier or above. The organization's certificates.
       operationId: listCertificates
       responses:
         '200':
@@ -1053,11 +1277,16 @@ paths:
                   $ref: '#/components/schemas/Certificate'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/ziti/certificates/expiry-alerts:
     get:
       tags: [Certificates]
       summary: Get certificate expiry alerts
+      description: >-
+        Operator tier or above. The organization's certificates that
+        expire within the threshold.
       operationId: getCertificateExpiryAlerts
       responses:
         '200':
@@ -1068,11 +1297,18 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/CertificateExpiryAlert'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/ziti/certificates/{id}/rotate:
     post:
       tags: [Certificates]
       summary: Rotate certificate
+      description: >-
+        Admin role. The certificate is one of the organization's; 404
+        otherwise.
       operationId: rotateCertificate
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -1083,6 +1319,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Certificate'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1091,6 +1331,10 @@ paths:
     get:
       tags: [BrowZer]
       summary: Get BrowZer status
+      description: >-
+        Any signed-in user gets whether BrowZer is enabled and its
+        bootstrapper URL. The ids of the controller objects its bootstrap
+        created go to an install administrator only.
       operationId: getBrowzerStatus
       responses:
         '200':
@@ -1132,25 +1376,46 @@ paths:
     post:
       tags: [BrowZer]
       summary: Enable BrowZer on service
+      description: >-
+        The path route is created on the BrowZer domain and the vhost route on
+        `domain`; a host another enabled route serves, other than this service's
+        own BrowZer route, is refused with 409 before the controller is changed.
+        Admin role. The service is one of the organization's, or any for
+        an install administrator; 404 otherwise, before the controller is
+        touched.
       operationId: enableBrowzerOnService
       parameters:
         - $ref: '#/components/parameters/IdPath'
       responses:
         '200':
           description: BrowZer enabled on service
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
 
   /api/v1/access/ziti/browzer/services/{id}/disable:
     post:
       tags: [BrowZer]
       summary: Disable BrowZer on service
+      description: >-
+        Admin role. The service is one of the organization's, or any for
+        an install administrator; 404 otherwise, before the controller is
+        touched.
       operationId: disableBrowzerOnService
       parameters:
         - $ref: '#/components/parameters/IdPath'
       responses:
         '200':
           description: BrowZer disabled on service
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1159,6 +1424,18 @@ paths:
     post:
       tags: [Auth Decision]
       summary: Auth decision endpoint (POST)
+      description: >-
+        Forward-auth. Allowing, it answers the headers the edge is to put on
+        the upstream request in place of the caller's: `X-Forwarded-User`,
+        `X-Forwarded-Email`, `X-Forwarded-Name`, `X-Forwarded-Roles`,
+        `X-Forwarded-Route` and `X-Risk-Score`, empty where there is no
+        identity; the caller's `Cookie` without the proxy's
+        `_openidx_proxy_session`, when the caller sent it; and an empty
+        `Authorization` when the access service authenticated the request with
+        it. The edge must copy all of them onto the upstream request. A proxy
+        session is accepted for the host in `X-Forwarded-Host` only when it
+        was issued for that host. Refusing sign-in, it redirects to
+        `/access/.auth/login`.
       operationId: authDecidePost
       requestBody:
         required: true
@@ -1180,6 +1457,18 @@ paths:
     get:
       tags: [Auth Decision]
       summary: Auth decision endpoint (GET)
+      description: >-
+        Forward-auth. Allowing, it answers the headers the edge is to put on
+        the upstream request in place of the caller's: `X-Forwarded-User`,
+        `X-Forwarded-Email`, `X-Forwarded-Name`, `X-Forwarded-Roles`,
+        `X-Forwarded-Route` and `X-Risk-Score`, empty where there is no
+        identity; the caller's `Cookie` without the proxy's
+        `_openidx_proxy_session`, when the caller sent it; and an empty
+        `Authorization` when the access service authenticated the request with
+        it. The edge must copy all of them onto the upstream request. A proxy
+        session is accepted for the host in `X-Forwarded-Host` only when it
+        was issued for that host. Refusing sign-in, it redirects to
+        `/access/.auth/login`.
       operationId: authDecideGet
       parameters:
         - name: uri
@@ -2512,7 +2801,12 @@ paths:
     get:
       tags: [PAM Ziti Reach]
       summary: List broker Ziti bindings
-      description: Admin only. The tunneler binding list plus the dialer role.
+      description: >-
+        The tunneler binding list plus the dialer role. Install
+        administrator only: admin or super_admin of the default
+        organization, because one broker tunnel serves every
+        organization's entries. An organization's admin gets 403 platform
+        administrator required.
       operationId: pamZitiBindings
       responses:
         '200':
@@ -2527,6 +2821,10 @@ paths:
                     items:
                       $ref: '#/components/schemas/PamZitiBinding'
                   dialer_role: {type: string}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/access/pam/entries/{id}/ziti/enable:
     post:
@@ -3600,6 +3898,9 @@ paths:
     post:
       tags: [Published Applications]
       summary: Consolidate app
+      description: >-
+        The app's one route is created on its public host, and is refused with
+        409 when an enabled route other than the app's own serves that host.
       operationId: consolidateApp
       x-openidx-handler: internal/access.(*Service).handleConsolidateApp
       requestBody:
@@ -3625,6 +3926,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -3748,6 +4051,9 @@ paths:
     post:
       tags: [Published Applications]
       summary: Publish paths
+      description: >-
+        The app's route is created on its public host, and is refused with 409
+        when an enabled route other than the app's own serves that host.
       operationId: publishPaths
       x-openidx-handler: internal/access.(*Service).handlePublishPaths
       requestBody:
@@ -3773,6 +4079,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -3786,6 +4094,9 @@ paths:
     post:
       tags: [Published Applications]
       summary: Publish app
+      description: >-
+        The app's route is created on its public host, and is refused with 409
+        when an enabled route other than the app's own serves that host.
       operationId: publishApp
       x-openidx-handler: internal/access.(*Service).handlePublishApp
       requestBody:
@@ -3811,6 +4122,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -4419,6 +4732,12 @@ paths:
     post:
       tags: [Integration Health]
       summary: Health fix
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Applies one of the Relations & Integrity Doctor's
+        repairs, which act on every organization's routes, applications and
+        Ziti services. An organization's admin gets 403 platform
+        administrator required.
       operationId: healthFix
       x-openidx-handler: internal/access.(*Service).handleHealthFix
       requestBody:
@@ -4472,6 +4791,10 @@ paths:
     get:
       tags: [Integration Health]
       summary: Health integrations
+      description: >-
+        Any signed-in user. The OpenZiti service and identity counts are
+        the organization's own; the controller's error text goes to an
+        install administrator only.
       operationId: healthIntegrations
       x-openidx-handler: internal/access.(*Service).handleHealthIntegrations
       responses:
@@ -4493,6 +4816,12 @@ paths:
     get:
       tags: [Integration Health]
       summary: Health relations
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The Relations & Integrity Doctor's report over every
+        organization's routes, applications and Ziti services; with
+        heal=safe it also applies every safe repair across them. An
+        organization's admin gets 403 platform administrator required.
       operationId: healthRelations
       x-openidx-handler: internal/access.(*Service).handleHealthRelations
       responses:
@@ -4514,6 +4843,10 @@ paths:
     get:
       tags: [Integration Health]
       summary: Health ziti
+      description: >-
+        Any signed-in user. The service and identity counts are the
+        organization's own; the controller's error text goes to an install
+        administrator only.
       operationId: healthZiti
       x-openidx-handler: internal/access.(*Service).handleHealthZiti
       responses:
@@ -5529,6 +5862,16 @@ paths:
     post:
       tags: [Proxy Routes]
       summary: Bulk routes
+      description: >-
+        Every route is created enabled. A list naming a host an enabled route
+        already serves, or one host twice, is refused as a whole with 409,
+        listing the conflicts; nothing is created. A conflict with another
+        organization's route names only the host.
+        Admin role. Creates one route per entry of `routes` and per host of
+        `subnet`. A Ziti route's service is named `openidx-<route name>`; a
+        route whose service name is another organization's or one of the
+        install's own services is not created, and its name is listed in
+        `name_conflicts`.
       operationId: bulkRoutes
       x-openidx-handler: internal/access.(*Service).handleBulkRoutes
       requestBody:
@@ -5546,12 +5889,43 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+                properties:
+                  created:
+                    type: integer
+                  requested:
+                    type: integer
+                  name_conflicts:
+                    type: array
+                    items:
+                      type: string
+                    description: The routes not created because their Ziti service name is taken
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Hosts the list cannot have; nothing was created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  conflicts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        host:
+                          type: string
+                        reason:
+                          type: string
+                        route:
+                          type: string
+                          description: The caller's own route that serves the host; absent for another organization's
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -5559,6 +5933,9 @@ paths:
     post:
       tags: [Services]
       summary: Quick create
+      description: >-
+        The route is created on `domain`, and is refused with 409 when another
+        enabled route serves that host.
       operationId: quickCreate
       x-openidx-handler: internal/access.(*Service).handleQuickCreate
       requestBody:
@@ -5582,6 +5959,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -5589,6 +5968,9 @@ paths:
     get:
       tags: [Services]
       summary: Get all services status
+      description: >-
+        Every enabled route's features, as GET /services/{id}/features returns
+        them: a Guacamole password is never returned.
       operationId: getAllServicesStatus
       x-openidx-handler: internal/access.(*Service).handleGetAllServicesStatus
       responses:
@@ -5612,6 +5994,10 @@ paths:
     get:
       tags: [Services]
       summary: Get service features
+      description: >-
+        Each feature's state and stored configuration. A Guacamole feature's
+        password is stored sealed and never returned: its configuration carries
+        `guacamole_password_set: true` in its place when one is stored.
       operationId: getServiceFeatures
       x-openidx-handler: internal/access.(*Service).handleGetServiceFeatures
       responses:
@@ -5739,6 +6125,14 @@ paths:
     post:
       tags: [Services]
       summary: Enable guacamole feature
+      description: >-
+        Creates the broker connection with `guacamole_protocol`,
+        `guacamole_host`, `guacamole_port`, `guacamole_username` and
+        `guacamole_password`; what is left out defaults to the route's remote
+        host and port and ssh. The password is stored sealed with the access
+        service's ENCRYPTION_KEY and never returned. An enable that leaves the
+        password out keeps the stored one if it names the same protocol, host,
+        port and user, and connects without one otherwise.
       operationId: enableGuacamoleFeature
       x-openidx-handler: internal/access.(*Service).handleEnableGuacamoleFeature
       requestBody:
@@ -5807,6 +6201,10 @@ paths:
     post:
       tags: [Services]
       summary: Enable ziti feature
+      description: >-
+        Admin role. 400 when ziti_service_name, or the name derived from
+        the route, is another organization's or one of the install's own
+        services.
       operationId: enableZitiFeature
       x-openidx-handler: internal/access.(*Service).handleEnableZitiFeature
       requestBody:
@@ -5866,6 +6264,9 @@ paths:
     get:
       tags: [Services]
       summary: Get service status
+      description: >-
+        The route's features, as GET /services/{id}/features returns them: a
+        Guacamole password is never returned.
       operationId: getServiceStatus
       x-openidx-handler: internal/access.(*Service).handleGetServiceStatus
       responses:
@@ -6193,6 +6594,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Ziti AI analyze
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The AI ledger and risk scores cover every identity
+        on the controller. An organization's admin gets 403 platform
+        administrator required.
       operationId: zitiAIAnalyze
       x-openidx-handler: internal/access.(*Service).handleZitiAIAnalyze
       requestBody:
@@ -6223,6 +6629,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: List ziti anomalies
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The AI ledger covers every identity on the
+        controller. An organization's admin gets 403 platform
+        administrator required.
       operationId: listZitiAnomalies
       x-openidx-handler: internal/access.(*Service).handleListZitiAnomalies
       responses:
@@ -6246,6 +6657,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Update ziti anomaly status
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The AI ledger covers every identity on the
+        controller. An organization's admin gets 403 platform
+        administrator required.
       operationId: updateZitiAnomalyStatus
       x-openidx-handler: internal/access.(*Service).handleUpdateZitiAnomalyStatus
       requestBody:
@@ -6280,6 +6696,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Quarantine ziti identity
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Quarantine takes any identity by its controller id;
+        an organization's admin uses the kill switch. An organization's
+        admin gets 403 platform administrator required.
       operationId: quarantineZitiIdentity
       x-openidx-handler: internal/access.(*Service).handleQuarantineZitiIdentity
       requestBody:
@@ -6314,6 +6735,10 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Unquarantine ziti identity
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Quarantine takes any identity by its controller id.
+        An organization's admin gets 403 platform administrator required.
       operationId: unquarantineZitiIdentity
       x-openidx-handler: internal/access.(*Service).handleUnquarantineZitiIdentity
       requestBody:
@@ -6346,6 +6771,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: Ziti identity risk
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The risk scores cover every identity on the
+        controller. An organization's admin gets 403 platform
+        administrator required.
       operationId: zitiIdentityRisk
       x-openidx-handler: internal/access.(*Service).handleZitiIdentityRisk
       responses:
@@ -6367,6 +6797,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: Ziti AI insights
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The AI ledger and risk scores cover every identity
+        on the controller. An organization's admin gets 403 platform
+        administrator required.
       operationId: zitiAIInsights
       x-openidx-handler: internal/access.(*Service).handleZitiAIInsights
       responses:
@@ -6388,6 +6823,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: Ziti AI recommendations
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The recommendations cover every service and policy
+        on the controller. An organization's admin gets 403 platform
+        administrator required.
       operationId: zitiAIRecommendations
       x-openidx-handler: internal/access.(*Service).handleZitiAIRecommendations
       responses:
@@ -6409,6 +6849,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: List auth policies
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Authentication policies decide how every
+        organization's identities sign in to the controller. An
+        organization's admin gets 403 platform administrator required.
       operationId: listAuthPolicies
       x-openidx-handler: internal/access.(*Service).handleListAuthPolicies
       responses:
@@ -6428,6 +6873,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Create auth policy
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Authentication policies decide how every
+        organization's identities sign in to the controller. An
+        organization's admin gets 403 platform administrator required.
       operationId: createAuthPolicy
       x-openidx-handler: internal/access.(*Service).handleCreateAuthPolicy
       requestBody:
@@ -6460,6 +6910,11 @@ paths:
     delete:
       tags: [OpenZiti Overlay]
       summary: Delete auth policy
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Authentication policies decide how every
+        organization's identities sign in to the controller. An
+        organization's admin gets 403 platform administrator required.
       operationId: deleteAuthPolicy
       x-openidx-handler: internal/access.(*Service).handleDeleteAuthPolicy
       responses:
@@ -6483,6 +6938,11 @@ paths:
     put:
       tags: [OpenZiti Overlay]
       summary: Update auth policy
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Authentication policies decide how every
+        organization's identities sign in to the controller. An
+        organization's admin gets 403 platform administrator required.
       operationId: updateAuthPolicy
       x-openidx-handler: internal/access.(*Service).handleUpdateAuthPolicy
       requestBody:
@@ -6566,6 +7026,10 @@ paths:
     put:
       tags: [OpenZiti Overlay]
       summary: Brow zer domain change
+      description: >-
+        Platform admin. The BrowZer routes whose host is the old domain move to
+        the new one, keeping their path. The domain must be a plain host name
+        (400) that no enabled route serves (409).
       operationId: browZerDomainChange
       x-openidx-handler: internal/access.(*Service).handleBrowZerDomainChange
       requestBody:
@@ -6589,6 +7053,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -6596,6 +7062,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: Brow zer management
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The BrowZer bootstrapper, its certificate and its
+        targets are the install's. An organization's admin gets 403
+        platform administrator required.
       operationId: browZerManagement
       x-openidx-handler: internal/access.(*Service).handleBrowZerManagement
       responses:
@@ -6647,6 +7118,10 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: List config types
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Config types are the controller's. An organization's
+        admin gets 403 platform administrator required.
       operationId: listConfigTypes
       x-openidx-handler: internal/access.(*Service).handleListConfigTypes
       responses:
@@ -6668,6 +7143,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: List configs
+      description: >-
+        Operator tier or above. An install administrator gets every config
+        on the controller; anyone else gets the configs their
+        organization's services use. A host.v1 config names the internal
+        address its service forwards to.
       operationId: listConfigs
       x-openidx-handler: internal/access.(*Service).handleListConfigs
       responses:
@@ -6687,6 +7167,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Create config
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The config writes take any config by its controller
+        id. An organization's admin gets 403 platform administrator
+        required.
       operationId: createConfig
       x-openidx-handler: internal/access.(*Service).handleCreateConfig
       requestBody:
@@ -6719,6 +7204,11 @@ paths:
     delete:
       tags: [OpenZiti Overlay]
       summary: Delete config
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The config writes take any config by its controller
+        id. An organization's admin gets 403 platform administrator
+        required.
       operationId: deleteConfig
       x-openidx-handler: internal/access.(*Service).handleDeleteConfig
       responses:
@@ -6742,6 +7232,11 @@ paths:
     put:
       tags: [OpenZiti Overlay]
       summary: Update config
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The config writes take any config by its controller
+        id, and a host.v1 config decides where a service's traffic goes.
+        An organization's admin gets 403 platform administrator required.
       operationId: updateConfig
       x-openidx-handler: internal/access.(*Service).handleUpdateConfig
       requestBody:
@@ -6804,6 +7299,10 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: Ziti controller features
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The controller's version and capabilities. An
+        organization's admin gets 403 platform administrator required.
       operationId: zitiControllerFeatures
       x-openidx-handler: internal/access.(*Service).handleZitiControllerFeatures
       responses:
@@ -6855,6 +7354,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: Discover ziti services
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Discovery lists the controller's services that no
+        organization manages. An organization's admin gets 403 platform
+        administrator required.
       operationId: discoverZitiServices
       x-openidx-handler: internal/access.(*Service).handleDiscoverZitiServices
       responses:
@@ -6876,6 +7380,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: List edge router policies
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The policies decide which identities of any
+        organization use which routers. An organization's admin gets 403
+        platform administrator required.
       operationId: listEdgeRouterPolicies
       x-openidx-handler: internal/access.(*Service).handleListEdgeRouterPolicies
       responses:
@@ -6895,6 +7404,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Create edge router policy
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The policies decide which identities of any
+        organization use which routers. An organization's admin gets 403
+        platform administrator required.
       operationId: createEdgeRouterPolicy
       x-openidx-handler: internal/access.(*Service).handleCreateEdgeRouterPolicy
       requestBody:
@@ -6927,6 +7441,11 @@ paths:
     delete:
       tags: [OpenZiti Overlay]
       summary: Delete edge router policy
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The policies decide which identities of any
+        organization use which routers. An organization's admin gets 403
+        platform administrator required.
       operationId: deleteEdgeRouterPolicy
       x-openidx-handler: internal/access.(*Service).handleDeleteEdgeRouterPolicy
       responses:
@@ -6950,6 +7469,11 @@ paths:
     put:
       tags: [OpenZiti Overlay]
       summary: Update edge router policy
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The policies decide which identities of any
+        organization use which routers. An organization's admin gets 403
+        platform administrator required.
       operationId: updateEdgeRouterPolicy
       x-openidx-handler: internal/access.(*Service).handleUpdateEdgeRouterPolicy
       requestBody:
@@ -6982,6 +7506,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Router enroll token
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. A new edge router carries every organization's
+        traffic. An organization's admin gets 403 platform administrator
+        required.
       operationId: routerEnrollToken
       x-openidx-handler: internal/access.(*Service).handleRouterEnrollToken
       requestBody:
@@ -7014,6 +7543,12 @@ paths:
     patch:
       tags: [OpenZiti Overlay]
       summary: Patch identity attributes
+      description: >-
+        Admin role. For anyone but an install administrator, an attribute
+        OpenIDX manages (access-proxy-clients, browzer-users,
+        enrolled-users, device-trusted, quarantined, org- and app- markers
+        and the like) cannot be added or removed, and an attribute that a
+        policy the organization does not own grants cannot be added: 403.
       operationId: patchIdentityAttributes
       x-openidx-handler: internal/access.(*Service).handlePatchIdentityAttributes
       requestBody:
@@ -7046,6 +7581,13 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Import ziti service
+      description: >-
+        A `from_url` whose host another enabled route serves is refused with
+        409.
+        Install administrator only: admin or super_admin of the default
+        organization. Import adopts a controller service no organization
+        manages. An organization's admin gets 403 platform administrator
+        required.
       operationId: importZitiService
       x-openidx-handler: internal/access.(*Service).handleImportZitiService
       requestBody:
@@ -7069,6 +7611,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/RouteHostTaken'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -7076,6 +7620,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Bulk import ziti services
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Import adopts controller services no organization
+        manages. An organization's admin gets 403 platform administrator
+        required.
       operationId: bulkImportZitiServices
       x-openidx-handler: internal/access.(*Service).handleBulkImportZitiServices
       requestBody:
@@ -7106,6 +7655,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: List jwt signers
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. JWT signers decide whose tokens the controller
+        accepts, for every organization. An organization's admin gets 403
+        platform administrator required.
       operationId: listJWTSigners
       x-openidx-handler: internal/access.(*Service).handleListJWTSigners
       responses:
@@ -7125,6 +7679,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Create jwt signer
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. JWT signers decide whose tokens the controller
+        accepts, for every organization. An organization's admin gets 403
+        platform administrator required.
       operationId: createJWTSigner
       x-openidx-handler: internal/access.(*Service).handleCreateJWTSigner
       requestBody:
@@ -7157,6 +7716,11 @@ paths:
     delete:
       tags: [OpenZiti Overlay]
       summary: Delete jwt signer
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. JWT signers decide whose tokens the controller
+        accepts, for every organization. An organization's admin gets 403
+        platform administrator required.
       operationId: deleteJWTSigner
       x-openidx-handler: internal/access.(*Service).handleDeleteJWTSigner
       responses:
@@ -7180,6 +7744,11 @@ paths:
     put:
       tags: [OpenZiti Overlay]
       summary: Update jwt signer
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. JWT signers decide whose tokens the controller
+        accepts, for every organization. An organization's admin gets 403
+        platform administrator required.
       operationId: updateJWTSigner
       x-openidx-handler: internal/access.(*Service).handleUpdateJWTSigner
       requestBody:
@@ -7212,6 +7781,11 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Submit device posture
+      description: >-
+        Any signed-in user, for their own device. identity_id is one of
+        the calling user's own identities in their organization, by its id
+        or its controller id (the ziti_id /ziti/sync/my-identity returns);
+        any other identity answers 404 and nothing is recorded.
       operationId: submitDevicePosture
       x-openidx-handler: internal/access.(*Service).handleSubmitDevicePosture
       requestBody:
@@ -7235,6 +7809,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -7451,6 +8027,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: Ziti reconciler status
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The reconciler converges every organization's
+        services and reports each by name. An organization's admin gets
+        403 platform administrator required.
       operationId: zitiReconcilerStatus
       x-openidx-handler: internal/access.(*Service).handleZitiReconcilerStatus
       responses:
@@ -7472,6 +8053,15 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Create service policy
+      description: >-
+        Admin role. For anyone but an install administrator (admin or
+        super_admin of the default organization), service_roles name only
+        the organization's own services (@id, @name, or an #attribute its
+        services alone carry) and identity_roles only its own identities or
+        the install's (routers, the access proxy); #all, and attributes
+        OpenIDX gives users of every organization (#browzer-users,
+        #enrolled-users, app- and other organizations' org- markers), are
+        403. A role that is not #attribute or @id is 400.
       operationId: createServicePolicy
       x-openidx-handler: internal/access.(*Service).handleCreateServicePolicy
       requestBody:
@@ -7527,6 +8117,15 @@ paths:
     put:
       tags: [OpenZiti Overlay]
       summary: Update service policy
+      description: >-
+        Admin role. For anyone but an install administrator (admin or
+        super_admin of the default organization), service_roles name only
+        the organization's own services (@id, @name, or an #attribute its
+        services alone carry) and identity_roles only its own identities or
+        the install's (routers, the access proxy); #all, and attributes
+        OpenIDX gives users of every organization (#browzer-users,
+        #enrolled-users, app- and other organizations' org- markers), are
+        403. A role that is not #attribute or @id is 400.
       operationId: updateServicePolicy
       x-openidx-handler: internal/access.(*Service).handleUpdateServicePolicy
       requestBody:
@@ -7565,6 +8164,10 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: Explain ziti service
+      description: >-
+        Admin role. An organization's admin explains the organization's
+        own services and gets 404 for any other name; an install
+        administrator explains any.
       operationId: explainZitiService
       x-openidx-handler: internal/access.(*Service).handleExplainZitiService
       responses:
@@ -7590,6 +8193,9 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Test ziti service
+      description: >-
+        Admin role. The server dials the service and its upstream and
+        returns the errors, which name the upstream address.
       operationId: testZitiService
       x-openidx-handler: internal/access.(*Service).handleTestZitiService
       requestBody:
@@ -7622,8 +8228,20 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: List ziti sessions
+      description: >-
+        Operator tier or above. An install administrator gets every
+        session on the controller; anyone else gets the sessions between
+        their organization's identities and its services. type, when
+        given, is Dial or Bind in any case; any other value is 400.
       operationId: listZitiSessions
       x-openidx-handler: internal/access.(*Service).handleListZitiSessions
+      parameters:
+        - name: type
+          in: query
+          required: false
+          description: The session type, Dial or Bind, in any case.
+          schema:
+            type: string
       responses:
         '200':
           description: Success
@@ -7632,6 +8250,8 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -7643,6 +8263,9 @@ paths:
     post:
       tags: [OpenZiti Overlay]
       summary: Batch delete ziti sessions
+      description: >-
+        Admin role. identity_id is one of the organization's identities,
+        or any for an install administrator; 404 otherwise.
       operationId: batchDeleteZitiSessions
       x-openidx-handler: internal/access.(*Service).handleBatchDeleteZitiSessions
       requestBody:
@@ -7666,6 +8289,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -7675,6 +8300,10 @@ paths:
     delete:
       tags: [OpenZiti Overlay]
       summary: Delete ziti session
+      description: >-
+        Admin role. Ends one of the organization's sessions (its identity
+        and its service both the organization's), or any for an install
+        administrator; 404 otherwise.
       operationId: deleteZitiSession
       x-openidx-handler: internal/access.(*Service).handleDeleteZitiSession
       responses:
@@ -7779,6 +8408,12 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: Ziti setup status
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. The setup reports the controller's address, the
+        identity directory, every edge router and the install's sync
+        counts. An organization's admin gets 403 platform administrator
+        required.
       operationId: zitiSetupStatus
       x-openidx-handler: internal/access.(*Service).handleZitiSetupStatus
       responses:
@@ -7889,6 +8524,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: Get sync status
+      description: >-
+        Operator tier or above. An install administrator gets the
+        install's sync run and counts. Anyone else gets the run's state
+        and times with their organization's own user and identity counts,
+        and not the run's counters.
       operationId: getSyncStatus
       x-openidx-handler: internal/access.(*Service).handleGetSyncStatus
       responses:
@@ -8020,6 +8660,10 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: List terminators
+      description: >-
+        Operator tier or above. An install administrator gets every
+        terminator; anyone else gets the terminators of their
+        organization's services.
       operationId: listTerminators
       x-openidx-handler: internal/access.(*Service).handleListTerminators
       responses:
@@ -8043,6 +8687,9 @@ paths:
     delete:
       tags: [OpenZiti Overlay]
       summary: Delete terminator
+      description: >-
+        Admin role. Removes a terminator of one of the organization's
+        services, or any for an install administrator; 404 otherwise.
       operationId: deleteTerminator
       x-openidx-handler: internal/access.(*Service).handleDeleteTerminator
       responses:
@@ -8066,6 +8713,10 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: Get terminator
+      description: >-
+        Operator tier or above. A terminator of one of the organization's
+        services, or any for an install administrator; 404 otherwise, as
+        for an unknown id.
       operationId: getTerminator
       x-openidx-handler: internal/access.(*Service).handleGetTerminator
       responses:
@@ -8089,6 +8740,11 @@ paths:
     get:
       tags: [OpenZiti Overlay]
       summary: Get unmanaged services count
+      description: >-
+        Install administrator only: admin or super_admin of the default
+        organization. Discovery counts the controller's services that no
+        organization manages. An organization's admin gets 403 platform
+        administrator required.
       operationId: getUnmanagedServicesCount
       x-openidx-handler: internal/access.(*Service).handleGetUnmanagedServicesCount
       responses:
@@ -8210,6 +8866,16 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    RouteHostTaken:
+      description: >-
+        Another enabled route already serves the host this route's `from_url`
+        names. A host is served by one enabled route in the whole
+        installation. When that route is the caller's own organization's, the
+        answer names it; another organization's route is not described.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RouteHostConflict'
 
   schemas:
     Error:
@@ -8230,6 +8896,18 @@ components:
           type: string
         details:
           type: object
+    RouteHostConflict:
+      type: object
+      properties:
+        error:
+          type: string
+        host:
+          type: string
+          description: The host as the route table holds it, lowercased and without a port
+        route_id:
+          type: string
+          format: uuid
+          description: The caller's own route that serves the host; absent when another organization's does
 
     # --- Auth ---
     SessionInfo:

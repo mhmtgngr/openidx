@@ -13,9 +13,11 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
-// PasswordlessSystemSettings represents the system-wide passwordless authentication settings
+// PasswordlessSystemSettings represents the system-wide passwordless authentication settings:
+// one row of system_settings, for every organization on the installation, which
+// only a platform administrator may write (requirePlatformAdmin below).
 // The whole struct was stored, read back by its own GET, and consulted by
-// nothing: an administrator could turn magic links off for the organization and
+// nothing: an administrator could turn magic links off for the installation and
 // keep handing them out, because only the PER-USER preference was ever asked.
 // Four of the five settings that remain are now decided in
 // passwordless.go — CreateMagicLink and CreateQRLoginSession consult them
@@ -26,7 +28,7 @@ import (
 //
 //   - biometric_only_enabled duplicated PasswordlessPreferences.WebAuthnOnly and
 //     BiometricPreferences.BiometricOnlyEnabled, both per-user and both already
-//     enforced. A third copy at organization scope, with no rule for which wins,
+//     enforced. A third copy at installation scope, with no rule for which wins,
 //     is a switch whose meaning nobody could state.
 //   - require_device_trust named a control that exists and lives elsewhere:
 //     POSTURE_DEVICE_TRUST_GATE, with a posture service behind it. A second flag

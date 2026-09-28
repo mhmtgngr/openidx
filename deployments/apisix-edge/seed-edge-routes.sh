@@ -117,6 +117,15 @@ UP_ISSUE='"retries":0,"timeout":{"connect":3,"send":10,"read":10}'
 # local to the box; the internet gets 404 before any upstream is consulted.
 put openidx-deny-health "{$H,\"uris\":[\"/health\",\"/health/*\",\"/ready\",\"/metrics\",\"/oauth/health\"],\"priority\":100,\"plugins\":{\"fault-injection\":{\"abort\":{\"http_status\":404,\"body\":\"{\\\"error\\\":\\\"not found\\\"}\"}}},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8005\":1}}}"
 
+# --- Audit event ingestion: closed at the edge, every DARK_MODE ---
+# POST /api/v1/audit/events is how OpenIDX's own services write to the audit
+# trail, over loopback with the internal service token (INTERNAL_SERVICE_TOKEN).
+# Nothing outside has a reason to reach it. Only POST is caught, so the
+# console's GET of the same path still reaches openidx-api-audit; in the dark
+# modes, where that route is not seeded, this stays so no catch-all can take
+# the path instead. scripts/check-audit-ingest-edges.sh keeps it here.
+put openidx-deny-audit-ingest "{$H,\"uris\":[\"/api/v1/audit/events\",\"/api/v1/audit/events/\"],\"methods\":[\"POST\"],\"priority\":90,\"plugins\":{\"fault-injection\":{\"abort\":{\"http_status\":404,\"body\":\"{\\\"error\\\":\\\"not found\\\"}\"}}},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8005\":1}}}"
+
 # ===========================================================================
 # TIER 0 — always public (the bootstrap gate; darking it bricks enrollment).
 # ===========================================================================

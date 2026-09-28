@@ -22,7 +22,8 @@ verification is in
 helm install openidx oci://ghcr.io/mhmtgngr/openidx/charts/openidx \
   --version <X.Y.Z> \
   --namespace openidx \
-  --create-namespace
+  --create-namespace \
+  -f values-production.yaml
 ```
 
 Or install from a repository checkout:
@@ -31,11 +32,15 @@ Or install from a repository checkout:
 # Add dependency charts
 helm dependency update deployments/kubernetes/helm/openidx
 
-# Install with default values
 helm install openidx deployments/kubernetes/helm/openidx \
   --namespace openidx \
-  --create-namespace
+  --create-namespace \
+  -f values-production.yaml
 ```
+
+`values-production.yaml` is your install's own file; [Configuration](#configuration)
+shows what goes in it. The chart refuses to render without the secrets and
+the issuer it names.
 
 The install itself bootstraps the platform: a post-install/pre-upgrade
 hook Job runs the database migrations (`helm install` waits for it to
@@ -48,9 +53,21 @@ is off by default and not ready to turn on yet
 
 ## Configuration
 
-### Required Secrets
+### Required values
 
-You must provide secrets either via `--set` flags or a values file:
+The chart refuses to render until these are set:
+
+- `secrets.postgresPassword`, `secrets.redisPassword` and
+  `secrets.encryptionKey`, while the bundled PostgreSQL and Redis are on;
+- `config.oauthIssuer`: the public URL of this install's OAuth service, on a
+  domain you own, for example `https://auth.example.com`. It is the `iss` of
+  every token and the base of the discovery document. Browsers, phones and
+  emailed links are sent to it: the access proxy's sign-in page posts
+  credentials there, and magic links and push-MFA enrollment point there. It
+  has no default. Up to v1.38.0 it defaulted to a domain this project does not
+  own, and the chart now refuses any value that names it.
+
+Set them with `--set` flags or a values file:
 
 ```bash
 helm install openidx deployments/kubernetes/helm/openidx \
@@ -58,8 +75,15 @@ helm install openidx deployments/kubernetes/helm/openidx \
   --create-namespace \
   --set secrets.postgresPassword="$(openssl rand -base64 32)" \
   --set secrets.redisPassword="$(openssl rand -base64 32)" \
-  --set secrets.encryptionKey="$(openssl rand -base64 24)"
+  --set secrets.encryptionKey="$(openssl rand -base64 24)" \
+  --set config.oauthIssuer="https://auth.example.com"
 ```
+
+The ingress hosts default to empty, which Kubernetes reads as any host name,
+served without TLS. Set `ingress.hosts` and `adminConsole.ingress.hosts` to
+your own names, with a `tls` entry for each, as below. The first API host is
+also the access proxy's host for vendor-access links unless
+`config.accessProxyDomain` is set; with no host, those links are refused.
 
 Or create a `values-production.yaml`:
 
@@ -70,39 +94,57 @@ secrets:
   encryptionKey: "your-32-byte-encryption-key!!!"
 
 config:
-  oauthIssuer: "https://auth.yourdomain.com"
-  viteApiUrl: "https://api.yourdomain.com"
-  viteOauthUrl: "https://auth.yourdomain.com"
+  oauthIssuer: "https://auth.example.com"
 
 ingress:
   hosts:
-    - host: api.yourdomain.com
+    - host: api.example.com
       paths:
         - path: /
           pathType: Prefix
   tls:
     - secretName: api-tls
       hosts:
-        - api.yourdomain.com
+        - api.example.com
 
 adminConsole:
   ingress:
     hosts:
-      - host: admin.yourdomain.com
+      - host: admin.example.com
         paths:
           - path: /
             pathType: Prefix
     tls:
       - secretName: admin-tls
         hosts:
-          - admin.yourdomain.com
+          - admin.example.com
 ```
+
+Replace `example.com` with your own domain. `config.viteApiUrl` and
+`config.viteOauthUrl` are build-time settings of the console image: the
+published image calls the origin it is served from, so leave them empty.
 
 ```bash
 helm install openidx deployments/kubernetes/helm/openidx \
   --namespace openidx \
   -f values-production.yaml
 ```
+
+The chart generates `INTERNAL_SERVICE_TOKEN`, the secret the services present
+to one another on calls no user makes, into the `<release>-internal-token`
+Secret on the first install and keeps it on every upgrade. Set
+`secrets.internalServiceToken` instead when the chart is rendered without a
+cluster (Argo CD, Flux), because each such render would otherwise make a new
+one. A value stored under the same key in `<release>-secrets` wins.
+
+### The audit service's edge port
+
+The API Ingress sends `/api/v1/audit` to the audit service's `edge` port
+(8014), not its `http` port (8004). The listener behind `edge` serves every
+audit route except event ingestion (`POST /api/v1/audit/events`), which is for
+the platform's own services: an Ingress cannot match on method, so it cannot
+refuse that POST while passing the console's `GET` of the same path. A custom
+Ingress or gateway in front of the audit service should do the same.
 
 ### An external database
 
@@ -186,6 +228,11 @@ helm upgrade openidx deployments/kubernetes/helm/openidx \
   --namespace openidx \
   -f values-production.yaml
 ```
+
+An install that kept the old default issuer or ingress hosts has to set its
+own before the upgrade renders, including with `--reuse-values`, which carries
+the old defaults forward. Relying parties that were configured with the old
+issuer need the new one.
 
 ## Uninstall
 

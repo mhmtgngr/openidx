@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -287,10 +288,16 @@ func main() {
 	eventStreamer.SetJWKSURL(cfg.OAuthJWKSURL)
 
 	// The audit trail is sensitive security data: every READ/report/export/stream
-	// route must be authenticated. Only the internal server-to-server ingestion
-	// endpoint (POST /events) is intentionally left open (network-isolated) — see
-	// RegisterRoutes. Historically NONE of the audit routes had auth, so the whole
-	// trail was readable/streamable unauthenticated.
+	// route must be authenticated. The server-to-server ingestion endpoint
+	// (POST /events) carries no user token and takes the internal service token
+	// instead -- see RegisterRoutes. Historically NONE of the audit routes had
+	// auth, so the whole trail was readable/streamable unauthenticated; the
+	// ingestion endpoint stayed open to anyone who could reach it for longer.
+	if cfg.InternalServiceToken == "" {
+		log.Warn("INTERNAL_SERVICE_TOKEN is not set: POST /api/v1/audit/events refuses every event, " +
+			"so access-service's audit events (PAM reveals, proxy decisions) will not reach the trail. " +
+			"Set the same value on audit-service and access-service.")
+	}
 	var auditAuth []gin.HandlerFunc
 	if cfg.OAuthJWKSURL != "" {
 		auditAuth = append(auditAuth, middleware.Auth(cfg.OAuthJWKSURL))
@@ -352,6 +359,24 @@ func main() {
 
 	// Build shutdownables list
 	var shutdownables []server.Shutdownable
+
+	// The edge listener: the same routes, without event ingestion. An edge
+	// that cannot refuse POST /api/v1/audit/events while passing the GET --
+	// a Kubernetes Ingress cannot match on method -- routes the audit prefix
+	// here instead (the Helm chart does). Every other edge refuses the POST
+	// itself and routes to the main listener.
+	var edgeServer *http.Server
+	if addr := strings.TrimSpace(cfg.AuditEdgeAddr); addr != "" {
+		edgeServer = server.NewHTTP(server.HTTPOptions{
+			Addr:         addr,
+			Handler:      router,
+			ReadTimeout:  15 * time.Second,
+			WriteTimeout: 15 * time.Second,
+			IdleTimeout:  60 * time.Second,
+		})
+		edgeServer.ConnContext = audit.MarkEdgeListener
+		shutdownables = append(shutdownables, server.NewShutdownFunc("edge listener", edgeServer.Shutdown))
+	}
 	shutdownables = append(shutdownables, server.CloseDB(db))
 	if redis != nil {
 		shutdownables = append(shutdownables, server.CloseRedis(redis))
@@ -375,6 +400,14 @@ func main() {
 			log.Fatal("Failed to start server", zap.Error(err))
 		}
 	}()
+	if edgeServer != nil {
+		go func() {
+			log.Info("Edge listener serving every route but event ingestion", zap.String("addr", edgeServer.Addr))
+			if err := tlsutil.ListenAndServe(edgeServer, cfg.TLS, log); err != nil && err != http.ErrServerClosed {
+				log.Fatal("Failed to start the edge listener", zap.Error(err))
+			}
+		}()
+	}
 
 	// Wait for shutdown signal
 	graceful.Start()

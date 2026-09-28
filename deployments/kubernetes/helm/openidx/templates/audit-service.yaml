@@ -45,7 +45,16 @@ spec:
             - name: http
               containerPort: 8004
               protocol: TCP
+            # Every route but event ingestion (AUDIT_EDGE_ADDR). The API
+            # Ingress sends /api/v1/audit here: an Ingress cannot refuse
+            # POST /api/v1/audit/events while passing the GET, so the port
+            # it reaches has no ingestion on it. Services post events to http.
+            - name: edge
+              containerPort: 8014
+              protocol: TCP
           env:
+            - name: AUDIT_EDGE_ADDR
+              value: ":8014"
             # Per-replica share of the auth rate limit while the rate-limit
             # Redis is unavailable (task 0.7): replicas cannot see each other's
             # local counters, so the fleet divides the quota by this hint.
@@ -90,6 +99,10 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "openidx.fullname" . }}-db-url
+            # INTERNAL_SERVICE_TOKEN, before -secrets so a value kept there
+            # wins (templates/secrets.yaml).
+            - secretRef:
+                name: {{ include "openidx.fullname" . }}-internal-token
             - secretRef:
                 name: {{ include "openidx.fullname" . }}-secrets
             - configMapRef:
@@ -161,6 +174,10 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    - port: {{ .Values.auditService.service.edgePort | default 8014 }}
+      targetPort: edge
+      protocol: TCP
+      name: edge
   selector:
     {{- include "openidx.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: audit-service

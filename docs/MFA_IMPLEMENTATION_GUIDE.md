@@ -9,6 +9,13 @@ OpenIDX now supports three types of Multi-Factor Authentication (MFA):
 
 This guide covers the implementation, API usage, and best practices for all three methods.
 
+Removing, replacing or adding a user's own second factor needs proof from the
+account holder in the same request: `current_password`, or where the change
+removes or replaces the TOTP credential, a current `totp_code` from it. A first
+factor on an account with none needs neither. The rule and the routes it covers
+are in the identity API reference,
+[`docs/docs/api/identity.md`](https://github.com/mhmtgngr/openidx/blob/main/docs/docs/api/identity.md#changing-your-own-second-factors).
+
 ---
 
 ## Table of Contents
@@ -212,7 +219,9 @@ CREATE TABLE mfa_webauthn (
 
 **Endpoint**: `DELETE /api/v1/identity/mfa/webauthn/credentials/:credential_id?user_id=<uuid>`
 
-**Response**: 204 No Content
+**Request**: `{ "current_password": "..." }`
+
+**Response**: 204 No Content, or 403 `reauthentication_required` without the password
 
 ### Configuration
 

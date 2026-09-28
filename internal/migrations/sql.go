@@ -719,8 +719,10 @@ CREATE TABLE IF NOT EXISTS system_settings (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_by UUID
 );
+-- support_email is empty: it was an address at a domain this project does not
+-- own. Migration 210 clears it on installs seeded before.
 INSERT INTO system_settings (key, value) VALUES
-('system', '{"general": {"organization_name": "OpenIDX", "support_email": "support@openidx.io", "default_language": "en", "default_timezone": "UTC"}, "security": {"password_policy": {"min_length": 12, "require_uppercase": true, "require_lowercase": true, "require_numbers": true, "require_special": true, "max_age": 90, "history": 5}, "session_timeout": 30, "max_failed_logins": 5, "lockout_duration": 15, "require_mfa": false, "blocked_countries": []}, "authentication": {"allow_registration": true, "require_email_verify": true, "mfa_methods": ["totp", "webauthn", "sms"]}, "branding": {"primary_color": "#2563eb", "secondary_color": "#1e40af", "login_page_title": "Welcome to OpenIDX"}}'::jsonb),
+('system', '{"general": {"organization_name": "OpenIDX", "support_email": "", "default_language": "en", "default_timezone": "UTC"}, "security": {"password_policy": {"min_length": 12, "require_uppercase": true, "require_lowercase": true, "require_numbers": true, "require_special": true, "max_age": 90, "history": 5}, "session_timeout": 30, "max_failed_logins": 5, "lockout_duration": 15, "require_mfa": false, "blocked_countries": []}, "authentication": {"allow_registration": true, "require_email_verify": true, "mfa_methods": ["totp", "webauthn", "sms"]}, "branding": {"primary_color": "#2563eb", "secondary_color": "#1e40af", "login_page_title": "Welcome to OpenIDX"}}'::jsonb),
 ('mfa_methods', '["totp", "webauthn", "sms"]'::jsonb)
 ON CONFLICT (key) DO NOTHING;`
 

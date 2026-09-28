@@ -77,6 +77,7 @@ func newSCIMHarness(t *testing.T) *scimHarness {
 
 	cfg := &config.Config{OAuthIssuer: "https://issuer.example.test", OAuthJWKSURL: jwks.URL}
 	h := &scimHarness{t: t, svc: NewService(db, nil, cfg, zap.NewNop()), key: key}
+	h.svc.outbound = testOutbound(t)
 	h.token = h.mint(key, cfg.OAuthIssuer)
 
 	h.router = gin.New()
@@ -235,6 +236,10 @@ func TestSCIMServerDiscoveryIsRFC7644(t *testing.T) {
 		r := h.call(http.MethodGet, "/scim/v2/ServiceProviderConfig", nil)
 		h.expect(r, http.StatusOK, "")
 		require.Equal(t, []interface{}{"urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"}, r.body["schemas"])
+		// A SCIM client shows this link to its administrators. It named a
+		// docs host on a domain the project does not own; it is the guide on
+		// the project's own documentation site.
+		require.Equal(t, "https://mhmtgngr.github.io/openidx/guides/SCIM/", r.body["documentationUri"])
 		supported := func(feature string) bool {
 			f, ok := r.body[feature].(map[string]interface{})
 			require.Truef(t, ok, "%s is required (RFC 7643 §5)", feature)

@@ -1498,3 +1498,49 @@ func TestReportModeGatesNamesEveryOpenControl(t *testing.T) {
 		t.Errorf("a fully-enforcing install still reports open gates: %v", got)
 	}
 }
+
+// TestAnEmptyAccessProxyDomainStaysEmpty: the Helm chart renders
+// ACCESS_PROXY_DOMAIN empty when the install names no ingress host, which is
+// now its default, meaning "no public host yet": vendor-access links are
+// refused at issuance and the services start. Viper ignored the empty variable
+// and loaded the "localhost" default instead, which the production gate
+// refuses, so every service of such an install refused to start. Unset, the
+// development default stays; a name that is set is kept.
+func TestAnEmptyAccessProxyDomainStaysEmpty(t *testing.T) {
+	load := func(t *testing.T) *Config {
+		t.Helper()
+		cfg, err := Load("access-service")
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		return cfg
+	}
+
+	t.Run("set and empty: empty, and the production gate does not refuse it", func(t *testing.T) {
+		t.Setenv("ACCESS_PROXY_DOMAIN", "")
+		cfg := load(t)
+		if cfg.AccessProxyDomain != "" {
+			t.Fatalf("ACCESS_PROXY_DOMAIN=\"\" loaded as %q", cfg.AccessProxyDomain)
+		}
+		if host := loopbackVendorHost(cfg.AccessProxyDomain); host != "" {
+			t.Errorf("the production gate would refuse %q", host)
+		}
+	})
+	t.Run("unset: the development default, which production refuses", func(t *testing.T) {
+		t.Setenv("ACCESS_PROXY_DOMAIN", "")
+		os.Unsetenv("ACCESS_PROXY_DOMAIN")
+		cfg := load(t)
+		if cfg.AccessProxyDomain != "localhost" {
+			t.Fatalf("unset ACCESS_PROXY_DOMAIN loaded as %q, want the localhost default", cfg.AccessProxyDomain)
+		}
+		if loopbackVendorHost(cfg.AccessProxyDomain) == "" {
+			t.Error("the production gate no longer refuses the localhost default")
+		}
+	})
+	t.Run("set: kept", func(t *testing.T) {
+		t.Setenv("ACCESS_PROXY_DOMAIN", "access.example.com")
+		if got := load(t).AccessProxyDomain; got != "access.example.com" {
+			t.Errorf("ACCESS_PROXY_DOMAIN=access.example.com loaded as %q", got)
+		}
+	})
+}
