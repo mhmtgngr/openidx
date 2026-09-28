@@ -48,8 +48,13 @@ func TestTheSignInTakesNoMoreOTPGuessesThanTheLimit(t *testing.T) {
 	user := h.seedUser(middleware.DefaultOrgID, "otp-limit")
 	username := h.scalar(`SELECT username FROM users WHERE id = $1::uuid`, user)
 	h.exec(`UPDATE users SET password_hash = $1 WHERE id = $2::uuid`, hash, user)
+	// The address has to be one mail could reach: an enrollment at a reserved
+	// name (".test", ".local", "example.com") is not a factor the user has, so
+	// the challenge would not offer the email code and the guesses below would
+	// be refused as an unoffered method rather than counted as wrong. See
+	// emailUndeliverable in mfa_recovery.go.
 	h.exec(`INSERT INTO mfa_email_otp (user_id, email_address, enabled, org_id)
-		VALUES ($1::uuid, $2, true, $3::uuid)`, user, username+"@example.test", middleware.DefaultOrgID)
+		VALUES ($1::uuid, $2, true, $3::uuid)`, user, username+"@mail.openidx-test.dev", middleware.DefaultOrgID)
 	// And a TOTP credential, with which the sign-in asks for a second factor
 	// whatever the risk engine says; the guesses go to the email code, which
 	// the same challenge offers.
