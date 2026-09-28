@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -882,17 +883,24 @@ func (s *Service) recordUnifiedEvent(c *gin.Context, orgID, eventType, actorUser
 		}
 	}
 	clientIP := c.ClientIP()
+	// The details carry what the request said about itself (its address, its
+	// user agent, the code a launch failed with), so what reaches the log is
+	// scrubbed the way every other param-derived field in this package is.
+	detailsJSON := ""
+	if b, err := json.Marshal(details); err == nil {
+		detailsJSON = string(b)
+	}
 	if s.auditService == nil {
 		s.logger.Warn("temp access: no unified audit store, event not recorded",
-			zap.String("event_type", eventType), zap.String("target_id", logsafe.Clean(targetID)),
-			zap.Any("details", details), zap.String("ip", clientIP))
+			zap.String("event_type", eventType), logsafe.String("target_id", targetID),
+			logsafe.String("details", detailsJSON), logsafe.String("ip", clientIP))
 		return
 	}
 	ctx := orgctx.WithBypassRLS(orgctx.With(c.Request.Context(), orgctx.Org{ID: orgID}))
 	if err := s.auditService.RecordEvent(ctx, "openidx", eventType, "", actorUserID, clientIP, details); err != nil {
 		s.logger.Error("temp access: unified audit write failed",
-			zap.String("event_type", eventType), zap.String("target_id", logsafe.Clean(targetID)),
-			zap.Any("details", details), zap.String("ip", clientIP), zap.Error(err))
+			zap.String("event_type", eventType), logsafe.String("target_id", targetID),
+			logsafe.String("details", detailsJSON), logsafe.String("ip", clientIP), zap.Error(err))
 	}
 	// The management events have an authenticated actor and an organization
 	// on the request, so they also go to the audit service's own stream, as
