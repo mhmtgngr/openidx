@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Backup codes and administrator bypass codes are offered at sign-in again.**
+  The risk engine's list of allowed methods names primary factors only, and
+  the login intersected the offer with it, so neither recovery factor was ever
+  offered. A bypass code now stands at every risk level; backup codes stand
+  wherever the authenticator app does.
+- **A reinstalled mobile app no longer leaves the user unable to sign in.**
+  Each install registers a new push device, and the rows earlier installs left
+  behind kept push on offer and took the challenge. Registering an install now
+  removes the user's earlier registrations on that platform that never
+  approved a sign-in and no enrolled agent owns. Push is offered only when the
+  user has an enabled device.
+- **An email code is not offered for an address no mail can reach** (`.local`,
+  `.localhost`, `.test`, `.invalid`, `.example`, `example.com/net/org`). Such an
+  enrollment no longer counts as a factor the user has.
+
+### Changed
+- The MFA step of the sign-in page tells a user who can use none of the
+  factors on offer to ask an administrator for a bypass code.
+
 ## [1.38.0] - 2026-09-27
 
 ### Security

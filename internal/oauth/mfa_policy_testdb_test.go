@@ -50,7 +50,7 @@ func TestMFAPolicyRaisesTheLoginChallenge(t *testing.T) {
 	if _, err := db.Pool.Exec(ctx, `
 		INSERT INTO mfa_email_otp (user_id, email_address, enabled, org_id)
 		VALUES ($1::uuid, $2, true, $3::uuid)`,
-		withFactor.ID, withFactor.UserName+"@example.test", org); err != nil {
+		withFactor.ID, withFactor.UserName+"@mail.openidx-test.dev", org); err != nil {
 		t.Fatalf("enroll email OTP: %v", err)
 	}
 	noFactor := seedUser("mfa-none")

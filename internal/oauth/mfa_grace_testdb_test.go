@@ -114,7 +114,7 @@ func (f *mfaGraceFixture) user(name string, factors ...string) *identity.User {
 				VALUES ($1::uuid, 'JBSWY3DPEHPK3PXP', true, NOW(), $2::uuid)`, u.ID, f.org)
 		case factor == "email":
 			f.exec(`INSERT INTO mfa_email_otp (user_id, email_address, enabled, org_id)
-				VALUES ($1::uuid, $2, true, $3::uuid)`, u.ID, u.UserName+"@example.test", f.org)
+				VALUES ($1::uuid, $2, true, $3::uuid)`, u.ID, u.UserName+"@mail.openidx-test.dev", f.org)
 		case factor == "bypass":
 			f.exec(`INSERT INTO mfa_bypass_codes (user_id, code_hash, reason, generated_by, valid_until, org_id)
 				VALUES ($1::uuid, 'not-a-real-hash', 'grace test', $1::uuid, NOW() + interval '1 day', $2::uuid)`, u.ID, f.org)
