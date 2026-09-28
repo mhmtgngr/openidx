@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Approval policies enforce their step order, `min_approvals` and
+  `max_wait_hours`.** All three were stored and shown and decided nothing:
+  every approver had to approve whatever a step said, every step's approvers
+  could decide at once, and an unanswered request waited for ever. A step now
+  needs the approvals it names (one when unset) and the steps run in order; an
+  approver of a later step is told to wait and does not see the request in
+  their queue until it reaches them, and a satisfied step's remaining
+  approvers are skipped. A request no policy step answers within
+  `max_wait_hours` expires, with an audit event. A policy whose step cannot
+  reach its `min_approvals` (too few eligible approvers, a manager step for a
+  requester with no manager) refuses the request with the reason instead of
+  filing one nobody can approve. Migration v212 records the terms a request
+  was filed under; requests already open keep advancing.
+
 ## [1.39.0] - 2026-09-28
 
 ### Security
@@ -103,19 +118,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   factors on offer to ask an administrator for a bypass code.
 
 ### Fixed
-- **Approval policies enforce their step order, `min_approvals` and
-  `max_wait_hours`.** All three were stored and shown and decided nothing:
-  every approver had to approve whatever a step said, every step's approvers
-  could decide at once, and an unanswered request waited for ever. A step now
-  needs the approvals it names (one when unset) and the steps run in order; an
-  approver of a later step is told to wait and does not see the request in
-  their queue until it reaches them, and a satisfied step's remaining
-  approvers are skipped. A request no policy step answers within
-  `max_wait_hours` expires, with an audit event. A policy whose step cannot
-  reach its `min_approvals` (too few eligible approvers, a manager step for a
-  requester with no manager) refuses the request with the reason instead of
-  filing one nobody can approve. Migration v212 records the terms a request
-  was filed under; requests already open keep advancing.
 - **Backup codes and administrator bypass codes are offered at sign-in again.**
   The risk engine's list of allowed methods names primary factors only, and
   the login intersected the offer with it, so neither recovery factor was ever
