@@ -91,7 +91,7 @@ func (s *Service) evaluateMFA(
 		ev.Enabled = true
 	}
 	pushDevices, _ := s.identityService.GetPushDevices(ctx, user.ID)
-	if len(pushDevices) > 0 {
+	if hasEnabledPushDevice(pushDevices) {
 		ev.Methods = append(ev.Methods, "push")
 		ev.Enabled = true
 	}
@@ -104,7 +104,10 @@ func (s *Service) evaluateMFA(
 		ev.Methods = append(ev.Methods, "sms")
 		ev.Enabled = true
 	}
-	if emailEnr, _ := s.identityService.GetEmailOTPEnrollment(ctx, user.ID); emailEnr != nil && emailEnr.Enabled {
+	// An email enrollment whose address no mail can reach (a seeded or synced
+	// test account at "@test.local", say) is not a factor: offering it sends
+	// the code nowhere and leaves the user waiting at the MFA step.
+	if emailEnr, _ := s.identityService.GetEmailOTPEnrollment(ctx, user.ID); emailEnr != nil && emailEnr.Enabled && !emailUndeliverable(emailEnr.EmailAddress) {
 		ev.Methods = append(ev.Methods, "email")
 		ev.Enabled = true
 	}
@@ -155,20 +158,8 @@ func (s *Service) evaluateMFA(
 		ev.RequireMFA = assessment.RequiresMFA && ev.Enabled && !ev.BrowserTrusted
 		ev.DenyAccess = assessment.DenyAccess
 		// Filter the offerable methods by what the risk policy allows.
-		if ev.RequireMFA && len(assessment.AllowedMethods) > 0 {
-			allowed := make(map[string]bool, len(assessment.AllowedMethods))
-			for _, m := range assessment.AllowedMethods {
-				allowed[m] = true
-			}
-			filtered := []string{}
-			for _, m := range ev.Methods {
-				if allowed[m] {
-					filtered = append(filtered, m)
-				}
-			}
-			if len(filtered) > 0 {
-				ev.Methods = filtered
-			}
+		if ev.RequireMFA {
+			ev.Methods = filterMethodsByRisk(ev.Methods, assessment.AllowedMethods)
 		}
 	} else {
 		// Legacy fallback: hardcoded threshold.

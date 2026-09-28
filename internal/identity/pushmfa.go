@@ -210,6 +210,7 @@ func (s *Service) registerPushMFADevice(ctx context.Context, userID string, enro
 	if err := s.storePushDevice(ctx, device); err != nil {
 		return nil, fmt.Errorf("failed to store device: %w", err)
 	}
+	s.removeSupersededPushDevices(ctx, device)
 
 	s.logger.Info("Push MFA device registered",
 		zap.String("user_id", userID),
@@ -219,6 +220,38 @@ func (s *Service) registerPushMFADevice(ctx context.Context, userID string, enro
 		zap.String("agent_id", device.AgentID))
 
 	return device, nil
+}
+
+// removeSupersededPushDevices deletes the user's earlier registrations on the
+// same platform that never approved anything, once a new install registers.
+//
+// The native client mints its device token once per install, so a reinstalled
+// app registers as a new device and the earlier installs' rows stay behind.
+// Nothing can answer a challenge sent to them, yet they kept push on the
+// user's list of factors and the newest of them took the challenge. A row that
+// has approved a sign-in (last_used_at set) is a real phone and is kept, as is
+// one an enrolled agent registered (it is replaced through its agent, not
+// here). Failure is logged and ignored: the registration itself succeeded.
+func (s *Service) removeSupersededPushDevices(ctx context.Context, device *PushMFADevice) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return
+	}
+	tag, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM mfa_push_devices
+		WHERE org_id = $1 AND user_id = $2 AND platform = $3 AND id <> $4
+		  AND last_used_at IS NULL AND COALESCE(agent_id, '') = ''`,
+		org.ID, device.UserID, device.Platform, device.ID)
+	if err != nil {
+		s.logger.Warn("could not remove superseded push devices",
+			zap.String("user_id", device.UserID), zap.Error(err))
+		return
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		s.logger.Info("removed push devices superseded by a new install",
+			zap.String("user_id", device.UserID), zap.String("platform", device.Platform),
+			zap.String("device_id", device.ID), zap.Int64("removed", n))
+	}
 }
 
 // CreatePushMFAChallenge creates a new push notification challenge
@@ -442,8 +475,8 @@ func (s *Service) GetPushMFAChallenge(ctx context.Context, challengeID string) (
 // GetPushMFADevices returns all push MFA devices for a user
 func (s *Service) GetPushMFADevices(ctx context.Context, userID string) ([]PushMFADevice, error) {
 	query := `
-		SELECT id, user_id, device_token, platform, device_name, device_model,
-		       os_version, app_version, enabled, trusted, last_ip,
+		SELECT id, user_id, device_token, platform, COALESCE(device_name, ''), COALESCE(device_model, ''),
+		       COALESCE(os_version, ''), COALESCE(app_version, ''), enabled, trusted, COALESCE(last_ip, ''),
 		       created_at, last_used_at, expires_at,
 		       COALESCE(agent_id, ''), COALESCE(device_id, ''),
 		       COALESCE(enrollment_session_id::text, '')
@@ -512,8 +545,8 @@ func (s *Service) DeletePushMFADevice(ctx context.Context, userID, deviceID stri
 
 func (s *Service) getPushDeviceByToken(ctx context.Context, token string) (*PushMFADevice, error) {
 	query := `
-		SELECT id, user_id, device_token, platform, device_name, device_model,
-		       os_version, app_version, enabled, trusted, last_ip,
+		SELECT id, user_id, device_token, platform, COALESCE(device_name, ''), COALESCE(device_model, ''),
+		       COALESCE(os_version, ''), COALESCE(app_version, ''), enabled, trusted, COALESCE(last_ip, ''),
 		       created_at, last_used_at, expires_at,
 		       COALESCE(agent_id, ''), COALESCE(device_id, ''),
 		       COALESCE(enrollment_session_id::text, '')
