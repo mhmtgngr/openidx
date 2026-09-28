@@ -49,6 +49,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/jitgrant"
+	"github.com/openidx/openidx/internal/pamgrant"
 )
 
 // Use the min function from pushmfa.go
@@ -950,6 +951,17 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 	// workflow had granted them until it expired on its own.
 	if _, err := jitgrant.EndAllForUser(ctx, s.db.Pool, userID, orgID); err != nil {
 		log.Warn("deprovision: ending time-bound elevations failed", zap.Error(err))
+	}
+	// The PAM entry surface: the leaver's own connection grants, launch
+	// approvals, exclusive leases, issued temporary access links and brokered
+	// session ledger rows. pamEntryAllowed reads pam_entry_grants at the moment
+	// of a connect, so without this a disabled user kept every PAM connection
+	// they had until its own expiry. The live entry sessions on the broker are
+	// ended by the access-service lifecycle sweep, as the Guacamole ones are.
+	if _, errs := pamgrant.EndForUser(ctx, s.db.Pool, userID, orgID); len(errs) > 0 {
+		for _, err := range errs {
+			log.Warn("deprovision: ending the PAM entry surface failed", zap.Error(err))
+		}
 	}
 
 	// Whichever branch below ends the sessions, the relying parties they

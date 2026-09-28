@@ -27,6 +27,7 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -40,6 +41,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/jitgrant"
+	"github.com/openidx/openidx/internal/pamgrant"
 )
 
 // killSwitchRedisMarkerTTL mirrors identity's revokedSessionTTL: markers must
@@ -311,72 +313,33 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 	//
 	// pamEntryAllowed decides connect and reveal from pam_entry_grants at the
 	// moment of the call, never from the token, so expiring the user's own
-	// grants is what stops the next launch. Grants held through a role or a
-	// group are the role's or the group's, not this user's, and are left
-	// alone: the user lost the role above (jitgrant) or keeps the group
-	// membership deliberately, and either way the grant belongs to a
-	// principal the kill switch was not pointed at.
-	if tag, err := s.db.Pool.Exec(ctx,
-		`UPDATE pam_entry_grants SET expires_at = NOW()
-		  WHERE principal_type = 'user' AND principal_id = $1 AND org_id = $2
-		    AND (expires_at IS NULL OR expires_at > NOW())`,
-		userID, orgID); err != nil {
-		warn("expire_pam_entry_grants", err)
-	} else {
-		res.PamEntryGrantsExpired = tag.RowsAffected()
-	}
-	// A launch approval already given is a single-use ticket the user could
-	// still spend; a pending one would be spent the moment an approver said
-	// yes. Both are revoked, which checkAndConsumePamApproval never matches.
-	if tag, err := s.db.Pool.Exec(ctx,
-		`UPDATE pam_entry_access_requests SET status = 'revoked'
-		  WHERE requester_id = $1 AND org_id = $2 AND status IN ('pending', 'approved')`,
-		userID, orgID); err != nil {
-		warn("revoke_pam_entry_approvals", err)
-	} else {
-		res.PamEntryApprovalsRevoked = tag.RowsAffected()
-	}
-	// An exclusive lease blocks every other principal from the entry while
-	// it is live; a severed user must not keep holding it.
-	if tag, err := s.db.Pool.Exec(ctx,
-		`UPDATE pam_active_checkouts SET status = 'revoked', released_at = NOW()
-		  WHERE principal_id = $1 AND org_id = $2 AND status = 'active'`,
-		userID, orgID); err != nil {
-		warn("release_pam_entry_leases", err)
-	} else {
-		res.PamEntryLeasesReleased = tag.RowsAffected()
-	}
-	res.PamEntrySessionsEnded = s.endUserPamEntrySessions(ctx, orgID, userID, warn)
-	// A temporary access link is access the user handed to somebody else, on
-	// a URL nobody signs in to. It is redeemed as long as it is active,
-	// whatever happens to its issuer, so it goes with the issuer's access:
-	// the same posture as the direct vault grants above, and a link is
-	// re-issued in a minute if the severance turns out to be a false alarm.
-	if tag, err := s.db.Pool.Exec(ctx,
-		`UPDATE temp_access_links SET status = 'revoked', updated_at = NOW()
-		  WHERE created_by = $1 AND org_id = $2 AND status = 'active'`,
-		userID, orgID); err != nil {
-		warn("revoke_temp_access_links", err)
-	} else {
-		res.TempAccessLinksRevoked = tag.RowsAffected()
-	}
-	// The brokered-session ledger (SSH certificates, cloud JIT credentials).
-	// The ledger is what the console and the reports read, so it is ended
-	// here. The credentials themselves are already in the user's hands and
-	// there is no revocation list for either kind; they expire by their TTL.
-	// That limit is reported, not hidden.
-	if tag, err := s.db.Pool.Exec(ctx,
-		`UPDATE brokered_sessions SET status = 'ended', ended_at = NOW()
-		  WHERE user_id = $1 AND org_id = $2 AND status = 'active'`,
-		userID, orgID); err != nil {
-		warn("end_brokered_sessions", err)
-	} else {
-		res.BrokeredSessionsEnded = tag.RowsAffected()
-		if res.BrokeredSessionsEnded > 0 {
-			res.Warnings = append(res.Warnings,
-				"brokered_sessions: ended in the ledger; the SSH certificates and cloud credentials they issued cannot be recalled and expire by their TTL")
+	// grants is what stops the next launch. The five writes live in
+	// internal/pamgrant, shared with deprovisionUser and the lifecycle sweep,
+	// and each is reported here by name: one table refusing must not hide
+	// behind the others succeeding.
+	pam, pamErrs := pamgrant.EndForUser(ctx, s.db.Pool, userID, orgID)
+	for _, err := range pamErrs {
+		var step *pamgrant.StepError
+		if errors.As(err, &step) {
+			warn(step.Step, step.Err)
+		} else {
+			warn("pam_entry_surface", err)
 		}
 	}
+	res.PamEntryGrantsExpired = pam.GrantsExpired
+	res.PamEntryApprovalsRevoked = pam.ApprovalsRevoked
+	res.PamEntryLeasesReleased = pam.LeasesReleased
+	res.TempAccessLinksRevoked = pam.TempLinksRevoked
+	res.BrokeredSessionsEnded = pam.BrokeredEnded
+	if res.BrokeredSessionsEnded > 0 {
+		// The ledger is ended; the SSH certificates and cloud credentials it
+		// recorded are already in the user's hands, there is no revocation list
+		// for either kind, and they expire by their TTL. Reported, not hidden.
+		res.Warnings = append(res.Warnings,
+			"brokered_sessions: ended in the ledger; the SSH certificates and cloud credentials they issued cannot be recalled and expire by their TTL")
+	}
+	// The live entry sessions need the broker, so they stay here.
+	res.PamEntrySessionsEnded = s.endUserPamEntrySessions(ctx, orgID, userID, warn)
 
 	// ---- Ziti: sever live circuits on the controller ----
 	zm := s.ziti()
