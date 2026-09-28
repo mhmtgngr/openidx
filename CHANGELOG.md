@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Severing a user now ends their PAM entry surface too.** The kill switch,
+  disabling or deleting a user, and the lifecycle sweep that catches every
+  other disable path (SCIM, directory sync, lifecycle policies) expire the
+  user's own PAM connection grants, revoke their pending and approved launch
+  approvals, release their exclusive leases, end their live PAM entry sessions
+  on the broker, revoke the temporary access links they issued and end their
+  brokered SSH and cloud sessions in the ledger. The kill switch's response and
+  audit event count each. Brokered SSH certificates and cloud credentials
+  cannot be recalled and expire by their TTL; the response says so.
 - **Backup codes and administrator bypass codes are offered at sign-in again.**
   The risk engine's list of allowed methods names primary factors only, and
   the login intersected the offer with it, so neither recovery factor was ever
