@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A brokered proxy route's Connect asks who is calling.** `POST
+  /guacamole/connections/:routeId/connect` (the RDP, SSH, VNC and Telnet
+  routes on My Privileged Access) let any signed-in user of the organization
+  who knew a route id open a session onto the route's host with the route's
+  injected credential. The route's brokered connection is now a PAM entry
+  (migration v213 makes one per route), and the route's Connect is the entry
+  launch: a connect grant on the entry, the entry's single-use approval, the
+  overlay check, a fresh second factor, and a `pam_entry_sessions` row. My
+  Privileged Access lists a route only for users who may launch it, and the
+  Privileged Sessions request queue holds the entry's requests. No grants are
+  invented: until an administrator grants connect on a route's entry (PAM
+  pages), only administrators can launch it.
 - **Approval policies enforce their step order, `min_approvals` and
   `max_wait_hours`.** All three were stored and shown and decided nothing:
   every approver had to approve whatever a step said, every step's approvers
