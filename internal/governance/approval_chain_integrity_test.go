@@ -66,6 +66,7 @@ func TestAHalfBuiltApprovalChainIsReported(t *testing.T) {
 			resource_id UUID,
 			approval_steps JSONB NOT NULL,
 			auto_approve_conditions JSONB,
+			max_wait_hours INTEGER DEFAULT 0,
 			enabled BOOLEAN DEFAULT true,
 			org_id UUID NOT NULL);
 		CREATE TABLE access_requests (
@@ -78,6 +79,7 @@ func TestAHalfBuiltApprovalChainIsReported(t *testing.T) {
 			status VARCHAR(20) NOT NULL,
 			priority VARCHAR(20),
 			expires_at TIMESTAMPTZ,
+			answer_by TIMESTAMPTZ,
 			created_at TIMESTAMPTZ DEFAULT now(),
 			updated_at TIMESTAMPTZ DEFAULT now(),
 			org_id UUID NOT NULL);
@@ -86,6 +88,7 @@ func TestAHalfBuiltApprovalChainIsReported(t *testing.T) {
 			request_id UUID NOT NULL,
 			approver_id UUID NOT NULL,
 			step_order INTEGER NOT NULL,
+			step_min_approvals INTEGER NOT NULL DEFAULT 1,
 			decision VARCHAR(20) NOT NULL,
 			comments TEXT,
 			decided_at TIMESTAMPTZ,
@@ -173,6 +176,7 @@ func TestARequestWhoseChainFailsIsWithdrawn(t *testing.T) {
 			resource_id UUID,
 			approval_steps JSONB NOT NULL,
 			auto_approve_conditions JSONB,
+			max_wait_hours INTEGER DEFAULT 0,
 			enabled BOOLEAN DEFAULT true,
 			org_id UUID NOT NULL);
 		CREATE TABLE access_requests (
@@ -185,6 +189,7 @@ func TestARequestWhoseChainFailsIsWithdrawn(t *testing.T) {
 			status VARCHAR(20) NOT NULL,
 			priority VARCHAR(20),
 			expires_at TIMESTAMPTZ,
+			answer_by TIMESTAMPTZ,
 			created_at TIMESTAMPTZ DEFAULT now(),
 			updated_at TIMESTAMPTZ DEFAULT now(),
 			org_id UUID NOT NULL);
@@ -193,6 +198,7 @@ func TestARequestWhoseChainFailsIsWithdrawn(t *testing.T) {
 			request_id UUID NOT NULL,
 			approver_id UUID NOT NULL,
 			step_order INTEGER NOT NULL,
+			step_min_approvals INTEGER NOT NULL DEFAULT 1,
 			decision VARCHAR(20) NOT NULL,
 			comments TEXT,
 			decided_at TIMESTAMPTZ,

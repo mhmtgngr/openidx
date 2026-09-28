@@ -130,6 +130,10 @@ func TestGuacamoleConnections_TenantIsolation(t *testing.T) {
 		c.Params = params
 		c.Set("org_id", org)
 		c.Set("user_id", user)
+		// The launch is the entry path's, which asks for a connect grant or an
+		// administrator; this test is about the tenant, so its callers are
+		// administrators of their own organizations.
+		c.Set("roles", []string{"admin"})
 		fn(c)
 		return w
 	}
@@ -167,11 +171,10 @@ func TestGuacamoleConnections_TenantIsolation(t *testing.T) {
 		}
 
 		// And the refusal happened at the connection, not at the approval gate.
-		// checkAndConsumeApproval would have matched this row — it keys on
-		// (connection_id, requester_id) over a table belted to the CALLER's
-		// organization, which is exactly why it could not help: the four-eyes
-		// control is satisfiable without ever leaving home. A still-'approved'
-		// row proves the lookup refused first.
+		// The old gate keyed on (connection_id, requester_id) over a table
+		// belted to the CALLER's organization, which is exactly why it could
+		// not help: the four-eyes control is satisfiable without ever leaving
+		// home. A still-'approved' row proves the lookup refused first.
 		var status string
 		if err := db.Pool.QueryRow(ctx,
 			`SELECT status FROM guacamole_session_requests WHERE id = $1`, reqID).Scan(&status); err != nil {
@@ -185,15 +188,6 @@ func TestGuacamoleConnections_TenantIsolation(t *testing.T) {
 
 	// The predicate must scope, not empty.
 	t.Run("the owning tenant can still connect", func(t *testing.T) {
-		// Give org A a real approval so the gate passes for its own user.
-		if _, err := db.Pool.Exec(ctx, `
-			INSERT INTO guacamole_session_requests
-			    (org_id, connection_id, requester_id, reason, status, expires_at)
-			VALUES ($1::uuid, $2::uuid, $3::uuid, 'own tenant', 'approved', NOW() + INTERVAL '1 hour')`,
-			orgA, connA, userA); err != nil {
-			t.Fatalf("seed org A approval: %v", err)
-		}
-
 		w := call(orgA, userA, s.handleGuacamoleConnect, http.MethodPost,
 			"/guacamole/connections/"+routeA+"/connect", "{}",
 			gin.Params{{Key: "routeId", Value: routeA}})

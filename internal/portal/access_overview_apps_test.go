@@ -57,8 +57,10 @@ func TestGetAccessOverview_AppsCountIncludesGroupAssignments(t *testing.T) {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 		`CREATE TABLE guacamole_sessions (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, user_id UUID, status VARCHAR(16))`,
-		`CREATE TABLE guacamole_session_requests (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, requester_id UUID,
+		`CREATE TABLE pam_entries (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, proxy_route_id UUID)`,
+		`CREATE TABLE pam_entry_access_requests (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, entry_id UUID, requester_id UUID,
 			status VARCHAR(16), expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE ziti_identities (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, user_id UUID, enrolled BOOLEAN)`,
