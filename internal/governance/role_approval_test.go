@@ -34,6 +34,7 @@ func TestCreateApprovalRows_RoleStep(t *testing.T) {
 			resource_id UUID,
 			approval_steps JSONB NOT NULL,
 			auto_approve_conditions JSONB,
+			max_wait_hours INTEGER DEFAULT 0,
 			enabled BOOLEAN DEFAULT true,
 			org_id UUID NOT NULL);
 		CREATE TABLE user_roles (
@@ -45,6 +46,7 @@ func TestCreateApprovalRows_RoleStep(t *testing.T) {
 			request_id UUID NOT NULL,
 			approver_id UUID NOT NULL,
 			step_order INTEGER NOT NULL,
+			step_min_approvals INTEGER NOT NULL DEFAULT 1,
 			decision VARCHAR(20) NOT NULL,
 			created_at TIMESTAMPTZ DEFAULT now(),
 			org_id UUID NOT NULL);
