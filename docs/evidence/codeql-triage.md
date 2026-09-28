@@ -216,9 +216,17 @@ finding — see the `[Unreleased]` entry in `CHANGELOG.md`.
 
 **Snapshot:** `main` at `588b49aa` carries **one** result for this rule; the
 branch that cuts v1.39.0 carries **six**. Only the five it adds matter, because
-the results check compares a pull request against its base — and unlike every
-other verdict in this file, these five fail that check. The dismissal below is
-not hygiene; it is the merge.
+the results check compares a pull request against its base, and those five fail
+it.
+
+**Corrected once the rest of CI went green:** an earlier version of this entry
+said the five therefore blocked the merge. They do not. With every other check
+passing and only this one red, GitHub reported the pull request as `unstable`
+rather than `blocked`, which is what it says when the failing check is not in
+the required set. So the dismissal is hygiene, in the same sense as every other
+item here — with one difference worth knowing: until it happens, every pull
+request that touches this tree shows a red security check, and a red check
+nobody can explain is how a real one gets waved through.
 
 `internal/access/app_publish.go:705, 1556`, `internal/access/feature_handlers.go:136`,
 `internal/access/service.go:2919, 2931`
@@ -355,11 +363,15 @@ UI branches on is a constant from that file. Two tests pin it: *drops a method
 it does not know from the handed-back list*, and *a list with nothing it knows
 asks for the authenticator code*.
 
-Whether that also clears the three alerts depends on whether the analysis reads
-a vocabulary lookup as a barrier, and that cannot be checked from here. If they
-survive the next analysis, dismiss them as **"false positive"** citing this
-entry: the four server-side refusals are the control, and nothing on a page in
-the user's own browser can be.
+**It cleared them.** This entry first said the outcome depended on whether the
+analysis reads a vocabulary lookup as a barrier, and that it could not be
+checked from here. The next analysis answered: three results before the change,
+none after, with every other JavaScript rule's count unchanged. The alerts are
+gone because the value the page branches on is now a constant from this file
+rather than a string out of the URL, and no dismissal is needed. If the shape
+ever returns, the verdict above is the one to apply: the four server-side
+refusals are the control, and nothing on a page in the user's own browser can
+be.
 
 ---
 
@@ -546,11 +558,12 @@ takes.
 ## What the maintainer needs to do
 
 The verdicts above are recorded; the alerts are still open in code scanning,
-and closing them is a UI action this branch cannot take. Items 1 to 4 are
-hygiene — an alert list nobody has triaged is an alert list nobody reads, and
-the results check passed on `dec5b493` without them. **Items 5 and 6 are not hygiene:
-those alerts fail the results check on the branch that raises them, so until
-they are cleared that branch cannot merge.**
+and closing them is a UI action this branch cannot take. Every item is hygiene
+— an alert list nobody has triaged is an alert list nobody reads, and the
+results check passed on `dec5b493` without any of them. **Item 5 is the one with
+a visible cost:** those five alerts fail the results check on every pull request
+that raises them, so until they are dismissed each one shows a red security
+check whose verdict lives here instead of there.
 
 1. Dismiss as **"used in tests"**: the 13 JS results.
 2. Dismiss as **"false positive"**, citing this file: `go/sql-injection`,
@@ -573,19 +586,19 @@ they are cleared that branch cannot merge.**
 5. Dismiss as **"false positive"**, citing this file: the five
    `go/clear-text-logging` alerts on `internal/access/app_publish.go:705, 1556`,
    `internal/access/feature_handlers.go:136` and
-   `internal/access/service.go:2919, 2931`. **This one is blocking**, and it is
-   the only item here that is: the branch cutting v1.39.0 cannot merge while
-   they are open, because a single new alert at 7.0 or higher fails the results
-   check. Read that entry before dismissing — the reason those five appeared is
+   `internal/access/service.go:2919, 2931`. A single new alert at 7.0 or higher
+   fails the results check, so every pull request raising these shows red until
+   they are dismissed; the merge itself is not blocked, as that entry now
+   records. Read it before dismissing — the reason those five appeared is
    that a password stopped being stored in plain text, and the change that
    would clear them without a dismissal is a change that should not be made.
-6. Check whether three `js/user-controlled-bypass` alerts on
-   `web/admin-console/src/pages/login.tsx:790, 792` are still raised. They are
-   also blocking, and they are also new on that branch, but unlike item 5 the
-   code changed under them: the handed-back method list is now read through a
-   known vocabulary. If the analysis still reports them, dismiss as **"false
-   positive"** citing their entry, which names the four server-side refusals
-   that are the actual control.
+6. Nothing to do for the three `js/user-controlled-bypass` alerts on
+   `web/admin-console/src/pages/login.tsx:790, 792`. They were new on that
+   branch and are no longer raised: the handed-back method list is read through
+   a known vocabulary now, so the condition turns on a constant rather than on
+   a string out of the URL. Read their entry anyway — it names the four
+   server-side refusals that are the actual control, and those are what a
+   recurrence would be judged against.
 
 Item 2 is the one worth doing carefully: a dismissal is keyed to an alert
 fingerprint, so the next refactor that moves one of those lines brings the
