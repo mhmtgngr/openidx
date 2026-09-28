@@ -42,16 +42,12 @@ func TestGuacEndUserSelfService(t *testing.T) {
 		RETURNING id::text`, defaultOrg).Scan(&routeID); err != nil {
 		t.Fatalf("seed proxy route: %v", err)
 	}
-	var connectionID string
-	if err := db.Pool.QueryRow(ctx, `
+	if _, err := db.Pool.Exec(ctx, `
 		INSERT INTO guacamole_connections
 			(route_id, org_id, guacamole_connection_id, protocol, hostname, port, require_approval, record_session)
-		VALUES ($1::uuid, $2::uuid, 'guac-conn-1', 'ssh', '10.0.0.5', 22, true, true)
-		RETURNING id::text`, routeID, defaultOrg).Scan(&connectionID); err != nil {
+		VALUES ($1::uuid, $2::uuid, 'guac-conn-1', 'ssh', '10.0.0.5', 22, true, true)`, routeID, defaultOrg); err != nil {
 		t.Fatalf("seed guacamole connection: %v", err)
 	}
-
-	_ = connectionID
 
 	s := &Service{db: db, logger: zap.NewNop()}
 
