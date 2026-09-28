@@ -33,10 +33,10 @@ import (
 // This does not re-register the routes by hand -- that would test a copy. It
 // calls RegisterRoutes on a stub service, exactly as test/openapi's spec
 // coverage does, and issues real requests through the resulting engine. A
-// non-admin must be stopped at 403 by the gate; an admin must get PAST it,
-// which on a stub service means 503 from the handler's own
-// `healthEngine == nil` guard. A missing gate shows up as the non-admin case
-// reaching 503 too.
+// non-admin must be stopped at 403 by the admin gate. An admin then meets the
+// install-administrator gate, which refuses a credential that names no
+// organization before it looks anything up; which admins it admits, with
+// tokens and a database behind it, is health_doctor_platform_testdb_test.go's.
 func TestHealthDoctorRoutes_requireAdminRole(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -78,10 +78,10 @@ func TestHealthDoctorRoutes_requireAdminRole(t *testing.T) {
 					"an unguarded route would reach the handler instead"},
 				{"no roles is refused", rolesAs(), http.StatusForbidden,
 					"a caller with no roles claim must fail closed"},
-				{"admin gets past the gate", rolesAs("admin"), http.StatusServiceUnavailable,
-					"503 is the handler's own nil-healthEngine answer: the gate let it through"},
-				{"super_admin gets past the gate", rolesAs("super_admin"), http.StatusServiceUnavailable,
-					"503 is the handler's own nil-healthEngine answer: the gate let it through"},
+				{"admin is held at the install-administrator gate", rolesAs("admin"), http.StatusForbidden,
+					"a credential of no organization is not the install's administrator"},
+				{"super_admin is held at the install-administrator gate", rolesAs("super_admin"), http.StatusForbidden,
+					"a credential of no organization is not the install's administrator"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					var body *strings.Reader
@@ -97,6 +97,14 @@ func TestHealthDoctorRoutes_requireAdminRole(t *testing.T) {
 					if w.Code != tc.want {
 						t.Errorf("%s %s as %s = %d, want %d (%s) body=%s",
 							route.method, route.path, tc.name, w.Code, tc.want, tc.notes, w.Body.String())
+					}
+					// The handler's own 503 would mean a gate let the request
+					// through.
+					if strings.Contains(w.Body.String(), "health engine not initialized") {
+						t.Errorf("%s %s as %s reached the handler: %s", route.method, route.path, tc.name, w.Body.String())
+					}
+					if strings.Contains(tc.name, "install-administrator") && !strings.Contains(w.Body.String(), "platform administrator required") {
+						t.Errorf("%s %s as %s: %s, want the install-administrator gate's refusal", route.method, route.path, tc.name, w.Body.String())
 					}
 				})
 			}

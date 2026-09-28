@@ -15,12 +15,11 @@ package access
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-
-	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ChainHop is one link in the path a packet takes from a client to the target.
@@ -53,15 +52,18 @@ type ResourceDiagnosis struct {
 // handleExplainZitiService explains how a Ziti service is wired end to end and
 // where the chain breaks. Admin-only: it intentionally exposes fabric internals,
 // which is the whole point — admins keep the behind-the-scenes view that end
-// users no longer need.
+// users no longer need. The walk reads the whole controller by name, so an
+// organization's admin gets it for their organization's own services only, and
+// the 404 an unknown name gets for any other; an install administrator can
+// explain any name.
 func (s *Service) handleExplainZitiService(c *gin.Context) {
 	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OpenZiti is not configured"})
 		return
 	}
 	ctx := c.Request.Context()
-	if _, err := orgctx.From(ctx); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+	view, ok := s.zitiViewFor(c)
+	if !ok {
 		return
 	}
 
@@ -69,6 +71,18 @@ func (s *Service) handleExplainZitiService(c *gin.Context) {
 	if name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "service name is required"})
 		return
+	}
+	if !view.install {
+		_, own, err := s.ownedZitiServices(ctx, view.orgID)
+		if err != nil {
+			s.logger.Error("explain: could not read the organization's services", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to explain the service"})
+			return
+		}
+		if !own[name] {
+			c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
+			return
+		}
 	}
 
 	d := s.explainService(ctx, name)
@@ -192,7 +206,7 @@ func (s *Service) explainService(ctx context.Context, name string) ResourceDiagn
 	termHop := ChainHop{
 		Step: 6, Title: "A gateway is connected right now", Technical: "terminator",
 	}
-	if svcID != "" && s.serviceHasTerminator(ctx, name) {
+	if svcID != "" && s.serviceHasTerminator(ctx, name, svcID) {
 		termHop.Status = "ok"
 		termHop.Detail = "a gateway is online and serving this resource"
 	} else {
@@ -218,7 +232,7 @@ func (s *Service) explainService(ctx context.Context, name string) ResourceDiagn
 }
 
 // serviceHasTerminator reports whether a gateway currently serves the service.
-func (s *Service) serviceHasTerminator(ctx context.Context, serviceName string) bool {
+func (s *Service) serviceHasTerminator(ctx context.Context, serviceName, serviceID string) bool {
 	ents, err := s.ziti().listEdgeEntities(ctx, "terminators")
 	if err != nil {
 		s.logger.Warn("explain: terminator list failed", zap.Error(err))
@@ -232,13 +246,16 @@ func (s *Service) serviceHasTerminator(ctx context.Context, serviceName string) 
 		}
 	}
 	// Fall back to the dedicated terminator query, which resolves the service.
-	return s.terminatorExistsForService(ctx, serviceName)
+	return s.terminatorExistsForService(ctx, serviceID)
 }
 
 // terminatorExistsForService asks the controller for terminators filtered to one
 // service, which is authoritative when the list form does not embed the name.
-func (s *Service) terminatorExistsForService(ctx context.Context, serviceName string) bool {
-	path := `/edge/management/v1/terminators?filter=service.name="` + serviceName + `"`
+// The filter names the service by the id the controller gave it rather than by
+// the name in the request: the filter is the controller's query language, and
+// a name is text an administrator chose.
+func (s *Service) terminatorExistsForService(ctx context.Context, serviceID string) bool {
+	path := "/edge/management/v1/terminators?filter=" + url.QueryEscape(`service="`+serviceID+`"`)
 	data, status, err := s.ziti().mgmtRequest("GET", path, nil)
 	if err != nil || status != http.StatusOK {
 		return false

@@ -31,16 +31,23 @@ type BambooHRConnector struct {
 // the config: an explicit BaseURL wins, otherwise the standard BambooHR gateway
 // for the configured subdomain.
 func NewBambooHRConnector(cfg HRISConfig, logger *zap.Logger) *BambooHRConnector {
-	base := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
-	if base == "" {
-		base = "https://api.bamboohr.com/api/gateway.php/" + strings.TrimSpace(cfg.Subdomain)
-	}
 	return &BambooHRConnector{
 		cfg:     cfg,
-		baseURL: base,
+		baseURL: bambooHRBaseURL(cfg.BaseURL, cfg.Subdomain),
 		logger:  logger.With(zap.String("component", "bamboohr-connector")),
 		client:  &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// bambooHRBaseURL is where the connector sends the API key: an explicit base
+// URL, otherwise the standard gateway for the subdomain. SameTarget compares
+// it, so a stored key is kept only for the endpoint it was entered for.
+func bambooHRBaseURL(baseURL, subdomain string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		base = "https://api.bamboohr.com/api/gateway.php/" + strings.TrimSpace(subdomain)
+	}
+	return base
 }
 
 func (c *BambooHRConnector) authHeader() string {

@@ -240,7 +240,11 @@ func (s *Service) pushSSFItem(ctx context.Context, it ssfDeliveryItem) {
 	if auth != "" {
 		req.Header.Set("Authorization", "Bearer "+auth)
 	}
-	client := &http.Client{Timeout: 15 * time.Second}
+	// The endpoint is an organization administrator's URL and the push starts
+	// inside the platform's network with the stream's bearer token, so the
+	// connection is the outbound guard's to allow, and a redirect is not
+	// followed: a receiver answers 202, and anything else is a failed push.
+	client := orgOutboundGuard().Client(15 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		s.retryOrDeadSSF(ctx, it, err)

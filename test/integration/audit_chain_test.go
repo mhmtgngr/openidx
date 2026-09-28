@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -81,10 +82,16 @@ func TestTheAuditTrailNoticesWhenItIsAltered(t *testing.T) {
 		"the trail is already broken before this test touched it: %v", before)
 
 	// --- the event this test will doctor, written through the product's own
-	// ingest path: the same endpoint, with the same shape, that
-	// internal/access.logAuditEvent posts every credential reveal to.
+	// ingest path: the same endpoint, with the same shape and the same
+	// credential, that internal/access.logAuditEvent posts every credential
+	// reveal with. The audit service takes events only from a caller holding
+	// INTERNAL_SERVICE_TOKEN, which the job exports for every service.
+	internalToken := os.Getenv("INTERNAL_SERVICE_TOKEN")
+	require.NotEmpty(t, internalToken,
+		"INTERNAL_SERVICE_TOKEN is not set for the test: audit-service refuses events without it, "+
+			"so export the value the services were started with")
 	marker := fmt.Sprintf("j8.tamper_probe.%d", time.Now().UnixNano())
-	status, created := apiRequest(t, "POST", auditURL+"/api/v1/audit/events", `{
+	status, created := apiRequestWithHeaders(t, "POST", auditURL+"/api/v1/audit/events", `{
 		"event_type":  "authorization",
 		"category":    "access_proxy",
 		"action":      "`+marker+`",
@@ -92,7 +99,7 @@ func TestTheAuditTrailNoticesWhenItIsAltered(t *testing.T) {
 		"actor_type":  "service",
 		"target_type": "audit_chain",
 		"details":     {"written_by": "test/integration/audit_chain_test.go"}
-	}`, "")
+	}`, "", map[string]string{"X-Internal-Token": internalToken})
 	require.Equal(t, 201, status,
 		"the audit ingest endpoint refused the event this test needs to seal: %v", created)
 	id, _ := created["id"].(string)

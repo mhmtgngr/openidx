@@ -129,7 +129,7 @@ type TenantResolverConfig struct {
 //
 // Resolution order (per v2.0 multi-tenancy design):
 //  1. X-Org-Slug header (set by the gateway from the subdomain when
-//     the install fronts wildcard *.openidx.io). Highest priority
+//     the install fronts wildcard *.example.com). Highest priority
 //     because the URL is the most explicit tenant signal. Where auth
 //     has already run, a slug naming an organization other than the
 //     credential's own is refused (403) unless the caller is a platform

@@ -71,6 +71,15 @@ regexes = [
 ]
 
 [[allowlists]]
+description = "Labelled test fixtures added by the batch-2 security tests. guacamole_feature_secret_testdb_test.go seeds two legacy plaintext passwords to prove the startup sweep seals them and the reads never return them; webhook_destination_testdb_test.go posts a subscription whose signing secret has to be some literal; and internal_token_test.go's negative case presents a counting sequence that is NOT the configured token, to prove it is refused. Each is listed as an anchored literal: they authenticate nothing, and the tests are what they are for."
+regexes = [
+  '''^Legacy-Plain-1$''',
+  '''^Legacy-Plain-2$''',
+  '''^signing-secret-0123$''',
+  '''^fedcba9876543210fedcba9876543210$''',
+]
+
+[[allowlists]]
 description = "The joke password from the redaction test: pam_launch_test.go asserts that '--password hunter2' is scrubbed from a launch command line before it is logged. The string has to be there for the test to mean anything."
 regexTarget = "line"
 regexes = [

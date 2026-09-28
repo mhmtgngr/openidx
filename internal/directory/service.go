@@ -11,6 +11,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
 
 // ErrVerifyUnsupported means this directory type cannot cheaply verify a credential
@@ -24,11 +25,19 @@ type Service struct {
 	scheduler *Scheduler
 	engine    *SyncEngine
 	cancelFn  context.CancelFunc
+	// cipher opens the credentials in directory_integrations.config (see
+	// secrets.go). Every binary that builds the service passes its
+	// ENCRYPTION_KEY cipher, since every one of them signs in with them: the
+	// sync jobs, the connection test, and the login pass-through.
+	cipher *secretcrypt.Cipher
 }
 
-// NewService creates a new directory service
-func NewService(db *database.PostgresDB, logger *zap.Logger) *Service {
+// NewService creates a new directory service. cipher is the service's
+// ENCRYPTION_KEY cipher, which opens the directories' stored credentials; a
+// no-op cipher reads them as they are and refuses a sealed one.
+func NewService(db *database.PostgresDB, logger *zap.Logger, cipher *secretcrypt.Cipher) *Service {
 	engine := NewSyncEngine(db, logger)
+	engine.cipher = cipher
 	scheduler := NewScheduler(db, engine, logger)
 
 	return &Service{
@@ -36,6 +45,7 @@ func NewService(db *database.PostgresDB, logger *zap.Logger) *Service {
 		logger:    logger.With(zap.String("service", "directory")),
 		scheduler: scheduler,
 		engine:    engine,
+		cipher:    cipher,
 	}
 }
 
@@ -86,8 +96,13 @@ func (s *Service) Stop() {
 	s.logger.Info("Directory service stopped")
 }
 
-// TestConnection tests connectivity for a given directory config
+// TestConnection tests connectivity for a given directory config. A stored
+// config's credential is opened by the caller (internal/admin); one that
+// arrives still sealed is refused rather than sent.
 func (s *Service) TestConnection(ctx context.Context, dirType string, configBytes []byte) error {
+	if err := refuseSealed(configBytes); err != nil {
+		return err
+	}
 	switch dirType {
 	case "ldap", "active_directory":
 		var cfg LDAPConfig
@@ -126,7 +141,14 @@ func (s *Service) TriggerSync(ctx context.Context, directoryID string, fullSync 
 // Diagnose runs live LDAP/AD probes against the supplied config and returns a
 // DiagnoseResult with findings + suggested config fixes. Only meaningful for
 // LDAP/Active Directory; other directory types return a single info finding.
+//
+// It opens nothing: a config from a request body is used as it came, so the
+// diagnostics cannot be used to open a sealed credential the caller supplies.
+// A stored config's credential is opened by the caller.
 func (s *Service) Diagnose(ctx context.Context, dirType string, configBytes []byte) (interface{}, error) {
+	if err := refuseSealed(configBytes); err != nil {
+		return nil, err
+	}
 	switch dirType {
 	case "ldap", "active_directory":
 		var cfg LDAPConfig
@@ -280,7 +302,13 @@ func (s *Service) loadDirectoryTypeAndConfig(ctx context.Context, directoryID st
 	if err != nil {
 		return "", nil, fmt.Errorf("directory not found or disabled: %w", err)
 	}
-	return dirType, configBytes, nil
+	// The login pass-through, password change and reset sign in with the
+	// stored bind password; it is stored sealed.
+	opened, err := OpenSecrets(s.cipher, configBytes)
+	if err != nil {
+		return "", nil, fmt.Errorf("directory %s: %w", directoryID, err)
+	}
+	return dirType, opened, nil
 }
 
 // GetSyncLogs returns recent sync logs for a directory

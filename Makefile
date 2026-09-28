@@ -19,7 +19,8 @@ GOLINT := golangci-lint
 # Docker parameters
 DOCKER := docker
 DOCKER_COMPOSE := docker-compose
-DOCKER_REGISTRY ?= ghcr.io/openidx
+# The namespace the release workflow publishes to and the chart pulls from.
+DOCKER_REGISTRY ?= ghcr.io/mhmtgngr/openidx
 
 # Kubernetes parameters
 KUBECTL := kubectl
@@ -401,21 +402,26 @@ helm-lint:
 helm-template:
 	@echo "📄 Rendering Helm templates..."
 	@# The bundled PostgreSQL/Redis passwords are `required`: an empty one used
-	@# to render a DSN that could not authenticate. Rendering supplies
-	@# throwaway values — a real install sets secrets.* for itself.
+	@# to render a DSN that could not authenticate. So is the issuer, which has
+	@# no default. Rendering supplies throwaway values — a real install sets
+	@# secrets.* and config.oauthIssuer for itself.
 	$(HELM) template openidx deployments/kubernetes/helm/openidx \
 		--namespace $(NAMESPACE) \
 		--values deployments/kubernetes/helm/openidx/values.yaml \
 		--set secrets.postgresPassword=render-only-not-a-credential \
 		--set secrets.redisPassword=render-only-not-a-credential \
-		--set secrets.encryptionKey=render-only-not-a-credential32b
+		--set secrets.encryptionKey=render-only-not-a-credential32b \
+		--set config.oauthIssuer=https://auth.render-only.invalid
 
 helm-install:
 	@echo "🚀 Installing OpenIDX..."
+	@# OAUTH_ISSUER is this install's public OAuth URL. The chart has no default
+	@# and refuses to render without one: make helm-install OAUTH_ISSUER=https://auth.example.com
 	$(HELM) upgrade --install openidx deployments/kubernetes/helm/openidx \
 		--namespace $(NAMESPACE) \
 		--create-namespace \
 		--values deployments/kubernetes/helm/openidx/values.yaml \
+		$(if $(OAUTH_ISSUER),--set config.oauthIssuer=$(OAUTH_ISSUER)) \
 		--wait
 
 helm-uninstall:

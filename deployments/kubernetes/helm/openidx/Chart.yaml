@@ -3,7 +3,7 @@ name: openidx
 description: OpenIDX - Open Source Zero Trust Access Platform
 type: application
 version: 0.2.0
-appVersion: "1.38.0"
+appVersion: "1.39.0"
 keywords:
   - identity
   - access-management
@@ -13,7 +13,7 @@ keywords:
   - mfa
 maintainers:
   - name: OpenIDX Team
-    email: team@openidx.io
+    url: https://github.com/mhmtgngr/openidx
 dependencies:
   - name: postgresql
     version: "14.x.x"

@@ -39,10 +39,13 @@ Broker web consoles (for debugging): direct `:8086`, ziti `:8087`.
 
 ## Kubernetes (Helm)
 
-Disabled by default. Enable and supply the broker secrets:
+Disabled by default. Enable and supply the broker secrets, on top of the
+install's own values file (`values-production.yaml` here; see
+`docs/docs/deployment/kubernetes.md`):
 
 ```bash
 helm upgrade --install openidx deployments/kubernetes/helm/openidx \
+  -f values-production.yaml \
   --set pamBroker.enabled=true \
   --set secrets.pamGuacDbPassword=<pw> \
   --set secrets.guacamoleAdminPassword=<pw> \
@@ -81,7 +84,9 @@ Create an identity with the `pam-broker-dialers` role attribute and enroll it:
 OpenIDX's reach mode uses proxy-loopback ports (host.v1 services, no
 `intercept.v1`), so the tunnel must **proxy** each service→port pair. The current
 mapping is served by the access-service at
-`GET /api/v1/access/pam/broker/ziti-bindings` (admin-guarded) and logged by the
+`GET /api/v1/access/pam/broker/ziti-bindings` (for an admin of the install's
+default organization, since one tunnel serves every organization; set
+`PAM_BROKER_BINDINGS_TOKEN` to such an admin's token) and logged by the
 tunnel entrypoint for visibility. The exact tunneler proxy invocation is
 OpenZiti-tunneler-version specific and is centralized in
 `pam-ziti-tunnel-entrypoint.sh` — override that command for your tunneler build.

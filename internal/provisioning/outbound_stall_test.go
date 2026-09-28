@@ -36,7 +36,7 @@ func stalledQueueFixture(t *testing.T) (*outboundWorker, context.Context, string
 		cleanup()
 		t.Fatalf("schema: %v", err)
 	}
-	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}}
+	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}, outbound: testOutbound(t)}
 	target, err := svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{
 		Name: "stalled-saas", BaseURL: "http://127.0.0.1:1", AuthType: "bearer", BearerToken: "tok",
 		ProvisionUsers: true, DeprovisionAction: "deactivate", Enabled: true,

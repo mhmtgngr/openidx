@@ -30,7 +30,11 @@ and set opa.policyConfigMap=opa-policies.
 
 API is available at:
 {{- range .Values.ingress.hosts }}
+{{- if .host }}
   https://{{ .host }}
+{{- else }}
+  any host name the ingress controller receives, without TLS (ingress.hosts[].host is empty)
+{{- end }}
 {{- end }}
 {{- end }}
 
@@ -38,9 +42,18 @@ API is available at:
 
 Admin Console is available at:
 {{- range .Values.adminConsole.ingress.hosts }}
+{{- if .host }}
   https://{{ .host }}
+{{- else }}
+  any host name the ingress controller receives, without TLS (adminConsole.ingress.hosts[].host is empty)
 {{- end }}
 {{- end }}
+{{- end }}
+
+Issuer: {{ .Values.config.oauthIssuer }}
+Tokens name it as `iss`, and the discovery document, the access proxy's sign-in
+page, magic links and push-MFA enrollment point browsers and phones at it. It
+must be this install's own public URL.
 
 Services deployed:
 {{- if .Values.identityService.enabled }}

@@ -10,7 +10,7 @@ info:
     `x-openidx-handler` extension naming the Go handler that serves them; where a
     payload shape is not yet pinned the body is shown as a free-form JSON object
     rather than invented.
-  version: 1.38.0
+  version: 1.39.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -445,6 +445,19 @@ paths:
     get:
       tags: [Authorization]
       summary: OAuth callback handler
+      description: |
+        Where an enterprise identity provider (the console's SSO buttons,
+        `/oauth/authorize?idp_hint=`) returns. A user who needs nothing more
+        is redirected to the application with a code, which carries the
+        request's PKCE challenge.
+        The provider proves one factor. The sign-in then asks the password
+        login's second-factor decision: a user it would challenge is
+        redirected to `/login?mfa_session=...&mfa_methods=...` (plus
+        `can_trust_browser=1` when the browser is not remembered), where
+        `POST /oauth/mfa-verify` completes the pending request; a user whose
+        MFA policy grace period is over is redirected to
+        `/login?error=sso_mfa_enrollment_required`, and a sign-in the risk
+        engine denies to `/login?error=sso_high_risk_login`.
       operationId: callback
       security: []
       parameters:
@@ -477,7 +490,11 @@ paths:
               properties:
                 grant_type:
                   type: string
-                  enum: [authorization_code, refresh_token, client_credentials]
+                  enum:
+                    - authorization_code
+                    - refresh_token
+                    - client_credentials
+                    - urn:ietf:params:oauth:grant-type:token-exchange
                 code:
                   type: string
                   description: Required for authorization_code grant
@@ -506,12 +523,49 @@ paths:
                     authentication of the device.
                 scope:
                   type: string
+                subject_token:
+                  type: string
+                  description: >-
+                    Token exchange (RFC 8693): the access token to exchange. It
+                    must be an access token OpenIDX issued, of the organization
+                    the request is for, unexpired and not revoked.
+                subject_token_type:
+                  type: string
+                  enum:
+                    - urn:ietf:params:oauth:token-type:access_token
+                    - urn:ietf:params:oauth:token-type:jwt
+                actor_token:
+                  type: string
+                  description: >-
+                    Token exchange: optional, the acting party's access token,
+                    held to the subject token's rules and recorded in the
+                    issued token's `act` claim.
+                actor_token_type:
+                  type: string
+                  enum:
+                    - urn:ietf:params:oauth:token-type:access_token
+                    - urn:ietf:params:oauth:token-type:jwt
+                audience:
+                  type: string
+                  description: >-
+                    Token exchange: the audience of the issued token. It must
+                    be the requesting client itself or one of its
+                    `token_exchange_audiences`. Absent means the requesting
+                    client.
+                resource:
+                  type: string
+                  description: >-
+                    Token exchange: the same target as `audience`, under RFC
+                    8693's other name. When both are sent they must name the
+                    same target.
       responses:
         '200':
           description: >-
             Token response. Every response from this endpoint, success or
             error, carries `Cache-Control: no-store` and `Pragma: no-cache`
-            (RFC 6749 §5.1).
+            (RFC 6749 §5.1). A token-exchange response also carries
+            `issued_token_type`; the issued token expires no later than the
+            subject token.
           headers:
             Cache-Control:
               schema:
@@ -529,9 +583,17 @@ paths:
           description: >-
             Invalid request. For the authorization_code grant this includes a
             code whose session was revoked after the code was issued
-            (`invalid_grant`, `session_revoked`).
+            (`invalid_grant`, `session_revoked`). For token exchange:
+            `unauthorized_client` when the client is not registered for the
+            grant, `invalid_target` when the audience is not one the client
+            may obtain tokens for, and `invalid_grant` for a subject or actor
+            token that is not a live, unrevoked access token of the
+            organization.
         '401':
-          description: Invalid client credentials
+          description: >-
+            Invalid client credentials (`invalid_client`). The client
+            credentials and token exchange grants answer this to any client
+            that is not confidential or does not present its secret.
 
   /oauth/introspect:
     post:
@@ -634,7 +696,12 @@ paths:
       description: >-
         Every client-management operation needs the `admin` or `super_admin`
         role in the organization the request is for; any other caller gets
-        403.
+        403. The operations on one client answer 404 for a client the
+        organization does not have, including another organization's, before
+        they read the request body or change anything. With STEPUP_GATE set to
+        enforce, a write by an administrator whose second factor is older than
+        STEPUP_MAX_AGE is refused with 403 `step_up_required`, as admin-api's
+        writes are.
       operationId: listClients
       responses:
         '200':
@@ -666,6 +733,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OAuthClient'
+        '400':
+          description: >-
+            A value the client may not have: an access-token lifetime past the
+            revocation marker's, an invalid back-channel or post-logout URI, or
+            an invalid `token_exchange_audiences` list.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -706,10 +778,16 @@ paths:
       responses:
         '200':
           description: Client updated
+        '400':
+          description: >-
+            A malformed body, or a value the client may not have (see the
+            create operation).
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     delete:
       tags: [Client Management]
       summary: Delete OAuth client
@@ -723,6 +801,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /api/v1/oauth/clients/{id}/regenerate-secret:
     post:
@@ -733,7 +813,9 @@ paths:
         - $ref: '#/components/parameters/IdPath'
       responses:
         '200':
-          description: New secret generated
+          description: >-
+            New secret generated and stored. The previous secret no longer
+            authenticates the client.
           content:
             application/json:
               schema:
@@ -745,6 +827,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /.well-known/apple-app-site-association:
     get:
@@ -874,6 +958,11 @@ paths:
     post:
       tags: [SAML]
       summary: Create SAML service provider
+      description: |
+        A metadata_url is fetched through the outbound guard: a URL that names or
+        resolves to an internal address (loopback, private, link-local, shared,
+        reserved), or redirects to one, is refused with 400 before anything is
+        stored. OIDX_OUTBOUND_ALLOWLIST lists internal hosts allowed anyway.
       operationId: createSAMLServiceProvider
       x-openidx-handler: internal/oauth.(*Service).handleCreateSAMLServiceProvider
       requestBody:
@@ -904,6 +993,9 @@ paths:
     post:
       tags: [SAML]
       summary: Import SAML metadata
+      description: |
+        A metadata_url is fetched under the same outbound rule as POST
+        /api/v1/saml/service-providers.
       operationId: importSAMLMetadata
       x-openidx-handler: internal/oauth.(*Service).handleImportSAMLMetadata
       requestBody:
@@ -1497,6 +1589,12 @@ paths:
     post:
       tags: [Passwordless]
       summary: O auth magic link
+      description: |
+        Emails a sign-in link for the pending sign-in `login_session` to the
+        user of the request's organization with address `email`. The answer
+        is the same whether or not the address belongs to a user. The link
+        points at the organization's own host (`https://<slug>.<base>` under
+        subdomain tenancy), where it is verified.
       operationId: oAuthMagicLink
       x-openidx-handler: internal/oauth.(*Service).handleOAuthMagicLink
       requestBody:
@@ -1527,6 +1625,15 @@ paths:
     get:
       tags: [Passwordless]
       summary: Magic link verify
+      description: |
+        Completes the pending sign-in `login_session` with the link `token`,
+        and redirects to the application with a code. The link is found by
+        the SHA-256 of its token, in the organization the request resolves
+        to, and spent once; the pending sign-in must be for an application of
+        that organization. Otherwise, and for a link that expired, was used,
+        or was sent before this version, the redirect is to
+        `/login?error=invalid_magic_link`, and a link refused because the
+        request is not in its organization is not spent.
       operationId: magicLinkVerify
       x-openidx-handler: internal/oauth.(*Service).handleMagicLinkVerify
       responses:
@@ -1887,6 +1994,13 @@ paths:
     post:
       tags: [Dynamic Client Registration]
       summary: Register client
+      description: >-
+        RFC 7591 registration, opened by the initial access token in
+        DCR_INITIAL_ACCESS_TOKEN (or, with DCR_ALLOW_OPEN_REGISTRATION, by
+        nothing). It creates clients in one organization only, DCR_ORG_ID or
+        else DEFAULT_ORG_ID; a request that resolves to any other
+        organization is answered 401 `invalid_token`, as one without the
+        token is.
       operationId: registerClient
       x-openidx-handler: internal/oauth.(*Service).handleRegisterClient
       requestBody:
@@ -2020,6 +2134,20 @@ paths:
     get:
       tags: [Social Login]
       summary: Social login callback
+      description: |
+        Where a social provider returns. With a pending request
+        (`login_session`), a user who needs nothing more gets the code
+        response; without one, tokens, and a user who would need more gets
+        403 (`mfa_required`, `sso_mfa_enrollment_required` or
+        `sso_high_risk_login`) and no tokens.
+        The provider proves one factor. The sign-in then asks the password
+        login's second-factor decision: a user it would challenge is
+        redirected to `/login?mfa_session=...&mfa_methods=...` (plus
+        `can_trust_browser=1` when the browser is not remembered), where
+        `POST /oauth/mfa-verify` completes the pending request; a user whose
+        MFA policy grace period is over is redirected to
+        `/login?error=sso_mfa_enrollment_required`, and a sign-in the risk
+        engine denies to `/login?error=sso_high_risk_login`.
       operationId: socialLoginCallback
       x-openidx-handler: internal/oauth.(*Service).handleSocialLoginCallback
       responses:
@@ -2068,6 +2196,16 @@ paths:
     post:
       tags: [Social Login]
       summary: Social link start
+      description: |
+        Starts linking an account of the provider to the caller's account, and
+        answers the provider's authorization URL. A linked account signs in to
+        this one, so an account with a password or a second factor must send
+        `current_password`, or `totp_code` (a current code, accepted once)
+        when it has TOTP. Without it, or with a wrong one, the answer is 403
+        with `error` `reauthentication_required`, `reauthentication_failed`,
+        `reauthentication_locked` or `reauthentication_unavailable`, and
+        `accepts`, as for a change to the account's second factors. A wrong
+        password counts against the sign-in lockout.
       operationId: socialLinkStart
       x-openidx-handler: internal/oauth.(*Service).handleSocialLinkStart
       requestBody:
@@ -2076,7 +2214,11 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                current_password:
+                  type: string
+                totp_code:
+                  type: string
       responses:
         '200':
           description: Success
@@ -2741,6 +2883,13 @@ components:
             application's access token. Clients that existed at the upgrade
             that added the setting have it; a client registered since has it
             only if it was set.
+        token_exchange_audiences:
+          type: array
+          items:
+            type: string
+          description: >-
+            The audiences, besides the client itself, token exchange may issue
+            this client tokens for. Absent or empty means none.
         enabled:
           type: boolean
         created_at:
@@ -2801,6 +2950,19 @@ components:
             only signs users in does not). On update, absent leaves the
             setting as it is. Not accepted at `POST /oauth/register`, where a
             client always starts without it.
+        token_exchange_audiences:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+          description: >-
+            Optional. The audiences, besides the client itself, token exchange
+            may issue this client tokens for (RFC 8693 `audience` or
+            `resource`). On update, absent leaves the list as it is and an
+            empty list clears it. Not accepted at `POST /oauth/register`, where
+            a client always starts without one.
         enabled:
           type: boolean
           default: true

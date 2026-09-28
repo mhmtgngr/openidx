@@ -71,7 +71,7 @@ from scratch. That changes the cost calculation in the v1.0 plan
 A request resolves to an `org_id` via three mechanisms, checked in
 order:
 
-1. **Subdomain** (browser): `acme.openidx.io` →
+1. **Subdomain** (browser): `acme.example.com` →
    `organizations.slug = 'acme'`. Requires wildcard TLS cert + DNS at
    deploy time. Gateway sets `X-Org-Slug`; middleware resolves to
    `org_id`.
@@ -125,7 +125,7 @@ request bodies.
 ### Decision 4 — Token signing
 
 One signing key per install, with a per-tenant `iss` claim
-(`https://acme.openidx.io` for tenant `acme`). Verifiers check `iss`
+(`https://acme.example.com` for tenant `acme`). Verifiers check `iss`
 against the org slug. We deliberately do not introduce per-tenant
 signing keys in v2.0 because:
 

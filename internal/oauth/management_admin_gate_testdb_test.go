@@ -328,6 +328,7 @@ func TestDynamicClientRegistrationCannotSetAPIAccess(t *testing.T) {
 	h := newTokenHarness(t)
 	org := h.seedOrg("dcr")
 	h.issuer.dcrInitialAccessToken = "iat-" + h.suffix
+	h.issuer.dcrOrgID = org.ID // the organization registration is bound to (DCR_ORG_ID)
 	api := h.oauthRouteTable(nil)
 	adminToken := h.accessToken(org, h.seedUser(org.ID, "dcr-admin", "admin"))
 

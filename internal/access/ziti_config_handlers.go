@@ -3,6 +3,7 @@ package access
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -49,9 +50,24 @@ func (s *Service) handleListConfigTypes(c *gin.Context) {
 	c.JSON(http.StatusOK, results)
 }
 
+// handleListConfigs lists the controller's configs, whose host.v1 entries name
+// the internal address each service forwards to. An install administrator sees
+// them all; anyone else sees the configs their organization's services use.
 func (s *Service) handleListConfigs(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
+	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
+	var own map[string]bool
+	if !view.install {
+		var err error
+		if own, err = s.ownedZitiConfigs(c.Request.Context(), view.orgID); err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("list configs", err), s.logger)
+			return
+		}
 	}
 	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/configs?limit=500", nil)
 	if err != nil {
@@ -80,7 +96,7 @@ func (s *Service) handleListConfigs(c *gin.Context) {
 	var results []configEntry
 	for _, raw := range resp.Data {
 		var ce configEntry
-		if err := json.Unmarshal(raw, &ce); err == nil {
+		if err := json.Unmarshal(raw, &ce); err == nil && (view.install || own[ce.ID]) {
 			results = append(results, ce)
 		}
 	}
@@ -142,7 +158,7 @@ func (s *Service) handleUpdateConfig(c *gin.Context) {
 		"data": req.Data,
 	}
 	body, _ := json.Marshal(payload)
-	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/configs/"+id, body)
+	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/configs/"+url.PathEscape(id), body)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update config", err), s.logger)
 		return
@@ -159,7 +175,7 @@ func (s *Service) handleDeleteConfig(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/configs/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/configs/"+url.PathEscape(id), nil)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete config", err), s.logger)
 		return

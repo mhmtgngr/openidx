@@ -379,3 +379,55 @@ func TestZitiProxyRewriteAnonymousSendsNoIdentity(t *testing.T) {
 			"reads as authenticated fact", got)
 	}
 }
+
+// TestBothProxiesKeepTheProxySessionCookieAndCallerIdentityFromTheUpstream
+// pins, on the two rewrite hooks themselves, what the route tests drive end to
+// end: the proxy's own session cookie is removed from the Cookie header and
+// the application's cookies stay; a caller's X-Auth-Request-* and the other
+// identity names are removed; and on the route path a bearer the proxy
+// consumed is removed while any other Authorization value stays. The overlay
+// path has no route test, because it serves a Ziti connection, so this is
+// where its half is held.
+func TestBothProxiesKeepTheProxySessionCookieAndCallerIdentityFromTheUpstream(t *testing.T) {
+	forged := func(frontendURL string) *http.Request {
+		req := spoofedRequest(t, frontendURL)
+		req.Header.Set("Cookie", "theme=dark; _openidx_proxy_session=the-users-session; app=1")
+		req.Header.Set("X-Auth-Request-User", "ceo")
+		req.Header.Set("X-Auth-Request-Email", "ceo@example.test")
+		req.Header.Set("X-Forwarded-Groups", "finance")
+		req.Header.Set("X-Risk-Score", "0")
+		req.Header.Add("Authorization", "Bearer consumed-token")
+		req.Header.Add("Authorization", "Basic app-own")
+		return req
+	}
+	session := &ProxySession{UserID: "u-1", bearer: "Bearer consumed-token"}
+	for name, newProxy := range map[string]func(*url.URL) *httputil.ReverseProxy{
+		"route": func(target *url.URL) *httputil.ReverseProxy {
+			return &httputil.ReverseProxy{Rewrite: proxyRewrite(target, &ProxyRoute{Name: "app"}, session, "203.0.113.7")}
+		},
+		"overlay": func(target *url.URL) *httputil.ReverseProxy {
+			return &httputil.ReverseProxy{Rewrite: zitiProxyRewrite(target, "u-1", "", "", "")}
+		},
+	} {
+		seen := runThrough(t, newProxy, forged)
+		if got := seen.header.Get("Cookie"); got != "theme=dark; app=1" {
+			t.Errorf("%s: Cookie = %q, want the application's two cookies only", name, got)
+		}
+		for _, h := range []string{"X-Auth-Request-User", "X-Auth-Request-Email", "X-Forwarded-Groups", "X-Risk-Score"} {
+			if got := seen.header.Get(h); got != "" {
+				t.Errorf("%s: the caller's %s = %q reached the upstream", name, h, got)
+			}
+		}
+		auth := strings.Join(seen.header.Values("Authorization"), ",")
+		switch name {
+		case "route":
+			if auth != "Basic app-own" {
+				t.Errorf("route: Authorization = %q, want the application's own value only", auth)
+			}
+		case "overlay":
+			if auth != "Bearer consumed-token,Basic app-own" {
+				t.Errorf("overlay: Authorization = %q, want both values: the overlay consumes none", auth)
+			}
+		}
+	}
+}

@@ -37,8 +37,29 @@ func TestADocumentWithTheRetiredForceLogoutKeyLoads(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	sec := got.Security
-	if sec.IdleTimeout != 3600 || sec.AbsoluteTimeout != 7200 ||
+	if sec.IdleTimeout == nil || *sec.IdleTimeout != 3600 || sec.AbsoluteTimeout == nil || *sec.AbsoluteTimeout != 7200 ||
 		sec.MaxConcurrentSessions != 3 || sec.ConcurrentSessionStrategy != "terminate_oldest" {
 		t.Fatalf("the session policy did not load: %+v", sec)
+	}
+}
+
+// Zero is a setting for the two session timeouts -- the Security tab documents
+// 0 as "disabled" -- so a document that sets them to zero must read differently
+// from one that does not carry them, like the one migration 010 seeds.
+func TestAZeroTimeoutIsNotAMissingOne(t *testing.T) {
+	zero, err := syssettings.Load(context.Background(), docRow(`{"security": {"idle_timeout": 0, "absolute_timeout": 0}}`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if zero.Security.IdleTimeout == nil || *zero.Security.IdleTimeout != 0 ||
+		zero.Security.AbsoluteTimeout == nil || *zero.Security.AbsoluteTimeout != 0 {
+		t.Errorf("timeouts set to zero loaded as %v / %v, want 0 / 0", zero.Security.IdleTimeout, zero.Security.AbsoluteTimeout)
+	}
+	missing, err := syssettings.Load(context.Background(), docRow(`{"security": {"session_timeout": 30}}`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if missing.Security.IdleTimeout != nil || missing.Security.AbsoluteTimeout != nil {
+		t.Errorf("timeouts the document does not carry loaded as %v / %v, want nil", missing.Security.IdleTimeout, missing.Security.AbsoluteTimeout)
 	}
 }

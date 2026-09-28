@@ -105,14 +105,18 @@ spec:
                 name: {{ include "openidx.fullname" $ }}-provisioning-service
                 port:
                   name: http
-          # Audit Service
+          # Audit Service, on its edge port: every audit route but event
+          # ingestion. POST /api/v1/audit/events is for the platform's own
+          # services, and an Ingress cannot match on method to refuse it
+          # while passing the console's GET, so the port it reaches has no
+          # ingestion on it (AUDIT_EDGE_ADDR, templates/audit-service.yaml).
           - path: /api/v1/audit
             pathType: Prefix
             backend:
               service:
                 name: {{ include "openidx.fullname" $ }}-audit-service
                 port:
-                  name: http
+                  name: edge
           # Admin API
           - path: /api/v1/dashboard
             pathType: Prefix

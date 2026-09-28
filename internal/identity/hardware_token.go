@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/subtle"
 	"encoding/base32"
 	"encoding/binary"
 	"errors"
@@ -414,34 +415,66 @@ func (s *Service) VerifyHardwareToken(ctx context.Context, userID, otp string, i
 	var valid bool
 	var newCounter int64
 
+	// newCounter is what the token's counter becomes when the code is accepted:
+	// for an HOTP token the counter after the matched one, and for a TOTP
+	// token -- which has no counter of its own -- the time step the code
+	// belongs to. Either way a code is accepted only while the stored counter
+	// is below it, so it is accepted once.
 	switch tokenType {
 	case "oath-hotp", "yubikey":
 		valid, newCounter = s.verifyHOTP(secret, counter, otp)
 	case "oath-totp":
-		valid = s.verifyTOTP(secret, otp)
-		newCounter = counter
+		newCounter, valid = s.verifyTOTP(secret, otp)
 	default:
 		return false, fmt.Errorf("unsupported token type: %s", tokenType)
 	}
 
 	if valid {
-		// Advancing the counter is what makes an HOTP single-use, so this write
+		// Advancing the counter is what makes a code single-use, so this write
 		// is part of the verification, not bookkeeping after it. Its error used
 		// to be discarded: a failed UPDATE left the counter where it was and the
 		// same code kept working, for as long as the write kept failing, with
 		// nothing said. Refuse instead — a code that cannot be spent has not
 		// been verified.
-		if _, err := s.db.Pool.Exec(ctx,
+		//
+		// And the comparison is in the write. The counter was read above and
+		// written back unconditionally, so two requests carrying one code both
+		// read the old counter and both were accepted; a TOTP token's counter
+		// was not advanced at all, so its code worked for its whole window.
+		//
+		// The lockout is re-checked in the same write. It was checked only in
+		// the read above, and this write cleared it, so among guesses sent
+		// together every one was tested against the token, however many
+		// failures locked it meanwhile, and a right one unlocked it.
+		tag, err := s.db.Pool.Exec(ctx,
 			//orgscope:ignore token id already resolved under the caller's org predicate; ctx is the bypassed verification context
 			`
 			UPDATE hardware_tokens
 			SET counter = $1, last_used_at = NOW(), use_count = use_count + 1,
 			    failed_attempts = 0, last_failed_at = NULL, locked_until = NULL
-			WHERE id = $2
-		`, newCounter, tokenID); err != nil {
+			WHERE id = $2 AND COALESCE(counter, 0) < $1
+			  AND (locked_until IS NULL OR locked_until <= NOW())
+		`, newCounter, tokenID)
+		if err != nil {
 			s.logger.Error("Hardware token accepted but its counter could not be advanced; refusing",
 				zap.String("token_id", tokenID), zap.Error(err))
 			return false, fmt.Errorf("could not spend hardware token code: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			// Locked by a concurrent failure, or the code was already spent.
+			var nowLocked *time.Time
+			//orgscope:ignore token id already resolved under the caller's org predicate; ctx is the bypassed verification context
+			if rerr := s.db.Pool.QueryRow(ctx, `SELECT locked_until FROM hardware_tokens WHERE id = $1`,
+				tokenID).Scan(&nowLocked); rerr == nil && nowLocked != nil && time.Now().Before(*nowLocked) {
+				s.logTokenEvent(ctx, tokenID, &userID, "failed", ipAddress, userAgent, map[string]interface{}{
+					"reason": "locked_out",
+				})
+				return false, ErrHardwareTokenLockedOut
+			}
+			s.logTokenEvent(ctx, tokenID, &userID, "failed", ipAddress, userAgent, map[string]interface{}{
+				"reason": "code_already_used",
+			})
+			return false, nil
 		}
 
 		s.logTokenEvent(ctx, tokenID, &userID, "used", ipAddress, userAgent, nil)
@@ -516,21 +549,22 @@ func (s *Service) verifyHOTP(secret []byte, counter int64, otp string) (bool, in
 	return false, counter
 }
 
-// verifyTOTP validates TOTP code
-func (s *Service) verifyTOTP(secret []byte, otp string) bool {
+// verifyTOTP validates a TOTP code against the current time step and one on
+// either side, and returns the step it belongs to -- the latest, if more than
+// one matches -- so the caller can accept it once.
+func (s *Service) verifyTOTP(secret []byte, otp string) (int64, bool) {
 	now := time.Now().Unix()
 	timeStep := int64(30)
 
-	// Check current and adjacent time steps
-	for i := int64(-1); i <= 1; i++ {
+	for i := int64(1); i >= -1; i-- {
 		counter := (now / timeStep) + i
 		expected := generateHOTP(secret, counter)
-		if expected == otp {
-			return true
+		if subtle.ConstantTimeCompare([]byte(expected), []byte(otp)) == 1 {
+			return counter, true
 		}
 	}
 
-	return false
+	return 0, false
 }
 
 // generateHOTP generates an HOTP code

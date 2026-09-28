@@ -4,7 +4,9 @@ package identity
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,14 +79,15 @@ func (s *Service) CreateMagicLink(ctx context.Context, email, purpose, redirectU
 		return nil, errors.New("user not found or disabled")
 	}
 
-	// The administrator's switch, then the user's.
+	// The installation's switch, then the user's.
 	//
 	// PasswordlessSystemSettings was saved, read back by its own GET, and
 	// consulted by nothing: an administrator who turned magic links off
 	// system-wide still handed them out, because only the PER-USER preference
 	// below was ever asked. The system switch is the stronger claim of the two —
-	// it is how an organization stops a whole sign-in method — so it is checked
-	// first and it wins.
+	// it is how the installation stops a whole sign-in method, for every
+	// organization on it (one row of system_settings, which only a platform
+	// administrator may write) — so it is checked first and it wins.
 	sys, err := s.loadPasswordlessSettings(ctx)
 	if err != nil {
 		// Fail closed on the switch that turns a login method OFF: a settings
@@ -92,7 +95,7 @@ func (s *Service) CreateMagicLink(ctx context.Context, email, purpose, redirectU
 		return nil, fmt.Errorf("passwordless settings unavailable: %w", err)
 	}
 	if !sys.MagicLinkEnabled {
-		return nil, errors.New("magic link login is disabled for this organization")
+		return nil, errors.New("magic link login is turned off on this installation")
 	}
 
 	// Check if passwordless is enabled for this user
@@ -125,11 +128,12 @@ func (s *Service) CreateMagicLink(ctx context.Context, email, purpose, redirectU
 	}
 	token := base64.URLEncoding.EncodeToString(tokenBytes)
 
-	// Hash token for storage
+	// Hash token for storage, and keep the digest the verifier finds it by.
 	tokenHash, err := bcrypt.GenerateFromPassword([]byte(token), bcryptCost)
 	if err != nil {
 		return nil, err
 	}
+	lookup := magicLinkLookup(token)
 
 	// Set purpose default
 	if purpose == "" {
@@ -163,15 +167,15 @@ func (s *Service) CreateMagicLink(ctx context.Context, email, purpose, redirectU
 	// Create magic link
 	query := `
 		INSERT INTO magic_links (
-			id, org_id, user_id, email, token_hash, purpose, redirect_url,
+			id, org_id, user_id, email, token_hash, token_lookup, purpose, redirect_url,
 			ip_address, user_agent, status, created_at, expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', NOW(), $10)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', NOW(), $11)
 		RETURNING created_at
 	`
 
 	var createdAt time.Time
 	err = s.db.Pool.QueryRow(ctx, query,
-		linkID, org.ID, userID, email, string(tokenHash), purpose, redirectURL,
+		linkID, org.ID, userID, email, string(tokenHash), lookup, purpose, redirectURL,
 		ipAddress, userAgent, expiresAt,
 	).Scan(&createdAt)
 	if err != nil {
@@ -213,81 +217,87 @@ func (s *Service) SendMagicLinkEmail(ctx context.Context, to, magicLinkURL strin
 	})
 }
 
-// VerifyMagicLink validates a magic link token and returns the user
+// magicLinkLookup is the digest a magic link is found by: the SHA-256 of its
+// token, hex-encoded (magic_links.token_lookup, migration v208). The token is 32
+// random bytes, so the digest discloses nothing, and unlike the bcrypt hash it
+// can be indexed.
+func magicLinkLookup(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// errMagicLinkInvalid is the one answer to a link that cannot be used: unknown,
+// another organization's, expired, spent, or minted before v208.
+var errMagicLinkInvalid = errors.New("invalid or expired magic link")
+
+// VerifyMagicLink spends a magic link of the request's organization and returns
+// its user and purpose.
+//
+// It read every pending link of every organization, with the row-level-security
+// belt lifted, and bcrypt-compared the token with each until one matched: a
+// quarter of a second of CPU per pending link in the install for every
+// unauthenticated GET /oauth/magic-link-verify, and a match accepted from
+// whichever organization it belonged to. The link is now found by the digest of
+// its token (magicLinkLookup), through an index, in the organization the
+// request resolved to -- under the belt, and named in the predicate too -- and
+// only that row is bcrypt-compared. A link of another organization is not
+// found, and is left unspent for its own. A link minted before v208 has no
+// digest and is not found either: it is asked for again.
 func (s *Service) VerifyMagicLink(ctx context.Context, token, ipAddress, userAgent string) (string, string, error) {
-	// A PRE-TENANT-RESOLUTION lookup, the same class as api-key-by-hash and
-	// route-by-host that TestPreResolutionLookupsUnderRLS pins. The visitor
-	// arrives holding a link and nothing else: no session, no organization, and
-	// the link is what says who they are. There is no tenant to scope by yet,
-	// so the belt is lifted here rather than in spite of it — under FORCE RLS
-	// this query would return no rows and every magic link in the product would
-	// stop working.
-	//
-	// Possession of the 32-byte token is the whole entitlement, and it is
-	// checked against the stored bcrypt hash, so spanning organizations
-	// discloses nothing: a token matches at most the one row it was minted for,
-	// and that row names its own user.
-	ctx = orgctx.WithBypassRLS(ctx)
-
-	// Find pending magic links
-	//orgscope:ignore pre-tenant-resolution: the link is presented before any organization is known and is itself the credential
-	query := `
-		SELECT id, user_id, token_hash, purpose, expires_at
-		FROM magic_links
-		WHERE status = 'pending'
-		ORDER BY created_at DESC
-	`
-
-	rows, err := s.db.Pool.Query(ctx, query)
+	org, err := orgctx.From(ctx)
 	if err != nil {
 		return "", "", err
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var linkID, userID, tokenHash, purpose string
-		var expiresAt time.Time
-
-		if err := rows.Scan(&linkID, &userID, &tokenHash, &purpose, &expiresAt); err != nil {
-			continue
-		}
-
-		// Check expiration
-		if time.Now().After(expiresAt) {
-			//silentwrite:ok the refusal is the `continue` below, decided from expires_at on every
-			// pass; this row only spares the next scan a bcrypt compare it would lose anyway.
-			s.db.Pool.Exec(ctx,
-				//orgscope:ignore link id from the bypassed pre-resolution scan above; the token is the credential
-				"UPDATE magic_links SET status = 'expired' WHERE id = $1", linkID)
-			continue
-		}
-
-		// Verify token
-		if err := bcrypt.CompareHashAndPassword([]byte(tokenHash), []byte(token)); err != nil {
-			continue // Try next link
-		}
-
-		// Token is valid - mark as used.
-		//
-		// THIS IS the single-use property of a magic link. The error was
-		// discarded and the function returned success regardless, so a failed
-		// mark left the link 'pending' and the same emailed sign-in link could
-		// be redeemed again -- by anyone who has the email, for as long as the
-		// link had left to live. A credential that cannot be spent must not be
-		// accepted.
-		if _, err := s.db.Pool.Exec(ctx,
-			//orgscope:ignore link id from the bypassed pre-resolution scan above; the token is the credential
-			"UPDATE magic_links SET status = 'used', used_at = NOW() WHERE id = $1",
-			linkID,
-		); err != nil {
-			s.logger.Error("could not spend a magic link; refusing the sign-in", zap.Error(err))
-			return "", "", fmt.Errorf("mark magic link used: %w", err)
-		}
-
-		return userID, purpose, nil
+	if token == "" {
+		return "", "", errMagicLinkInvalid
 	}
 
-	return "", "", errors.New("invalid or expired magic link")
+	var linkID, userID, tokenHash, purpose string
+	var expiresAt time.Time
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT id, user_id, token_hash, purpose, expires_at
+		FROM magic_links
+		WHERE token_lookup = $1 AND org_id = $2 AND status = 'pending'`,
+		magicLinkLookup(token), org.ID,
+	).Scan(&linkID, &userID, &tokenHash, &purpose, &expiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", errMagicLinkInvalid
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("look up magic link: %w", err)
+	}
+
+	if time.Now().After(expiresAt) {
+		//silentwrite:ok the refusal is the return below, decided from expires_at; this row only labels a link already refused
+		s.db.Pool.Exec(ctx,
+			"UPDATE magic_links SET status = 'expired' WHERE id = $1 AND org_id = $2 AND status = 'pending'", linkID, org.ID)
+		return "", "", errMagicLinkInvalid
+	}
+
+	// The digest found the row; the bcrypt hash is still what the link was
+	// minted with, and one comparison is what verifying it costs.
+	if err := bcrypt.CompareHashAndPassword([]byte(tokenHash), []byte(token)); err != nil {
+		return "", "", errMagicLinkInvalid
+	}
+
+	// Spend it. THIS IS the single-use property of a magic link, so the write
+	// decides: only a pending, unexpired link is spent, and of two requests
+	// carrying one link, one spends it. It was an unconditional UPDATE by id,
+	// after a scan that both requests passed. A link whose spend cannot be
+	// written is not accepted.
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE magic_links SET status = 'used', used_at = NOW()
+		WHERE id = $1 AND org_id = $2 AND status = 'pending' AND expires_at > NOW()`,
+		linkID, org.ID)
+	if err != nil {
+		s.logger.Error("could not spend a magic link; refusing the sign-in", zap.Error(err))
+		return "", "", fmt.Errorf("mark magic link used: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return "", "", errMagicLinkInvalid
+	}
+
+	return userID, purpose, nil
 }
 
 // CreateQRLoginSession creates a QR code login session
@@ -321,7 +331,7 @@ func (s *Service) CreateQRLoginSession(ctx context.Context, ipAddress string, br
 		return nil, fmt.Errorf("passwordless settings unavailable: %w", err)
 	}
 	if !sys.QRLoginEnabled {
-		return nil, errors.New("QR login is disabled for this organization")
+		return nil, errors.New("QR login is turned off on this installation")
 	}
 
 	sessionID := uuid.New().String()

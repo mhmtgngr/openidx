@@ -86,6 +86,7 @@ func buildBrowZerVHostConfig(routes []browzerRouteInfo, opts browzerVHostOpts) s
 			fmt.Fprintf(&b, "        proxy_pass http://127.0.0.1:%d;\n", ports[r.serviceName])
 			b.WriteString("        proxy_set_header Host $host;\n")
 			b.WriteString("        proxy_set_header X-Forwarded-Proto https;\n")
+			writeBrowZerCallerHeaders(&b)
 			b.WriteString("    }\n")
 		}
 
@@ -96,6 +97,7 @@ func buildBrowZerVHostConfig(routes []browzerRouteInfo, opts browzerVHostOpts) s
 		b.WriteString("        proxy_ssl_name $host;\n")
 		b.WriteString("        proxy_set_header Host $host;\n")
 		b.WriteString("        proxy_set_header X-Forwarded-Proto https;\n")
+		writeBrowZerCallerHeaders(&b)
 		b.WriteString("        proxy_http_version 1.1;\n")
 		b.WriteString("        proxy_set_header Upgrade $http_upgrade;\n")
 		b.WriteString("        proxy_set_header Connection \"upgrade\";\n")

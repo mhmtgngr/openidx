@@ -3,6 +3,7 @@ package access
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -97,7 +98,7 @@ func (s *Service) handleUpdateAuthPolicy(c *gin.Context) {
 	}
 
 	body, _ := json.Marshal(req)
-	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/auth-policies/"+id, body)
+	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/auth-policies/"+url.PathEscape(id), body)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update auth policy", err), s.logger)
 		return
@@ -114,7 +115,7 @@ func (s *Service) handleDeleteAuthPolicy(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/auth-policies/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/auth-policies/"+url.PathEscape(id), nil)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete auth policy", err), s.logger)
 		return
@@ -229,7 +230,7 @@ func (s *Service) handleUpdateJWTSigner(c *gin.Context) {
 	}
 
 	body, _ := json.Marshal(req)
-	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/external-jwt-signers/"+id, body)
+	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/external-jwt-signers/"+url.PathEscape(id), body)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update j w t signer", err), s.logger)
 		return
@@ -246,7 +247,7 @@ func (s *Service) handleDeleteJWTSigner(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/external-jwt-signers/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/external-jwt-signers/"+url.PathEscape(id), nil)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete j w t signer", err), s.logger)
 		return

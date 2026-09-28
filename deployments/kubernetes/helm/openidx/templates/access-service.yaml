@@ -123,6 +123,10 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "openidx.fullname" . }}-db-url
+            # INTERNAL_SERVICE_TOKEN, before -secrets so a value kept there
+            # wins (templates/secrets.yaml).
+            - secretRef:
+                name: {{ include "openidx.fullname" . }}-internal-token
             - secretRef:
                 name: {{ include "openidx.fullname" . }}-secrets
             - configMapRef:

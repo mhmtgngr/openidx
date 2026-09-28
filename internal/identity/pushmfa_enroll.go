@@ -103,6 +103,10 @@ func (s *Service) StartPushEnrollment(ctx context.Context, userID string) (*Push
 	}, nil
 }
 
+// errAgentTicketAddsFactor refuses a device-enrollment ticket that would add a
+// second factor to an account that already has one.
+var errAgentTicketAddsFactor = errors.New("this account already has a second factor: add the phone from Push Devices, which asks for your password")
+
 // CompletePushEnrollment validates an enrollment ticket and binds the presented
 // device to the ticket's user. The ticket is consumed (single-use). The caller
 // need not be authenticated as the user — the ticket is the authorization — but
@@ -139,6 +143,26 @@ func (s *Service) CompletePushEnrollment(ctx context.Context, token string, enro
 	// Consume the ticket first (single-use) so a replay can't double-register.
 	if delErr := pushenroll.Consume(ctx, s.redis.Client, token); delErr != nil {
 		s.logger.Warn("failed to delete consumed push enrollment ticket", zap.Error(delErr))
+	}
+
+	// A ticket from an agent enrollment was minted by the access service for a
+	// bearer token alone: POST /agent/enroll/session asks the account holder
+	// for nothing more. So it may bind the account's first factor, as the
+	// self-service routes may without proof, or re-register a phone the account
+	// already has, and no more. A phone joining an account that has a second
+	// factor is added from the start route, which asks for the password
+	// (factor_proof.go).
+	if ticket.AgentID != "" || ticket.EnrollmentSessionID != "" {
+		has, err := s.hasSecondFactor(ctx, ticket.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("enrollment temporarily unavailable")
+		}
+		if has {
+			existing, _ := s.getPushDeviceByToken(ctx, enrollment.DeviceToken)
+			if existing == nil || existing.UserID != ticket.UserID {
+				return nil, errAgentTicketAddsFactor
+			}
+		}
 	}
 
 	device, err := s.registerPushMFADevice(ctx, ticket.UserID, enrollment, ipAddress, PushDeviceLink{

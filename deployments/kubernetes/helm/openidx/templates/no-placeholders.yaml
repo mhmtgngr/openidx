@@ -1,7 +1,8 @@
 {{- /*
 Interlock only: renders nothing. It walks .Values and fails the render while
-any string still carries a REPLACE-WITH marker (see openidx.rejectPlaceholders
-in _helpers.tpl for the measurement that motivated it). It lives in its own
-file so the refusal does not depend on which resource happens to be enabled.
+any string still carries a REPLACE-WITH marker, or names a domain the project
+does not own (see openidx.rejectPlaceholders in _helpers.tpl for the
+measurement that motivated each). It lives in its own file so the refusal does
+not depend on which resource happens to be enabled.
 */ -}}
 {{- include "openidx.rejectPlaceholders" (dict "v" .Values "path" "") -}}

@@ -13,21 +13,58 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
-// handleGetSyncStatus returns the current user-to-Ziti sync state.
+// handleGetSyncStatus returns the user-to-Ziti sync state.
 // GET /api/v1/access/ziti/sync/status
+//
+// ziti_user_sync is one row for the whole install: the last sync run's state,
+// times and counters. An install administrator gets it with the install's
+// users and identities counted; anyone else gets the run's state and times,
+// which name nothing, with their organization's users and identities counted
+// and without the run's counters, which count every organization's users.
 func (s *Service) handleGetSyncStatus(c *gin.Context) {
 	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Ziti not configured"})
 		return
 	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	if view.install {
+		// Install-wide by definition: counted across every organization rather
+		// than the one the request happened to resolve to.
+		ctx = orgctx.WithBypassRLS(ctx)
+	}
 
-	status, err := s.ziti().GetSyncStatus(c.Request.Context())
+	status, err := s.ziti().GetSyncStatus(ctx)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get sync status", err), s.logger)
 		return
 	}
+	if view.install {
+		c.JSON(http.StatusOK, status)
+		return
+	}
 
-	c.JSON(http.StatusOK, status)
+	org := gin.H{
+		"status":            status.Status,
+		"last_full_sync_at": status.LastFullSyncAt,
+		"last_auto_sync_at": status.LastAutoSyncAt,
+	}
+	var unsynced, total, identities int
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM users u
+		         WHERE u.org_id = $1 AND u.enabled = true
+		           AND NOT EXISTS (SELECT 1 FROM ziti_identities zi WHERE zi.user_id = u.id AND zi.org_id = $1)),
+		       (SELECT COUNT(*) FROM users WHERE org_id = $1 AND enabled = true),
+		       (SELECT COUNT(*) FROM ziti_identities WHERE org_id = $1)`, view.orgID).
+		Scan(&unsynced, &total, &identities); err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get sync status", err), s.logger)
+		return
+	}
+	org["unsynced_users"], org["total_users"], org["total_identities"] = unsynced, total, identities
+	c.JSON(http.StatusOK, org)
 }
 
 // handleSyncAllUsers triggers a full batch sync of all unsynced users.

@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.39.0] - 2026-09-28
+
+### Security
+- **Organizations stay apart on shared surfaces.**
+  - **Domains:** a custom domain is verified only by its DNS TXT record
+    (`_openidx-challenge.<domain>`). An unverified claim no longer blocks the
+    domain's real owner (v206). (OPENIDX-2026-032)
+  - **Plan, status and limits:** only a platform admin changes them.
+    (OPENIDX-2026-047)
+  - **Members:** an organization lists only its own users as members, in the
+    roles `owner`, `admin` and `member`, and its last owner cannot be removed.
+    (OPENIDX-2026-047)
+- **The access proxy.**
+  - **Sign-in page:** it takes only a well-formed `login_session`, and runs under
+    its own nonce policy. (OPENIDX-2026-039)
+  - **Redirects:** sign-in and sign-out go only to the proxy's own hosts.
+    (OPENIDX-2026-040)
+  - **Credentials:** the proxy's session cookie, and a token it consumed, no
+    longer reach applications. A session works only on the host it was issued
+    for, and in its route's organization. (OPENIDX-2026-029)
+  - **Identity headers:** caller-supplied identity headers are stripped
+    everywhere, BrowZer included. (OPENIDX-2026-024)
+  - **Hosts:** one enabled route holds a host across the whole install (v211).
+    (OPENIDX-2026-021)
+  - **BrowZer:** its configuration takes only plain route values.
+    (OPENIDX-2026-017)
+  - **Upstream pools:** a pool-backed route that requires sign-in carries
+    forward-auth at the edge. (OPENIDX-2026-019)
+- **OpenZiti keeps organizations apart.**
+  - **Reads:** an organization sees only its own fabric, and controller-wide
+    objects need an install administrator. (OPENIDX-2026-043)
+  - **Writes by id:** these check ownership. (OPENIDX-2026-018)
+  - **Service names:** a name belongs to one organization. (OPENIDX-2026-018)
+  - **Roles, attributes and intercept addresses:** a policy, attribute or
+    intercept address may name only the organization's own. (OPENIDX-2026-018)
+  - **Posture:** a device reports posture only for its own identity.
+    (OPENIDX-2026-041)
+  - **Controller queries:** request values are escaped. (OPENIDX-2026-045)
+  - **Integrity doctor:** it needs an install administrator. (OPENIDX-2026-020)
+- **Audit and outbound requests.**
+  - **Audit ingestion:** it takes only `INTERNAL_SERVICE_TOKEN`, and the shipped
+    edges refuse it. (OPENIDX-2026-031)
+  - **Outbound destinations:** URLs an organization supplies reach public
+    addresses only, checked when saved and again at each connection
+    (OPENIDX-2026-030):
+    - webhooks;
+    - audit webhooks;
+    - SCIM targets;
+    - SSF receivers;
+    - SAML metadata.
+  - **Admin role:** the provisioning API and the audit webhook routes need it.
+    (OPENIDX-2026-028)
+- **Sign-in and second factors.**
+  - **TOTP:** a code is accepted once, and the lockout holds under concurrency
+    (v207). (OPENIDX-2026-035)
+  - **SMS and email codes:** they take no more guesses than their limit.
+    (OPENIDX-2026-034)
+  - **Magic links:** a link is found by its digest, in its own organization
+    (v208). (OPENIDX-2026-022)
+  - **Proof for changes:** changing a second factor, the email address, or a
+    linked sign-in account needs the password or a current code.
+    (OPENIDX-2026-026, OPENIDX-2026-027)
+  - **External providers:** signing in through a social or enterprise identity
+    provider asks for the second factor. (OPENIDX-2026-033)
+- **OAuth.**
+  - **Token exchange:** it needs a confidential client, issues only listed
+    audiences, refuses revoked tokens, and never outlives its subject (v209).
+    (OPENIDX-2026-023)
+  - **Client credentials:** only confidential clients may use the grant.
+    (OPENIDX-2026-042)
+  - **Dynamic registration:** it registers in one organization.
+    (OPENIDX-2026-044)
+  - **Other organizations' clients:** the client API answers 404 for them.
+  - **Step-up:** the step-up gate covers client, SAML and SSF management.
+    (OPENIDX-2026-046)
+  - **Applications:** editing an application changes only its own
+    organization's client. (OPENIDX-2026-036)
+- **The console.**
+  - **Email preview:** it runs no script, in a sandboxed frame.
+    (OPENIDX-2026-025)
+  - **Content-Security-Policy:** every shipped nginx configuration that serves
+    the console sends one, and CI and the build hold them to it.
+    (OPENIDX-2026-025)
+  - **Admin-only pages:** these, and the organization selector, show only to
+    those who can use them.
+- **Secrets and defaults.**
+  - **Stored credentials:** directory credentials and the Guacamole password are
+    stored sealed and never returned. (OPENIDX-2026-038)
+  - **Shipped defaults:** no shipped default names `openidx.io`, and the chart
+    requires `config.oauthIssuer` (v210). (OPENIDX-2026-037)
+
+### Changed
+- The MFA step of the sign-in page tells a user who can use none of the
+  factors on offer to ask an administrator for a bypass code.
+
 ### Fixed
 - **Backup codes and administrator bypass codes are offered at sign-in again.**
   The risk engine's list of allowed methods names primary factors only, and
@@ -22,10 +117,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An email code is not offered for an address no mail can reach** (`.local`,
   `.localhost`, `.test`, `.invalid`, `.example`, `example.com/net/org`). Such an
   enrollment no longer counts as a factor the user has.
+- **An audit event could name the wrong client address.** Nine handlers wrote
+  their audit event from a detached goroutine and read `ClientIP()` inside it.
+  gin pools its request context and resets it for the next request as soon as
+  the handler returns, so that read raced the next request and could take its
+  address instead. Affected: SAML IdP sign-in and SP-initiated logout, social
+  sign-in and account linking, the three step-up events, and both logout
+  events. The address is now read before the goroutine starts, and
+  `TestNoDetachedGoroutineReadsAGinContext` fails if any handler goes back to
+  reading a pooled context after detaching. Rows already written cannot be
+  corrected; a wrong address, where it happened, is the address of whichever
+  request arrived next on the same worker.
 
-### Changed
-- The MFA step of the sign-in page tells a user who can use none of the
-  factors on offer to ask an administrator for a bypass code.
+### Upgrade notes
+- **Helm:**
+  - Set `config.oauthIssuer`. The chart refuses to render without it, and
+    refuses any value under `openidx.io`.
+  - The ingress hosts default to empty.
+  - The API Ingress sends the audit prefix to the audit service's new edge port
+    (8014). A custom NetworkPolicy must allow it.
+  - GitOps and `helm template` users set `secrets.internalServiceToken`.
+- **Compose:**
+  - Set `INTERNAL_SERVICE_TOKEN` in `.env`. The lite install adds it itself.
+  - An existing `apisix.yaml` in the config volume should get the
+    `deny-audit-ingest` route.
+- **Every proxied application signs in once more.** Sessions issued before the
+  upgrade carry no host.
+- **Routes that shared a host are disabled** by v211. The first organization to
+  route the host keeps it.
+- **New settings:**
+  - `OIDX_OUTBOUND_ALLOWLIST`: internal webhook, SCIM, SSF and SAML metadata
+    destinations must be listed there;
+  - `APISIX_FORWARD_AUTH_URI`: needed for pool-backed routes that require
+    sign-in;
+  - `DCR_ORG_ID`.
+- **OpenZiti:**
+  - Tenant organizations' operators and admins lose the controller-wide routes.
+  - Contested service names stop converging until one is renamed.
+- **OAuth clients:**
+  - A public or native client gets 401 on client credentials and token exchange.
+  - A token-exchange audience other than the client itself must be listed in the
+    client's `token_exchange_audiences`.
+  - A dynamic registration naming an organization other than `DCR_ORG_ID` (or
+    `DEFAULT_ORG_ID`) gets 401.
+- **Second factors:**
+  - Changing a second factor, the email address, or a linked account asks for the
+    password or a code.
+  - A TOTP code works once.
+  - Magic links sent before the upgrade must be requested again.
+- **Credentials:**
+  - Directory credentials and the Guacamole password are sealed at the first
+    start.
+  - admin-api, identity-service and oauth-service need the same
+    `ENCRYPTION_KEY`.
+  - Reads show `*_set` flags in place of the secrets.
+- **Session timeouts:** an idle or absolute session timeout of 0 in
+  `system_settings` now turns that timeout off.
 
 ## [1.38.0] - 2026-09-27
 
@@ -11627,7 +11774,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.38.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.39.0...HEAD
+[1.39.0]: https://github.com/mhmtgngr/openidx/compare/v1.38.0...v1.39.0
 [1.38.0]: https://github.com/mhmtgngr/openidx/compare/v1.37.0...v1.38.0
 [1.37.0]: https://github.com/mhmtgngr/openidx/compare/v1.36.0...v1.37.0
 [1.36.0]: https://github.com/mhmtgngr/openidx/compare/v1.35.0...v1.36.0

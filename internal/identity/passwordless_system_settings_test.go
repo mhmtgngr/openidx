@@ -18,7 +18,7 @@ import (
 //
 // PasswordlessSystemSettings was saved by PUT /identity/passwordless/settings,
 // read back by its own GET, and consulted by no other code in the tree. An
-// administrator who turned magic links off for the organization still got magic
+// administrator who turned magic links off for the installation still got magic
 // links, because CreateMagicLink asked only the PER-USER preference — a
 // different struct, in a different table, set by the user themselves. The
 // stronger switch was the one that did nothing.
@@ -46,7 +46,7 @@ func passwordlessTestService(t *testing.T) (*Service, context.Context, string, f
 			org_id UUID)`,
 		`CREATE TABLE magic_links (
 			id UUID PRIMARY KEY, org_id UUID, user_id UUID, email TEXT, token_hash TEXT,
-			purpose TEXT, redirect_url TEXT, ip_address TEXT, user_agent TEXT,
+			token_lookup VARCHAR(64) UNIQUE, purpose TEXT, redirect_url TEXT, ip_address TEXT, user_agent TEXT,
 			status TEXT, created_at TIMESTAMPTZ DEFAULT now(), expires_at TIMESTAMPTZ,
 			used_at TIMESTAMPTZ)`,
 		`CREATE TABLE qr_login_sessions (
@@ -78,10 +78,11 @@ func setPasswordlessSettings(t *testing.T, s *Service, ctx context.Context, in P
 	}
 }
 
-// TestTheOrganizationSwitchStopsAMagicLink is the whole point: an administrator
+// TestTheInstallationSwitchStopsAMagicLink is the whole point: an administrator
 // turns the method off and it is off, without touching a single user's
-// preferences.
-func TestTheOrganizationSwitchStopsAMagicLink(t *testing.T) {
+// preferences. The switch is one row of system_settings, for every organization
+// on the installation, and only a platform administrator may write it.
+func TestTheInstallationSwitchStopsAMagicLink(t *testing.T) {
 	s, ctx, _, cleanup := passwordlessTestService(t)
 	if s == nil {
 		return
@@ -104,17 +105,17 @@ func TestTheOrganizationSwitchStopsAMagicLink(t *testing.T) {
 			"the whole life of this endpoint: the setting was stored, returned on the next GET, " +
 			"and asked by nothing.")
 	}
-	if !strings.Contains(err.Error(), "organization") {
+	if !strings.Contains(err.Error(), "installation") {
 		t.Errorf("the refusal blames the wrong party: %v. A user whose own preference is intact "+
 			"must not be told their account disabled the method.", err)
 	}
 }
 
-// TestTheOrganizationSwitchStopsQRLogin. Same claim, the other method — and the
+// TestTheInstallationSwitchStopsQRLogin. Same claim, the other method — and the
 // session is refused before it is minted rather than at scan time, because the
 // browser showing the code has no user yet and would otherwise display a QR
 // code that can never complete.
-func TestTheOrganizationSwitchStopsQRLogin(t *testing.T) {
+func TestTheInstallationSwitchStopsQRLogin(t *testing.T) {
 	s, ctx, _, cleanup := passwordlessTestService(t)
 	if s == nil {
 		return
@@ -196,7 +197,7 @@ func TestNoUnenforceableSwitchSurvives(t *testing.T) {
 	for _, gone := range []string{"BiometricOnlyEnabled", "RequireDeviceTrust"} {
 		if _, ok := reflect.TypeOf(PasswordlessSystemSettings{}).FieldByName(gone); ok {
 			{
-				t.Errorf("PasswordlessSystemSettings has %s again. If organization-scoped %s is "+
+				t.Errorf("PasswordlessSystemSettings has %s again. If an installation-wide %s is "+
 					"wanted, it needs an enforcement point and a rule for how it composes with "+
 					"the per-user setting of the same name — not a second copy of the word.",
 					gone, gone)

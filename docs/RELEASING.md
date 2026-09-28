@@ -184,8 +184,13 @@ cosign verify \
   --certificate-identity-regexp '^https://github.com/mhmtgngr/openidx/\.github/workflows/release\.yml@' \
   ghcr.io/mhmtgngr/openidx/charts/openidx:X.Y.Z
 helm install openidx oci://ghcr.io/mhmtgngr/openidx/charts/openidx \
-  --version X.Y.Z --namespace openidx --create-namespace
+  --version X.Y.Z --namespace openidx --create-namespace \
+  -f my-values.yaml
 ```
+
+`my-values.yaml` holds the install's own settings; the chart refuses to render
+without `config.oauthIssuer` (the install's public OAuth URL) and the bundled
+datastores' `secrets.*`. See `docs/docs/deployment/kubernetes.md`.
 
 ## Versioning policy
 

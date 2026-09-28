@@ -23,6 +23,9 @@ import (
 func TestMagicLinkSignsInOnlyWhoNeedsNoSecondFactor(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	f := newMFAGraceFixture(t)
+	// The link completes a sign-in to an application of the organization the
+	// request resolved to; the verifier looks the application up.
+	f.s.clients = NewPostgresOAuthClientStore(f.db)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: f.org}))
@@ -40,7 +43,7 @@ func TestMagicLinkSignsInOnlyWhoNeedsNoSecondFactor(t *testing.T) {
 		t.Helper()
 		ls := GenerateRandomToken(32) // the handler takes 32 to 128 characters
 		params, _ := json.Marshal(map[string]string{
-			"redirect_uri": "https://app.example.test/callback", "scope": "openid", "state": "st-1",
+			"client_id": "admin-console", "redirect_uri": "https://app.example.test/callback", "scope": "openid", "state": "st-1",
 		})
 		if err := f.s.redis.Client.Set(ctx, "login_session:"+ls, params, time.Minute).Err(); err != nil {
 			t.Fatalf("seed login session: %v", err)

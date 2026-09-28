@@ -21,7 +21,7 @@ info:
     objects are documented at the route level only: the endpoint, its method,
     its path parameters and its status codes are exact, the payload shape is
     not yet pinned. That is stated rather than guessed.
-  version: 1.38.0
+  version: 1.39.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -253,6 +253,10 @@ paths:
     get:
       tags: [Directories]
       summary: List directory integrations
+      description: |
+        The stored credential (bind_password, client_secret or api_key) is
+        never returned, sealed or not: bind_password_set, client_secret_set
+        or api_key_set says whether one is stored.
       operationId: listDirectories
       responses:
         '200':
@@ -266,6 +270,12 @@ paths:
     post:
       tags: [Directories]
       summary: Create directory integration
+      description: |
+        The config's credential (bind_password for ldap and
+        active_directory, client_secret for azure_ad, api_key for hris and
+        bamboohr) is sealed with ENCRYPTION_KEY before it is stored. The
+        response carries bind_password_set, client_secret_set or api_key_set
+        in its place. A sealed value (encv1: or encv2:) is refused with 400.
       operationId: createDirectory
       requestBody:
         required: true
@@ -2741,6 +2751,10 @@ paths:
     get:
       tags: [Directories]
       summary: Get directory
+      description: |
+        The stored credential (bind_password, client_secret or api_key) is
+        never returned, sealed or not: bind_password_set, client_secret_set
+        or api_key_set says whether one is stored.
       operationId: getDirectory
       x-openidx-handler: internal/admin.(*Service).handleGetDirectory
       responses:
@@ -2762,6 +2776,17 @@ paths:
     put:
       tags: [Directories]
       summary: Update directory
+      description: |
+        A credential left out, or sent empty, keeps the stored one while the
+        type and the target stay the same: for ldap and active_directory the
+        host, port, bind DN, TLS settings and referral settings; for azure_ad
+        the tenant and client ID; for hris and bamboohr the provider, base URL
+        and subdomain. A changed target needs the credential again: 400, with
+        a field error on config.bind_password, config.client_secret or
+        config.api_key. 400 as well when the stored credential cannot be
+        decrypted with ENCRYPTION_KEY; send it again. A sealed value is
+        refused. The credential is sealed before it is stored, and
+        bind_password_set, client_secret_set and api_key_set are not stored.
       operationId: updateDirectory
       x-openidx-handler: internal/admin.(*Service).handleUpdateDirectory
       requestBody:
@@ -2796,6 +2821,9 @@ paths:
     post:
       tags: [Directories]
       summary: Diagnose directory
+      description: |
+        Diagnoses the saved configuration, signing in with the stored
+        credential. 400 when it cannot be decrypted with ENCRYPTION_KEY.
       operationId: diagnoseDirectory
       x-openidx-handler: internal/admin.(*Service).handleDiagnoseDirectory
       requestBody:
@@ -2880,6 +2908,9 @@ paths:
     post:
       tags: [Directories]
       summary: Test connection
+      description: |
+        Signs in with the stored credential, opened with ENCRYPTION_KEY. 400
+        with success false when it cannot be decrypted; nothing is sent.
       operationId: testConnection
       x-openidx-handler: internal/admin.(*Service).handleTestConnection
       requestBody:
@@ -2912,6 +2943,9 @@ paths:
     post:
       tags: [Directories]
       summary: Diagnose directory
+      description: |
+        Diagnoses the {type, config} in the body as it came. A sealed
+        credential in it is refused with 400.
       operationId: diagnoseDirectory2
       x-openidx-handler: internal/admin.(*Service).handleDiagnoseDirectory
       requestBody:
@@ -5094,15 +5128,40 @@ paths:
     put:
       tags: [Organizations]
       summary: Update organization
+      description: >-
+        Changes the fields the request sets; a field left out keeps its value.
+        An owner or admin of the organization changes its name. The plan, the
+        status and the limits are changed by a platform admin only: an owner or
+        admin may send them as they are, and a request that would change any of
+        them is refused whole with 403, whose body names the fields. Anyone who
+        is not an owner or admin of the organization, or a platform admin, gets
+        403.
       operationId: updateOrganization
       x-openidx-handler: internal/organization.(*Service).handleUpdateOrganization
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              minProperties: 1
+              properties:
+                name:
+                  type: string
+                plan:
+                  type: string
+                  description: Platform admin only
+                status:
+                  type: string
+                  description: Platform admin only
+                max_users:
+                  type: integer
+                  minimum: 0
+                  description: Platform admin only
+                max_applications:
+                  type: integer
+                  minimum: 0
+                  description: Platform admin only
       responses:
         '200':
           description: Success
@@ -5152,18 +5211,41 @@ paths:
     post:
       tags: [Organizations]
       summary: Add member
+      description: >-
+        Makes a user a member of the organization, or changes the role of one
+        who is. Needs an owner or admin of the organization, or a platform
+        admin. The role is one the organization grants. An owner or admin adds
+        only the organization's own users (users.org_id); a user of another
+        organization is answered 404, as an id that names no user is. A
+        platform admin adds any existing user. Granting the owner role, or
+        changing an owner's role, needs an owner or a platform admin, and the
+        last owner cannot be demoted (409).
       operationId: addMember
       x-openidx-handler: internal/organization.(*Service).handleAddMember
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              required: [user_id, role]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                role:
+                  type: string
+                  enum: [owner, admin, member]
       responses:
         '200':
-          description: Success
+          description: The member's role was changed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '201':
+          description: The user was added
           content:
             application/json:
               schema:
@@ -5177,6 +5259,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -5191,6 +5275,11 @@ paths:
     delete:
       tags: [Organizations]
       summary: Remove member
+      description: >-
+        Removes a member. Needs an owner or admin of the organization, or a
+        platform admin; removing an owner needs an owner or a platform admin,
+        and the last owner cannot be removed (409). Someone who is not a
+        member is answered 404.
       operationId: removeMember
       x-openidx-handler: internal/organization.(*Service).handleRemoveMember
       responses:
@@ -5201,14 +5290,14 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-        '400':
-          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -6870,6 +6959,9 @@ paths:
     get:
       tags: [Tenants]
       summary: List tenant domains
+      description: >-
+        The organization's domain claims. An unverified claim carries the TXT
+        record that verifies it.
       operationId: listTenantDomains
       x-openidx-handler: internal/admin.(*Service).handleListTenantDomains
       responses:
@@ -6879,7 +6971,11 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TenantDomain'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -6891,23 +6987,41 @@ paths:
     post:
       tags: [Tenants]
       summary: Create tenant domain
+      description: >-
+        Claims a domain for the organization. The claim is unverified until its
+        TXT record is published and the verify operation finds it; the answer
+        carries that record. An unverified claim holds nothing: any number of
+        organizations may claim the same domain, and the one that proves
+        control in DNS gets it. An organization claims a domain once, and a
+        domain another organization has verified cannot be claimed; both are
+        answered 409.
       operationId: createTenantDomain
       x-openidx-handler: internal/admin.(*Service).handleCreateTenantDomain
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              required: [domain]
+              properties:
+                domain:
+                  type: string
+                  description: >-
+                    A DNS name of at least two labels, such as
+                    login.example.com. It is stored in lower case without a
+                    trailing dot.
+                domain_type:
+                  type: string
+                  enum: [subdomain, custom]
+                  default: subdomain
       responses:
-        '200':
-          description: Success
+        '201':
+          description: The claim, with the record that verifies it
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TenantDomain'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -6916,6 +7030,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -6970,33 +7086,52 @@ paths:
     post:
       tags: [Tenants]
       summary: Verify tenant domain
+      description: >-
+        Looks up the TXT record _openidx-challenge.<domain> and marks the claim
+        verified only if one of its values is exactly
+        openidx-domain-verification=<the claim's token>; the lookup is given 5
+        seconds. The request body is not read: nothing sent with the request
+        stands in for the record, for an organization's admin or for a
+        platform admin. Verifying a claim removes every other organization's
+        unverified claim to the domain. A verified claim answers 200 again.
       operationId: verifyTenantDomain
       x-openidx-handler: internal/admin.(*Service).handleVerifyTenantDomain
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
       responses:
         '200':
-          description: Success
+          description: The domain is verified
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: true
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >-
+            No TXT record at the challenge name holds the expected value, or
+            the claim has no token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: Another organization has verified the domain
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/ServerError'
+        '502':
+          description: The DNS lookup failed or timed out; try again
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /api/v1/tenants/{orgId}/settings:
     parameters:
@@ -7189,6 +7324,16 @@ paths:
     post:
       tags: [Webhooks]
       summary: Create webhook
+      description: |
+        The URL must be https, and it must point at the internet: its host is resolved, and a URL that names or resolves to a loopback,
+        private, link-local (169.254.169.254 included), shared (100.64.0.0/10),
+        unspecified, multicast or reserved address -- in any spelling, IPv4-mapped,
+        NAT64 and 6to4 included -- is refused with 400 and nothing is stored.
+        The same check is made at every connection, and redirects are not
+        followed. OIDX_OUTBOUND_ALLOWLIST (docs/docs/deployment/configuration.md)
+        is the operator's list of internal destinations allowed anyway.
+        The 400 names the host and the kind of address, never where a name
+        resolved.
       operationId: createWebhook
       x-openidx-handler: internal/admin.(*Service).handleCreateWebhook
       requestBody:
@@ -7390,6 +7535,13 @@ paths:
     post:
       tags: [Webhooks]
       summary: Test webhook
+      description: |
+        Sends a signed ping and answers with the delivery record, including the
+        first 1000 bytes of the receiver's answer. A subscription whose URL is
+        not allowed by the outbound rule of POST /api/v1/webhooks (one saved
+        before that rule existed, or a name that now resolves inward) is not
+        contacted: the delivery comes back `failed`, with the refusal as its
+        response body.
       operationId: testWebhook
       x-openidx-handler: internal/admin.(*Service).handleTestWebhook
       requestBody:
@@ -7445,6 +7597,12 @@ components:
             $ref: '#/components/schemas/Error'
     NotFound:
       description: No such resource in the caller's organization
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: The request conflicts with the resource's current state
       content:
         application/json:
           schema:
@@ -7556,7 +7714,9 @@ components:
               type: string
             support_email:
               type: string
-              format: email
+              description: >-
+                An email address shown as the support contact, or empty when
+                none is published, which is the default.
             default_language:
               type: string
             default_timezone:
@@ -7802,6 +7962,10 @@ components:
         config:
           type: object
           additionalProperties: true
+          description: |
+            The connector's settings. The credential is never returned:
+            bind_password_set, client_secret_set or api_key_set says whether
+            one is stored.
         enabled:
           type: boolean
         last_sync_at:
@@ -7830,6 +7994,10 @@ components:
         config:
           type: object
           additionalProperties: true
+          description: |
+            The connector's settings, with its credential: bind_password,
+            client_secret or api_key. The credential is sealed with
+            ENCRYPTION_KEY before it is stored.
         enabled:
           type: boolean
           default: true
@@ -8069,3 +8237,53 @@ components:
           type: string
           format: date-time
           nullable: true
+
+    TenantDomain:
+      type: object
+      properties:
+        id:
+          type: string
+        org_id:
+          type: string
+        domain:
+          type: string
+          description: A DNS name, stored in lower case without a trailing dot
+        domain_type:
+          type: string
+          enum: [subdomain, custom]
+        verified:
+          type: boolean
+        verification_token:
+          type: string
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        ssl_enabled:
+          type: boolean
+        primary_domain:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        verification_record:
+          $ref: '#/components/schemas/DomainVerificationRecord'
+
+    DomainVerificationRecord:
+      type: object
+      description: >-
+        The TXT record whose presence verifies the domain, given while it is
+        unverified.
+      properties:
+        type:
+          type: string
+          enum: [TXT]
+        name:
+          type: string
+          example: _openidx-challenge.login.example.com
+        value:
+          type: string
+          example: openidx-domain-verification=3f9c0a6e1b2d4c5e8f7a6b5c4d3e2f1a

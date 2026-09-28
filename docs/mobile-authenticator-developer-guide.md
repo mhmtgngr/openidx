@@ -263,7 +263,9 @@ Algorithm is **explicit in the emitted URI [verified]**:
   `{ "secret": "<from setup>", "code": "123456" }` → `{ "status": "enrolled" }`
   (`service.go:3959`).
 - **Verify** — `POST /api/v1/identity/mfa/totp/verify` `{ "code": "123456" }` →
-  `{ "valid": true }` (`service.go:3985`).
+  `{ "valid": true }` (`service.go:3985`). A code is accepted once: the same
+  code again, an earlier one, or the code that activated the credential answers
+  `{ "valid": false }`. Wait for the next code rather than resubmitting.
 - **Status** — `GET .../mfa/totp/status`; **Disable** — `DELETE .../mfa/totp`.
 - App code: `client/lib/features/totp.dart` (RFC 6238, unit-tested against the RFC
   vectors in `client/test/totp_test.dart`), UI
@@ -285,7 +287,12 @@ The number is **2 digits (10–99)**; the challenge times out after
 ```
 Re-registering the same `device_token` updates the row (idempotent). Until real push is
 wired, the app registers a stable per-install UUID as `device_token`
-(`client/lib/mobile/push_token_service.dart`).
+(`client/lib/mobile/push_token_service.dart`). On an account that already has a second
+factor, the request must carry the account's password (`"current_password"`), or it is
+refused with 403 `reauthentication_required`. The ticket a device enrollment hands the
+phone binds it only as the account's first factor, or re-registers a phone the account
+already has; otherwise the user adds the phone from Push Devices, which asks for the
+password.
 
 **Approve/deny a challenge (number-match)** —
 `POST /api/v1/identity/mfa/push/verify` (`handlers_mfa.go:272`):
@@ -400,21 +407,23 @@ in a `react-native-webview`).
 ### 5.2 BrowZer clientless (browser) access — ✅ implemented, zero native integration
 BrowZer runs the Ziti SDK **in the browser**; the user's OIDC login (which the app
 already does) authorizes the overlay dial (`internal/access/apisix_routes.go:52-108`,
-`ziti_user_sync.go:275-300`). For an HTTP app, just open its BrowZer URL
-(`browzer_domain`/`browzer_path` on a service row, §5.3) in a WebView. A **login-time
+`ziti_user_sync.go:275-300`). For an HTTP app, just open its BrowZer URL (the
+`action.url` of the app in `GET /api/v1/access/my/resources`) in a WebView. A **login-time
 device-trust gate** may apply when `OPENIDX_REQUIRE_DEVICE_TRUST_FOR_CLIENTLESS=true`
 (`internal/oauth/service.go:1624-1634`) — an untrusted device is refused and a
 device-trust request is filed.
 
 ### 5.3 List connectable services — ✅ implemented
-`GET /api/v1/access/ziti/services` **[verified]** (returns 3 on the ref box):
+`GET /api/v1/access/my/ziti/services`: the services the signed-in user can
+reach, with where each one lives.
 ```jsonc
-{ "services": [
-  { "id":"…","ziti_id":"…","name":"acme-server1-ssh","protocol":"tcp",
-    "host":"10.0.5.20","port":22,"enabled":true,
-    "browzer_path":"/apisix","browzer_domain":"apisix.localtest.me" } ] }
+{ "linked": true, "enrolled": true,
+  "services": [
+    { "name":"acme-server1-ssh","host":"192.0.2.20","port":22,"protocol":"tcp" } ] }
 ```
-`name` is the Ziti service a native SDK dials; `browzer_*` gives the clientless URL.
+`name` is the Ziti service a native SDK dials. `GET /api/v1/access/ziti/services`
+is the organization's whole service list, for operators and administrators; a
+plain user gets 403 from it.
 
 ### 5.4 Native overlay dial (Phase 3) — 🚧 scaffolded, the one real code TODO
 Goal: the phone becomes a first-class Ziti endpoint so a native SSH/RDP client (or the
@@ -444,7 +453,10 @@ The phone can enroll as a managed device and report posture, which drives device
   (`trusted=false` until an admin approves).
 - **Report posture** — `POST /api/v1/access/ziti/posture/device`
   `{ "identity_id":"<ziti_id>", "posture": {…screen-lock, root/jailbreak, os_version…} }`
-  → health report `{ overall_passed, score, … }` (`ziti_fabric_handlers.go:427-457`).
+  → health report `{ overall_passed, score, … }` (`handleSubmitDevicePosture`).
+  `identity_id` is the signed-in user's own identity: the `ziti_id` that
+  `GET ziti/sync/my-identity` returns, or its id. Any other identity gets 404
+  and nothing is recorded.
   The engine collects the signals (`agent/internal/checks`, surfaced through `agent/mobile/mobile.go`'s `Posture()`), shared with desktop.
 - **My devices** — `GET /api/v1/access/my-devices`.
 - Trust is granted admin-side; it flips `known_devices.trusted=true` and re-adds the
@@ -538,7 +550,7 @@ artifact name and the key that signed it can ever come apart — including if th
 `GET /api/v1/identity/mfa/methods`.
 
 **Access (`/api/v1/access`, access-service, Bearer):**
-`GET ziti/services` · `GET ziti/sync/my-identity` ·
+`GET my/ziti/services` · `GET ziti/sync/my-identity` ·
 `POST agent/enroll/oauth` · `POST ziti/posture/device` · `GET my-devices` ·
 `GET pam/entries` · `POST pam/entries/:id/request` · `POST pam/entries/:id/connect` ·
 `POST pam/sessions/:id/end` · `GET guacamole/my-connections`.

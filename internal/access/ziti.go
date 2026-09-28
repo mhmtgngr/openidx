@@ -626,10 +626,11 @@ func zitiProxyRewrite(target *url.URL, callerID, email, name, roles string) func
 
 		// Whatever the caller asserted about itself goes before anything is
 		// written, so a connection with no resolved identity forwards none
-		// rather than the caller's own.
-		for _, h := range proxyOwnedHeaders {
-			pr.Out.Header.Del(h)
-		}
+		// rather than the caller's own. The proxy's session cookie goes too:
+		// a browser that also reaches this host through the proxy holds one,
+		// and it is the proxy's credential, not the application's.
+		deleteProxyOwnedHeaders(pr.Out.Header)
+		stripProxySessionCookie(pr.Out.Header)
 
 		// The overlay peer, as this proxy observed it — not as anyone claimed
 		// it. If the address is not host:port shaped, say nothing rather than
@@ -1627,7 +1628,7 @@ func (zm *ZitiManager) PatchIdentityRoleAttributes(ctx context.Context, zitiID s
 	})
 
 	_, statusCode, err := zm.mgmtRequest("PATCH",
-		fmt.Sprintf("/edge/management/v1/identities/%s", zitiID), body)
+		"/edge/management/v1/identities/"+url.PathEscape(zitiID), body)
 	if err != nil {
 		return fmt.Errorf("failed to patch identity role attributes: %w", err)
 	}
@@ -1640,7 +1641,7 @@ func (zm *ZitiManager) PatchIdentityRoleAttributes(ctx context.Context, zitiID s
 // GetIdentityRoleAttributes retrieves current role attributes for an identity
 func (zm *ZitiManager) GetIdentityRoleAttributes(ctx context.Context, zitiID string) ([]string, error) {
 	respData, statusCode, err := zm.mgmtRequest("GET",
-		fmt.Sprintf("/edge/management/v1/identities/%s", zitiID), nil)
+		"/edge/management/v1/identities/"+url.PathEscape(zitiID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1965,7 +1966,7 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 // (e.g. "configs", "service-edge-router-policies") whose name exactly matches.
 // Used by teardown to remove name-keyed objects we don't track in our own DB.
 func (zm *ZitiManager) deleteEdgeEntityByName(ctx context.Context, collection, name string) error {
-	lookup := fmt.Sprintf("/edge/management/v1/%s?filter=name=%q", collection, name)
+	lookup := "/edge/management/v1/" + collection + "?filter=" + zitiFilterEquals("name", name)
 	data, status, err := zm.mgmtRequest("GET", lookup, nil)
 	if err != nil {
 		return err
@@ -2662,7 +2663,7 @@ func (zm *ZitiManager) CreateHostV1ConfigFixed(ctx context.Context, name, host s
 	// hop route was added/removed), PATCH the data so the reconciler self-heals —
 	// otherwise a stale port silently breaks the route. A non-200 GET or empty
 	// data set is treated as "not found" — fall through to create.
-	lookupPath := fmt.Sprintf("/edge/management/v1/configs?filter=name=\"%s\"", name)
+	lookupPath := "/edge/management/v1/configs?filter=" + zitiFilterEquals("name", name)
 	if lookupData, lookupStatus, lookupErr := zm.mgmtRequest("GET", lookupPath, nil); lookupErr == nil && lookupStatus == http.StatusOK {
 		var existing struct {
 			Data []struct {
@@ -2738,7 +2739,7 @@ func (zm *ZitiManager) CreateInterceptV1ConfigFixed(ctx context.Context, name, h
 		},
 	}
 
-	lookupPath := fmt.Sprintf("/edge/management/v1/configs?filter=name=\"%s\"", name)
+	lookupPath := "/edge/management/v1/configs?filter=" + zitiFilterEquals("name", name)
 	if lookupData, lookupStatus, lookupErr := zm.mgmtRequest("GET", lookupPath, nil); lookupErr == nil && lookupStatus == http.StatusOK {
 		var existing struct {
 			Data []struct {
@@ -2982,10 +2983,19 @@ func (zm *ZitiManager) ProvisionDialableService(ctx context.Context, spec Dialab
 	return zitiID, nil
 }
 
+// zitiFilterEquals is a controller list filter matching one field exactly,
+// ready to follow "?filter=". The value is quoted as a string of the
+// controller's query language and the whole filter is query-escaped, so a
+// value -- a name an administrator chose -- can neither end the string nor add
+// a parameter to the request.
+func zitiFilterEquals(field, value string) string {
+	return url.QueryEscape(field + "=" + strconv.Quote(value))
+}
+
 // serviceIDByName returns the Ziti service id for a service name, or "" if it
 // does not exist. Used to make provisioning idempotent (reuse over dup-POST).
 func (zm *ZitiManager) serviceIDByName(ctx context.Context, name string) (string, error) {
-	path := fmt.Sprintf("/edge/management/v1/services?filter=name=%q", name)
+	path := "/edge/management/v1/services?filter=" + zitiFilterEquals("name", name)
 	data, status, err := zm.mgmtRequest("GET", path, nil)
 	if err != nil {
 		return "", fmt.Errorf("lookup service %q: %w", name, err)

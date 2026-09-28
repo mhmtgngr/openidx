@@ -72,7 +72,7 @@ func NewTestOIDCContext(t *testing.T) *TestOIDCContext {
 
 	// Create test config
 	cfg := &config.Config{
-		OAuthIssuer: "https://test.openidx.org",
+		OAuthIssuer: "https://issuer.example.com",
 	}
 
 	// Create identity service mock

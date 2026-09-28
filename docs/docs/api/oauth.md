@@ -79,4 +79,7 @@ POST /oauth/token
 | POST | `/api/v1/oauth/clients/:id/regenerate-secret` | Regenerate secret | Bearer |
 
 The bearer must hold the `admin` or `super_admin` role in the organization the
-request is for; any other caller gets `403`.
+request is for; any other caller gets `403`. A route that names a client
+answers `404` when the organization has no such client, including a client of
+another organization, before it reads the body or changes anything. A value
+the client may not have is `400`.

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -21,9 +22,10 @@ vi.mock('../lib/api', () => ({
 }))
 
 // Mock toast hook
+const { toastMock } = vi.hoisted(() => ({ toastMock: vi.fn() }))
 vi.mock('../hooks/use-toast', () => ({
   useToast: () => ({
-    toast: vi.fn(),
+    toast: toastMock,
   }),
 }))
 
@@ -111,5 +113,110 @@ describe('UserProfilePage', () => {
     })
     const container = document.querySelector('.space-y-6')
     expect(container).toBeInTheDocument()
+  })
+
+  // The identity service refuses a change to the account's second factors, or
+  // its address, until the request carries proof from the account holder
+  // (internal/identity/factor_proof.go). The page asks for it and sends it.
+  const refusal = (error: string, accepts: string[]) => ({
+    response: { status: 403, data: { error, error_description: 'x', accepts } },
+  })
+
+  const withMFA = () =>
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url === '/api/v1/identity/users/me') return Promise.resolve({ ...mockProfile, mfaEnabled: true })
+      if (url.includes('/password-info')) return Promise.resolve({ source: 'local', password_must_change: false })
+      if (url.includes('/mfa/methods')) return Promise.resolve({ methods: { totp: true }, enabled_count: 1, mfa_enabled: true })
+      return Promise.resolve([])
+    })
+
+  const openDisable = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(await screen.findByRole('tab', { name: /security/i }))
+    await user.click(await screen.findByRole('button', { name: 'Disable MFA' }))
+    const confirm = await screen.findByRole('alertdialog')
+    await user.click(within(confirm).getByRole('button', { name: 'Disable MFA' }))
+  }
+
+  it('asks for a code or the password before disabling MFA, and sends it', async () => {
+    const user = userEvent.setup()
+    withMFA()
+    vi.mocked(api.post).mockImplementation((url: string, body?: unknown) => {
+      const proof = body as { totp_code?: string; current_password?: string } | undefined
+      if (url.endsWith('/users/me/mfa/disable') && !proof?.totp_code && !proof?.current_password) {
+        return Promise.reject(refusal('reauthentication_required', ['current_password', 'totp_code']))
+      }
+      return Promise.resolve({})
+    })
+    render(<UserProfilePage />, { wrapper: createWrapper() })
+
+    await openDisable(user)
+    const prompt = await screen.findByRole('dialog')
+    expect(prompt).toHaveTextContent('Enter your current password, or a code from your authenticator app')
+    await user.type(within(prompt).getByLabelText('Authenticator code'), '123456')
+    await user.click(within(prompt).getByRole('button', { name: 'Confirm' }))
+
+    await waitFor(() =>
+      expect(api.post).toHaveBeenLastCalledWith('/api/v1/identity/users/me/mfa/disable', { totp_code: '123456' }),
+    )
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('shows a clear error when the proof is wrong, and does not disable MFA', async () => {
+    const user = userEvent.setup()
+    withMFA()
+    vi.mocked(api.post).mockImplementation((url: string, body?: unknown) => {
+      if (!url.endsWith('/users/me/mfa/disable')) return Promise.resolve({})
+      const proof = body as { current_password?: string } | undefined
+      return Promise.reject(
+        refusal(proof?.current_password ? 'reauthentication_failed' : 'reauthentication_required', ['current_password']),
+      )
+    })
+    render(<UserProfilePage />, { wrapper: createWrapper() })
+
+    await openDisable(user)
+    const prompt = await screen.findByRole('dialog')
+    await user.type(within(prompt).getByLabelText('Current password'), 'not-my-password')
+    await user.click(within(prompt).getByRole('button', { name: 'Confirm' }))
+
+    expect(await within(await screen.findByRole('dialog')).findByRole('alert')).toHaveTextContent(
+      'That password is not correct.',
+    )
+    expect(toastMock).not.toHaveBeenCalledWith(expect.objectContaining({ description: 'MFA disabled' }))
+  })
+
+  it('asks for the password when the address changes, and not for a name', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.put).mockImplementation((_url: string, body?: unknown) => {
+      const update = body as { email?: string; current_password?: string }
+      if (update.email !== mockProfile.email && !update.current_password) {
+        return Promise.reject(refusal('reauthentication_required', ['current_password']))
+      }
+      return Promise.resolve({ ...mockProfile, ...update })
+    })
+    render(<UserProfilePage />, { wrapper: createWrapper() })
+
+    const first = await screen.findByLabelText('First Name')
+    await user.clear(first)
+    await user.type(first, 'Renamed')
+    await user.click(screen.getByRole('button', { name: 'Update Profile' }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenLastCalledWith('/api/v1/identity/users/me', {
+        firstName: 'Renamed', lastName: 'User', email: 'test@example.com',
+      }),
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    const email = screen.getByLabelText('Email')
+    await user.clear(email)
+    await user.type(email, 'moved@example.com')
+    await user.click(screen.getByRole('button', { name: 'Update Profile' }))
+    const prompt = await screen.findByRole('dialog')
+    await user.type(within(prompt).getByLabelText('Current password'), 'my-password')
+    await user.click(within(prompt).getByRole('button', { name: 'Confirm' }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenLastCalledWith('/api/v1/identity/users/me', {
+        firstName: 'Renamed', lastName: 'User', email: 'moved@example.com', current_password: 'my-password',
+      }),
+    )
   })
 })

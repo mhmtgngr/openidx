@@ -142,8 +142,9 @@ spec:
 {{- end }}
 ---
 ###############################################################################
-# Audit Service (port 8004)
-# Receives traffic from: APISIX gateway, admin-api, access-service
+# Audit Service (port 8004; edge port 8014, every route but event ingestion)
+# Receives traffic from: APISIX gateway (edge port too), admin-api,
+# access-service (event ingestion)
 ###############################################################################
 {{- if .Values.auditService.enabled }}
 apiVersion: networking.k8s.io/v1
@@ -169,6 +170,8 @@ spec:
       ports:
         - protocol: TCP
           port: 8004
+        - protocol: TCP
+          port: 8014
     # admin-api aggregation
     - from:
         - podSelector:

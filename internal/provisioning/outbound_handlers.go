@@ -8,7 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
-	"github.com/openidx/openidx/internal/scimclient"
 	"go.uber.org/zap"
 )
 
@@ -153,7 +152,7 @@ func (s *Service) handleTestTarget(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve credentials"})
 		return
 	}
-	client, err := scimclient.New(scimclient.Config{BaseURL: target.BaseURL, Bearer: token})
+	client, err := s.scimClient(target.BaseURL, token)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

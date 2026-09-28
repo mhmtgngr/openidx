@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -80,6 +81,14 @@ type ZitiMetric struct {
 	RecordedAt time.Time         `json:"recorded_at"`
 }
 
+// sdkReady reports whether the SDK context this service dials and hosts
+// through is up.
+func (zm *ZitiManager) sdkReady() bool {
+	zm.mu.RLock()
+	defer zm.mu.RUnlock()
+	return zm.initialized && zm.zitiCtx != nil
+}
+
 // ---- Edge Router Management ----
 
 // ListEdgeRouters retrieves all edge routers from the Ziti controller and syncs them to the database
@@ -132,7 +141,7 @@ func (zm *ZitiManager) ListEdgeRouters(ctx context.Context) ([]ZitiEdgeRouterInf
 // GetEdgeRouter retrieves a single edge router by ID from the Ziti controller
 func (zm *ZitiManager) GetEdgeRouter(ctx context.Context, routerID string) (*ZitiEdgeRouterInfo, error) {
 	respData, statusCode, err := zm.mgmtRequest("GET",
-		fmt.Sprintf("/edge/management/v1/edge-routers/%s", routerID), nil)
+		"/edge/management/v1/edge-routers/"+url.PathEscape(routerID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get edge router %s: %w", routerID, err)
 	}
@@ -223,10 +232,7 @@ func (zm *ZitiManager) HealthCheck(ctx context.Context) (*FabricHealthStatus, er
 		}
 	}
 
-	// Check SDK context readiness
-	zm.mu.RLock()
-	status.SDKReady = zm.initialized && zm.zitiCtx != nil
-	zm.mu.RUnlock()
+	status.SDKReady = zm.sdkReady()
 
 	// Check router status
 	if status.ControllerReachable {

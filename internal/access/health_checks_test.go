@@ -44,7 +44,9 @@ func TestDedupBrowzerConfigDetectFlagsExtraRows(t *testing.T) {
 }
 
 func TestOrphanZitiServices(t *testing.T) {
-	controller := []string{"openidx-A", "openidx-B", "openidx-Orphan", "non-openidx"}
+	// openidx-console and openidx-access are the install's own services: no
+	// route names them, and they are not orphans.
+	controller := []string{"openidx-A", "openidx-B", "openidx-Orphan", "non-openidx", "openidx-console", "openidx-access"}
 	desired := map[string]bool{"openidx-A": true, "openidx-B": true}
 	got := orphanOpenidxServices(controller, desired)
 	if len(got) != 1 || got[0] != "openidx-Orphan" {

@@ -74,8 +74,12 @@ helm install openidx ../kubernetes/helm/openidx \
   --set secrets.redisPassword="$(aws secretsmanager get-secret-value \
     --secret-id openidx-prod/redis-auth-token \
     --query SecretString --output text)" \
-  --set config.elasticsearchUrl="http://elasticsearch:9200"
+  --set config.elasticsearchUrl="http://elasticsearch:9200" \
+  --set config.oauthIssuer="https://auth.example.com"
 ```
+
+`config.oauthIssuer` is required: the public URL of the install's OAuth
+service, on a domain you own.
 
 ## Module Reference
 

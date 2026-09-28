@@ -166,6 +166,14 @@ env_set() {
   fi
 }
 
+# A .env written before the internal service token existed has none, and the
+# audit service writes no event without it. Add one; the services that need it
+# read it from .env like the other secrets.
+if [ -z "$(env_get INTERNAL_SERVICE_TOKEN)" ]; then
+  note "Adding INTERNAL_SERVICE_TOKEN to .env (the audit service needs it to accept events)"
+  env_set INTERNAL_SERVICE_TOKEN "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+fi
+
 # --- settings ----------------------------------------------------------------
 console_port="${OPENIDX_CONSOLE_PORT:-$(env_get OPENIDX_CONSOLE_PORT)}"
 console_port="${console_port:-3000}"

@@ -131,6 +131,7 @@ func bclSetup(t *testing.T) (*Service, *database.PostgresDB, *outcomeBox) {
 			back_channel_logout_uri VARCHAR(500),
 			post_logout_redirect_uris JSONB,
 			api_access BOOLEAN NOT NULL DEFAULT false,
+			token_exchange_audiences JSONB,
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW(),
 			org_id UUID NOT NULL,
@@ -527,7 +528,7 @@ func TestDCRCarriesBackchannelLogoutURI(t *testing.T) {
 
 // The advertisement and the capability now agree.
 func TestDiscoveryAdvertisesBackchannelLogoutThatIsImplemented(t *testing.T) {
-	doc, _ := serveDiscovery(t, "https://test.openidx.org")
+	doc, _ := serveDiscovery(t, "https://issuer.example.com")
 	if doc["backchannel_logout_supported"] != true || doc["backchannel_logout_session_supported"] != true {
 		t.Fatalf("discovery must advertise back-channel logout with sid: %v", doc)
 	}

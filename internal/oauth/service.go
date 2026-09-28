@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/validation"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
@@ -96,6 +97,14 @@ type OAuthClient struct {
 	// the field send nothing for it, and reading that as false would take API
 	// access away from the console itself on its next edit.
 	APIAccess *bool `json:"api_access,omitempty"`
+
+	// TokenExchangeAudiences are the audiences, besides the client itself,
+	// that token exchange may issue this client tokens for (v209,
+	// token_exchange.go). Nil or empty means none. A pointer for APIAccess's
+	// reason: a writer that leaves it out leaves it as it is, and only an
+	// administrator's write through /api/v1/oauth/clients sets it --
+	// dynamic registration cannot.
+	TokenExchangeAudiences *[]string `json:"token_exchange_audiences,omitempty"`
 }
 
 // MayCallAPI reports whether access tokens issued to this client carry the
@@ -308,6 +317,10 @@ type Service struct {
 	// accepted when dcrInitialAccessToken is empty. Default false = closed, so a
 	// deployment that sets neither value refuses anonymous client registration.
 	dcrAllowOpenRegistration bool
+
+	// dcrOrgID is the one organization dynamic registration creates clients
+	// in (DCR_ORG_ID, else DEFAULT_ORG_ID); see dcrRegistersIn.
+	dcrOrgID string
 	// ssfReceiverConfig trusts an upstream SSF transmitter's issuer + JWKS for
 	// inbound SET validation. Empty = only OpenIDX-issued SETs are accepted.
 	ssfReceiverConfig SSFReceiverConfig
@@ -460,6 +473,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		cellID:                   cfg.CellID,
 		dcrInitialAccessToken:    cfg.DCRInitialAccessToken,
 		dcrAllowOpenRegistration: cfg.DCRAllowOpenRegistration,
+		dcrOrgID:                 dcrOrgFromConfig(cfg),
 		ssfReceiverConfig:        SSFReceiverConfig{Issuer: cfg.SSFReceiverIssuer, JWKSURL: cfg.SSFReceiverJWKSURL},
 		identityService:          idSvc,
 	}
@@ -1649,6 +1663,25 @@ func VerifyPKCE(codeVerifier, codeChallenge, method string) bool {
 // to the organization the request resolved to.
 var requireAdminRole = middleware.RequireRoles("admin", "super_admin")
 
+// managementStepUp is the MFA-freshness gate admin-api mounts on every write
+// made with admin authority (STEPUP_GATE, middleware.RequireFreshMFA), for the
+// same writes here: an OAuth client's redirect URIs and secret, a SAML service
+// provider's certificate, an SSF stream's endpoint. These APIs are admin
+// surfaces served by another binary, and they were left out: with the gate
+// enforcing, an administrator whose last second factor was hours old could not
+// delete a user in the console but could re-point the organization's single
+// sign-on. Same settings, same decision, the same step_up_required answer and
+// the same audit events (under this service's "oauth" source); reads and
+// machine credentials are never gated. It follows requireAdminRole, and with
+// the gate off it makes no query.
+func (s *Service) managementStepUp() gin.HandlerFunc {
+	cfg := middleware.StepUpConfig{Source: appaccess.SourceOIDC}
+	if s.config != nil {
+		cfg.Gate, cfg.MaxAge = s.config.StepUpGate, s.config.StepUpMaxAge
+	}
+	return middleware.RequireFreshMFA(s.db, cfg, s.recordUnifiedEvent, s.logger)
+}
+
 // RegisterRoutes wires the oauth-service HTTP routes.
 //
 // clientMgmtAuth authenticates the management APIs -- /api/v1/oauth/clients,
@@ -1656,7 +1689,8 @@ var requireAdminRole = middleware.RequireRoles("admin", "super_admin")
 // required: these endpoints create and modify OAuth clients, so they must be
 // authenticated in every environment (a nil here is a programmer error and
 // intentionally panics at request time rather than silently exposing the API).
-// requireAdminRole follows it on every one of those routes. The variadic
+// requireAdminRole follows it on every one of those routes, and
+// managementStepUp after that. The variadic
 // flowAuth is applied to the interactive OIDC flow endpoints (consent,
 // step-up) only when supplied; callers omit it in development to keep the
 // local login flow friction-free.
@@ -1683,7 +1717,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 	// able to enumerate, create or delete one. Gated with the same middleware
 	// as the client-management API, and like it held to administrators.
 	ssfAdmin := router.Group("/ssf")
-	ssfAdmin.Use(clientMgmtAuth, requireAdminRole)
+	ssfAdmin.Use(clientMgmtAuth, requireAdminRole, svc.managementStepUp())
 	{
 		ssfAdmin.GET("/streams", svc.handleListSSFStreams)
 		ssfAdmin.POST("/streams", svc.handleCreateSSFStream)
@@ -1869,7 +1903,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 	// is a different door: an initial access token opens it, and a client
 	// registered through it cannot set api_access.
 	clients := router.Group("/api/v1/oauth/clients")
-	clients.Use(clientMgmtAuth, requireAdminRole)
+	clients.Use(clientMgmtAuth, requireAdminRole, svc.managementStepUp())
 	{
 		clients.GET("", svc.handleListClients)
 		clients.POST("", svc.handleCreateClient)
@@ -3560,18 +3594,37 @@ func (s *Service) handleCallback(c *gin.Context) {
 	s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "success",
 		user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String()})
 
+	// The identity provider proved one factor. The password login's own
+	// decision says whether that is enough (external_signin_mfa.go); a second
+	// factor continues on the login page with the pending request.
+	pending := make(map[string]string, len(originalParams))
+	for k, v := range originalParams {
+		if k != "idp_id" {
+			pending[k] = v
+		}
+	}
+	if s.externalSignInNeedsMore(c, user.ID, pending, "", "sso") {
+		return
+	}
+
 	if !s.assignmentGateAllows(c, originalParams["client_id"], user.ID) {
 		return
 	}
 
+	// The PKCE challenge travels with the code. It was dropped here, so a
+	// public client's code carried no challenge and the token endpoint refused
+	// it ("PKCE required for public clients"): the console's SSO buttons could
+	// never finish.
 	authCode := &AuthorizationCode{
-		Code:        GenerateRandomToken(32),
-		ClientID:    originalParams["client_id"],
-		UserID:      user.ID,
-		RedirectURI: originalParams["redirect_uri"],
-		Scope:       originalParams["scope"],
-		State:       originalParams["state"],
-		Nonce:       originalParams["nonce"],
+		Code:                GenerateRandomToken(32),
+		ClientID:            originalParams["client_id"],
+		UserID:              user.ID,
+		RedirectURI:         originalParams["redirect_uri"],
+		Scope:               originalParams["scope"],
+		State:               originalParams["state"],
+		Nonce:               originalParams["nonce"],
+		CodeChallenge:       originalParams["code_challenge"],
+		CodeChallengeMethod: originalParams["code_challenge_method"],
 	}
 	s.CreateAuthorizationCode(c.Request.Context(), authCode)
 
@@ -4250,19 +4303,20 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 }
 
 func (s *Service) handleClientCredentialsGrant(c *gin.Context) {
-	clientID, clientSecret, credsOK := clientCredentials(c)
-	if !credsOK {
-		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "use only one client authentication method"})
-		return
-	}
 	scope := c.PostForm("scope")
 
-	// Verify client
-	client, err := s.GetClient(c.Request.Context(), clientID)
-	if err != nil || subtle.ConstantTimeCompare([]byte(client.ClientSecret), []byte(clientSecret)) != 1 {
-		c.JSON(401, gin.H{"error": "invalid_client"})
+	// RFC 6749 §4.4: this grant is for confidential clients only. It used to
+	// compare the stored secret with the presented one and nothing else, so a
+	// public client -- no secret stored, none presented, and a client_id
+	// anyone can read off an authorization URL -- was authenticated by naming
+	// it. The seeded admin console is one, allowed to call OpenIDX's own APIs,
+	// so anyone could mint a token those APIs accept.
+	client, err := s.authenticateConfidentialClient(c)
+	if err != nil {
+		writeClientAuthError(c, err)
 		return
 	}
+	clientID := client.ClientID
 
 	// SECURITY: the requested scope must be registered for this client
 	// (RFC 6749 §3.3). Without this the caller-supplied scope was minted into
@@ -4633,7 +4687,7 @@ func (s *Service) handleCreateClient(c *gin.Context) {
 	client.ClientSecret = GenerateRandomToken(32)
 
 	if err := s.CreateClient(c.Request.Context(), &client); err != nil {
-		apperrors.HandleErrorWithLogger(c, apperrors.Internal("create client", err), s.logger)
+		s.writeClientStoreError(c, "create client", err)
 		return
 	}
 
@@ -4661,10 +4715,50 @@ func (s *Service) handleCreateClient(c *gin.Context) {
 	c.JSON(201, client)
 }
 
-func (s *Service) handleGetClient(c *gin.Context) {
+// managedClient loads the client a /api/v1/oauth/clients/:id request names, in
+// the organization the request resolved to, and answers 404 when that
+// organization has none -- before anything else is done with the request.
+//
+// Each route used to go straight to its write, scoped to the organization, and
+// report whatever that write returned: for another organization's client, an
+// update answered 500, a secret regeneration 200 with a new secret that was
+// never stored, and a delete 204. Nothing changed, but the answers said a
+// write had failed or had happened. One lookup up front gives a client that
+// does not exist and a client of another organization the same answer, the
+// one a read of it already gave.
+func (s *Service) managedClient(c *gin.Context) (*OAuthClient, bool) {
 	client, err := s.GetClient(c.Request.Context(), c.Param("id"))
 	if err != nil {
+		s.writeClientStoreError(c, "get client", err)
+		return nil, false
+	}
+	return client, true
+}
+
+// writeClientStoreError answers a client read or write the store refused: 404
+// for a client the organization does not have (a delete or a write that raced
+// one is the same case), 400 for a value the store will not keep, and 500 for
+// anything else. Every one of them used to be 500, which told an administrator
+// who typed an access-token lifetime too long, or a malformed logout URI, that
+// the server had failed.
+func (s *Service) writeClientStoreError(c *gin.Context, op string, err error) {
+	var invalid *validation.ValidationError
+	switch {
+	case errors.Is(err, ErrOAuthClientNotFound):
 		c.JSON(404, gin.H{"error": "client not found"})
+	case errors.Is(err, ErrAccessTokenLifetimeTooLong),
+		errors.Is(err, ErrInvalidPostLogoutRedirectURI),
+		errors.Is(err, ErrInvalidTokenExchangeAudiences),
+		errors.As(err, &invalid):
+		c.JSON(400, gin.H{"error": err.Error()})
+	default:
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal(op, err), s.logger)
+	}
+}
+
+func (s *Service) handleGetClient(c *gin.Context) {
+	client, ok := s.managedClient(c)
+	if !ok {
 		return
 	}
 
@@ -4674,6 +4768,9 @@ func (s *Service) handleGetClient(c *gin.Context) {
 }
 
 func (s *Service) handleUpdateClient(c *gin.Context) {
+	if _, ok := s.managedClient(c); !ok {
+		return
+	}
 	var client OAuthClient
 	if err := c.ShouldBindJSON(&client); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -4681,7 +4778,7 @@ func (s *Service) handleUpdateClient(c *gin.Context) {
 	}
 
 	if err := s.UpdateClient(c.Request.Context(), c.Param("id"), &client); err != nil {
-		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update client", err), s.logger)
+		s.writeClientStoreError(c, "update client", err)
 		return
 	}
 
@@ -4689,31 +4786,43 @@ func (s *Service) handleUpdateClient(c *gin.Context) {
 }
 
 func (s *Service) handleDeleteClient(c *gin.Context) {
+	if _, ok := s.managedClient(c); !ok {
+		return
+	}
 	if err := s.DeleteClient(c.Request.Context(), c.Param("id")); err != nil {
-		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete client", err), s.logger)
+		s.writeClientStoreError(c, "delete client", err)
 		return
 	}
 
-	c.JSON(204, nil)
+	c.Status(204)
 }
 
+// RegenerateClientSecret stores a new secret for clientID in the request's
+// organization and returns it, or ErrOAuthClientNotFound when the organization
+// has no such client: a secret that was not stored is not handed out.
 func (s *Service) RegenerateClientSecret(ctx context.Context, clientID string) (string, error) {
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return "", err
 	}
 	newSecret := GenerateRandomToken(32)
-	_, err = s.db.Pool.Exec(ctx, "UPDATE oauth_clients SET client_secret = $2, updated_at = NOW() WHERE client_id = $1 AND org_id = $3", clientID, newSecret, org.ID)
+	tag, err := s.db.Pool.Exec(ctx, "UPDATE oauth_clients SET client_secret = $2, updated_at = NOW() WHERE client_id = $1 AND org_id = $3", clientID, newSecret, org.ID)
 	if err != nil {
 		return "", err
+	}
+	if tag.RowsAffected() == 0 {
+		return "", ErrOAuthClientNotFound
 	}
 	return newSecret, nil
 }
 
 func (s *Service) handleRegenerateClientSecret(c *gin.Context) {
+	if _, ok := s.managedClient(c); !ok {
+		return
+	}
 	secret, err := s.RegenerateClientSecret(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		apperrors.HandleErrorWithLogger(c, apperrors.Internal("regenerate client secret", err), s.logger)
+		s.writeClientStoreError(c, "regenerate client secret", err)
 		return
 	}
 	c.JSON(200, gin.H{"client_secret": secret})
@@ -5095,11 +5204,15 @@ func (s *Service) handleLogout(c *gin.Context) {
 		s.logger.Info("Single-session logout for user", zap.String("user_id", userID))
 
 		// Log audit event in background with timeout
+		// gin pools the Context and resets it for the next request as soon as
+		// the handler returns, so a detached goroutine must read the address
+		// before it starts -- see TestNoDetachedGoroutineReadsAGinContext.
+		clientIP := c.ClientIP()
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			s.logAuditEvent(ctx, "authentication", "security", "logout", "success",
-				userID, c.ClientIP(), userID, "user",
+				userID, clientIP, userID, "user",
 				map[string]interface{}{"method": "logout_endpoint"})
 		}()
 	}
@@ -5162,11 +5275,12 @@ func (s *Service) handleLogoutAll(c *gin.Context) {
 	s.logger.Info("Logout-all for user", zap.String("user_id", userID))
 
 	// Log audit event in background with timeout
+	clientIP := c.ClientIP()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.logAuditEvent(ctx, "authentication", "security", "logout_all", "success",
-			userID, c.ClientIP(), userID, "user",
+			userID, clientIP, userID, "user",
 			map[string]interface{}{"method": "logout_all_endpoint"})
 	}()
 

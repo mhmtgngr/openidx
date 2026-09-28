@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { setAuthInitializing, setAuthExpiredHandler } from './api'
 import { resolveOAuthURL } from './oauth-url'
+import { parseJwt } from './jwt'
 import { SessionExpiredDialog } from '../components/session-expired-dialog'
 
 interface User {
@@ -10,6 +11,22 @@ interface User {
   roles: string[]
   groups: string[]
   permissions: string[]
+  // The organization the access token was minted in (its signed org_id). The
+  // roles above are held there; a super_admin is a platform admin only when
+  // this is the default organization (lib/platform-admin.ts).
+  orgId: string
+}
+
+function userFromClaims(parsed: Record<string, unknown>): User {
+  return {
+    id: (parsed.sub as string) || '',
+    email: (parsed.email as string) || '',
+    name: (parsed.name as string) || (parsed.preferred_username as string) || '',
+    roles: (parsed.roles as string[]) || [],
+    groups: (parsed.groups as string[]) || [],
+    permissions: (parsed.permissions as string[]) || [],
+    orgId: typeof parsed.org_id === 'string' ? parsed.org_id : '',
+  }
 }
 
 interface AuthContextType {
@@ -27,23 +44,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export const OAUTH_URL = resolveOAuthURL()
 export const OAUTH_CLIENT_ID = import.meta.env.VITE_OAUTH_CLIENT_ID || 'admin-console'
-
-// Helper to parse JWT token
-function parseJwt(token: string): Record<string, unknown> | null {
-  try {
-    const base64Url = token.split('.')[1]
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split('')
-        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-        .join('')
-    )
-    return JSON.parse(jsonPayload)
-  } catch {
-    return null
-  }
-}
 
 // Generate PKCE code verifier and challenge
 function generateCodeVerifier(): string {
@@ -147,14 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Set auth state
           const parsed = parseJwt(tokens.access_token)
           if (parsed) {
-            setUser({
-              id: (parsed.sub as string) || '',
-              email: (parsed.email as string) || '',
-              name: (parsed.name as string) || (parsed.preferred_username as string) || '',
-              roles: (parsed.roles as string[]) || [],
-              groups: (parsed.groups as string[]) || [],
-              permissions: (parsed.permissions as string[]) || [],
-            })
+            setUser(userFromClaims(parsed))
             setToken(tokens.access_token)
             setIsAuthenticated(true)
           }
@@ -191,14 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return
           }
 
-          setUser({
-            id: (parsed.sub as string) || '',
-            email: (parsed.email as string) || '',
-            name: (parsed.name as string) || (parsed.preferred_username as string) || '',
-            roles: roles,
-            groups: (parsed.groups as string[]) || [],
-            permissions: (parsed.permissions as string[]) || [],
-          })
+          setUser(userFromClaims(parsed))
           setToken(storedToken)
           setIsAuthenticated(true)
           setAuthInitializing(false)
@@ -250,14 +236,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         const parsed = parseJwt(tokens.access_token)
         if (parsed) {
-          setUser({
-            id: (parsed.sub as string) || '',
-            email: (parsed.email as string) || '',
-            name: (parsed.name as string) || (parsed.preferred_username as string) || '',
-            roles: (parsed.roles as string[]) || [],
-            groups: (parsed.groups as string[]) || [],
-            permissions: (parsed.permissions as string[]) || [],
-          })
+          setUser(userFromClaims(parsed))
           setToken(tokens.access_token)
           setIsAuthenticated(true)
           return true

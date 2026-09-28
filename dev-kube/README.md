@@ -238,9 +238,14 @@ For production, use the Helm chart in `deployments/kubernetes/helm/openidx/`:
 ```bash
 helm install openidx ./deployments/kubernetes/helm/openidx \
   --values ./deployments/kubernetes/helm/openidx/values.yaml \
+  --values values-production.yaml \
   --namespace openidx \
   --create-namespace
 ```
+
+`values-production.yaml` is your own: the chart refuses to render without the
+datastore secrets and `config.oauthIssuer`, the install's public OAuth URL
+(see `docs/docs/deployment/kubernetes.md`).
 
 ## Additional Resources
 

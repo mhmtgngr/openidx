@@ -17,6 +17,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/netutil"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -64,7 +65,27 @@ type EventStreamer struct {
 	// audit event stream is sensitive security data and must not be readable
 	// unauthenticated. Set via SetJWKSURL from the service entrypoint.
 	jwksURL string
+	// guard decides where a webhook subscription may point, when it is
+	// registered and when an event is delivered to it: the URL is a caller's,
+	// and the POST starts inside the platform's network.
+	guard *netutil.OutboundGuard
 }
+
+// outboundGuard is the guard the streamer's webhooks are held to: public
+// addresses, and what OIDX_OUTBOUND_ALLOWLIST names.
+func outboundGuard(logger *zap.Logger) *netutil.OutboundGuard {
+	guard, err := netutil.DefaultOutboundGuard()
+	if err != nil {
+		logger.Error("OIDX_OUTBOUND_ALLOWLIST does not parse, so it allows nothing: audit webhooks reach public addresses only",
+			zap.Error(err))
+	}
+	return guard
+}
+
+// requireWebhookAdmin admits admin and super_admin to the webhook
+// subscription routes; anyone else the JWT middleware let through -- a user,
+// an auditor, a machine credential holding neither role -- gets 403.
+var requireWebhookAdmin = middleware.RequireRoles("admin", "super_admin")
 
 // SetJWKSURL enables JWT auth on the audit stream (REST routes via middleware,
 // WebSocket via the access_token_<jwt> subprotocol validated at upgrade).
@@ -146,6 +167,7 @@ func NewEventStreamer(logger *zap.Logger, service *Service, allowedOrigins []str
 		service:         service,
 		originValidator: originValidator,
 		upgrader:        upgrader,
+		guard:           outboundGuard(logger),
 	}
 }
 
@@ -180,6 +202,7 @@ func NewEventStreamerWithConfig(logger *zap.Logger, service *Service, streamConf
 		service:         service,
 		originValidator: originValidator,
 		upgrader:        upgrader,
+		guard:           outboundGuard(logger),
 	}
 }
 
@@ -200,9 +223,16 @@ func (es *EventStreamer) RegisterRoutes(r *gin.RouterGroup) {
 		}
 	}
 
+	// A webhook subscription is where the organization's audit events are to
+	// be delivered, at a URL its registrant chooses; the SOC 2 report counts
+	// the enabled ones as evidence of security-event notification, and the
+	// test route posts to the URL from inside the platform. Registering,
+	// listing, testing and deleting one is an administrator's: admin or
+	// super_admin, as on every other admin surface. These routes asked only
+	// for a signed-in user. The console has no page for them; they are an API.
 	webhooks := r.Group("/webhooks")
 	if es.jwksURL != "" {
-		webhooks.Use(middleware.Auth(es.jwksURL))
+		webhooks.Use(middleware.Auth(es.jwksURL), requireWebhookAdmin)
 	}
 	{
 		webhooks.POST("", es.handleRegisterWebhook)
@@ -484,6 +514,13 @@ func (es *EventStreamer) handleRegisterWebhook(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid request body"})
 		return
 	}
+	if err := es.guard.CheckURL(c.Request.Context(), req.URL); err != nil {
+		c.JSON(400, gin.H{
+			"error": "webhook URL is not allowed: " + err.Error(),
+			"hint":  "webhooks reach public addresses only; an operator can allow internal ones with " + netutil.OutboundAllowlistEnv,
+		})
+		return
+	}
 
 	subscription := &WebhookSubscription{
 		ID:        generateUUID(),
@@ -705,7 +742,11 @@ func (es *EventStreamer) deliverWebhook(delivery *WebhookDelivery) bool {
 	req.Header.Set("User-Agent", "OpenIDX-Audit-Streamer/1.0")
 	req.Header.Set("X-OpenIDX-Delivery-ID", delivery.ID)
 
-	client := &http.Client{}
+	// Guarded connections and no redirects: the URL is a caller's, so where the
+	// request may go is the outbound guard's decision, made again at the
+	// connection so that a name that now resolves somewhere internal is still
+	// refused.
+	client := es.guard.Client(es.webhookConfig.Timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		es.logger.Warn("Webhook delivery failed",

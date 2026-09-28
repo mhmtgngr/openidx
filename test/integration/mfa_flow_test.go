@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,7 +89,9 @@ func TestMFADisableWithoutEnroll(t *testing.T) {
 
 	token := loginAndGetToken(t, username, password)
 
-	// Disabling MFA when not enrolled should still succeed (idempotent)
-	status, _ := apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/disable", "", token)
+	// Disabling MFA when not enrolled should still succeed (idempotent).
+	// It needs the account holder's proof like any other factor change.
+	status, _ := apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/disable",
+		fmt.Sprintf(`{"current_password":%q}`, password), token)
 	assert.Equal(t, 200, status)
 }

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 
 	"github.com/openidx/openidx/internal/common/health"
@@ -67,6 +69,10 @@ type IntegrationsHealthResponse struct {
 // handleHealthIntegrations returns health status for all integrations
 func (s *Service) handleHealthIntegrations(c *gin.Context) {
 	ctx := c.Request.Context()
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
 
 	response := &IntegrationsHealthResponse{
 		Status:       "healthy",
@@ -76,6 +82,9 @@ func (s *Service) handleHealthIntegrations(c *gin.Context) {
 
 	// Check Ziti
 	zitiHealth := s.checkZitiHealth(ctx)
+	if !view.install {
+		s.narrowZitiHealth(ctx, zitiHealth, view.orgID)
+	}
 	response.Integrations["ziti"] = &IntegrationHealth{
 		Status:       zitiHealth.Status,
 		Available:    zitiHealth.ControllerReachable,
@@ -130,7 +139,14 @@ func (s *Service) handleHealthIntegrations(c *gin.Context) {
 
 // handleHealthZiti returns detailed Ziti health status
 func (s *Service) handleHealthZiti(c *gin.Context) {
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
 	health := s.checkZitiHealth(c.Request.Context())
+	if !view.install {
+		s.narrowZitiHealth(c.Request.Context(), health, view.orgID)
+	}
 
 	statusCode := http.StatusOK
 	switch health.Status {
@@ -289,6 +305,23 @@ func (s *Service) checkZitiHealth(ctx context.Context) *ZitiHealth {
 	}
 
 	return health
+}
+
+// narrowZitiHealth turns the controller's health into what one organization
+// may see of it: reachability and router status stay, the organization's own
+// service and identity counts replace the controller's, and the controller's
+// error text, which can carry its address, becomes a plain statement.
+func (s *Service) narrowZitiHealth(ctx context.Context, h *ZitiHealth, orgID string) {
+	if h.Status == "unhealthy" {
+		h.ErrorMessage = "controller unreachable"
+	}
+	h.ServicesCount, h.IdentitiesCount = 0, 0
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM ziti_services WHERE org_id = $1),
+		       (SELECT COUNT(*) FROM ziti_identities WHERE org_id = $1)`, orgID).
+		Scan(&h.ServicesCount, &h.IdentitiesCount); err != nil {
+		s.logger.Warn("could not count the organization's Ziti services and identities", zap.Error(err))
+	}
 }
 
 func (s *Service) checkGuacamoleHealth(ctx context.Context) *GuacamoleHealth {

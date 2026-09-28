@@ -69,10 +69,11 @@ API validator checks it against the organization the request resolved to:
 - A token with no `org_id` is refused with `401`; signing in again or
   refreshing replaces it.
 - A platform admin may act in another organization, by `X-Org-Slug` (the
-  console's organization selector) or `X-Org-ID`. Where the resolver runs
-  after authentication (admin-api), every such crossing writes a
-  `platform_admin_cross_org_access` row to the target organization's audit
-  trail.
+  console's organization selector, which the console shows, and whose
+  choice it sends, only for a platform admin's token) or `X-Org-ID`. Where
+  the resolver runs after authentication (admin-api), every such crossing
+  writes a `platform_admin_cross_org_access` row to the target
+  organization's audit trail.
 
 A platform admin is a user holding the `super_admin` role in the install's
 default organization (`00000000-0000-0000-0000-000000000010`): the token's
@@ -91,7 +92,37 @@ list are read by its members, in any role, and by a platform admin; its
 branding, settings and custom domains (`/api/v1/tenants/{orgId}/...`) by the
 administrators of the organization the request resolved to and by a platform
 admin; anyone else gets the `404` an unknown id gets. Only a platform admin
-creates an organization.
+creates an organization. An organization's owners and admins rename it; its
+plan, status and limits are the install's decisions and only a platform admin
+changes them. An owner or admin who tries gets `403`, and nothing of the
+request is applied. An organization's members are its own users
+(`users.org_id`) in a role it grants: `owner`, `admin` or `member`. Its owners
+and admins add only its users, and a user of another organization gets the
+`404` an id that names no user gets; a platform admin may add any user. Only an
+owner or a platform admin grants the owner role or changes or removes an
+owner's membership, and an organization keeps at least one owner.
+
+A verified custom domain decides which organization's branding, custom CSS
+included, the login page served at that host shows. A claim to a domain is
+verified only by DNS: the TXT record `_openidx-challenge.<domain>` must hold
+`openidx-domain-verification=<token>`, where the token is the one the claim was
+given when it was added. Nothing sent with the request stands in for the
+record, for a platform admin either. An unverified claim holds nothing, so any
+number of organizations may claim the same domain, and a squatter's claim does
+not keep the domain's owner out. One claim to a domain can be verified, and
+verifying it removes the other organizations' unverified claims.
+
+Tables under the belt give the same answer. A route that names one record of
+another organization finds nothing and answers `404`, as it does for an id
+that does not exist. The OAuth client routes (`/api/v1/oauth/clients/{id}`)
+look the client up before they read the body or change anything, so an update,
+a secret regeneration or a delete aimed at another organization's client does
+not report a failure or a success it did not have.
+
+Dynamic client registration (`POST /oauth/register`) is opened by one initial
+access token for the whole install, so it registers clients in one
+organization only: `DCR_ORG_ID`, or `DEFAULT_ORG_ID`. The token cannot pick
+another organization through `X-Org-Slug` or a tenant's host.
 
 ### 6. A CI linter makes it un-bypassable by construction
 
@@ -123,7 +154,10 @@ organization: the `system_settings` rows (SMS delivery, the passwordless
 defaults, the OpenZiti controller connection, the BrowZer domain, the APISIX TLS
 switch), the OAuth signing keys, the shared IP deny-list and error catalog, the
 platform TLS certificate and key, and the self-heal loop's controls. Changing
-one of them changes it for every organization.
+one of them changes it for every organization. The Relations & Integrity
+Doctor (`/api/v1/access/health/relations` and `/health/fix/:checkId`) is held to
+the same rule: it reads and repairs every organization's routes, applications
+and Ziti services under the RLS opt-out.
 
 Changing them needs an **administrator of the default organization**: a user
 who holds `admin` or `super_admin` in the install's default organization
@@ -145,6 +179,112 @@ needs `admin` or `super_admin` held there. Every platform admin can change
 install-wide settings; an `admin` of the default organization without
 `super_admin` can change them and still cannot act in any other organization.
 
+## Shared proxy surfaces
+
+The access proxy serves every organization's applications from one listener,
+and BrowZer from one set of nginx files, so what one organization's
+administrator writes into a route reaches them. A host belongs to the one
+enabled route that serves it, in the whole installation: the proxy,
+forward-auth, the BrowZer configuration and the edge routes all find a route by
+its host exactly, and every API that puts a route on a host (routes, quick
+create, bulk create, app publishing, Ziti import, BrowZer on a service, the
+BrowZer domain) answers 409 when another enabled route already serves it. The
+first organization to route a host holds it; another organization is told only
+that the host is routed elsewhere. There is no proof of domain ownership, so an
+organization can hold a host before its owner routes it, and an operator
+settles that by disabling the route (migration v211, `internal/access/route_host.go`).
+A proxy session is good on the
+host whose sign-in set its cookie and on no other host, whichever
+organization's route that is, and it belongs to the route it was signed in on
+and that route's organization: it is listed, revoked and continuously verified
+there, and it is not accepted on another organization's route should the host
+pass to one. The proxy follows a `redirect_url` only to a path
+on the same host, to the access service's own host, or to a host of the
+organization's own routes, where the organization is the one that owns the
+route serving the request's host. The nginx configuration generated for
+BrowZer takes a route only when its host, path, landing path and upstream are
+plain values that nginx cannot read as syntax
+(`internal/access/browzer_config_values.go`).
+## The OpenZiti controller
+
+One OpenZiti controller serves every organization on an install. Its services,
+identities, policies, configs, terminators and sessions have no organization
+of their own, so the access service decides what each caller sees of it. Three
+mirror tables under the RLS belt record who owns what: `ziti_services` (by the
+controller's id and by name, which the controller keeps unique),
+`ziti_identities` and `ziti_service_policies`. An object that none of them
+gives to an organization is the install's.
+
+- Reading an organization's part of the fabric needs the operator tier. An
+  install administrator, as above, sees the whole controller. Anyone else sees
+  their organization's services, the configs and terminators of those
+  services, its service policies, and the sessions between its identities and
+  its services.
+- Reading what no organization owns needs an install administrator: the edge
+  routers and their policies, the authentication policies and JWT signers, the
+  config types, the fabric metrics, the reconciler and network-setup state,
+  the BrowZer bootstrapper, the AI ledger, discovery of unmanaged services, the
+  governance-policy syncs and the PAM broker's bindings.
+- The status probes (`/ziti/status`, `/health/ziti`, `/health/integrations`
+  and `/ziti/browzer/status`) stay open to any signed-in user. They say whether
+  the overlay is up and count the organization's own services and identities.
+  The controller's version, addresses and error text go to an install
+  administrator only.
+- A write to something the organization owns needs the admin role and reaches
+  only the organization's own objects: ending one of its sessions, or every
+  session of one of its identities, removing a terminator of one of its
+  services, turning BrowZer on or off for one of its services, rotating one of
+  its certificates. Another organization's object, taken by its id, gets the
+  `404` an unknown id gets. An install administrator reaches any.
+- A write to something no organization owns needs an install administrator:
+  enrolling an edge router, reconnecting the controller, the edge-router,
+  authentication and JWT-signer policies, raw configs, the AI analysis, its
+  anomalies and quarantine, the governance-policy syncs, and importing a
+  service no organization manages.
+- A controller service name belongs to one organization. The reconciler and
+  Add Service reach a service by its name and adopt one that already exists,
+  converging its target and policies to the new claim. So a name another
+  organization holds (a service in its mirror, or one of its routes or PAM
+  entries that names it), or one of the install's own services, cannot be
+  given to a new service or to a route: Add Service and Ziti on a route answer
+  `409`, the Ziti feature `400`, and a bulk route that would name one is not
+  created and is listed in the answer's `name_conflicts`. Add Service also
+  refuses, to anyone but an install administrator, a name already on the
+  controller. The reconciler does not converge a name that more than one
+  organization holds, and reports the conflict in the route's converge state
+  until one of them is renamed.
+
+- Roles and attributes are one namespace on the controller, so an
+  organization's admin may use only its own. A service policy's service roles
+  name only the organization's services, and its identity roles only its
+  identities or the install's (routers, the access proxy); `#all` and the
+  attributes OpenIDX gives users of every organization (`#browzer-users`,
+  `#enrolled-users`, `#device-trusted`, `app-` and other organizations' `org-`
+  markers) are refused with `403`. The attributes OpenIDX manages cannot be
+  added to or removed from an identity, and neither can an attribute that
+  another organization's or the install's policy grants. Add Service refuses
+  another organization's or the install's intercept address (`409`), and dial
+  roles and attributes under the same rules (`403`). An install administrator
+  is not held to these.
+- These checks are made when a policy, an identity or a service is written.
+  The attributes user sync gives identities from group names are the group's
+  bare name unless `ZITI_PER_ORG_ATTRIBUTES` is on, and then `org-<id>-<name>`.
+  With it off, two organizations' groups of the same name give their users the
+  same attribute, so a policy of one organization on that attribute also
+  reaches the other's users -- to the policy organization's own services only,
+  since its service roles are checked. That namespacing of group attributes is
+  what the overlay still depends on `ZITI_PER_ORG_ATTRIBUTES` for.
+- The reconciler's Dial policy for a route grants `#browzer-users` (BrowZer and
+  router-hosted routes) or `#access-proxy-clients` (identity mode), which the
+  users or tunnelers of every organization hold. `ZITI_PER_ORG_ATTRIBUTES` adds
+  an organization-only Dial policy beside it and does not remove it; only
+  `ACCESS_ASSIGNMENT_ENFORCE`, for a route with an application behind it,
+  replaces it with the application's marker. Otherwise a route's service is
+  dialable on the overlay by other organizations' users, and the route's own
+  sign-in is what keeps them out.
+
+The rules are in `internal/access/ziti_scope.go` and `internal/access/ziti_roles.go`.
+
 ## What multi-tenancy covers
 
 | Layer | Tenant isolation |
@@ -153,7 +293,8 @@ install-wide settings; an `admin` of the default organization without
 | Application services | Enforced — `app.org_id` stamped per connection; queries carry `org_id` |
 | Tokens and API keys | Bound — accepted only in their own organization, except a platform admin's |
 | Authorization / governance | Scoped — campaigns, certifications, ABAC, SoD, and risk policies carry `org_id` |
-| Audit | Scoped — `audit_events` is org-scoped, including Elasticsearch search |
+| Audit | Scoped — `audit_events` is org-scoped, including Elasticsearch search; only the platform's own services write events (`INTERNAL_SERVICE_TOKEN`), so no caller can file an event under another organization |
+| Outbound requests | Contained — URLs an organization's administrator supplies (webhooks, audit-stream webhooks, outbound SCIM targets, SSF receivers, SAML metadata) reach public addresses only, so no organization can use the platform's network position to reach its services or their data (`internal/common/netutil/outbound.go`). The exceptions, `OIDX_OUTBOUND_ALLOWLIST`, apply to every organization. A refused URL does not count against the webhook circuit breaker every organization shares |
 | CI / tests | Enforced — `orgscope` merge gate + cross-org integration test |
 
 ## Federation vs. multi-tenancy

@@ -40,7 +40,7 @@ func runOrgSlug(t *testing.T, baseDomain, host, spoofed string) (string, bool) {
 }
 
 func TestOrgSlugHeader_subdomain_injected(t *testing.T) {
-	slug, _ := runOrgSlug(t, "openidx.io", "acme.openidx.io", "")
+	slug, _ := runOrgSlug(t, "example.com", "acme.example.com", "")
 	if slug != "acme" {
 		t.Fatalf("X-Org-Slug = %q, want %q", slug, "acme")
 	}
@@ -49,7 +49,7 @@ func TestOrgSlugHeader_subdomain_injected(t *testing.T) {
 func TestOrgSlugHeader_clientSuppliedHeader_alwaysStripped(t *testing.T) {
 	// A client must never pick its own tenant by sending the header
 	// directly — the gateway is the only legitimate producer.
-	slug, _ := runOrgSlug(t, "openidx.io", "acme.openidx.io", "victim-org")
+	slug, _ := runOrgSlug(t, "example.com", "acme.example.com", "victim-org")
 	if slug != "acme" {
 		t.Fatalf("X-Org-Slug = %q, want subdomain %q to override the spoofed value", slug, "acme")
 	}
@@ -65,37 +65,37 @@ func TestOrgSlugHeader_unconfigured_stillStripsSpoofedHeader(t *testing.T) {
 }
 
 func TestOrgSlugHeader_bareBaseDomain_noHeader(t *testing.T) {
-	_, present := runOrgSlug(t, "openidx.io", "openidx.io", "")
+	_, present := runOrgSlug(t, "example.com", "example.com", "")
 	if present {
 		t.Fatal("X-Org-Slug present, want none for the bare base domain")
 	}
 }
 
 func TestOrgSlugHeader_multiLevelSubdomain_noHeader(t *testing.T) {
-	// "a.b.openidx.io" is not a tenant subdomain — only a single
+	// "a.b.example.com" is not a tenant subdomain — only a single
 	// label directly under the base domain qualifies.
-	_, present := runOrgSlug(t, "openidx.io", "a.b.openidx.io", "")
+	_, present := runOrgSlug(t, "example.com", "a.b.example.com", "")
 	if present {
 		t.Fatal("X-Org-Slug present, want none for a multi-level subdomain")
 	}
 }
 
 func TestOrgSlugHeader_unrelatedHost_noHeader(t *testing.T) {
-	_, present := runOrgSlug(t, "openidx.io", "evil-openidx.io", "")
+	_, present := runOrgSlug(t, "example.com", "evil-example.com", "")
 	if present {
 		t.Fatal("X-Org-Slug present, want none for a host that merely ends in the base domain string")
 	}
 }
 
 func TestOrgSlugHeader_hostPort_ignored(t *testing.T) {
-	slug, _ := runOrgSlug(t, "openidx.io", "acme.openidx.io:8443", "")
+	slug, _ := runOrgSlug(t, "example.com", "acme.example.com:8443", "")
 	if slug != "acme" {
 		t.Fatalf("X-Org-Slug = %q, want %q (port must be stripped)", slug, "acme")
 	}
 }
 
 func TestOrgSlugHeader_hostCase_normalized(t *testing.T) {
-	slug, _ := runOrgSlug(t, "OpenIDX.io", "ACME.openidx.IO", "")
+	slug, _ := runOrgSlug(t, "Example.COM", "ACME.example.Com", "")
 	if slug != "acme" {
 		t.Fatalf("X-Org-Slug = %q, want %q (hostnames are case-insensitive)", slug, "acme")
 	}

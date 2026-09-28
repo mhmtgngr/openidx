@@ -47,7 +47,9 @@ OpenIDX surfaces the console everywhere it matters:
 
 - **Ziti Network** and **Network Setup** admin pages show an **"Ziti Console"**
   button (from the `console_url` field of `GET /api/v1/access/ziti/status` and
-  `GET /api/v1/access/ziti/setup/status`).
+  `GET /api/v1/access/ziti/setup/status`). Both carry it to an install
+  administrator (an admin of the default organization) only: the console
+  administers the controller every organization shares.
 - The URL is derived from the controller URL (`<ZITI_CTRL_URL>/zac/`) and can be
   overridden with `ZITI_CONSOLE_URL` when the browser reaches the controller on
   a mapped host/port (the dev compose maps host `11280` → container `1280`).

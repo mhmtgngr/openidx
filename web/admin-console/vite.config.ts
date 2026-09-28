@@ -55,9 +55,53 @@ function openapiSpecs(): Plugin {
   }
 }
 
+// Every config that serves the console sends a Content-Security-Policy whose
+// script-src is 'self' with no 'unsafe-inline' (deployments/docker/nginx/
+// admin-console.conf; scripts/check-console-csp.sh holds them to it). The
+// browser refuses an inline <script>, an on* handler attribute or a
+// javascript: URL under that policy, so one of them in an HTML file the build
+// emits would leave the console blank or broken, and only in a browser. Vite
+// itself emits the entry as <script type="module" src> and nothing inline; a
+// plugin, or a snippet pasted into index.html, could. So the build fails
+// instead.
+function noInlineScript(): Plugin {
+  let outDir = 'dist'
+  return {
+    name: 'openidx-no-inline-script',
+    apply: 'build',
+    configResolved(config) {
+      outDir = config.build.outDir
+    },
+    closeBundle() {
+      const dir = path.resolve(here, outDir)
+      for (const name of fs.readdirSync(dir).filter((f) => f.endsWith('.html'))) {
+        const html = fs.readFileSync(path.join(dir, name), 'utf8')
+        const found: string[] = []
+        // `<\/script\b[^>]*>`, not `<\/script\s*>`: HTML closes a script element
+        // on `</script` followed by whitespace, `/` or `>`, and then ignores
+        // whatever attribute-shaped text precedes the `>`. So a browser ends the
+        // element at `</script\t\nfoo>` while the narrower pattern does not, and
+        // an inline script written that way would pass this guard and then be
+        // refused by the policy at run time.
+        for (const [, attrs, body] of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi)) {
+          if (!/\ssrc\s*=/i.test(attrs) || body.trim() !== '') found.push('an inline <script>')
+        }
+        if (/<[^>]*\son[a-z]+\s*=/i.test(html)) found.push('an on* event-handler attribute')
+        if (/javascript:/i.test(html)) found.push('a javascript: URL')
+        if (found.length > 0) {
+          throw new Error(
+            `${name} has ${found.join(', ')}. The console's Content-Security-Policy (script-src 'self') ` +
+              'refuses inline script, so the console would not run.',
+          )
+        }
+      }
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), openapiSpecs()],
+  plugins: [react(), openapiSpecs(), noInlineScript()],
   // NOTE: custom manualChunks removed — isolating react/react-dom into a separate
   // chunk from its consumers (radix/router/query/charts/swagger/vendor) caused
   // "Cannot read properties of undefined (reading 'useLayoutEffect')" at runtime

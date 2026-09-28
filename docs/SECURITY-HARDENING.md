@@ -149,6 +149,19 @@ startup.
 - Apply Kubernetes NetworkPolicies (or VPC security groups) to
   restrict service-to-service traffic to known peers.
 
+### Admin console
+
+- The console keeps its access and refresh tokens in `localStorage`.
+  The nginx configurations this repository ships send a
+  Content-Security-Policy on the console's documents and files that
+  allows no inline script and no `eval`, so injected markup cannot run
+  and read them (`scripts/check-console-csp.sh` fails CI if one stops).
+- If your own web server or CDN serves the built console, send the same
+  policy, from `deployments/docker/nginx/admin-console.conf`, on the
+  console's documents and files, and only there: the API, OAuth, SAML
+  and Guacamole paths answer with pages the console's policy would
+  break.
+
 ### Observability
 
 - Forward audit events out of the database to a SIEM. The audit table

@@ -212,10 +212,7 @@ func (s *Service) handleLoginWithIDP(c *gin.Context, idpID string) {
 	challenge := generateCodeChallenge(verifier)
 	state := generateState()
 
-	redirectURL := c.Query("redirect_url")
-	if redirectURL == "" {
-		redirectURL = "/"
-	}
+	redirectURL := s.redirectTarget(c, c.Query("redirect_url"), "/")
 
 	// Store state with IDP info
 	sessionData, _ := json.Marshal(map[string]string{
@@ -294,7 +291,7 @@ func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifi
 	}
 
 	// Create proxy session
-	session, err := s.createSession(c, claims, tokenResp.AccessToken)
+	session, err := s.createSession(c, claims)
 	if err != nil {
 		s.logger.Error("Failed to create session", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
@@ -312,9 +309,9 @@ func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifi
 	// The session itself is created and valid either way, so this does not fail
 	// the login; it is reported instead, because the gap is otherwise invisible
 	// -- the session simply looks like a local one.
-	if _, err := s.db.Pool.Exec(c.Request.Context(),
+	if _, err := s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
 		"UPDATE proxy_sessions SET idp_id=$1 WHERE id=$2 AND org_id=$3",
-		idpID, session.ID, org.ID); err != nil {
+		idpID, session.ID, session.orgID); err != nil {
 		s.logger.Error("a session authenticated by an external identity provider could not be marked "+
 			"with it; it will read as a local session, so revoking that provider's sessions will miss it",
 			logsafe.String("idp_id", idpID), logsafe.String("session_id", session.ID), zap.Error(err))
@@ -341,10 +338,7 @@ func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifi
 		"idp_id":     idpID,
 	})
 
-	if redirectURL == "" {
-		redirectURL = "/"
-	}
-	c.Redirect(http.StatusFound, redirectURL)
+	c.Redirect(http.StatusFound, s.redirectTarget(c, redirectURL, "/"))
 }
 
 // exchangeCodeWithIDP exchanges an authorization code with an external IDP's token endpoint

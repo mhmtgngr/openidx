@@ -67,8 +67,12 @@ type Security struct {
 	LockoutDuration int  `json:"lockout_duration"` // minutes
 	RequireMFA      bool `json:"require_mfa"`
 
-	IdleTimeout               int    `json:"idle_timeout"`         // seconds
-	AbsoluteTimeout           int    `json:"absolute_timeout"`     // seconds
+	// IdleTimeout and AbsoluteTimeout, in seconds, are pointers because zero
+	// is a setting: the Security tab documents 0 as "disabled" for both. A
+	// document that does not carry the key, like the one migration 010 seeds,
+	// leaves nil, and the reader applies its default.
+	IdleTimeout               *int   `json:"idle_timeout"`
+	AbsoluteTimeout           *int   `json:"absolute_timeout"`
 	RememberMeDuration        int    `json:"remember_me_duration"` // seconds
 	ReauthInterval            int    `json:"reauth_interval"`      // seconds, 0 = unset
 	BindSessionToIP           bool   `json:"bind_session_to_ip"`

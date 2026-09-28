@@ -146,6 +146,24 @@ echo "$line" | grep -q 'http_status\\":404' || fail "deny-health: must answer 40
 for u in /health /health/\* /ready /metrics; do echo "$line" | grep -qF "$u" || fail "deny-health: must cover $u"; done
 echo "OK deny-health (operational endpoints 404 at the edge in every mode)"
 
+# --- audit event ingestion closed in every mode ---
+#
+# POST /api/v1/audit/events writes into any organization's audit trail and is
+# meant only for OpenIDX's own services. The route must be seeded whatever
+# DARK_MODE is, answer at the edge, catch POST only (the console GETs the same
+# path), and outrank the audit route that forwards the rest of the prefix.
+for m in off tier2 tier1; do
+  out=$(DARK_MODE=$m DRY_RUN=1 bash seed-edge-routes.sh 2>/dev/null)
+  has "$out" openidx-deny-audit-ingest || fail "$m: the audit ingestion deny route MUST be seeded"
+done
+line=$(grep -E '^put openidx-deny-audit-ingest ' seed-edge-routes.sh)
+echo "$line" | grep -qF '/api/v1/audit/events\"' || fail "deny-audit-ingest: must cover /api/v1/audit/events"
+echo "$line" | grep -qF 'methods\":[\"POST\"]' || fail "deny-audit-ingest: must catch POST, and only POST"
+echo "$line" | grep -q 'fault-injection' || fail "deny-audit-ingest: must answer at the edge, not proxy"
+echo "$line" | grep -q 'http_status\\":404' || fail "deny-audit-ingest: must answer 404"
+echo "$line" | grep -q 'priority\\":90' || fail "deny-audit-ingest: must outrank openidx-api-audit (priority 30)"
+echo "OK deny-audit-ingest (audit event ingestion 404 at the edge in every mode)"
+
 # --- origin cloaking, application half (task 1.2) ---
 #
 # A network allow-list admits every tenant of the same edge provider (an Azure

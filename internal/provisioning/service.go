@@ -20,11 +20,13 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/netutil"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/common/sessionend"
 	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/revocation"
+	"github.com/openidx/openidx/internal/scimclient"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/middleware"
@@ -230,6 +232,14 @@ type Service struct {
 
 	// cipher encrypts/decrypts outbound-SCIM target secrets at rest.
 	cipher *secretcrypt.Cipher
+
+	// outbound decides where an outbound-SCIM target's base URL may point:
+	// when it is saved, and at every connection the worker and the connection
+	// test make. The URL is an organization administrator's, the requests
+	// carry the target's bearer token from inside the platform's network, and
+	// a failed call's response body comes back in the error the test route and
+	// the target's status return.
+	outbound *netutil.OutboundGuard
 }
 
 // NewService creates a new provisioning service
@@ -243,13 +253,39 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		log.Warn("provisioning: encryption key unusable; outbound-SCIM secrets will not be encrypted at rest", zap.Error(err))
 		cipher = secretcrypt.NewNoop()
 	}
-	return &Service{
-		db:     db,
-		redis:  redis,
-		config: cfg,
-		logger: log,
-		cipher: cipher,
+	outbound, err := netutil.DefaultOutboundGuard()
+	if err != nil {
+		log.Error("OIDX_OUTBOUND_ALLOWLIST does not parse, so it allows nothing: outbound SCIM targets must be public addresses",
+			zap.Error(err))
 	}
+	return &Service{
+		db:       db,
+		redis:    redis,
+		config:   cfg,
+		logger:   log,
+		cipher:   cipher,
+		outbound: outbound,
+	}
+}
+
+// outboundGuard is s.outbound, or the process default for a Service built
+// without NewService.
+func (s *Service) outboundGuard() *netutil.OutboundGuard {
+	if s.outbound != nil {
+		return s.outbound
+	}
+	g, _ := netutil.DefaultOutboundGuard()
+	return g
+}
+
+// scimClient builds the SCIM client for a target: its connections go through
+// the outbound guard, and it follows no redirects.
+func (s *Service) scimClient(baseURL, bearer string) (*scimclient.Client, error) {
+	return scimclient.New(scimclient.Config{
+		BaseURL:    baseURL,
+		Bearer:     bearer,
+		HTTPClient: s.outboundGuard().Client(30 * time.Second),
+	})
 }
 
 // encryptSecret seals a plaintext secret for storage. Empty input returns "".
@@ -960,6 +996,23 @@ func (s *Service) listSCIMUsers(ctx context.Context, startIndex, count int, pred
 	}, nil
 }
 
+// requireAdminRole admits only an administrator -- admin or super_admin, the
+// tier the console gives the Provisioning Rules page -- to /api/v1/provisioning.
+// The routes behind it decide what the organization's directory becomes and
+// where it goes: rules that change users as they are provisioned, and outbound
+// SCIM targets, to which the worker sends every user and group, with the
+// target's credentials, at the base URL the target names; /sync sends the
+// whole directory at once. They asked only for a signed-in user, so anyone the
+// organization had given an account could point a target at a server of their
+// own and have the directory delivered there -- unless ENABLE_OPA_AUTHZ was
+// on, and it is off by default. Anyone else -- a signed-in user without either
+// role, an operator, an auditor, a machine credential that holds neither -- is
+// refused with 403. The roles are the token's, held in the token's
+// organization (openIDXAuthMiddleware refuses a token of another), and the
+// handlers keep every read and write to the organization the request resolved
+// to.
+var requireAdminRole = middleware.RequireRoles("admin", "super_admin")
+
 // RegisterRoutes registers provisioning service routes
 func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.HandlerFunc) {
 	// SCIM 2.0 endpoints
@@ -994,9 +1047,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		scim.GET("/ServiceProviderConfig", svc.handleGetServiceProviderConfig)
 	}
 
-	// Internal provisioning API
+	// Internal provisioning API: the organization's provisioning rules and its
+	// outbound SCIM targets. Administrators only, behind the same
+	// authentication; see requireAdminRole. The SCIM server above keeps its
+	// bearer-token authentication as it is: its callers are the upstream
+	// identity providers an organization points at it.
 	prov := router.Group("/api/v1/provisioning")
-	prov.Use(svc.openIDXAuthMiddleware())
+	prov.Use(svc.openIDXAuthMiddleware(), requireAdminRole)
 	for _, mw := range extraMiddleware {
 		prov.Use(mw)
 	}

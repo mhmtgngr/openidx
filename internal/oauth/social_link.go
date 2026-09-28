@@ -93,6 +93,14 @@ func (s *Service) handleSocialLinkStart(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required to link an account"})
 		return
 	}
+	// A linked account is a way to sign in, added with the token alone: a
+	// token read out of the console's localStorage could attach an account of
+	// the thief's and keep a way in after it expired. An account with a
+	// password or a second factor now needs the password, or a current TOTP
+	// code, in this request's body, as a change to its factors does.
+	if !s.identityService.RequireSignInMethodProof(c, userID) {
+		return
+	}
 
 	providerID := c.Param("provider_id")
 	provider, err := s.loadSocialProviderConfig(c.Request.Context(), providerID)
@@ -274,11 +282,15 @@ func (s *Service) handleSocialLinkCallback(c *gin.Context) {
 		return
 	}
 
+	// gin pools the Context and resets it for the next request as soon as
+	// the handler returns, so a detached goroutine must read the address
+	// before it starts -- see TestNoDetachedGoroutineReadsAGinContext.
+	clientIP := c.ClientIP()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.logAuditEvent(ctx, "authentication", "social_link", "link", "success",
-			userID, c.ClientIP(), providerID, "identity_provider",
+			userID, clientIP, providerID, "identity_provider",
 			map[string]interface{}{
 				"provider_type": provider.ProviderType,
 				"social_id":     userInfo.ID,

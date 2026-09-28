@@ -135,7 +135,7 @@ func TestOutboundWorkerCreateThenDeactivate(t *testing.T) {
 	srv := sp.server()
 	defer srv.Close()
 
-	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}}
+	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}, outbound: testOutbound(t)}
 
 	// Configure an enabled user-provisioning target pointing at the fake SP.
 	target, err := svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{
@@ -218,7 +218,7 @@ func TestOutboundWorkerTransientRetry(t *testing.T) {
 	srv := sp.server()
 	defer srv.Close()
 
-	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}}
+	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}, outbound: testOutbound(t)}
 	target, _ := svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{
 		Name: "flaky", BaseURL: srv.URL, AuthType: "bearer", BearerToken: "tok",
 		ProvisionUsers: true, DeprovisionAction: "deactivate", Enabled: true,
@@ -267,7 +267,7 @@ func TestOutboundWorkerDeadLetterTerminal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}}
+	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}, outbound: testOutbound(t)}
 	target, _ := svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{
 		Name: "bad", BaseURL: srv.URL, AuthType: "bearer", BearerToken: "tok",
 		ProvisionUsers: true, Enabled: true,
@@ -298,7 +298,7 @@ func TestEnqueueFanOutOnlyEnabledUserTargets(t *testing.T) {
 	db.Pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS pgcrypto`)
 	db.Pool.Exec(ctx, outboundSchema)
 
-	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}}
+	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}, outbound: testOutbound(t)}
 	// enabled+users -> should receive; disabled -> skip; groups-only -> skip for user op.
 	svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{Name: "a", BaseURL: "https://a/scim", ProvisionUsers: true, Enabled: true})
 	svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{Name: "b", BaseURL: "https://b/scim", ProvisionUsers: true, Enabled: false})
@@ -321,7 +321,7 @@ func TestTargetAppSecretRoundTrip(t *testing.T) {
 	db.Pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS pgcrypto`)
 	db.Pool.Exec(ctx, outboundSchema)
 
-	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}}
+	svc := &Service{db: db, logger: zap.NewNop(), config: &config.Config{}, outbound: testOutbound(t)}
 	target, err := svc.CreateTargetApp(ctx, testOrgID, &TargetAppInput{
 		Name: "sec", BaseURL: "https://s/scim", AuthType: "bearer", BearerToken: "super-secret",
 		ProvisionUsers: true, Enabled: true,

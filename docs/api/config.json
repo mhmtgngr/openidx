@@ -54,9 +54,7 @@
     }
   },
   "servers": {
-    "local": "http://localhost:{port}",
-    "staging": "https://staging-api.openidx.org",
-    "production": "https://api.openidx.org"
+    "local": "http://localhost:{port}"
   },
   "authentication": {
     "type": "bearer",

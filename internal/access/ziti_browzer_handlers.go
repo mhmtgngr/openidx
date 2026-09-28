@@ -14,8 +14,16 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
-// handleBrowZerStatus returns the current BrowZer configuration state
+// handleBrowZerStatus returns the current BrowZer configuration state. The
+// configuration exists once for the install; the ids of the controller objects
+// it created (the JWT signer, the auth, dial and edge-router policies) are the
+// install's, so anyone but an install administrator gets whether BrowZer is on
+// and where its bootstrapper answers, and nothing else.
 func (s *Service) handleBrowZerStatus(c *gin.Context) {
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
 	if s.ziti() == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"enabled": false,
@@ -31,6 +39,10 @@ func (s *Service) handleBrowZerStatus(c *gin.Context) {
 			"configured":       false,
 			"bootstrapper_url": "http://localhost:1408",
 		})
+		return
+	}
+	if !view.install {
+		c.JSON(http.StatusOK, gin.H{"enabled": cfg.Enabled, "bootstrapper_url": cfg.BootstrapperURL})
 		return
 	}
 
@@ -75,7 +87,9 @@ func (s *Service) handleDisableBrowZer(c *gin.Context) {
 }
 
 // handleEnableBrowZerOnService adds the "browzer-enabled" role attribute to a Ziti service
-// and optionally creates a proxy_route for path-based BrowZer access.
+// and optionally creates a proxy_route for path-based BrowZer access. The
+// attribute publishes the service to every BrowZer user of the install, so an
+// organization's admin publishes only the organization's own services.
 func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ziti not initialized"})
@@ -89,6 +103,9 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
+	if !s.browzerServiceAllowed(c, zitiServiceID) {
+		return
+	}
 
 	// Parse optional path and/or domain from request body
 	var body struct {
@@ -98,6 +115,50 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 	_ = c.ShouldBindJSON(&body)
 	browzerPath := strings.TrimSpace(body.Path)
 	browzerDomain := strings.TrimSpace(body.Domain)
+	if browzerPath != "" && !strings.HasPrefix(browzerPath, "/") {
+		browzerPath = "/" + browzerPath
+	}
+	pathFromURL := ""
+	if browzerPath != "" {
+		domain := "browzer.localtest.me"
+		if s.browzerTargetManager != nil {
+			if d := s.browzerTargetManager.GetDomain(); d != "" {
+				domain = d
+			}
+		}
+		pathFromURL = fmt.Sprintf("http://%s%s", domain, browzerPath)
+	}
+	vhostFromURL := ""
+	if browzerDomain != "" {
+		vhostFromURL = fmt.Sprintf("http://%s/", browzerDomain)
+	}
+
+	// A host is served by one enabled route in the whole installation. The
+	// routes this may create are checked before anything changes: a host held
+	// by another organization, or by a route of this organization other than
+	// this service's own BrowZer route (which is replaced below), refuses the
+	// request.
+	if pathFromURL != "" || vhostFromURL != "" {
+		var serviceName string
+		if err := s.db.Pool.QueryRow(c.Request.Context(),
+			`SELECT name FROM ziti_services WHERE ziti_id = $1 AND org_id = $2`, zitiServiceID, org.ID,
+		).Scan(&serviceName); err == nil {
+			for _, fromURL := range []string{pathFromURL, vhostFromURL} {
+				if fromURL == "" {
+					continue
+				}
+				holder, herr := s.enabledRouteOnHost(c.Request.Context(), fromURL)
+				if herr != nil {
+					apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to check the BrowZer route's host", herr), s.logger)
+					return
+				}
+				if holder != nil && !(holder.OrgID == org.ID && holder.BrowZer && holder.ZitiServiceName == serviceName) {
+					respondRouteHostTaken(c, org.ID, &routeHostTakenError{Holder: holder})
+					return
+				}
+			}
+		}
+	}
 
 	// Get current attributes
 	attrs, err := s.ziti().GetServiceRoleAttributes(c.Request.Context(), zitiServiceID)
@@ -126,9 +187,6 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 	// If a path was provided, create/update a proxy_route for path-based BrowZer routing
 	var routePath string
 	if browzerPath != "" {
-		if !strings.HasPrefix(browzerPath, "/") {
-			browzerPath = "/" + browzerPath
-		}
 		routePath = browzerPath
 
 		// Look up the service details from the database
@@ -140,14 +198,7 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		if err != nil {
 			s.logger.Warn("Could not look up service details for BrowZer path route", zap.Error(err))
 		} else {
-			domain := "browzer.localtest.me"
-			if s.browzerTargetManager != nil {
-				if d := s.browzerTargetManager.GetDomain(); d != "" {
-					domain = d
-				}
-			}
-
-			fromURL := fmt.Sprintf("http://%s%s", domain, browzerPath)
+			fromURL := pathFromURL
 			toURL := fmt.Sprintf("http://%s:%d", serviceHost, servicePort)
 			routeName := fmt.Sprintf("browzer-%s", serviceName)
 
@@ -172,6 +223,10 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 				 VALUES ($1, $2, $3, $4, true, true, 10, true, $5, true, $6)`,
 				routeName, fmt.Sprintf("BrowZer path route for %s", serviceName), fromURL, toURL, serviceName, org.ID,
 			)
+			if isRouteHostTaken(dbErr) {
+				respondRouteHostTaken(c, org.ID, s.routeHostTaken(c.Request.Context(), fromURL))
+				return
+			}
 			if dbErr != nil {
 				s.logger.Warn("Failed to create BrowZer path route", zap.Error(dbErr))
 			} else {
@@ -194,7 +249,7 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		if err != nil {
 			s.logger.Warn("Could not look up service details for BrowZer vhost route", zap.Error(err))
 		} else {
-			fromURL := fmt.Sprintf("http://%s/", browzerDomain)
+			fromURL := vhostFromURL
 			toURL := fmt.Sprintf("http://%s:%d", serviceHost, servicePort)
 			routeName := fmt.Sprintf("browzer-vhost-%s", serviceName)
 
@@ -214,6 +269,10 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 				 VALUES ($1, $2, $3, $4, true, true, 10, true, $5, true, $6)`,
 				routeName, fmt.Sprintf("BrowZer vhost route for %s", serviceName), fromURL, toURL, serviceName, org.ID,
 			)
+			if isRouteHostTaken(dbErr) {
+				respondRouteHostTaken(c, org.ID, s.routeHostTaken(c.Request.Context(), fromURL))
+				return
+			}
 			if dbErr != nil {
 				s.logger.Warn("Failed to create BrowZer vhost route", zap.Error(dbErr))
 			} else {
@@ -256,6 +315,9 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 	org, oerr := orgctx.From(c.Request.Context())
 	if oerr != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	if !s.browzerServiceAllowed(c, zitiServiceID) {
 		return
 	}
 
@@ -313,4 +375,30 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 	s.enqueueReconcile()
 
 	c.JSON(http.StatusOK, gin.H{"message": "BrowZer disabled on service", "role_attributes": filtered})
+}
+
+// browzerServiceAllowed decides whether the caller may turn BrowZer on or off
+// for a controller service: an install administrator for any, anyone else for
+// one of their organization's services. It writes the refusal -- the 404 an
+// unknown service gets -- and returns false otherwise. It runs before the
+// controller is touched: the toggles rewrite the service's role attributes
+// there, whoever owns it.
+func (s *Service) browzerServiceAllowed(c *gin.Context, zitiServiceID string) bool {
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return false
+	}
+	if view.install {
+		return true
+	}
+	owned, err := s.ownsZitiService(c.Request.Context(), view.orgID, zitiServiceID)
+	if err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("read the organization's Ziti services", err), s.logger)
+		return false
+	}
+	if !owned {
+		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
+		return false
+	}
+	return true
 }

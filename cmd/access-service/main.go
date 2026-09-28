@@ -101,6 +101,13 @@ func main() {
 
 	cfg.LogSecurityWarnings(log)
 
+	// The audit service writes an event only for a service presenting the
+	// internal token, so without one every event this service posts is refused.
+	if cfg.AuditURL != "" && cfg.InternalServiceToken == "" {
+		log.Warn("INTERNAL_SERVICE_TOKEN is not set: the audit service will refuse every audit event " +
+			"this service posts (PAM reveals, proxy decisions). Set the same value on access-service and audit-service.")
+	}
+
 	// Initialize tracing
 	tracingCfg := tracing.ConfigFromEnv("access-service", cfg.Environment)
 	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)
@@ -352,7 +359,8 @@ func main() {
 		apisixClient := access.NewAPISIXClient(cfg.APISIXAdminURL, cfg.APISIXAdminKey)
 		_, apisixHopPort := access.ParseHopAddr(cfg.ZitiBrowZerHopAddr)
 		apisixRec := access.NewAPISIXReconciler(db, log, apisixClient, browzerTargetManager,
-			access.APISIXRouteOpts(cfg.APISIXBootstrapperNode, apisixHopPort, access.SplitCSV(cfg.BrowZerOIDCCallbackPaths)))
+			access.APISIXRouteOpts(cfg.APISIXBootstrapperNode, apisixHopPort, access.SplitCSV(cfg.BrowZerOIDCCallbackPaths),
+				cfg.APISIXForwardAuthURI))
 		browzerTargetManager.SetAPISIXReconciler(apisixRec)
 		go func() {
 			if err := apisixRec.Reconcile(bgCtx); err != nil {
@@ -377,6 +385,17 @@ func main() {
 	}
 	accessService.SetFeatureManager(featureManager)
 	log.Info("Feature Manager initialized")
+
+	// Guacamole feature passwords were stored in plaintext before they were
+	// sealed. Seal the ones still waiting now, where the key is, rather than
+	// at each feature's next enable.
+	sealCtx, cancelSeal := context.WithTimeout(context.Background(), 30*time.Second)
+	if n, err := featureManager.SealStoredSecrets(sealCtx); err != nil {
+		log.Warn("could not seal the stored Guacamole feature passwords; each is sealed at its feature's next enable", zap.Error(err))
+	} else if n > 0 {
+		log.Info("sealed stored Guacamole feature passwords", zap.Int("count", n))
+	}
+	cancelSeal()
 
 	// Initialize Unified Audit Service
 	auditService := access.NewUnifiedAuditService(db, log)

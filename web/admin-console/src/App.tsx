@@ -279,8 +279,11 @@ function App() {
         <Route path="directories" element={<Directories />} />
         <Route path="service-accounts" element={<ServiceAccounts />} />
 
-        {/* Applications - Admin Protected */}
-        <Route path="applications" element={<Applications />} />
+        {/* Applications - Admin Protected. The OAuth client, SAML service
+            provider, proxy route and upstream pool APIs answer administrators
+            only, reads included, so these pages sit behind AdminRoute rather
+            than rendering broken for anyone else. */}
+        <Route path="applications" element={<AdminRoute><Applications /></AdminRoute>} />
         <Route path="assignment-report" element={<AssignmentReport />} />
         <Route path="identity-providers" element={<IdentityProviders />} />
         <Route path="provisioning-rules" element={<ProvisioningRules />} />
@@ -290,8 +293,8 @@ function App() {
 
         {/* Network & Access - Admin Protected */}
         <Route path="zero-trust" element={<ZeroTrust />} />
-        <Route path="proxy-routes" element={<ProxyRoutes />} />
-        <Route path="upstream-pools" element={<UpstreamPools />} />
+        <Route path="proxy-routes" element={<AdminRoute><ProxyRoutes /></AdminRoute>} />
+        <Route path="upstream-pools" element={<AdminRoute><UpstreamPools /></AdminRoute>} />
         <Route path="ziti-setup" element={<ZitiSetup />} />
         <Route path="ziti-network" element={<ZitiNetwork />} />
         <Route path="network-topology" element={<NetworkTopology />} />
@@ -350,7 +353,7 @@ function App() {
         <Route path="predictive-analytics" element={<PredictiveAnalytics />} />
 
         {/* Enterprise - Admin Protected */}
-        <Route path="saml-service-providers" element={<SAMLServiceProviders />} />
+        <Route path="saml-service-providers" element={<AdminRoute><SAMLServiceProviders /></AdminRoute>} />
         <Route path="bulk-operations" element={<BulkOperations />} />
         <Route path="email-templates" element={<EmailTemplates />} />
         <Route path="lifecycle-policies" element={<LifecyclePolicies />} />

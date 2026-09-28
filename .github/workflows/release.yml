@@ -142,8 +142,14 @@ jobs:
               --certificate-identity-regexp '^https://github.com/${{ github.repository }}/\.github/workflows/release\.yml@' \
               ghcr.io/${{ github.repository }}/charts/openidx:${{ env.CHART_VERSION }}
             helm install openidx oci://ghcr.io/${{ github.repository }}/charts/openidx \
-              --version ${{ env.CHART_VERSION }} --namespace openidx --create-namespace
+              --version ${{ env.CHART_VERSION }} --namespace openidx --create-namespace \
+              -f my-values.yaml
             ```
+
+            `my-values.yaml` holds your install's own settings. The chart refuses
+            to render without `config.oauthIssuer`, the public URL of your OAuth
+            service (for example `https://auth.example.com`), and without the
+            bundled datastores' `secrets.*`; see docs/docs/deployment/kubernetes.md.
           files: dist/*
 
   # Publishes the Helm chart as an OCI artifact alongside the binaries. Runs

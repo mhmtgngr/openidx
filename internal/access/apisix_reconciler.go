@@ -54,7 +54,7 @@ func (rec *APISIXReconciler) Reconcile(ctx context.Context) error {
 	}
 	objs := buildBrowZerAPISIXRoutes(browzer, rec.opts)
 
-	pooled, perr := BuildEdgeRoutesForPools(ctx, rec.db, rec.logger)
+	pooled, perr := BuildEdgeRoutesForPools(ctx, rec.db, rec.logger, rec.opts.forwardAuthURI)
 	if perr != nil {
 		// Not fatal, but not silent: with the pool set unread, every
 		// oidx-route-* object would look undesired, so the pass must not prune

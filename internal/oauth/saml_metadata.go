@@ -490,9 +490,18 @@ func (md *SPMetadata) RedirectSLOURL() string {
 	return ""
 }
 
-// FetchSAMLMetadata fetches and parses metadata from a remote URL
+// FetchSAMLMetadata fetches and parses metadata from a remote URL. The URL is
+// the organization administrator's, so the fetch goes through the outbound
+// guard: a URL naming an internal address, or redirecting to one, is refused.
 func (s *Service) FetchSAMLMetadata(ctx context.Context, metadataURL string) (*SPMetadata, error) {
-	client := s.outboundHTTPClient("saml-metadata", 30*time.Second)
+	// Checked before the client as well as at its connections: a refused URL
+	// is the administrator's to fix, not a failure of the metadata host, so it
+	// must not count against the circuit breaker every organization's fetches
+	// share.
+	if err := orgOutboundGuard().CheckURL(ctx, metadataURL); err != nil {
+		return nil, fmt.Errorf("metadata URL is not allowed: %w", err)
+	}
+	client := s.outboundGuardedHTTPClient("saml-metadata", 30*time.Second)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", metadataURL, nil)
 	if err != nil {

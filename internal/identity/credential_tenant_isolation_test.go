@@ -393,17 +393,19 @@ func TestHardwareTokenEventIsFiledUnderTheTokensOrg(t *testing.T) {
 	}
 }
 
-// Guards the fallback rather than the happy path: a magic link is minted inside
-// an organization, so its row must carry that organization even though the
-// verification that reads it back spans every tenant.
-func TestMagicLinkCarriesItsOrgThroughAPreResolutionVerify(t *testing.T) {
-	s, _, bCtx, db := newCredentialIsolationService(t)
+// A magic link is minted inside an organization, so its row must carry that
+// organization, and it is verified inside the organization the request
+// resolved to: the tenant resolver gives every request one, from the host or
+// the default. Verification used to read every tenant's pending links, and a
+// link was accepted wherever it was presented.
+func TestAMagicLinkIsVerifiedOnlyInItsOwnOrganization(t *testing.T) {
+	s, aCtx, bCtx, db := newCredentialIsolationService(t)
 
 	if _, err := db.Pool.Exec(context.Background(), `
 		CREATE TABLE IF NOT EXISTS magic_links (
 		    id UUID PRIMARY KEY, org_id UUID NOT NULL, user_id UUID NOT NULL,
 		    email VARCHAR(255) NOT NULL, token_hash TEXT NOT NULL,
-		    purpose VARCHAR(50), redirect_url TEXT, ip_address VARCHAR(45),
+		    token_lookup VARCHAR(64) UNIQUE, purpose VARCHAR(50), redirect_url TEXT, ip_address VARCHAR(45),
 		    user_agent TEXT, status VARCHAR(20) NOT NULL,
 		    created_at TIMESTAMPTZ DEFAULT NOW(), expires_at TIMESTAMPTZ NOT NULL,
 		    used_at TIMESTAMPTZ);
@@ -430,12 +432,26 @@ func TestMagicLinkCarriesItsOrgThroughAPreResolutionVerify(t *testing.T) {
 		t.Errorf("magic link filed under org %s, want %s", org, credOrgB)
 	}
 
-	// And the pre-resolution verify still works with no organization anywhere:
-	// the visitor holds a link and nothing else, so a scoped query here would
-	// mean no magic link in the product ever worked again.
-	userID, purpose, err := s.VerifyMagicLink(context.Background(), link.Token, "10.0.0.9", "test")
+	// Presented in another organization, or with none, it is not found, and
+	// it is not spent: it still works where it was minted.
+	if _, _, err := s.VerifyMagicLink(aCtx, link.Token, "10.0.0.9", "test"); err == nil {
+		t.Fatal("organization A verified organization B's magic link")
+	}
+	if _, _, err := s.VerifyMagicLink(context.Background(), link.Token, "10.0.0.9", "test"); err == nil {
+		t.Fatal("a magic link verified with no organization on the context")
+	}
+	var status string
+	if err := db.Pool.QueryRow(context.Background(),
+		"SELECT status FROM magic_links WHERE id = $1", link.ID).Scan(&status); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if status != "pending" {
+		t.Fatalf("the link refused in another organization is %q, want pending", status)
+	}
+
+	userID, purpose, err := s.VerifyMagicLink(bCtx, link.Token, "10.0.0.9", "test")
 	if err != nil {
-		t.Fatalf("verify with no org on the context: %v", err)
+		t.Fatalf("verify in the link's own organization: %v", err)
 	}
 	if userID == "" || purpose != "login" {
 		t.Errorf("verify returned user=%q purpose=%q", userID, purpose)

@@ -264,11 +264,15 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 	}
 
 	// Log audit event in background with timeout
+	// gin pools the Context and resets it for the next request as soon as
+	// the handler returns, so a detached goroutine must read the address
+	// before it starts -- see TestNoDetachedGoroutineReadsAGinContext.
+	clientIP := c.ClientIP()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.logAuditEvent(ctx, "authentication", "social_login", "login", "success",
-			userID, c.ClientIP(), providerID, "identity_provider",
+			userID, clientIP, providerID, "identity_provider",
 			map[string]interface{}{
 				"provider_type": provider.ProviderType,
 				"social_id":     userInfo.ID,
@@ -282,6 +286,11 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 		if err == nil {
 			var oauthParams map[string]string
 			if json.Unmarshal([]byte(paramsJSON), &oauthParams) == nil {
+				// The provider proved one factor. The password login's own
+				// decision says whether that is enough (external_signin_mfa.go).
+				if s.externalSignInNeedsMore(c, userID, oauthParams, loginSession, "social") {
+					return
+				}
 				// Create a session linked to this login
 				clientIP := c.ClientIP()
 				userAgent := c.GetHeader("User-Agent")
@@ -300,7 +309,12 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 		}
 	}
 
-	// Fallback: generate tokens directly using the SAML token flow
+	// Fallback: generate tokens directly using the SAML token flow. Only for a
+	// user whom the password login would let in without a second factor: with
+	// no pending request there is nowhere to continue a challenge.
+	if s.externalSignInNeedsMore(c, userID, nil, "", "social") {
+		return
+	}
 	samlUser := &SAMLUser{
 		ID:          userID,
 		Email:       userInfo.Email,

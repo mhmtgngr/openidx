@@ -24,6 +24,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/leader"
+	"github.com/openidx/openidx/internal/common/netutil"
 	"github.com/openidx/openidx/internal/common/resilience"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
@@ -65,34 +66,68 @@ type Service struct {
 	redis  *database.RedisClient
 	logger *zap.Logger
 	client *resilience.ResilientHTTPClient
+	// guard decides where a subscription's URL may point: when it is saved and
+	// at every delivery. The URL is an organization administrator's, and the
+	// delivery starts inside the platform's network, with the first 1000 bytes
+	// of the answer kept and shown back -- so without it a subscription could
+	// read the platform's internal services and the cloud metadata endpoint.
+	guard   *netutil.OutboundGuard
+	breaker *resilience.CircuitBreaker
 	// cipher encrypts the per-subscription HMAC signing secret at rest. Reads are
 	// prefix-aware (legacy plaintext rows pass through) so rollout needs no flag day.
 	cipher *secretcrypt.Cipher
 }
 
 // NewService creates a new webhook service. cipher encrypts subscription signing
-// secrets at rest (built from ENCRYPTION_KEY by the caller).
+// secrets at rest (built from ENCRYPTION_KEY by the caller). Deliveries reach
+// public addresses, and the internal ones OIDX_OUTBOUND_ALLOWLIST names.
 func NewService(db *database.PostgresDB, redis *database.RedisClient, logger *zap.Logger, cipher *secretcrypt.Cipher) *Service {
-	rawClient := &http.Client{
-		Timeout: 10 * time.Second,
+	guard, err := netutil.DefaultOutboundGuard()
+	if err != nil {
+		logger.Error("OIDX_OUTBOUND_ALLOWLIST does not parse, so it allows nothing: webhooks reach public addresses only",
+			zap.Error(err))
 	}
-	cb := resilience.NewCircuitBreaker(resilience.CircuitBreakerConfig{
-		Name:         "webhook-delivery",
-		Threshold:    10,
-		ResetTimeout: 30 * time.Second,
-		Logger:       logger.With(zap.String("component", "webhook-circuit-breaker")),
-	})
-	return &Service{
+	s := &Service{
 		db:     db,
 		redis:  redis,
 		logger: logger,
-		client: resilience.NewResilientHTTPClient(rawClient, cb),
+		breaker: resilience.NewCircuitBreaker(resilience.CircuitBreakerConfig{
+			Name:         "webhook-delivery",
+			Threshold:    10,
+			ResetTimeout: 30 * time.Second,
+			Logger:       logger.With(zap.String("component", "webhook-circuit-breaker")),
+		}),
 		cipher: cipher,
 	}
+	s.SetOutboundGuard(guard)
+	return s
 }
 
-// CreateSubscription creates a new webhook subscription
+// outbound is s.guard, or the process default for a Service built without
+// NewService.
+func (s *Service) outbound() *netutil.OutboundGuard {
+	if s.guard != nil {
+		return s.guard
+	}
+	g, _ := netutil.DefaultOutboundGuard()
+	return g
+}
+
+// SetOutboundGuard replaces the guard that decides where subscriptions may
+// point, and the delivery client built on it: guarded connections, a
+// ten-second timeout and no redirects.
+func (s *Service) SetOutboundGuard(g *netutil.OutboundGuard) {
+	s.guard = g
+	s.client = resilience.NewResilientHTTPClient(g.Client(10*time.Second), s.breaker)
+}
+
+// CreateSubscription creates a new webhook subscription. A URL the outbound
+// guard refuses is returned as a *netutil.DestinationError, before anything is
+// stored.
 func (s *Service) CreateSubscription(ctx context.Context, name, url, secret string, events []string, createdBy string) (*Subscription, error) {
+	if err := s.outbound().CheckURL(ctx, url); err != nil {
+		return nil, err
+	}
 	var createdByPtr *string
 	if createdBy != "" {
 		createdByPtr = &createdBy
@@ -206,8 +241,12 @@ func (s *Service) GetSubscription(ctx context.Context, id string) (*Subscription
 	return &sub, nil
 }
 
-// UpdateSubscription updates a webhook subscription
+// UpdateSubscription updates a webhook subscription. The new URL is held to
+// the same rule as a new subscription's.
 func (s *Service) UpdateSubscription(ctx context.Context, id, name, url string, events []string, status string) error {
+	if err := s.outbound().CheckURL(ctx, url); err != nil {
+		return err
+	}
 	query := `UPDATE webhook_subscriptions SET name = $2, url = $3, events = $4::TEXT[], status = $5, updated_at = $6
 		WHERE id = $1`
 
@@ -428,6 +467,17 @@ func (s *Service) deliverWebhook(ctx context.Context, deliveryID string) error {
 	}
 	if subSecret, err = s.cipher.Decrypt(subSecret); err != nil {
 		return fmt.Errorf("failed to decrypt webhook secret: %w", err)
+	}
+
+	// A URL saved before the guard existed, or a name that now resolves to an
+	// internal address, is refused here rather than inside the client: its
+	// circuit breaker is shared by every organization's subscriptions, and one
+	// organization's refused URL must not open it for the others. The client
+	// checks again at the connection itself, which is the check a rebinding
+	// name cannot get past.
+	if err := s.outbound().CheckURL(ctx, subURL); err != nil {
+		s.scheduleRetry(ctx, deliveryID, attempt, nil, err.Error())
+		return fmt.Errorf("webhook destination refused: %w", err)
 	}
 
 	// Build the HTTP request
@@ -742,6 +792,21 @@ func (s *Service) PingSubscription(ctx context.Context, subscriptionID string) (
 		return nil, fmt.Errorf("failed to create ping delivery record: %w", err)
 	}
 
+	delivery := &Delivery{
+		ID:             deliveryID,
+		SubscriptionID: subscriptionID,
+		EventType:      "ping",
+		Payload:        string(payloadJSON),
+		Attempt:        1,
+		CreatedAt:      now,
+	}
+
+	// The same rule a delivery is held to, checked before the request so that a
+	// refused URL costs no circuit-breaker failure (see deliverWebhook).
+	if err := s.outbound().CheckURL(ctx, sub.URL); err != nil {
+		return s.failPing(ctx, delivery, subscriptionID, err), nil
+	}
+
 	// Build and send the HTTP request directly (no retry scheduling for test pings)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sub.URL, strings.NewReader(string(payloadJSON)))
 	if err != nil {
@@ -757,30 +822,9 @@ func (s *Service) PingSubscription(ctx context.Context, subscriptionID string) (
 	req.Header.Set("X-Webhook-Timestamp", timestamp)
 	req.Header.Set("X-Webhook-Signature", signature)
 
-	delivery := &Delivery{
-		ID:             deliveryID,
-		SubscriptionID: subscriptionID,
-		EventType:      "ping",
-		Payload:        string(payloadJSON),
-		Attempt:        1,
-		CreatedAt:      now,
-	}
-
 	resp, err := s.client.Do(req)
 	if err != nil {
-		// Update delivery as failed
-		updateQuery := `UPDATE webhook_deliveries SET status = 'failed', attempt = 1, response_body = $2 WHERE id = $1`
-		errMsg := err.Error()
-		s.db.Pool.Exec(ctx, updateQuery, deliveryID, errMsg)
-
-		delivery.Status = "failed"
-		delivery.ResponseBody = &errMsg
-
-		s.logger.Warn("webhook ping failed",
-			zap.String("subscription_id", subscriptionID),
-			zap.Error(err),
-		)
-		return delivery, nil
+		return s.failPing(ctx, delivery, subscriptionID, err), nil
 	}
 	defer resp.Body.Close()
 
@@ -816,6 +860,22 @@ func (s *Service) PingSubscription(ctx context.Context, subscriptionID string) (
 	)
 
 	return delivery, nil
+}
+
+// failPing records a test ping that got no answer, and returns it.
+func (s *Service) failPing(ctx context.Context, delivery *Delivery, subscriptionID string, cause error) *Delivery {
+	updateQuery := `UPDATE webhook_deliveries SET status = 'failed', attempt = 1, response_body = $2 WHERE id = $1`
+	errMsg := cause.Error()
+	s.db.Pool.Exec(ctx, updateQuery, delivery.ID, errMsg)
+
+	delivery.Status = "failed"
+	delivery.ResponseBody = &errMsg
+
+	s.logger.Warn("webhook ping failed",
+		zap.String("subscription_id", subscriptionID),
+		zap.Error(cause),
+	)
+	return delivery
 }
 
 // GetDeliveryStats returns delivery statistics for a subscription

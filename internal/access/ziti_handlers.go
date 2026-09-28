@@ -34,52 +34,57 @@ func (s *Service) zitiConsoleURL(ctx context.Context) string {
 	return strings.TrimRight(ctrlURL, "/") + "/zac/"
 }
 
+// handleZitiStatus says whether OpenZiti is configured and reachable, with the
+// organization's own service and identity counts. The controller's version,
+// its management endpoints, the console URL derived from them and the
+// controller's own error text describe the install and can name its internal
+// addresses, so only an install administrator gets them.
 func (s *Service) handleZitiStatus(c *gin.Context) {
-	consoleURL := s.zitiConsoleURL(c.Request.Context())
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
 	if s.ziti() == nil {
-		c.JSON(http.StatusOK, gin.H{
-			"enabled":     false,
-			"message":     "OpenZiti integration is not configured",
-			"sdk_ready":   false,
-			"console_url": consoleURL,
-		})
+		status := gin.H{
+			"enabled":   false,
+			"message":   "OpenZiti integration is not configured",
+			"sdk_ready": false,
+		}
+		if view.install {
+			status["console_url"] = s.zitiConsoleURL(c.Request.Context())
+		}
+		c.JSON(http.StatusOK, status)
 		return
 	}
 
 	status := gin.H{
-		"enabled":     true,
-		"sdk_ready":   s.ziti().IsInitialized(),
-		"console_url": consoleURL,
+		"enabled":   true,
+		"sdk_ready": s.ziti().IsInitialized(),
 	}
 
 	// Check controller connectivity
 	version, err := s.ziti().GetControllerVersion(c.Request.Context())
-	if err != nil {
-		status["controller_reachable"] = false
-		status["controller_error"] = err.Error()
-	} else {
-		status["controller_reachable"] = true
-		status["controller_version"] = version
-	}
-
-	// Management endpoint pool (HA failover state). ha=true when more than one
-	// controller endpoint is configured via ZITI_CTRL_URLS.
-	endpoints := s.ziti().ControllerEndpoints()
-	status["controller_endpoints"] = endpoints
-	status["ha"] = len(endpoints) > 1
-
-	org, oerr := orgctx.From(c.Request.Context())
-	if oerr != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
-		return
+	status["controller_reachable"] = err == nil
+	if view.install {
+		if err != nil {
+			status["controller_error"] = err.Error()
+		} else {
+			status["controller_version"] = version
+		}
+		// Management endpoint pool (HA failover state). ha=true when more than
+		// one controller endpoint is configured via ZITI_CTRL_URLS.
+		endpoints := s.ziti().ControllerEndpoints()
+		status["controller_endpoints"] = endpoints
+		status["ha"] = len(endpoints) > 1
+		status["console_url"] = s.zitiConsoleURL(c.Request.Context())
 	}
 
 	// Count local DB records
 	var serviceCount, identityCount int
-	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_services WHERE org_id = $1", org.ID).Scan(&serviceCount); err != nil {
+	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_services WHERE org_id = $1", view.orgID).Scan(&serviceCount); err != nil {
 		s.logger.Warn("Failed to count ziti services", zap.Error(err))
 	}
-	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_identities WHERE org_id = $1", org.ID).Scan(&identityCount); err != nil {
+	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_identities WHERE org_id = $1", view.orgID).Scan(&identityCount); err != nil {
 		s.logger.Warn("Failed to count ziti identities", zap.Error(err))
 	}
 	status["services_count"] = serviceCount
@@ -206,11 +211,27 @@ func (s *Service) handleCreateZitiService(c *gin.Context) {
 		return
 	}
 
-	org, oerr := orgctx.From(c.Request.Context())
-	if oerr != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+	view, ok := s.zitiViewFor(c)
+	if !ok {
 		return
 	}
+	// ProvisionDialableService adopts a service that already exists under
+	// this name and rewrites its configs and policies, so the name has to be
+	// free: not another organization's or the install's (ziti_scope.go), and,
+	// for anyone but an install administrator adopting a service no
+	// organization holds, not on the controller at all.
+	if claimed, err := zitiServiceNameClaimed(c.Request.Context(), s.db, view.orgID, req.Name); err != nil || claimed {
+		s.refuseZitiServiceName(c, err)
+		return
+	}
+	if !view.install {
+		existing, err := s.ziti().serviceIDByName(c.Request.Context(), req.Name)
+		if err != nil || existing != "" {
+			s.refuseZitiServiceName(c, err)
+			return
+		}
+	}
+	org := orgctx.Org{ID: view.orgID}
 
 	// Provision the FULL overlay object graph (host.v1 + intercept.v1 + service +
 	// Bind/Dial/service-edge-router policies) so the service is actually dialable.
@@ -233,6 +254,14 @@ func (s *Service) handleCreateZitiService(c *gin.Context) {
 			r = "#" + r
 		}
 		dialRoles = append(dialRoles, r)
+	}
+	// The dial roles, attributes and intercept address reach other
+	// organizations' identities, policies and clients (ziti_roles.go).
+	if !view.install {
+		if err := s.checkNewServiceRoles(c.Request.Context(), view.orgID, dialRoles, req.Attributes, interceptAddr); err != nil {
+			s.writeZitiRoleError(c, "check the service's roles", err)
+			return
+		}
 	}
 	zitiID, err := s.ziti().ProvisionDialableService(c.Request.Context(), DialableServiceSpec{
 		Name:              req.Name,
@@ -425,6 +454,9 @@ func (s *Service) handleCreateZitiIdentity(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
+	if !s.zitiIdentityAttributesAllowed(c, "", req.Attributes) {
+		return
+	}
 
 	zitiID, enrollmentJWT, err := s.ziti().CreateIdentity(c.Request.Context(), req.Name, req.IdentityType, req.Attributes)
 	if err != nil {
@@ -572,6 +604,15 @@ func (s *Service) handleEnableZitiOnRoute(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "route not found"})
 		return
 	}
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	if claimed, err := zitiServiceNameClaimed(c.Request.Context(), s.db, org.ID, req.ServiceName); err != nil || claimed {
+		s.refuseZitiServiceName(c, err)
+		return
+	}
 
 	if err := s.ziti().SetupZitiForRoute(c.Request.Context(), routeID, req.ServiceName, req.Host, req.Port); err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to enable Ziti on route", err), s.logger)
@@ -614,4 +655,14 @@ func (s *Service) handleDisableZitiOnRoute(c *gin.Context) {
 	s.logAuditEvent(c, "ziti_disabled_on_route", routeID, "proxy_route", nil)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Ziti disabled on route"})
+}
+
+// refuseZitiServiceName answers a request whose service name is not the
+// caller's organization's to take, or whose check could not run.
+func (s *Service) refuseZitiServiceName(c *gin.Context, err error) {
+	if err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("check the ziti service name", err), s.logger)
+		return
+	}
+	c.JSON(http.StatusConflict, gin.H{"error": "a ziti service with this name already exists"})
 }

@@ -77,6 +77,10 @@ type ProxyRoute struct {
 	UpstreamPoolID string    `json:"upstream_pool_id,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	// OrgID is the organization that owns the route. findRouteByHost fills it
+	// for the data plane, which resolves a request's organization from the
+	// route its host matched; the route API does not return it.
+	OrgID string `json:"-"`
 	// ApplicationID/ApplicationName identify the application (if any) whose
 	// applications.route_id points at this route — the same link appForRoute
 	// (proxy_assignment_cache.go) resolves to decide real access under
@@ -129,6 +133,14 @@ type ProxySession struct {
 	// nothing else to go on: proxy_sessions.idp_id was written by the multi-IdP
 	// callback and read by nothing until this field existed.
 	IDPName string `json:"idp_name,omitempty"`
+	// bearer is the Authorization header value the proxy authenticated this
+	// request with, when it came from getSessionFromBearer. The proxy removes
+	// exactly that value before the request goes upstream.
+	bearer string
+	// orgID is the organization of the route the session was signed in on,
+	// which is where its roles hold: a proxy session is accepted only on that
+	// organization's routes (sessionOnRoute).
+	orgID string
 }
 
 // Service provides access proxy operations
@@ -243,9 +255,13 @@ func (s *Service) SetZitiManager(zm *ZitiManager) {
 	s.zitiProvider.Store(zm)
 }
 
-// SetFeatureManager sets the feature manager for the service
+// SetFeatureManager sets the feature manager for the service. The manager
+// seals the secrets it stores with this service's ENCRYPTION_KEY cipher.
 func (s *Service) SetFeatureManager(fm *FeatureManager) {
 	s.featureManager = fm
+	if s.idpCipher != nil {
+		fm.SetSecretCipher(s.idpCipher)
+	}
 	if s.zitiProvider != nil {
 		fm.SetZitiProvider(s.zitiProvider)
 	}
@@ -443,30 +459,51 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// is gated like the route list it summarises.
 		api.GET("/overview", adminOnly, svc.handleAccessOverview)
 
-		// OpenZiti management endpoints
-		api.GET("/ziti/status", svc.handleZitiStatus)
-		// Guided network setup: checklist + install advisor + per-route advice.
-		// The advice names every Ziti route's upstream, like the route list, and
-		// carries the install-wide user sync counts; the console shows it on
-		// the admin-only Network Setup page.
-		api.GET("/ziti/setup/status", adminOnly, svc.handleZitiSetupStatus)
-		api.GET("/ziti/reconciler/status", svc.handleZitiReconcilerStatus)
-		// Ziti management mutations are admin-only: creating identities/services
-		// mints overlay-join credentials and reconfigures the zero-trust fabric,
-		// so a plain authenticated tenant user must NOT reach them. GET reads of
-		// the fabric's own configuration and status stay open to any
-		// authenticated user (org-scoped lists/status). The reads that describe
-		// other users -- their identities, sessions, devices, posture and risk
-		// -- carry `operatorTier`, the tier of the console pages that show them.
-		// The device posture self-report stays open because a device submits
-		// its own posture. `adminOnly` is the shared gate.
+		// OpenZiti management endpoints.
 		//
-		// `platformOnly` follows adminOnly on the routes whose settings exist
-		// once for the whole install -- the OpenZiti controller connection, the
-		// BrowZer domain and certificate, the platform TLS certificate -- which
-		// an organization's admin role cannot authorize on its own. See
+		// One controller serves every organization, and its objects carry no
+		// tenant (ziti_scope.go). So each route here that reads it is one of
+		// three kinds:
+		//
+		//   - a status probe any signed-in user may call, answering whether
+		//     the overlay is up with the organization's own counts and nothing
+		//     that names an address;
+		//   - a read of the organization's own part of the fabric, which needs
+		//     `operatorTier` and shows an install administrator the whole
+		//     controller and anyone else only what their organization owns;
+		//   - a read of something no organization owns -- the routers, the
+		//     metrics, the edge-router and authentication policies, the JWT
+		//     signers, the AI ledger -- which needs `adminOnly, platformOnly`.
+		//
+		// Writes follow the same line. One that changes something the
+		// organization owns -- its services, identities, policies, posture
+		// checks, certificates, sessions and terminators, BrowZer on one of
+		// its services -- needs `adminOnly` and reaches only the
+		// organization's own objects, as the mirror records them; an install
+		// administrator reaches any. One that changes something no
+		// organization owns -- a router, an edge-router, authentication or
+		// JWT-signer policy, a raw config, the AI ledger, a governance-policy
+		// sync, an import of an unowned service -- needs `adminOnly,
+		// platformOnly`. The self-service routes (/my/ziti/services,
+		// /ziti/sync/my-identity and the device posture self-report) answer
+		// for the caller only.
+		//
+		// `platformOnly` follows adminOnly on the routes whose object or
+		// setting exists once for the whole install -- the OpenZiti controller
+		// connection, the BrowZer domain and certificate, the platform TLS
+		// certificate, and the controller's install-wide objects -- which an
+		// organization's admin role cannot authorize on its own. See
 		// middleware.RequirePlatformAdmin.
 		platformOnly := svc.requirePlatformAdmin()
+		api.GET("/ziti/status", svc.handleZitiStatus)
+		// Guided network setup: checklist + install advisor + per-route advice.
+		// It reports the controller's address, the identity directory and every
+		// edge router, and carries the install's user sync counts: the setup of
+		// the install's network, not of one organization's part of it.
+		api.GET("/ziti/setup/status", adminOnly, platformOnly, svc.handleZitiSetupStatus)
+		// The reconciler converges every organization's services and reports
+		// each by name.
+		api.GET("/ziti/reconciler/status", adminOnly, platformOnly, svc.handleZitiReconcilerStatus)
 
 		// Upstream pools: the operator's declaration of a route's backend set.
 		// Admin-only like the route list, reads included: a pool's members are
@@ -492,7 +529,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/settings/test", adminOnly, platformOnly, svc.handleTestZitiSettings)
 		api.POST("/ziti/connect", adminOnly, platformOnly, svc.handleZitiConnect)
 		api.POST("/ziti/disconnect", adminOnly, platformOnly, svc.handleZitiDisconnect)
-		api.GET("/ziti/services", svc.handleListZitiServices)
+		// The organization's services, with the internal host and port each
+		// one forwards to.
+		api.GET("/ziti/services", operatorTier, svc.handleListZitiServices)
 		api.POST("/ziti/services", adminOnly, svc.handleCreateZitiService)
 		api.DELETE("/ziti/services/:id", adminOnly, svc.handleDeleteZitiService)
 		// The identity list names every user who has one.
@@ -504,29 +543,36 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/routes/:id/enable", adminOnly, svc.handleEnableZitiOnRoute)
 		api.POST("/ziti/routes/:id/disable", adminOnly, svc.handleDisableZitiOnRoute)
 
-		// Phase 2: Fabric & Router management
-		api.GET("/ziti/fabric/overview", svc.handleGetFabricOverview)
-		api.GET("/ziti/fabric/routers", svc.handleListEdgeRouters)
+		// Phase 2: Fabric & Router management. The overview and the health
+		// are the organization's view of the fabric (orgFabricHealth); the
+		// routers, which name the hosts they run on, and the metrics, which
+		// count every organization's objects, are the install's.
+		api.GET("/ziti/fabric/overview", operatorTier, svc.handleGetFabricOverview)
+		api.GET("/ziti/fabric/routers", adminOnly, platformOnly, svc.handleListEdgeRouters)
 		// One-command router/gateway onboarding: mint an edge-router enrollment
-		// JWT + a copy-paste command; the router joins via the #all bootstrap.
-		api.POST("/ziti/fabric/routers/enroll-token", adminOnly, svc.handleRouterEnrollToken)
-		api.GET("/ziti/fabric/routers/:id", svc.handleGetEdgeRouter)
-		api.GET("/ziti/fabric/health", svc.handleGetHealth)
-		api.POST("/ziti/fabric/reconnect", adminOnly, svc.handleReconnect)
-		api.GET("/ziti/fabric/metrics", svc.handleGetMetrics)
-		api.GET("/ziti/fabric/service-policies", svc.handleListServicePolicies)
+		// JWT + a copy-paste command; the router joins via the #all bootstrap
+		// and carries every organization's traffic.
+		api.POST("/ziti/fabric/routers/enroll-token", adminOnly, platformOnly, svc.handleRouterEnrollToken)
+		api.GET("/ziti/fabric/routers/:id", adminOnly, platformOnly, svc.handleGetEdgeRouter)
+		api.GET("/ziti/fabric/health", operatorTier, svc.handleGetHealth)
+		api.POST("/ziti/fabric/reconnect", adminOnly, platformOnly, svc.handleReconnect)
+		api.GET("/ziti/fabric/metrics", adminOnly, platformOnly, svc.handleGetMetrics)
+		api.GET("/ziti/fabric/service-policies", operatorTier, svc.handleListServicePolicies)
 
-		// Ziti service connectivity test (diagnostic dial; read-like)
-		api.POST("/ziti/services/:id/test", svc.handleTestZitiService)
+		// Ziti service connectivity test: the server dials the service's
+		// upstream and returns the dial errors, which name its address, so it
+		// is gated like the route connection test.
+		api.POST("/ziti/services/:id/test", adminOnly, svc.handleTestZitiService)
 		// Admin "behind the scenes": explain how a resource is wired end to end
 		// and which link is broken, so diagnosis needs no CLI.
 		api.GET("/ziti/services/by-name/:name/explain", adminOnly, svc.handleExplainZitiService)
 
-		// Edge router policy CRUD
-		api.GET("/ziti/edge-router-policies", svc.handleListEdgeRouterPolicies)
-		api.POST("/ziti/edge-router-policies", adminOnly, svc.handleCreateEdgeRouterPolicy)
-		api.PUT("/ziti/edge-router-policies/:id", adminOnly, svc.handleUpdateEdgeRouterPolicy)
-		api.DELETE("/ziti/edge-router-policies/:id", adminOnly, svc.handleDeleteEdgeRouterPolicy)
+		// Edge router policy CRUD. The policies decide which identities of any
+		// organization may use which routers.
+		api.GET("/ziti/edge-router-policies", adminOnly, platformOnly, svc.handleListEdgeRouterPolicies)
+		api.POST("/ziti/edge-router-policies", adminOnly, platformOnly, svc.handleCreateEdgeRouterPolicy)
+		api.PUT("/ziti/edge-router-policies/:id", adminOnly, platformOnly, svc.handleUpdateEdgeRouterPolicy)
+		api.DELETE("/ziti/edge-router-policies/:id", adminOnly, platformOnly, svc.handleDeleteEdgeRouterPolicy)
 
 		// Service policy CRUD
 		api.POST("/ziti/service-policies", adminOnly, svc.handleCreateServicePolicy)
@@ -536,10 +582,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Identity attribute management
 		api.PATCH("/ziti/identities/:id/attributes", adminOnly, svc.handlePatchIdentityAttributes)
 
-		// User-to-Ziti identity sync. The status counts the users of the whole
-		// install, the unsynced list names users, and the map pairs each user
-		// with their identity; the console reads them on operator pages (the
-		// dashboard for staff, Users).
+		// User-to-Ziti identity sync. The status counts the organization's
+		// users (an install administrator's, the install's), the unsynced list
+		// names users, and the map pairs each user with their identity; the
+		// console reads them on operator pages (the dashboard for staff, Users).
 		api.GET("/ziti/sync/status", operatorTier, svc.handleGetSyncStatus)
 		api.GET("/ziti/sync/unsynced", operatorTier, svc.handleGetUnsyncedUsers)
 		api.GET("/ziti/sync/user-map", operatorTier, svc.handleGetUserZitiMap)
@@ -577,17 +623,17 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// enriched with connection details. Deliberately not adminOnly.
 		api.GET("/my/ziti/services", svc.handleMyZitiServices)
 
-		// Phase 3: Posture checks. Definitions are admin-managed and readable
-		// by anyone; one identity's posture, and its evaluation, describe that
-		// identity's device, so they carry the operator tier. The device
-		// self-report is data-plane and stays open.
-		api.GET("/ziti/posture/checks", svc.handleListPostureChecks)
+		// Phase 3: Posture checks. Definitions are admin-managed; they, the
+		// summary of the organization's results and one identity's posture and
+		// its evaluation carry the operator tier. The device self-report is
+		// data-plane and stays open.
+		api.GET("/ziti/posture/checks", operatorTier, svc.handleListPostureChecks)
 		api.POST("/ziti/posture/checks", adminOnly, svc.handleCreatePostureCheck)
 		api.PUT("/ziti/posture/checks/:id", adminOnly, svc.handleUpdatePostureCheck)
 		api.DELETE("/ziti/posture/checks/:id", adminOnly, svc.handleDeletePostureCheck)
 		api.GET("/ziti/posture/identities/:id", operatorTier, svc.handleGetIdentityPosture)
 		api.POST("/ziti/posture/identities/:id/evaluate", operatorTier, svc.handleEvaluateIdentityPosture)
-		api.GET("/ziti/posture/summary", svc.handleGetPostureSummary)
+		api.GET("/ziti/posture/summary", operatorTier, svc.handleGetPostureSummary)
 		api.POST("/ziti/posture/device", svc.handleSubmitDevicePosture)
 
 		// EDR/MDM posture sources (CrowdStrike/Intune/Jamf) — ingest external
@@ -614,35 +660,43 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Agent-facing gateway: POST /api/v1/access/mcp/:server/tools/:tool.
 		api.POST("/mcp/:server/tools/:tool", svc.handleMCPInvoke)
 
-		// Phase 3: Policy sync
-		api.GET("/ziti/policy-sync", svc.handleListPolicySyncStates)
-		api.POST("/ziti/policy-sync", adminOnly, svc.handleSyncGovernancePolicy)
-		api.POST("/ziti/policy-sync/:id/trigger", adminOnly, svc.handleTriggerPolicySync)
-		api.DELETE("/ziti/policy-sync/:id", adminOnly, svc.handleDeletePolicySyncState)
+		// Phase 3: Policy sync. policy_sync_state has no organization.
+		api.GET("/ziti/policy-sync", adminOnly, platformOnly, svc.handleListPolicySyncStates)
+		api.POST("/ziti/policy-sync", adminOnly, platformOnly, svc.handleSyncGovernancePolicy)
+		api.POST("/ziti/policy-sync/:id/trigger", adminOnly, platformOnly, svc.handleTriggerPolicySync)
+		api.DELETE("/ziti/policy-sync/:id", adminOnly, platformOnly, svc.handleDeletePolicySyncState)
 
-		// Config types & configs management
-		api.GET("/ziti/config-types", svc.handleListConfigTypes)
-		api.GET("/ziti/configs", svc.handleListConfigs)
-		api.POST("/ziti/configs", adminOnly, svc.handleCreateConfig)
-		api.PUT("/ziti/configs/:id", adminOnly, svc.handleUpdateConfig)
-		api.DELETE("/ziti/configs/:id", adminOnly, svc.handleDeleteConfig)
+		// Config types & configs management. A host.v1 config names the
+		// internal address its service forwards to. The writes take any
+		// config by its controller id, and a changed host.v1 moves where a
+		// service's traffic goes, so they are the install's; an organization's
+		// own configs follow its routes and services.
+		api.GET("/ziti/config-types", adminOnly, platformOnly, svc.handleListConfigTypes)
+		api.GET("/ziti/configs", operatorTier, svc.handleListConfigs)
+		api.POST("/ziti/configs", adminOnly, platformOnly, svc.handleCreateConfig)
+		api.PUT("/ziti/configs/:id", adminOnly, platformOnly, svc.handleUpdateConfig)
+		api.DELETE("/ziti/configs/:id", adminOnly, platformOnly, svc.handleDeleteConfig)
 
-		// Auth policies & JWT signers management
-		api.GET("/ziti/auth-policies", svc.handleListAuthPolicies)
-		api.POST("/ziti/auth-policies", adminOnly, svc.handleCreateAuthPolicy)
-		api.PUT("/ziti/auth-policies/:id", adminOnly, svc.handleUpdateAuthPolicy)
-		api.DELETE("/ziti/auth-policies/:id", adminOnly, svc.handleDeleteAuthPolicy)
-		api.GET("/ziti/jwt-signers", svc.handleListJWTSigners)
-		api.POST("/ziti/jwt-signers", adminOnly, svc.handleCreateJWTSigner)
-		api.PUT("/ziti/jwt-signers/:id", adminOnly, svc.handleUpdateJWTSigner)
-		api.DELETE("/ziti/jwt-signers/:id", adminOnly, svc.handleDeleteJWTSigner)
+		// Auth policies & JWT signers management: how every organization's
+		// identities authenticate to the controller.
+		api.GET("/ziti/auth-policies", adminOnly, platformOnly, svc.handleListAuthPolicies)
+		api.POST("/ziti/auth-policies", adminOnly, platformOnly, svc.handleCreateAuthPolicy)
+		api.PUT("/ziti/auth-policies/:id", adminOnly, platformOnly, svc.handleUpdateAuthPolicy)
+		api.DELETE("/ziti/auth-policies/:id", adminOnly, platformOnly, svc.handleDeleteAuthPolicy)
+		api.GET("/ziti/jwt-signers", adminOnly, platformOnly, svc.handleListJWTSigners)
+		api.POST("/ziti/jwt-signers", adminOnly, platformOnly, svc.handleCreateJWTSigner)
+		api.PUT("/ziti/jwt-signers/:id", adminOnly, platformOnly, svc.handleUpdateJWTSigner)
+		api.DELETE("/ziti/jwt-signers/:id", adminOnly, platformOnly, svc.handleDeleteJWTSigner)
 
-		// Terminators management
-		api.GET("/ziti/terminators", svc.handleListTerminators)
-		api.GET("/ziti/terminators/:id", svc.handleGetTerminator)
+		// Terminators management. A terminator names the address a service
+		// is hosted at. The delete reaches the organization's own terminators.
+		api.GET("/ziti/terminators", operatorTier, svc.handleListTerminators)
+		api.GET("/ziti/terminators/:id", operatorTier, svc.handleGetTerminator)
 		api.DELETE("/ziti/terminators/:id", adminOnly, svc.handleDeleteTerminator)
 
-		// Ziti session visibility: who is connected to which service right now.
+		// Ziti session visibility: who is connected to which service right
+		// now. The deletes reach the organization's own sessions and
+		// identities.
 		api.GET("/ziti/sessions", operatorTier, svc.handleListZitiSessions)
 		api.DELETE("/ziti/sessions/:id", adminOnly, svc.handleDeleteZitiSession)
 		api.POST("/ziti/sessions/batch-terminate", adminOnly, svc.handleBatchDeleteZitiSessions)
@@ -651,22 +705,26 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// sessions, anomaly ledger, fused identity risk scores, policy-hygiene
 		// recommendations, and quarantine response. Analysis mutates the
 		// ledger/baselines and quarantine rewrites identity attributes, so
-		// those are admin-only. The reads score and name identities, so they
-		// carry the operator tier.
-		api.GET("/ziti/ai/insights", operatorTier, svc.handleZitiAIInsights)
-		api.POST("/ziti/ai/analyze", adminOnly, svc.handleZitiAIAnalyze)
-		api.GET("/ziti/ai/anomalies", operatorTier, svc.handleListZitiAnomalies)
-		api.POST("/ziti/ai/anomalies/:id/status", adminOnly, svc.handleUpdateZitiAnomalyStatus)
-		api.GET("/ziti/ai/identity-risk", operatorTier, svc.handleZitiIdentityRisk)
-		api.GET("/ziti/ai/recommendations", operatorTier, svc.handleZitiAIRecommendations)
-		api.POST("/ziti/ai/identities/:id/quarantine", adminOnly, svc.handleQuarantineZitiIdentity)
-		api.POST("/ziti/ai/identities/:id/unquarantine", adminOnly, svc.handleUnquarantineZitiIdentity)
+		// those are admin-only. The baselines, the ledger and the quarantine
+		// list have no organization, the risk scores and recommendations are
+		// computed over every identity, service and policy on the controller,
+		// and quarantine takes any identity by its controller id, so every
+		// route needs an install administrator. An organization's admin cuts
+		// a user off with the kill switch, which stays in the organization.
+		api.GET("/ziti/ai/insights", adminOnly, platformOnly, svc.handleZitiAIInsights)
+		api.POST("/ziti/ai/analyze", adminOnly, platformOnly, svc.handleZitiAIAnalyze)
+		api.GET("/ziti/ai/anomalies", adminOnly, platformOnly, svc.handleListZitiAnomalies)
+		api.POST("/ziti/ai/anomalies/:id/status", adminOnly, platformOnly, svc.handleUpdateZitiAnomalyStatus)
+		api.GET("/ziti/ai/identity-risk", adminOnly, platformOnly, svc.handleZitiIdentityRisk)
+		api.GET("/ziti/ai/recommendations", adminOnly, platformOnly, svc.handleZitiAIRecommendations)
+		api.POST("/ziti/ai/identities/:id/quarantine", adminOnly, platformOnly, svc.handleQuarantineZitiIdentity)
+		api.POST("/ziti/ai/identities/:id/unquarantine", adminOnly, platformOnly, svc.handleUnquarantineZitiIdentity)
 		// Controller version / OpenZiti v2.0 feature detection
-		api.GET("/ziti/controller/features", svc.handleZitiControllerFeatures)
+		api.GET("/ziti/controller/features", adminOnly, platformOnly, svc.handleZitiControllerFeatures)
 
-		// Phase 5: Certificates
-		api.GET("/ziti/certificates", svc.handleListCertificates)
-		api.GET("/ziti/certificates/expiry-alerts", svc.handleGetCertExpiryAlerts)
+		// Phase 5: Certificates: the organization's certificate inventory.
+		api.GET("/ziti/certificates", operatorTier, svc.handleListCertificates)
+		api.GET("/ziti/certificates/expiry-alerts", operatorTier, svc.handleGetCertExpiryAlerts)
 		api.POST("/ziti/certificates/:id/rotate", adminOnly, svc.handleRotateCertificate)
 
 		// BrowZer management endpoints
@@ -678,8 +736,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/browzer/services/:id/enable", adminOnly, svc.handleEnableBrowZerOnService)
 		api.POST("/ziti/browzer/services/:id/disable", adminOnly, svc.handleDisableBrowZerOnService)
 
-		// BrowZer bootstrapper management panel endpoints
-		api.GET("/ziti/browzer/management", svc.handleBrowZerManagement)
+		// BrowZer bootstrapper management panel endpoints. The panel shows the
+		// install's bootstrapper, its certificate and every BrowZer target.
+		api.GET("/ziti/browzer/management", adminOnly, platformOnly, svc.handleBrowZerManagement)
 		// The bootstrapper's certificate, key and domain are the install's.
 		api.POST("/ziti/browzer/certificates", adminOnly, platformOnly, svc.handleBrowZerCertUpload)
 		api.DELETE("/ziti/browzer/certificates", adminOnly, platformOnly, svc.handleBrowZerCertRevert)
@@ -833,7 +892,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// PAM OpenZiti reach mode — per-entry zero-trust target hop toggle,
 		// broker capability probe, and the tunneler binding list.
 		api.GET("/pam/broker/status", svc.handlePamBrokerStatus)
-		api.GET("/pam/broker/ziti-bindings", svc.requireAdminRole(), svc.handlePamZitiBindings)
+		// The binding list is install-wide: one broker tunnel serves every
+		// organization's entries.
+		api.GET("/pam/broker/ziti-bindings", svc.requireAdminRole(), platformOnly, svc.handlePamZitiBindings)
 		api.POST("/pam/entries/:id/ziti/enable", svc.requireAdminRole(), svc.handlePamEnableZiti)
 		api.POST("/pam/entries/:id/ziti/disable", svc.requireAdminRole(), svc.handlePamDisableZiti)
 
@@ -911,10 +972,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 		// Ziti discovery and import: discovery lists the controller's services
 		// that no route manages yet, and import turns them into proxy routes.
-		api.GET("/ziti/discover", adminOnly, svc.handleDiscoverZitiServices)
-		api.POST("/ziti/import", adminOnly, svc.handleImportZitiService)
-		api.POST("/ziti/import/bulk", adminOnly, svc.handleBulkImportZitiServices)
-		api.GET("/ziti/unmanaged/count", adminOnly, svc.handleGetUnmanagedServicesCount)
+		// A service no organization owns is the install's (ziti_scope.go).
+		api.GET("/ziti/discover", adminOnly, platformOnly, svc.handleDiscoverZitiServices)
+		api.POST("/ziti/import", adminOnly, platformOnly, svc.handleImportZitiService)
+		api.POST("/ziti/import/bulk", adminOnly, platformOnly, svc.handleBulkImportZitiServices)
+		api.GET("/ziti/unmanaged/count", adminOnly, platformOnly, svc.handleGetUnmanagedServicesCount)
 
 		// App publishing (register, discover, classify, publish). These are
 		// admin management routes — registering an internal app and publishing
@@ -947,8 +1009,14 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// assumed an admin ("an org-scoped admin request must see all rows");
 		// this is the guard that comment assumed. Pinned by
 		// health_doctor_gate_test.go against the real route table.
-		api.GET("/health/relations", adminOnly, svc.handleHealthRelations)
-		api.POST("/health/fix/:checkId", adminOnly, svc.handleHealthFix)
+		//
+		// The admin role of one organization cannot authorize what the doctor
+		// does to the others, so both routes also need an install
+		// administrator (`platformOnly`), like the other install-wide Ziti
+		// routes; health_doctor_platform_testdb_test.go drives that with the
+		// middleware chain.
+		api.GET("/health/relations", adminOnly, platformOnly, svc.handleHealthRelations)
+		api.POST("/health/fix/:checkId", adminOnly, platformOnly, svc.handleHealthFix)
 
 		// Unified audit log. The reads are the organization's audit trail, at
 		// the tier of the console's Unified Audit page.
@@ -1364,6 +1432,12 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		landingPath = "/"
 	}
 
+	if name := identityCustomHeader(req.CustomHeaders); name != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(
+			"custom_headers cannot set %s: the proxy writes it from the signed-in session", name)})
+		return
+	}
+
 	hostingMode, ok := normalizeHostingMode(req.HostingMode)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hosting_mode (expected identity, direct, or hop)"})
@@ -1446,6 +1520,11 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		req.RequireDeviceTrust, countriesJSON, req.MaxRiskScore, landingPath, hostingMode, org.ID,
 		poolID)
 	if err != nil {
+		// Another enabled route, in this organization or any other, already
+		// serves the host from_url names.
+		if s.answerRouteHostTaken(c, org.ID, req.FromURL, err) {
+			return
+		}
 		s.logger.Error("Failed to create route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route"})
 		return
@@ -1537,6 +1616,12 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get route"})
+		return
+	}
+
+	if name := identityCustomHeader(req.CustomHeaders); name != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(
+			"custom_headers cannot set %s: the proxy writes it from the signed-in session", name)})
 		return
 	}
 
@@ -1685,6 +1770,11 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		existing.RequireDeviceTrust, countriesJSON, existing.MaxRiskScore,
 		existing.LandingPath, existing.HostingMode, poolID, id, org.ID)
 	if err != nil {
+		// A new from_url, or enabling the route, puts it on a host another
+		// enabled route already serves.
+		if s.answerRouteHostTaken(c, org.ID, existing.FromURL, err) {
+			return
+		}
 		s.logger.Error("Failed to update route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update route"})
 		return
@@ -1891,11 +1981,9 @@ func (s *Service) handleLogin(c *gin.Context) {
 	challenge := generateCodeChallenge(verifier)
 	state := generateState()
 
-	// Store verifier and original URL in Redis
-	redirectURL := c.Query("redirect_url")
-	if redirectURL == "" {
-		redirectURL = "/access/.auth/session"
-	}
+	// Store verifier and original URL in Redis. Only a target the proxy may
+	// send a browser to is stored; anything else lands on the session page.
+	redirectURL := s.redirectTarget(c, c.Query("redirect_url"), "/access/.auth/session")
 
 	sessionData, _ := json.Marshal(map[string]string{
 		"verifier":     verifier,
@@ -1931,9 +2019,15 @@ func (s *Service) handleLogin(c *gin.Context) {
 }
 
 func (s *Service) handleCallback(c *gin.Context) {
-	// If login_session is present, the OAuth service is asking us to show a login form
+	// If login_session is present, the OAuth service is asking us to show a
+	// login form. Anyone can put anything in the link, and the value goes into
+	// the page, so only the shape the OAuth service mints is served.
 	loginSession := c.Query("login_session")
 	if loginSession != "" {
+		if !loginSessionPattern.MatchString(loginSession) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid login_session"})
+			return
+		}
 		s.serveLoginPage(c, loginSession)
 		return
 	}
@@ -1999,7 +2093,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 	}
 
 	// Create proxy session
-	session, err := s.createSession(c, claims, tokenResp.AccessToken)
+	session, err := s.createSession(c, claims)
 	if err != nil {
 		s.logger.Error("Failed to create session", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
@@ -2026,128 +2120,9 @@ func (s *Service) handleCallback(c *gin.Context) {
 		"email":      session.Email,
 	})
 
-	// Redirect to original URL
-	redirectURL := storedState.RedirectURL
-	if redirectURL == "" {
-		redirectURL = "/"
-	}
-	c.Redirect(http.StatusFound, redirectURL)
-}
-
-func (s *Service) serveLoginPage(c *gin.Context, loginSession string) {
-	oauthURL := s.oauthIssuer
-	html := fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OpenIDX - Sign In</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center}
-.card{background:#1e293b;border-radius:12px;padding:2.5rem;width:100%%;max-width:400px;box-shadow:0 25px 50px rgba(0,0,0,.3)}
-h1{font-size:1.5rem;text-align:center;margin-bottom:.5rem;color:#f8fafc}
-.subtitle{text-align:center;color:#94a3b8;margin-bottom:2rem;font-size:.875rem}
-label{display:block;font-size:.875rem;color:#94a3b8;margin-bottom:.375rem}
-input{width:100%%;padding:.75rem 1rem;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#f8fafc;font-size:1rem;margin-bottom:1rem;outline:none;transition:border-color .2s}
-input:focus{border-color:#3b82f6}
-button{width:100%%;padding:.75rem;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer;transition:background .2s}
-button:hover{background:#2563eb}
-button:disabled{opacity:.6;cursor:not-allowed}
-.error{background:#7f1d1d;border:1px solid #991b1b;color:#fca5a5;padding:.75rem;border-radius:8px;margin-bottom:1rem;font-size:.875rem;display:none}
-.mfa-section{display:none}
-.logo{text-align:center;margin-bottom:1.5rem;font-size:2rem}
-</style>
-</head>
-<body>
-<div class="card">
-<div class="logo">&#x1f510;</div>
-<h1>OpenIDX Access</h1>
-<p class="subtitle">Sign in to continue to your application</p>
-<div id="error" class="error"></div>
-<form id="loginForm">
-<div id="credentials-section">
-<label for="username">Username or Email</label>
-<input type="text" id="username" name="username" required autocomplete="username" autofocus>
-<label for="password">Password</label>
-<input type="password" id="password" name="password" required autocomplete="current-password">
-</div>
-<div id="mfa-section" class="mfa-section">
-<label for="mfa_code">MFA Verification Code</label>
-<input type="text" id="mfa_code" name="mfa_code" placeholder="Enter 6-digit code" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6">
-</div>
-<button type="submit" id="submitBtn">Sign In</button>
-</form>
-</div>
-<script>
-const loginSession = %q;
-const oauthURL = %q;
-let mfaSession = '';
-
-document.getElementById('loginForm').addEventListener('submit', async function(e) {
-  e.preventDefault();
-  const errEl = document.getElementById('error');
-  errEl.style.display = 'none';
-  const btn = document.getElementById('submitBtn');
-  btn.disabled = true;
-  btn.textContent = 'Signing in...';
-
-  try {
-    if (mfaSession) {
-      const resp = await fetch(oauthURL + '/oauth/mfa/verify', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({mfa_session: mfaSession, code: document.getElementById('mfa_code').value})
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        throw new Error(data.error_description || data.error || 'MFA verification failed');
-      }
-      if (data.redirect_url) {
-        window.location.href = data.redirect_url;
-        return;
-      }
-    } else {
-      const resp = await fetch(oauthURL + '/oauth/login', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          username: document.getElementById('username').value,
-          password: document.getElementById('password').value,
-          login_session: loginSession
-        })
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        throw new Error(data.error_description || data.error || 'Authentication failed');
-      }
-      if (data.mfa_required) {
-        mfaSession = data.mfa_session;
-        document.getElementById('credentials-section').style.display = 'none';
-        document.getElementById('mfa-section').style.display = 'block';
-        document.getElementById('mfa_code').focus();
-        btn.disabled = false;
-        btn.textContent = 'Verify';
-        return;
-      }
-      if (data.redirect_url) {
-        window.location.href = data.redirect_url;
-        return;
-      }
-    }
-  } catch(err) {
-    errEl.textContent = err.message;
-    errEl.style.display = 'block';
-  }
-  btn.disabled = false;
-  btn.textContent = mfaSession ? 'Verify' : 'Sign In';
-});
-</script>
-</body>
-</html>`, loginSession, oauthURL)
-
-	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusOK, html)
+	// Redirect to original URL. It was checked when it was stored, and is
+	// checked again here, where it is followed.
+	c.Redirect(http.StatusFound, s.redirectTarget(c, storedState.RedirectURL, "/"))
 }
 
 func (s *Service) handleLogout(c *gin.Context) {
@@ -2190,15 +2165,12 @@ func (s *Service) handleLogout(c *gin.Context) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	redirectURL := c.Query("redirect_url")
-	if redirectURL == "" {
-		redirectURL = "/access/.auth/login"
-	}
-	c.Redirect(http.StatusFound, redirectURL)
+	// Signing out needs no session, so this redirect is anybody's to write.
+	c.Redirect(http.StatusFound, s.redirectTarget(c, c.Query("redirect_url"), "/access/.auth/login"))
 }
 
 func (s *Service) handleSessionInfo(c *gin.Context) {
-	session := s.getSessionFromRequest(c)
+	session := s.getSessionFromRequest(c, s.browserHost(c))
 	if session == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "no active session"})
 		return
@@ -2301,7 +2273,7 @@ func (s *Service) handleProxy(c *gin.Context) {
 	// Check authentication
 	var session *ProxySession
 	if route.RequireAuth {
-		session = s.getSessionFromRequest(c)
+		session = sessionOnRoute(s.getSessionFromRequest(c, host), route)
 		// Enforce the route's idle timeout on the cookie session: if it has been
 		// idle longer than idle_timeout, revoke it and re-auth. (Bearer tokens
 		// carry their own JWT expiry, so this only applies to the cookie path.)
@@ -2318,9 +2290,11 @@ func (s *Service) handleProxy(c *gin.Context) {
 			session = s.getSessionFromBearer(c)
 		}
 		if session == nil {
-			// Redirect to login
+			// Redirect to login, back to this path on this host afterwards.
+			// RequestURI and not URL.String(): a request line in absolute form
+			// names a scheme and host of its own, and they are not this one.
 			loginURL := fmt.Sprintf("/access/.auth/login?redirect_url=%s",
-				url.QueryEscape(c.Request.URL.String()))
+				url.QueryEscape(c.Request.URL.RequestURI()))
 			c.Redirect(http.StatusFound, loginURL)
 			return
 		}
@@ -2906,6 +2880,9 @@ func (s *Service) handleQuickCreate(c *gin.Context) {
 		routeID, req.Name, fromURL, req.TargetURL, requireAuth,
 		req.RouteType, rolesJSON, groupsJSON, org.ID)
 	if err != nil {
+		if s.answerRouteHostTaken(c, org.ID, fromURL, err) {
+			return
+		}
 		s.logger.Error("Failed to create route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route"})
 		return
@@ -2978,17 +2955,24 @@ func (s *Service) handleQuickCreate(c *gin.Context) {
 }
 
 func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute, error) {
-	// Try exact match first, then wildcard
+	// A request that names no host matches no route.
+	if strings.TrimSpace(host) == "" {
+		return nil, pgx.ErrNoRows
+	}
 	var r ProxyRoute
 	var desc, zitiServiceName, idpID, remoteHost, inlinePolicy, guacConnID *string
 	var remotePort *int
 	var allowedRoles, allowedGroups, policyIDs, corsOrigins, customHeaders, postureCheckIDs, allowedCountries []byte
 
-	// Match from_url containing the host.
+	// The route whose host is the request's, exactly: proxy_route_host()
+	// normalizes both (migration v211), and the unique index on the enabled
+	// routes' hosts makes the answer the one route that holds the host, in
+	// whichever organization. It was from_url LIKE '%' || host || '%', highest
+	// priority first, so another organization's route containing the host
+	// anywhere in its from_url and given a higher priority took the host's
+	// traffic.
 	// Bypass RLS: route resolution runs before the org is known — the host IS
-	// what resolves the tenant. Hosts are globally unique across tenants (a
-	// subdomain maps to exactly one org), so the priority-ordered LIMIT 1 stays
-	// unambiguous even with cross-org visibility.
+	// what resolves the tenant.
 	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore proxy data-plane route resolution; the reverse proxy matches an inbound request to its route by host before any user/org is resolved
 		`SELECT id, name, description, from_url, to_url, preserve_host, require_auth,
@@ -2999,9 +2983,9 @@ func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute
 		        COALESCE(reverify_interval, 0), posture_check_ids, inline_policy,
 		        COALESCE(require_device_trust, false), allowed_countries,
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
-		        created_at, updated_at
-		 FROM proxy_routes WHERE from_url LIKE '%' || $1 || '%' AND enabled=true
-		 ORDER BY priority DESC LIMIT 1`, host).Scan(
+		        created_at, updated_at, org_id::text
+		 FROM proxy_routes WHERE host = proxy_route_host($1) AND enabled = true
+		 LIMIT 1`, host).Scan(
 		&r.ID, &r.Name, &desc, &r.FromURL, &r.ToURL, &r.PreserveHost,
 		&r.RequireAuth, &allowedRoles, &allowedGroups, &policyIDs,
 		&r.IdleTimeout, &r.AbsoluteTimeout, &corsOrigins, &customHeaders,
@@ -3010,7 +2994,7 @@ func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute
 		&r.ReverifyInterval, &postureCheckIDs, &inlinePolicy,
 		&r.RequireDeviceTrust, &allowedCountries,
 		&r.MaxRiskScore, &guacConnID,
-		&r.CreatedAt, &r.UpdatedAt)
+		&r.CreatedAt, &r.UpdatedAt, &r.OrgID)
 	if err != nil {
 		return nil, err
 	}
@@ -3080,7 +3064,7 @@ func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute
 	return &r, nil
 }
 
-func (s *Service) createSession(c *gin.Context, claims map[string]interface{}, accessToken string) (*ProxySession, error) {
+func (s *Service) createSession(c *gin.Context, claims map[string]interface{}) (*ProxySession, error) {
 	id := uuid.New().String()
 	token := generateSessionToken()
 	tokenHash := hashToken(token)
@@ -3097,36 +3081,53 @@ func (s *Service) createSession(c *gin.Context, claims map[string]interface{}, a
 
 	expiresAt := time.Now().Add(12 * time.Hour)
 
-	// Proxy data-plane login: the session belongs to the org of the route the user
-	// authenticated against. The org is taken from context when present, with a
-	// default-org fallback so the data-plane never fails to mint a session.
+	// Proxy data-plane login: the session belongs to the route the user signed
+	// in on -- the one holding the host whose callback this is -- and to that
+	// route's organization. It used to take the organization the tenant
+	// resolver chose, which for a proxied host is the default organization, and
+	// no route at all: the session was listed and revocable under the wrong
+	// organization, and continuous verification, which joins a session to its
+	// route to find reverify_interval, never saw one. A callback on a host no
+	// route holds (the access service's own) keeps the resolver's organization,
+	// with a default-org fallback so the data-plane never fails to mint a
+	// session.
 	orgID := "00000000-0000-0000-0000-000000000010"
 	if org, oerr := orgctx.From(c.Request.Context()); oerr == nil {
 		orgID = org.ID
 	}
+	var routeID *string
+	if route, rerr := s.findRouteByHost(c.Request.Context(), s.browserHost(c)); rerr == nil && route != nil && route.OrgID != "" {
+		orgID, routeID = route.OrgID, &route.ID
+	}
 
-	_, err := s.db.Pool.Exec(c.Request.Context(),
-		`INSERT INTO proxy_sessions (id, user_id, session_token, ip_address, user_agent, expires_at, org_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		id, userID, tokenHash, c.ClientIP(), c.Request.UserAgent(), expiresAt, orgID)
+	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
+		//orgscope:ignore proxy data-plane login; the row is written with the organization of the route the callback's host resolves to, which may not be the request's resolved organization
+		`INSERT INTO proxy_sessions (id, user_id, session_token, ip_address, user_agent, expires_at, org_id, route_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		id, userID, tokenHash, c.ClientIP(), c.Request.UserAgent(), expiresAt, orgID, routeID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Store session data in Redis for fast access
+	// Store session data in Redis for fast access. host binds the session to
+	// the host whose callback set its cookie: getSessionFromRequest refuses it
+	// anywhere else. org_id is the organization its roles hold in. The user's
+	// OpenIDX access token is not kept: nothing read it back, and a copy in
+	// Redis is a credential for OpenIDX's own APIs.
 	sessionData, _ := json.Marshal(map[string]interface{}{
 		"id":          id,
 		"user_id":     userID,
 		"email":       email,
 		"name":        name,
 		"roles":       roles,
-		"token":       accessToken,
+		"org_id":      orgID,
+		"host":        sessionHost(s.browserHost(c)),
 		"expires":     expiresAt.Unix(),
 		"last_active": time.Now().Unix(),
 	})
 	s.redis.Client.Set(c.Request.Context(), "proxy_session:"+tokenHash, sessionData, 12*time.Hour)
 
-	return &ProxySession{
+	session := &ProxySession{
 		ID:           id,
 		UserID:       userID,
 		SessionToken: token,
@@ -3138,15 +3139,42 @@ func (s *Service) createSession(c *gin.Context, claims map[string]interface{}, a
 		StartedAt:    time.Now(),
 		LastActiveAt: time.Now(),
 		ExpiresAt:    expiresAt,
-	}, nil
+		orgID:        orgID,
+	}
+	if routeID != nil {
+		session.RouteID = *routeID
+	}
+	return session, nil
+}
+
+// sessionOnRoute returns session when it may be used on route: a session signed
+// in on one organization's route carries that organization's roles, and is not
+// accepted on another organization's route, even on the same host -- a host
+// can pass from one organization to another once the first disables its
+// route. A bearer session carries its token's own organization binding.
+func sessionOnRoute(session *ProxySession, route *ProxyRoute) *ProxySession {
+	if session == nil || route == nil || session.orgID == "" || session.orgID == route.OrgID {
+		return session
+	}
+	return nil
 }
 
 func (sess *ProxySession) AbsoluteTimeout() int {
 	return int(time.Until(sess.ExpiresAt).Seconds())
 }
 
-func (s *Service) getSessionFromRequest(c *gin.Context) *ProxySession {
-	cookie, err := c.Cookie("_openidx_proxy_session")
+// getSessionFromRequest returns the proxy session the request's cookie names,
+// when it is live and was issued for host, the host the browser addressed.
+//
+// The session cookie is host-only, so a browser only ever sends it to the host
+// it was set on, and every proxied host gets a session of its own. The session
+// was nonetheless looked up by its token alone, and whoever held a copy of the
+// cookie -- an application it was forwarded to, or anyone reading that
+// application's logs -- could present it at any other route and be the user
+// there. A session is now good on the host it was issued for and refused on
+// every other, as is one issued before sessions carried their host.
+func (s *Service) getSessionFromRequest(c *gin.Context, host string) *ProxySession {
+	cookie, err := c.Cookie(proxySessionCookie)
 	if err != nil || cookie == "" {
 		return nil
 	}
@@ -3159,6 +3187,16 @@ func (s *Service) getSessionFromRequest(c *gin.Context) *ProxySession {
 
 	var sessionData map[string]interface{}
 	if err := json.Unmarshal(data, &sessionData); err != nil {
+		return nil
+	}
+
+	issuedFor, _ := sessionData["host"].(string)
+	if issuedFor == "" || issuedFor != sessionHost(host) {
+		if issuedFor != "" {
+			s.logger.Warn("a proxy session was presented on a host it was not issued for; refusing it",
+				logsafe.String("session_id", fmt.Sprint(sessionData["id"])),
+				logsafe.String("issued_for", issuedFor), logsafe.String("host", sessionHost(host)))
+		}
 		return nil
 	}
 
@@ -3186,6 +3224,7 @@ func (s *Service) getSessionFromRequest(c *gin.Context) *ProxySession {
 		lastActive = time.Unix(int64(la), 0)
 	}
 
+	orgID, _ := sessionData["org_id"].(string)
 	return &ProxySession{
 		ID:           fmt.Sprint(sessionData["id"]),
 		UserID:       fmt.Sprint(sessionData["user_id"]),
@@ -3194,6 +3233,7 @@ func (s *Service) getSessionFromRequest(c *gin.Context) *ProxySession {
 		Roles:        roles,
 		LastActiveAt: lastActive,
 		ExpiresAt:    expiresAt,
+		orgID:        orgID,
 	}
 }
 
@@ -3250,6 +3290,7 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 		Email:  email,
 		Name:   name,
 		Roles:  roles,
+		bearer: authHeader,
 	}
 }
 
@@ -3348,7 +3389,7 @@ func (s *Service) evaluatePolicies(c *gin.Context, route *ProxyRoute, session *P
 		// internal-service secret instead. Without this the call is 401'd and
 		// the policy check fails closed (denies all traffic to the route).
 		if s.config.InternalServiceToken != "" {
-			req.Header.Set("X-Internal-Token", s.config.InternalServiceToken)
+			req.Header.Set(middleware.InternalTokenHeader, s.config.InternalServiceToken)
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -3496,6 +3537,14 @@ func (s *Service) logAuditEvent(c *gin.Context, action, targetID, targetType str
 	if org, err := orgctx.From(c.Request.Context()); err == nil {
 		orgSlug = org.Slug
 	}
+	// The audit service writes an event only for an OpenIDX service that
+	// presents the internal service token; nothing else may put words in the
+	// trail. With none configured the event is refused, and the warning below
+	// says so.
+	internalToken := ""
+	if s.config != nil {
+		internalToken = s.config.InternalServiceToken
+	}
 
 	body, _ := json.Marshal(event)
 	go func() {
@@ -3508,6 +3557,9 @@ func (s *Service) logAuditEvent(c *gin.Context, action, targetID, targetType str
 		req.Header.Set("Content-Type", "application/json")
 		if orgSlug != "" {
 			req.Header.Set("X-Org-Slug", orgSlug)
+		}
+		if internalToken != "" {
+			req.Header.Set(middleware.InternalTokenHeader, internalToken)
 		}
 
 		resp, err := http.DefaultClient.Do(req)
@@ -3584,14 +3636,11 @@ func hasAnyRole(userRoles, requiredRoles []string) bool {
 // connection whose Ziti identity did not resolve, forwarded the caller's own
 // X-Forwarded-User straight through to an upstream that has no reason to
 // doubt it.
-var proxyOwnedHeaders = []string{
-	"X-Forwarded-User",
-	"X-Forwarded-Email",
-	"X-Forwarded-Name",
-	"X-Forwarded-Roles",
-	"X-Ziti-Identity",
-	"X-Real-IP",
-}
+//
+// They are the identity headers (proxyIdentityHeaders, and the
+// X-Auth-Request-* family deleteProxyOwnedHeaders removes by prefix) and
+// X-Real-IP.
+var proxyOwnedHeaders = append(append([]string{}, proxyIdentityHeaders...), "X-Real-IP")
 
 // proxyRewrite builds the ReverseProxy.Rewrite hook for one proxied request.
 //
@@ -3644,9 +3693,20 @@ func proxyRewrite(target *url.URL, route *ProxyRoute, session *ProxySession, cli
 
 		// Identity, from the verified session and nowhere else. The caller's
 		// own copies go first, so an unauthenticated route cannot forward one.
-		for _, h := range proxyOwnedHeaders {
-			pr.Out.Header.Del(h)
+		deleteProxyOwnedHeaders(pr.Out.Header)
+
+		// The proxy's own credentials stay with the proxy. Its session cookie
+		// authenticates the browser to the proxy on this host; forwarded, it
+		// let the application, or anyone reading its logs, replay the user's
+		// session. A bearer the proxy authenticated this request with is an
+		// OpenIDX access token that may call OpenIDX's own APIs. Every other
+		// cookie, and an Authorization header the proxy did not consume, is
+		// the application's own and goes through untouched.
+		stripProxySessionCookie(pr.Out.Header)
+		if session != nil && session.bearer != "" {
+			removeHeaderValue(pr.Out.Header, "Authorization", session.bearer)
 		}
+
 		if session != nil {
 			pr.Out.Header.Set("X-Forwarded-User", session.UserID)
 			pr.Out.Header.Set("X-Forwarded-Email", session.Email)
@@ -3668,8 +3728,14 @@ func proxyRewrite(target *url.URL, route *ProxyRoute, session *ProxySession, cli
 		}
 
 		// Operator-configured headers last, so a route can deliberately
-		// override anything above.
+		// override the provenance above. Not the identity: a route that could
+		// set X-Forwarded-User would name every one of its users as somebody
+		// else, so those are the session's alone (the route API refuses them,
+		// and one stored before it did is skipped here).
 		for k, v := range route.CustomHeaders {
+			if isProxyIdentityHeader(k) {
+				continue
+			}
 			pr.Out.Header.Set(k, v)
 		}
 	}

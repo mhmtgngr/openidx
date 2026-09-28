@@ -221,3 +221,34 @@ func TestKnownPublicAPIs(t *testing.T) {
 		}
 	}
 }
+
+// TestTheGCPProfileAdmitsOnlyGoogleAPIHosts: the profile listed gcp.com and
+// *.gcp.com next to googleapis.com. Google Cloud's APIs are served from
+// googleapis.com, and gcp.com is not a Google API domain, so the entry admitted
+// whoever holds that name. The allowlist is checked before any DNS lookup, so
+// the refusals here resolve nothing.
+func TestTheGCPProfileAdmitsOnlyGoogleAPIHosts(t *testing.T) {
+	gcp := KnownPublicAPIs.GCP
+	admits := func(host string) bool {
+		for _, d := range gcp.AllowedDomains {
+			if gcp.domainMatches(host, d) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, host := range []string{"googleapis.com", "storage.googleapis.com", "iamcredentials.googleapis.com"} {
+		if !admits(host) {
+			t.Errorf("the GCP profile refuses %s, a Google API host", host)
+		}
+	}
+	for _, host := range []string{"gcp.com", "api.gcp.com", "googleapis.com.example.test"} {
+		if admits(host) {
+			t.Errorf("the GCP profile admits %s, which is not a Google API host", host)
+		}
+		err := gcp.ValidateURL("https://" + host + "/v1/")
+		if err == nil || !strings.Contains(err.Error(), "not in the allowlist") {
+			t.Errorf("ValidateURL(%s) = %v, want a refusal by the allowlist", host, err)
+		}
+	}
+}

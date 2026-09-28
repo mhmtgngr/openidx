@@ -52,11 +52,16 @@ func (s *Service) getEffectiveSessionPolicy(ctx context.Context, clientID string
 	// syssettings, which is now the single reader of this table.
 	if settings, err := syssettings.Load(ctx, s.db.Pool); err == nil {
 		sec := settings.Security
-		if sec.IdleTimeout > 0 {
-			policy.IdleTimeout = sec.IdleTimeout
+		// Zero turns a timeout off: the Security tab says so (0 = disabled),
+		// and the sweeps and the console's idle lock already read it that
+		// way. This read took zero for "not set", so an operator who turned a
+		// timeout off got the 30-minute or 24-hour default instead. A value the
+		// document does not carry, or a negative one, still keeps the default.
+		if v := sec.IdleTimeout; v != nil && *v >= 0 {
+			policy.IdleTimeout = *v
 		}
-		if sec.AbsoluteTimeout > 0 {
-			policy.AbsoluteTimeout = sec.AbsoluteTimeout
+		if v := sec.AbsoluteTimeout; v != nil && *v >= 0 {
+			policy.AbsoluteTimeout = *v
 		}
 		if sec.RememberMeDuration > 0 {
 			policy.RememberMeDuration = sec.RememberMeDuration
@@ -96,10 +101,11 @@ func (s *Service) getEffectiveSessionPolicy(ctx context.Context, clientID string
 			`, clientID, org.ID).Scan(&idleTimeout, &absoluteTimeout, &maxConcurrent, &concStrategy, &bindIP)
 		}
 		if err == nil {
-			if idleTimeout != nil && *idleTimeout > 0 {
+			// The same reading per application: NULL inherits, zero is off.
+			if idleTimeout != nil && *idleTimeout >= 0 {
 				policy.IdleTimeout = *idleTimeout
 			}
-			if absoluteTimeout != nil && *absoluteTimeout > 0 {
+			if absoluteTimeout != nil && *absoluteTimeout >= 0 {
 				policy.AbsoluteTimeout = *absoluteTimeout
 			}
 			if maxConcurrent != nil && *maxConcurrent > 0 {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { Fragment, useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Building2, Palette, Settings, Globe, Plus, Trash2, CheckCircle, Copy, Save } from 'lucide-react'
@@ -33,6 +33,13 @@ interface TenantSettings {
 interface TenantDomain {
   id: string; domain: string; domain_type: string; verified: boolean; primary_domain: boolean
   verification_token?: string
+  /** The TXT record that verifies the domain, present while it is unverified. */
+  verification_record?: { type: string; name: string; value: string }
+}
+
+/** The HTTP status of a failed API call, if the server answered. */
+function statusOf(err: unknown): number | undefined {
+  return (err as { response?: { status?: number } } | null)?.response?.status
 }
 
 /**
@@ -149,25 +156,45 @@ export function TenantManagementPage() {
       setAddDomainOpen(false)
       setNewDomain('')
     },
-    onError: () =>
+    onError: (err: unknown) => {
+      const status = statusOf(err)
       toast({
         title: t('pages.tenantManagement.toasts.domainAddFailed'),
+        description:
+          status === 400 ? t('pages.tenantManagement.toasts.domainInvalid')
+            : status === 409 ? t('pages.tenantManagement.toasts.domainConflict')
+              : undefined,
         variant: 'destructive',
-      }),
+      })
+    },
   })
 
+  // Verification is a DNS lookup on the server: the domain is verified only if
+  // its TXT record holds the value shown, so a failure says what to fix.
   const verifyDomainMutation = useMutation({
-    mutationFn: (domainId: string) => api.post(`/api/v1/tenants/${selectedOrgId}/domains/${domainId}/verify`, { token: '' }),
+    mutationFn: (domainId: string) => api.post(`/api/v1/tenants/${selectedOrgId}/domains/${domainId}/verify`),
     onSuccess: () => {
       invalidate('tenant-domains')()
       toast({ title: t('pages.tenantManagement.toasts.domainVerified') })
     },
-    onError: () =>
+    onError: (err: unknown) => {
+      const status = statusOf(err)
       toast({
         title: t('pages.tenantManagement.toasts.verifyFailed'),
+        description:
+          status === 400 ? t('pages.tenantManagement.toasts.recordNotFound')
+            : status === 409 ? t('pages.tenantManagement.toasts.verifiedElsewhere')
+              : status === 502 || status === 504 ? t('pages.tenantManagement.toasts.lookupFailed')
+                : undefined,
         variant: 'destructive',
-      }),
+      })
+    },
   })
+
+  const copyToClipboard = (value: string) => {
+    void navigator.clipboard.writeText(value)
+    toast({ title: t('common.copied') })
+  }
 
   const deleteDomainMutation = useMutation({
     mutationFn: (domainId: string) => api.delete(`/api/v1/tenants/${selectedOrgId}/domains/${domainId}`),
@@ -448,7 +475,8 @@ export function TenantManagementPage() {
                     </TableRow></TableHeader>
                     <TableBody>
                       {domains.map(d => (
-                        <TableRow key={d.id}>
+                        <Fragment key={d.id}>
+                        <TableRow>
                           <TableCell className="font-medium">{d.domain}</TableCell>
                           <TableCell>
                             <Badge variant="outline">
@@ -463,17 +491,6 @@ export function TenantManagementPage() {
                                 ? t('pages.tenantManagement.domains.verified')
                                 : t('pages.tenantManagement.domains.pending')}
                             </Badge>
-                            {!d.verified && d.verification_token && (
-                              <button
-                                className="ml-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                                onClick={() => {
-                                  navigator.clipboard.writeText(d.verification_token || '')
-                                  toast({ title: t('pages.tenantManagement.toasts.tokenCopied') })
-                                }}
-                              >
-                                <Copy className="h-3 w-3" />{d.verification_token}
-                              </button>
-                            )}
                           </TableCell>
                           <TableCell>
                             {d.primary_domain ? (
@@ -485,20 +502,16 @@ export function TenantManagementPage() {
                           <TableCell>
                             <div className="flex gap-1">
                               {!d.verified && (
-                                <ConfirmAction
-                                  title={t('pages.tenantManagement.domains.verifyTitle')}
-                                  description={t('pages.tenantManagement.domains.verifyDesc', {
-                                    domain: d.domain,
-                                  })}
-                                  confirmLabel={t('pages.tenantManagement.domains.verifyConfirm')}
-                                  onConfirm={() => verifyDomainMutation.mutateAsync(d.id)}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  aria-label={t('pages.tenantManagement.domains.verifyAria', { domain: d.domain })}
+                                  disabled={verifyDomainMutation.isPending}
+                                  onClick={() => verifyDomainMutation.mutate(d.id)}
                                 >
-                                  {(open) => (
-                                    <Button variant="ghost" size="sm" onClick={open}>
-                                      <CheckCircle className="h-4 w-4 text-green-600" />
-                                    </Button>
-                                  )}
-                                </ConfirmAction>
+                                  <CheckCircle className="mr-1 h-4 w-4 text-green-600" />
+                                  {t('pages.tenantManagement.domains.verify')}
+                                </Button>
                               )}
                               <ConfirmAction
                                 title={t('pages.tenantManagement.domains.deleteTitle')}
@@ -518,6 +531,40 @@ export function TenantManagementPage() {
                             </div>
                           </TableCell>
                         </TableRow>
+                        {!d.verified && d.verification_record && (
+                          <TableRow>
+                            <TableCell colSpan={5} className="bg-muted/40">
+                              <p className="text-sm text-muted-foreground">
+                                {t('pages.tenantManagement.domains.recordHint', { domain: d.domain })}
+                              </p>
+                              <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                                <dt className="font-medium">{t('pages.tenantManagement.domains.recordType')}</dt>
+                                <dd className="font-mono">{d.verification_record.type}</dd>
+                                <dt className="font-medium">{t('pages.tenantManagement.domains.recordName')}</dt>
+                                <dd>
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center gap-1 break-all text-left font-mono text-primary hover:underline"
+                                    onClick={() => copyToClipboard(d.verification_record?.name ?? '')}
+                                  >
+                                    <Copy className="h-3 w-3 shrink-0" />{d.verification_record.name}
+                                  </button>
+                                </dd>
+                                <dt className="font-medium">{t('pages.tenantManagement.domains.recordValue')}</dt>
+                                <dd>
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center gap-1 break-all text-left font-mono text-primary hover:underline"
+                                    onClick={() => copyToClipboard(d.verification_record?.value ?? '')}
+                                  >
+                                    <Copy className="h-3 w-3 shrink-0" />{d.verification_record.value}
+                                  </button>
+                                </dd>
+                              </dl>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                        </Fragment>
                       ))}
                     </TableBody>
                   </Table>

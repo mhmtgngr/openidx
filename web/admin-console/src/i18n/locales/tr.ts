@@ -112,6 +112,21 @@ const tr: typeof en = {
     userLink: {
       title: 'Bu kullanıcının Access 360 görünümünü aç (IAM · PAM · Ağ)',
     },
+    factorProof: {
+      title: 'Kimliğinizi doğrulayın',
+      descriptionPassword: 'Bu değişikliği yapmak için mevcut parolanızı girin.',
+      descriptionCode: 'Bu değişikliği yapmak için kimlik doğrulayıcı uygulamanızdaki bir kodu girin.',
+      descriptionEither:
+        'Bu değişikliği yapmak için mevcut parolanızı ya da kimlik doğrulayıcı uygulamanızdaki bir kodu girin.',
+      passwordLabel: 'Mevcut parola',
+      codeLabel: 'Doğrulama kodu',
+      confirm: 'Onayla',
+      failedPassword: 'Parola doğru değil.',
+      failedEither: 'Parola ya da kod doğru değil. Bir kod yalnızca bir kez geçerlidir; bir sonrakini bekleyin.',
+      locked: 'Çok fazla deneme yapıldı. Birkaç dakika bekleyip yeniden deneyin.',
+      unavailable:
+        'Bu değişiklik parolanızı gerektiriyor ve hesabınızın burada bir parolası yok. Değişikliği bir yöneticiden isteyin.',
+    },
     confirmAction: {
       confirm: 'Onayla',
       reasonLabel: 'Gerekçe (zorunlu)',
@@ -481,6 +496,10 @@ const tr: typeof en = {
       linkRefusedRisk: 'Bu oturum açma bağlantısı buradan kullanılamaz. Parolanızla oturum açın.',
       linkInvalid: 'Bu oturum açma bağlantısı geçersiz, süresi dolmuş veya kullanılmış. Yeni bir bağlantı isteyin.',
       linkSessionExpired: 'Bu oturum açma isteğinin süresi doldu. Uygulamadan yeniden başlayın.',
+      ssoNeedsEnrollment:
+        'Kuruluşunuz eklemediğiniz bir oturum açma yöntemi gerektiriyor ve ekleme süresi doldu. Bir yöneticiden atlama kodu isteyin.',
+      ssoRefusedRisk: 'Bu oturum açma buradan reddedildi. Daha önce kullandığınız bir cihazdan deneyin veya bir yöneticiye başvurun.',
+      ssoFailed: 'Bu oturum açma tamamlanamadı. Yeniden deneyin.',
     },
     resume: {
       checking: 'Mevcut oturumunuz denetleniyor…',
@@ -3361,6 +3380,7 @@ const tr: typeof en = {
       registered: '{{date}} tarihinde kaydedildi',
       lastUsed: 'Son kullanım {{date}}',
       usedTimes: '{{n}} kez kullanıldı',
+      remove: 'Güvenlik anahtarını kaldır',
       toasts: {
         loadFailed: 'Güvenlik anahtarları yüklenemedi',
         registered: 'Güvenlik anahtarı başarıyla kaydedildi',
@@ -3409,6 +3429,7 @@ const tr: typeof en = {
       trusted: 'Güvenilen',
       enrolled: '{{date}} tarihinde kaydedildi',
       lastUsed: 'Son kullanım {{date}}',
+      remove: 'Cihazı kaldır',
       toasts: {
         loadFailed: 'Anlık bildirim cihazları yüklenemedi',
         enrolled: 'Anlık bildirim cihazı başarıyla kaydedildi',
@@ -7846,7 +7867,7 @@ const tr: typeof en = {
       },
       domains: {
         title: 'Özel Alan Adları',
-        desc: 'Bu kiracının alan adlarını yönetin',
+        desc: 'Doğrulanmış bir alan adında sunulan oturum açma sayfası bu kuruluşun markalamasını gösterir.',
         add: 'Alan Adı Ekle',
         adding: 'Ekleniyor...',
         emptyTitle: 'Yapılandırılmış alan adı yok',
@@ -7863,10 +7884,13 @@ const tr: typeof en = {
           subdomain: 'Alt alan adı',
           custom: 'Özel alan adı',
         },
-        verifyTitle: 'Bu alan adı doğrulansın mı?',
-        verifyDesc:
-          '{{domain}} bu kiracı için doğrulanmış, güvenilir bir alan adı olarak işaretlenir. Doğrulanmış alan adları markalı URL\'ler ve kimlik bağlama için güvenilir kabul edilir.',
-        verifyConfirm: 'Doğrula',
+        verify: 'Doğrula',
+        verifyAria: '{{domain}} alan adını doğrula',
+        recordHint:
+          '{{domain}} alan adının DNS kayıtlarına bu TXT kaydını ekleyin, ardından doğrulayın. Kayıt, alan adının bu kuruluşun denetiminde olduğunu kanıtlar.',
+        recordType: 'Tür',
+        recordName: 'Ad',
+        recordValue: 'Değer',
         deleteTitle: 'Bu alan adı silinsin mi?',
         deleteDesc:
           '{{domain}} kiracıdan kaldırılır. Buna dayanan markalı URL\'ler çalışmayı durdurur.',
@@ -7880,11 +7904,17 @@ const tr: typeof en = {
         settingsFailed: 'Ayarlar kaydedilemedi',
         domainAdded: 'Alan adı eklendi',
         domainAddFailed: 'Alan adı eklenemedi',
+        domainInvalid: 'login.example.com gibi bir DNS adı girin.',
+        domainConflict:
+          'Bu kuruluş alan adını zaten ekledi ya da başka bir kuruluş onu doğruladı.',
         domainVerified: 'Alan adı doğrulandı',
         verifyFailed: 'Doğrulama başarısız',
+        recordNotFound:
+          'OpenIDX TXT kaydını bulamadı. Kaydı yayımlayın, DNS\'in güncellenmesini bekleyin ve yeniden deneyin.',
+        verifiedElsewhere: 'Bu alan adını başka bir kuruluş doğruladı.',
+        lookupFailed: 'DNS sorgusu başarısız oldu. Daha sonra yeniden deneyin.',
         domainRemoved: 'Alan adı kaldırıldı',
         domainDeleteFailed: 'Alan adı silinemedi',
-        tokenCopied: 'Belirteç kopyalandı',
       },
     },
     devices: {
@@ -8263,10 +8293,16 @@ const tr: typeof en = {
         createFailed: 'Kuruluş oluşturulamadı',
         updated: 'Kuruluş güncellendi',
         updateFailed: 'Kuruluş güncellenemedi',
+        platformAdminFields:
+          'Bir kuruluşun planını, durumunu ve sınırlarını yalnızca bir platform yöneticisi değiştirebilir.',
         deleted: 'Kuruluş silindi',
         memberAdded: 'Üye eklendi',
         memberAddFailed: 'Üye eklenemedi',
+        memberInvalid: 'Bir kullanıcının kimliğini girin.',
+        memberNotFound: 'Bu kimliğe sahip bir kullanıcı bu kuruluşta yok.',
+        lastOwner: 'Bir kuruluşun en az bir sahibi olmalıdır.',
         memberRemoved: 'Üye kaldırıldı',
+        memberRemoveFailed: 'Üye kaldırılamadı',
       },
     },
     auditArchival: {
@@ -8745,6 +8781,7 @@ const tr: typeof en = {
         htmlBody: 'HTML Gövdesi',
         textBody: 'Düz Metin Gövdesi',
         previewLabel: 'Önizleme',
+        previewFrame: 'E-posta önizlemesi',
         empty: 'Düzenlemek için soldan bir şablon seçin',
       },
     },

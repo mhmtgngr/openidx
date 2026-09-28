@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/netutil"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/common/testutil"
@@ -109,6 +111,16 @@ func setupTest(t *testing.T) *testContext {
 	// Create service - convert mock Redis client to database.RedisClient wrapper
 	redisClient := &database.RedisClient{Client: mockRedis.Client()}
 	service := NewService(db, redisClient, logger, testCipher())
+	// The receivers here are local test servers, and names like example.com
+	// stand for public receivers: loopback is allowlisted, and every name
+	// resolves to a public address without DNS. What the outbound guard
+	// refuses is outbound_guard_testdb_test.go's subject, not these tests'.
+	allow, err := netutil.ParseAllowlist("127.0.0.0/8")
+	require.NoError(t, err)
+	service.SetOutboundGuard(netutil.NewOutboundGuard(allow).WithProxy(nil).WithResolver(
+		netutil.ResolverFunc(func(context.Context, string, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("203.0.113.10")}, nil
+		})))
 
 	teardown := func() {
 		if server != nil {
@@ -827,9 +839,14 @@ func TestPingSubscription(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			// CreateSubscription refuses this URL now; a row saved before it
+			// did is what a ping can still meet.
 			name: "ping to invalid URL",
 			setup: func() string {
-				sub, _ := tc.service.CreateSubscription(tc.ctx, "Test", "invalid://url", "secret", []string{EventUserCreated}, "user")
+				sub, err := tc.service.CreateSubscription(tc.ctx, "Test", server.URL, "secret", []string{EventUserCreated}, "user")
+				require.NoError(t, err)
+				_, err = tc.db.Pool.Exec(tc.ctx, "UPDATE webhook_subscriptions SET url = 'invalid://url' WHERE id = $1", sub.ID)
+				require.NoError(t, err)
 				return sub.ID
 			},
 			wantErr:      false, // Ping returns delivery even on failure

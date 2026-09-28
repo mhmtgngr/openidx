@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/smtp"
+	"strings"
 	"time"
 
 	"github.com/openidx/openidx/internal/common/database"
@@ -168,11 +169,16 @@ func (s *Service) SendPasswordResetEmail(ctx context.Context, to, userName, toke
 	})
 }
 
-// SendWelcomeEmail sends a welcome email to a new user.
-func (s *Service) SendWelcomeEmail(ctx context.Context, to, userName string) error {
-	return s.SendAsync(ctx, to, "Welcome to OpenIDX", "welcome", map[string]interface{}{
-		"Name": userName,
-	})
+// SendWelcomeEmail sends a welcome email to a new user. Its button signs in at
+// baseURL, the install's own public URL, as the other mails' links do; with
+// no baseURL the mail carries no link. It used to link every recipient to a
+// docs page on a domain the project does not own.
+func (s *Service) SendWelcomeEmail(ctx context.Context, to, userName, baseURL string) error {
+	data := map[string]interface{}{"Name": userName}
+	if baseURL != "" {
+		data["URL"] = strings.TrimRight(baseURL, "/") + "/login"
+	}
+	return s.SendAsync(ctx, to, "Welcome to OpenIDX", "welcome", data)
 }
 
 // generateToken generates a cryptographically random 32-byte hex-encoded token.

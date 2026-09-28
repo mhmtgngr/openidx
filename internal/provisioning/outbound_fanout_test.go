@@ -39,7 +39,7 @@ func TestInboundCreateFansOutToTargets(t *testing.T) {
 		t.Fatalf("inbound schema: %v", err)
 	}
 
-	svc := &Service{db: db, logger: zap.NewNop()}
+	svc := &Service{db: db, logger: zap.NewNop(), outbound: testOutbound(t)}
 	orgID := "00000000-0000-0000-0000-0000000000aa"
 	octx := orgctx.With(ctx, orgctx.Org{ID: orgID})
 
@@ -103,7 +103,7 @@ func TestInboundCreateNoTargetsNoQueue(t *testing.T) {
 	db.Pool.Exec(ctx, outboundSchema)
 	db.Pool.Exec(ctx, inboundUsersSchema)
 
-	svc := &Service{db: db, logger: zap.NewNop()}
+	svc := &Service{db: db, logger: zap.NewNop(), outbound: testOutbound(t)}
 	orgID := "00000000-0000-0000-0000-0000000000bb"
 	octx := orgctx.With(ctx, orgctx.Org{ID: orgID})
 

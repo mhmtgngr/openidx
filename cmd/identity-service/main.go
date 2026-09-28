@@ -274,7 +274,15 @@ func main() {
 	}, log))
 
 	// Initialize directory service for LDAP sync
-	dirService := directory.NewService(db, log)
+	// One ENCRYPTION_KEY cipher for what this service keeps sealed at rest:
+	// the directories' credentials, which the directory service opens to sign
+	// in with, and the webhooks' signing secrets.
+	secretCipher, err := secretcrypt.New(cfg.EncryptionKey)
+	if err != nil {
+		log.Warn("directory credentials and webhook signing secrets will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
+		secretCipher = secretcrypt.NewNoop()
+	}
+	dirService := directory.NewService(db, log, secretCipher)
 	if redis != nil {
 		dirService.SetRedis(redis.Client) // leader-gate the sync tick across replicas
 		// And cut the tokens of anyone a sync deprovisions. The sync engine
@@ -292,12 +300,7 @@ func main() {
 	emailService := email.NewService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, redis, log)
 
 	// Initialize webhook service
-	webhookSecretCipher, err := secretcrypt.New(cfg.EncryptionKey)
-	if err != nil {
-		log.Warn("webhook signing secrets will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
-		webhookSecretCipher = secretcrypt.NewNoop()
-	}
-	webhookService := webhooks.NewService(db, redis, log, webhookSecretCipher)
+	webhookService := webhooks.NewService(db, redis, log, secretCipher)
 
 	// Initialize risk/anomaly service
 	riskService := risk.NewService(db, redis, log)

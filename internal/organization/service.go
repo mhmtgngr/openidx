@@ -4,13 +4,16 @@ package organization
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
@@ -238,13 +241,47 @@ func (s *Service) ListOrganizations(ctx context.Context, limit, offset int) ([]O
 	return orgs, total, nil
 }
 
-// UpdateOrganization updates an organization's name, plan, and status
-func (s *Service) UpdateOrganization(ctx context.Context, orgID string, name, plan, status string) error {
+// OrganizationUpdate is a change to an organization's record: each field that
+// is set is written, and a nil field keeps its value.
+type OrganizationUpdate struct {
+	Name            *string `json:"name"`
+	Plan            *string `json:"plan"`
+	Status          *string `json:"status"`
+	MaxUsers        *int    `json:"max_users"`
+	MaxApplications *int    `json:"max_applications"`
+}
+
+// installFieldChanges names the fields of u that would change the plan, the
+// status or a limit of org. Those are the install's decisions about a tenant --
+// what it is sold, whether it is suspended, how much it may hold -- and so the
+// platform admin's, not the organization's own owners'. A field restated with
+// the value it has changes nothing and is not named.
+func (u OrganizationUpdate) installFieldChanges(org *Organization) []string {
+	var changed []string
+	if u.Plan != nil && *u.Plan != org.Plan {
+		changed = append(changed, "plan")
+	}
+	if u.Status != nil && *u.Status != org.Status {
+		changed = append(changed, "status")
+	}
+	if u.MaxUsers != nil && *u.MaxUsers != org.MaxUsers {
+		changed = append(changed, "max_users")
+	}
+	if u.MaxApplications != nil && *u.MaxApplications != org.MaxApplications {
+		changed = append(changed, "max_applications")
+	}
+	return changed
+}
+
+// UpdateOrganization writes the fields of u that are set.
+func (s *Service) UpdateOrganization(ctx context.Context, orgID string, u OrganizationUpdate) error {
 	now := time.Now().UTC()
 
 	result, err := s.db.Pool.Exec(ctx,
-		`UPDATE organizations SET name = $1, plan = $2, status = $3, updated_at = $4 WHERE id = $5`,
-		name, plan, status, now, orgID,
+		`UPDATE organizations SET name = COALESCE($1, name), plan = COALESCE($2, plan), status = COALESCE($3, status),
+		        max_users = COALESCE($4, max_users), max_applications = COALESCE($5, max_applications), updated_at = $6
+		 WHERE id = $7`,
+		u.Name, u.Plan, u.Status, u.MaxUsers, u.MaxApplications, now, orgID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update organization: %w", err)
@@ -298,57 +335,158 @@ func (s *Service) GetUserOrganizations(ctx context.Context, userID string) ([]Or
 	return orgs, nil
 }
 
-// AddMember adds or updates a member in an organization
-func (s *Service) AddMember(ctx context.Context, orgID, userID, role, invitedBy string) error {
-	memberID := uuid.New().String()
-	now := time.Now().UTC()
+// orgRoles are the roles an organization grants its members: an owner or an
+// admin administers it through this API, and a member reads it. They are the
+// roles the console offers, and nothing else is stored.
+var orgRoles = map[string]bool{"owner": true, "admin": true, "member": true}
 
-	// invited_by is a nullable UUID; store NULL rather than an empty string
-	// (which would fail the UUID cast) when the inviter is unknown.
-	var inviter interface{}
-	if invitedBy != "" {
-		inviter = invitedBy
-	}
-	_, err := s.db.Pool.Exec(ctx,
-		`INSERT INTO organization_members (id, organization_id, user_id, role, joined_at, invited_by)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 ON CONFLICT (organization_id, user_id)
-		 DO UPDATE SET role = EXCLUDED.role`,
-		memberID, orgID, userID, role, now, inviter,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to add member: %w", err)
-	}
+// The ways a membership change is refused.
+var (
+	errOrganizationNotFound = errors.New("organization not found")
+	errMemberNotFound       = errors.New("member not found")
+	errNotOrgAdmin          = errors.New("must be an owner or admin of this organization")
+	errOwnerOnly            = errors.New("only an owner can grant the owner role or change an owner's membership")
+	errLastOwner            = errors.New("an organization must keep at least one owner")
+)
 
-	s.logger.Info("member added to organization",
-		zap.String("org_id", orgID),
-		zap.String("user_id", userID),
-		zap.String("role", role),
-	)
-
-	return nil
+// membershipChange is one write to an organization's membership: userID is
+// given role, or leaves the organization when role is empty. actorID is the
+// caller, whose own membership authorizes the change unless platform is set.
+type membershipChange struct {
+	orgID, userID, role string
+	actorID             string
+	platform            bool
+	invitedBy           string
 }
 
-// RemoveMember removes a member from an organization
-func (s *Service) RemoveMember(ctx context.Context, orgID, userID string) error {
-	result, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2`,
-		orgID, userID,
-	)
+// changeMembership applies ch and reports whether it added a member.
+//
+// Each membership write to an organization runs in a transaction that first
+// locks the organization's row, so what the checks read cannot change under
+// them: two owners removing each other at the same time cannot each see the
+// other remain and leave the organization with none.
+//
+//   - The caller must be an owner or admin of the organization, read again
+//     under the lock, or the platform admin.
+//   - Granting the owner role, or changing or removing an owner's membership,
+//     needs an owner or the platform admin. Otherwise an admin could demote
+//     the owners one at a time, make themselves one and take the organization.
+//   - The last owner can be neither demoted nor removed, by anyone: an
+//     organization with no owner is one only the platform admin can manage.
+func (s *Service) changeMembership(ctx context.Context, ch membershipChange) (bool, error) {
+	if _, err := uuid.Parse(ch.orgID); err != nil {
+		return false, errOrganizationNotFound
+	}
+	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to remove member: %w", err)
+		return false, fmt.Errorf("begin membership change: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var locked string
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM organizations WHERE id = $1 FOR UPDATE`, ch.orgID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, errOrganizationNotFound
+		}
+		return false, fmt.Errorf("lock organization: %w", err)
+	}
+	roleOf := func(userID string) (string, error) {
+		var role string
+		err := tx.QueryRow(ctx,
+			`SELECT COALESCE((SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2), '')`,
+			ch.orgID, userID).Scan(&role)
+		return role, err
 	}
 
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("member not found")
+	current, err := roleOf(ch.userID)
+	if err != nil {
+		return false, fmt.Errorf("read membership: %w", err)
+	}
+	if ch.role == "" && current == "" {
+		return false, errMemberNotFound
+	}
+	if !ch.platform {
+		actorRole := ""
+		if _, perr := uuid.Parse(ch.actorID); perr == nil {
+			if actorRole, err = roleOf(ch.actorID); err != nil {
+				return false, fmt.Errorf("read the caller's membership: %w", err)
+			}
+		}
+		if actorRole != "owner" && actorRole != "admin" {
+			return false, errNotOrgAdmin
+		}
+		if (ch.role == "owner" || current == "owner") && actorRole != "owner" {
+			return false, errOwnerOnly
+		}
+	}
+	if current == "owner" && ch.role != "owner" {
+		var owners int
+		if err := tx.QueryRow(ctx,
+			`SELECT COUNT(*) FROM organization_members WHERE organization_id = $1 AND role = 'owner'`,
+			ch.orgID).Scan(&owners); err != nil {
+			return false, fmt.Errorf("count owners: %w", err)
+		}
+		if owners <= 1 {
+			return false, errLastOwner
+		}
 	}
 
-	s.logger.Info("member removed from organization",
-		zap.String("org_id", orgID),
-		zap.String("user_id", userID),
+	if ch.role == "" {
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2`,
+			ch.orgID, ch.userID); err != nil {
+			return false, fmt.Errorf("remove member: %w", err)
+		}
+	} else {
+		// invited_by is a nullable UUID; store NULL rather than a value the
+		// UUID cast would refuse when the inviter is unknown.
+		var inviter interface{}
+		if _, err := uuid.Parse(ch.invitedBy); err == nil {
+			inviter = ch.invitedBy
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO organization_members (id, organization_id, user_id, role, joined_at, invited_by)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (organization_id, user_id)
+			 DO UPDATE SET role = EXCLUDED.role`,
+			uuid.New().String(), ch.orgID, ch.userID, ch.role, time.Now().UTC(), inviter); err != nil {
+			return false, fmt.Errorf("add member: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit membership change: %w", err)
+	}
+
+	s.logger.Info("organization membership changed",
+		zap.String("org_id", ch.orgID),
+		zap.String("user_id", ch.userID),
+		zap.String("from_role", current),
+		zap.String("to_role", ch.role),
 	)
+	return current == "" && ch.role != "", nil
+}
 
-	return nil
+// userOrganization returns the organization a user belongs to (users.org_id),
+// and false when no user has the id.
+//
+// users is under the RLS belt and this one read is not. A platform admin may
+// add a user of any organization, and an owner's request is scoped to the
+// organization of their token, which need not be the one they administer; left
+// to the belt, the lookup would answer "no such user" for the wrong reason in
+// both cases. The rule is applied by the caller to the org_id returned, and
+// nothing else of the row leaves this function.
+func (s *Service) userOrganization(ctx context.Context, userID string) (string, bool, error) {
+	var orgID string
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
+		//orgscope:ignore one user's organization by id, to decide whether the caller may make them a member; the caller applies its rule to the org_id returned and nothing else of the row is read
+		`SELECT org_id::text FROM users WHERE id = $1`, userID).Scan(&orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return orgID, true, nil
 }
 
 // GetMemberRole returns the caller's role within an organization, or "" if they
@@ -523,29 +661,93 @@ func (s *Service) handleGetOrganization(c *gin.Context) {
 	c.JSON(http.StatusOK, org)
 }
 
+// handleUpdateOrganization changes an organization's record. A field the
+// request leaves out keeps its value.
+//
+// An owner or admin of the organization changes its name. The plan, the status
+// and the limits are the platform admin's: an owner used to be able to upgrade
+// their own plan, raise their limits or lift their own suspension here. An owner
+// or admin may still send them as they are -- the console restates them with
+// every rename, and every client did while plan and status were required -- but
+// a request that would change one is refused whole with 403 naming the fields,
+// rather than applied without them.
 func (s *Service) handleUpdateOrganization(c *gin.Context) {
 	orgID := c.Param("id")
 	if !s.requireOrgAdmin(c, orgID) {
 		return
 	}
 
-	var req struct {
-		Name   string `json:"name" binding:"required"`
-		Plan   string `json:"plan" binding:"required"`
-		Status string `json:"status" binding:"required"`
-	}
-
+	var req OrganizationUpdate
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.Name == nil && req.Plan == nil && req.Status == nil && req.MaxUsers == nil && req.MaxApplications == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "nothing to update"})
+		return
+	}
+	for _, f := range []struct {
+		name  string
+		value *string
+	}{{"name", req.Name}, {"plan", req.Plan}, {"status", req.Status}} {
+		if f.value != nil && strings.TrimSpace(*f.value) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": f.name + " must not be empty"})
+			return
+		}
+	}
+	for _, f := range []struct {
+		name  string
+		value *int
+	}{{"max_users", req.MaxUsers}, {"max_applications", req.MaxApplications}} {
+		if f.value != nil && *f.value < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": f.name + " must not be negative"})
+			return
+		}
+	}
 
-	if err := s.UpdateOrganization(c.Request.Context(), orgID, req.Name, req.Plan, req.Status); err != nil {
+	ctx := c.Request.Context()
+	current, ok := s.loadOrganization(c, orgID)
+	if !ok {
+		return
+	}
+	if !orgctx.IsPlatformAdmin(ctx) {
+		if changed := req.installFieldChanges(current); len(changed) > 0 {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":             "forbidden",
+				"error_description": "only a platform admin can change an organization's plan, status or limits",
+				"fields":            changed,
+			})
+			return
+		}
+		// Restated as they are, so nothing of them is written: a concurrent
+		// change by the platform admin is not undone by an owner's rename.
+		req.Plan, req.Status, req.MaxUsers, req.MaxApplications = nil, nil, nil, nil
+	}
+
+	if err := s.UpdateOrganization(ctx, orgID, req); err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to update organization", err), s.logger)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "organization updated"})
+}
+
+// loadOrganization reads the organization a write names. An id that names none
+// -- reachable by a platform admin, whom requireOrgAdmin does not look up -- is
+// answered 404, as is an id that is not a UUID, rather than a database error.
+func (s *Service) loadOrganization(c *gin.Context, orgID string) (*Organization, bool) {
+	if _, err := uuid.Parse(orgID); err == nil {
+		org, err := s.GetOrganization(c.Request.Context(), orgID)
+		if err == nil {
+			return org, true
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to load organization", err), s.logger)
+			return nil, false
+		}
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
+	return nil, false
 }
 
 func (s *Service) handleListMembers(c *gin.Context) {
@@ -578,6 +780,16 @@ func (s *Service) handleListMembers(c *gin.Context) {
 	c.JSON(http.StatusOK, members)
 }
 
+// handleAddMember makes a user a member of the organization in a role, or
+// changes the role of one who is.
+//
+// It used to accept any user id -- another organization's user, or no user at
+// all -- and any role string. The role must be one the organization grants and
+// the user must exist. An owner or admin may add only the organization's own
+// users (users.org_id); a platform admin may add any user. A user of another
+// organization is answered exactly as an id that names no user, so the answer
+// does not tell an owner which ids exist elsewhere. changeMembership decides
+// who may touch an owner and keeps the last one.
 func (s *Service) handleAddMember(c *gin.Context) {
 	orgID := c.Param("id")
 	if !s.requireOrgAdmin(c, orgID) {
@@ -593,33 +805,82 @@ func (s *Service) handleAddMember(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	// The inviter is the authenticated caller; AddMember stores NULL when unknown
-	// rather than substituting the seed admin identity.
-	inviterID, _ := c.Get("user_id")
-	invitedBy, _ := inviterID.(string)
-
-	if err := s.AddMember(c.Request.Context(), orgID, req.UserID, req.Role, invitedBy); err != nil {
-		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to add member", err), s.logger)
+	if !orgRoles[req.Role] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "role must be one of owner, admin, member"})
+		return
+	}
+	if _, err := uuid.Parse(req.UserID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id must be a user's id"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"message": "member added"})
+	ctx := c.Request.Context()
+	platform := orgctx.IsPlatformAdmin(ctx)
+	userOrg, found, err := s.userOrganization(ctx, req.UserID)
+	if err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to look up user", err), s.logger)
+		return
+	}
+	if !found || (!platform && userOrg != orgID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	// The inviter is the authenticated caller, or NULL when there is none,
+	// never the seed admin identity.
+	caller := c.GetString("user_id")
+	added, err := s.changeMembership(ctx, membershipChange{
+		orgID: orgID, userID: req.UserID, role: req.Role,
+		actorID: caller, platform: platform, invitedBy: caller,
+	})
+	if err != nil {
+		s.respondMembershipError(c, err)
+		return
+	}
+	if added {
+		c.JSON(http.StatusCreated, gin.H{"message": "member added"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "member role updated"})
 }
 
+// handleRemoveMember removes a member from the organization. changeMembership
+// keeps an owner's membership to owners and the last owner in place.
 func (s *Service) handleRemoveMember(c *gin.Context) {
 	orgID := c.Param("id")
 	userID := c.Param("userId")
 	if !s.requireOrgAdmin(c, orgID) {
 		return
 	}
+	if _, err := uuid.Parse(userID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "member not found"})
+		return
+	}
 
-	if err := s.RemoveMember(c.Request.Context(), orgID, userID); err != nil {
-		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to remove member", err), s.logger)
+	ctx := c.Request.Context()
+	if _, err := s.changeMembership(ctx, membershipChange{
+		orgID: orgID, userID: userID,
+		actorID: c.GetString("user_id"), platform: orgctx.IsPlatformAdmin(ctx),
+	}); err != nil {
+		s.respondMembershipError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "member removed"})
+}
+
+// respondMembershipError answers a refused or failed membership change.
+func (s *Service) respondMembershipError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errOrganizationNotFound), errors.Is(err, errMemberNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	case errors.Is(err, errNotOrgAdmin), errors.Is(err, errOwnerOnly):
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "error_description": err.Error()})
+	case errors.Is(err, errLastOwner):
+		c.JSON(http.StatusConflict, gin.H{"error": "conflict", "error_description": err.Error()})
+	default:
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to change membership", err), s.logger)
+	}
 }
 
 func (s *Service) handleGetMyOrganizations(c *gin.Context) {
@@ -662,11 +923,17 @@ func (s *Service) requireOrgAdmin(c *gin.Context, orgID string) bool {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "error_description": "authentication required"})
 		return false
 	}
-	role, err := s.GetMemberRole(ctx, orgID, callerID)
-	if err != nil {
-		s.logger.Error("failed to check organization membership", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-		return false
+	// An id that is not a UUID names no membership; asking the database would
+	// only turn the refusal into a 500.
+	role := ""
+	if _, err := uuid.Parse(orgID); err == nil {
+		if _, err := uuid.Parse(callerID); err == nil {
+			if role, err = s.GetMemberRole(ctx, orgID, callerID); err != nil {
+				s.logger.Error("failed to check organization membership", zap.Error(err))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+				return false
+			}
+		}
 	}
 	if role != "owner" && role != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "error_description": "must be an owner or admin of this organization"})

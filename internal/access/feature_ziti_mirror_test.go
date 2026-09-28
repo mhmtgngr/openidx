@@ -41,7 +41,11 @@ CREATE TABLE IF NOT EXISTS ziti_service_policies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     ziti_id VARCHAR(255) UNIQUE, name VARCHAR(255), policy_type VARCHAR(16),
     service_roles JSONB DEFAULT '[]', identity_roles JSONB DEFAULT '[]',
-    is_system BOOLEAN DEFAULT false, org_id UUID);`
+    is_system BOOLEAN DEFAULT false, org_id UUID);
+-- Read by the check that a service name is not another organization's.
+CREATE TABLE IF NOT EXISTS pam_entries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ziti_service_name VARCHAR(255), org_id UUID);`
 
 const (
 	featureOrg   = "00000000-0000-0000-0000-0000000000c1"

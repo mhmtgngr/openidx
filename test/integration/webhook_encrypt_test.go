@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/netutil"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/webhooks"
@@ -40,6 +42,13 @@ func TestWebhookSecretEncryptedAtRest(t *testing.T) {
 	cipher, err := secretcrypt.New("0123456789abcdef0123456789abcdef")
 	require.NoError(t, err)
 	svc := webhooks.NewService(db, rc, zaptest.NewLogger(t), cipher)
+	// example.test stands for a receiver on the internet: it resolves to a
+	// public (documentation) address without DNS, since creating a webhook
+	// resolves its host and refuses one that is internal or unknown.
+	svc.SetOutboundGuard(netutil.NewOutboundGuard(netutil.Allowlist{}).WithProxy(nil).WithResolver(
+		netutil.ResolverFunc(func(context.Context, string, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("203.0.113.10")}, nil
+		})))
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 

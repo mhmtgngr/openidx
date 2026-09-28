@@ -47,6 +47,7 @@ func seedProxySession(t *testing.T, rc *goredis.Client, token string, expires ti
 		"email":       "someone@example.com",
 		"name":        "Someone",
 		"roles":       []string{"reader"},
+		"host":        "example.com", // httptest.NewRequest's host
 		"expires":     expires.Unix(),
 		"last_active": time.Now().Unix(),
 	})

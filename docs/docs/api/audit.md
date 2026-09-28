@@ -9,8 +9,14 @@ The Audit Service provides event logging, compliance reporting, and data export.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/audit/events` | List events (filtered, paginated) |
-| POST | `/api/v1/audit/events` | Log an event |
+| POST | `/api/v1/audit/events` | Log an event (OpenIDX services only; see below) |
 | GET | `/api/v1/audit/events/:id` | Get event details |
+
+`POST /api/v1/audit/events` is how OpenIDX's own services write to the trail.
+It needs the internal service token in `X-Internal-Token` (the value of
+`INTERNAL_SERVICE_TOKEN`) and answers 401 without it, even to an
+administrator's access token. The shipped edges (APISIX, the Helm ingress, the
+lite install's nginx and the gateway service) do not route it at all.
 
 ### Query Parameters
 
@@ -69,3 +75,17 @@ Periods: `24h`, `7d`, `30d`, `90d`
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/v1/audit/export` | Export events (CSV or JSON) |
+
+## Webhook subscriptions
+
+Where the organization's audit events are to be delivered. These routes need
+the `admin` or `super_admin` role; any other caller gets `403`. A URL that
+names or resolves to an internal address is refused with `400` unless an
+operator allowed it with `OIDX_OUTBOUND_ALLOWLIST`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/audit/webhooks` | List the organization's subscriptions |
+| POST | `/api/v1/audit/webhooks` | Register one (`url`, `secret`, `enabled`, `filters`) |
+| DELETE | `/api/v1/audit/webhooks/:id` | Delete one |
+| POST | `/api/v1/audit/webhooks/:id/test` | Send it a test event |

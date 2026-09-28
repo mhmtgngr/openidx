@@ -1,12 +1,17 @@
 package access
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
@@ -26,8 +31,26 @@ func (s *Service) zitiUnavailable(c *gin.Context) bool {
 // Fabric & Router handlers
 // ---------------------------------------------------------------------------
 
+// handleGetFabricOverview is the fabric's health, its routers and its recent
+// metrics for an install administrator, and for anyone else the health their
+// organization may see (orgFabricHealth) with no routers and no metrics: the
+// routers name the hosts they run on, and the metrics count every
+// organization's services and identities.
 func (s *Service) handleGetFabricOverview(c *gin.Context) {
 	if s.zitiUnavailable(c) {
+		return
+	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
+	if !view.install {
+		health, err := s.orgFabricHealth(c.Request.Context(), view.orgID)
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get fabric overview", err), s.logger)
+			return
+		}
+		c.JSON(http.StatusOK, FabricOverview{Health: *health, RecentMetrics: []ZitiMetric{}, Routers: []ZitiEdgeRouterInfo{}})
 		return
 	}
 	overview, err := s.ziti().GetFabricOverview(c.Request.Context())
@@ -36,6 +59,37 @@ func (s *Service) handleGetFabricOverview(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, overview)
+}
+
+// orgFabricHealth is the fabric's health as one organization sees it. Whether
+// the controller answers, whether this service's SDK is up and how many edge
+// routers are online is state every organization's traffic shares and names
+// nothing, so it is kept; the counts are the organization's own, from the
+// mirror, in place of the controller's; and the details, whose errors can
+// carry the controller's address, are left out.
+func (s *Service) orgFabricHealth(ctx context.Context, orgID string) (*FabricHealthStatus, error) {
+	zm := s.ziti()
+	h := &FabricHealthStatus{LastChecked: time.Now(), SDKReady: zm.sdkReady()}
+	if _, err := zm.GetControllerVersion(ctx); err == nil {
+		h.ControllerReachable = true
+		if routers, err := zm.ListEdgeRouters(ctx); err == nil {
+			h.RoutersTotal = len(routers)
+			for _, r := range routers {
+				if r.IsOnline {
+					h.RoutersOnline++
+				}
+			}
+		}
+	}
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM ziti_services WHERE org_id = $1),
+		       (SELECT COUNT(*) FROM ziti_identities WHERE org_id = $1),
+		       (SELECT COUNT(*) FROM ziti_service_policies WHERE org_id = $1)`, orgID).
+		Scan(&h.ServicesCount, &h.IdentitiesCount, &h.PoliciesCount)
+	if err != nil {
+		return nil, err
+	}
+	return h, nil
 }
 
 func (s *Service) handleListEdgeRouters(c *gin.Context) {
@@ -63,8 +117,23 @@ func (s *Service) handleGetEdgeRouter(c *gin.Context) {
 	c.JSON(http.StatusOK, router)
 }
 
+// handleGetHealth is the fabric's health: the controller's for an install
+// administrator, and for anyone else the part their organization may see.
 func (s *Service) handleGetHealth(c *gin.Context) {
 	if s.zitiUnavailable(c) {
+		return
+	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
+		return
+	}
+	if !view.install {
+		health, err := s.orgFabricHealth(c.Request.Context(), view.orgID)
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get health status", err), s.logger)
+			return
+		}
+		c.JSON(http.StatusOK, health)
 		return
 	}
 	status, err := s.ziti().HealthCheck(c.Request.Context())
@@ -126,14 +195,36 @@ func (s *Service) handleGetMetrics(c *gin.Context) {
 	c.JSON(http.StatusOK, metrics)
 }
 
+// handleListServicePolicies lists the controller's service policies, which
+// name the services and identity attributes they join. An install
+// administrator sees them all; anyone else sees their organization's, as the
+// ziti_service_policies mirror records them.
 func (s *Service) handleListServicePolicies(c *gin.Context) {
 	if s.zitiUnavailable(c) {
+		return
+	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
 		return
 	}
 	policies, err := s.ziti().ListServicePolicies(c.Request.Context())
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to list service policies", err), s.logger)
 		return
+	}
+	if !view.install {
+		own, err := s.ownedZitiPolicies(c.Request.Context(), view.orgID)
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to list service policies", err), s.logger)
+			return
+		}
+		mine := make([]ZitiServicePolicyInfo, 0, len(own))
+		for _, p := range policies {
+			if own[p.ID] {
+				mine = append(mine, p)
+			}
+		}
+		policies = mine
 	}
 	c.JSON(http.StatusOK, policies)
 }
@@ -294,7 +385,7 @@ func (s *Service) handleUpdateEdgeRouterPolicy(c *gin.Context) {
 		"identityRoles":   req.IdentityRoles,
 	}
 	body, _ := json.Marshal(payload)
-	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/edge-router-policies/"+id, body)
+	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/edge-router-policies/"+url.PathEscape(id), body)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update edge router policy", err), s.logger)
 		return
@@ -311,7 +402,7 @@ func (s *Service) handleDeleteEdgeRouterPolicy(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/edge-router-policies/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/edge-router-policies/"+url.PathEscape(id), nil)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete edge router policy", err), s.logger)
 		return
@@ -413,8 +504,15 @@ func (s *Service) handleEvaluateIdentityPosture(c *gin.Context) {
 	})
 }
 
+// handleGetPostureSummary summarizes the organization's posture checks and
+// results. The governance-policy sync counts in it come from policy_sync_state,
+// which has no organization, so only an install administrator gets them.
 func (s *Service) handleGetPostureSummary(c *gin.Context) {
 	if s.zitiUnavailable(c) {
+		return
+	}
+	view, ok := s.zitiViewFor(c)
+	if !ok {
 		return
 	}
 	summary, err := s.ziti().GetPostureCheckSummary(c.Request.Context())
@@ -422,9 +520,20 @@ func (s *Service) handleGetPostureSummary(c *gin.Context) {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get posture check summary", err), s.logger)
 		return
 	}
+	if !view.install {
+		delete(summary, "total_policy_syncs")
+		delete(summary, "error_policy_syncs")
+	}
 	c.JSON(http.StatusOK, summary)
 }
 
+// handleSubmitDevicePosture is a device's report of its own posture, the mobile
+// app's self-report. The results it records are what the proxy's posture
+// checks read for the identity, so the identity has to be the caller's: one of
+// the calling user's own identities in their organization, named by its id or
+// by its controller id (the ziti_id /ziti/sync/my-identity returns). Any other
+// identity -- another user's, another organization's, one that does not exist
+// -- gets the same 404 and nothing is recorded.
 func (s *Service) handleSubmitDevicePosture(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
@@ -439,15 +548,20 @@ func (s *Service) handleSubmitDevicePosture(c *gin.Context) {
 		return
 	}
 
-	report, err := s.ziti().EvaluateDeviceHealth(c.Request.Context(), req.IdentityID, &req.Posture)
+	identityID, ok := s.callersOwnZitiIdentity(c, req.IdentityID)
+	if !ok {
+		return
+	}
+
+	report, err := s.ziti().EvaluateDeviceHealth(c.Request.Context(), identityID, &req.Posture)
 	if err != nil {
 		s.logger.Error("Device posture evaluation failed",
-			zap.String("identity_id", req.IdentityID), zap.Error(err))
+			zap.String("identity_id", identityID), zap.Error(err))
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("submit device posture", err), s.logger)
 		return
 	}
 
-	s.logAuditEvent(c, "device_posture_evaluated", req.IdentityID, "ziti_identity", map[string]interface{}{
+	s.logAuditEvent(c, "device_posture_evaluated", identityID, "ziti_identity", map[string]interface{}{
 		"overall_passed": report.OverallPassed,
 		"score":          report.Score,
 		"critical":       report.Critical,
@@ -455,6 +569,44 @@ func (s *Service) handleSubmitDevicePosture(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, report)
+}
+
+// callersOwnZitiIdentity resolves ref -- an identity's id or its controller id
+// -- to the id of an identity the calling user holds in the organization the
+// request resolved to. Otherwise it writes the refusal and returns false.
+func (s *Service) callersOwnZitiIdentity(c *gin.Context, ref string) (string, bool) {
+	// The caller comes from the verified token only. A credential with no user
+	// behind it -- a service account's API key -- holds no identity.
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return "", false
+	}
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return "", false
+	}
+	notFound := func() (string, bool) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ziti identity not found"})
+		return "", false
+	}
+	if _, err := uuid.Parse(userID); err != nil {
+		return notFound()
+	}
+	var id string
+	err = s.db.Pool.QueryRow(c.Request.Context(), `
+		SELECT id::text FROM ziti_identities
+		 WHERE (id::text = $1 OR ziti_id = $1) AND user_id = $2::uuid AND org_id = $3`,
+		ref, userID, org.ID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return notFound()
+	}
+	if err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("submit device posture", err), s.logger)
+		return "", false
+	}
+	return id, true
 }
 
 // ---------------------------------------------------------------------------
@@ -563,6 +715,9 @@ func (s *Service) handleCreateServicePolicy(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
+	if !s.zitiPolicyRolesAllowed(c, req.ServiceRoles, req.IdentityRoles) {
+		return
+	}
 
 	zitiID, err := s.ziti().CreateServicePolicy(c.Request.Context(), req.Name, req.Type, req.ServiceRoles, req.IdentityRoles)
 	if err != nil {
@@ -632,6 +787,9 @@ func (s *Service) handleUpdateServicePolicy(c *gin.Context) {
 	}
 	if isSystem {
 		c.JSON(http.StatusForbidden, gin.H{"error": "cannot modify system-managed policies"})
+		return
+	}
+	if !s.zitiPolicyRolesAllowed(c, req.ServiceRoles, req.IdentityRoles) {
 		return
 	}
 
@@ -744,6 +902,9 @@ func (s *Service) handlePatchIdentityAttributes(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ziti identity not found"})
 		return
 	}
+	if !s.zitiIdentityAttributesAllowed(c, zitiID, req.Attributes) {
+		return
+	}
 
 	if err := s.ziti().PatchIdentityRoleAttributes(c.Request.Context(), zitiID, req.Attributes); err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to patch identity attributes", err), s.logger)
@@ -811,11 +972,29 @@ func (s *Service) handleGetCertExpiryAlerts(c *gin.Context) {
 	c.JSON(http.StatusOK, certs)
 }
 
+// handleRotateCertificate rotates one of the organization's certificates. The
+// rotation reads and claims the certificate by id alone, because the expiry
+// monitor rotates across organizations, so the organization is checked here.
 func (s *Service) handleRotateCertificate(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
 	}
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	id := c.Param("id")
+	var owned bool
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT EXISTS (SELECT 1 FROM ziti_certificates WHERE id::text = $1 AND org_id = $2)`, id, org.ID).Scan(&owned); err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to rotate certificate", err), s.logger)
+		return
+	}
+	if !owned {
+		c.JSON(http.StatusNotFound, gin.H{"error": "certificate not found"})
+		return
+	}
 	if err := s.ziti().RotateCertificate(c.Request.Context(), id); err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to rotate certificate", err), s.logger)
 		return

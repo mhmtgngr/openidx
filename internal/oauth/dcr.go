@@ -15,6 +15,9 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/config"
+	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -25,9 +28,10 @@ import (
 // job, or an MCP server) can register, obtain credentials, and then use the
 // token endpoint (incl. token exchange) without a human in the loop.
 //
-// Registration can be gated by an initial access token (a bearer the operator
-// distributes) so the endpoint is not open to the world; when no gate is
-// configured it is open (dev/first-run), matching common OSS defaults.
+// Registration is gated by an initial access token (a bearer the operator
+// distributes) and closed when none is configured, unless the operator opts
+// into open registration (dcrAuthorized). Either way it creates clients in one
+// organization only (dcrRegistersIn).
 
 // clientMetadata is the RFC 7591 client metadata request/response body. Only the
 // fields OpenIDX supports are modeled; unknown request fields are ignored.
@@ -86,7 +90,7 @@ func dcrError(c *gin.Context, status int, code, desc string) {
 
 // handleRegisterClient implements POST /oauth/register (RFC 7591).
 func (s *Service) handleRegisterClient(c *gin.Context) {
-	if !s.dcrAuthorized(c) {
+	if !s.dcrAuthorized(c) || !s.dcrRegistersIn(c) {
 		dcrError(c, http.StatusUnauthorized, "invalid_token", "registration requires a valid initial access token")
 		return
 	}
@@ -240,6 +244,17 @@ func (s *Service) buildClientFromMetadata(md *clientMetadata) (*OAuthClient, err
 	if md.TokenEndpointAuthMethod == "none" {
 		clientType = "public"
 	}
+	// Client credentials and token exchange admit a confidential client only
+	// (authenticateConfidentialClient). Registering a public one for either
+	// would hand back a client every such request refuses, so the
+	// registration is refused instead.
+	if clientType == "public" {
+		for _, gt := range []string{"client_credentials", grantTypeTokenExchange} {
+			if contains(grantTypes, gt) {
+				return nil, &metadataError{"token_endpoint_auth_method none cannot be used with the " + gt + " grant: it needs a confidential client"}
+			}
+		}
+	}
 
 	responseTypes := md.ResponseTypes
 	if len(responseTypes) == 0 && needsRedirect {
@@ -317,6 +332,37 @@ func (s *Service) dcrAuthorized(c *gin.Context) bool {
 	}
 	got := bearerToken(c)
 	return got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(gate)) == 1
+}
+
+// dcrOrgFromConfig is the organization dynamic registration is bound to:
+// DCR_ORG_ID, or DEFAULT_ORG_ID when that is not set.
+func dcrOrgFromConfig(cfg *config.Config) string {
+	return strings.TrimSpace(firstNonEmptyStr(cfg.DCROrgID, cfg.DefaultOrgID))
+}
+
+// dcrRegistersIn reports whether this registration request is for the one
+// organization dynamic registration serves (DCR_ORG_ID, else DEFAULT_ORG_ID).
+//
+// A registration creates its client in the organization the request resolved
+// to, and the tenant resolver takes that from the request itself: the
+// X-Org-Slug header, the tenant's host, or the fallback when it names neither.
+// The initial access token is one for the whole install, so its holder -- or,
+// with open registration, anyone -- could create a client in any organization
+// by naming it, without anyone there having handed out a token. A request
+// resolved elsewhere is refused with the answer a missing token gets; the
+// log says which organization was asked for.
+func (s *Service) dcrRegistersIn(c *gin.Context) bool {
+	want := s.dcrOrgID
+	if want == "" {
+		want = middleware.DefaultOrgID
+	}
+	org, err := orgctx.From(c.Request.Context())
+	if err == nil && org.ID == want {
+		return true
+	}
+	s.logger.Warn("DCR: registration refused outside the organization it is bound to (DCR_ORG_ID)",
+		logsafe.String("requested_org", org.ID))
+	return false
 }
 
 // storeRegistrationToken persists the hash of a registration access token.
