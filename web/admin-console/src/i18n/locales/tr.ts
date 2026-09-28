@@ -573,6 +573,8 @@ const tr: typeof en = {
       verify: 'Doğrula',
       verifying: 'Doğrulanıyor...',
       differentMethod: 'Farklı bir yöntem kullan',
+      noUsableMethod:
+        'Bunların hiçbirini kullanamıyor musunuz (örneğin yeni veya yeniden kurulmuş bir telefonda)? Yöneticinizden tek kullanımlık bir atlama kodu isteyin ve yeniden oturum açın. Kod burada sunulacaktır.',
       backToLogin: 'Oturum açmaya dön',
     },
     form: {

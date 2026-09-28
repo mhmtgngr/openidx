@@ -769,4 +769,54 @@ describe('LoginPage', () => {
       expect(fetchMock).not.toHaveBeenCalled()
     })
   })
+
+  // A user on a new or reinstalled phone can often use none of the factors on
+  // offer (push goes to the old install, the authenticator lived in the app).
+  // The picker has to say what to do then: get a bypass code from an
+  // administrator. Once one exists the server offers it, and the hint goes away.
+  describe('MFA step with no usable method', () => {
+    const fetchMock = vi.fn()
+
+    beforeEach(() => {
+      sessionStorage.setItem('oidc_login_session', 'test-session')
+      fetchMock.mockReset()
+      vi.stubGlobal('fetch', fetchMock)
+    })
+
+    afterEach(() => {
+      sessionStorage.clear()
+      vi.unstubAllGlobals()
+    })
+
+    const reachPicker = async (methods: string[]) => {
+      fetchMock.mockImplementationOnce(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ mfa_required: true, mfa_session: 'mfa-1', mfa_methods: methods }),
+        } as Response)
+      )
+      const user = userEvent.setup()
+      renderWithRouter(<LoginPage />)
+      await user.type(screen.getByLabelText(/username or email/i), 'testuser')
+      await user.type(screen.getByLabelText(/^password$/i), 'password123')
+      await user.click(screen.getByRole('button', { name: /sign in$/i }))
+    }
+
+    it('tells the user how to get a bypass code when none is offered', async () => {
+      await reachPicker(['push', 'totp', 'email'])
+      expect(await screen.findByTestId('mfa-no-usable-method')).toHaveTextContent(/bypass code/i)
+    })
+
+    it('shows the hint on a single-method screen too', async () => {
+      await reachPicker(['totp'])
+      await screen.findByLabelText(/verification code/i)
+      expect(screen.getByTestId('mfa-no-usable-method')).toBeInTheDocument()
+    })
+
+    it('drops the hint once a bypass code is offered', async () => {
+      await reachPicker(['push', 'bypass'])
+      await screen.findAllByRole('button', { name: /bypass/i })
+      expect(screen.queryByTestId('mfa-no-usable-method')).not.toBeInTheDocument()
+    })
+  })
 })

@@ -580,6 +580,8 @@ const en = {
       verify: 'Verify',
       verifying: 'Verifying...',
       differentMethod: 'Use a different method',
+      noUsableMethod:
+        'Can\'t use any of these, for example on a new or reinstalled phone? Ask your administrator for a one-time bypass code, then sign in again. It will be offered here.',
       backToLogin: 'Back to login',
     },
     form: {

@@ -1244,6 +1244,12 @@ export function LoginPage() {
               )
             })}
 
+            {!mfaMethods.includes('bypass') && (
+              <p className="text-xs text-muted-foreground text-center" data-testid="mfa-no-usable-method">
+                {t('login.mfa.noUsableMethod')}
+              </p>
+            )}
+
             <Button
               type="button"
               variant="ghost"
@@ -1466,6 +1472,11 @@ export function LoginPage() {
             )}
 
             <div className="space-y-2 mt-4">
+              {!mfaMethods.includes('bypass') && (
+                <p className="text-xs text-muted-foreground text-center" data-testid="mfa-no-usable-method">
+                  {t('login.mfa.noUsableMethod')}
+                </p>
+              )}
               {mfaMethods.length > 1 && (
                 <Button
                   type="button"
