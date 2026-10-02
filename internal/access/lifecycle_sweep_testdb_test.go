@@ -78,7 +78,7 @@ func seedLifecycle(t *testing.T, pool *pgxpool.Pool) (*Service, string) {
 			org_id uuid, status text NOT NULL, expires_at timestamptz, updated_at timestamptz);
 		CREATE TABLE user_roles (user_id uuid, role_id uuid, org_id uuid);
 		CREATE TABLE group_memberships (user_id uuid, group_id uuid, org_id uuid);
-		CREATE TABLE user_application_assignments (user_id uuid, application_id uuid, org_id uuid);`)
+		CREATE TABLE user_application_assignments (user_id uuid, application_id uuid, org_id uuid, expires_at TIMESTAMPTZ);`)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS vault_checkouts,

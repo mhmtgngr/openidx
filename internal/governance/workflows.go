@@ -1506,9 +1506,17 @@ func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) er
 			return fmt.Errorf("failed to add to group: %w", err)
 		}
 	case "application":
+		// The assignment carries the request's window (migration v222), which
+		// internal/appaccess reads: the access ends when the window does, not
+		// at the expiry sweep's next tick. A standing assignment stays
+		// standing, a request without a window makes one, and of two windows
+		// on one assignment the later counts.
 		_, err := s.db.Pool.Exec(ctx,
-			`INSERT INTO user_application_assignments (user_id, application_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-			request.RequesterID, request.ResourceID, org.ID,
+			`INSERT INTO user_application_assignments (user_id, application_id, org_id, expires_at) VALUES ($1, $2, $3, $4)
+			 ON CONFLICT (user_id, application_id) DO UPDATE SET expires_at =
+			   CASE WHEN user_application_assignments.expires_at IS NULL OR EXCLUDED.expires_at IS NULL THEN NULL
+			        ELSE GREATEST(user_application_assignments.expires_at, EXCLUDED.expires_at) END`,
+			request.RequesterID, request.ResourceID, org.ID, request.ExpiresAt,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to assign application: %w", err)
