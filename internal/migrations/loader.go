@@ -1539,5 +1539,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamEntryRequestGrantsUp,
 			DownSQL:     pamEntryRequestGrantsDown,
 		},
+		{
+			Version:     217,
+			Name:        "pam_session_admin_bypass",
+			Description: "A PAM entry session ends when the grant that opened it does; for that the session records the gates its launch passed only because the caller is an administrator (pam_entry_sessions.admin_bypass: 'grant', 'approval'; empty when none), so a session an administrator opened without a grant is not ended for the lack of one. Rows written before this migration stay NULL and are not judged by the sweep. Down drops the column.",
+			UpSQL:       pamSessionAdminBypassUp,
+			DownSQL:     pamSessionAdminBypassDown,
+		},
 	}
 }

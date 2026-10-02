@@ -622,16 +622,21 @@ func (s *Service) findGuacConnectionIDByName(ctx context.Context, broker *Guacam
 // recordPamLaunch writes the pam_entry_sessions ledger row, bumps the entry's
 // launch counters, and emits the pam.entry_connected audit event. Best-effort:
 // a ledger failure must not block the session. Returns the session row id.
+//
+// The row records the gates an administrator passed only by being one
+// (admin_bypass, migration v217), so the lifecycle sweep can tell a session a
+// grant opened, which ends with the grant, from one an administrator opened
+// without any.
 func (s *Service) recordPamLaunch(c *gin.Context, orgID string, entry *pamLaunchEntry, protocol, guacConnID string, injected bool, guacUsername string) string {
 	ctx := c.Request.Context()
 	userID := c.GetString("user_id")
 
 	var sessionID string
 	if err := s.db.Pool.QueryRow(ctx, `
-		INSERT INTO pam_entry_sessions (org_id, entry_id, user_id, protocol, guac_connection_id, credential_injected, guac_username)
-		VALUES ($1, $2, NULLIF($3,'')::uuid, NULLIF($4,''), NULLIF($5,''), $6, NULLIF($7,''))
+		INSERT INTO pam_entry_sessions (org_id, entry_id, user_id, protocol, guac_connection_id, credential_injected, guac_username, admin_bypass)
+		VALUES ($1, $2, NULLIF($3,'')::uuid, NULLIF($4,''), NULLIF($5,''), $6, NULLIF($7,''), $8)
 		RETURNING id`,
-		orgID, entry.ID, userID, protocol, guacConnID, injected, guacUsername).Scan(&sessionID); err != nil {
+		orgID, entry.ID, userID, protocol, guacConnID, injected, guacUsername, adminBypassed(entry.AdminBypass)).Scan(&sessionID); err != nil {
 		s.logger.Warn("recordPamLaunch: session ledger insert failed",
 			zap.String("entry_id", entry.ID), zap.Error(err))
 	}

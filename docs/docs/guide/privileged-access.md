@@ -24,8 +24,12 @@ sequenceDiagram
     A->>A: record session, write audit events
 ```
 
-The user never sees the password or key. Revoking their access (or the
-admin kill switch) terminates the live session, not just future ones.
+The user never sees the password or key. A session lasts as long as the
+access that opened it: when the grant ends (a request's window closes, an
+administrator removes it, the role or group carrying it goes) or the admin
+kill switch is pressed, the live session ends within half a minute, not just
+future ones. A session an administrator opened without a grant is not ended
+for the lack of one.
 
 ## For admins: setting it up
 
