@@ -1594,7 +1594,7 @@ const en = {
       },
       editDialog: {
         title: 'Edit User',
-        externalNote: 'External (vendor) account, {{status}}, ending on {{date}}. Its status, sponsor and end date are changed on the External Users page.',
+        externalNote: 'External (vendor) account, {{status}}, sponsored by {{sponsor}}, ending on {{date}}. Its status, sponsor and end date are changed on the External Users page.',
         externalLink: 'Open External Users',
         updating: 'Updating...',
         update: 'Update User',
