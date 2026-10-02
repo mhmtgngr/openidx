@@ -29,12 +29,16 @@ func appAccessSchema(t *testing.T, s *Service) {
 			username VARCHAR(255),
 			email VARCHAR(255),
 			org_id UUID NOT NULL
-		)`,
+		,
+    user_type VARCHAR(16) NOT NULL DEFAULT 'internal', account_status VARCHAR(16) NOT NULL DEFAULT 'active', vendor_org_id UUID, sponsor_user_id UUID, account_expires_at TIMESTAMPTZ, status_changed_at TIMESTAMPTZ, access_severed_at TIMESTAMPTZ
+)`,
 		`CREATE TABLE groups (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			name VARCHAR(255) NOT NULL,
 			org_id UUID NOT NULL
-		)`,
+		,
+    external_allowed BOOLEAN NOT NULL DEFAULT false
+)`,
 		`CREATE TABLE group_memberships (
 			group_id UUID NOT NULL,
 			user_id UUID NOT NULL,

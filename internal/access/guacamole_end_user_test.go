@@ -15,9 +15,10 @@ import (
 )
 
 // TestGuacEndUserSelfService proves the end-user self-service handlers:
-// my-connections lists the org's brokered connections with their PAM flags,
-// and my-session-requests returns only the caller's own requests (never
-// another user's), joined with route info. Uses a migrated testcontainer DB
+// my-connections lists the brokered connections the caller may launch with
+// their PAM flags (a grant on the route's entry shows it; none hides it), and
+// my-session-requests returns only the caller's own requests (never another
+// user's), joined with route info. Uses a migrated testcontainer DB
 // (container superuser bypasses RLS, so the handlers' explicit org_id/user
 // predicates carry the scoping).
 func TestGuacEndUserSelfService(t *testing.T) {
@@ -41,28 +42,41 @@ func TestGuacEndUserSelfService(t *testing.T) {
 		RETURNING id::text`, defaultOrg).Scan(&routeID); err != nil {
 		t.Fatalf("seed proxy route: %v", err)
 	}
-	var connectionID string
-	if err := db.Pool.QueryRow(ctx, `
+	if _, err := db.Pool.Exec(ctx, `
 		INSERT INTO guacamole_connections
 			(route_id, org_id, guacamole_connection_id, protocol, hostname, port, require_approval, record_session)
-		VALUES ($1::uuid, $2::uuid, 'guac-conn-1', 'ssh', '10.0.0.5', 22, true, true)
-		RETURNING id::text`, routeID, defaultOrg).Scan(&connectionID); err != nil {
+		VALUES ($1::uuid, $2::uuid, 'guac-conn-1', 'ssh', '10.0.0.5', 22, true, true)`, routeID, defaultOrg); err != nil {
 		t.Fatalf("seed guacamole connection: %v", err)
-	}
-
-	// One request each for two different users.
-	if _, err := db.Pool.Exec(ctx, `
-		INSERT INTO guacamole_session_requests (org_id, connection_id, requester_id, reason, status)
-		VALUES ($1::uuid, $2::uuid, $3::uuid, 'deploy hotfix', 'approved'),
-		       ($1::uuid, $2::uuid, $4::uuid, 'other user',    'pending')`,
-		defaultOrg, connectionID, userA, userB); err != nil {
-		t.Fatalf("seed session requests: %v", err)
 	}
 
 	s := &Service{db: db, logger: zap.NewNop()}
 
-	// my-connections: the seeded connection shows up with its PAM flags.
-	conns := fetchMyConnections(t, s, defaultOrg)
+	// The entry standing for the route, and user A's grant on it.
+	entryID, err := s.syncRouteEntry(ctx, defaultOrg, routeID)
+	if err != nil {
+		t.Fatalf("sync the route's entry: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO pam_entry_grants (org_id, entry_id, principal_type, principal_id, actions)
+		VALUES ($1::uuid, $2::uuid, 'user', $3, ARRAY['connect'])`, defaultOrg, entryID, userA); err != nil {
+		t.Fatalf("grant user A: %v", err)
+	}
+
+	// One request each for two different users.
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO pam_entry_access_requests (org_id, entry_id, requester_id, reason, status)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, 'deploy hotfix', 'approved'),
+		       ($1::uuid, $2::uuid, $4::uuid, 'other user',    'pending')`,
+		defaultOrg, entryID, userA, userB); err != nil {
+		t.Fatalf("seed session requests: %v", err)
+	}
+
+	// my-connections: user A, who holds the grant, sees the connection with
+	// its PAM flags; user B, who holds none, sees nothing.
+	if conns := fetchMyConnections(t, s, defaultOrg, userB); len(conns) != 0 {
+		t.Fatalf("my-connections for an ungranted user returned %d connections, want 0", len(conns))
+	}
+	conns := fetchMyConnections(t, s, defaultOrg, userA)
 	if len(conns) != 1 {
 		t.Fatalf("my-connections returned %d connections, want 1", len(conns))
 	}
@@ -95,13 +109,13 @@ func TestGuacEndUserSelfService(t *testing.T) {
 		`UPDATE proxy_routes SET enabled = false WHERE id = $1::uuid`, routeID); err != nil {
 		t.Fatalf("disable route: %v", err)
 	}
-	if conns := fetchMyConnections(t, s, defaultOrg); len(conns) != 0 {
+	if conns := fetchMyConnections(t, s, defaultOrg, userA); len(conns) != 0 {
 		t.Errorf("my-connections after disabling route returned %d, want 0", len(conns))
 	}
 }
 
 // fetchMyConnections drives handleListMyGuacConnections over a gin test context.
-func fetchMyConnections(t *testing.T, s *Service, orgID string) []GuacUserConnection {
+func fetchMyConnections(t *testing.T, s *Service, orgID, userID string) []GuacUserConnection {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -109,6 +123,7 @@ func fetchMyConnections(t *testing.T, s *Service, orgID string) []GuacUserConnec
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/access/guacamole/my-connections", nil)
 	req = req.WithContext(orgctx.With(req.Context(), orgctx.Org{ID: orgID}))
 	c.Request = req
+	c.Set("user_id", userID)
 
 	s.handleListMyGuacConnections(c)
 	if w.Code != http.StatusOK {
