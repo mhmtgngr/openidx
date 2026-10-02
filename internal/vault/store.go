@@ -401,8 +401,17 @@ func (s *Service) hasGrant(ctx context.Context, secretID, principalID string, us
 	if err != nil {
 		return false, err
 	}
+	return s.hasGrantInOrg(ctx, orgID, secretID, principalID, userRoles, action)
+}
+
+// hasGrantInOrg is hasGrant with the organization stated by the caller, for
+// UseAs, whose bypass context is the one thing that must not supply it.
+func (s *Service) hasGrantInOrg(ctx context.Context, orgID, secretID, principalID string, userRoles []string, action string) (bool, error) {
+	if userRoles == nil {
+		userRoles = []string{}
+	}
 	var ok bool
-	err = s.db.Pool.QueryRow(ctx, `
+	err := s.db.Pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM vault_access_grants
 			WHERE secret_id = $1
@@ -472,6 +481,51 @@ func (s *Service) Use(ctx context.Context, orgID, secretID string) ([]byte, erro
 	}
 	s.recordCheckout(ctx, secretID, version, "", "use", "", nil)
 	s.recordAudit(ctx, "vault.use", "", map[string]interface{}{"secret_id": secretID, "system": true})
+	return pt, nil
+}
+
+// UseAs is Use on a person's behalf: the plaintext goes to an internal caller
+// (it is never handed to the person), but the person chose the secret, so the
+// person must hold a `use` grant on it.
+//
+// Use alone checks no grant, and that is right for the callers it was written
+// for: a PAM launch decides access on the entry, and the entry names its own
+// secret. A caller that takes the secret id from a request has no such
+// decision in front of it. POST /pam/connect/cloud was that caller: any member
+// of an organization could name any of its secrets as the AWS broker
+// credential and assume any role the credential could.
+//
+// isAdmin skips the grant, as on Reveal. orgID is explicit for the reason
+// given on Use. A refusal is ErrForbidden; a secret outside orgID is
+// ErrNotFound, checked after the grant so a refused caller cannot tell the
+// two apart by the error.
+func (s *Service) UseAs(ctx context.Context, orgID, secretID, principalID string, userRoles []string, isAdmin bool, reason string) ([]byte, error) {
+	if !orgctx.IsBypassRLS(ctx) {
+		return nil, errors.New("vault: UseAs requires a system (bypass-RLS) context")
+	}
+	if orgID == "" {
+		return nil, errors.New("vault: UseAs requires an organization")
+	}
+	if principalID == "" {
+		return nil, ErrForbidden
+	}
+	if !isAdmin {
+		ok, err := s.hasGrantInOrg(ctx, orgID, secretID, principalID, userRoles, "use")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrForbidden
+		}
+	}
+	version, pt, err := s.decryptCurrent(ctx, orgID, secretID)
+	if err != nil {
+		return nil, err
+	}
+	s.recordCheckout(ctx, secretID, version, principalID, "use", reason, nil)
+	s.recordAudit(ctx, "vault.use", principalID, map[string]interface{}{
+		"secret_id": secretID, "on_behalf_of": principalID, "admin": isAdmin,
+	})
 	return pt, nil
 }
 
