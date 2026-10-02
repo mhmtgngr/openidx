@@ -38,14 +38,16 @@ import (
 // unapproved or out-of-scope attempt is refused at every enforcement point,
 // OAuth, the proxy, the Ziti dial and PAM.
 //
-// One vendor user and their sponsor. Three applications, each an OIDC client
-// that requires assignment and a BrowZer route on the overlay, and three PAM
-// entries on the overlay that the vendor may see and ask for:
+// One vendor user and their sponsor, and three of each kind of target a vendor
+// can be opened: applications, each an OIDC client that requires assignment
+// and a BrowZer route on the overlay; PAM entries on the overlay that the
+// vendor may see and ask for; and network services on the overlay:
 //
 //   - approved: asked for through governance, approved by the sponsor and then
 //     by the administrator, for a window;
-//   - unapproved: the application asked for and denied by the sponsor; the
-//     entry asked for and approved by the sponsor only, one of its two steps;
+//   - unapproved: the application and the network service asked for and
+//     denied by the sponsor; the entry asked for and approved by the sponsor
+//     only, one of its two steps;
 //   - out of scope: never asked for.
 //
 // Every request goes through governance's own routes and its own token check,
@@ -64,15 +66,11 @@ import (
 //   - the proxy: handleProxy as the router's NoRoute, from a proxy session,
 //     reaching the upstream or refusing before it;
 //   - the Ziti dial: the vendor identity's role attributes as the user sync
-//     patches them, against the Dial policy the reconciler writes, on a stand-in
-//     controller that matches the two the way the controller does;
+//     and the network grant worker patch them, against the Dial policies the
+//     reconciler and the grant worker write, on a stand-in controller that
+//     matches the two the way the controller does;
 //   - PAM: connect, on a stand-in broker, and the lifecycle sweep that ends a
 //     session whose grant ended.
-//
-// Not proved here, and said in docs/evidence/display-equals-enforcement.md: a
-// network service, the third kind of target a vendor can be opened. An
-// approved request for one opens no dial yet: no Dial policy names the
-// jit-<request-id> attribute it adds.
 func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing.T) {
 	f := newExternalPamFixture(t)
 	ctx := context.Background()
@@ -122,6 +120,18 @@ func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing
 		return id
 	}
 	approvedEntry, unapprovedEntry, outOfScopeEntry := newEntry("db-01"), newEntry("db-02"), newEntry("db-03")
+
+	// Network services: services of the organization on the overlay, named in
+	// a request by their mirror id and dialled by their controller id.
+	type netService struct{ id, zitiID string }
+	newService := func(name string) netService {
+		t.Helper()
+		n := netService{zitiID: "zsvc-" + name + "-" + f.suffix}
+		n.id = f.scalar(`INSERT INTO ziti_services (org_id, ziti_id, name, host, port)
+			VALUES ($1, $2, $3, $4, 5432) RETURNING id::text`, f.org, n.zitiID, name+"-"+f.suffix, name+".example.test")
+		return n
+	}
+	approvedService, unapprovedService, outOfScopeService := newService("warehouse"), newService("ledger"), newService("archive")
 
 	// ---- governance, behind its own token check ----
 	keys := newAcceptanceTokens(t, f.org)
@@ -255,6 +265,9 @@ func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing
 	zcfg := MockConfig(t)
 	zcfg.ZitiCtrlURL = ctrl.URL
 	zm := &ZitiManager{cfg: zcfg, logger: zap.NewNop(), db: f.db, mgmtToken: "t", mgmtClient: ctrl.Client()}
+	// The network grant and revocation workers reach the controller through
+	// the access service's own manager.
+	f.svc.zitiProvider = newZitiProviderWith(zm)
 	vendorIdentity := "zid-" + f.suffix
 	f.exec(`INSERT INTO ziti_identities (ziti_id, name, identity_type, user_id, enrolled, org_id)
 		VALUES ($1, $2, 'User', $3, true, $4)`, vendorIdentity, "vendor-"+f.suffix, f.external, f.org)
@@ -278,7 +291,7 @@ func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing
 	// Every service is dialable by whoever holds its application, and by no
 	// one else: a refusal below is the policy refusing, not a policy missing.
 	for _, a := range []app{approvedApp, unapprovedApp, outOfScopeApp} {
-		if got := overlay.dialRoles(a.service); !slices.Equal(got, []string{"#app-" + a.id}) {
+		if got := overlay.dialRoles("#" + a.service); !slices.Equal(got, []string{"#app-" + a.id}) {
 			t.Fatalf("the Dial policy of %s names %v, want only #app-%s", a.service, got, a.id)
 		}
 	}
@@ -290,7 +303,8 @@ func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing
 			t.Fatalf("sync the vendor's overlay identity: %v", err)
 		}
 	}
-	dials := func(a app) bool { return overlay.dials(a.service, vendorIdentity) }
+	dials := func(a app) bool { return overlay.dials("#"+a.service, vendorIdentity) }
+	dialsService := func(n netService) bool { return overlay.dials("@"+n.zitiID, vendorIdentity) }
 	// The identity's first sync, which the poller gives it when it creates it.
 	syncVendor()
 
@@ -308,19 +322,25 @@ func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing
 	deniedRequest := file("application", unapprovedApp.id)
 	entryRequest := file("pam_entry", approvedEntry)
 	halfRequest := file("pam_entry", unapprovedEntry)
-	for _, id := range []string{appRequest, entryRequest, halfRequest} {
+	serviceRequest := file("network_service", approvedService.id)
+	deniedServiceRequest := file("network_service", unapprovedService.id)
+	for _, id := range []string{appRequest, entryRequest, halfRequest, serviceRequest} {
 		decide(sponsorToken, id, "approve")
 	}
 	decide(sponsorToken, deniedRequest, "deny")
-	for _, id := range []string{appRequest, entryRequest} {
+	decide(sponsorToken, deniedServiceRequest, "deny")
+	for _, id := range []string{appRequest, entryRequest, serviceRequest} {
 		decide(adminToken, id, "approve")
 	}
-	for id, want := range map[string]string{appRequest: "fulfilled", entryRequest: "fulfilled", deniedRequest: "denied", halfRequest: "pending"} {
+	for id, want := range map[string]string{appRequest: "fulfilled", entryRequest: "fulfilled", deniedRequest: "denied",
+		halfRequest: "pending", serviceRequest: "fulfilled", deniedServiceRequest: "denied"} {
 		if got := statusOf(id); got != want {
 			t.Fatalf("request %s is %s, want %s", id, got, want)
 		}
 	}
-	// The poller's next pass re-syncs an identity whose assignment started.
+	// The network grant worker's tick applies the fulfilled network request,
+	// and the poller's next pass re-syncs an identity whose assignment started.
+	f.svc.drainNetworkGrants(bypass)
 	zm.resyncChangedAssignments(bypass)
 	if attrs := overlay.attributes(vendorIdentity); !slices.Contains(attrs, "browzer-users") {
 		t.Fatalf("the vendor's identity carries %v: without #browzer-users it is not the clientless user this test is about", attrs)
@@ -352,6 +372,19 @@ func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing
 		for _, a := range []app{unapprovedApp, outOfScopeApp} {
 			if dials(a) {
 				t.Errorf("Ziti: the vendor dials %s", a.service)
+			}
+		}
+		// The approved network service opens through the request's own Dial
+		// policy, to the request's own attribute; the others open to no one.
+		if got := overlay.dialRoles("@" + approvedService.zitiID); !slices.Equal(got, []string{"#jit-" + serviceRequest}) {
+			t.Errorf("Ziti: the approved network service's Dial policies name %v, want only #jit-%s", got, serviceRequest)
+		}
+		if !dialsService(approvedService) {
+			t.Errorf("Ziti: the vendor cannot dial the approved network service: identity %v", overlay.attributes(vendorIdentity))
+		}
+		for _, n := range []netService{unapprovedService, outOfScopeService} {
+			if dialsService(n) {
+				t.Errorf("Ziti: the vendor dials the network service %s", n.zitiID)
 			}
 		}
 
@@ -401,7 +434,8 @@ func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing
 	}
 	// Two hours and a minute pass. The windows' ends are behind them, and so is
 	// the vendor identity's last sync, which happened in the window.
-	f.exec(`UPDATE access_requests SET expires_at = expires_at - interval '2 hours 1 minute' WHERE id IN ($1, $2)`, appRequest, entryRequest)
+	f.exec(`UPDATE access_requests SET expires_at = expires_at - interval '2 hours 1 minute' WHERE id IN ($1, $2, $3)`,
+		appRequest, entryRequest, serviceRequest)
 	f.exec(`UPDATE pam_entry_grants SET expires_at = expires_at - interval '2 hours 1 minute' WHERE request_id = $1`, entryRequest)
 	f.exec(`UPDATE user_application_assignments SET expires_at = expires_at - interval '2 hours 1 minute',
 		assigned_at = assigned_at - interval '2 hours 1 minute' WHERE user_id = $1`, f.external)
@@ -430,6 +464,9 @@ func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing
 		if dials(approvedApp) {
 			t.Errorf("Ziti: the vendor still dials the application whose window ended: identity %v", overlay.attributes(vendorIdentity))
 		}
+		if dialsService(approvedService) {
+			t.Errorf("Ziti: the vendor still dials the network service whose window ended: identity %v", overlay.attributes(vendorIdentity))
+		}
 		launch := f.approval(approvedEntry)
 		if code, body := connect(approvedEntry); code != http.StatusForbidden || body["error"] != "not permitted" {
 			t.Errorf("PAM: the entry whose window ended answered %d %v, want 403 not permitted", code, body)
@@ -442,13 +479,20 @@ func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing
 	// The sweeps then run: governance's expiry tick removes what the window
 	// gave, and the lifecycle sweep looks at the live sessions.
 	gsvc.RunJITExpiryOnce(ctx)
+	f.svc.drainNetworkRevocations(bypass)
 	f.svc.runLifecycleEnforcement(bypass)
 
 	t.Run("the sweeps end what the window left: the assignment, the requests and the session", func(t *testing.T) {
-		for _, id := range []string{appRequest, entryRequest} {
+		for _, id := range []string{appRequest, entryRequest, serviceRequest} {
 			if got := statusOf(id); got != "expired" {
 				t.Errorf("request %s is %s after the expiry tick, want expired", id, got)
 			}
+		}
+		if got := overlay.dialRoles("@" + approvedService.zitiID); len(got) != 0 {
+			t.Errorf("Ziti: the network service's Dial policy outlived its request: %v", got)
+		}
+		if n := f.scalar(`SELECT count(*)::text FROM ziti_service_policies WHERE name = $1`, jitDialPolicyName(serviceRequest)); n != "0" {
+			t.Errorf("the mirror still holds the network service's Dial policy (%s rows)", n)
 		}
 		if n := f.scalar(`SELECT count(*)::text FROM user_application_assignments WHERE user_id = $1`, f.external); n != "0" {
 			t.Errorf("the expiry tick left %s of the vendor's application assignments", n)
@@ -523,6 +567,15 @@ type acceptanceOverlay struct {
 }
 
 func (o *acceptanceOverlay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	const policies = "/edge/management/v1/service-policies/"
+	if r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, policies) {
+		id := strings.TrimPrefix(r.URL.Path, policies)
+		o.policies.mu.Lock()
+		o.policies.policies = slices.DeleteFunc(o.policies.policies, func(p ZitiServicePolicyInfo) bool { return p.ID == id })
+		o.policies.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	const identities = "/edge/management/v1/identities/"
 	id := strings.TrimPrefix(r.URL.Path, identities)
 	if id == r.URL.Path || id == "" || strings.Contains(id, "/") {
@@ -555,28 +608,30 @@ func (o *acceptanceOverlay) attributes(identity string) []string {
 	return append([]string(nil), o.attrs[identity]...)
 }
 
-// dialRoles returns the identity roles of every Dial policy on the service.
+// dialRoles returns the identity roles of every Dial policy naming the
+// service role, #name or @id.
 func (o *acceptanceOverlay) dialRoles(service string) []string {
 	o.policies.mu.Lock()
 	defer o.policies.mu.Unlock()
 	var roles []string
 	for _, p := range o.policies.policies {
-		if p.Type == "Dial" && slices.Contains(p.ServiceRoles, "#"+service) {
+		if p.Type == "Dial" && slices.Contains(p.ServiceRoles, service) {
 			roles = append(roles, p.IdentityRoles...)
 		}
 	}
 	return roles
 }
 
-// dials reports whether the identity may dial the service: whether a Dial
-// policy on the service names the identity, by its id or by an attribute it
-// carries, which is how the controller reads a policy's identity roles.
+// dials reports whether the identity may dial the service named by a service
+// role, #name or @id: whether a Dial policy naming it names the identity, by its
+// id or by an attribute it carries, which is how the controller reads a
+// policy's identity roles.
 func (o *acceptanceOverlay) dials(service, identity string) bool {
 	attrs := o.attributes(identity)
 	o.policies.mu.Lock()
 	defer o.policies.mu.Unlock()
 	for _, p := range o.policies.policies {
-		if p.Type != "Dial" || !slices.Contains(p.ServiceRoles, "#"+service) {
+		if p.Type != "Dial" || !slices.Contains(p.ServiceRoles, service) {
 			continue
 		}
 		for _, role := range p.IdentityRoles {

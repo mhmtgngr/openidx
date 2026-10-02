@@ -257,6 +257,22 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		body.ResourceName = name
 	}
 
+	// network_service requests: a time-bound dial to one of the
+	// organization's Ziti services (network_service_requests.go).
+	if body.ResourceType == "network_service" {
+		name, refusal, err := s.checkNetworkServiceRequest(c.Request.Context(), org.ID, body.ResourceID, body.Duration)
+		if err != nil {
+			s.logger.Error("could not check a network service request", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create access request"})
+			return
+		}
+		if refusal != nil {
+			c.JSON(refusal.status, gin.H{"error": refusal.msg, "code": refusal.code})
+			return
+		}
+		body.ResourceName = name
+	}
+
 	// Parse duration to calculate expires_at.
 	//
 	// Over the ceiling is refused, not silently shortened: an elevation granted
