@@ -168,6 +168,9 @@ type Service struct {
 	agentHandler         *AgentAPIHandler
 	remoteSupportHandler *RemoteSupportHandler
 	vaultSvc             *vault.Service
+	// webhooks publishes the privileged-access events (session_events.go);
+	// nil when the service runs without it, and then nothing is published.
+	webhooks WebhookPublisher
 	// guacRecordingRing seals guacd recordings at rest (PAM A1). Nil when
 	// encryption is unconfigured — the recording download handler then streams
 	// plaintext unchanged. Same keyring the sealer worker uses.
@@ -766,11 +769,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// every brokered target — so it carries the same adminOnly gate as the
 		// app-publishing routes below, and for the same reason. The end-user
 		// launcher reads /guacamole/my-connections instead, which returns the
-		// PAM flags without the infrastructure. Connect stays open to any
-		// authenticated user: launching a session the caller is entitled to is
-		// the end-user path, and v151 gave it the org predicate it was missing.
+		// PAM flags without the infrastructure. Connect is the entry launch
+		// (guacamole_route_entry.go): the route's entry decides who may launch
+		// it, and the launch carries the same freshness gate as
+		// /pam/entries/:id/connect, since it opens the same kind of session.
 		api.GET("/guacamole/connections", adminOnly, svc.handleListGuacamoleConnections)
-		api.POST("/guacamole/connections/:routeId/connect", svc.handleGuacamoleConnect)
+		api.POST("/guacamole/connections/:routeId/connect", svc.requireFreshMFA("pam.connect"), svc.handleGuacamoleConnect)
 		api.PUT("/guacamole/connections/:routeId/credential", svc.requireAdminRole(), svc.handleSetGuacCredential)
 
 		// Guacamole end-user self-service (PAM finalization): brokered-connection
@@ -811,6 +815,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/pam/moderation/:id", svc.handleGetModerationStatus)
 		api.POST("/pam/moderation/:id/join", svc.requireAdminRole(), svc.handleJoinModeration)
 		api.POST("/pam/moderation/:id/end", svc.handleEndModeration)
+		// The moderator of a PAM entry's session watches the session the
+		// moderation admitted (entry_moderation.go).
+		api.POST("/pam/moderation/:id/watch", svc.requireFreshMFA("pam.moderation_watch"), svc.handleWatchModeratedSession)
 
 		// Guacamole live monitor — read-only connection sharing (Task 4 — PAM M4)
 		api.POST("/guacamole/sessions/:id/share", svc.requireAdminRole(), svc.handleShareGuacSession)
@@ -885,6 +892,18 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/entry-requests/:id/approve", svc.requireAdminRole(), svc.handlePamApproveRequest)
 		api.POST("/pam/entry-requests/:id/deny", svc.requireAdminRole(), svc.handlePamDenyRequest)
 		api.GET("/pam/my-entry-requests", svc.handlePamListMyRequests)
+		// The sponsor's queue: an external user's launch is approved by their
+		// sponsor, who need not be an administrator.
+		api.GET("/pam/sponsored/entry-requests", svc.handlePamListSponsoredRequests)
+		api.POST("/pam/sponsored/entry-requests/:id/approve", svc.requireFreshMFA("pam.sponsor_decide"), svc.handlePamSponsorApproveRequest)
+		api.POST("/pam/sponsored/entry-requests/:id/deny", svc.requireFreshMFA("pam.sponsor_decide"), svc.handlePamSponsorDenyRequest)
+		// And the sessions those launches opened: watch read-only, or end.
+		api.GET("/pam/sponsored/sessions", svc.handlePamListSponsoredSessions)
+		api.POST("/pam/sponsored/sessions/:id/watch", svc.requireFreshMFA("pam.sponsor_watch"), svc.handlePamSponsorWatchSession)
+		api.POST("/pam/sponsored/sessions/:id/end", svc.requireFreshMFA("pam.sponsor_end"), svc.handlePamSponsorEndSession)
+		// And moderates their moderated sessions (entry_moderation.go).
+		api.GET("/pam/sponsored/moderation", svc.handlePamListSponsoredModeration)
+		api.POST("/pam/sponsored/moderation/:id/join", svc.requireFreshMFA("pam.sponsor_moderate"), svc.handlePamSponsorJoinModeration)
 		api.GET("/pam/sessions", svc.requireAdminRole(), svc.handlePamListSessions)
 		api.POST("/pam/sessions/:id/end", svc.handlePamEndSession)
 		api.POST("/pam/import/rdm", svc.requireAdminRole(), svc.handlePamImportRDM)
@@ -3514,7 +3533,9 @@ func (s *Service) logAuditEvent(c *gin.Context, action, targetID, targetType str
 		event["actor_type"] = "user"
 	}
 
-	if action == "proxy_access_denied" {
+	switch action {
+	case "proxy_access_denied", "pam.ssh_cert_denied", "pam.cloud_jit_denied",
+		"pam.reveal_denied", "pam.launch_denied", "pam.ztna.denied":
 		event["outcome"] = "failure"
 	}
 
