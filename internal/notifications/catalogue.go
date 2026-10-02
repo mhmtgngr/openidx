@@ -35,6 +35,19 @@ const (
 	TypeSecurity = "security"
 	// TypeBroadcast: an announcement an administrator sent to an audience.
 	TypeBroadcast = "broadcast"
+	// TypeApprovalPending: an access request is waiting for this user's
+	// approval, at the step they approve.
+	TypeApprovalPending = "approval_pending"
+	// TypeRequestUpdate: one of this user's access requests or privileged
+	// session requests was decided, or the access it gave is about to end or
+	// ended. Not "access_request": the
+	// old preferences page offered a switch by that name for a notification
+	// nothing sent, and a preference stored from it must not decide this one.
+	TypeRequestUpdate = "request_update"
+	// TypeSponsoredAccess: an external (vendor) user this user sponsors needs
+	// them: a privileged launch waiting for their approval, a moderated
+	// session waiting for a moderator, or a privileged session that started.
+	TypeSponsoredAccess = "sponsored_access"
 )
 
 // PreferenceType is one switchable notification type, in the words the person
@@ -76,6 +89,24 @@ var TypeCatalogue = []PreferenceType{
 		Type:        TypeBroadcast,
 		Title:       "Announcements",
 		Description: "Messages an administrator sent to everyone, a role or a group.",
+		Channels:    []string{"in_app", "push"},
+	},
+	{
+		Type:        TypeApprovalPending,
+		Title:       "Approvals waiting for you",
+		Description: "An access request is waiting for your approval.",
+		Channels:    []string{"in_app", "push"},
+	},
+	{
+		Type:        TypeRequestUpdate,
+		Title:       "Your access requests",
+		Description: "An access request or session request of yours was approved or denied, or the access it gave is about to end or ended.",
+		Channels:    []string{"in_app", "push"},
+	},
+	{
+		Type:        TypeSponsoredAccess,
+		Title:       "Vendor users you sponsor",
+		Description: "A vendor user you sponsor is waiting for you to approve or moderate a privileged session, or started one.",
 		Channels:    []string{"in_app", "push"},
 	},
 }

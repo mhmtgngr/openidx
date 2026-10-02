@@ -112,7 +112,8 @@ const userSelectColumns = `
 	COALESCE(last_name, '')  AS last_name,
 	enabled, email_verified,
 	created_at, updated_at, last_login_at, password_changed_at,
-	password_must_change, failed_login_count, last_failed_login_at, locked_until`
+	password_must_change, failed_login_count, last_failed_login_at, locked_until,
+	user_type, account_status, vendor_org_id::text, sponsor_user_id::text, account_expires_at`
 
 // scanUser scans one row (in userSelectColumns order) into a UserDB.
 func scanUser(row pgx.Row) (*UserDB, error) {
@@ -122,6 +123,7 @@ func scanUser(row pgx.Row) (*UserDB, error) {
 		&u.Enabled, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt,
 		&u.PasswordChangedAt, &u.PasswordMustChange, &u.FailedLoginCount,
 		&u.LastFailedLoginAt, &u.LockedUntil,
+		&u.UserType, &u.AccountStatus, &u.VendorOrgID, &u.SponsorUserID, &u.AccountExpiresAt,
 	)
 	if err != nil {
 		return nil, err

@@ -4280,6 +4280,9 @@ func (s *Service) handleCreateDelegation(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
+		if writeExternalRefusal(c, err) {
+			return
+		}
 		s.logger.Error("failed to create delegation", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -4308,6 +4311,9 @@ func (s *Service) handleUpdateDelegation(c *gin.Context) {
 	if err := s.UpdateDelegation(c.Request.Context(), id, updates); err != nil {
 		if errors.Is(err, errDelegationScope) {
 			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		if writeExternalRefusal(c, err) {
 			return
 		}
 		if strings.Contains(err.Error(), "not found") {
