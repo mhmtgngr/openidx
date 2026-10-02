@@ -56,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requester with no manager) refuses the request with the reason instead of
   filing one nobody can approve. Migration v212 records the terms a request
   was filed under; requests already open keep advancing.
+### Fixed
+- **An SSH certificate needs a grant.** `openidx-connect ssh` and `POST /pam/connect/ssh` sign only for a host and login registered as an SSH entry that the caller may connect to. If the entry requires approval, each certificate uses up one approved request. Before, any signed-in user could get a certificate for any login, `root` included. Administrators skip the grant but still need a registered entry. Refusals are audited as `pam.ssh_cert_denied`.
 
 ## [1.39.0] - 2026-09-28
 
