@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -215,5 +215,34 @@ describe('UsersPage', () => {
       expect(screen.getByText('Previous')).toBeInTheDocument()
       expect(screen.getByText('Next')).toBeInTheDocument()
     })
+  })
+
+  it("shows an external account's lifecycle status, not its sign-in flag", async () => {
+    const wrapper = createWrapper()
+    vi.mocked(api.getWithHeaders).mockResolvedValue({
+      data: [
+        {
+          id: 'x1', userName: 'ayse.vendor', name: { givenName: 'Ayse', familyName: 'Vendor' },
+          emails: [{ value: 'ayse@supplier.example.test' }], enabled: false,
+          userType: 'external', accountStatus: 'suspended', accountExpiresAt: '2099-01-01T00:00:00Z',
+        },
+        {
+          id: 'i1', userName: 'deniz', name: { givenName: 'Deniz', familyName: 'Internal' },
+          emails: [{ value: 'deniz@example.test' }], enabled: false,
+        },
+      ],
+      headers: {},
+    })
+
+    render(<UsersPage />, { wrapper })
+
+    const external = (await screen.findByText('Ayse Vendor')).closest('tr')!
+    expect(within(external).getByText('External')).toBeInTheDocument()
+    expect(within(external).getByText('Suspended')).toBeInTheDocument()
+    expect(within(external).queryByText('Disabled')).not.toBeInTheDocument()
+
+    const internal = screen.getByText('Deniz Internal').closest('tr')!
+    expect(within(internal).queryByText('External')).not.toBeInTheDocument()
+    expect(within(internal).getByText('Disabled')).toBeInTheDocument()
   })
 })
