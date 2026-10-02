@@ -7221,7 +7221,7 @@ const en = {
       kill: {
         dialogTitle: 'Kill Switch — {{username}}',
         dialogDesc:
-          "Severs this user's live access across all three pillars at once: IAM sessions are revoked, vault checkouts and JIT elevations are revoked, live privileged sessions are terminated, and Ziti network sessions are severed on the controller.",
+          "Severs this user's live access across all three pillars at once: IAM sessions are revoked, vault checkouts and JIT elevations are revoked, PAM connection grants, launch approvals and the temporary access links they issued are revoked, live privileged sessions are terminated, and Ziti network sessions are severed on the controller.",
         willSever:
           'Will sever now: {{iamSessions}} IAM sessions, {{checkouts}} checkouts, {{jit}} JIT grants, {{privSessions}} privileged sessions.',
         willSeverWithZiti:
@@ -7242,6 +7242,8 @@ const en = {
         partCheckouts: '{{n}} checkouts',
         partJit: '{{n}} JIT grants',
         partPrivSessions: '{{n}} privileged sessions',
+        partPamGrants: '{{n}} PAM connection grants',
+        partTempLinks: '{{n}} temporary access links',
         partNetwork: '{{n}} network sessions',
       },
     },

@@ -389,14 +389,6 @@ var signalRegister = map[string]string{
 	// Re-emitting it would echo the event back to every stream, including
 	// the partner that originated it, and two OpenIDX deployments subscribed
 	// to each other would loop. A receiver applies; it does not originate.
-	// Ending an external (vendor) account deprovisions it exactly as an
-	// administrator's disable does, but does not yet tell the SSF receivers:
-	// which event a suspension sends (the account can come back under a new
-	// sponsor) is the framework's section 6.10, which lands with the SSF part.
-	"internal/identity/external_accounts.go::endExternal":               "an external account's SSF signal is section 6.10 of the third-party access framework, not yet sent",
-	"internal/identity/external_accounts.go::suspendSponsoredExternals": "an external account's SSF signal is section 6.10 of the third-party access framework, not yet sent",
-	"internal/identity/vendor_orgs.go::handleCloseVendorOrg":            "an external account's SSF signal is section 6.10 of the third-party access framework, not yet sent",
-
 	"internal/oauth/ssf_receiver.go::applyCAEPEvent": "receiver of a partner-originated event; re-emitting would echo it (and loop between two mutually subscribed deployments)",
 }
 
