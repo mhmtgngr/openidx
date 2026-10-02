@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **An SSH certificate needs a grant.** `openidx-connect ssh` and `POST /pam/connect/ssh` sign only for a host and login registered as an SSH entry that the caller may connect to. If the entry requires approval, each certificate uses up one approved request. Before, any signed-in user could get a certificate for any login, `root` included. Administrators skip the grant but still need a registered entry. Refusals are audited as `pam.ssh_cert_denied`.
+
 ## [1.39.0] - 2026-09-28
 
 ### Security
