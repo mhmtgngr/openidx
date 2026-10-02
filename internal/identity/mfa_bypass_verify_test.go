@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY,
     username VARCHAR(255) NOT NULL,
     org_id UUID NOT NULL
+,
+    user_type VARCHAR(16) NOT NULL DEFAULT 'internal', account_status VARCHAR(16) NOT NULL DEFAULT 'active', vendor_org_id UUID, sponsor_user_id UUID, account_expires_at TIMESTAMPTZ, status_changed_at TIMESTAMPTZ, access_severed_at TIMESTAMPTZ
 );
 CREATE TABLE IF NOT EXISTS mfa_bypass_codes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

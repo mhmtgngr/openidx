@@ -9,7 +9,7 @@ minutes, so there is **no standing access** on the target host.
 ## How it works
 
 ```
-openidx-connect ssh root@db01
+openidx-connect ssh deploy@db01
 ```
 
 1. Generates an ephemeral ed25519 keypair locally. The **private key never
@@ -25,6 +25,21 @@ openidx-connect ssh root@db01
 
 Because the credential is a certificate the target already trusts (its `sshd`
 has `TrustedUserCAKeys` set to the org CA public key), `ssh` "just works".
+
+## Who gets a certificate
+
+The CA signs only for a host and login that an administrator registered as an
+**SSH entry** on the PAM pages. The login is the entry's username, or the
+username of the credential entry it links to. The caller must also hold a
+`connect` grant on that entry, as a user, a role or a group. If the entry
+requires approval, file a request on the entry (`POST
+/api/v1/access/pam/entries/<id>/request`). Each approved request is good for one
+certificate. Anything else is refused with `403 ssh_target_not_granted`.
+Administrators skip the grant, but not the registration.
+
+A certificate names a login, not a host. Every host that trusts the CA accepts
+it for that login. To tie logins to hosts, give each host an
+`AuthorizedPrincipalsFile` and list only the logins that host should accept.
 
 ## Setup on target hosts (one-time)
 

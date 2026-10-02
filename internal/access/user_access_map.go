@@ -443,10 +443,13 @@ func (s *Service) collectPAMPillar(ctx context.Context, orgID, userID string, ou
 	if err != nil {
 		return err
 	}
+	// A route's session request lives on the entry standing for the route
+	// (pam_entries.proxy_route_id, v213), not in guacamole_session_requests.
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM guacamole_session_requests
-		  WHERE requester_id = $1 AND org_id = $2 AND status = 'pending'
-		    AND (expires_at IS NULL OR expires_at > NOW())`,
+		`SELECT COUNT(*) FROM pam_entry_access_requests r
+		  JOIN pam_entries e ON e.id = r.entry_id AND e.org_id = r.org_id
+		 WHERE r.requester_id = $1 AND r.org_id = $2 AND e.proxy_route_id IS NOT NULL
+		   AND r.status = 'pending' AND (r.expires_at IS NULL OR r.expires_at > NOW())`,
 		userID, orgID).Scan(&out.PendingSessionRequests)
 	if err != nil {
 		return err

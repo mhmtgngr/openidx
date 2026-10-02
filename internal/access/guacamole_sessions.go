@@ -40,19 +40,12 @@ type GuacSessionRequest struct {
 // ---- handleRequestGuacSession ----
 // POST /api/v1/access/guacamole/connections/:routeId/request
 //
-// Resolves the guacamole_connections row via route_id, verifies the connection
-// belongs to the requester's org (via proxy_routes JOIN, same pattern as
-// handleSetGuacCredential), then inserts a pending guacamole_session_requests
-// row. Returns {request_id}.
+// Resolves the route's brokered connection in the caller's organization and
+// files a pam_entry_access_requests row on the entry standing for it: the
+// request the entry path consumes at launch. The caller needs the connect
+// grant, as on the entry route, and gets {request_id} back as before.
 func (s *Service) handleRequestGuacSession(c *gin.Context) {
 	routeID := c.Param("routeId")
-	userID := c.GetString("user_id")
-
-	var body struct {
-		Reason string `json:"reason"`
-	}
-	_ = c.ShouldBindJSON(&body) // reason is optional
-
 	ctx := c.Request.Context()
 
 	org, err := orgctx.From(ctx)
@@ -60,17 +53,9 @@ func (s *Service) handleRequestGuacSession(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-
-	// Resolve the guacamole_connections UUID PK for the route, scoped to this org.
-	var connectionID string
-	err = s.db.Pool.QueryRow(ctx,
-		`SELECT gc.id
-		   FROM guacamole_connections gc
-		   JOIN proxy_routes pr ON pr.id = gc.route_id
-		  WHERE gc.route_id = $1 AND pr.org_id = $2`,
-		routeID, org.ID).Scan(&connectionID)
+	rc, err := s.resolveRouteConnection(ctx, org.ID, routeID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, errRouteNotBrokered) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "guacamole connection not found for this route"})
 			return
 		}
@@ -79,125 +64,30 @@ func (s *Service) handleRequestGuacSession(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up connection"})
 		return
 	}
-
-	expiresAt := time.Now().Add(time.Hour)
-
-	var requestID string
-	err = s.db.Pool.QueryRow(ctx,
-		`INSERT INTO guacamole_session_requests
-			(org_id, connection_id, requester_id, reason, status, expires_at)
-		 VALUES ($1, $2, $3, $4, 'pending', $5)
-		 RETURNING id`,
-		org.ID, connectionID, userID, body.Reason, expiresAt).Scan(&requestID)
-	if err != nil {
-		s.logger.Error("handleRequestGuacSession: insert failed",
-			zap.String("connection_id", connectionID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session request"})
-		return
-	}
-
-	s.logAuditEvent(c, "guacamole.session_requested", requestID, "guacamole_session_request",
-		map[string]interface{}{
-			"route_id":      routeID,
-			"connection_id": connectionID,
-			"requester_id":  userID,
-			"expires_at":    expiresAt.Format(time.RFC3339),
-		})
-
-	c.JSON(http.StatusCreated, gin.H{"request_id": requestID})
+	s.createPamAccessRequest(c, rc.EntryID)
 }
 
 // ---- handleApproveGuacSession ----
 // POST /api/v1/access/guacamole/session-requests/:id/approve (admin)
 //
-// Sets status='approved', records approver and decision time.
+// The request is a pam_entry_access_requests row (see handleRequestGuacSession),
+// so the decision is the entry path's: four eyes included.
 func (s *Service) handleApproveGuacSession(c *gin.Context) {
-	s.decideGuacSession(c, "approved", "guacamole.session_approved")
+	s.decidePamRequest(c, "approved", "pam.access_approved")
 }
 
 // ---- handleDenyGuacSession ----
 // POST /api/v1/access/guacamole/session-requests/:id/deny (admin)
-//
-// Sets status='denied', records approver and decision time.
 func (s *Service) handleDenyGuacSession(c *gin.Context) {
-	s.decideGuacSession(c, "denied", "guacamole.session_denied")
-}
-
-// decideGuacSession is the shared implementation for approve/deny.
-func (s *Service) decideGuacSession(c *gin.Context, newStatus, auditAction string) {
-	requestID := c.Param("id")
-	approverID := c.GetString("user_id")
-
-	ctx := c.Request.Context()
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
-		return
-	}
-
-	// Four eyes. `require_approval` on a connection means the session cannot
-	// start until someone APPROVES the request (handleGuacamoleConnect's
-	// checkAndConsumeApproval), and that gate applies to administrators too --
-	// there is no admin bypass on it. Both routes here are admin-only, so
-	// without this check an administrator who requests a session for a gated
-	// connection can turn round and approve it themselves, which is the gate
-	// approving nothing. Denying your own request is harmless (it is a
-	// withdrawal), so only the approval is refused.
-	//
-	// The lookup is org-scoped, so another tenant's request is a 404 the same
-	// as an unknown id.
-	var requesterID string
-	switch err := s.db.Pool.QueryRow(ctx,
-		`SELECT requester_id::text FROM guacamole_session_requests WHERE id = $1 AND org_id = $2`,
-		requestID, org.ID).Scan(&requesterID); {
-	case errors.Is(err, pgx.ErrNoRows):
-		c.JSON(http.StatusNotFound, gin.H{"error": "session request not found or not in pending state"})
-		return
-	case err != nil:
-		s.logger.Error("decideGuacSession: requester lookup failed",
-			logsafe.String("request_id", requestID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update session request"})
-		return
-	case newStatus == "approved" && requesterID == approverID:
-		c.JSON(http.StatusForbidden, gin.H{"error": "you cannot approve your own session request"})
-		return
-	}
-
-	tag, err := s.db.Pool.Exec(ctx,
-		`UPDATE guacamole_session_requests
-		    SET status      = $1,
-		        approver_id = $2,
-		        decided_at  = NOW()
-		  WHERE id = $3 AND org_id = $4 AND status = 'pending'`,
-		newStatus, approverID, requestID, org.ID)
-	if err != nil {
-		s.logger.Error("decideGuacSession: update failed",
-			logsafe.String("request_id", requestID), zap.String("status", newStatus), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update session request"})
-		return
-	}
-	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "session request not found or not in pending state"})
-		return
-	}
-
-	s.logAuditEvent(c, auditAction, requestID, "guacamole_session_request",
-		map[string]interface{}{
-			"request_id":  requestID,
-			"approver_id": approverID,
-			"new_status":  newStatus,
-		})
-
-	c.JSON(http.StatusOK, gin.H{"request_id": requestID, "status": newStatus})
+	s.decidePamRequest(c, "denied", "pam.access_denied")
 }
 
 // ---- handleListGuacSessionRequests ----
 // GET /api/v1/access/guacamole/session-requests (admin)
 //
-// Lists pending session requests for the org. RLS enforces org scoping via
-// the request context's app.org_id setting, so no explicit org_id filter
-// is needed — but we add it explicitly for defence in depth.
+// Lists the pending requests on the organization's route-backed entries, in
+// the shape the Privileged Sessions page has always read: connection_id is
+// the route's connection record.
 func (s *Service) handleListGuacSessionRequests(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -208,11 +98,13 @@ func (s *Service) handleListGuacSessionRequests(c *gin.Context) {
 	}
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, connection_id, requester_id, reason, status,
-		        approver_id, decided_at, expires_at, created_at
-		   FROM guacamole_session_requests
-		  WHERE org_id = $1 AND status = 'pending'
-		  ORDER BY created_at DESC`,
+		`SELECT r.id, r.org_id, gc.id, r.requester_id, COALESCE(r.reason,''), r.status,
+		        r.approver_id, r.decided_at, r.expires_at, r.created_at
+		   FROM pam_entry_access_requests r
+		   JOIN pam_entries e ON e.id = r.entry_id AND e.org_id = r.org_id
+		   JOIN guacamole_connections gc ON gc.route_id = e.proxy_route_id AND gc.org_id = e.org_id
+		  WHERE r.org_id = $1 AND r.status = 'pending'
+		  ORDER BY r.created_at DESC`,
 		org.ID)
 	if err != nil {
 		s.logger.Error("handleListGuacSessionRequests: query failed", zap.Error(err))
@@ -691,41 +583,4 @@ func (s *Service) recordGuacSession(ctx context.Context, orgID, connectionID, us
 		 VALUES ($1,$2,NULLIF($3,'')::uuid,$4,'active') RETURNING id`,
 		orgID, connectionID, userID, recordingPath).Scan(&id)
 	return id, err
-}
-
-// ---- checkAndConsumeApproval ----
-// checkAndConsumeApproval atomically consumes the most-recent approved,
-// unexpired guacamole_session_requests row for the given connection and
-// user. Returns (true, nil) if a row was consumed (access granted),
-// (false, nil) if none exists (access denied), or (false, err) on error.
-//
-// The UPDATE names the organization itself. It used to rely on the connect
-// handler's ctx carrying the org_id app-setting, with a note that "the context
-// must originate from the request — not a background context — so RLS remains
-// active": a correctness argument about the caller, in a gate that decides
-// whether a privileged session may start. The predicate makes the gate's own
-// SQL sufficient, so that note is no longer load-bearing.
-func (s *Service) checkAndConsumeApproval(ctx context.Context, orgID, connectionID, userID string) (bool, error) {
-	var id string
-	err := s.db.Pool.QueryRow(ctx,
-		`UPDATE guacamole_session_requests SET status = 'consumed'
-		  WHERE id = (
-		        SELECT id FROM guacamole_session_requests
-		         WHERE connection_id = $1
-		           AND requester_id  = $2
-		           AND org_id        = $3
-		           AND status        = 'approved'
-		           AND (expires_at IS NULL OR expires_at > NOW())
-		         ORDER BY created_at DESC
-		         LIMIT 1
-		  )
-		  RETURNING id`,
-		connectionID, userID, orgID).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
 }
