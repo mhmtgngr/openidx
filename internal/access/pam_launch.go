@@ -260,6 +260,9 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 			return
 		}
 	}
+	if s.refuseIneffectiveExternal(c, org.ID, userID) {
+		return
+	}
 
 	// Approval gate — single-use, atomically consumed. Admins (the approvers)
 	// bypass their own gate.

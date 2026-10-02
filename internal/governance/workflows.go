@@ -17,6 +17,7 @@ import (
 
 	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/vault"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
@@ -1349,6 +1350,13 @@ func (s *Service) checkSoDForRoleGrant(ctx context.Context, userID, targetRoleID
 func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
+		return err
+	}
+	// Invariant I4 of the third-party access framework: nothing an external
+	// (vendor) user holds takes effect until the account is active with a
+	// strong second factor. The request may be filed and approved before
+	// that; the approval stands and the request stays 'approved'.
+	if err := externalid.CheckEffective(ctx, s.db.Pool, org.ID, request.RequesterID); err != nil {
 		return err
 	}
 	switch request.ResourceType {

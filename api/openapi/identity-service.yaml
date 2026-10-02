@@ -4823,6 +4823,41 @@ paths:
   # ---- External (vendor) users and vendor organizations (third-party access
   # framework, Phase 1 and the vendor closed list of Phase 2) ----
 
+  /api/v1/identity/invitations/{token}/mfa:
+    post:
+      tags: [Public]
+      summary: Confirm an external invitation's authenticator
+      description: >
+        The second step of an external (vendor) user's invitation (invariant
+        I4). The account the accepted invitation made cannot sign in until its
+        owner confirms an authenticator-app code for the secret it was shown;
+        the account then becomes `active`.
+      operationId: completeExternalInvitationMFA
+      x-openidx-handler: internal/identity.(*Service).handleCompleteInvitationMFA
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [secret, code]
+              properties:
+                secret: {type: string}
+                code: {type: string}
+      responses:
+        '200':
+          description: The authenticator is confirmed and the account is active
+        '400':
+          description: >
+            The secret or the code is missing, the token is not an accepted
+            external invitation that still answers, or the code does not verify
+
   /api/v1/identity/vendor-orgs:
     get:
       tags: [Vendor Organizations]

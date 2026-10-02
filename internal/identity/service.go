@@ -43,6 +43,7 @@ import (
 	"github.com/openidx/openidx/internal/common/sessionend"
 	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/common/syssettings"
+	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/revocation"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/webhooks"
@@ -2167,6 +2168,8 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 	var lockedUntil *time.Time
 	var source *string
 	var directoryID *string
+	var userType, accountStatus string
+	var accountExpiresAt *time.Time
 
 	// failed_login_count is deliberately not read here. It used to be, so the
 	// count could be incremented in Go and written back — the lost-update shape
@@ -2175,10 +2178,12 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 	//
 	// Get user by username or email, within the caller's org
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, password_hash, enabled, locked_until, source, directory_id
+		SELECT id, password_hash, enabled, locked_until, source, directory_id,
+		       user_type, account_status, account_expires_at
 		FROM users
 		WHERE (username = $1 OR email = $1) AND org_id = $2
-	`, username, org.ID).Scan(&userID, &passwordHash, &enabled, &lockedUntil, &source, &directoryID)
+	`, username, org.ID).Scan(&userID, &passwordHash, &enabled, &lockedUntil, &source, &directoryID,
+		&userType, &accountStatus, &accountExpiresAt)
 
 	if err != nil {
 		s.logger.Debug("User not found", zap.String("username", username))
@@ -2198,6 +2203,29 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 				"reason":   "account_disabled",
 			})
 		return nil, ErrAccountDisabled
+	}
+
+	// An external (vendor) account signs in only while it is active and before
+	// its expiry. users.enabled already refuses the suspended, expired and
+	// disabled ones and an invitation still waiting for its second factor; the
+	// expiry is checked here as well so an account does not outlive its date
+	// by the length of a sweep interval.
+	if userType == "external" {
+		reason := ""
+		switch {
+		case accountStatus != "active":
+			reason = "external_" + accountStatus
+		case accountExpiresAt != nil && !time.Now().Before(*accountExpiresAt):
+			reason = "external_expired"
+		}
+		if reason != "" {
+			s.logAuditEvent(ctx, "identity", "authentication", "user.login_denied", "failure",
+				userID, userID, "user", map[string]interface{}{
+					"username": logsafe.Clean(username),
+					"reason":   reason,
+				})
+			return nil, ErrAccountDisabled
+		}
 	}
 
 	// Check if account is locked
@@ -3982,6 +4010,7 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		// target user. Org context comes from the tenant middleware and must
 		// match the ticket's org.
 		public.POST("/mfa/push/enroll/complete", svc.handleCompletePushEnrollment)
+		public.POST("/invitations/:token/mfa", svc.handleCompleteInvitationMFA)
 	}
 
 	identity := newPlaneGroup(router.Group("/api/v1/identity"), profile)
@@ -4121,18 +4150,18 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.GET("/mfa/push/challenge/:challenge_id", svc.handleGetPushChallenge)
 
 		// SMS OTP MFA
-		identity.POST("/mfa/sms/enroll", svc.handleEnrollSMS)
-		identity.POST("/mfa/sms/verify", svc.requireFactorProof(addsFactor), svc.handleVerifySMSEnrollment)
+		identity.POST("/mfa/sms/enroll", svc.strongFactorsOnlyForExternal("sms"), svc.handleEnrollSMS)
+		identity.POST("/mfa/sms/verify", svc.strongFactorsOnlyForExternal("sms"), svc.requireFactorProof(addsFactor), svc.handleVerifySMSEnrollment)
 		identity.GET("/mfa/sms/status", svc.handleGetSMSStatus)
 		identity.DELETE("/mfa/sms", svc.requireFactorProof(removesFactor), svc.handleDeleteSMS)
-		identity.POST("/mfa/sms/challenge", svc.handleCreateSMSChallenge)
+		identity.POST("/mfa/sms/challenge", svc.strongFactorsOnlyForExternal("sms"), svc.handleCreateSMSChallenge)
 
 		// Email OTP MFA
-		identity.POST("/mfa/email/enroll", svc.requireFactorProof(addsFactor), svc.handleEnrollEmailOTP)
-		identity.POST("/mfa/email/verify", svc.handleVerifyEmailOTPEnrollment)
+		identity.POST("/mfa/email/enroll", svc.strongFactorsOnlyForExternal("email"), svc.requireFactorProof(addsFactor), svc.handleEnrollEmailOTP)
+		identity.POST("/mfa/email/verify", svc.strongFactorsOnlyForExternal("email"), svc.handleVerifyEmailOTPEnrollment)
 		identity.GET("/mfa/email/status", svc.handleGetEmailOTPStatus)
 		identity.DELETE("/mfa/email", svc.requireFactorProof(removesFactor), svc.handleDeleteEmailOTP)
-		identity.POST("/mfa/email/challenge", svc.handleCreateEmailOTPChallenge)
+		identity.POST("/mfa/email/challenge", svc.strongFactorsOnlyForExternal("email"), svc.handleCreateEmailOTPChallenge)
 
 		// Common OTP verification (works for both SMS and Email)
 		identity.POST("/mfa/otp/verify", svc.handleVerifyOTP)
@@ -4187,11 +4216,11 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.POST("/mfa/hardware-token/verify", svc.handleVerifyHardwareToken)
 
 		// Phone Call MFA
-		identity.POST("/mfa/phone/enroll", svc.requireFactorProof(changesPhoneCall), svc.handleEnrollPhoneCall)
-		identity.POST("/mfa/phone/verify", svc.requireFactorProof(addsFactor), svc.handleVerifyPhoneCallEnrollment)
+		identity.POST("/mfa/phone/enroll", svc.strongFactorsOnlyForExternal("phone"), svc.requireFactorProof(changesPhoneCall), svc.handleEnrollPhoneCall)
+		identity.POST("/mfa/phone/verify", svc.strongFactorsOnlyForExternal("phone"), svc.requireFactorProof(addsFactor), svc.handleVerifyPhoneCallEnrollment)
 		identity.GET("/mfa/phone/status", svc.handleGetPhoneCallStatus)
 		identity.DELETE("/mfa/phone", svc.requireFactorProof(removesFactor), svc.handleDeletePhoneCall)
-		identity.POST("/mfa/phone/callback", svc.handleRequestCallback)
+		identity.POST("/mfa/phone/callback", svc.strongFactorsOnlyForExternal("phone"), svc.handleRequestCallback)
 
 		// Device Trust Approval (Admin)
 		identity.GET("/device-trust-requests", svc.handleListDeviceTrustRequests)
@@ -6462,7 +6491,8 @@ func (s *Service) handleListInvitations(c *gin.Context) {
 		return
 	}
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT id, email, invited_by, roles, groups, token, status, expires_at, accepted_at, created_at
+		`SELECT id, email, invited_by, roles, groups, token, status, expires_at, accepted_at, created_at,
+		        user_type, vendor_org_id::text, sponsor_user_id::text, account_expires_at
 		 FROM user_invitations WHERE org_id = $1 ORDER BY created_at DESC LIMIT 50`, org.ID)
 	if err != nil {
 		s.logger.Error("failed to list invitations", zap.Error(err))
@@ -6482,13 +6512,19 @@ func (s *Service) handleListInvitations(c *gin.Context) {
 		ExpiresAt  time.Time  `json:"expires_at"`
 		AcceptedAt *time.Time `json:"accepted_at,omitempty"`
 		CreatedAt  time.Time  `json:"created_at"`
+		// The external half (migration v214).
+		UserType         string     `json:"user_type"`
+		VendorOrgID      *string    `json:"vendor_org_id,omitempty"`
+		SponsorUserID    *string    `json:"sponsor_user_id,omitempty"`
+		AccountExpiresAt *time.Time `json:"account_expires_at,omitempty"`
 	}
 
 	var invitations []Invitation
 	for rows.Next() {
 		var inv Invitation
 		err := rows.Scan(&inv.ID, &inv.Email, &inv.InvitedBy, &inv.Roles, &inv.Groups,
-			&inv.Token, &inv.Status, &inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt)
+			&inv.Token, &inv.Status, &inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt,
+			&inv.UserType, &inv.VendorOrgID, &inv.SponsorUserID, &inv.AccountExpiresAt)
 		if err != nil {
 			continue
 		}
@@ -6506,6 +6542,7 @@ func (s *Service) handleCreateInvitation(c *gin.Context) {
 		Email  string   `json:"email" binding:"required"`
 		Roles  []string `json:"roles"`
 		Groups []string `json:"groups"`
+		externalInviteFields
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -6521,11 +6558,46 @@ func (s *Service) handleCreateInvitation(c *gin.Context) {
 		return
 	}
 
+	// An external invitation carries its vendor, sponsor and account expiry,
+	// checked against the invariants before anything is stored.
+	var ext *externalInvitation
+	switch req.UserType {
+	case "", externalid.TypeInternal:
+	case externalid.TypeExternal:
+		inviter, _ := invitedBy.(string)
+		ext, err = s.validateExternalInvitation(c.Request.Context(), org.ID, inviter, req.Email, req.Roles, req.Groups,
+			req.externalInviteFields, time.Now().UTC())
+		if err != nil {
+			s.writeInviteError(c, err)
+			return
+		}
+	default:
+		c.JSON(400, gin.H{"error": "user_type must be internal or external"})
+		return
+	}
+
 	var id string
-	err = s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO user_invitations (email, invited_by, roles, groups, token, expires_at, org_id)
-		 VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days', $6) RETURNING id`,
-		req.Email, invitedBy, req.Roles, req.Groups, token, org.ID).Scan(&id)
+	if ext == nil {
+		err = s.db.Pool.QueryRow(c.Request.Context(),
+			`INSERT INTO user_invitations (email, invited_by, roles, groups, token, expires_at, org_id)
+			 VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days', $6) RETURNING id`,
+			req.Email, invitedBy, req.Roles, req.Groups, token, org.ID).Scan(&id)
+	} else {
+		err = s.db.Pool.QueryRow(c.Request.Context(),
+			`INSERT INTO user_invitations (email, invited_by, roles, groups, token, expires_at, org_id,
+			                               user_type, vendor_org_id, sponsor_user_id, account_expires_at)
+			 VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days', $6, 'external', $7::uuid, $8::uuid, $9) RETURNING id`,
+			req.Email, invitedBy, req.Roles, req.Groups, token, org.ID,
+			ext.VendorOrgID, ext.SponsorUserID, ext.AccountExpiresAt).Scan(&id)
+		if err == nil {
+			inviter, _ := invitedBy.(string)
+			s.logAuditEvent(c.Request.Context(), "identity", "external_access", "external.invited", "success", inviter, id,
+				"invitation", map[string]interface{}{
+					"email": logsafe.Clean(req.Email), "vendor_org_id": ext.VendorOrgID, "sponsor_user_id": ext.SponsorUserID,
+					"account_expires_at": ext.AccountExpiresAt.Format(time.RFC3339),
+				})
+		}
+	}
 	if err != nil {
 		s.logger.Error("failed to create invitation", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -6610,13 +6682,16 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 	// An UPDATE ... RETURNING with the predicate on it does both at once and
 	// locks the row until commit, so exactly one caller can claim a token. No
 	// rows back means already used, expired, or not this org's.
-	var invID, email string
+	var invID, email, userType string
 	var roles, groups []string
+	var ext externalInvitation
+	var vendorID, sponsorID *string
+	var accountExpires *time.Time
 	err = s.db.Pool.QueryRow(ctx,
 		`UPDATE user_invitations SET status = 'accepted', accepted_at = NOW()
 		 WHERE token = $1 AND org_id = $2 AND status = 'pending' AND expires_at > NOW()
-		 RETURNING id, email, roles, groups`,
-		token, org.ID).Scan(&invID, &email, &roles, &groups)
+		 RETURNING id, email, roles, groups, user_type, vendor_org_id::text, sponsor_user_id::text, account_expires_at`,
+		token, org.ID).Scan(&invID, &email, &roles, &groups, &userType, &vendorID, &sponsorID, &accountExpires)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid or expired invitation"})
 		return
@@ -6632,6 +6707,19 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 			s.logger.Error("could not release a claimed invitation after a failed acceptance; it must be reissued",
 				logsafe.String("invitation_id", invID), zap.Error(rerr))
 		}
+	}
+
+	// An external invitation makes an external account, which signs in only
+	// after its second factor is enrolled (external_invitations.go).
+	if userType == externalid.TypeExternal {
+		if vendorID == nil || sponsorID == nil || accountExpires == nil {
+			c.JSON(400, gin.H{"error": "invalid or expired invitation"})
+			return
+		}
+		ext = externalInvitation{VendorOrgID: *vendorID, SponsorUserID: *sponsorID, AccountExpiresAt: *accountExpires}
+		s.acceptExternalInvitation(c, org.ID, invID, email, roles, groups, ext,
+			req.Username, req.FirstName, req.LastName, hashedPassword, releaseInvitation)
+		return
 	}
 
 	// Create user (CreateUser scopes to the org carried on ctx)
