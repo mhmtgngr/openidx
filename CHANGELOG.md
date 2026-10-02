@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **External (vendor) users, part one: the identity model.** A supplier's people can be users of the organization, tied to a vendor organization, with a sponsor and an account expiry (migration v214). Vendor organizations are managed at `/api/v1/identity/vendor-orgs`. Closing one disables its external users and cannot be undone. The database itself refuses three things for an external user: a role other than `user`, a group not marked open to external users, and a delegation or an approval. Deleting or disabling a sponsor suspends the external users they sponsor. Invitations, the first-login MFA gate, the expiry sweep and the console pages follow in the next parts.
+- **External users, part two: invitations and the second factor.** `POST /api/v1/identity/invitations` with `user_type: external` names the vendor organization and, optionally, a sponsor and a lifetime. The invitation is checked against the vendor's status, allowed domains and contract, the sponsor, and the role and group limits. The accepted account cannot sign in until its owner confirms an authenticator-app code at `POST /api/v1/identity/invitations/:token/mfa`. An external user signs in only with an authenticator app, a passkey or a push device. SMS, email and phone-call factors are refused to them, and a remembered browser never stands in for the factor. An external user with no such factor, or an account that is not active, gets no approved access fulfilled and launches no PAM session.
+- **External users, part three: the account's end and its sponsor.** Every minute the identity service ends the external accounts the clock or a departure has ended. An account past its expiry becomes `expired`. One whose sponsor is no longer an enabled internal user is `suspended`, and one of a closed vendor is `disabled`. A suspension nobody reverses within 7 days becomes `disabled`, and an account still waiting for its second factor after its invitation lapsed becomes `expired`. Each departure is severed once, as an administrator's disable is: sessions, tokens, API keys, vault checkouts and grants, and time-bound elevations. Administrators manage the accounts at `/api/v1/identity/external-users`: list, suspend, disable, extend within a year and the vendor's contract, change the sponsor, and reactivate a suspended account with a new sponsor within 7 days. Each change needs a reason and is audited. An external user's access request must name a duration that ends no later than the account (`external_window_invalid`). A role, PAM entry grant or vault grant written for one directly is cut to end with the account, and cut again when the account's end moves earlier (migration v215).
+- **External users, part four: the console.** **Identity → External Users** lists the external accounts with their vendor, sponsor, status, end date and second factor, and offers only the moves each account's state allows: extend, change the sponsor, reactivate inside the grace period, suspend and disable, each with a reason. Its Invitations tab invites a vendor user, limited to active vendors and to the groups open to external users, and gives the link to send when email is not configured. Its Vendor organizations tab creates, edits and closes vendors. The invitation link opens a new public page, `/accept-invite`, where the person sets a password and, for an external invitation, an authenticator app; the account is active only once the app's code is confirmed. The Users page shows an external account's lifecycle status and, when editing it, its sponsor and end date, and the Groups page shows and sets whether a group is open to external users, and shows why the identity service refused to close one.
+- **A PAM connection can be requested and approved like any other access.** Access Requests has a PAM Connection type (`resource_type: pam_entry`): the requester picks an entry they already see but cannot connect to, for a duration. The request goes through the approval policies, and fulfilling it writes a `connect` grant on the entry that ends with the request's window and names the request (migration v216). The expiry sweep and the kill switch end that grant alone, so a standing grant the user holds on the same entry stays. An entry the requester cannot see answers 404 as if it did not exist, one they can already connect to 409, and a request with no duration 400. Connect, reveal and the request check read one grant predicate (`internal/pamgrant`).
+- **An external user's privileged session runs under fixed controls, whatever the entry says.** Every launch needs a launch approval and is recorded, and no administrator bypass applies. The target must be reached over the overlay whatever `PAM_REQUIRE_ZTNA` says, so a direct-reach or website entry is refused. The session runs on a broker connection of its own, under a broker account that can open nothing else. A launch is refused rather than run without one (`external_broker_identity_required`, which needs `GUACAMOLE_PER_USER_IDENTITIES=true`) or without a recording path (`external_recording_unavailable`). Clipboard, drive redirection, file transfer and printing are off, and the entry's settings can neither turn them on nor thin out the recording. The lifecycle sweep ends the session after 8 hours, audited as `pam.session_ended` with reason `max_duration`. An external user is refused reveal and break-glass (`external_reveal_forbidden`), SSH certificates (`external_ssh_ca_forbidden`), cloud keys (`external_cloud_jit_forbidden`) and the browser SSH terminal, which records nothing. Each refusal is audited as a failure. The entry list and the broker status show an external user what their launch will do, and the launch answers with the `session_policy` it ran under.
+
+### Fixed
+- **`PAM_REQUIRE_ZTNA=enforce` now holds at the Windows app launch and the browser SSH terminal.** Neither asked the overlay gate, so an app on a direct-reach host, or a direct-reach SSH entry opened in the browser terminal, launched while Connect on the same entry was refused. The gate is also asked before the launch approval is spent, so a launch it refuses no longer uses up the approval. `pam.ztna.denied` is recorded as a failure.
+- **A PAM session ends when the access that opened it does.** A session opened on a grant ran on after the grant ended, so a four-hour request was four hours to start a session that then ran for as long as it was used. Within half a minute of a grant ending (a request's window closing, an administrator removing the grant, the role or group that carried it going) the lifecycle sweep now ends the sessions it opened, on the broker, and audits each as `pam.session_ended` with reason `grant_ended`. A session an administrator opened without a grant is not ended for the lack of one: the session records the gates its launch passed only because the caller is an administrator (migration v217). The browser SSH terminal now closes within ten seconds of its session being ended, by this sweep or by the kill switch, which before marked the session ended and left the terminal open; and a terminal's session is marked ended when it closes.
+- **Severing a user now ends their PAM entry surface too.** The kill switch,
+  disabling or deleting a user, and the lifecycle sweep that catches every
+  other disable path (SCIM, directory sync, lifecycle policies) expire the
+  user's own PAM connection grants, revoke their pending and approved launch
+  approvals, release their exclusive leases, end their live PAM entry sessions
+  on the broker, revoke the temporary access links they issued and end their
+  brokered SSH and cloud sessions in the ledger. The kill switch's response and
+  audit event count each. Brokered SSH certificates and cloud credentials
+  cannot be recalled and expire by their TTL; the response says so.
+- **Temporary access link events are in the audit trail.** Issuing, using,
+  refusing and revoking a link, and a launch that fails, now land in the
+  unified audit trail under the issuing organization, with the reason for a
+  refusal and the redeemer's address; before, they were service log lines
+  only. The Guacamole legal-hold events were log lines too and are recorded
+  the same way.
+- **A brokered proxy route's Connect asks who is calling.** `POST
+  /guacamole/connections/:routeId/connect` (the RDP, SSH, VNC and Telnet
+  routes on My Privileged Access) let any signed-in user of the organization
+  who knew a route id open a session onto the route's host with the route's
+  injected credential. The route's brokered connection is now a PAM entry
+  (migration v213 makes one per route), and the route's Connect is the entry
+  launch: a connect grant on the entry, the entry's single-use approval, the
+  overlay check, a fresh second factor, and a `pam_entry_sessions` row. My
+  Privileged Access lists a route only for users who may launch it, and the
+  Privileged Sessions request queue holds the entry's requests. No grants are
+  invented: until an administrator grants connect on a route's entry (PAM
+  pages), only administrators can launch it. A route launch's credential
+  injection is audited as `pam.credential_injected` now;
+  `guacamole_credential_injected` is no longer written.
+- **Approval policies enforce their step order, `min_approvals` and
+  `max_wait_hours`.** All three were stored and shown and decided nothing:
+  every approver had to approve whatever a step said, every step's approvers
+  could decide at once, and an unanswered request waited for ever. A step now
+  needs the approvals it names (one when unset) and the steps run in order; an
+  approver of a later step is told to wait and does not see the request in
+  their queue until it reaches them, and a satisfied step's remaining
+  approvers are skipped. A request no policy step answers within
+  `max_wait_hours` expires, with an audit event. A policy whose step cannot
+  reach its `min_approvals` (too few eligible approvers, a manager step for a
+  requester with no manager) refuses the request with the reason instead of
+  filing one nobody can approve. Migration v212 records the terms a request
+  was filed under; requests already open keep advancing.
+- **An SSH certificate needs a grant.** `openidx-connect ssh` and `POST /pam/connect/ssh` sign only for a host and login registered as an SSH entry that the caller may connect to. If the entry requires approval, each certificate uses up one approved request. Before, any signed-in user could get a certificate for any login, `root` included. Administrators skip the grant but still need a registered entry. Refusals are audited as `pam.ssh_cert_denied`.
+- **Cloud just-in-time access needs a grant and lasts at most an hour.** `POST /pam/connect/cloud` uses a broker credential only for a caller who holds a `use` grant on it. Before, any signed-in user could name any of the organization's secrets as the broker and assume any role it could. AWS cannot revoke STS credentials, so the session ceiling drops from 12 hours to 60 minutes. Administrators skip the grant but not the cap. Refusals are audited as `pam.cloud_jit_denied`.
+- **The audit trail shows when an administrator got into a PAM entry only by being one.** `pam.entry_connected` now carries `admin_bypass`, plus `admin_bypassed`, which lists the gates skipped: `grant`, `approval`, or both. It covers Connect, the in-browser SSH terminal and Windows app launches. Before, an administrator reaching an entry nobody granted them looked the same as an operator using a grant.
+
 ## [1.39.0] - 2026-09-28
 
 ### Security

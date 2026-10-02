@@ -766,11 +766,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// every brokered target — so it carries the same adminOnly gate as the
 		// app-publishing routes below, and for the same reason. The end-user
 		// launcher reads /guacamole/my-connections instead, which returns the
-		// PAM flags without the infrastructure. Connect stays open to any
-		// authenticated user: launching a session the caller is entitled to is
-		// the end-user path, and v151 gave it the org predicate it was missing.
+		// PAM flags without the infrastructure. Connect is the entry launch
+		// (guacamole_route_entry.go): the route's entry decides who may launch
+		// it, and the launch carries the same freshness gate as
+		// /pam/entries/:id/connect, since it opens the same kind of session.
 		api.GET("/guacamole/connections", adminOnly, svc.handleListGuacamoleConnections)
-		api.POST("/guacamole/connections/:routeId/connect", svc.handleGuacamoleConnect)
+		api.POST("/guacamole/connections/:routeId/connect", svc.requireFreshMFA("pam.connect"), svc.handleGuacamoleConnect)
 		api.PUT("/guacamole/connections/:routeId/credential", svc.requireAdminRole(), svc.handleSetGuacCredential)
 
 		// Guacamole end-user self-service (PAM finalization): brokered-connection
@@ -3514,7 +3515,9 @@ func (s *Service) logAuditEvent(c *gin.Context, action, targetID, targetType str
 		event["actor_type"] = "user"
 	}
 
-	if action == "proxy_access_denied" {
+	switch action {
+	case "proxy_access_denied", "pam.ssh_cert_denied", "pam.cloud_jit_denied",
+		"pam.reveal_denied", "pam.launch_denied", "pam.ztna.denied":
 		event["outcome"] = "failure"
 	}
 
