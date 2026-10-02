@@ -83,13 +83,17 @@ type KillSwitchResult struct {
 	// certificates and cloud credentials those sessions issued cannot be
 	// recalled; they expire by their own TTL, and a warning says so whenever
 	// this is above zero.
-	BrokeredSessionsEnded int64     `json:"pam_brokered_sessions_ended"`
-	ZitiEdgeSessions      int       `json:"ziti_edge_sessions_terminated"`
-	ZitiAPISessions       int       `json:"ziti_api_sessions_terminated"`
-	ZitiIdentityDeleted   bool      `json:"ziti_identity_deleted"`
-	ZitiControllerOnline  bool      `json:"ziti_controller_online"`
-	Warnings              []string  `json:"warnings,omitempty"`
-	ExecutedAt            time.Time `json:"executed_at"`
+	BrokeredSessionsEnded int64 `json:"pam_brokered_sessions_ended"`
+	// ModerationsEnded counts the moderations the user asked for or
+	// moderates. A session one admitted ends with it, on the next lifecycle
+	// tick.
+	ModerationsEnded     int64     `json:"pam_moderations_ended"`
+	ZitiEdgeSessions     int       `json:"ziti_edge_sessions_terminated"`
+	ZitiAPISessions      int       `json:"ziti_api_sessions_terminated"`
+	ZitiIdentityDeleted  bool      `json:"ziti_identity_deleted"`
+	ZitiControllerOnline bool      `json:"ziti_controller_online"`
+	Warnings             []string  `json:"warnings,omitempty"`
+	ExecutedAt           time.Time `json:"executed_at"`
 }
 
 // handleUserKillSwitch severs one user's live access across IAM, PAM and Ziti.
@@ -149,6 +153,7 @@ func (s *Service) handleUserKillSwitch(c *gin.Context) {
 			"pam_entry_sessions_ended":       result.PamEntrySessionsEnded,
 			"pam_temp_links_revoked":         result.TempAccessLinksRevoked,
 			"pam_brokered_sessions_ended":    result.BrokeredSessionsEnded,
+			"pam_moderations_ended":          result.ModerationsEnded,
 			"ziti_edge_sessions_terminated":  result.ZitiEdgeSessions,
 			"ziti_api_sessions_terminated":   result.ZitiAPISessions,
 			"ziti_identity_deleted":          result.ZitiIdentityDeleted,
@@ -332,6 +337,7 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 	res.PamEntryLeasesReleased = pam.LeasesReleased
 	res.TempAccessLinksRevoked = pam.TempLinksRevoked
 	res.BrokeredSessionsEnded = pam.BrokeredEnded
+	res.ModerationsEnded = pam.ModerationsEnded
 	if res.BrokeredSessionsEnded > 0 {
 		// The ledger is ended; the SSH certificates and cloud credentials it
 		// recorded are already in the user's hands, there is no revocation list
@@ -416,6 +422,7 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 		zap.Int("pam_entry_sessions_ended", res.PamEntrySessionsEnded),
 		zap.Int64("temp_links_revoked", res.TempAccessLinksRevoked),
 		zap.Int64("brokered_sessions_ended", res.BrokeredSessionsEnded),
+		zap.Int64("moderations_ended", res.ModerationsEnded),
 		zap.Int("ziti_edge_sessions", res.ZitiEdgeSessions),
 		zap.Int("ziti_api_sessions", res.ZitiAPISessions))
 

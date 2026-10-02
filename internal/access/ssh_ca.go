@@ -193,6 +193,9 @@ var errSSHTargetNotGranted = errors.New("no SSH entry you may connect to matches
 type sshCertTarget struct {
 	EntryID         string
 	RequireApproval bool
+	// RequireModerator: the entry's sessions are moderated, and a
+	// certificate opens a login no moderator can watch.
+	RequireModerator bool
 }
 
 // normalizeSSHHost folds a host name the way the entry's hostname is folded
@@ -212,7 +215,8 @@ func normalizeSSHHost(h string) string {
 // carrying connect, as on POST /pam/entries/:id/connect. An administrator
 // passes the grant check, as on that route, but still only for a registered
 // pair. Several entries can name the same pair; the first one the caller may
-// connect to wins, those without an approval requirement first.
+// connect to wins, unmoderated ones first, then those without an approval
+// requirement.
 func (s *Service) sshCertTargetFor(ctx context.Context, orgID, userID string, roles []string, isAdmin bool, host, principal string) (sshCertTarget, error) {
 	host = normalizeSSHHost(host)
 	principal = strings.TrimSpace(principal)
@@ -220,21 +224,21 @@ func (s *Service) sshCertTargetFor(ctx context.Context, orgID, userID string, ro
 		return sshCertTarget{}, errSSHTargetNotGranted
 	}
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT e.id::text, e.require_approval
+		SELECT e.id::text, e.require_approval, e.require_moderator
 		  FROM pam_entries e
 		  LEFT JOIN pam_entries ce ON ce.id = e.credential_entry_id AND ce.org_id = e.org_id
 		 WHERE e.org_id = $1
 		   AND e.entry_type = 'ssh'
 		   AND rtrim(lower(btrim(COALESCE(e.hostname, ''))), '.') = $2
 		   AND COALESCE(NULLIF(btrim(e.username), ''), btrim(ce.username)) = $3
-		 ORDER BY e.require_approval, e.created_at, e.id`, orgID, host, principal)
+		 ORDER BY e.require_moderator, e.require_approval, e.created_at, e.id`, orgID, host, principal)
 	if err != nil {
 		return sshCertTarget{}, err
 	}
 	var candidates []sshCertTarget
 	for rows.Next() {
 		var t sshCertTarget
-		if err := rows.Scan(&t.EntryID, &t.RequireApproval); err != nil {
+		if err := rows.Scan(&t.EntryID, &t.RequireApproval, &t.RequireModerator); err != nil {
 			rows.Close()
 			return sshCertTarget{}, err
 		}
@@ -313,6 +317,16 @@ func (s *Service) handleSSHConnect(c *gin.Context) {
 		}
 		s.logger.Error("handleSSHConnect: entry lookup failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check permissions"})
+		return
+	}
+	// A moderated entry is reached only through the session broker, where its
+	// moderator watches; a certificate would open a login nobody can.
+	if target.RequireModerator {
+		s.logAuditEvent(c, "pam.ssh_cert_denied", userID, "user", map[string]interface{}{
+			"host": req.Host, "principal": req.Principal, "user_id": userID, "entry_id": target.EntryID,
+			"code": "moderated_entry_needs_broker",
+		})
+		refuseModeratedEntry(c, &pamLaunchEntry{ID: target.EntryID, RequireModerator: true}, "an SSH certificate")
 		return
 	}
 

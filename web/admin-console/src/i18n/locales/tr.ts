@@ -9254,7 +9254,7 @@ const tr: typeof en = {
         broadcast: 'Bir yöneticinin size gönderdiği duyurular',
         approval_pending: 'Bir erişim talebi onayınızı beklediğinde',
         request_update: 'Bir talebiniz karara bağlandığında, verdiği erişimin süresi dolmak üzereyken ve dolduğunda',
-        sponsored_access: 'Sponsoru olduğunuz bir tedarikçi kullanıcı onayınızı beklediğinde veya ayrıcalıklı bir oturum başlattığında',
+        sponsored_access: 'Sponsoru olduğunuz bir tedarikçi kullanıcı onayınızı ya da bir moderatörü beklediğinde veya ayrıcalıklı bir oturum başlattığında',
       },
     },
     pamSessionWindow: {

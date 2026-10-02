@@ -45,8 +45,8 @@ const (
 	// nothing sent, and a preference stored from it must not decide this one.
 	TypeRequestUpdate = "request_update"
 	// TypeSponsoredAccess: an external (vendor) user this user sponsors needs
-	// them: a privileged launch waiting for their approval, or a privileged
-	// session that started.
+	// them: a privileged launch waiting for their approval, a moderated
+	// session waiting for a moderator, or a privileged session that started.
 	TypeSponsoredAccess = "sponsored_access"
 )
 
@@ -106,7 +106,7 @@ var TypeCatalogue = []PreferenceType{
 	{
 		Type:        TypeSponsoredAccess,
 		Title:       "Vendor users you sponsor",
-		Description: "A vendor user you sponsor is waiting for you to approve a privileged session, or started one.",
+		Description: "A vendor user you sponsor is waiting for you to approve or moderate a privileged session, or started one.",
 		Channels:    []string{"in_app", "push"},
 	},
 }

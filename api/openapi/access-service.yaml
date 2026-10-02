@@ -8822,6 +8822,28 @@ paths:
 
   # ---- Sponsors and moderators (third-party access framework, Phase 2) ----
 
+  /api/v1/access/pam/moderation/{id}/watch:
+    post:
+      tags: [PAM Moderation]
+      summary: Watch a moderated session
+      description: >
+        A read-only view of the session the moderation admitted, for its
+        moderator. Needs a fresh second factor (`pam.moderation_watch`).
+      operationId: pamWatchModeratedSession
+      x-openidx-handler: internal/access.(*Service).handleWatchModeratedSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The view to open
+        '403':
+          description: A fresh second factor is required first (`step_up_required`)
+        '404':
+          description: Not a session the caller moderates
+
   /api/v1/access/pam/sponsored/entry-requests:
     get:
       tags: [PAM Sponsor]
@@ -8931,6 +8953,40 @@ paths:
       responses:
         '200':
           description: Ended
+        '403':
+          description: A fresh second factor is required first (`step_up_required`)
+        '404':
+          description: >
+            Not one of the caller's: a request, session or moderation of an
+            external user someone else sponsors answers as if it did not exist
+
+  /api/v1/access/pam/sponsored/moderation:
+    get:
+      tags: [PAM Sponsor]
+      summary: List the moderation requests of the caller's external users
+      description: The pending moderation requests of the external users the caller sponsors; the sponsor may moderate them.
+      operationId: pamListSponsoredModeration
+      x-openidx-handler: internal/access.(*Service).handlePamListSponsoredModeration
+      responses:
+        '200':
+          description: The requests
+
+  /api/v1/access/pam/sponsored/moderation/{id}/join:
+    post:
+      tags: [PAM Sponsor]
+      summary: Moderate a sponsored user's session
+      description: >
+        The sponsor joins a moderation request of an external user they sponsor, which admits the session. Needs a fresh second factor (`pam.sponsor_moderate`).
+      operationId: pamSponsorJoinModeration
+      x-openidx-handler: internal/access.(*Service).handlePamSponsorJoinModeration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Joined
         '403':
           description: A fresh second factor is required first (`step_up_required`)
         '404':

@@ -161,6 +161,10 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 			externalid.ErrRecordingUnavailable, map[string]interface{}{"entry_id": entryID, "path": "browser_terminal"})
 		return
 	}
+	// Nor is there a session here a moderator could watch.
+	if refuseModeratedEntry(c, &entry, "the browser terminal") {
+		return
+	}
 	// The overlay gate, which this path did not ask before: under
 	// PAM_REQUIRE_ZTNA=enforce a direct-reach SSH entry opened here while its
 	// connect was refused.
@@ -556,13 +560,13 @@ func (s *Service) pamLaunchEntryByID(ctx context.Context, entryID, orgID string)
 		       COALESCE(username,''), COALESCE(domain,''), COALESCE(url,''), settings,
 		       COALESCE(vault_secret_id::text,''), COALESCE(credential_entry_id::text,''),
 		       COALESCE(guacamole_connection_id,''), require_approval, record_session,
-		       reach_mode, COALESCE(ziti_intercept_port,0)
+		       reach_mode, COALESCE(ziti_intercept_port,0), require_moderator
 		  FROM pam_entries WHERE id = $1 AND org_id = $2`, entryID, orgID).Scan(
 		&entry.ID, &entry.Name, &entry.EntryType, &entry.Hostname, &entry.Port,
 		&entry.Username, &entry.Domain, &entry.URL, &settingsJSON,
 		&entry.VaultSecretID, &entry.CredentialEntryID,
 		&entry.GuacConnectionID, &entry.RequireApproval, &entry.RecordSession,
-		&entry.ReachMode, &entry.ZitiInterceptPort,
+		&entry.ReachMode, &entry.ZitiInterceptPort, &entry.RequireModerator,
 	); err != nil {
 		return entry, PamEntryType{}, err
 	}

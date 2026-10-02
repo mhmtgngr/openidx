@@ -815,6 +815,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/pam/moderation/:id", svc.handleGetModerationStatus)
 		api.POST("/pam/moderation/:id/join", svc.requireAdminRole(), svc.handleJoinModeration)
 		api.POST("/pam/moderation/:id/end", svc.handleEndModeration)
+		// The moderator of a PAM entry's session watches the session the
+		// moderation admitted (entry_moderation.go).
+		api.POST("/pam/moderation/:id/watch", svc.requireFreshMFA("pam.moderation_watch"), svc.handleWatchModeratedSession)
 
 		// Guacamole live monitor — read-only connection sharing (Task 4 — PAM M4)
 		api.POST("/guacamole/sessions/:id/share", svc.requireAdminRole(), svc.handleShareGuacSession)
@@ -898,6 +901,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/pam/sponsored/sessions", svc.handlePamListSponsoredSessions)
 		api.POST("/pam/sponsored/sessions/:id/watch", svc.requireFreshMFA("pam.sponsor_watch"), svc.handlePamSponsorWatchSession)
 		api.POST("/pam/sponsored/sessions/:id/end", svc.requireFreshMFA("pam.sponsor_end"), svc.handlePamSponsorEndSession)
+		// And moderates their moderated sessions (entry_moderation.go).
+		api.GET("/pam/sponsored/moderation", svc.handlePamListSponsoredModeration)
+		api.POST("/pam/sponsored/moderation/:id/join", svc.requireFreshMFA("pam.sponsor_moderate"), svc.handlePamSponsorJoinModeration)
 		api.GET("/pam/sessions", svc.requireAdminRole(), svc.handlePamListSessions)
 		api.POST("/pam/sessions/:id/end", svc.handlePamEndSession)
 		api.POST("/pam/import/rdm", svc.requireAdminRole(), svc.handlePamImportRDM)

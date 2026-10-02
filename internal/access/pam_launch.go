@@ -184,6 +184,9 @@ type pamLaunchEntry struct {
 	GuacConnectionID  string
 	RequireApproval   bool
 	RecordSession     bool
+	// RequireModerator: a session on the entry waits until a moderator has
+	// joined to watch it (entry_moderation.go).
+	RequireModerator  bool
 	ReachMode         string
 	ZitiInterceptPort int
 	// AdminBypass names the gates this launch passed only because the caller
@@ -194,6 +197,10 @@ type pamLaunchEntry struct {
 	// user (pinExternalPamPolicy), never loaded: the session gets its own
 	// broker connection and identity, is recorded, and runs hardened (I5, I7).
 	External bool
+	// ModerationID is the moderation this launch claimed, set by
+	// claimPamModeration and never loaded. The session row records it, so
+	// its moderator watches and ends that session and no other.
+	ModerationID string
 }
 
 // pamAdminBypass names the gates an administrator's launch of entry passes
@@ -323,6 +330,11 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 	if s.refuseExternalLaunch(c, &entry) {
 		return
 	}
+	// The moderation gate, asked before the approval gate so a launch that
+	// has to wait for its moderator does not spend an approval.
+	if s.refuseUnmoderatedLaunch(c, org.ID, &entry, userID) {
+		return
+	}
 
 	// Approval gate — single-use, atomically consumed. Admins (the approvers)
 	// bypass their own gate; an external user always needs one (I5).
@@ -351,6 +363,12 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 		return
 	}
 
+	// The launch spends the moderation it waited for; one moderation admits
+	// one session.
+	if !s.claimPamModeration(c, org.ID, &entry, userID) {
+		return
+	}
+
 	// Everything from broker selection onward is the shared launch core, reused
 	// by the Windows-app launch path.
 	res, fail := s.launchPamSession(c, org.ID, &entry, typeInfo.Protocol, nil, "pam-"+entry.ID, entry.GuacConnectionID,
@@ -362,6 +380,7 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 			}
 		})
 	if fail != nil {
+		s.releasePamModeration(org.ID, &entry)
 		fail.writeJSON(c)
 		return
 	}
@@ -701,10 +720,11 @@ func (s *Service) recordPamLaunch(c *gin.Context, orgID string, entry *pamLaunch
 
 	var sessionID string
 	if err := s.db.Pool.QueryRow(ctx, `
-		INSERT INTO pam_entry_sessions (org_id, entry_id, user_id, protocol, guac_connection_id, credential_injected, guac_username, admin_bypass, recording_path)
-		VALUES ($1, $2, NULLIF($3,'')::uuid, NULLIF($4,''), NULLIF($5,''), $6, NULLIF($7,''), $8, NULLIF($9,''))
+		INSERT INTO pam_entry_sessions (org_id, entry_id, user_id, protocol, guac_connection_id, credential_injected, guac_username, admin_bypass, recording_path, moderation_id)
+		VALUES ($1, $2, NULLIF($3,'')::uuid, NULLIF($4,''), NULLIF($5,''), $6, NULLIF($7,''), $8, NULLIF($9,''), NULLIF($10,'')::uuid)
 		RETURNING id`,
-		orgID, entry.ID, userID, protocol, guacConnID, injected, guacUsername, adminBypassed(entry.AdminBypass), recordingPath).Scan(&sessionID); err != nil {
+		orgID, entry.ID, userID, protocol, guacConnID, injected, guacUsername, adminBypassed(entry.AdminBypass), recordingPath,
+		entry.ModerationID).Scan(&sessionID); err != nil {
 		s.logger.Warn("recordPamLaunch: session ledger insert failed",
 			zap.String("entry_id", entry.ID), zap.Error(err))
 	}

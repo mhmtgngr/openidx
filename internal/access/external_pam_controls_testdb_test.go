@@ -393,6 +393,16 @@ func (f *externalPamFixture) router(userID string, roles ...string) *gin.Engine 
 	r.GET("/pam/entries/:id", f.svc.handlePamGetEntry)
 	r.GET("/pam/broker/status", f.svc.handlePamBrokerStatus)
 	r.GET("/guacamole/my-connections", f.svc.handleListMyGuacConnections)
+	r.POST("/pam/entries", f.svc.handlePamCreateEntry)
+	r.PUT("/pam/entries/:id", f.svc.handlePamUpdateEntry)
+	r.POST("/pam/moderation/request", f.svc.handleRequestModeration)
+	r.GET("/pam/moderation/pending", f.svc.handleListPendingModeration)
+	r.POST("/pam/moderation/:id/join", f.svc.handleJoinModeration)
+	r.POST("/pam/moderation/:id/end", f.svc.handleEndModeration)
+	r.POST("/pam/moderation/:id/watch", f.svc.handleWatchModeratedSession)
+	r.GET("/pam/sponsored/moderation", f.svc.handlePamListSponsoredModeration)
+	r.POST("/pam/sponsored/moderation/:id/join", f.svc.handlePamSponsorJoinModeration)
+	r.POST("/temp-access", f.svc.handleCreateTempAccess)
 	return r
 }
 
