@@ -32,6 +32,11 @@ func (s *Service) StartJITExpirationChecker(ctx context.Context) {
 // revokeExpiredJITAccess finds fulfilled access requests that have passed their
 // expiration time, revokes the granted access, and marks them as expired.
 func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
+	// Requests nobody answered within their policy's wait end here too: the
+	// same tick, the same leader, and the same "nothing is left standing"
+	// reason. See approval_steps.go.
+	s.expireUnansweredRequests(ctx)
+
 	// Background cross-org sweep: find expired fulfilled requests across all orgs.
 	// org_id is selected so each request's revocation/audit writes below stay scoped
 	// to its own org (the ticker has no request context to read org from).

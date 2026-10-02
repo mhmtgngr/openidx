@@ -519,6 +519,7 @@ func TestTheLaunchRoutesActuallyCarryTheGate(t *testing.T) {
 
 	for _, want := range []struct{ path, action string }{
 		{"/pam/entries/:id/connect", "pam.connect"},
+		{"/guacamole/connections/:routeId/connect", "pam.connect"},
 		{"/pam/entries/:id/reveal", "pam.reveal"},
 		{"/pam/entries/:id/break-glass", "pam.break_glass"},
 		{"/pam/connect/ssh", "pam.connect_ssh"},

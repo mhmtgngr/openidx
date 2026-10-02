@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **External (vendor) users, part one: the identity model.** A supplier's people can be users of the organization, tied to a vendor organization, with a sponsor and an account expiry (migration v214). Vendor organizations are managed at `/api/v1/identity/vendor-orgs`. Closing one disables its external users and cannot be undone. The database itself refuses three things for an external user: a role other than `user`, a group not marked open to external users, and a delegation or an approval. Deleting or disabling a sponsor suspends the external users they sponsor. Invitations, the first-login MFA gate, the expiry sweep and the console pages follow in the next parts.
+
+### Fixed
+- **A brokered proxy route's Connect asks who is calling.** `POST
+  /guacamole/connections/:routeId/connect` (the RDP, SSH, VNC and Telnet
+  routes on My Privileged Access) let any signed-in user of the organization
+  who knew a route id open a session onto the route's host with the route's
+  injected credential. The route's brokered connection is now a PAM entry
+  (migration v213 makes one per route), and the route's Connect is the entry
+  launch: a connect grant on the entry, the entry's single-use approval, the
+  overlay check, a fresh second factor, and a `pam_entry_sessions` row. My
+  Privileged Access lists a route only for users who may launch it, and the
+  Privileged Sessions request queue holds the entry's requests. No grants are
+  invented: until an administrator grants connect on a route's entry (PAM
+  pages), only administrators can launch it. A route launch's credential
+  injection is audited as `pam.credential_injected` now;
+  `guacamole_credential_injected` is no longer written.
+- **Approval policies enforce their step order, `min_approvals` and
+  `max_wait_hours`.** All three were stored and shown and decided nothing:
+  every approver had to approve whatever a step said, every step's approvers
+  could decide at once, and an unanswered request waited for ever. A step now
+  needs the approvals it names (one when unset) and the steps run in order; an
+  approver of a later step is told to wait and does not see the request in
+  their queue until it reaches them, and a satisfied step's remaining
+  approvers are skipped. A request no policy step answers within
+  `max_wait_hours` expires, with an audit event. A policy whose step cannot
+  reach its `min_approvals` (too few eligible approvers, a manager step for a
+  requester with no manager) refuses the request with the reason instead of
+  filing one nobody can approve. Migration v212 records the terms a request
+  was filed under; requests already open keep advancing.
+
 ## [1.39.0] - 2026-09-28
 
 ### Security

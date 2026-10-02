@@ -752,7 +752,8 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 		rows, err = s.db.Pool.Query(ctx, `
 			SELECT id, username, email, COALESCE(first_name, ''), COALESCE(last_name, ''), enabled, email_verified,
 			       created_at, updated_at, last_login_at, password_changed_at,
-			       password_must_change, failed_login_count, last_failed_login_at, locked_until
+			       password_must_change, failed_login_count, last_failed_login_at, locked_until,
+			       user_type, account_status, vendor_org_id::text, sponsor_user_id::text, account_expires_at
 			FROM users
 			WHERE (username ILIKE $1 ESCAPE '\' OR email ILIKE $1 ESCAPE '\' OR first_name ILIKE $1 ESCAPE '\' OR last_name ILIKE $1 ESCAPE '\')
 			  AND org_id = $2
@@ -763,7 +764,8 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 		rows, err = s.db.Pool.Query(ctx, `
 			SELECT id, username, email, COALESCE(first_name, ''), COALESCE(last_name, ''), enabled, email_verified,
 			       created_at, updated_at, last_login_at, password_changed_at,
-			       password_must_change, failed_login_count, last_failed_login_at, locked_until
+			       password_must_change, failed_login_count, last_failed_login_at, locked_until,
+			       user_type, account_status, vendor_org_id::text, sponsor_user_id::text, account_expires_at
 			FROM users
 			WHERE org_id = $1
 			ORDER BY created_at DESC
@@ -783,6 +785,7 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 			&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
 			&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
 			&dbUser.LastFailedLoginAt, &dbUser.LockedUntil,
+			&dbUser.UserType, &dbUser.AccountStatus, &dbUser.VendorOrgID, &dbUser.SponsorUserID, &dbUser.AccountExpiresAt,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -844,6 +847,10 @@ func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 	// resulting state is disabled (without needing the prior value) is safe.
 	if !user.Enabled {
 		s.deprovisionUser(ctx, user.ID, org.ID, false)
+		if _, err := s.suspendSponsoredExternals(ctx, org.ID, user.ID, "sponsor disabled"); err != nil {
+			s.logger.Warn("could not suspend the external users of a disabled sponsor; the external-account sweep retries",
+				zap.String("user_id", logsafe.Clean(user.ID)), zap.Error(err))
+		}
 	}
 	return nil
 }
@@ -1004,6 +1011,13 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	// removing the user row, so a concurrent refresh grant can't slip through
 	// against a still-present user.
 	s.deprovisionUser(ctx, userID, org.ID, true)
+
+	// The external users this one sponsors lose their sponsor; they are
+	// suspended first, because the row delete below sets sponsor_user_id NULL
+	// and the database refuses that for a live external account.
+	if _, err := s.suspendSponsoredExternals(ctx, org.ID, userID, "sponsor deleted"); err != nil {
+		return fmt.Errorf("suspend the external users this user sponsors: %w", err)
+	}
 
 	// Row removal lives in the repository (primary pool). Ordering + side
 	// effects (audit above, deprovision above) stay here. Missing row maps to
@@ -1295,7 +1309,8 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 		searchPattern := "%" + searchQuery + "%"
 		rows, err = s.db.Pool.Query(ctx, `
 			SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $1), 0) as member_count
+			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $1), 0) as member_count,
+			       g.external_allowed
 			FROM groups g
 			WHERE (g.name ILIKE $2 OR g.description ILIKE $2) AND g.org_id = $1
 			ORDER BY g.name
@@ -1304,7 +1319,8 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 	} else {
 		rows, err = s.db.Pool.Query(ctx, `
 			SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $1), 0) as member_count
+			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $1), 0) as member_count,
+			       g.external_allowed
 			FROM groups g
 			WHERE g.org_id = $1
 			ORDER BY g.name
@@ -1321,6 +1337,7 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 		var dbGroup GroupDB
 		if err := rows.Scan(
 			&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
+			&dbGroup.ExternalAllowed,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -1631,7 +1648,8 @@ func (s *Service) GetSubgroups(ctx context.Context, parentID string) ([]Group, e
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) as member_count
+		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) as member_count,
+		       g.external_allowed
 		FROM groups g
 		WHERE g.parent_id = $1 AND g.org_id = $2
 		ORDER BY g.name
@@ -1646,6 +1664,7 @@ func (s *Service) GetSubgroups(ctx context.Context, parentID string) ([]Group, e
 		var dbGroup GroupDB
 		if err := rows.Scan(
 			&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
+			&dbGroup.ExternalAllowed,
 		); err != nil {
 			return nil, err
 		}
@@ -4134,6 +4153,13 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		// Email verification
 		identity.POST("/resend-verification", svc.handleResendVerification)
 
+		// Vendor organizations (external identities, migration v214)
+		identity.GET("/vendor-orgs", svc.handleListVendorOrgs)
+		identity.POST("/vendor-orgs", svc.handleCreateVendorOrg)
+		identity.GET("/vendor-orgs/:id", svc.handleGetVendorOrg)
+		identity.PUT("/vendor-orgs/:id", svc.handleUpdateVendorOrg)
+		identity.POST("/vendor-orgs/:id/close", svc.handleCloseVendorOrg)
+
 		// Invitations
 		identity.GET("/invitations", svc.handleListInvitations)
 		identity.POST("/invitations", svc.handleCreateInvitation)
@@ -4344,6 +4370,9 @@ func (s *Service) handleUpdateUser(c *gin.Context) {
 
 	user.ID = userID
 	if err := s.UpdateUser(auditCtx(c), &user); err != nil {
+		if writeExternalRefusal(c, err) {
+			return
+		}
 		s.logger.Error("failed to update user", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -4358,6 +4387,9 @@ func (s *Service) handleDeleteUser(c *gin.Context) {
 
 	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
 	if err := s.DeleteUser(ctx, userID); err != nil {
+		if writeExternalRefusal(c, err) {
+			return
+		}
 		s.logger.Error("failed to delete user", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -4667,6 +4699,9 @@ func (s *Service) handleAssignUserRole(c *gin.Context) {
 
 	err := s.AssignUserRole(auditCtx(c), userID, req.RoleID, assignedBy, req.ExpiresAt)
 	if err != nil {
+		if writeExternalRefusal(c, err) {
+			return
+		}
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -4731,6 +4766,9 @@ func (s *Service) handleUpdateUserRoles(c *gin.Context) {
 
 	err := s.UpdateUserRoles(auditCtx(c), userID, req.RoleIDs, assignedBy)
 	if err != nil {
+		if writeExternalRefusal(c, err) {
+			return
+		}
 		s.logger.Error("failed to update user roles", logsafe.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -4870,6 +4908,9 @@ func (s *Service) handleUpdateGroup(c *gin.Context) {
 
 	group.ID = groupID
 	if err := s.UpdateGroup(c.Request.Context(), &group); err != nil {
+		if writeExternalRefusal(c, err) {
+			return
+		}
 		s.logger.Error("failed to update group", logsafe.String("group_id", groupID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -4916,6 +4957,9 @@ func (s *Service) handleAddGroupMember(c *gin.Context) {
 	}
 
 	if err := s.AddGroupMember(auditCtx(c), groupID, req.UserID); err != nil {
+		if writeExternalRefusal(c, err) {
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			c.JSON(404, gin.H{"error": err.Error()})
 			return

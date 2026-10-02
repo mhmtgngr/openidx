@@ -3,6 +3,7 @@ package governance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -278,6 +279,15 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 				"it will sit with an incomplete chain and must be cancelled by hand",
 				logsafe.String("request_id", id), zap.Error(derr))
 		}
+		var unbuildable *chainError
+		if errors.As(err, &unbuildable) {
+			// The policy, not the platform, is what refused: say so, so the
+			// administrator who owns the policy can be told which step.
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "the approval policy for this resource cannot be satisfied: " + unbuildable.reason,
+				"code":  "approval_chain_unbuildable"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "the request could not be routed for approval and was not created; please try again"})
 		return
@@ -307,11 +317,14 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 // for this approver" and the request sits. Missing PART of it is worse and
 // quieter: the approvers who did get a row approve, the pending count reaches
 // zero, and the request is fulfilled having skipped a step the policy required.
-func (s *Service) insertApproval(ctx context.Context, requestID, approverID string, order int, orgID string) error {
+func (s *Service) insertApproval(ctx context.Context, requestID, approverID string, order, minApprovals int, orgID string) error {
+	if minApprovals < 1 {
+		minApprovals = 1
+	}
 	_, err := s.db.Pool.Exec(ctx,
-		`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		uuid.New().String(), requestID, approverID, order, "pending", time.Now(), orgID,
+		`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, step_min_approvals, decision, created_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		uuid.New().String(), requestID, approverID, order, minApprovals, "pending", time.Now(), orgID,
 	)
 	if err != nil {
 		return fmt.Errorf("record the approver for step %d: %w", order, err)
@@ -343,16 +356,20 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 
 	// Try to find a matching policy (specific resource first, then generic)
 	var stepsJSON, condJSON []byte
+	var maxWaitHours int
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT approval_steps, auto_approve_conditions FROM approval_policies
+		`SELECT approval_steps, auto_approve_conditions, COALESCE(max_wait_hours, 0) FROM approval_policies
 		 WHERE resource_type = $1 AND (resource_id = $2 OR resource_id IS NULL) AND enabled = true AND org_id = $3
 		 ORDER BY resource_id NULLS LAST LIMIT 1`,
 		resourceType, resourceID, org.ID,
-	).Scan(&stepsJSON, &condJSON)
+	).Scan(&stepsJSON, &condJSON, &maxWaitHours)
 	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("look up the approval policy: %w", err)
+		}
 		// No matching policy — create a default admin approval
 		adminID := "00000000-0000-0000-0000-000000000001"
-		return s.insertApproval(ctx, requestID, adminID, 1, org.ID)
+		return s.insertApproval(ctx, requestID, adminID, 1, 1, org.ID)
 	}
 
 	// V-007: evaluate the policy's typed auto_approve_conditions before
@@ -368,100 +385,48 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 		}
 	}
 
+	// The policy's wait, recorded on the request now so a policy edited while
+	// the request is open does not move it. Zero means the policy sets no
+	// deadline, and the request waits as it always has.
+	if maxWaitHours > 0 {
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE access_requests SET answer_by = NOW() + make_interval(hours => $1)
+			  WHERE id = $2 AND org_id = $3`, maxWaitHours, requestID, org.ID); err != nil {
+			return fmt.Errorf("record the policy's answer-by deadline: %w", err)
+		}
+	}
+
 	var steps []ApprovalStep
 	if err := json.Unmarshal(stepsJSON, &steps); err != nil || len(steps) == 0 {
 		return nil
 	}
 
+	// Each step expands to the users who may decide it, with the requester
+	// excluded (four eyes) and each user once, and each row records how many
+	// approvals its step needs. A step that cannot reach that number -- a role
+	// with one holder under min_approvals 2, a manager step for a requester
+	// with no manager, a step naming only the requester -- refuses the request
+	// here, with the reason, rather than leaving a request nobody can approve.
 	for i, step := range steps {
-		// Handle different approval step types
-		switch step.Type {
-		case ApprovalStepTypeSpecificUser:
-			if step.ApproverID != "" {
-				if err := s.insertApproval(ctx, requestID, step.ApproverID, step.Order, org.ID); err != nil {
-					return err
-				}
-			}
-		case ApprovalStepTypeRole:
-			if step.RoleID != "" {
-				// Role membership lives in the user_roles join table — users has
-				// no `roles` column, so the old `$1 = ANY(roles)` query errored on
-				// every call, was swallowed, and created ZERO approver rows: a
-				// role-based approval tier silently approved nothing (and a mixed
-				// [user, role] policy auto-fulfilled once the user approved).
-				// DISTINCT guards against a user holding the role via >1 grant.
-				roleRows, err := s.db.Pool.Query(ctx,
-					`SELECT DISTINCT user_id FROM user_roles WHERE role_id = $1 AND org_id = $2`, step.RoleID, org.ID,
-				)
-				if err != nil {
-					s.logger.Error("Failed to query users by role", zap.Error(err), zap.String("role_id", step.RoleID))
-				} else {
-					defer roleRows.Close()
-					for roleRows.Next() {
-						var userID string
-						if err := roleRows.Scan(&userID); err != nil {
-							s.logger.Error("Failed to scan role user", zap.Error(err))
-							continue
-						}
-						if userID == requesterID {
-							continue // four-eyes: never make the requester their own approver
-						}
-						if err := s.insertApproval(ctx, requestID, userID, step.Order, org.ID); err != nil {
-							return err
-						}
-					}
-				}
-			}
-		case ApprovalStepTypeGroup:
-			if step.GroupID != "" {
-				groupRows, err := s.db.Pool.Query(ctx,
-					`SELECT user_id FROM group_memberships WHERE group_id = $1 AND org_id = $2`, step.GroupID, org.ID,
-				)
-				if err != nil {
-					s.logger.Error("Failed to query group members", zap.Error(err), zap.String("group_id", step.GroupID))
-				} else {
-					defer groupRows.Close()
-					for groupRows.Next() {
-						var userID string
-						if err := groupRows.Scan(&userID); err != nil {
-							s.logger.Error("Failed to scan group member", zap.Error(err))
-							continue
-						}
-						if userID == requesterID {
-							continue // four-eyes: never make the requester their own approver
-						}
-						if err := s.insertApproval(ctx, requestID, userID, step.Order, org.ID); err != nil {
-							return err
-						}
-					}
-				}
-			}
-		case ApprovalStepTypeManager:
-			// Look up the requester's manager from the access request
-			var requesterID string
-			err := s.db.Pool.QueryRow(ctx,
-				`SELECT requester_id FROM access_requests WHERE id = $1 AND org_id = $2`, requestID, org.ID,
-			).Scan(&requesterID)
-			if err != nil {
-				s.logger.Error("Failed to get requester for manager approval", zap.Error(err))
-			} else {
-				var managerID *string
-				err = s.db.Pool.QueryRow(ctx,
-					`SELECT manager_id FROM users WHERE id = $1 AND org_id = $2`, requesterID, org.ID,
-				).Scan(&managerID)
-				if err != nil {
-					s.logger.Error("Failed to get manager for requester", zap.Error(err), zap.String("requester_id", requesterID))
-				} else if managerID != nil {
-					if err := s.insertApproval(ctx, requestID, *managerID, step.Order, org.ID); err != nil {
-						return err
-					}
-				}
-			}
-		case ApprovalStepTypeAuto:
+		if step.Type == ApprovalStepTypeAuto {
 			// Automatic approval - no human approver needed
 			s.logger.Debug("Auto-approval step", zap.Int("step", i+1))
-		default:
-			s.logger.Warn("Unknown approval step type", zap.String("type", string(step.Type)))
+			continue
+		}
+		order := step.effectiveOrder(i)
+		need := step.effectiveMinApprovals()
+		approvers, err := s.resolveStepApprovers(ctx, org.ID, step, requesterID)
+		if err != nil {
+			return err
+		}
+		if len(approvers) < need {
+			return &chainError{fmt.Sprintf("approval step %d needs %d approvals but has %d eligible approvers",
+				order, need, len(approvers))}
+		}
+		for _, approverID := range approvers {
+			if err := s.insertApproval(ctx, requestID, approverID, order, need, org.ID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -752,13 +717,42 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 		return
 	}
 
-	now := time.Now()
+	// Steps run in order, and a step needs the approvals its rows record. The
+	// caller's row must belong to the lowest unsatisfied step: an approver of a
+	// later step is told to wait rather than having a decision recorded that
+	// the chain is not at yet.
+	_, active, _, err := s.approvalProgress(c.Request.Context(), id, org.ID)
+	if err != nil {
+		s.logger.Error("Failed to read approval progress", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve request"})
+		return
+	}
+	callerStep, err := s.callerStep(c.Request.Context(), id, approverID, org.ID)
+	if err != nil {
+		s.logger.Error("Failed to find the caller's approval row", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve request"})
+		return
+	}
+	if callerStep == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No pending approval found for this approver"})
+		return
+	}
+	if callerStep != active {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf("this request is at approval step %d; your approval is for step %d and cannot be given yet",
+				active, callerStep),
+			"status": "pending",
+			"step":   active,
+		})
+		return
+	}
 
+	now := time.Now()
 	result, err := s.db.Pool.Exec(c.Request.Context(),
 		`UPDATE access_request_approvals
 		 SET decision = 'approved', comments = $1, decided_at = $2
-		 WHERE request_id = $3 AND approver_id = $4 AND decision = 'pending' AND org_id = $5`,
-		body.Comments, now, id, approverID, org.ID,
+		 WHERE request_id = $3 AND approver_id = $4 AND step_order = $5 AND decision = 'pending' AND org_id = $6`,
+		body.Comments, now, id, approverID, callerStep, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to approve request", zap.Error(err))
@@ -770,19 +764,24 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 		return
 	}
 
-	// Check if ALL approvals for this request are now approved
-	var pendingCount int
-	err = s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT COUNT(*) FROM access_request_approvals WHERE request_id = $1 AND decision = 'pending' AND org_id = $2`,
-		id, org.ID,
-	).Scan(&pendingCount)
+	steps, active, done, err := s.approvalProgress(c.Request.Context(), id, org.ID)
 	if err != nil {
-		s.logger.Error("Failed to check pending approvals", zap.Error(err))
+		s.logger.Error("Failed to check approval status", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check approval status"})
 		return
 	}
+	// The step this decision completed no longer needs its other approvers;
+	// their rows are closed so the queue stops asking them.
+	for _, st := range steps {
+		if st.Order == callerStep && st.satisfied() && st.Pending > 0 {
+			if _, err := s.skipRemainingInStep(c.Request.Context(), id, callerStep, org.ID); err != nil {
+				s.logger.Warn("Failed to skip the remaining approvers of a satisfied step",
+					logsafe.String("request_id", id), zap.Error(err))
+			}
+		}
+	}
 
-	if pendingCount == 0 {
+	if done {
 		_, err = s.db.Pool.Exec(c.Request.Context(),
 			`UPDATE access_requests SET status = 'approved', updated_at = $1 WHERE id = $2 AND org_id = $3`,
 			time.Now(), id, org.ID,
@@ -821,7 +820,11 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Approval recorded; the request is still awaiting other approvers", "status": "pending"})
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Approval recorded; the request is still awaiting other approvers",
+		"status":  "pending",
+		"step":    active,
+	})
 }
 
 // handleDenyRequest denies an access request
@@ -845,13 +848,41 @@ func (s *Service) handleDenyRequest(c *gin.Context) {
 		return
 	}
 
+	// A denial is final, and it is a decision of the step the chain is at:
+	// an approver of a later step waits for their step like they do to approve.
+	_, active, _, err := s.approvalProgress(c.Request.Context(), id, org.ID)
+	if err != nil {
+		s.logger.Error("Failed to read approval progress", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to deny request"})
+		return
+	}
+	callerStep, err := s.callerStep(c.Request.Context(), id, approverID, org.ID)
+	if err != nil {
+		s.logger.Error("Failed to find the caller's approval row", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to deny request"})
+		return
+	}
+	if callerStep == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No pending approval found for this approver"})
+		return
+	}
+	if callerStep != active {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf("this request is at approval step %d; your decision is for step %d and cannot be given yet",
+				active, callerStep),
+			"status": "pending",
+			"step":   active,
+		})
+		return
+	}
+
 	now := time.Now()
 
 	result, err := s.db.Pool.Exec(c.Request.Context(),
 		`UPDATE access_request_approvals
 		 SET decision = 'denied', comments = $1, decided_at = $2
-		 WHERE request_id = $3 AND approver_id = $4 AND decision = 'pending' AND org_id = $5`,
-		body.Comments, now, id, approverID, org.ID,
+		 WHERE request_id = $3 AND approver_id = $4 AND step_order = $5 AND decision = 'pending' AND org_id = $6`,
+		body.Comments, now, id, approverID, callerStep, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to deny request", zap.Error(err))
@@ -948,7 +979,23 @@ func (s *Service) handleListPendingApprovals(c *gin.Context) {
 		 FROM access_request_approvals a
 		 JOIN access_requests ar ON ar.id = a.request_id AND ar.org_id = a.org_id
 		 LEFT JOIN users ru ON ru.id = ar.requester_id AND ru.org_id = ar.org_id
-		 WHERE a.approver_id = $1 AND a.decision = 'pending' AND a.org_id = $2
+		 JOIN (
+		     -- The step each request is at: the lowest one still short of the
+		     -- approvals its rows say it needs. A row of a later step is not
+		     -- the approver's to decide yet, so the queue does not show it.
+		     SELECT request_id, org_id, MIN(step_order) AS step_order
+		       FROM (
+		         SELECT request_id, org_id, step_order,
+		                MAX(step_min_approvals) AS needed,
+		                COUNT(*) FILTER (WHERE decision = 'approved') AS approved
+		           FROM access_request_approvals
+		          WHERE org_id = $2
+		          GROUP BY request_id, org_id, step_order
+		       ) steps
+		      WHERE approved < needed
+		      GROUP BY request_id, org_id
+		 ) active ON active.request_id = a.request_id AND active.org_id = a.org_id AND active.step_order = a.step_order
+		 WHERE a.approver_id = $1 AND a.decision = 'pending' AND a.org_id = $2 AND ar.status = 'pending'
 		 ORDER BY ar.created_at DESC`, userID, org.ID,
 	)
 	if err != nil {

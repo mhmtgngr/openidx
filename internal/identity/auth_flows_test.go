@@ -56,6 +56,8 @@ CREATE TABLE users (
     source               VARCHAR(50),
     directory_id         UUID,
     org_id               UUID        NOT NULL
+,
+    user_type VARCHAR(16) NOT NULL DEFAULT 'internal', account_status VARCHAR(16) NOT NULL DEFAULT 'active', vendor_org_id UUID, sponsor_user_id UUID, account_expires_at TIMESTAMPTZ, status_changed_at TIMESTAMPTZ, access_severed_at TIMESTAMPTZ
 );
 CREATE TABLE system_settings (
     key   VARCHAR(255) PRIMARY KEY,
