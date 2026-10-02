@@ -3,6 +3,8 @@ package oauth
 import (
 	"context"
 	"errors"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // authorizationClaims reads the authorization facts a token issued now carries
@@ -65,4 +67,49 @@ func (s *Service) authorizationClaims(ctx context.Context, userID, orgID string)
 		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 	`)
 	return roles, groups, permissions, errors.Join(errs...)
+}
+
+// accessTokenLifetime is how long a token issued now for the user lives, in
+// seconds: the client's lifetime, cut to the end of the earliest window among
+// the time-bound roles the token carries. Section 6.5 of the third-party
+// access framework: a token that carries an elevation does not outlive it.
+//
+// The role leaves a token issued after its window (authorizationClaims reads
+// only live assignments), and the role-expiry sweep cuts the tokens that still
+// carry it within a minute -- through the revocation marker, which lives in
+// Redis. This makes the token itself say when it ends, so a resource server
+// that verifies the signature offline, or one that reads no marker, stops
+// accepting the role at the window's end as well. The token endpoint reports
+// the same lifetime in expires_in, and the client refreshes then; the token
+// it gets carries what is still live.
+//
+// A token with no user (client credentials) and a read that fails keep the
+// client's lifetime: the read that fails is the one the token builder makes
+// too, and a token built without the role has no window to end with.
+func (s *Service) accessTokenLifetime(ctx context.Context, userID string, configured int) int {
+	if userID == "" {
+		return configured
+	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return configured
+	}
+	var left *float64
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT EXTRACT(EPOCH FROM MIN(ur.expires_at) - NOW())::float8
+		FROM roles r
+		JOIN user_roles ur ON r.id = ur.role_id
+		WHERE ur.user_id = $1 AND ur.org_id = $2
+		AND ur.expires_at IS NOT NULL AND ur.expires_at > NOW()
+	`, userID, org.ID).Scan(&left); err != nil || left == nil {
+		return configured
+	}
+	secs := int(*left)
+	if secs < 1 {
+		secs = 1
+	}
+	if secs < configured {
+		return secs
+	}
+	return configured
 }
