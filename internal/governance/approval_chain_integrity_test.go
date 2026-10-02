@@ -60,6 +60,10 @@ func TestAHalfBuiltApprovalChainIsReported(t *testing.T) {
 	ctx := orgctx.With(context.Background(), orgctx.Org{ID: chainOrgID})
 
 	if _, err := db.Pool.Exec(ctx, `
+		CREATE TABLE users (
+			id UUID PRIMARY KEY,
+			org_id UUID NOT NULL,
+			user_type VARCHAR(16) NOT NULL DEFAULT 'internal');
 		CREATE TABLE approval_policies (
 			id UUID PRIMARY KEY,
 			resource_type VARCHAR(50) NOT NULL,
@@ -170,6 +174,10 @@ func TestARequestWhoseChainFailsIsWithdrawn(t *testing.T) {
 
 	ctx := orgctx.With(context.Background(), orgctx.Org{ID: chainOrgID})
 	if _, err := db.Pool.Exec(ctx, `
+		CREATE TABLE users (
+			id UUID PRIMARY KEY,
+			org_id UUID NOT NULL,
+			user_type VARCHAR(16) NOT NULL DEFAULT 'internal');
 		CREATE TABLE approval_policies (
 			id UUID PRIMARY KEY,
 			resource_type VARCHAR(50) NOT NULL,
