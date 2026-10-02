@@ -378,8 +378,11 @@ func severCensus(t *testing.T) (severs []string, satisfied, grantShape, signalli
 // is the seam; this counts the account-severing paths that use it.
 //
 // Only the ACCOUNT shape is held to it. Taking a role or a group away is
-// token-claims-change, a different event with a different subject, and is
-// stated here as not done rather than pretended.
+// token-claims-change, a different event. Governance sends it when a role or a
+// group an access request gave begins or ends (internal/governance/
+// claims_signal.go); the other grant-shaped severs -- an access review's
+// revoke, a deleted group, a directory sync, an administrator's edit -- do not
+// send it yet, and that is stated here as not done rather than pretended.
 
 // signalRegister names the account-severing paths that do not enqueue the
 // signal, with why. Same contract as severRegister: only shrinks.

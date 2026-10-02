@@ -425,9 +425,7 @@ func (s *Service) handleCloseVendorOrg(c *gin.Context) {
 	// After the commit, never inside it: a revocation marker for access a
 	// rolled-back close would have left in place is a lie the other way.
 	for _, uid := range disabled {
-		s.deprovisionUser(ctx, uid, org.ID, false)
-		if _, err := s.db.Pool.Exec(ctx,
-			`UPDATE users SET access_severed_at = NOW() WHERE id = $1::uuid AND org_id = $2`, uid, org.ID); err != nil {
+		if err := s.severExternal(ctx, org.ID, uid, externalid.StatusDisabled); err != nil {
 			s.logger.Warn("close vendor organization: could not record the severing", zap.Error(err))
 		}
 	}

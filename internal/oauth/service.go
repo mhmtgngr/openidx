@@ -1296,67 +1296,11 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 		name = firstName + " " + lastName
 	}
 
-	// Get user roles (excluding expired time-bound assignments)
-	roleNames := make([]string, 0)
-	if userID != "" {
-		rows, err := s.db.Pool.Query(ctx, `
-			SELECT r.name
-			FROM roles r
-			JOIN user_roles ur ON r.id = ur.role_id
-			WHERE ur.user_id = $1 AND ur.org_id = $2
-			AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-		`, userID, org.ID)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var roleName string
-				if err := rows.Scan(&roleName); err == nil {
-					roleNames = append(roleNames, roleName)
-				}
-			}
-		}
-	}
-
-	// Get user groups
-	groupNames := make([]string, 0)
-	if userID != "" {
-		gRows, err := s.db.Pool.Query(ctx, `
-			SELECT g.name FROM groups g
-			JOIN group_memberships gm ON g.id = gm.group_id
-			WHERE gm.user_id = $1 AND gm.org_id = $2
-		`, userID, org.ID)
-		if err == nil {
-			defer gRows.Close()
-			for gRows.Next() {
-				var gn string
-				if err := gRows.Scan(&gn); err == nil {
-					groupNames = append(groupNames, gn)
-				}
-			}
-		}
-	}
-
-	// Get effective permissions (resource:action pairs)
-	permStrings := make([]string, 0)
-	if userID != "" {
-		pRows, err := s.db.Pool.Query(ctx, `
-			SELECT DISTINCT p.resource || ':' || p.action
-			FROM permissions p
-			JOIN role_permissions rp ON p.id = rp.permission_id
-			JOIN user_roles ur ON ur.role_id = rp.role_id
-			WHERE ur.user_id = $1 AND ur.org_id = $2
-			AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-		`, userID, org.ID)
-		if err == nil {
-			defer pRows.Close()
-			for pRows.Next() {
-				var ps string
-				if err := pRows.Scan(&ps); err == nil {
-					permStrings = append(permStrings, ps)
-				}
-			}
-		}
-	}
+	// The authorization facts. The SSF drainer reads them through the same
+	// function for a token-claims-change event, so the event says what a token
+	// issued at that moment says. A read that fails leaves its claim short, as
+	// it always has: the token then asserts less, never more.
+	roleNames, groupNames, permStrings, _ := s.authorizationClaims(ctx, userID, org.ID)
 
 	claims := jwt.MapClaims{
 		"sub":       userID,
@@ -1455,61 +1399,11 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce, 
 		name = firstName + " " + lastName
 	}
 
-	// Get user roles (excluding expired time-bound assignments)
-	roleNames := make([]string, 0)
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT r.name
-		FROM roles r
-		JOIN user_roles ur ON r.id = ur.role_id
-		WHERE ur.user_id = $1 AND ur.org_id = $2
-		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-	`, userID, org.ID)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var roleName string
-			if err := rows.Scan(&roleName); err == nil {
-				roleNames = append(roleNames, roleName)
-			}
-		}
-	}
-
-	// Get user groups
-	groupNames := make([]string, 0)
-	gRows, gErr := s.db.Pool.Query(ctx, `
-		SELECT g.name FROM groups g
-		JOIN group_memberships gm ON g.id = gm.group_id
-		WHERE gm.user_id = $1 AND gm.org_id = $2
-	`, userID, org.ID)
-	if gErr == nil {
-		defer gRows.Close()
-		for gRows.Next() {
-			var gn string
-			if gRows.Scan(&gn) == nil {
-				groupNames = append(groupNames, gn)
-			}
-		}
-	}
-
-	// Get effective permissions
-	permStrings := make([]string, 0)
-	pRows, pErr := s.db.Pool.Query(ctx, `
-		SELECT DISTINCT p.resource || ':' || p.action
-		FROM permissions p
-		JOIN role_permissions rp ON p.id = rp.permission_id
-		JOIN user_roles ur ON ur.role_id = rp.role_id
-		WHERE ur.user_id = $1 AND ur.org_id = $2
-		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-	`, userID, org.ID)
-	if pErr == nil {
-		defer pRows.Close()
-		for pRows.Next() {
-			var ps string
-			if pRows.Scan(&ps) == nil {
-				permStrings = append(permStrings, ps)
-			}
-		}
-	}
+	// The authorization facts. The SSF drainer reads them through the same
+	// function for a token-claims-change event, so the event says what a token
+	// issued at that moment says. A read that fails leaves its claim short, as
+	// it always has: the token then asserts less, never more.
+	roleNames, groupNames, permStrings, _ := s.authorizationClaims(ctx, userID, org.ID)
 
 	claims := jwt.MapClaims{
 		// Pairwise when OIDCPairwiseSubjects is on (OIDC Core §8.1); the raw

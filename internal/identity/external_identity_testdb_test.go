@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +98,25 @@ func TestExternalUsersHoldOnlyWhatTheyMay(t *testing.T) {
 		out := map[string]interface{}{}
 		_ = json.Unmarshal(w.Body.Bytes(), &out)
 		return w.Code, out
+	}
+	// signals reads the SSF signals enqueued about a user, oldest first, by
+	// the last segment of their event type.
+	signals := func(userID string) []string {
+		t.Helper()
+		rows, err := db.Pool.Query(ctx, `SELECT event_type FROM ssf_pending_events WHERE subject_id = $1 ORDER BY id`, userID)
+		if err != nil {
+			t.Fatalf("read the SSF signals: %v", err)
+		}
+		defer rows.Close()
+		out := []string{}
+		for rows.Next() {
+			var ev string
+			if err := rows.Scan(&ev); err != nil {
+				t.Fatalf("read an SSF signal: %v", err)
+			}
+			out = append(out, ev[strings.LastIndex(ev, "/")+1:])
+		}
+		return out
 	}
 	refused := func(t *testing.T, what string, code int, body map[string]interface{}, wantStatus int, wantCode string) {
 		t.Helper()
@@ -218,6 +238,9 @@ func TestExternalUsersHoldOnlyWhatTheyMay(t *testing.T) {
 			t.Errorf("after its sponsor's delete the external user is %s, enabled %v, sponsor %v, severed %v; want suspended, disabled, none, severed",
 				status, enabled, sponsorID, severed)
 		}
+		if got := signals(vendorUser); !slices.Equal(got, []string{"session-revoked"}) {
+			t.Errorf("SSF signals after the sponsor left: %v, want [session-revoked]", got)
+		}
 	})
 
 	t.Run("closing the vendor disables its external users and cannot be undone", func(t *testing.T) {
@@ -240,6 +263,12 @@ func TestExternalUsersHoldOnlyWhatTheyMay(t *testing.T) {
 		}
 		if status != "disabled" || enabled {
 			t.Errorf("a live external user of the closed vendor is %s, enabled %v", status, enabled)
+		}
+		if got := signals(live); !slices.Equal(got, []string{"account-disabled"}) {
+			t.Errorf("SSF signals of a live external user of the closed vendor: %v, want [account-disabled]", got)
+		}
+		if got := signals(vendorUser); !slices.Equal(got, []string{"session-revoked", "account-disabled"}) {
+			t.Errorf("SSF signals of the suspended external user of the closed vendor: %v, want [session-revoked account-disabled]", got)
 		}
 		code, body = call(http.MethodPut, "/vendor-orgs/"+vendor, `{"name":"Reopened `+suffix+`"}`)
 		refused(t, "editing a closed vendor", code, body, http.StatusConflict, "vendor_org_closed")

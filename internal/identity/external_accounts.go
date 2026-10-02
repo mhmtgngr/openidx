@@ -14,6 +14,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/externalid"
 )
 
@@ -24,10 +25,11 @@ import (
 // users rather than disabling them, so a new sponsor can take them over within
 // the grace period, and a suspended account cannot sign in. Each account goes
 // to 'suspended' with users.enabled false in one statement (the v214 CHECK
-// refuses an enabled external account that is not live), and is then
-// deprovisioned exactly as an administrator's disable deprovisions an
-// account: sessions with their revocation markers, API keys, vault checkouts
-// and grants, JIT elevations.
+// refuses an enabled external account that is not live), and is then severed
+// (severExternal): deprovisioned exactly as an administrator's disable
+// deprovisions an account -- sessions with their revocation markers, API
+// keys, vault checkouts and grants, JIT elevations -- and its sessions'
+// end signalled to the tenant's SSF receivers.
 //
 // DeleteUser calls it before removing the sponsor's row: the sponsor_user_id
 // foreign key sets the column NULL on delete, which the v214 CHECK refuses
@@ -67,9 +69,7 @@ func (s *Service) suspendSponsoredExternals(ctx context.Context, orgID, sponsorI
 	}
 	actor := actorIDFromContext(ctx)
 	for _, id := range suspended {
-		s.deprovisionUser(ctx, id, orgID, false)
-		if _, err := s.db.Pool.Exec(ctx,
-			`UPDATE users SET access_severed_at = NOW() WHERE id = $1::uuid AND org_id = $2`, id, orgID); err != nil {
+		if err := s.severExternal(ctx, orgID, id, externalid.StatusSuspended); err != nil {
 			s.logger.Warn("could not record the severing of a suspended external user",
 				zap.String("user_id", logsafe.Clean(id)), zap.Error(err))
 		}
@@ -171,15 +171,39 @@ func (s *Service) loadExternalAccount(c *gin.Context, orgID, userID string) (ext
 }
 
 // severExternal ends a departed external account's live access, the way an
-// administrator's disable does, and records that it was done. Best-effort,
-// like deprovisionUser: the status is already changed when this runs.
-func (s *Service) severExternal(ctx context.Context, orgID, userID string) {
+// administrator's disable does, tells the tenant's SSF receivers, and records
+// that it was done. status is the one the account moved to. Every path that
+// ends an external account severs it here: the routes, a departing sponsor,
+// a closed vendor and the sweep.
+//
+// What the receivers are told depends on whether the account can come back
+// (§6.10 of the framework):
+//   - suspended: session-revoked. A new sponsor may reactivate the account
+//     within the grace period (decision D5), so its sessions end and the
+//     account stays;
+//   - expired or disabled: account-disabled. Neither comes back: a new
+//     invitation is a new account.
+//
+// Best-effort, like deprovisionUser: the status is already changed when this
+// runs, so a signal that cannot be written is logged and the severing goes
+// on. The error is the record's: a sever that is not recorded is repeated by
+// the next sweep, and its signal with it.
+func (s *Service) severExternal(ctx context.Context, orgID, userID, status string) error {
 	s.deprovisionUser(ctx, userID, orgID, false)
-	if _, err := s.db.Pool.Exec(ctx,
-		`UPDATE users SET access_severed_at = NOW() WHERE id = $1::uuid AND org_id = $2`, userID, orgID); err != nil {
-		s.logger.Warn("could not record the severing of an external account; the sweep retries it",
-			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
+	event := ssfsignal.AccountDisabled
+	if status == externalid.StatusSuspended {
+		event = ssfsignal.SessionRevoked
 	}
+	if err := ssfsignal.Enqueue(ctx, s.db.Pool, ssfsignal.Signal{
+		OrgID: orgID, EventType: event, SubjectID: userID,
+		Claims: map[string]any{"reason": "external_" + status},
+	}); err != nil {
+		s.logger.Error("an external account was severed, but its SSF signal was not enqueued",
+			zap.String("user_id", logsafe.Clean(userID)), zap.String("status", status), zap.Error(err))
+	}
+	_, err := s.db.Pool.Exec(ctx,
+		`UPDATE users SET access_severed_at = NOW() WHERE id = $1::uuid AND org_id = $2`, userID, orgID)
+	return err
 }
 
 // endExternal moves a live or suspended account to a state it cannot sign in
@@ -212,7 +236,10 @@ func (s *Service) endExternal(c *gin.Context, to, action string) {
 		c.JSON(http.StatusConflict, gin.H{"error": "the account is " + a.Status + " and cannot be " + to, "code": "external_status_conflict"})
 		return
 	}
-	s.severExternal(ctx, orgID, userID)
+	if err := s.severExternal(ctx, orgID, userID, to); err != nil {
+		s.logger.Warn("could not record the severing of an external account; the sweep retries it",
+			zap.String("user_id", logsafe.Clean(userID)), zap.Error(err))
+	}
 	s.logAuditEvent(ctx, "identity", "external_access", action, "success", actor, userID, "user",
 		map[string]interface{}{"reason": req.Reason, "from": a.Status})
 	c.JSON(http.StatusOK, gin.H{"id": userID, "status": to})
