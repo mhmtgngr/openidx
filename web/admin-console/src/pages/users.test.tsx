@@ -245,4 +245,31 @@ describe('UsersPage', () => {
     expect(within(internal).queryByText('External')).not.toBeInTheDocument()
     expect(within(internal).getByText('Disabled')).toBeInTheDocument()
   })
+
+  it("names an external account's sponsor in the edit dialog", async () => {
+    const wrapper = createWrapper()
+    const user = userEvent.setup()
+    vi.mocked(api.getWithHeaders).mockResolvedValue({
+      data: [{
+        id: 'x1', userName: 'ayse.vendor', name: { givenName: 'Ayse', familyName: 'Vendor' },
+        emails: [{ value: 'ayse@supplier.example.test' }], enabled: true,
+        userType: 'external', accountStatus: 'active', sponsorUserId: 's-1', accountExpiresAt: '2099-01-01T00:00:00Z',
+      }],
+      headers: {},
+    })
+    vi.mocked(api.get).mockImplementation(((url: string) =>
+      Promise.resolve(url === '/api/v1/identity/users/s-1'
+        ? { id: 's-1', userName: 'selin', name: { givenName: 'Selin', familyName: 'Sponsor' } }
+        : [])) as never)
+
+    render(<UsersPage />, { wrapper })
+    const row = (await screen.findByText('Ayse Vendor')).closest('tr')!
+    const trigger = within(row).getAllByRole('button').find((b) => b.getAttribute('aria-haspopup') === 'menu')!
+    await user.click(trigger)
+    await user.click(await screen.findByRole('menuitem', { name: /edit user/i }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText(/sponsored by Selin Sponsor/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('link', { name: /open external users/i })).toHaveAttribute('href', '/external-users')
+  })
 })

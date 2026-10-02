@@ -53,6 +53,7 @@ interface User {
   user_type: string
   account_status: string
   account_expires_at: string
+  sponsor_user_id: string
 }
 
 // The /api/v1/identity/users endpoint speaks SCIM (userName, name.givenName,
@@ -76,6 +77,7 @@ function toFlatUser(u: RawUser): User {
     user_type: String(u.userType ?? u.user_type ?? 'internal'),
     account_status: String(u.accountStatus ?? u.account_status ?? ''),
     account_expires_at: String(u.accountExpiresAt ?? u.account_expires_at ?? ''),
+    sponsor_user_id: String(u.sponsorUserId ?? u.sponsor_user_id ?? ''),
   }
 }
 function toApiUser(d: Partial<User> & { password?: string }): Record<string, unknown> {
@@ -165,6 +167,14 @@ export function UsersPage() {
       if (!isNaN(total)) setTotalCount(total)
       return (result.data || []).map(toFlatUser)
     },
+  })
+
+  // The sponsor of the external account being edited, by name.
+  const sponsorId = editUserModal && selectedUser?.user_type === 'external' ? selectedUser.sponsor_user_id : ''
+  const { data: sponsor } = useQuery({
+    queryKey: ['user', sponsorId],
+    queryFn: async () => toFlatUser(await api.get<RawUser>(`/api/v1/identity/users/${sponsorId}`)),
+    enabled: !!sponsorId,
   })
 
   // Fetch Ziti identity mapping for all users
@@ -696,6 +706,9 @@ export function UsersPage() {
                 {t('pages.users.editDialog.externalNote', {
                   status: t(`pages.externalUsers.status.${selectedUser.account_status}`, { defaultValue: selectedUser.account_status }),
                   date: selectedUser.account_expires_at ? new Date(selectedUser.account_expires_at).toLocaleDateString() : '—',
+                  sponsor: sponsor
+                    ? ([sponsor.first_name, sponsor.last_name].filter(Boolean).join(' ') || sponsor.username)
+                    : '—',
                 })}{' '}
                 <Link to="/external-users" className="font-medium underline">{t('pages.users.editDialog.externalLink')}</Link>
               </div>

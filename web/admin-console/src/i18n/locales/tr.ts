@@ -1583,7 +1583,7 @@ const tr: typeof en = {
       },
       editDialog: {
         title: 'Kullanıcıyı Düzenle',
-        externalNote: 'Dış (tedarikçi) hesap, {{status}}, {{date}} tarihinde bitiyor. Durumu, sponsoru ve bitiş tarihi Dış Kullanıcılar sayfasında değiştirilir.',
+        externalNote: 'Dış (tedarikçi) hesap, {{status}}, sponsoru {{sponsor}}, {{date}} tarihinde bitiyor. Durumu, sponsoru ve bitiş tarihi Dış Kullanıcılar sayfasında değiştirilir.',
         externalLink: 'Dış Kullanıcılar sayfasını aç',
         updating: 'Güncelleniyor...',
         update: 'Kullanıcıyı Güncelle',
