@@ -32,7 +32,9 @@ const (
 )
 
 const approvalSchema = `
-CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY, org_id UUID, username VARCHAR(255), enabled BOOLEAN DEFAULT TRUE);
+CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY, org_id UUID, username VARCHAR(255), enabled BOOLEAN DEFAULT TRUE,
+    first_name VARCHAR(255), last_name VARCHAR(255), manager_id UUID,
+    user_type VARCHAR(16) NOT NULL DEFAULT 'internal');
 CREATE TABLE IF NOT EXISTS roles (id UUID PRIMARY KEY, name VARCHAR(255), org_id UUID);
 CREATE TABLE IF NOT EXISTS user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ, PRIMARY KEY (user_id, role_id));
 CREATE TABLE IF NOT EXISTS groups (id UUID PRIMARY KEY, name VARCHAR(255), org_id UUID);
@@ -46,13 +48,21 @@ CREATE TABLE IF NOT EXISTS access_requests (
     org_id UUID NOT NULL, requester_id UUID NOT NULL,
     resource_type VARCHAR(64), resource_id VARCHAR(255), resource_name VARCHAR(255),
     justification TEXT, status VARCHAR(32) NOT NULL DEFAULT 'pending',
-    priority VARCHAR(32) DEFAULT 'normal', expires_at TIMESTAMPTZ,
+    priority VARCHAR(32) DEFAULT 'normal', expires_at TIMESTAMPTZ, answer_by TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
 CREATE TABLE IF NOT EXISTS access_request_approvals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    request_id UUID NOT NULL, approver_id UUID NOT NULL, step_order INT,
+    request_id UUID NOT NULL, approver_id UUID NOT NULL, step_order INT, step_min_approvals INT NOT NULL DEFAULT 1,
     decision VARCHAR(32) NOT NULL DEFAULT 'pending', comments TEXT,
-    decided_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW(), org_id UUID NOT NULL);`
+    decided_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW(), org_id UUID NOT NULL);
+CREATE TABLE IF NOT EXISTS approval_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(255), resource_type VARCHAR(50) NOT NULL,
+    resource_id UUID, approval_steps JSONB NOT NULL DEFAULT '[]', auto_approve_conditions JSONB,
+    max_wait_hours INTEGER DEFAULT 72, enabled BOOLEAN DEFAULT true, org_id UUID NOT NULL);
+CREATE TABLE IF NOT EXISTS audit_events (
+    id UUID PRIMARY KEY, event_type VARCHAR(50), category VARCHAR(50), action VARCHAR(100), outcome VARCHAR(20),
+    actor_id VARCHAR(255), actor_ip VARCHAR(45), target_id VARCHAR(255), target_type VARCHAR(50), details JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(), org_id UUID);`
 
 type approvalFixture struct {
 	svc *Service
