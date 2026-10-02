@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
@@ -185,6 +186,41 @@ type pamLaunchEntry struct {
 	RecordSession     bool
 	ReachMode         string
 	ZitiInterceptPort int
+	// AdminBypass names the gates this launch passed only because the caller
+	// is an administrator ("grant", "approval"); empty otherwise. Set by the
+	// launch handler, never loaded, and carried to pam.entry_connected.
+	AdminBypass []string
+	// External is set by the launch handler when the caller is an external
+	// user (pinExternalPamPolicy), never loaded: the session gets its own
+	// broker connection and identity, is recorded, and runs hardened (I5, I7).
+	External bool
+}
+
+// pamAdminBypass names the gates an administrator's launch of entry passes
+// only because the caller is an administrator: "grant" when no connect grant
+// (user, role or group) would have admitted them, "approval" when the entry
+// requires an approval, which administrators never spend.
+//
+// Administrators pass both gates on every launch path, and the audit event
+// said nothing about it: an administrator connecting to an entry nobody
+// granted them read the same as an operator using their grant. Called only
+// for administrators. A failed grant lookup counts as a bypass, so an error
+// records the bypass rather than hiding it.
+func (s *Service) pamAdminBypass(ctx context.Context, orgID string, entry *pamLaunchEntry, userID string, roles []string) []string {
+	gates := []string{}
+	allowed, err := s.pamEntryAllowed(ctx, orgID, entry.ID, userID, roles, "connect")
+	if err != nil {
+		s.logger.Warn("pamAdminBypass: grant lookup failed; recording the launch as a grant bypass",
+			zap.String("entry_id", entry.ID), zap.Error(err))
+		allowed = false
+	}
+	if !allowed {
+		gates = append(gates, "grant")
+	}
+	if entry.RequireApproval {
+		gates = append(gates, "approval")
+	}
+	return gates
 }
 
 // dialTarget returns the host:port guacd should open the protocol connection
@@ -213,25 +249,51 @@ func (e *pamLaunchEntry) dialTarget() (host string, port int) {
 // connect URL. Website entries return their URL (no brokering). 403s when a
 // required approval is missing — the UI then offers "request access".
 func (s *Service) handlePamConnect(c *gin.Context) {
-	entryID := c.Param("id")
+	s.connectPamEntry(c, c.Param("id"), pamConnectHooks{})
+}
+
+// pamConnectHooks let a caller that reaches the entry path from elsewhere (the
+// route-based Guacamole connect) add its own gate and ledger around the launch
+// without a second copy of the decision.
+type pamConnectHooks struct {
+	// BeforeLaunch runs after every gate of the entry path has passed and
+	// before a credential is resolved. Returning false means the hook has
+	// written the response and the launch does not happen.
+	BeforeLaunch func(c *gin.Context, entry *pamLaunchEntry) bool
+	// AfterLaunch runs once the session is brokered and ledgered.
+	AfterLaunch func(c *gin.Context, entry *pamLaunchEntry, res *pamSessionResult)
+	// Response is merged into the success body.
+	Response gin.H
+}
+
+// connectPamEntry is the entry launch: ACL, approval, overlay check, then the
+// shared launch core. handlePamConnect is this with no hooks; the route-based
+// connect adds its moderation gate and its own session ledger through them.
+func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConnectHooks) {
 	ctx := c.Request.Context()
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	userID := c.GetString("user_id")
-	isAdmin := s.pamCallerIsAdmin(c)
+	caller, ok := s.resolvePamCaller(c, org.ID)
+	if !ok {
+		return // resolvePamCaller already wrote the error
+	}
+	userID, isAdmin := caller.UserID, caller.Admin
 
 	entry, typeInfo, ok := s.loadPamLaunchEntry(c, org.ID, entryID)
 	if !ok {
 		return // loadPamLaunchEntry already wrote the error
 	}
+	pinExternalPamPolicy(&entry, caller)
 
-	if !isAdmin {
+	if isAdmin {
+		entry.AdminBypass = s.pamAdminBypass(ctx, org.ID, &entry, userID, pamCallerRoles(c))
+	} else {
 		allowed, aclErr := s.pamEntryAllowed(ctx, org.ID, entryID, userID, pamCallerRoles(c), "connect")
 		if aclErr != nil {
-			s.logger.Error("handlePamConnect: ACL check failed", zap.Error(aclErr))
+			s.logger.Error("connectPamEntry: ACL check failed", zap.Error(aclErr))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check permissions"})
 			return
 		}
@@ -240,13 +302,34 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 			return
 		}
 	}
+	if s.refuseIneffectiveExternal(c, org.ID, userID) {
+		return
+	}
+	if s.refuseClosedTarget(c, org.ID, caller, entryID) {
+		return
+	}
+
+	// Does this launch stay on the overlay? Asked before the approval gate, so
+	// a refusal does not spend an approval, before the website short-circuit,
+	// and before launchPamSession resolves a credential, because a refusal
+	// must not have decrypted a vault secret on its way to being refused — and
+	// because the website path never reaches launchPamSession at all, so a
+	// check placed there would miss the one entry type that brokers nothing.
+	// An external user's launch is held to it whatever PAM_REQUIRE_ZTNA says.
+	if v := s.checkPamZTNA(c, org.ID, userID, entryID, entry.ReachMode, typeInfo.Protocol, caller.External); v.Refuse {
+		c.JSON(http.StatusForbidden, gin.H{"error": v.Reason, "code": v.Code})
+		return
+	}
+	if s.refuseExternalLaunch(c, &entry) {
+		return
+	}
 
 	// Approval gate — single-use, atomically consumed. Admins (the approvers)
-	// bypass their own gate.
+	// bypass their own gate; an external user always needs one (I5).
 	if entry.RequireApproval && !isAdmin {
 		consumed, gateErr := s.checkAndConsumePamApproval(ctx, entryID, userID)
 		if gateErr != nil {
-			s.logger.Error("handlePamConnect: approval check failed", zap.Error(gateErr))
+			s.logger.Error("connectPamEntry: approval check failed", zap.Error(gateErr))
 			c.JSON(http.StatusForbidden, gin.H{"error": "session requires approval"})
 			return
 		}
@@ -256,14 +339,7 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 		}
 	}
 
-	// Does this launch stay on the overlay? Asked here, before the website
-	// short-circuit and before launchPamSession resolves a credential, because
-	// a refusal must not have decrypted a vault secret on its way to being
-	// refused — and because the website path never reaches launchPamSession at
-	// all, so a check placed there would miss the one entry type that brokers
-	// nothing.
-	if v := s.checkPamZTNA(c, org.ID, userID, entryID, entry.ReachMode, typeInfo.Protocol); v.Refuse {
-		c.JSON(http.StatusForbidden, gin.H{"error": v.Reason, "code": v.Code})
+	if hooks.BeforeLaunch != nil && !hooks.BeforeLaunch(c, &entry) {
 		return
 	}
 
@@ -282,23 +358,34 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 			if _, err := s.db.Pool.Exec(ctx,
 				`UPDATE pam_entries SET guacamole_connection_id = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
 				connID, entry.ID, org.ID); err != nil {
-				s.logger.Warn("handlePamConnect: persist connection id failed", zap.Error(err))
+				s.logger.Warn("connectPamEntry: persist connection id failed", zap.Error(err))
 			}
 		})
 	if fail != nil {
 		fail.writeJSON(c)
 		return
 	}
+	if hooks.AfterLaunch != nil {
+		hooks.AfterLaunch(c, &entry, res)
+	}
 
-	c.JSON(http.StatusOK, gin.H{
+	body := gin.H{
 		"launch_type":         "guacamole",
 		"connect_url":         res.ConnectURL,
+		"connection_id":       res.ConnID,
 		"entry_id":            entryID,
 		"session_id":          res.SessionID,
 		"credential_injected": res.Injected,
 		"recorded":            entry.RecordSession,
 		"reach_mode":          entry.ReachMode,
-	})
+	}
+	if entry.External {
+		body["session_policy"] = externalSessionPolicy()
+	}
+	for k, v := range hooks.Response {
+		body[k] = v
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 // pamSessionResult is the outcome of a successful brokered launch.
@@ -308,6 +395,8 @@ type pamSessionResult struct {
 	SessionID  string
 	Injected   bool
 	GuacUser   string
+	// RecordingPath is the file guacd writes when the entry records, else "".
+	RecordingPath string
 }
 
 // pamLaunchFailure is why a brokered launch did not happen.
@@ -385,6 +474,21 @@ func (s *Service) launchPamSession(
 		return nil, &pamLaunchFailure{http.StatusServiceUnavailable, "ziti_unavailable",
 			"OpenZiti overlay is unavailable for this Ziti-reach connection"}
 	}
+	// An external user's session (I5, I7). The launch paths asked this before
+	// spending an approval; asked again here because this core is what every
+	// path shares. The session gets a broker connection of its own, never the
+	// entry's shared one: its parameters are what make it the session I7
+	// describes, and the shared connection's are rewritten by whoever launches
+	// next, before this user's browser has opened it.
+	if _, refusal := s.externalLaunchRefusal(entry); refusal != nil {
+		if errors.Is(refusal, externalid.ErrBrokerIdentityRequired) {
+			return nil, &pamLaunchFailure{http.StatusServiceUnavailable, "external_broker_identity_required", refusal.Error()}
+		}
+		return nil, &pamLaunchFailure{http.StatusServiceUnavailable, "external_recording_unavailable", refusal.Error()}
+	}
+	if entry.External {
+		connName, existingConnID, persistConnID = connName+"-x-"+userID, "", nil
+	}
 
 	// Resolve the credential source (own secret or linked credential entry).
 	target, err := s.resolvePamLaunchTarget(ctx, orgID, entry)
@@ -436,6 +540,9 @@ func (s *Service) launchPamSession(
 
 	params := buildPamGuacParams(secretType, target.Username, target.Domain, cred,
 		settings, entry.RecordSession, recPath, recName)
+	if entry.External {
+		hardenExternalGuacParams(params)
+	}
 	injected := len(cred) > 0
 	// Zero the plaintext immediately after buildPamGuacParams copies it into
 	// the params map (string copies are GC-managed; same caveat as M3).
@@ -444,7 +551,12 @@ func (s *Service) launchPamSession(
 	}
 
 	dialHost, dialPort := entry.dialTarget()
-	connID, err := s.ensureGuacConnection(ctx, connName, existingConnID, protocol, dialHost, dialPort, params, broker, persistConnID)
+	var connID string
+	if entry.External {
+		connID, err = s.ensureExternalGuacConnection(ctx, connName, protocol, dialHost, dialPort, params, broker)
+	} else {
+		connID, err = s.ensureGuacConnection(ctx, connName, existingConnID, protocol, dialHost, dialPort, params, broker, persistConnID)
+	}
 	if err != nil {
 		s.logger.Error("launchPamSession: guacamole connection failed",
 			zap.String("entry_id", logsafe.Clean(entry.ID)), zap.Error(err))
@@ -465,6 +577,16 @@ func (s *Service) launchPamSession(
 	// Build the browser URL before recording the launch so the per-user Guacamole
 	// identity (if enabled) can be persisted on the session row for later revoke.
 	connectURL, guacUser := s.connectURLForBroker(ctx, broker, orgID, userID, connID, realClientIP(c))
+	if entry.External && guacUser == "" {
+		// The per-user identity could not be set up and the URL carries the
+		// shared token, which opens every connection on the broker. It is
+		// dropped, not handed to an external user.
+		refusal := externalid.ErrBrokerIdentityRequired
+		s.logAuditEvent(c, "pam.launch_denied", entry.ID, "pam_entry", map[string]interface{}{
+			"entry_id": entry.ID, "user_id": userID, "code": externalid.Code(refusal), "external": true,
+		})
+		return nil, &pamLaunchFailure{http.StatusServiceUnavailable, "external_broker_identity_required", refusal.Error()}
+	}
 
 	sessionID := s.recordPamLaunch(c, orgID, entry, protocol, connID, injected, guacUser)
 	if entry.RecordSession && sessionID != "" && recFile != "" {
@@ -477,7 +599,7 @@ func (s *Service) launchPamSession(
 
 	return &pamSessionResult{
 		ConnectURL: connectURL, ConnID: connID, SessionID: sessionID,
-		Injected: injected, GuacUser: guacUser,
+		Injected: injected, GuacUser: guacUser, RecordingPath: recFile,
 	}, nil
 }
 
@@ -532,6 +654,24 @@ func (s *Service) ensureGuacConnection(
 	return newID, nil
 }
 
+// ensureExternalGuacConnection gives an external user's session its own
+// broker connection, created or updated with this launch's parameters, or
+// fails. Unlike ensureGuacConnection it never falls back to a connection whose
+// update failed: the parameters are the session's controls (I7), and a stale
+// set is not this launch's.
+func (s *Service) ensureExternalGuacConnection(
+	ctx context.Context, name, protocol, dialHost string, dialPort int,
+	params map[string]string, broker *GuacamoleClient,
+) (string, error) {
+	if id := s.findGuacConnectionIDByName(ctx, broker, name); id != "" {
+		if err := broker.UpdateConnection(id, name, protocol, dialHost, dialPort, params); err != nil {
+			return "", err
+		}
+		return id, nil
+	}
+	return broker.CreateConnection(name, protocol, dialHost, dialPort, params)
+}
+
 // findGuacConnectionIDByName returns the Guacamole identifier of the connection
 // with the given name, or "" if not found or on error. Used to recover the
 // deterministic pam-<entryID> connection when its id wasn't persisted.
@@ -552,16 +692,21 @@ func (s *Service) findGuacConnectionIDByName(ctx context.Context, broker *Guacam
 // recordPamLaunch writes the pam_entry_sessions ledger row, bumps the entry's
 // launch counters, and emits the pam.entry_connected audit event. Best-effort:
 // a ledger failure must not block the session. Returns the session row id.
+//
+// The row records the gates an administrator passed only by being one
+// (admin_bypass, migration v217), so the lifecycle sweep can tell a session a
+// grant opened, which ends with the grant, from one an administrator opened
+// without any.
 func (s *Service) recordPamLaunch(c *gin.Context, orgID string, entry *pamLaunchEntry, protocol, guacConnID string, injected bool, guacUsername string) string {
 	ctx := c.Request.Context()
 	userID := c.GetString("user_id")
 
 	var sessionID string
 	if err := s.db.Pool.QueryRow(ctx, `
-		INSERT INTO pam_entry_sessions (org_id, entry_id, user_id, protocol, guac_connection_id, credential_injected, guac_username)
-		VALUES ($1, $2, NULLIF($3,'')::uuid, NULLIF($4,''), NULLIF($5,''), $6, NULLIF($7,''))
+		INSERT INTO pam_entry_sessions (org_id, entry_id, user_id, protocol, guac_connection_id, credential_injected, guac_username, admin_bypass)
+		VALUES ($1, $2, NULLIF($3,'')::uuid, NULLIF($4,''), NULLIF($5,''), $6, NULLIF($7,''), $8)
 		RETURNING id`,
-		orgID, entry.ID, userID, protocol, guacConnID, injected, guacUsername).Scan(&sessionID); err != nil {
+		orgID, entry.ID, userID, protocol, guacConnID, injected, guacUsername, adminBypassed(entry.AdminBypass)).Scan(&sessionID); err != nil {
 		s.logger.Warn("recordPamLaunch: session ledger insert failed",
 			zap.String("entry_id", entry.ID), zap.Error(err))
 	}
@@ -580,8 +725,23 @@ func (s *Service) recordPamLaunch(c *gin.Context, orgID string, entry *pamLaunch
 		"user_id":             userID,
 		"credential_injected": injected,
 		"recorded":            entry.RecordSession,
+		"admin_bypass":        len(entry.AdminBypass) > 0,
+		"admin_bypassed":      adminBypassed(entry.AdminBypass),
 	})
+	// An external user's sponsor is told the session started (I6).
+	if entry.External && sessionID != "" {
+		s.notifySponsorOfSession(ctx, orgID, userID, entry, sessionID)
+	}
 	return sessionID
+}
+
+// adminBypassed renders the bypassed gates for the audit event: always a
+// list, so a filter on the field never has to tell null from empty.
+func adminBypassed(gates []string) []string {
+	if gates == nil {
+		return []string{}
+	}
+	return gates
 }
 
 // ---- Approval lifecycle (pre-connect gate) ----
@@ -619,7 +779,13 @@ func (s *Service) checkAndConsumePamApproval(ctx context.Context, entryID, userI
 // The requester must hold the connect grant (or be admin — pointless but
 // harmless); the approval is an additional, single-use gate on top.
 func (s *Service) handlePamRequestAccess(c *gin.Context) {
-	entryID := c.Param("id")
+	s.createPamAccessRequest(c, c.Param("id"))
+}
+
+// createPamAccessRequest files a pending pam_entry_access_requests row for the
+// caller on entryID and answers 201 {request_id}. Shared by the entry route
+// and the route-based Guacamole request, which resolves its entry first.
+func (s *Service) createPamAccessRequest(c *gin.Context, entryID string) {
 	userID := c.GetString("user_id")
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -658,7 +824,7 @@ func (s *Service) handlePamRequestAccess(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "entry not found"})
 			return
 		}
-		s.logger.Error("handlePamRequestAccess: insert failed", zap.Error(err))
+		s.logger.Error("createPamAccessRequest: insert failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create access request"})
 		return
 	}
@@ -668,6 +834,7 @@ func (s *Service) handlePamRequestAccess(c *gin.Context) {
 			"entry_id": entryID, "requester_id": userID,
 			"expires_at": expiresAt.Format(time.RFC3339),
 		})
+	s.notifySponsorOfLaunchRequest(ctx, org.ID, userID, entryID, requestID, body.Reason)
 	c.JSON(http.StatusCreated, gin.H{"request_id": requestID})
 }
 
@@ -682,6 +849,18 @@ func (s *Service) handlePamDenyRequest(c *gin.Context) {
 }
 
 func (s *Service) decidePamRequest(c *gin.Context, newStatus, auditAction string) {
+	s.decidePamRequestAs(c, newStatus, auditAction, false)
+}
+
+// decidePamRequestAs decides a pending launch request. asSponsor is the
+// sponsor's route: the request must be one of the caller's own external
+// users', whichever the decision.
+//
+// An external (vendor) user's launch is approved by their sponsor (section
+// 5.6 of the third-party access framework), on either route: an
+// administrator who is not the sponsor can deny it but not approve it. The
+// rule is in the statement, so it is atomic with the status check.
+func (s *Service) decidePamRequestAs(c *gin.Context, newStatus, auditAction string, asSponsor bool) {
 	requestID := c.Param("id")
 	approverID := c.GetString("user_id")
 
@@ -696,15 +875,23 @@ func (s *Service) decidePamRequest(c *gin.Context, newStatus, auditAction string
 	// OWN request. Deny is allowed (a requester can effectively withdraw), but
 	// approval requires a different person. Enforced in SQL via requester_id
 	// <> approver so it is atomic with the status check.
-	selfGuard := ""
+	guard := ""
 	if newStatus == "approved" {
-		selfGuard = " AND requester_id <> NULLIF($2,'')::uuid"
+		guard = ` AND r.requester_id <> NULLIF($2,'')::uuid
+		  AND NOT EXISTS (SELECT 1 FROM users u
+		                   WHERE u.id = r.requester_id AND u.org_id = r.org_id AND u.user_type = 'external'
+		                     AND u.sponsor_user_id IS DISTINCT FROM NULLIF($2,'')::uuid)`
+	}
+	if asSponsor {
+		guard += ` AND EXISTS (SELECT 1 FROM users u
+		                        WHERE u.id = r.requester_id AND u.org_id = r.org_id AND u.user_type = 'external'
+		                          AND u.sponsor_user_id = NULLIF($2,'')::uuid)`
 	}
 
 	tag, err := s.db.Pool.Exec(ctx,
-		`UPDATE pam_entry_access_requests
+		`UPDATE pam_entry_access_requests r
 		    SET status = $1, approver_id = NULLIF($2,'')::uuid, decided_at = NOW()
-		  WHERE id = $3 AND org_id = $4 AND status = 'pending'`+selfGuard,
+		  WHERE r.id = $3 AND r.org_id = $4 AND r.status = 'pending'`+guard,
 		newStatus, approverID, requestID, org.ID)
 	if err != nil {
 		s.logger.Error("decidePamRequest: update failed",
@@ -713,24 +900,79 @@ func (s *Service) decidePamRequest(c *gin.Context, newStatus, auditAction string
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		// Distinguish self-approval rejection from not-found for a clear message.
-		if newStatus == "approved" {
-			var requesterID string
-			_ = s.db.Pool.QueryRow(ctx,
-				`SELECT requester_id::text FROM pam_entry_access_requests WHERE id=$1 AND org_id=$2 AND status='pending'`,
-				requestID, org.ID).Scan(&requesterID)
-			if requesterID != "" && requesterID == approverID {
-				c.JSON(http.StatusForbidden, gin.H{"error": "you cannot approve your own access request (four-eyes)"})
-				return
-			}
+		// Say why, for a request that is there and pending; anything else, and
+		// on the sponsor's route a request that is not one of the caller's
+		// external users', is not found.
+		var requesterID, requesterType, sponsorID string
+		_ = s.db.Pool.QueryRow(ctx,
+			`SELECT r.requester_id::text, COALESCE(u.user_type, ''), COALESCE(u.sponsor_user_id::text, '')
+			   FROM pam_entry_access_requests r
+			   LEFT JOIN users u ON u.id = r.requester_id AND u.org_id = r.org_id
+			  WHERE r.id = $1 AND r.org_id = $2 AND r.status = 'pending'`,
+			requestID, org.ID).Scan(&requesterID, &requesterType, &sponsorID)
+		external := requesterType == externalid.TypeExternal
+		switch {
+		case requesterID == "", asSponsor && (!external || sponsorID != approverID):
+			c.JSON(http.StatusNotFound, gin.H{"error": "request not found or not pending"})
+		case newStatus == "approved" && requesterID == approverID:
+			c.JSON(http.StatusForbidden, gin.H{"error": "you cannot approve your own access request (four-eyes)"})
+		case newStatus == "approved" && external && sponsorID != approverID:
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "an external user's launch is approved by their sponsor",
+				"code":  "external_launch_needs_sponsor",
+			})
+		default:
+			c.JSON(http.StatusNotFound, gin.H{"error": "request not found or not pending"})
 		}
-		c.JSON(http.StatusNotFound, gin.H{"error": "request not found or not pending"})
 		return
 	}
 
+	as := "administrator"
+	if asSponsor {
+		as = "sponsor"
+	}
 	s.logAuditEvent(c, auditAction, requestID, "pam_entry_access_request",
-		map[string]interface{}{"request_id": requestID, "approver_id": approverID, "new_status": newStatus})
+		map[string]interface{}{"request_id": requestID, "approver_id": approverID, "new_status": newStatus, "as": as})
 	c.JSON(http.StatusOK, gin.H{"request_id": requestID, "status": newStatus})
+}
+
+// handlePamSponsorApproveRequest — POST /pam/sponsored/entry-requests/:id/approve.
+// The sponsor of an external user approves one of their launch requests.
+func (s *Service) handlePamSponsorApproveRequest(c *gin.Context) {
+	s.decidePamRequestAs(c, "approved", "pam.access_approved", true)
+}
+
+// handlePamSponsorDenyRequest — POST /pam/sponsored/entry-requests/:id/deny.
+func (s *Service) handlePamSponsorDenyRequest(c *gin.Context) {
+	s.decidePamRequestAs(c, "denied", "pam.access_denied", true)
+}
+
+// handlePamListSponsoredRequests — GET /pam/sponsored/entry-requests: the
+// pending, unexpired launch requests of the external users the caller
+// sponsors. Empty for anyone who sponsors no one.
+func (s *Service) handlePamListSponsoredRequests(c *gin.Context) {
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT r.id, r.entry_id, e.name, e.entry_type, r.requester_id::text,
+		       r.reason, r.status, r.approver_id::text, r.decided_at, r.expires_at, r.created_at
+		  FROM pam_entry_access_requests r
+		  JOIN pam_entries e ON e.id = r.entry_id AND e.org_id = r.org_id
+		  JOIN users u ON u.id = r.requester_id AND u.org_id = r.org_id
+		 WHERE r.org_id = $1 AND r.status = 'pending' AND r.expires_at > NOW()
+		   AND u.user_type = 'external' AND u.sponsor_user_id = NULLIF($2,'')::uuid
+		 ORDER BY r.created_at DESC`, org.ID, c.GetString("user_id"))
+	if err != nil {
+		s.logger.Error("handlePamListSponsoredRequests: query failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list requests"})
+		return
+	}
+	defer rows.Close()
+	c.JSON(http.StatusOK, gin.H{"requests": scanPamAccessRequests(rows, s.logger)})
 }
 
 // PamAccessRequest is the API row for the approval queues.

@@ -120,6 +120,14 @@ function routeGet(url: string) {
       { id: 'grp-2', displayName: 'Developers' },
     ])
   }
+  if (url.includes('/access/pam/entries')) {
+    return Promise.resolve({
+      entries: [
+        { id: 'pam-view', name: 'prod-db-01', actions: ['view'] },
+        { id: 'pam-conn', name: 'build-agent', actions: ['view', 'connect'] },
+      ],
+    })
+  }
   if (url.includes('requester_id=me')) {
     return Promise.resolve({ requests: [myRequest] })
   }
@@ -428,6 +436,47 @@ describe('AccessRequestsPage', () => {
           resource_id: 'role-2',
           resource_name: 'auditor',
           duration: '',
+        }),
+      )
+    })
+  })
+
+  it('PAM Connection offers only entries the user cannot yet connect to, and needs a duration', async () => {
+    const user = userEvent.setup()
+    render(<AccessRequestsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Access Requests')
+
+    fireEvent.click(screen.getByRole('button', { name: /request access/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText(/explain why you need access/i)).toBeInTheDocument())
+
+    await user.click(screen.getByRole('combobox', { name: /resource type/i }))
+    await user.click(await screen.findByRole('option', { name: /^pam connection$/i }))
+
+    await user.click(await screen.findByRole('combobox', { name: /resource name/i }))
+    expect(await screen.findByRole('option', { name: /^prod-db-01$/i })).toBeInTheDocument()
+    // An entry the user can already connect to is not offered.
+    expect(screen.queryByRole('option', { name: /^build-agent$/i })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: /^prod-db-01$/i }))
+
+    // A PAM connection is always time-bound: no Permanent, and Submit waits
+    // for a duration.
+    const submit = screen.getByRole('button', { name: /submit request/i })
+    expect(submit).toBeDisabled()
+    await user.click(screen.getByRole('combobox', { name: /access duration/i }))
+    expect(screen.queryByRole('option', { name: /^permanent$/i })).not.toBeInTheDocument()
+    await user.click(await screen.findByRole('option', { name: /4 hours/i }))
+
+    fireEvent.change(screen.getByPlaceholderText(/explain why you need access/i), { target: { value: 'Patch window' } })
+    await user.click(submit)
+
+    await waitFor(() => {
+      expect(vi.mocked(api.post)).toHaveBeenCalledWith(
+        '/api/v1/governance/requests',
+        expect.objectContaining({
+          resource_type: 'pam_entry',
+          resource_id: 'pam-view',
+          resource_name: 'prod-db-01',
+          duration: '4h',
         }),
       )
     })

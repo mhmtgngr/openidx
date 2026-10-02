@@ -76,8 +76,11 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	userID := c.GetString("user_id")
-	isAdmin := s.pamCallerIsAdmin(c)
+	caller, ok := s.resolvePamCaller(c, org.ID)
+	if !ok {
+		return // resolvePamCaller already wrote the error
+	}
+	userID, isAdmin := caller.UserID, caller.Admin
 
 	app, err := s.loadLaunchApp(ctx, org.ID, appID)
 	if err != nil {
@@ -137,8 +140,11 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 	if app.RecordSession != nil && *app.RecordSession {
 		entry.RecordSession = true
 	}
+	pinExternalPamPolicy(&entry, caller)
 
-	if !isAdmin {
+	if isAdmin {
+		entry.AdminBypass = s.pamAdminBypass(ctx, org.ID, &entry, userID, pamCallerRoles(c))
+	} else {
 		allowed, aclErr := s.pamEntryAllowed(ctx, org.ID, chosen.HostEntryID, userID, pamCallerRoles(c), "connect")
 		if aclErr != nil {
 			s.logger.Error("handleWindowsAppLaunch: ACL check failed", zap.Error(aclErr))
@@ -149,6 +155,23 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "not permitted"})
 			return
 		}
+	}
+	if s.refuseIneffectiveExternal(c, org.ID, userID) {
+		return
+	}
+	if s.refuseClosedTarget(c, org.ID, caller, chosen.HostEntryID) {
+		return
+	}
+	// The overlay gate, which this path did not ask before: under
+	// PAM_REQUIRE_ZTNA=enforce an app on a direct-reach host launched while a
+	// connect to the same host was refused. An external user is held to it
+	// whatever the setting says (I5).
+	if v := s.checkPamZTNA(c, org.ID, userID, chosen.HostEntryID, entry.ReachMode, typeInfo.Protocol, caller.External); v.Refuse {
+		c.JSON(http.StatusForbidden, gin.H{"error": v.Reason, "code": v.Code})
+		return
+	}
+	if s.refuseExternalLaunch(c, &entry) {
+		return
 	}
 	if entry.RequireApproval && !isAdmin {
 		consumed, gateErr := s.checkAndConsumePamApproval(ctx, chosen.HostEntryID, userID)
@@ -185,7 +208,7 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 	s.logAuditEvent(c, "windows_app.launched", app.ID, "windows_app", map[string]interface{}{
 		"app_name": app.DisplayName, "alias": app.Alias, "host_entry_id": chosen.HostEntryID,
 	})
-	c.JSON(http.StatusOK, gin.H{
+	body := gin.H{
 		"launch_type":   "guacamole",
 		"connect_url":   res.ConnectURL,
 		"app_id":        app.ID,
@@ -193,7 +216,11 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 		"host_name":     chosen.HostName,
 		"session_id":    res.SessionID,
 		"recorded":      entry.RecordSession,
-	})
+	}
+	if entry.External {
+		body["session_policy"] = externalSessionPolicy()
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 // placeApp picks a host and, when none is usable, returns the conflict to
