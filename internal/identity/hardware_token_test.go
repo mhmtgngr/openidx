@@ -33,7 +33,9 @@ const (
 const hardwareTokenSchema = `
 CREATE TABLE IF NOT EXISTS organizations (id UUID PRIMARY KEY, name TEXT);
 CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY, username TEXT, org_id UUID, enabled BOOLEAN DEFAULT TRUE);
+    id UUID PRIMARY KEY, username TEXT, org_id UUID, enabled BOOLEAN DEFAULT TRUE,
+    user_type VARCHAR(16) NOT NULL DEFAULT 'internal', account_status VARCHAR(16) NOT NULL DEFAULT 'active', vendor_org_id UUID, sponsor_user_id UUID, account_expires_at TIMESTAMPTZ, status_changed_at TIMESTAMPTZ, access_severed_at TIMESTAMPTZ
+);
 CREATE TABLE IF NOT EXISTS hardware_tokens (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL,

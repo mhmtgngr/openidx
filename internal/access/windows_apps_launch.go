@@ -138,7 +138,9 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 		entry.RecordSession = true
 	}
 
-	if !isAdmin {
+	if isAdmin {
+		entry.AdminBypass = s.pamAdminBypass(ctx, org.ID, &entry, userID, pamCallerRoles(c))
+	} else {
 		allowed, aclErr := s.pamEntryAllowed(ctx, org.ID, chosen.HostEntryID, userID, pamCallerRoles(c), "connect")
 		if aclErr != nil {
 			s.logger.Error("handleWindowsAppLaunch: ACL check failed", zap.Error(aclErr))
@@ -149,6 +151,9 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "not permitted"})
 			return
 		}
+	}
+	if s.refuseIneffectiveExternal(c, org.ID, userID) {
+		return
 	}
 	if entry.RequireApproval && !isAdmin {
 		consumed, gateErr := s.checkAndConsumePamApproval(ctx, chosen.HostEntryID, userID)

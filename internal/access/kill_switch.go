@@ -6,7 +6,12 @@
 //	IAM:  revoke identity sessions (+ Redis revocation markers the
 //	      oauth-service honors on every refresh grant),
 //	PAM:  revoke active vault checkouts, expire direct vault grants, revoke
-//	      JIT elevations, terminate live Guacamole sessions,
+//	      JIT elevations, terminate live Guacamole sessions; expire the
+//	      user's own PAM entry grants, revoke their pending and approved
+//	      launch approvals, release their exclusive leases, end their live
+//	      PAM entry sessions on the broker, revoke the temporary access
+//	      links they issued, and end their brokered SSH and cloud sessions
+//	      in the ledger,
 //	Ziti: terminate the identity's edge + API sessions on the controller
 //	      (severing live circuits), for the user identity and any device
 //	      identities the user enrolled.
@@ -22,10 +27,12 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -35,6 +42,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/jitgrant"
+	"github.com/openidx/openidx/internal/pamgrant"
 )
 
 // killSwitchRedisMarkerTTL mirrors identity's revokedSessionTTL: markers must
@@ -55,18 +63,33 @@ type KillSwitchResult struct {
 	// RefreshTokensRevoked: revoking the refresh tokens stops the refresh
 	// grant, while this is what makes /oauth/userinfo and /oauth/introspect
 	// refuse the access token the user is already holding.
-	AccessTokensRevoked  bool      `json:"iam_access_tokens_revoked"`
-	APIKeysRevoked       int64     `json:"iam_api_keys_revoked"`
-	CheckoutsRevoked     int64     `json:"pam_checkouts_revoked"`
-	VaultGrantsExpired   int64     `json:"pam_vault_grants_expired"`
-	JITGrantsRevoked     int64     `json:"pam_jit_grants_revoked"`
-	GuacSessionsKilled   int       `json:"pam_privileged_sessions_terminated"`
-	ZitiEdgeSessions     int       `json:"ziti_edge_sessions_terminated"`
-	ZitiAPISessions      int       `json:"ziti_api_sessions_terminated"`
-	ZitiIdentityDeleted  bool      `json:"ziti_identity_deleted"`
-	ZitiControllerOnline bool      `json:"ziti_controller_online"`
-	Warnings             []string  `json:"warnings,omitempty"`
-	ExecutedAt           time.Time `json:"executed_at"`
+	AccessTokensRevoked bool  `json:"iam_access_tokens_revoked"`
+	APIKeysRevoked      int64 `json:"iam_api_keys_revoked"`
+	CheckoutsRevoked    int64 `json:"pam_checkouts_revoked"`
+	VaultGrantsExpired  int64 `json:"pam_vault_grants_expired"`
+	JITGrantsRevoked    int64 `json:"pam_jit_grants_revoked"`
+	GuacSessionsKilled  int   `json:"pam_privileged_sessions_terminated"`
+	// The PAM entry surface. Until these were added the emergency control
+	// left a user holding every PAM connection grant they had, every launch
+	// approval already given to them, every exclusive lease, every live entry
+	// session, every vendor link they had issued and every brokered SSH or
+	// cloud session, and the response said nothing about any of it.
+	PamEntryGrantsExpired    int64 `json:"pam_entry_grants_expired"`
+	PamEntryApprovalsRevoked int64 `json:"pam_entry_approvals_revoked"`
+	PamEntryLeasesReleased   int64 `json:"pam_entry_leases_released"`
+	PamEntrySessionsEnded    int   `json:"pam_entry_sessions_ended"`
+	TempAccessLinksRevoked   int64 `json:"pam_temp_links_revoked"`
+	// BrokeredSessionsEnded counts ledger rows. The short-lived SSH
+	// certificates and cloud credentials those sessions issued cannot be
+	// recalled; they expire by their own TTL, and a warning says so whenever
+	// this is above zero.
+	BrokeredSessionsEnded int64     `json:"pam_brokered_sessions_ended"`
+	ZitiEdgeSessions      int       `json:"ziti_edge_sessions_terminated"`
+	ZitiAPISessions       int       `json:"ziti_api_sessions_terminated"`
+	ZitiIdentityDeleted   bool      `json:"ziti_identity_deleted"`
+	ZitiControllerOnline  bool      `json:"ziti_controller_online"`
+	Warnings              []string  `json:"warnings,omitempty"`
+	ExecutedAt            time.Time `json:"executed_at"`
 }
 
 // handleUserKillSwitch severs one user's live access across IAM, PAM and Ziti.
@@ -120,6 +143,12 @@ func (s *Service) handleUserKillSwitch(c *gin.Context) {
 			"pam_vault_grants_expired":       result.VaultGrantsExpired,
 			"pam_jit_grants_revoked":         result.JITGrantsRevoked,
 			"pam_privileged_sessions_killed": result.GuacSessionsKilled,
+			"pam_entry_grants_expired":       result.PamEntryGrantsExpired,
+			"pam_entry_approvals_revoked":    result.PamEntryApprovalsRevoked,
+			"pam_entry_leases_released":      result.PamEntryLeasesReleased,
+			"pam_entry_sessions_ended":       result.PamEntrySessionsEnded,
+			"pam_temp_links_revoked":         result.TempAccessLinksRevoked,
+			"pam_brokered_sessions_ended":    result.BrokeredSessionsEnded,
 			"ziti_edge_sessions_terminated":  result.ZitiEdgeSessions,
 			"ziti_api_sessions_terminated":   result.ZitiAPISessions,
 			"ziti_identity_deleted":          result.ZitiIdentityDeleted,
@@ -281,6 +310,38 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 
 	res.GuacSessionsKilled = s.terminateUserGuacSessions(ctx, orgID, userID, warn)
 
+	// ---- PAM entries: grants, approvals, leases, live sessions, links ----
+	//
+	// pamEntryAllowed decides connect and reveal from pam_entry_grants at the
+	// moment of the call, never from the token, so expiring the user's own
+	// grants is what stops the next launch. The five writes live in
+	// internal/pamgrant, shared with deprovisionUser and the lifecycle sweep,
+	// and each is reported here by name: one table refusing must not hide
+	// behind the others succeeding.
+	pam, pamErrs := pamgrant.EndForUser(ctx, s.db.Pool, userID, orgID)
+	for _, err := range pamErrs {
+		var step *pamgrant.StepError
+		if errors.As(err, &step) {
+			warn(step.Step, step.Err)
+		} else {
+			warn("pam_entry_surface", err)
+		}
+	}
+	res.PamEntryGrantsExpired = pam.GrantsExpired
+	res.PamEntryApprovalsRevoked = pam.ApprovalsRevoked
+	res.PamEntryLeasesReleased = pam.LeasesReleased
+	res.TempAccessLinksRevoked = pam.TempLinksRevoked
+	res.BrokeredSessionsEnded = pam.BrokeredEnded
+	if res.BrokeredSessionsEnded > 0 {
+		// The ledger is ended; the SSH certificates and cloud credentials it
+		// recorded are already in the user's hands, there is no revocation list
+		// for either kind, and they expire by their TTL. Reported, not hidden.
+		res.Warnings = append(res.Warnings,
+			"brokered_sessions: ended in the ledger; the SSH certificates and cloud credentials they issued cannot be recalled and expire by their TTL")
+	}
+	// The live entry sessions need the broker, so they stay here.
+	res.PamEntrySessionsEnded = s.endUserPamEntrySessions(ctx, orgID, userID, warn)
+
 	// ---- Ziti: sever live circuits on the controller ----
 	zm := s.ziti()
 	res.ZitiControllerOnline = zm != nil
@@ -349,6 +410,12 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 		zap.Int64("sessions_revoked", res.SessionsRevoked),
 		zap.Int64("checkouts_revoked", res.CheckoutsRevoked),
 		zap.Int("guac_sessions_killed", res.GuacSessionsKilled),
+		zap.Int64("pam_entry_grants_expired", res.PamEntryGrantsExpired),
+		zap.Int64("pam_entry_approvals_revoked", res.PamEntryApprovalsRevoked),
+		zap.Int64("pam_entry_leases_released", res.PamEntryLeasesReleased),
+		zap.Int("pam_entry_sessions_ended", res.PamEntrySessionsEnded),
+		zap.Int64("temp_links_revoked", res.TempAccessLinksRevoked),
+		zap.Int64("brokered_sessions_ended", res.BrokeredSessionsEnded),
 		zap.Int("ziti_edge_sessions", res.ZitiEdgeSessions),
 		zap.Int("ziti_api_sessions", res.ZitiAPISessions))
 
@@ -407,6 +474,134 @@ func (s *Service) terminateUserGuacSessions(ctx context.Context, orgID, userID s
 }
 
 var errGuacNotConfigured = &accessMapError{"guacamole not configured; active privileged sessions were not terminated"}
+
+var errPamBrokerNotConfigured = &accessMapError{"PAM broker not configured; active PAM entry sessions were not terminated"}
+
+// endUserPamEntrySessions ends the user's live PAM entry sessions: the ones
+// launched from a PAM entry (pam_entry_sessions), as opposed to the
+// route-based Guacamole sessions terminateUserGuacSessions handles. A ledger
+// row is marked ended only once the broker no longer serves the session, the
+// same honesty contract as the Guacamole path: the DB never claims a
+// termination that did not happen.
+//
+// A row records the Guacamole connection it launched, not the active session
+// id, so the broker's active sessions are listed and matched on that
+// connection. With per-user broker identities on, the match is exact: the
+// session's Guacamole username is this user's. Without them every session on
+// the broker runs as the shared broker account, so every live session on that
+// entry's connection is cut, and a warning says another user's session on the
+// same entry may have gone with it. An emergency control that cannot tell
+// whose shell it is looking at cuts the shell rather than leaving it open.
+func (s *Service) endUserPamEntrySessions(ctx context.Context, orgID, userID string, warn func(string, error)) int {
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT s.id, COALESCE(s.guac_connection_id, ''), COALESCE(s.guac_username, ''), COALESCE(e.reach_mode, '')
+		   FROM pam_entry_sessions s
+		   JOIN pam_entries e ON e.id = s.entry_id AND e.org_id = s.org_id
+		  WHERE s.user_id = $1 AND s.org_id = $2 AND s.status = 'active'`, userID, orgID)
+	if err != nil {
+		warn("list_pam_entry_sessions", err)
+		return 0
+	}
+	return len(s.endPamEntrySessionRows(ctx, orgID, scanPamSessionRows(rows), warn))
+}
+
+// pamSessionRow is one live pam_entry_sessions row, with what the broker needs
+// to find the session it launched.
+type pamSessionRow struct{ rowID, connID, guacUser, reach string }
+
+// scanPamSessionRows reads (id, connection, guac user, reach mode) rows and
+// closes them.
+func scanPamSessionRows(rows pgx.Rows) []pamSessionRow {
+	defer rows.Close()
+	var sessions []pamSessionRow
+	for rows.Next() {
+		var g pamSessionRow
+		if err := rows.Scan(&g.rowID, &g.connID, &g.guacUser, &g.reach); err == nil {
+			sessions = append(sessions, g)
+		}
+	}
+	return sessions
+}
+
+// endPamEntrySessionRows ends the given live sessions of one organization on
+// their broker and marks each row ended once the broker no longer serves it.
+// It returns the rows it marked ended. A row with no broker connection (a
+// browser terminal, a website launch) is marked ended directly, and the
+// terminal's own watcher closes it (ws_connect.go).
+func (s *Service) endPamEntrySessionRows(ctx context.Context, orgID string, sessions []pamSessionRow, warn func(string, error)) []string {
+	if len(sessions) == 0 {
+		return nil
+	}
+
+	// One listing per broker, however many sessions ride it.
+	type listing struct {
+		active []GuacActiveSession
+		err    error
+	}
+	listings := map[*GuacamoleClient]*listing{}
+	activeOn := func(broker *GuacamoleClient) ([]GuacActiveSession, error) {
+		if l, ok := listings[broker]; ok {
+			return l.active, l.err
+		}
+		active, err := broker.ListActiveSessions(ctx)
+		listings[broker] = &listing{active: active, err: err}
+		return active, err
+	}
+
+	var ended []string
+	brokerMissing := false
+	for _, g := range sessions {
+		if g.connID != "" {
+			broker := s.brokerFor(g.reach)
+			if broker == nil {
+				brokerMissing = true
+				continue
+			}
+			active, err := activeOn(broker)
+			if err != nil {
+				warn("list_pam_broker_sessions", err)
+				continue
+			}
+			cut := true
+			for _, a := range active {
+				if a.ConnectionIdentifier != g.connID {
+					continue
+				}
+				if g.guacUser != "" && a.Username != g.guacUser {
+					continue
+				}
+				if err := broker.TerminateSession(ctx, a.Identifier); err != nil {
+					warn("terminate_pam_entry_session", err)
+					cut = false
+					continue
+				}
+				if g.guacUser == "" {
+					warn("terminate_pam_entry_session", &accessMapError{
+						"the broker runs every session as one shared account, so every live session on the entry's connection " + g.connID + " was cut, another user's included"})
+				}
+			}
+			if !cut {
+				continue
+			}
+			if g.guacUser != "" && broker.perUserIdentities {
+				if err := broker.revokeConnectionRead(ctx, g.guacUser, g.connID); err != nil {
+					warn("revoke_pam_connection_read", err)
+				}
+			}
+		}
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE pam_entry_sessions SET status = 'ended', ended_at = NOW()
+			  WHERE id = $1 AND org_id = $2 AND status = 'active'`, g.rowID, orgID); err != nil {
+			warn("mark_pam_entry_session", err)
+			continue
+		}
+		ended = append(ended, g.rowID)
+	}
+	if brokerMissing {
+		warn("terminate_pam_entry_sessions", errPamBrokerNotConfigured)
+	}
+	return ended
+}
 
 // TerminateIdentitySessions deletes all edge sessions and API sessions the
 // controller holds for one Ziti identity, severing live circuits and forcing

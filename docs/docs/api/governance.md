@@ -35,6 +35,24 @@ The Governance Service manages access reviews, certification campaigns, and poli
 - `revoked` — Access should be removed
 - `flagged` — Requires further investigation
 
+## Access requests
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/governance/requests` | List requests (`?requester_id=me` for the caller's own) |
+| POST | `/api/v1/governance/requests` | File a request: `resource_type`, `resource_id`, `resource_name`, `justification`, `priority`, `duration` (`4h`, `1d`, ...; empty for permanent where the type allows it) |
+| GET | `/api/v1/governance/requests/:id` | Get a request |
+| POST | `/api/v1/governance/requests/:id/approve` | Approve, as an approver of the request's current step |
+| POST | `/api/v1/governance/requests/:id/deny` | Deny, likewise |
+| POST | `/api/v1/governance/requests/:id/cancel` | Cancel a pending request, as its requester |
+
+### Resource types
+
+- `role`, `group`, `application` — an assignment, ended by the expiry sweep when the request has a duration
+- `vault_credential` — a time-bound reveal of a vault secret; a duration is required
+- `network_service` — a time-bound Ziti attribute
+- `pam_entry` — a time-bound `connect` grant on a PAM entry, ending with the request's window; a duration is required. The requester must already see the entry (a standing grant of any action on it, directly, through a role or through a group); otherwise the answer is `404` with `pam_entry_not_found`, the same as for an entry that does not exist. A requester who can already connect gets `409` with `pam_entry_already_granted`, and a request with no duration `400` with `pam_entry_duration_required`. The request carries the entry's own name, so `resource_name` may be left out. The entry's launch approval, where the entry asks for one, is still taken at connect.
+
 ## Policies
 
 | Method | Path | Description |
