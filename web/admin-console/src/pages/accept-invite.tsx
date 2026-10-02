@@ -143,8 +143,8 @@ export function AcceptInvitePage() {
             <form onSubmit={confirmFactor} className="space-y-4">
               <p className="text-sm text-muted-foreground">{t('pages.acceptInvite.mfaIntro')}</p>
               {step.otpauthURL && (
-                <div className="flex justify-center rounded-md border bg-white p-4">
-                  <QRCodeSVG value={step.otpauthURL} size={176} aria-label={t('pages.acceptInvite.qrLabel')} />
+                <div className="flex justify-center rounded-md border bg-background p-4">
+                  <QRCodeSVG value={step.otpauthURL} size={176} includeMargin aria-label={t('pages.acceptInvite.qrLabel')} />
                 </div>
               )}
               <div className="space-y-1">

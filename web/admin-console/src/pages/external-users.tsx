@@ -98,14 +98,14 @@ const accountStatusClass: Record<string, string> = {
   active: 'bg-green-100 text-green-800',
   pending_mfa: 'bg-amber-100 text-amber-800',
   suspended: 'bg-orange-100 text-orange-800',
-  expired: 'bg-gray-200 text-gray-800',
+  expired: 'bg-muted text-muted-foreground',
   disabled: 'bg-red-100 text-red-800',
 }
 
 const vendorStatusClass: Record<string, string> = {
   active: 'bg-green-100 text-green-800',
   suspended: 'bg-amber-100 text-amber-800',
-  closed: 'bg-gray-200 text-gray-800',
+  closed: 'bg-muted text-muted-foreground',
 }
 
 const formatDate = (s?: string | null) => (s ? new Date(s).toLocaleDateString() : '—')
@@ -165,6 +165,7 @@ function SponsorPicker({ id, value, onChange, optional }: {
       />
       <select
         id={id}
+        aria-labelledby={`${id}-label`}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
@@ -527,7 +528,7 @@ function SponsorDialog({ kind, user, busy, onClose, onSubmit }: {
           onSubmit={(e) => { e.preventDefault(); if (valid) void onSubmit({ sponsor_user_id: sponsor, reason: reason.trim() }) }}
         >
           <div className="space-y-1">
-            <Label htmlFor="xu-new-sponsor">{t('pages.externalUsers.sponsor.label')}</Label>
+            <Label id="xu-new-sponsor-label" htmlFor="xu-new-sponsor">{t('pages.externalUsers.sponsor.label')}</Label>
             <SponsorPicker id="xu-new-sponsor" value={sponsor} onChange={setSponsor} />
           </div>
           <div className="space-y-1">
@@ -739,7 +740,7 @@ function InviteDialog({ vendors, onClose, onCopy }: {
               </select>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="xu-invite-sponsor">{t('pages.externalUsers.sponsor.label')}</Label>
+              <Label id="xu-invite-sponsor-label" htmlFor="xu-invite-sponsor">{t('pages.externalUsers.sponsor.label')}</Label>
               <SponsorPicker id="xu-invite-sponsor" value={sponsor} onChange={setSponsor} optional />
             </div>
             <div className="space-y-1">
@@ -995,7 +996,7 @@ function VendorDialog({ vendor, onClose }: { vendor: VendorOrg | null; onClose: 
             <Input id="xv-days" type="number" min={1} max={365} value={form.default_expiry_days} onChange={set('default_expiry_days')} />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="xv-sponsor">{t('pages.externalUsers.vendorDialog.defaultSponsor')}</Label>
+            <Label id="xv-sponsor-label" htmlFor="xv-sponsor">{t('pages.externalUsers.vendorDialog.defaultSponsor')}</Label>
             <SponsorPicker id="xv-sponsor" value={form.default_sponsor_user_id}
               onChange={(v) => setForm((f) => ({ ...f, default_sponsor_user_id: v }))} optional />
           </div>
