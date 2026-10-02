@@ -17,6 +17,32 @@ The Identity Service manages users, groups, roles, permissions, sessions, identi
 | POST | `/api/v1/identity/users/export` | Export users (CSV) |
 | POST | `/api/v1/identity/users/import` | Import users (CSV) |
 
+An external (vendor) user is a user with `userType` `external`. Such a user carries `accountStatus`, `vendorOrgId`, `sponsorUserId` and `accountExpiresAt`, which are read-only through these routes. An external user may hold only the `user` role and join only groups whose `attributes.externalAllowed` is `"true"`. Anything else is refused with `403` and a `code`: `external_role_cap`, `external_group_not_allowed` or `external_account_not_live`.
+
+## Vendor organizations
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/identity/vendor-orgs` | List vendor organizations, with external-user counts by status |
+| POST | `/api/v1/identity/vendor-orgs` | Create a vendor organization |
+| GET | `/api/v1/identity/vendor-orgs/:id` | Get a vendor organization |
+| PUT | `/api/v1/identity/vendor-orgs/:id` | Update one (status `active` or `suspended`) |
+| POST | `/api/v1/identity/vendor-orgs/:id/close` | Close one, with a `reason`. Its external users are disabled. This cannot be undone |
+
+## Invitations
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/identity/invitations` | List invitations, with `user_type` and, for an external one, its vendor, sponsor and account expiry |
+| POST | `/api/v1/identity/invitations` | Invite a user. An external invitation adds `user_type: "external"`, `vendor_org_id`, and optionally `sponsor_user_id` plus `expires_in_days` or `account_expires_at` |
+| DELETE | `/api/v1/identity/invitations/:id` | Revoke an invitation |
+| POST | `/api/v1/identity/invitations/:token/accept` | Accept an invitation (public; the token is the credential) |
+| POST | `/api/v1/identity/invitations/:token/mfa` | Finish an external invitation: `{secret, code}` from the authenticator the acceptance returned (public) |
+
+An external invitation is refused when the vendor is not active (`vendor_not_active`) or the address is outside its allowed domains (`external_email_domain`). It is also refused when the sponsor is not an enabled internal user (`external_sponsor_invalid`), the lifetime is not within a year and the contract (`external_expiry_invalid`), or it names a role other than `user` or a group not open to external users. Without a sponsor, the vendor's default sponsor is used, then the inviter. Without a lifetime, the vendor's default is used, cut back to the contract's end.
+
+The acceptance creates an account in `pending_mfa` that cannot sign in. It answers with `mfa.secret` and `mfa.otpauth_url` for an authenticator app. The account becomes `active` only when `/mfa` receives a valid code. External users cannot enroll SMS, email or phone-call factors (`external_factor_not_allowed`).
+
 ## Roles & Permissions
 
 | Method | Path | Description |
