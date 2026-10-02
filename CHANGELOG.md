@@ -14,6 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **External users, part four: the console.** **Identity → External Users** lists the external accounts with their vendor, sponsor, status, end date and second factor, and offers only the moves each account's state allows: extend, change the sponsor, reactivate inside the grace period, suspend and disable, each with a reason. Its Invitations tab invites a vendor user, limited to active vendors and to the groups open to external users, and gives the link to send when email is not configured. Its Vendor organizations tab creates, edits and closes vendors. The invitation link opens a new public page, `/accept-invite`, where the person sets a password and, for an external invitation, an authenticator app; the account is active only once the app's code is confirmed. The Users page shows an external account's lifecycle status and, when editing it, its sponsor and end date, and the Groups page shows and sets whether a group is open to external users, and shows why the identity service refused to close one.
 
 ### Fixed
+- **Severing a user now ends their PAM entry surface too.** The kill switch,
+  disabling or deleting a user, and the lifecycle sweep that catches every
+  other disable path (SCIM, directory sync, lifecycle policies) expire the
+  user's own PAM connection grants, revoke their pending and approved launch
+  approvals, release their exclusive leases, end their live PAM entry sessions
+  on the broker, revoke the temporary access links they issued and end their
+  brokered SSH and cloud sessions in the ledger. The kill switch's response and
+  audit event count each. Brokered SSH certificates and cloud credentials
+  cannot be recalled and expire by their TTL; the response says so.
+- **Temporary access link events are in the audit trail.** Issuing, using,
+  refusing and revoking a link, and a launch that fails, now land in the
+  unified audit trail under the issuing organization, with the reason for a
+  refusal and the redeemer's address; before, they were service log lines
+  only. The Guacamole legal-hold events were log lines too and are recorded
+  the same way.
 - **A brokered proxy route's Connect asks who is calling.** `POST
   /guacamole/connections/:routeId/connect` (the RDP, SSH, VNC and Telnet
   routes on My Privileged Access) let any signed-in user of the organization
@@ -138,15 +153,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   factors on offer to ask an administrator for a bypass code.
 
 ### Fixed
-- **Severing a user now ends their PAM entry surface too.** The kill switch,
-  disabling or deleting a user, and the lifecycle sweep that catches every
-  other disable path (SCIM, directory sync, lifecycle policies) expire the
-  user's own PAM connection grants, revoke their pending and approved launch
-  approvals, release their exclusive leases, end their live PAM entry sessions
-  on the broker, revoke the temporary access links they issued and end their
-  brokered SSH and cloud sessions in the ledger. The kill switch's response and
-  audit event count each. Brokered SSH certificates and cloud credentials
-  cannot be recalled and expire by their TTL; the response says so.
 - **Backup codes and administrator bypass codes are offered at sign-in again.**
   The risk engine's list of allowed methods names primary factors only, and
   the login intersected the offer with it, so neither recovery factor was ever
