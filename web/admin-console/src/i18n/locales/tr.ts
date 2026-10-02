@@ -9243,12 +9243,18 @@ const tr: typeof en = {
         device_trust: 'Cihaz Güveni',
         security: 'Güvenlik Hatırlatmaları',
         broadcast: 'Duyurular',
+        approval_pending: 'Onayınızı Bekleyenler',
+        request_update: 'Erişim Talepleriniz',
+        sponsored_access: 'Sponsoru Olduğunuz Tedarikçi Kullanıcıları',
       },
       eventHints: {
         access_granted: 'Size bir uygulama veya ayrıcalıklı kimlik bilgisi verildiğinde',
         device_trust: 'Bir cihaz onay beklediğinde veya talebiniz karara bağlandığında',
         security: 'Hesabınızla ilgili dikkat gerektiren bir durum olduğunda',
         broadcast: 'Bir yöneticinin size gönderdiği duyurular',
+        approval_pending: 'Bir erişim talebi onayınızı beklediğinde',
+        request_update: 'Bir talebiniz karara bağlandığında, verdiği erişimin süresi dolmak üzereyken ve dolduğunda',
+        sponsored_access: 'Sponsoru olduğunuz bir tedarikçi kullanıcı onayınızı beklediğinde veya ayrıcalıklı bir oturum başlattığında',
       },
     },
     pamSessionWindow: {

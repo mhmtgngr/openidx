@@ -223,7 +223,7 @@ func (s *Service) endPamEntrySessionsOfDisabledUsers(ctx context.Context) {
 			s.logger.Warn("lifecycle sweep: PAM entry session of disabled user not ended (will retry next tick)",
 				zap.String("step", step), zap.String("user_id", logsafe.Clean(o.userID)), zap.Error(err))
 		}
-		if n := s.endUserPamEntrySessions(ctx, o.orgID, o.userID, warn); n > 0 {
+		if n := s.endUserPamEntrySessions(ctx, o.orgID, o.userID, sessionEndAccountOff, "", warn); n > 0 {
 			s.logger.Info("lifecycle sweep: ended PAM entry sessions of disabled user",
 				zap.String("user_id", logsafe.Clean(o.userID)), zap.Int("count", n))
 		}
@@ -282,6 +282,7 @@ func (s *Service) endLapsedPamEntrySessions(ctx context.Context) {
 			s.logger.Info("lifecycle sweep: ended a PAM entry session",
 				zap.String("session_id", id), zap.String("user_id", logsafe.Clean(userOf[id])),
 				zap.String("reason", reasonOf[id]))
+			s.pamSessionEnded(orgID, id, reasonOf[id], "")
 			if s.auditService != nil {
 				if err := s.auditService.RecordEvent(octx, "openidx", "pam.session_ended", "", userOf[id], "",
 					map[string]interface{}{"session_id": id, "reason": reasonOf[id]}); err != nil {

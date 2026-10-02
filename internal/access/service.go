@@ -168,6 +168,9 @@ type Service struct {
 	agentHandler         *AgentAPIHandler
 	remoteSupportHandler *RemoteSupportHandler
 	vaultSvc             *vault.Service
+	// webhooks publishes the privileged-access events (session_events.go);
+	// nil when the service runs without it, and then nothing is published.
+	webhooks WebhookPublisher
 	// guacRecordingRing seals guacd recordings at rest (PAM A1). Nil when
 	// encryption is unconfigured — the recording download handler then streams
 	// plaintext unchanged. Same keyring the sealer worker uses.

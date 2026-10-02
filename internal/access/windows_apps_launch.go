@@ -106,7 +106,7 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 	// If the caller chose to replace a session, end it first so its host frees
 	// a slot for the placement below.
 	if replace := c.Query("replace"); replace != "" {
-		s.endPamSession(ctx, org.ID, replace)
+		s.endPamSession(ctx, org.ID, userID, replace)
 	}
 
 	candidates, err := s.appCandidateHosts(ctx, org.ID, userID, &app)
@@ -312,16 +312,27 @@ func (s *Service) appCandidateHosts(ctx context.Context, orgID, userID string, a
 	return out, rows.Err()
 }
 
-// endPamSession marks a session ended, freeing its host's capacity slot. The
-// user explicitly asked to disconnect it (the 409 resolution flow). Best-effort.
-func (s *Service) endPamSession(ctx context.Context, orgID, sessionID string) {
+// endPamSession marks one of the user's own sessions ended, freeing its host's
+// capacity slot. The user explicitly asked to disconnect it (the 409
+// resolution flow). Best-effort.
+//
+// Only the caller's own: the session id comes from the query string, and
+// without the user term any user could end anyone's session in the
+// organization, a browser terminal's included, whose watcher closes it once
+// its row is no longer active.
+func (s *Service) endPamSession(ctx context.Context, orgID, userID, sessionID string) {
 	if _, err := uuid.Parse(sessionID); err != nil {
 		return
 	}
-	if _, err := s.db.Pool.Exec(ctx,
+	tag, err := s.db.Pool.Exec(ctx,
 		`UPDATE pam_entry_sessions SET status = 'ended', ended_at = NOW()
-		  WHERE id = $1 AND org_id = $2 AND status = 'active'`, sessionID, orgID); err != nil {
+		  WHERE id = $1 AND org_id = $2 AND user_id::text = $3 AND status = 'active'`, sessionID, orgID, userID)
+	if err != nil {
 		s.logger.Warn("endPamSession: update failed", zap.String("session_id", logsafe.Clean(sessionID)), zap.Error(err))
+		return
+	}
+	if tag.RowsAffected() == 1 {
+		s.pamSessionEnded(orgID, sessionID, sessionEndRequested, userID)
 	}
 }
 

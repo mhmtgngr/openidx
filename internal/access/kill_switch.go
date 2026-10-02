@@ -340,7 +340,7 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 			"brokered_sessions: ended in the ledger; the SSH certificates and cloud credentials they issued cannot be recalled and expire by their TTL")
 	}
 	// The live entry sessions need the broker, so they stay here.
-	res.PamEntrySessionsEnded = s.endUserPamEntrySessions(ctx, orgID, userID, warn)
+	res.PamEntrySessionsEnded = s.endUserPamEntrySessions(ctx, orgID, userID, sessionEndKillSwitch, actorID, warn)
 
 	// ---- Ziti: sever live circuits on the controller ----
 	zm := s.ziti()
@@ -492,7 +492,10 @@ var errPamBrokerNotConfigured = &accessMapError{"PAM broker not configured; acti
 // entry's connection is cut, and a warning says another user's session on the
 // same entry may have gone with it. An emergency control that cannot tell
 // whose shell it is looking at cuts the shell rather than leaving it open.
-func (s *Service) endUserPamEntrySessions(ctx context.Context, orgID, userID string, warn func(string, error)) int {
+//
+// Each session it ends is published as pam.session.ended with reason, and
+// actorID when someone asked for it.
+func (s *Service) endUserPamEntrySessions(ctx context.Context, orgID, userID, reason, actorID string, warn func(string, error)) int {
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT s.id, COALESCE(s.guac_connection_id, ''), COALESCE(s.guac_username, ''), COALESCE(e.reach_mode, '')
 		   FROM pam_entry_sessions s
@@ -502,7 +505,11 @@ func (s *Service) endUserPamEntrySessions(ctx context.Context, orgID, userID str
 		warn("list_pam_entry_sessions", err)
 		return 0
 	}
-	return len(s.endPamEntrySessionRows(ctx, orgID, scanPamSessionRows(rows), warn))
+	ended := s.endPamEntrySessionRows(ctx, orgID, scanPamSessionRows(rows), warn)
+	for _, id := range ended {
+		s.pamSessionEnded(orgID, id, reason, actorID)
+	}
+	return len(ended)
 }
 
 // pamSessionRow is one live pam_entry_sessions row, with what the broker needs

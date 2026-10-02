@@ -78,6 +78,23 @@ step who is also an approver of a later one is refused there (`four_eyes`),
 and the later step needs someone else; they can still deny. A chain of two
 steps is two people's decision.
 
+### Who is told
+
+- **The approvers of the step a request waits at** are told when it reaches
+  them: when it is filed, and when the step before it is satisfied. The
+  notification type is **Approvals waiting for you** (`approval_pending`).
+- **The requester** is told:
+  - when the request is approved and the access granted;
+  - when it is denied;
+  - within the hour before a time-bound access ends, once;
+  - when that access ends, or the request expires unanswered.
+
+  The notification type is **Your access requests** (`request_update`).
+- Each person can switch either type off on their notification preferences.
+- **The organization's webhook subscribers**, a SIEM for one, hear the same
+  moments whatever anyone's preferences say: `access_request.created`,
+  `.approved` (with the window's end), `.denied`, `.expiring` and `.ended`.
+
 ## Certification campaigns
 
 A campaign asks owners to confirm, item by item, that access is still

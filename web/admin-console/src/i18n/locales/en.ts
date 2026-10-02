@@ -9513,7 +9513,7 @@ const en = {
         in_app: 'In-App',
         push: 'Push',
       },
-      // The four types this deployment actually sends. The seven that used to
+      // The types this deployment actually sends. The seven that used to
       // be listed here -- access_request, security_alert, session_revoked,
       // review_assigned, group_request, password_expiry, mfa_change -- named
       // notifications nothing in this product has ever sent, so every switch
@@ -9524,12 +9524,18 @@ const en = {
         device_trust: 'Device Trust',
         security: 'Security Reminders',
         broadcast: 'Announcements',
+        approval_pending: 'Approvals Waiting for You',
+        request_update: 'Your Access Requests',
+        sponsored_access: 'Vendor Users You Sponsor',
       },
       eventHints: {
         access_granted: 'When you are granted an application or a privileged credential',
         device_trust: 'When a device awaits approval, or your request is decided',
         security: 'When something about your account needs attention',
         broadcast: 'Announcements an administrator sends to you',
+        approval_pending: 'When an access request is waiting for your approval',
+        request_update: 'When a request of yours is decided, or the access it gave is about to end or has ended',
+        sponsored_access: 'When a vendor user you sponsor waits for your approval, or starts a privileged session',
       },
     },
     // The chrome-less window one PAM session runs in. The connection's own
