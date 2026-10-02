@@ -27,6 +27,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/vault"
 )
 
@@ -286,6 +287,15 @@ func (s *Service) handleSSHConnect(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	// An external user is not issued certificates (I5): a certificate is a
+	// credential in their hands, used from their own machine, past the
+	// broker's recording and the overlay. Asked before the entry lookup, so
+	// the answer says nothing about which hosts are registered.
+	if s.refuseExternalCaller(c, org.ID, externalid.ErrSSHCAForbidden, "pam.ssh_cert_denied", userID, "user",
+		map[string]interface{}{"host": req.Host, "principal": req.Principal}) {
 		return
 	}
 

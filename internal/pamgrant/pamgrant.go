@@ -34,6 +34,7 @@ package pamgrant
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -88,58 +89,75 @@ type Lister interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// LapsedSession is a live PAM entry session whose user no longer holds a
-// grant to connect to its entry.
+// LapsedSession is a live PAM entry session that has to end, and why.
 type LapsedSession struct {
 	ID     string
 	OrgID  string
 	UserID string
+	// Reason is "grant_ended" when the user no longer holds a grant to
+	// connect to the entry, "max_duration" when an external user's session
+	// has run past its ceiling.
+	Reason string
 }
 
 // LapsedSessions lists, across the install, up to limit live PAM entry
-// sessions whose user no longer holds a live 'connect' grant on the session's
-// entry: the grant expired (a request's window closed), was removed, or the
-// role or group that carried it is no longer theirs. The access service ends
-// them: a session lasts as long as the access that opened it.
+// sessions that have to end, oldest first. The access service ends them.
 //
-// It is Holds asked of the session's user, with the roles read from
-// user_roles the way a token's are (internal/oauth: the user's unexpired
+//   - grant_ended: the user no longer holds a live 'connect' grant on the
+//     session's entry: the grant expired (a request's window closed), was
+//     removed, or the role or group that carried it is no longer theirs. A
+//     session lasts as long as the access that opened it.
+//   - max_duration: the user is external and the session started more than
+//     maxExternal ago (invariant I7 of the third-party access framework),
+//     whatever grant it rides. A maxExternal of zero turns this off.
+//
+// The grant half is Holds asked of the session's user, with the roles read
+// from user_roles the way a token's are (internal/oauth: the user's unexpired
 // assignments in the org, by name, as a role grant names them), because the
-// sweep has no token. Two kinds of session are not judged: one an
+// sweep has no token. Two kinds of session are not judged by it: one an
 // administrator opened without a grant (admin_bypass names 'grant'), since no
 // grant opened it, and one recorded before migration v217 (admin_bypass
-// NULL), since whether a grant opened it is not known.
-func LapsedSessions(ctx context.Context, q Lister, limit int) ([]LapsedSession, error) {
+// NULL), since whether a grant opened it is not known. The duration half
+// judges every external session, those two kinds included. When both apply,
+// the reason is grant_ended.
+func LapsedSessions(ctx context.Context, q Lister, maxExternal time.Duration, limit int) ([]LapsedSession, error) {
 	rows, err := q.Query(ctx,
-		//orgscope:ignore install-wide sweep of live PAM entry sessions; each grant, role and group is matched in the session's own org
-		`SELECT s.id::text, s.org_id::text, s.user_id::text
-		   FROM pam_entry_sessions s
-		  WHERE s.status = 'active' AND s.user_id IS NOT NULL
-		    AND s.admin_bypass IS NOT NULL AND NOT ('grant' = ANY(s.admin_bypass))
-		    AND NOT EXISTS (
-		          SELECT 1 FROM pam_entry_grants g
-		           WHERE g.org_id = s.org_id AND g.entry_id = s.entry_id
-		             AND 'connect' = ANY(g.actions)
-		             AND (g.expires_at IS NULL OR g.expires_at > NOW())
-		             AND ((g.principal_type = 'user' AND g.principal_id = s.user_id::text)
-		               OR (g.principal_type = 'role' AND g.principal_id IN (
-		                     SELECT r.name FROM user_roles ur
-		                       JOIN roles r ON r.id = ur.role_id
-		                      WHERE ur.user_id = s.user_id AND ur.org_id = s.org_id
-		                        AND (ur.expires_at IS NULL OR ur.expires_at > NOW())))
-		               OR (g.principal_type = 'group' AND g.principal_id IN (
-		                     SELECT gm.group_id::text FROM group_memberships gm
-		                      WHERE gm.user_id = s.user_id AND gm.org_id = s.org_id))))
-		  ORDER BY s.started_at
-		  LIMIT $1`, limit)
+		//orgscope:ignore install-wide sweep of live PAM entry sessions; each grant, role, group and user is matched in the session's own org
+		`SELECT id, org_id, user_id, CASE WHEN lapsed THEN 'grant_ended' ELSE 'max_duration' END
+		   FROM (
+		     SELECT s.id::text AS id, s.org_id::text AS org_id, s.user_id::text AS user_id, s.started_at,
+		            (s.admin_bypass IS NOT NULL AND NOT ('grant' = ANY(s.admin_bypass))
+		             AND NOT EXISTS (
+		                   SELECT 1 FROM pam_entry_grants g
+		                    WHERE g.org_id = s.org_id AND g.entry_id = s.entry_id
+		                      AND 'connect' = ANY(g.actions)
+		                      AND (g.expires_at IS NULL OR g.expires_at > NOW())
+		                      AND ((g.principal_type = 'user' AND g.principal_id = s.user_id::text)
+		                        OR (g.principal_type = 'role' AND g.principal_id IN (
+		                              SELECT r.name FROM user_roles ur
+		                                JOIN roles r ON r.id = ur.role_id
+		                               WHERE ur.user_id = s.user_id AND ur.org_id = s.org_id
+		                                 AND (ur.expires_at IS NULL OR ur.expires_at > NOW())))
+		                        OR (g.principal_type = 'group' AND g.principal_id IN (
+		                              SELECT gm.group_id::text FROM group_memberships gm
+		                               WHERE gm.user_id = s.user_id AND gm.org_id = s.org_id))))) AS lapsed,
+		            ($2::bigint > 0 AND s.started_at < NOW() - make_interval(secs => $2::bigint)
+		             AND EXISTS (SELECT 1 FROM users u
+		                          WHERE u.id = s.user_id AND u.org_id = s.org_id AND u.user_type = 'external')) AS overlong
+		       FROM pam_entry_sessions s
+		      WHERE s.status = 'active' AND s.user_id IS NOT NULL
+		   ) judged
+		  WHERE lapsed OR overlong
+		  ORDER BY started_at
+		  LIMIT $1`, limit, int64(maxExternal/time.Second))
 	if err != nil {
-		return nil, fmt.Errorf("list PAM entry sessions past their grant: %w", err)
+		return nil, fmt.Errorf("list PAM entry sessions that have to end: %w", err)
 	}
 	defer rows.Close()
 	var out []LapsedSession
 	for rows.Next() {
 		var l LapsedSession
-		if err := rows.Scan(&l.ID, &l.OrgID, &l.UserID); err != nil {
+		if err := rows.Scan(&l.ID, &l.OrgID, &l.UserID, &l.Reason); err != nil {
 			return nil, fmt.Errorf("scan a PAM entry session: %w", err)
 		}
 		out = append(out, l)

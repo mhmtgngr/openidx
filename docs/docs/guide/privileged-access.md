@@ -82,6 +82,46 @@ for the lack of one.
 4. Your sessions, requests, and JIT elevations show under **My Access**;
    an admin (or an access-review revoke) can end them at any time.
 
+## External (vendor) users
+
+An external user's session runs under fixed controls, whatever the entry or
+the install's settings say:
+
+- **Approved.** Every launch needs a launch approval, even on an entry that
+  asks for none. The user asks for one with **Request access**, and an
+  administrator approves it. No administrator bypass applies to them,
+  whatever roles their token claims.
+- **Recorded.** The session is recorded, keystrokes included. Without
+  `GUACAMOLE_RECORDING_PATH` the launch is refused
+  (`external_recording_unavailable`).
+- **On the overlay.** The entry's reach mode must be `ziti`, whatever
+  `PAM_REQUIRE_ZTNA` says. A direct-reach entry and a website entry are
+  refused (`ztna_required_direct_reach`, `ztna_required_website_entry`).
+- **On its own broker connection and identity.** The session runs on a
+  broker connection of its own, opened by a broker account that can open
+  nothing else. That needs `GUACAMOLE_PER_USER_IDENTITIES=true`. Without it,
+  or when the account cannot be set up at launch, the launch is refused
+  (`external_broker_identity_required`) rather than handed the shared broker
+  token, which opens every connection on the broker.
+- **Hardened.** Clipboard in both directions, drive redirection, file
+  transfer over the drive or SFTP, and printing are off. The entry's settings
+  cannot turn them back on, or leave the screen, the pointer or touches out of
+  the recording.
+- **A working day at most.** The lifecycle sweep ends the session after 8
+  hours, whatever grant it rides. An idle timeout is not enforced yet: the
+  broker reports no per-session activity to measure one by.
+- **No credential in their hands.** Reveal and break-glass
+  (`external_reveal_forbidden`), SSH certificates
+  (`external_ssh_ca_forbidden`) and cloud keys
+  (`external_cloud_jit_forbidden`) are refused. So is the browser SSH
+  terminal, which records nothing (`external_recording_unavailable`).
+
+The entry list and the broker status show an external user what their launch
+will do: approval and recording on, no Reveal, and the overlay enforced. Each
+refusal is audited: `pam.launch_denied`, `pam.reveal_denied`,
+`pam.ssh_cert_denied`, `pam.cloud_jit_denied` and `pam.ztna.denied`, marked
+`external`.
+
 ## The mental model
 
 - **The vault owns credentials; people borrow reach.** A grant is to a

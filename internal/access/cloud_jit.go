@@ -36,6 +36,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 )
 
 // cloudJITMaxTTL is the ceiling on an STS session. STS credentials cannot be
@@ -123,6 +124,12 @@ func (s *Service) handleCloudConnect(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	// An external user is not issued cloud keys (I5): they would hold an STS
+	// session of their own, used from anywhere, outside every session control.
+	if s.refuseExternalCaller(c, org.ID, externalid.ErrCloudJITForbidden, "pam.cloud_jit_denied", userID, "user",
+		map[string]interface{}{"provider": req.Provider, "role_arn": req.RoleARN, "secret_id": req.SecretID}) {
 		return
 	}
 	if s.vaultSvc == nil {

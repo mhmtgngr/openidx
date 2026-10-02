@@ -195,7 +195,11 @@ has an internal sponsor and has an end date. None of the three is optional.
   by naming a new sponsor. An expired or disabled one needs a new invitation.
 
 [Identity API → External users](../api/identity.md#external-users) has the
-routes and the refusal codes.
+routes and the refusal codes. An external user's privileged sessions run under
+fixed controls, whatever the entry says: approved, recorded, on the overlay,
+hardened and at most a working day long, with no credential handed over.
+[Privileged access → External (vendor) users](privileged-access.md#external-vendor-users)
+lists them.
 
 ## Policies that decide, and policies that describe
 

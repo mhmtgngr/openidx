@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
@@ -189,6 +190,10 @@ type pamLaunchEntry struct {
 	// is an administrator ("grant", "approval"); empty otherwise. Set by the
 	// launch handler, never loaded, and carried to pam.entry_connected.
 	AdminBypass []string
+	// External is set by the launch handler when the caller is an external
+	// user (pinExternalPamPolicy), never loaded: the session gets its own
+	// broker connection and identity, is recorded, and runs hardened (I5, I7).
+	External bool
 }
 
 // pamAdminBypass names the gates an administrator's launch of entry passes
@@ -271,13 +276,17 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	userID := c.GetString("user_id")
-	isAdmin := s.pamCallerIsAdmin(c)
+	caller, ok := s.resolvePamCaller(c, org.ID)
+	if !ok {
+		return // resolvePamCaller already wrote the error
+	}
+	userID, isAdmin := caller.UserID, caller.Admin
 
 	entry, typeInfo, ok := s.loadPamLaunchEntry(c, org.ID, entryID)
 	if !ok {
 		return // loadPamLaunchEntry already wrote the error
 	}
+	pinExternalPamPolicy(&entry, caller)
 
 	if isAdmin {
 		entry.AdminBypass = s.pamAdminBypass(ctx, org.ID, &entry, userID, pamCallerRoles(c))
@@ -297,8 +306,23 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 		return
 	}
 
+	// Does this launch stay on the overlay? Asked before the approval gate, so
+	// a refusal does not spend an approval, before the website short-circuit,
+	// and before launchPamSession resolves a credential, because a refusal
+	// must not have decrypted a vault secret on its way to being refused — and
+	// because the website path never reaches launchPamSession at all, so a
+	// check placed there would miss the one entry type that brokers nothing.
+	// An external user's launch is held to it whatever PAM_REQUIRE_ZTNA says.
+	if v := s.checkPamZTNA(c, org.ID, userID, entryID, entry.ReachMode, typeInfo.Protocol, caller.External); v.Refuse {
+		c.JSON(http.StatusForbidden, gin.H{"error": v.Reason, "code": v.Code})
+		return
+	}
+	if s.refuseExternalLaunch(c, &entry) {
+		return
+	}
+
 	// Approval gate — single-use, atomically consumed. Admins (the approvers)
-	// bypass their own gate.
+	// bypass their own gate; an external user always needs one (I5).
 	if entry.RequireApproval && !isAdmin {
 		consumed, gateErr := s.checkAndConsumePamApproval(ctx, entryID, userID)
 		if gateErr != nil {
@@ -310,17 +334,6 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 			c.JSON(http.StatusForbidden, gin.H{"error": "session requires approval", "approval_required": true})
 			return
 		}
-	}
-
-	// Does this launch stay on the overlay? Asked here, before the website
-	// short-circuit and before launchPamSession resolves a credential, because
-	// a refusal must not have decrypted a vault secret on its way to being
-	// refused — and because the website path never reaches launchPamSession at
-	// all, so a check placed there would miss the one entry type that brokers
-	// nothing.
-	if v := s.checkPamZTNA(c, org.ID, userID, entryID, entry.ReachMode, typeInfo.Protocol); v.Refuse {
-		c.JSON(http.StatusForbidden, gin.H{"error": v.Reason, "code": v.Code})
-		return
 	}
 
 	if hooks.BeforeLaunch != nil && !hooks.BeforeLaunch(c, &entry) {
@@ -362,6 +375,9 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 		"credential_injected": res.Injected,
 		"recorded":            entry.RecordSession,
 		"reach_mode":          entry.ReachMode,
+	}
+	if entry.External {
+		body["session_policy"] = externalSessionPolicy()
 	}
 	for k, v := range hooks.Response {
 		body[k] = v
@@ -455,6 +471,21 @@ func (s *Service) launchPamSession(
 		return nil, &pamLaunchFailure{http.StatusServiceUnavailable, "ziti_unavailable",
 			"OpenZiti overlay is unavailable for this Ziti-reach connection"}
 	}
+	// An external user's session (I5, I7). The launch paths asked this before
+	// spending an approval; asked again here because this core is what every
+	// path shares. The session gets a broker connection of its own, never the
+	// entry's shared one: its parameters are what make it the session I7
+	// describes, and the shared connection's are rewritten by whoever launches
+	// next, before this user's browser has opened it.
+	if _, refusal := s.externalLaunchRefusal(entry); refusal != nil {
+		if errors.Is(refusal, externalid.ErrBrokerIdentityRequired) {
+			return nil, &pamLaunchFailure{http.StatusServiceUnavailable, "external_broker_identity_required", refusal.Error()}
+		}
+		return nil, &pamLaunchFailure{http.StatusServiceUnavailable, "external_recording_unavailable", refusal.Error()}
+	}
+	if entry.External {
+		connName, existingConnID, persistConnID = connName+"-x-"+userID, "", nil
+	}
 
 	// Resolve the credential source (own secret or linked credential entry).
 	target, err := s.resolvePamLaunchTarget(ctx, orgID, entry)
@@ -506,6 +537,9 @@ func (s *Service) launchPamSession(
 
 	params := buildPamGuacParams(secretType, target.Username, target.Domain, cred,
 		settings, entry.RecordSession, recPath, recName)
+	if entry.External {
+		hardenExternalGuacParams(params)
+	}
 	injected := len(cred) > 0
 	// Zero the plaintext immediately after buildPamGuacParams copies it into
 	// the params map (string copies are GC-managed; same caveat as M3).
@@ -514,7 +548,12 @@ func (s *Service) launchPamSession(
 	}
 
 	dialHost, dialPort := entry.dialTarget()
-	connID, err := s.ensureGuacConnection(ctx, connName, existingConnID, protocol, dialHost, dialPort, params, broker, persistConnID)
+	var connID string
+	if entry.External {
+		connID, err = s.ensureExternalGuacConnection(ctx, connName, protocol, dialHost, dialPort, params, broker)
+	} else {
+		connID, err = s.ensureGuacConnection(ctx, connName, existingConnID, protocol, dialHost, dialPort, params, broker, persistConnID)
+	}
 	if err != nil {
 		s.logger.Error("launchPamSession: guacamole connection failed",
 			zap.String("entry_id", logsafe.Clean(entry.ID)), zap.Error(err))
@@ -535,6 +574,16 @@ func (s *Service) launchPamSession(
 	// Build the browser URL before recording the launch so the per-user Guacamole
 	// identity (if enabled) can be persisted on the session row for later revoke.
 	connectURL, guacUser := s.connectURLForBroker(ctx, broker, orgID, userID, connID, realClientIP(c))
+	if entry.External && guacUser == "" {
+		// The per-user identity could not be set up and the URL carries the
+		// shared token, which opens every connection on the broker. It is
+		// dropped, not handed to an external user.
+		refusal := externalid.ErrBrokerIdentityRequired
+		s.logAuditEvent(c, "pam.launch_denied", entry.ID, "pam_entry", map[string]interface{}{
+			"entry_id": entry.ID, "user_id": userID, "code": externalid.Code(refusal), "external": true,
+		})
+		return nil, &pamLaunchFailure{http.StatusServiceUnavailable, "external_broker_identity_required", refusal.Error()}
+	}
 
 	sessionID := s.recordPamLaunch(c, orgID, entry, protocol, connID, injected, guacUser)
 	if entry.RecordSession && sessionID != "" && recFile != "" {
@@ -600,6 +649,24 @@ func (s *Service) ensureGuacConnection(
 		persist(ctx, newID)
 	}
 	return newID, nil
+}
+
+// ensureExternalGuacConnection gives an external user's session its own
+// broker connection, created or updated with this launch's parameters, or
+// fails. Unlike ensureGuacConnection it never falls back to a connection whose
+// update failed: the parameters are the session's controls (I7), and a stale
+// set is not this launch's.
+func (s *Service) ensureExternalGuacConnection(
+	ctx context.Context, name, protocol, dialHost string, dialPort int,
+	params map[string]string, broker *GuacamoleClient,
+) (string, error) {
+	if id := s.findGuacConnectionIDByName(ctx, broker, name); id != "" {
+		if err := broker.UpdateConnection(id, name, protocol, dialHost, dialPort, params); err != nil {
+			return "", err
+		}
+		return id, nil
+	}
+	return broker.CreateConnection(name, protocol, dialHost, dialPort, params)
 }
 
 // findGuacConnectionIDByName returns the Guacamole identifier of the connection

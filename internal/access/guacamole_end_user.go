@@ -70,8 +70,11 @@ func (s *Service) handleListMyGuacConnections(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	userID := c.GetString("user_id")
-	isAdmin := s.pamCallerIsAdmin(c)
+	caller, ok := s.resolvePamCaller(c, org.ID)
+	if !ok {
+		return // resolvePamCaller already wrote the error
+	}
+	userID, isAdmin := caller.UserID, caller.Admin
 	roles := pamCallerRoles(c)
 
 	rows, err := s.db.Pool.Query(ctx,
@@ -126,6 +129,11 @@ func (s *Service) handleListMyGuacConnections(c *gin.Context) {
 			if !allowed {
 				continue
 			}
+		}
+		// An external user's launch is approved and recorded whatever the
+		// entry says (I5), and the list says so.
+		if caller.External {
+			cand.conn.RequireApproval, cand.conn.RecordSession = true, true
 		}
 		conns = append(conns, cand.conn)
 	}

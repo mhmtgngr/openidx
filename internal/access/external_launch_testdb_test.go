@@ -23,7 +23,11 @@ import (
 // account is active with a strong second factor, and the refusal comes after
 // the grant check (an ungranted caller still reads "not permitted") and
 // before the approval gate (a refused launch does not spend the approval).
-// The entries are websites, the one type connect answers without a broker.
+// The entries are websites, the one type connect answers without a broker,
+// and so the one type I5 refuses an external user outright: with a second
+// factor the launch passes I4 and is refused at the overlay gate instead,
+// still before the approval. TestAnExternalUsersSessionRunsUnderTheEnforcedControls
+// carries an external launch through to a session.
 func TestAnExternalUserLaunchesNothingWithoutASecondFactor(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, cleanup := setupTestDB(t)
@@ -120,14 +124,13 @@ func TestAnExternalUserLaunchesNothingWithoutASecondFactor(t *testing.T) {
 	}
 
 	exec(`INSERT INTO mfa_totp (user_id, secret, enabled, org_id) VALUES ($1, 'JBSWY3DPEHPK3PXP', true, $2)`, external, org)
-	if code, body := call(vendorAPI, "/pam/entries/"+plain+"/connect", ""); code != http.StatusOK {
-		t.Errorf("a granted entry with an authenticator: %d %v, want 200", code, body)
+	for _, e := range []string{plain, gated} {
+		if code, body := call(vendorAPI, "/pam/entries/"+e+"/connect", ""); code != http.StatusForbidden || body["code"] != "ztna_required_website_entry" {
+			t.Errorf("a granted website entry with an authenticator: %d %v, want 403 ztna_required_website_entry (I4 passed, I5 refuses)", code, body)
+		}
 	}
-	if code, body := call(vendorAPI, "/pam/entries/"+gated+"/connect", ""); code != http.StatusOK {
-		t.Errorf("an approved entry with an authenticator: %d %v, want 200", code, body)
-	}
-	if status := scalar(`SELECT status FROM pam_entry_access_requests WHERE id = $1`, request); status != "consumed" {
-		t.Errorf("the approval of the launch that went through is %s, want consumed", status)
+	if status := scalar(`SELECT status FROM pam_entry_access_requests WHERE id = $1`, request); status != "approved" {
+		t.Errorf("the launch refused at the overlay gate spent the approval: it is %s", status)
 	}
 
 	exec(`UPDATE users SET account_status = 'pending_mfa' WHERE id = $1`, external)
