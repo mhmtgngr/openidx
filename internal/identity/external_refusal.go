@@ -5,7 +5,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/externalid"
 )
 
@@ -31,4 +33,34 @@ func writeExternalRefusal(c *gin.Context, err error) bool {
 	}
 	c.JSON(status, gin.H{"error": r.Error(), "code": externalid.Code(r)})
 	return true
+}
+
+// strongFactorsOnlyForExternal refuses method to an external (vendor) user:
+// SMS, email and phone-call codes are not offered to one (decision D4 of the
+// third-party access framework; internal/externalid.StrongFactors). It sits
+// on the enrollment and challenge routes of those methods, so the sign-in
+// that never offers them is matched by an account that cannot hold them.
+// Anyone else passes.
+func (s *Service) strongFactorsOnlyForExternal(method string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString("user_id")
+		org, err := orgctx.From(c.Request.Context())
+		if userID == "" || err != nil || s.db == nil {
+			c.Next()
+			return
+		}
+		ext, err := externalid.IsExternal(c.Request.Context(), s.db.Pool, org.ID, userID)
+		if err != nil {
+			s.logger.Error("could not read the caller's user type for a factor enrollment", zap.Error(err))
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+			return
+		}
+		if ext && !externalid.FactorAllowed(externalid.TypeExternal, method) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": externalid.ErrFactorNotAllowed.Error(), "code": externalid.Code(externalid.ErrFactorNotAllowed),
+			})
+			return
+		}
+		c.Next()
+	}
 }

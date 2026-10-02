@@ -36,6 +36,7 @@
     "POST /federation/discover",
     "POST /invitations",
     "POST /invitations/:token/accept",
+    "POST /invitations/:token/mfa",
     "POST /mfa/backup/generate",
     "POST /mfa/backup/verify",
     "POST /mfa/bypass-codes/verify",

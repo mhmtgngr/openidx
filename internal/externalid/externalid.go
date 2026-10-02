@@ -86,7 +86,76 @@ var (
 	ErrGroupHasExternal   = errors.New("remove the external members before closing this group to external users")
 	ErrIdentityIncomplete = errors.New("an external user needs a vendor organization, a sponsor and an account expiry")
 	ErrAccountNotLive     = errors.New("this external account is suspended, expired or disabled and cannot be enabled")
+	ErrNotActivated       = errors.New("this external account has no second factor enrolled or is not active; nothing it holds takes effect until it is")
+	ErrFactorNotAllowed   = errors.New("external users enroll an authenticator app, a passkey or a push device, not SMS, email or phone call")
+	ErrEmailDomain        = errors.New("the email address is not in one of the vendor organization's allowed domains")
 )
+
+// StrongFactors are the second factors an external user may enroll and sign
+// in with (decision D4): an authenticator app (TOTP), a passkey or security
+// key (WebAuthn), and a push device. SMS, email and phone-call codes are not
+// offered to an external user: they ride on accounts a supplier's helpdesk
+// can be talked into moving, which is the attack this account type exists
+// to resist.
+var StrongFactors = []string{"totp", "webauthn", "push"}
+
+// FactorAllowed reports whether userType may enroll or be challenged with
+// method. Every method is allowed to a non-external user.
+func FactorAllowed(userType, method string) bool {
+	if userType != TypeExternal {
+		return true
+	}
+	for _, f := range StrongFactors {
+		if f == method {
+			return true
+		}
+	}
+	return false
+}
+
+// HasStrongFactor reports whether userID has a StrongFactors factor enrolled
+// in orgID.
+func HasStrongFactor(ctx context.Context, q Querier, orgID, userID string) (bool, error) {
+	var ok bool
+	err := q.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM mfa_totp WHERE user_id = $1::uuid AND org_id = $2::uuid AND enabled)
+		    OR EXISTS (SELECT 1 FROM mfa_webauthn WHERE user_id = $1::uuid AND org_id = $2::uuid)
+		    OR EXISTS (SELECT 1 FROM mfa_push_devices WHERE user_id = $1::uuid AND org_id = $2::uuid AND COALESCE(enabled, true))`,
+		userID, orgID).Scan(&ok)
+	return ok, err
+}
+
+// CheckEffective is invariant I4: nothing an external user holds takes
+// effect until the account is active and has a strong second factor. A
+// request may be filed and approved before that; fulfilling it, and
+// launching a privileged session, wait. Nil for a user who is not external.
+func CheckEffective(ctx context.Context, q Querier, orgID, userID string) error {
+	ext, err := IsExternal(ctx, q, orgID, userID)
+	if err != nil || !ext {
+		return err
+	}
+	a, err := Load(ctx, q, orgID, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !a.External() {
+		return nil
+	}
+	if a.Status != StatusActive {
+		return ErrNotActivated
+	}
+	ok, err := HasStrongFactor(ctx, q, orgID, userID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotActivated
+	}
+	return nil
+}
 
 // FromDB maps a refusal raised by the database guard (migration v214's
 // external_identity_guard trigger and the users CHECK) to this package's
@@ -358,7 +427,7 @@ func CheckSponsor(ctx context.Context, q Querier, orgID, sponsorID string) error
 func IsRefusal(err error) bool {
 	for _, r := range []error{ErrRoleCap, ErrGroupNotExternal, ErrExternalApprover, ErrExternalActor,
 		ErrExpiryRequired, ErrExpiryPast, ErrExpiryTooLong, ErrExpiryContract, ErrVendorNotActive, ErrSponsorInvalid,
-		ErrTypeImmutable, ErrGroupHasExternal, ErrIdentityIncomplete, ErrAccountNotLive} {
+		ErrTypeImmutable, ErrGroupHasExternal, ErrIdentityIncomplete, ErrAccountNotLive, ErrNotActivated, ErrFactorNotAllowed, ErrEmailDomain} {
 		if errors.Is(err, r) {
 			return true
 		}
@@ -392,6 +461,12 @@ func Code(err error) string {
 		return "external_identity_incomplete"
 	case errors.Is(err, ErrAccountNotLive):
 		return "external_account_not_live"
+	case errors.Is(err, ErrNotActivated):
+		return "external_not_activated"
+	case errors.Is(err, ErrFactorNotAllowed):
+		return "external_factor_not_allowed"
+	case errors.Is(err, ErrEmailDomain):
+		return "external_email_domain"
 	}
 	return ""
 }

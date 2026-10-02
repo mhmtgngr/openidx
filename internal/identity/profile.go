@@ -127,6 +127,7 @@ var routePlanes = map[string]servicePlane{
 	"POST /users/reset-password":                      planeIssue,
 	"POST /verify-email":                              planeIssue,
 	"POST /invitations/:token/accept":                 planeIssue,
+	"POST /invitations/:token/mfa":                    planeIssue,
 	"GET /providers":                                  planeIssue,
 	"GET /branding":                                   planeIssue,
 	"POST /federation/discover":                       planeIssue,

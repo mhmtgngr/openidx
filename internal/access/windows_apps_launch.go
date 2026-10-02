@@ -150,6 +150,9 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 			return
 		}
 	}
+	if s.refuseIneffectiveExternal(c, org.ID, userID) {
+		return
+	}
 	if entry.RequireApproval && !isAdmin {
 		consumed, gateErr := s.checkAndConsumePamApproval(ctx, chosen.HostEntryID, userID)
 		if gateErr != nil || !consumed {
