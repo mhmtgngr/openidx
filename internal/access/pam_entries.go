@@ -221,14 +221,17 @@ type PamEntry struct {
 	CredentialEntryName string                 `json:"credential_entry_name,omitempty"`
 	AllowReveal         bool                   `json:"allow_reveal"`
 	RequireApproval     bool                   `json:"require_approval"`
-	DualControlRequired bool                   `json:"dual_control_required"`
-	ExclusiveCheckout   bool                   `json:"exclusive_checkout"`
-	BreakGlassEnabled   bool                   `json:"break_glass_enabled"`
-	RecordSession       bool                   `json:"record_session"`
-	ReachMode           string                 `json:"reach_mode"`
-	Renderer            string                 `json:"renderer"`
-	ZitiEnabled         bool                   `json:"ziti_enabled"`
-	Favorite            bool                   `json:"favorite"`
+	// RequireModerator: a session on the entry waits until a moderator
+	// joins to watch it (moderated_sessions.go).
+	RequireModerator    bool   `json:"require_moderator"`
+	DualControlRequired bool   `json:"dual_control_required"`
+	ExclusiveCheckout   bool   `json:"exclusive_checkout"`
+	BreakGlassEnabled   bool   `json:"break_glass_enabled"`
+	RecordSession       bool   `json:"record_session"`
+	ReachMode           string `json:"reach_mode"`
+	Renderer            string `json:"renderer"`
+	ZitiEnabled         bool   `json:"ziti_enabled"`
+	Favorite            bool   `json:"favorite"`
 	// Actions are the grant actions the caller holds on the entry, set by
 	// the entry list so the console offers only what the API will allow.
 	// An administrator, whom the grant checks do not apply to, holds every
@@ -258,6 +261,10 @@ type pamEntryUpsertReq struct {
 	CredentialEntryID string                 `json:"credential_entry_id"`
 	AllowReveal       bool                   `json:"allow_reveal"`
 	RequireApproval   bool                   `json:"require_approval"`
+	// RequireModerator is a pointer so an update that leaves it out keeps it:
+	// the console's entry form predates the field, and saving it must not
+	// clear a moderation requirement it never showed.
+	RequireModerator *bool `json:"require_moderator"`
 	// DualControlRequired, ExclusiveCheckout, BreakGlassEnabled are the v105
 	// checkout controls; all default false so existing entries are unaffected.
 	DualControlRequired bool   `json:"dual_control_required"`
@@ -305,6 +312,11 @@ func validatePamEntry(req *pamEntryUpsertReq) (PamEntryType, error) {
 	}
 	if req.Port < 0 || req.Port > 65535 {
 		return PamEntryType{}, errors.New("port out of range")
+	}
+	// A moderator watches a session, and an entry that opens none has nothing
+	// to watch.
+	if req.RequireModerator != nil && *req.RequireModerator && t.Protocol == "" {
+		return PamEntryType{}, fmt.Errorf("a %s entry opens no session, so it cannot require a moderator", t.Type)
 	}
 	// RemoteApp command-line args must never carry a secret (visible in the
 	// target's process list). Reject on write so the mistake surfaces in the
@@ -490,7 +502,8 @@ const pamEntrySelectColumns = `
 	e.allow_reveal, e.require_approval, e.record_session, e.reach_mode,
 	COALESCE(e.renderer,'guacamole'),
 	e.dual_control_required, e.exclusive_checkout, e.break_glass_enabled,
-	e.last_connected_at, e.connect_count, e.created_at, e.updated_at`
+	e.last_connected_at, e.connect_count, e.created_at, e.updated_at,
+	e.require_moderator`
 
 type pamEntryScanner interface {
 	Scan(dest ...any) error
@@ -508,6 +521,7 @@ func scanPamEntry(row pamEntryScanner) (*PamEntry, error) {
 		&e.Renderer,
 		&e.DualControlRequired, &e.ExclusiveCheckout, &e.BreakGlassEnabled,
 		&e.LastConnectedAt, &e.ConnectCount, &e.CreatedAt, &e.UpdatedAt,
+		&e.RequireModerator,
 	); err != nil {
 		return nil, err
 	}
@@ -623,6 +637,7 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 			&e.Renderer,
 			&e.DualControlRequired, &e.ExclusiveCheckout, &e.BreakGlassEnabled,
 			&e.LastConnectedAt, &e.ConnectCount, &e.CreatedAt, &e.UpdatedAt,
+			&e.RequireModerator,
 			&e.Favorite,
 		); err != nil {
 			s.logger.Warn("handlePamListEntries: scan failed", zap.Error(err))
@@ -881,17 +896,17 @@ func (s *Service) handlePamCreateEntry(c *gin.Context) {
 		                         hostname, port, username, domain, url, settings,
 		                         vault_secret_id, credential_entry_id,
 		                         allow_reveal, require_approval, record_session, renderer, created_by,
-		                         dual_control_required, exclusive_checkout, break_glass_enabled)
+		                         dual_control_required, exclusive_checkout, break_glass_enabled, require_moderator)
 		VALUES ($1, $2, NULLIF($3,'')::uuid, $4, $5, NULLIF($6,''), $7,
 		        NULLIF($8,''), NULLIF($9,0), NULLIF($10,''), NULLIF($11,''), NULLIF($12,''), $13,
 		        NULLIF($14,'')::uuid, NULLIF($15,'')::uuid,
 		        $16, $17, $18, $19, NULLIF($20,'')::uuid,
-		        $21, $22, $23)`,
+		        $21, $22, $23, COALESCE($24::boolean, false))`,
 		entryID, org.ID, req.FolderID, req.Name, req.EntryType, req.Description, req.Tags,
 		req.Hostname, pamDefaultPort(req.EntryType, req.Port), req.Username, req.Domain, req.URL, settingsJSON,
 		vaultSecretID, req.CredentialEntryID,
 		req.AllowReveal, req.RequireApproval, req.RecordSession, pamNormalizeRenderer(req.Renderer, req.EntryType), userID,
-		req.DualControlRequired, req.ExclusiveCheckout, req.BreakGlassEnabled)
+		req.DualControlRequired, req.ExclusiveCheckout, req.BreakGlassEnabled, req.RequireModerator)
 	if err != nil {
 		if vaultSecretID != "" && s.vaultSvc != nil {
 			if delErr := s.vaultSvc.Delete(ctx, vaultSecretID); delErr != nil {
@@ -906,7 +921,7 @@ func (s *Service) handlePamCreateEntry(c *gin.Context) {
 
 	s.logAuditEvent(c, "pam.entry_created", entryID, "pam_entry", map[string]interface{}{
 		"name": req.Name, "entry_type": req.EntryType, "kind": typeInfo.Kind,
-		"has_secret": vaultSecretID != "",
+		"has_secret": vaultSecretID != "", "require_moderator": req.RequireModerator != nil && *req.RequireModerator,
 	})
 	c.JSON(http.StatusCreated, gin.H{"id": entryID})
 }
@@ -921,7 +936,8 @@ func (s *Service) handlePamUpdateEntry(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if _, err := validatePamEntry(&req); err != nil {
+	typeInfo, err := validatePamEntry(&req)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -1007,6 +1023,7 @@ func (s *Service) handlePamUpdateEntry(c *gin.Context) {
 		       allow_reveal = $13, require_approval = $14, record_session = $15,
 		       renderer = $18,
 		       dual_control_required = $19, exclusive_checkout = $20, break_glass_enabled = $21,
+		       require_moderator = ($23::boolean AND COALESCE($22::boolean, require_moderator)),
 		       updated_at = NOW()
 		 WHERE id = $16 AND org_id = $17`,
 		req.FolderID, req.Name, req.Description, req.Tags,
@@ -1015,7 +1032,10 @@ func (s *Service) handlePamUpdateEntry(c *gin.Context) {
 		vaultSecretID, req.CredentialEntryID,
 		req.AllowReveal, req.RequireApproval, req.RecordSession,
 		entryID, org.ID, pamNormalizeRenderer(req.Renderer, req.EntryType),
-		req.DualControlRequired, req.ExclusiveCheckout, req.BreakGlassEnabled)
+		req.DualControlRequired, req.ExclusiveCheckout, req.BreakGlassEnabled,
+		// Left out, the requirement stays; an entry that opens no session
+		// cannot keep one.
+		req.RequireModerator, typeInfo.Protocol != "")
 	if err != nil {
 		s.logger.Error("handlePamUpdateEntry: update failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update entry"})

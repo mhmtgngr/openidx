@@ -50,6 +50,35 @@ func (s *Service) notifySponsorOfLaunchRequest(ctx context.Context, orgID, userI
 	}
 }
 
+// notifySponsorOfModeration tells an external (vendor) user's sponsor that the
+// user is waiting for a moderator on an entry that requires one, which the
+// sponsor may be (entry_moderation.go). Best-effort: the request stands, and
+// the sponsor's moderation queue lists it either way.
+func (s *Service) notifySponsorOfModeration(ctx context.Context, orgID, userID, entryID, entryName, moderationID string) {
+	acct, err := externalid.Load(ctx, s.db.Pool, orgID, userID)
+	if err != nil {
+		s.logger.Warn("notify sponsor of a moderation request: could not read the requester's account", zap.Error(err))
+		return
+	}
+	if !acct.External() || acct.SponsorUserID == "" {
+		return
+	}
+	var who string
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(NULLIF(email, ''), username) FROM users WHERE id = $1::uuid AND org_id = $2`,
+		userID, orgID).Scan(&who); err != nil {
+		s.logger.Warn("notify sponsor of a moderation request: could not read the user's name", zap.Error(err))
+		return
+	}
+	if err := notifications.NewService(s.db, s.logger).CreateMultiChannelNotification(ctx,
+		acct.SponsorUserID, orgID, notifications.TypeSponsoredAccess,
+		"A vendor user you sponsor is waiting for a moderator",
+		fmt.Sprintf("%s wants to open a moderated session on %s. Join to watch it, and it can start.", who, entryName), "",
+		map[string]interface{}{"moderation_id": moderationID, "entry_id": entryID, "user_id": userID, "kind": "moderation_requested"}); err != nil {
+		s.logger.Warn("notify sponsor of a moderation request failed", zap.String("sponsor_id", acct.SponsorUserID), zap.Error(err))
+	}
+}
+
 // notifySponsorOfSession tells an external (vendor) user's sponsor that the
 // user's privileged session on entry started (invariant I6 of the third-party
 // access framework), and stamps the session's sponsor_notified_at once the

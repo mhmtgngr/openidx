@@ -1567,5 +1567,12 @@ func allMigrations() []*Migration {
 			UpSQL:       accessRequestExpiryWarnedUp,
 			DownSQL:     accessRequestExpiryWarnedDown,
 		},
+		{
+			Version:     221,
+			Name:        "pam_entry_moderation",
+			Description: "Section 6.10 of the third-party access framework: the moderation gate of route-based Guacamole connections (v117) is extended to PAM entries. pam_entries.require_moderator (off by default) makes a session on the entry wait until a moderator joins: an administrator, or an external user's sponsor. guacamole_moderation_sessions gains entry_id (an entry's request; connection_id stays a route's, and a row names exactly one) and admitted_at (one moderation admits one session, claimed by the launch). pam_entry_sessions.moderation_id names the moderation that admitted a session, so its moderator watches and ends that session and the lifecycle sweep ends it once the moderation ends. Additive; down removes the entry requests with the columns.",
+			UpSQL:       pamEntryModerationUp,
+			DownSQL:     pamEntryModerationDown,
+		},
 	}
 }

@@ -75,8 +75,12 @@ for the lack of one.
      - `account_disabled`, `kill_switch` and `sponsor_ended`;
      - `risk_suspended` (the session risk scorer);
      - `closed` (a browser terminal closed);
-     - `ended` (the user or an administrator ended it).
+     - `ended` (the user or an administrator ended it);
+     - `moderation_ended` (the moderation that admitted it ended).
    - `pam.break_glass`: the entry, the user and their justification.
+9. **Moderate the sessions that need a second person.** An entry with
+   `require_moderator` opens a session only while a moderator watches it.
+   See [Moderated sessions](#moderated-sessions).
 
 ## For users: getting a session
 
@@ -95,6 +99,44 @@ for the lack of one.
    return it when done.
 4. Your sessions, requests, and JIT elevations show under **My Access**;
    an admin (or an access-review revoke) can end them at any time.
+
+## Moderated sessions
+
+An entry that requires a moderator (`require_moderator: true` on
+`POST /api/v1/access/pam/entries` or `PUT .../entries/{id}`) opens a session
+only while a second person is watching it.
+
+1. **The user asks for a moderator.** Connect answers `428` with
+   `moderation_required` until one has joined. The user asks with
+   `POST /api/v1/access/pam/moderation/request` and `{"entry_id": ...}`.
+   Only a user who may connect to the entry can ask.
+2. **A moderator joins.** That is an administrator, from
+   `GET .../moderation/pending` and `POST .../moderation/{id}/join`. For an
+   external user it can also be their sponsor, who is told of the request
+   (`GET .../sponsored/moderation`, then `POST .../sponsored/moderation/{id}/join`
+   with a fresh second factor). Nobody moderates their own session.
+3. **The user connects** within 15 minutes of the join. One moderation
+   admits one session, and the session records which moderation admitted it.
+   Another session needs the moderator to join again.
+4. **The moderator watches** that session read-only
+   (`POST .../moderation/{id}/watch`, with a fresh second factor).
+5. **Ending the moderation ends the session** on the broker
+   (`POST .../moderation/{id}/end`), for the moderator or the user.
+   - An end the broker did not take is finished by the lifecycle sweep, which
+     ends a session whose moderation is over.
+   - The kill switch ends the moderations a user asked for or moderates
+     (`pam_moderations_ended`). So a session a severed moderator was watching
+     ends too.
+
+A path that runs no session a moderator could watch refuses a moderated
+entry (`moderated_entry_needs_broker`):
+- the browser SSH terminal;
+- an SSH certificate;
+- a temporary access link, at issuing and at redemption.
+
+A Windows app on a moderated host waits for a moderator like a connect.
+An update that leaves `require_moderator` out keeps it, and an entry that
+opens no session, such as a website, cannot require one.
 
 ## External (vendor) users
 
@@ -136,6 +178,9 @@ the install's settings say:
   broker (`POST .../sponsored/sessions/{id}/end`), each with a fresh second
   factor. Watching and ending are audited (`pam.session_watched`,
   `pam.session_ended` with reason `sponsor_ended`).
+- **Moderated by their sponsor.** On an entry that requires a moderator,
+  the sponsor is told of the user's request and can join it as the moderator
+  (see [Moderated sessions](#moderated-sessions)).
 - **A working day at most.** The lifecycle sweep ends the session after 8
   hours, whatever grant it rides. An idle timeout is not enforced yet: the
   broker reports no per-session activity to measure one by.
