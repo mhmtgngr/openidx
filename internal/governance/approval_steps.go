@@ -129,7 +129,48 @@ func (s *Service) resolveStepApprovers(ctx context.Context, orgID string, step A
 	default:
 		return nil, &chainError{fmt.Sprintf("the approval policy has a step of unknown type %q", step.Type)}
 	}
-	return ids, nil
+	return s.withoutExternalApprovers(ctx, orgID, ids)
+}
+
+// withoutExternalApprovers drops external (vendor) users from a step's
+// approvers, keeping the order: an external user never approves (invariant
+// I2). A role an external user cannot hold rules most of them out already;
+// this covers the rest, a group step on an external_allowed group, a manager
+// step, and a specific user. The database refuses an external approver row as
+// well (migration v214), so a step that resolved one would otherwise fail the
+// whole request instead of losing that approver. A step left with too few is
+// refused by the caller's min_approvals check, like any other short step.
+func (s *Service) withoutExternalApprovers(ctx context.Context, orgID string, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return ids, nil
+	}
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id::text FROM users WHERE id = ANY($1::uuid[]) AND org_id = $2 AND user_type = 'external'`, ids, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("check the approvers' user type: %w", err)
+	}
+	defer rows.Close()
+	external := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan an external approver: %w", err)
+		}
+		external[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("check the approvers' user type: %w", err)
+	}
+	if len(external) == 0 {
+		return ids, nil
+	}
+	kept := ids[:0:0]
+	for _, id := range ids {
+		if !external[id] {
+			kept = append(kept, id)
+		}
+	}
+	return kept, nil
 }
 
 // stepProgress is one step's state, from its rows.

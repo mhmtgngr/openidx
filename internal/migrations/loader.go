@@ -1518,5 +1518,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamEntriesProxyRouteUp,
 			DownSQL:     pamEntriesProxyRouteDown,
 		},
+		{
+			Version:     214,
+			Name:        "external_identities",
+			Description: "External (vendor) identities, Phase 1 of the third-party access framework. vendor_organizations (the supplier, inside the tenant, FORCE RLS like every org-scoped table; status active/suspended/closed, contract dates, allowed email domains, default account expiry 1-365 days, default sponsor). users gets user_type (internal for every existing row, external, service), account_status (the external lifecycle: invited, pending_mfa, active, suspended, expired, disabled; 'active' and inert for internal users, who keep users.enabled), vendor_org_id, sponsor_user_id, account_expires_at, status_changed_at and access_severed_at. A CHECK makes vendor, expiry and, while the account is live, sponsor mandatory for an external user and absent for everyone else (invariant I1); deleting a sponsor sets the column NULL, which the CHECK refuses for a live account, so the delete path suspends the sponsor's external users first and a raw DELETE fails loudly. groups.external_allowed (FALSE everywhere, so an external user can join only a group an administrator marked, invariant I3). user_invitations gets the same four fields under the same CHECK. Down disables external users and drops everything.",
+			UpSQL:       externalIdentitiesUp,
+			DownSQL:     externalIdentitiesDown,
+		},
 	}
 }

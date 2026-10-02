@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **External (vendor) users, part one: the identity model.** A supplier's people can be users of the organization, tied to a vendor organization, with a sponsor and an account expiry (migration v214). Vendor organizations are managed at `/api/v1/identity/vendor-orgs`. Closing one disables its external users and cannot be undone. The database itself refuses three things for an external user: a role other than `user`, a group not marked open to external users, and a delegation or an approval. Deleting or disabling a sponsor suspends the external users they sponsor. Invitations, the first-login MFA gate, the expiry sweep and the console pages follow in the next parts.
+
 ### Fixed
 - **A brokered proxy route's Connect asks who is calling.** `POST
   /guacamole/connections/:routeId/connect` (the RDP, SSH, VNC and Telnet

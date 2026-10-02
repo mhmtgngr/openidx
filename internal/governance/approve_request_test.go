@@ -33,7 +33,8 @@ const (
 
 const approvalSchema = `
 CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY, org_id UUID, username VARCHAR(255), enabled BOOLEAN DEFAULT TRUE,
-    first_name VARCHAR(255), last_name VARCHAR(255), manager_id UUID);
+    first_name VARCHAR(255), last_name VARCHAR(255), manager_id UUID,
+    user_type VARCHAR(16) NOT NULL DEFAULT 'internal');
 CREATE TABLE IF NOT EXISTS roles (id UUID PRIMARY KEY, name VARCHAR(255), org_id UUID);
 CREATE TABLE IF NOT EXISTS user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ, PRIMARY KEY (user_id, role_id));
 CREATE TABLE IF NOT EXISTS groups (id UUID PRIMARY KEY, name VARCHAR(255), org_id UUID);

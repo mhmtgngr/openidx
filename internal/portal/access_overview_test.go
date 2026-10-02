@@ -34,7 +34,9 @@ func TestGetAccessOverview_CrossPillar(t *testing.T) {
 		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID)`,
 		`CREATE TABLE roles (id UUID PRIMARY KEY, name VARCHAR(255))`,
 		`CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID)`,
-		`CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255))`,
+		`CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255),
+    external_allowed BOOLEAN NOT NULL DEFAULT false
+)`,
 		`CREATE TABLE applications (id UUID PRIMARY KEY, name VARCHAR(255), enabled BOOLEAN, route_id UUID, org_id UUID)`,
 		`CREATE TABLE user_application_assignments (user_id UUID, application_id UUID, org_id UUID)`,
 		`CREATE TABLE group_application_assignments (group_id UUID, application_id UUID, org_id UUID)`,

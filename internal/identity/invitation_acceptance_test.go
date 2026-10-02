@@ -178,9 +178,13 @@ func TestTheInvitedAccountGetsItsPasswordAndItsGrantsOrNeither(t *testing.T) {
 			id UUID PRIMARY KEY,
 			password_hash TEXT,
 			password_changed_at TIMESTAMPTZ,
-			org_id UUID NOT NULL);
+			org_id UUID NOT NULL,
+    user_type VARCHAR(16) NOT NULL DEFAULT 'internal', account_status VARCHAR(16) NOT NULL DEFAULT 'active', vendor_org_id UUID, sponsor_user_id UUID, account_expires_at TIMESTAMPTZ, status_changed_at TIMESTAMPTZ, access_severed_at TIMESTAMPTZ
+);
 		CREATE TABLE roles (id UUID PRIMARY KEY, name TEXT NOT NULL, org_id UUID NOT NULL);
-		CREATE TABLE groups (id UUID PRIMARY KEY, name TEXT NOT NULL, org_id UUID NOT NULL);
+		CREATE TABLE groups (id UUID PRIMARY KEY, name TEXT NOT NULL, org_id UUID NOT NULL,
+    external_allowed BOOLEAN NOT NULL DEFAULT false
+);
 		CREATE TABLE user_roles (user_id UUID NOT NULL, role_id UUID NOT NULL, org_id UUID NOT NULL);
 		CREATE TABLE group_memberships (user_id UUID NOT NULL, group_id UUID NOT NULL, org_id UUID NOT NULL);
 	`); err != nil {

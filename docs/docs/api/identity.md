@@ -17,6 +17,18 @@ The Identity Service manages users, groups, roles, permissions, sessions, identi
 | POST | `/api/v1/identity/users/export` | Export users (CSV) |
 | POST | `/api/v1/identity/users/import` | Import users (CSV) |
 
+An external (vendor) user is a user with `userType` `external`. Such a user carries `accountStatus`, `vendorOrgId`, `sponsorUserId` and `accountExpiresAt`, which are read-only through these routes. An external user may hold only the `user` role and join only groups whose `attributes.externalAllowed` is `"true"`. Anything else is refused with `403` and a `code`: `external_role_cap`, `external_group_not_allowed` or `external_account_not_live`.
+
+## Vendor organizations
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/identity/vendor-orgs` | List vendor organizations, with external-user counts by status |
+| POST | `/api/v1/identity/vendor-orgs` | Create a vendor organization |
+| GET | `/api/v1/identity/vendor-orgs/:id` | Get a vendor organization |
+| PUT | `/api/v1/identity/vendor-orgs/:id` | Update one (status `active` or `suspended`) |
+| POST | `/api/v1/identity/vendor-orgs/:id/close` | Close one, with a `reason`. Its external users are disabled. This cannot be undone |
+
 ## Roles & Permissions
 
 | Method | Path | Description |

@@ -142,6 +142,8 @@
     "GET /users/me/sessions",
     "GET /users/me/tokens",
     "GET /users/search",
+    "GET /vendor-orgs",
+    "GET /vendor-orgs/:id",
     "PATCH /passwordless/settings",
     "PATCH /risk/policies/:id/toggle",
     "POST /biometric/policies",
@@ -174,6 +176,8 @@
     "POST /users/me/privacy/consents",
     "POST /users/me/privacy/dsar",
     "POST /users/me/tokens",
+    "POST /vendor-orgs",
+    "POST /vendor-orgs/:id/close",
     "PUT /biometric/policies/:policy_id",
     "PUT /device-trust-settings",
     "PUT /groups/:id",
@@ -185,7 +189,8 @@
     "PUT /roles/:id/permissions",
     "PUT /users/:id",
     "PUT /users/:id/roles",
-    "PUT /users/me"
+    "PUT /users/me",
+    "PUT /vendor-orgs/:id"
   ],
   "issue_rules": [
     {
