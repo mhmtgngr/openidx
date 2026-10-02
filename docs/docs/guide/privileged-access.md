@@ -82,6 +82,11 @@ for the lack of one.
    `require_moderator` opens a session only while a moderator watches it.
    See [Moderated sessions](#moderated-sessions).
 
+The entry form also shows, locked, what policy holds an external (vendor)
+user's session to on every entry: a launch approval by their sponsor,
+recording, the overlay, no clipboard, drive or printing, and no password
+reveal. The form's own switches decide for everyone else.
+
 ## For users: getting a session
 
 1. Open **My Apps & Network**. Your privileged connections appear
@@ -102,9 +107,15 @@ for the lack of one.
 
 ## Moderated sessions
 
-An entry that requires a moderator (`require_moderator: true` on
-`POST /api/v1/access/pam/entries` or `PUT .../entries/{id}`) opens a session
-only while a second person is watching it.
+An entry that requires a moderator opens a session only while a second
+person is watching it. Tick **Require a moderator** on the entry in **PAM
+Connections**, or set `require_moderator: true` on
+`POST /api/v1/access/pam/entries` or `PUT .../entries/{id}`.
+
+In the console, **Connect** on such an entry asks the user to ask for a
+moderator, and connects once one has joined. The moderator's side is in
+**Access Requests → Pending approvals**: the requests waiting for a moderator,
+and the sessions the caller moderates, with **Watch** and **End**.
 
 1. **The user asks for a moderator.** Connect answers `428` with
    `moderation_required` until one has joined. The user asks with
@@ -148,8 +159,8 @@ the install's settings say:
   whatever grant they hold (`external_target_not_open`).
 - **Approved by their sponsor.** Every launch needs a launch approval, even
   on an entry that asks for none. The user asks for one with **Request
-  access**. Their sponsor is told, finds it in their queue
-  (`GET /api/v1/access/pam/sponsored/entry-requests`) and approves or denies
+  access**. Their sponsor is told, finds it in **Access Requests → Pending
+  approvals** (`GET /api/v1/access/pam/sponsored/entry-requests`) and approves or denies
   it (`POST .../sponsored/entry-requests/{id}/approve` or `/deny`, with a fresh
   second factor). An administrator who is not the sponsor can deny it but not
   approve it (`external_launch_needs_sponsor`). No administrator bypass
@@ -173,7 +184,8 @@ the install's settings say:
 - **Watched by their sponsor.** When the session starts, the sponsor is
   told, and the session records when (`sponsor_notified_at`; empty when the
   sponsor switched that notification off). The sponsor lists their external
-  users' live sessions (`GET /api/v1/access/pam/sponsored/sessions`), watches
+  users' live sessions in **Access Requests → Pending approvals**
+  (`GET /api/v1/access/pam/sponsored/sessions`), watches
   one read-only (`POST .../sponsored/sessions/{id}/watch`) and ends one on the
   broker (`POST .../sponsored/sessions/{id}/end`), each with a fresh second
   factor. Watching and ending are audited (`pam.session_watched`,

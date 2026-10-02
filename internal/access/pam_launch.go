@@ -981,7 +981,8 @@ func (s *Service) handlePamListSponsoredRequests(c *gin.Context) {
 	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.id, r.entry_id, e.name, e.entry_type, r.requester_id::text,
-		       r.reason, r.status, r.approver_id::text, r.decided_at, r.expires_at, r.created_at
+		       r.reason, r.status, r.approver_id::text, r.decided_at, r.expires_at, r.created_at,
+		       COALESCE(NULLIF(u.email, ''), u.username, ''), u.user_type = 'external'
 		  FROM pam_entry_access_requests r
 		  JOIN pam_entries e ON e.id = r.entry_id AND e.org_id = r.org_id
 		  JOIN users u ON u.id = r.requester_id AND u.org_id = r.org_id
@@ -999,17 +1000,22 @@ func (s *Service) handlePamListSponsoredRequests(c *gin.Context) {
 
 // PamAccessRequest is the API row for the approval queues.
 type PamAccessRequest struct {
-	ID          string     `json:"id"`
-	EntryID     string     `json:"entry_id"`
-	EntryName   string     `json:"entry_name"`
-	EntryType   string     `json:"entry_type"`
-	RequesterID string     `json:"requester_id"`
-	Reason      string     `json:"reason,omitempty"`
-	Status      string     `json:"status"`
-	ApproverID  *string    `json:"approver_id,omitempty"`
-	DecidedAt   *time.Time `json:"decided_at,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID          string `json:"id"`
+	EntryID     string `json:"entry_id"`
+	EntryName   string `json:"entry_name"`
+	EntryType   string `json:"entry_type"`
+	RequesterID string `json:"requester_id"`
+	// Requester names who asked, for a queue a person reads, and External
+	// says the requester is an external user, whose launch only their
+	// sponsor approves.
+	Requester  string     `json:"requester"`
+	External   bool       `json:"external"`
+	Reason     string     `json:"reason,omitempty"`
+	Status     string     `json:"status"`
+	ApproverID *string    `json:"approver_id,omitempty"`
+	DecidedAt  *time.Time `json:"decided_at,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 func scanPamAccessRequests(rows pgx.Rows, logger *zap.Logger) []PamAccessRequest {
@@ -1018,7 +1024,8 @@ func scanPamAccessRequests(rows pgx.Rows, logger *zap.Logger) []PamAccessRequest
 		var r PamAccessRequest
 		var reason *string
 		if err := rows.Scan(&r.ID, &r.EntryID, &r.EntryName, &r.EntryType, &r.RequesterID,
-			&reason, &r.Status, &r.ApproverID, &r.DecidedAt, &r.ExpiresAt, &r.CreatedAt); err != nil {
+			&reason, &r.Status, &r.ApproverID, &r.DecidedAt, &r.ExpiresAt, &r.CreatedAt,
+			&r.Requester, &r.External); err != nil {
 			logger.Warn("scanPamAccessRequests: scan failed", zap.Error(err))
 			continue
 		}
@@ -1041,9 +1048,11 @@ func (s *Service) handlePamListRequests(c *gin.Context) {
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.id, r.entry_id, e.name, e.entry_type, r.requester_id::text,
-		       r.reason, r.status, r.approver_id::text, r.decided_at, r.expires_at, r.created_at
+		       r.reason, r.status, r.approver_id::text, r.decided_at, r.expires_at, r.created_at,
+		       COALESCE(NULLIF(u.email, ''), u.username, ''), COALESCE(u.user_type, '') = 'external'
 		  FROM pam_entry_access_requests r
 		  JOIN pam_entries e ON e.id = r.entry_id
+		  LEFT JOIN users u ON u.id = r.requester_id AND u.org_id = r.org_id
 		 WHERE r.org_id = $1 AND r.status = 'pending'
 		 ORDER BY r.created_at DESC`, org.ID)
 	if err != nil {
@@ -1072,9 +1081,11 @@ func (s *Service) handlePamListMyRequests(c *gin.Context) {
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.id, r.entry_id, e.name, e.entry_type, r.requester_id::text,
-		       r.reason, r.status, r.approver_id::text, r.decided_at, r.expires_at, r.created_at
+		       r.reason, r.status, r.approver_id::text, r.decided_at, r.expires_at, r.created_at,
+		       COALESCE(NULLIF(u.email, ''), u.username, ''), COALESCE(u.user_type, '') = 'external'
 		  FROM pam_entry_access_requests r
 		  JOIN pam_entries e ON e.id = r.entry_id
+		  LEFT JOIN users u ON u.id = r.requester_id AND u.org_id = r.org_id
 		 WHERE r.org_id = $1 AND r.requester_id::text = $2
 		 ORDER BY r.created_at DESC
 		 LIMIT 100`, org.ID, userID)

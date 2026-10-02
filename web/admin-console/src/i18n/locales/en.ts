@@ -10,6 +10,69 @@ const en = {
   // dialog every destructive action routes through -- stayed English on a
   // console that is otherwise translated.
   components: {
+    // The privileged-session decisions in the Access Requests approvals tab.
+    // Connect on an entry whose session waits for a moderator.
+    moderationWait: {
+      title: '{{name}} needs a moderator',
+      description: 'A session on this connection opens only while a moderator watches it. Ask for one; once a moderator joins, you can connect.',
+      reason: 'Reason (optional)',
+      ask: 'Ask for a moderator',
+      askFailed: 'Could not ask for a moderator',
+      waiting: 'Waiting for a moderator to join…',
+      joined: 'A moderator joined. Connect within 15 minutes.',
+      connect: 'Connect',
+      expired: 'Nobody joined in time. Ask again.',
+      ended: 'The moderation ended. Ask again.',
+      denied: 'The moderator turned the request down.',
+    },
+    sessionQueue: {
+      launches: {
+        title: 'Privileged session approvals',
+        description: 'Launch approvals waiting for you. A vendor user\'s launch is approved by their sponsor.',
+      },
+      moderation: {
+        title: 'Waiting for a moderator',
+        description: 'Sessions that open only while a moderator watches. Join one to let it start.',
+      },
+      moderating: {
+        title: 'Sessions you moderate',
+        description: 'Watch the session once it starts, or end it. Ending the moderation ends the session.',
+      },
+      sponsored: {
+        title: 'Live sessions of vendor users you sponsor',
+        description: 'Watch one read-only, or end it.',
+      },
+      table: {
+        requester: 'Requester',
+        vendorUser: 'Vendor user',
+        entry: 'Connection',
+        reason: 'Reason',
+        asked: 'Asked',
+        started: 'Started',
+        session: 'Session',
+        actions: 'Actions',
+      },
+      external: 'Vendor user',
+      recorded: 'Recorded',
+      live: 'Live',
+      notStarted: 'Not started yet',
+      approve: 'Approve',
+      deny: 'Deny',
+      join: 'Join as moderator',
+      watch: 'Watch',
+      end: 'End',
+      sponsorApproves: 'Only their sponsor can approve',
+      toasts: {
+        approved: 'Launch approved',
+        denied: 'Launch denied',
+        decideFailed: 'The decision was not recorded',
+        joined: 'You are the moderator. The session can start now.',
+        joinFailed: 'Could not join as the moderator',
+        watchFailed: 'Could not open the session to watch',
+        ended: 'Session ended',
+        endFailed: 'Could not end the session',
+      },
+    },
     myApps: {
       heading: 'Sign in to your apps',
       subtitle: 'Click one and OpenIDX signs you in automatically (single sign-on) — no separate password.',
@@ -34,6 +97,8 @@ const en = {
       nothingToLaunch: 'Nothing to launch',
       approvalRequired: 'Approval required',
       approvalRequiredDesc: 'Request access to this connection first.',
+      moderationRequired: 'This connection needs a moderator',
+      moderationRequiredDesc: 'Open it from PAM Connections to ask for one.',
       launchFailed: 'Launch failed',
     },
     windowsApps: {
@@ -1850,6 +1915,8 @@ const en = {
         close: 'Close',
         until: 'until {{date}}',
         days: '{{n}} days',
+        closedList: 'Closed list',
+        targets: 'Targets',
         status: {
           active: 'Active',
           suspended: 'Suspended',
@@ -1878,7 +1945,27 @@ const en = {
         defaultDays: 'Default account lifetime (days)',
         defaultSponsor: 'Default sponsor',
         notes: 'Notes',
+        closedList: 'Closed list',
+        closedListHint:
+          'Its users ask for and launch only the PAM connections, applications and network services opened to it under Targets.',
         save: 'Save',
+      },
+      targetsDialog: {
+        title: 'What is open to {{name}}',
+        description: 'On a closed list, the vendor\'s users ask for and launch these and nothing else, whatever grant they hold.',
+        resourceName: 'targets',
+        empty: 'Nothing is open yet: the vendor\'s users can ask for and launch nothing.',
+        type: 'Type',
+        target: 'Target',
+        choose: 'Choose…',
+        serviceId: 'Network service id',
+        open: 'Open',
+        withdraw: 'Withdraw',
+        types: {
+          pam_entry: 'PAM connection',
+          application: 'Application',
+          network_service: 'Network service',
+        },
       },
       toasts: {
         suspend: '{{name}} was suspended',
@@ -4345,6 +4432,19 @@ const en = {
         allowReveal: 'Allow password reveal',
         requireApproval: 'Require approval to connect',
         recordSession: 'Record session',
+        requireModerator: 'Require a moderator',
+        requireModeratorHint:
+          'A session opens only after a moderator (an administrator, or a vendor user\'s sponsor) joins to watch it.',
+        externalPolicyTitle: 'Enforced by policy for vendor users',
+        externalPolicy: {
+          launchApproval: 'Launch approval, by their sponsor',
+          recording: 'Recorded',
+          overlay: 'Over the overlay only',
+          hardened: 'No clipboard, drive or printing',
+          reveal: 'Password reveal',
+        },
+        externalPolicyNote:
+          'An external (vendor) user\'s session runs under these whatever this entry says; the settings above apply to everyone else.',
         browserTerminal: 'Open in browser terminal (clientless SSH, no Guacamole tab)',
         save: 'Save',
         create: 'Create',
