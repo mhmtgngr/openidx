@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A PAM connection can be requested and approved like any other access.** Access Requests has a PAM Connection type (`resource_type: pam_entry`): the requester picks an entry they already see but cannot connect to, for a duration. The request goes through the approval policies, and fulfilling it writes a `connect` grant on the entry that ends with the request's window and names the request (migration v216). The expiry sweep and the kill switch end that grant alone, so a standing grant the user holds on the same entry stays. An entry the requester cannot see answers 404 as if it did not exist, one they can already connect to 409, and a request with no duration 400. Connect, reveal and the request check read one grant predicate (`internal/pamgrant`).
 
 ### Fixed
+- **An approved vault credential request is granted when its approver approves it.** The approval route read the request back without its end, and a vault credential checkout refuses to be unbounded, so an approval there was recorded and the credential was never checked out; only an auto-approved request was granted. The same read gives a PAM connection request its window.
 - **Severing a user now ends their PAM entry surface too.** The kill switch,
   disabling or deleting a user, and the lifecycle sweep that catches every
   other disable path (SCIM, directory sync, lifecycle policies) expire the
