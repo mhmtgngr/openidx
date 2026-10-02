@@ -210,8 +210,10 @@ has an internal sponsor and has an end date. None of the three is optional.
   users ask only for the PAM entries, applications and network services
   opened to that vendor (`/vendor-orgs/{id}/targets`), and are shown only
   those PAM entries. Anything else is refused (`external_target_not_open`).
-  Off by default: an administrator turns it on per vendor. An external user
-  never asks for a vault credential (`external_reveal_forbidden`).
+  Off by default: an administrator turns it on per vendor, with the
+  **Closed list** switch on **External Users → Vendor organizations**, and
+  opens targets under **Targets**. An external user never asks for a vault
+  credential (`external_reveal_forbidden`).
 - **Who approves their requests.** The sponsor, first. An external user's
   access request starts with a step for their sponsor, before any step the
   approval policy adds, and the sponsor is not an approver of the policy's

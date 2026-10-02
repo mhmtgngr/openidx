@@ -812,6 +812,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// queue, joins (→ active, unblocking connect), or ends (kill switch).
 		api.POST("/pam/moderation/request", svc.handleRequestModeration)
 		api.GET("/pam/moderation/pending", svc.requireAdminRole(), svc.handleListPendingModeration)
+		api.GET("/pam/moderation/moderating", svc.handleListModerating)
 		api.GET("/pam/moderation/:id", svc.handleGetModerationStatus)
 		api.POST("/pam/moderation/:id/join", svc.requireAdminRole(), svc.handleJoinModeration)
 		api.POST("/pam/moderation/:id/end", svc.handleEndModeration)

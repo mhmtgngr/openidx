@@ -126,16 +126,41 @@ func TestAModeratedEntryOpensOnlyWhileItsModeratorWatches(t *testing.T) {
 	if code, body := ask(f.operator, mod); code != http.StatusOK || body["id"] != first || body["reused"] != true {
 		t.Errorf("asking again: %d %v, want the same request back", code, body)
 	}
-	if code, body := f.call(f.admin, http.MethodGet, "/pam/moderation/pending", "", "admin"); code != http.StatusOK || !strings.Contains(fmt.Sprint(body), mod) {
-		t.Errorf("the administrators' queue does not name the entry: %d %v", code, body)
+	if code, body := f.call(f.admin, http.MethodGet, "/pam/moderation/pending", "", "admin"); code != http.StatusOK ||
+		!strings.Contains(fmt.Sprint(body), mod) || !strings.Contains(fmt.Sprint(body), "xp-operator-"+f.suffix) {
+		t.Errorf("the administrators' queue does not name the entry and who asked: %d %v", code, body)
 	}
 	if code, body := f.call(f.operator, http.MethodPost, "/pam/moderation/"+first+"/join", "{}", "admin"); code != http.StatusConflict {
 		t.Errorf("the requester moderates their own session: %d %v, want 409", code, body)
 	}
 	join(f.admin, first)
+	// moderating lists what the caller moderates, and whether its session is
+	// live yet.
+	moderating := func(userID string) string {
+		t.Helper()
+		code, body := f.call(userID, http.MethodGet, "/pam/moderation/moderating", "")
+		if code != http.StatusOK {
+			t.Fatalf("the moderations held by %s: %d %v", userID, code, body)
+		}
+		for _, m := range body["moderations"].([]interface{}) {
+			if row := m.(map[string]interface{}); row["id"] == first {
+				return fmt.Sprint(row["session_live"])
+			}
+		}
+		return "absent"
+	}
+	if got := moderating(f.admin); got != "false" {
+		t.Errorf("the moderator's list before the launch: %s, want the moderation, not yet live", got)
+	}
+	if got := moderating(otherAdmin); got != "absent" {
+		t.Errorf("someone who does not moderate it lists the moderation: %s", got)
+	}
 
 	// One moderation, one session.
 	session := launched(f.operator)
+	if got := moderating(f.admin); got != "true" {
+		t.Errorf("the moderator's list after the launch: %s, want the session live", got)
+	}
 	if got := f.scalar(`SELECT COALESCE(moderation_id::text, '') FROM pam_entry_sessions WHERE id = $1`, session); got != first {
 		t.Errorf("the session names moderation %q, want %q", got, first)
 	}

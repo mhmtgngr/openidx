@@ -8822,6 +8822,19 @@ paths:
 
   # ---- Sponsors and moderators (third-party access framework, Phase 2) ----
 
+  /api/v1/access/pam/moderation/moderating:
+    get:
+      tags: [PAM Moderation]
+      summary: List the sessions the caller moderates
+      description: >
+        The live PAM entry sessions a moderation the caller joined admitted,
+        with Watch and End in the console.
+      operationId: pamListModerating
+      x-openidx-handler: internal/access.(*Service).handleListModerating
+      responses:
+        '200':
+          description: The sessions
+
   /api/v1/access/pam/moderation/{id}/watch:
     post:
       tags: [PAM Moderation]

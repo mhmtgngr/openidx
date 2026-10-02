@@ -45,6 +45,11 @@ func TestAnExternalUsersLaunchIsApprovedByTheirSponsor(t *testing.T) {
 		requests, _ := body["requests"].([]interface{})
 		for _, r := range requests {
 			if m, _ := r.(map[string]interface{}); m["id"] == requestID {
+				// The queue names who asked, and that they are a vendor user.
+				if m["requester"] != f.externalAccount || m["external"] != true {
+					t.Errorf("the sponsor's queue names the requester %v (external %v), want %s, external",
+						m["requester"], m["external"], f.externalAccount)
+				}
 				return true
 			}
 		}
