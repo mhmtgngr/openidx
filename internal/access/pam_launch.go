@@ -185,6 +185,37 @@ type pamLaunchEntry struct {
 	RecordSession     bool
 	ReachMode         string
 	ZitiInterceptPort int
+	// AdminBypass names the gates this launch passed only because the caller
+	// is an administrator ("grant", "approval"); empty otherwise. Set by the
+	// launch handler, never loaded, and carried to pam.entry_connected.
+	AdminBypass []string
+}
+
+// pamAdminBypass names the gates an administrator's launch of entry passes
+// only because the caller is an administrator: "grant" when no connect grant
+// (user, role or group) would have admitted them, "approval" when the entry
+// requires an approval, which administrators never spend.
+//
+// Administrators pass both gates on every launch path, and the audit event
+// said nothing about it: an administrator connecting to an entry nobody
+// granted them read the same as an operator using their grant. Called only
+// for administrators. A failed grant lookup counts as a bypass, so an error
+// records the bypass rather than hiding it.
+func (s *Service) pamAdminBypass(ctx context.Context, orgID string, entry *pamLaunchEntry, userID string, roles []string) []string {
+	gates := []string{}
+	allowed, err := s.pamEntryAllowed(ctx, orgID, entry.ID, userID, roles, "connect")
+	if err != nil {
+		s.logger.Warn("pamAdminBypass: grant lookup failed; recording the launch as a grant bypass",
+			zap.String("entry_id", entry.ID), zap.Error(err))
+		allowed = false
+	}
+	if !allowed {
+		gates = append(gates, "grant")
+	}
+	if entry.RequireApproval {
+		gates = append(gates, "approval")
+	}
+	return gates
 }
 
 // dialTarget returns the host:port guacd should open the protocol connection
@@ -248,7 +279,9 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 		return // loadPamLaunchEntry already wrote the error
 	}
 
-	if !isAdmin {
+	if isAdmin {
+		entry.AdminBypass = s.pamAdminBypass(ctx, org.ID, &entry, userID, pamCallerRoles(c))
+	} else {
 		allowed, aclErr := s.pamEntryAllowed(ctx, org.ID, entryID, userID, pamCallerRoles(c), "connect")
 		if aclErr != nil {
 			s.logger.Error("connectPamEntry: ACL check failed", zap.Error(aclErr))
@@ -617,8 +650,19 @@ func (s *Service) recordPamLaunch(c *gin.Context, orgID string, entry *pamLaunch
 		"user_id":             userID,
 		"credential_injected": injected,
 		"recorded":            entry.RecordSession,
+		"admin_bypass":        len(entry.AdminBypass) > 0,
+		"admin_bypassed":      adminBypassed(entry.AdminBypass),
 	})
 	return sessionID
+}
+
+// adminBypassed renders the bypassed gates for the audit event: always a
+// list, so a filter on the field never has to tell null from empty.
+func adminBypassed(gates []string) []string {
+	if gates == nil {
+		return []string{}
+	}
+	return gates
 }
 
 // ---- Approval lifecycle (pre-connect gate) ----
