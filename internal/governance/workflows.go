@@ -821,10 +821,16 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 			s.logger.Error("Failed to update request status", zap.Error(err))
 		}
 
+		// The request's window is read back with it: a PAM entry connection, a
+		// vault credential and a network service are granted until it ends, and
+		// refuse an unbounded grant, so without it an approval here was
+		// recorded and granted nothing.
 		var request AccessRequest
 		err = s.db.Pool.QueryRow(c.Request.Context(),
-			`SELECT id, requester_id, resource_type, resource_id, resource_name, status FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
-		).Scan(&request.ID, &request.RequesterID, &request.ResourceType, &request.ResourceID, &request.ResourceName, &request.Status)
+			`SELECT id, requester_id, resource_type, resource_id, resource_name, status, expires_at
+			   FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
+		).Scan(&request.ID, &request.RequesterID, &request.ResourceType, &request.ResourceID, &request.ResourceName, &request.Status,
+			&request.ExpiresAt)
 		if err != nil {
 			s.logger.Error("Failed to reload approved request for fulfillment", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{
