@@ -66,6 +66,12 @@ var severRegister = map[string]struct{ verdict, reason string }{
 			"so a concurrent refresh grant cannot slip through against a still-present user. Verified by " +
 			"reading that caller; this function is the row removal and nothing else, as its own comment says."},
 
+	"internal/identity/user_repository.go::Update": {revokedByCaller,
+		"Service.UpdateUser calls this and then deprovisionUser -- which writes the marker -- whenever the edit " +
+			"leaves the account disabled. Verified by reading that caller. This function writes the row, and enqueues " +
+			"the account-disabled signal itself on the edit that turns the account off, since only the write can tell " +
+			"that edit apart from an edit of an account already disabled."},
+
 	// ---- the grant shape -------------------------------------------------
 
 	"internal/identity/group_repository.go::Delete": {revokedByCaller,
@@ -81,6 +87,13 @@ var severRegister = map[string]struct{ verdict, reason string }{
 			"still hold. Every caller was read: governance's review decision (both the single and batch " +
 			"paths, after tx.Commit), its JIT expiry sweep, EndAllForUser's two callers (deprovisionUser and " +
 			"the kill switch) and EndAllForDisabledUsers via the lifecycle sweep."},
+
+	"internal/jitgrant/jitgrant.go::RevokeRequest": {revokedByCaller,
+		"the request-scoped twin of Revoke, for the same reason: it takes an Execer so a caller can run it inside " +
+			"its own transaction, and the marker belongs after the commit. Its role branch removes only the assignment " +
+			"whose window is the request's (migration v223). Every caller was read: governance's JIT expiry sweep cuts " +
+			"the tokens after it for a type the token carries, EndAllForUser's two callers (deprovisionUser and the " +
+			"kill switch) write the marker, and EndAllForDisabledUsers returns the users the lifecycle sweep then cuts."},
 
 	"internal/directory/sync.go::deleteSyncedGroup": {revokesIndirectly,
 		"the cascade path, fixed: group_memberships.group_id is ON DELETE CASCADE, so deleting a group the " +
@@ -378,8 +391,11 @@ func severCensus(t *testing.T) (severs []string, satisfied, grantShape, signalli
 // is the seam; this counts the account-severing paths that use it.
 //
 // Only the ACCOUNT shape is held to it. Taking a role or a group away is
-// token-claims-change, a different event with a different subject, and is
-// stated here as not done rather than pretended.
+// token-claims-change, a different event. Governance sends it when a role or a
+// group an access request gave begins or ends (internal/governance/
+// claims_signal.go); the other grant-shaped severs -- an access review's
+// revoke, a deleted group, a directory sync, an administrator's edit -- do not
+// send it yet, and that is stated here as not done rather than pretended.
 
 // signalRegister names the account-severing paths that do not enqueue the
 // signal, with why. Same contract as severRegister: only shrinks.
