@@ -33,6 +33,10 @@ describe('ManageAppAccessDialog', () => {
         return Promise.resolve({
           assignments: [
             { principal_type: 'group', principal_id: 'g1', principal_name: 'Engineers', assigned_at: '' },
+            {
+              principal_type: 'user', principal_id: 'u2', principal_name: 'vendor@supplier.example.test',
+              assigned_at: '', expires_at: '2026-10-02T14:00:00Z',
+            },
           ],
         })
       }
@@ -51,6 +55,16 @@ describe('ManageAppAccessDialog', () => {
     // the group grant is listed by name, proving group assignments surface here
     await waitFor(() => expect(screen.getByText('Engineers')).toBeInTheDocument())
     expect(screen.getByRole('button', { name: /Assign/ })).toBeInTheDocument()
+  })
+
+  it('says when an assignment an access request made ends, and nothing for a standing one', async () => {
+    render(
+      <ManageAppAccessDialog appId="app-1" appName="Grafana" open onOpenChange={() => {}} />,
+      { wrapper: wrapper() },
+    )
+    const requested = await screen.findByText('vendor@supplier.example.test')
+    expect(requested.closest('li')).toHaveTextContent(/until .*\(granted by an access request\)/)
+    expect(screen.getByText('Engineers').closest('li')).not.toHaveTextContent(/until/)
   })
 
   // --- require_assignment: the only control that can lock users out of an app ---

@@ -41,6 +41,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 )
 
 // wsRelayUpgrader upgrades the browser terminal connection. The OAuth Bearer is
@@ -120,8 +121,11 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	userID := c.GetString("user_id")
-	isAdmin := s.pamCallerIsAdmin(c)
+	caller, ok := s.resolvePamCaller(c, org.ID)
+	if !ok {
+		return // resolvePamCaller already wrote the error
+	}
+	userID, isAdmin := caller.UserID, caller.Admin
 
 	entry, typeInfo, ok := s.loadPamLaunchEntry(c, org.ID, entryID)
 	if !ok {
@@ -133,7 +137,9 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 	}
 
 	// Permission gate — identical to handlePamConnect. MUST run before upgrade.
-	if !isAdmin {
+	if isAdmin {
+		entry.AdminBypass = s.pamAdminBypass(ctx, org.ID, &entry, userID, pamCallerRoles(c))
+	} else {
 		allowed, aclErr := s.pamEntryAllowed(ctx, org.ID, entryID, userID, pamCallerRoles(c), "connect")
 		if aclErr != nil {
 			s.logger.Error("ws-connect: ACL check failed", zap.Error(aclErr))
@@ -144,6 +150,27 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "not permitted"})
 			return
 		}
+	}
+	if s.refuseIneffectiveExternal(c, org.ID, userID) {
+		return
+	}
+	// The browser terminal records nothing, and an external user's session is
+	// recorded (I5): they connect through the broker, which records.
+	if caller.External {
+		s.refuseExternalPam(c, "pam.launch_denied", entryID, "pam_entry", http.StatusForbidden,
+			externalid.ErrRecordingUnavailable, map[string]interface{}{"entry_id": entryID, "path": "browser_terminal"})
+		return
+	}
+	// Nor is there a session here a moderator could watch.
+	if refuseModeratedEntry(c, &entry, "the browser terminal") {
+		return
+	}
+	// The overlay gate, which this path did not ask before: under
+	// PAM_REQUIRE_ZTNA=enforce a direct-reach SSH entry opened here while its
+	// connect was refused.
+	if v := s.checkPamZTNA(c, org.ID, userID, entryID, entry.ReachMode, typeInfo.Protocol, false); v.Refuse {
+		c.JSON(http.StatusForbidden, gin.H{"error": v.Reason, "code": v.Code})
+		return
 	}
 	// Approval gate — single-use, atomically consumed (admins bypass their own).
 	if entry.RequireApproval && !isAdmin {
@@ -230,7 +257,7 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 	defer wsConn.Close()
 
 	injected := secretType != "" || username != ""
-	sessionID := s.recordPamLaunch(c, org.ID, &entry, "ssh", "", injected, "")
+	sessionID := s.recordPamLaunch(c, org.ID, &entry, "ssh", "", injected, "", "")
 	s.logAuditEvent(c, "pam.ws_connect", entryID, "pam_entry", map[string]interface{}{
 		"entry_id": entryID, "renderer": "wasm-ssh", "protocol": "ssh",
 		"user_id": userID, "session_id": sessionID, "outcome": "started",
@@ -240,7 +267,77 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 		"entry_id": entryID, "user_id": userID, "session_id": sessionID, "outcome": "ended",
 	})
 
+	// The terminal lives as long as its ledger row does. The kill switch, the
+	// lifecycle sweep and the end of the grant that opened it mark the row
+	// ended, on whichever replica they run; the watcher here, on the replica
+	// holding the connection, closes the terminal within a tick of that. When
+	// the terminal closes for any other reason, its row is ended here.
+	stop := make(chan struct{})
+	if sessionID != "" {
+		go s.watchPamTerminal(org.ID, sessionID, stop, func() {
+			_ = wsConn.Close()
+			_ = sshClient.Close()
+		})
+	}
 	bridgeSSHOverWebSocket(wsConn, sshClient, s.logger)
+	close(stop)
+	if sessionID != "" {
+		s.endPamTerminalRow(org.ID, sessionID)
+	}
+}
+
+// pamTerminalWatchInterval is how often a browser terminal reads its ledger
+// row. A variable so a test can shorten it.
+var pamTerminalWatchInterval = 10 * time.Second
+
+// watchPamTerminal closes a browser terminal once its pam_entry_sessions row is
+// no longer active (or gone), and returns when stop closes. A read that fails
+// is retried on the next tick rather than taken as an end: the database being
+// briefly unreachable is not a reason to cut a session nobody ended.
+func (s *Service) watchPamTerminal(orgID, sessionID string, stop <-chan struct{}, closeTerminal func()) {
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: orgID})
+	ticker := time.NewTicker(pamTerminalWatchInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			var status string
+			err := s.db.Pool.QueryRow(ctx,
+				`SELECT status FROM pam_entry_sessions WHERE id = $1 AND org_id = $2`, sessionID, orgID).Scan(&status)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				s.logger.Warn("browser terminal: could not read its session row; checking again next tick",
+					zap.String("session_id", sessionID), zap.Error(err))
+				continue
+			}
+			if err != nil || status != "active" {
+				s.logger.Info("browser terminal: its session was ended; closing it",
+					zap.String("session_id", sessionID))
+				closeTerminal()
+				return
+			}
+		}
+	}
+}
+
+// endPamTerminalRow marks a closed browser terminal's ledger row ended. Before
+// this the row stayed active after the terminal closed, so the ledger listed
+// terminals nobody had open.
+func (s *Service) endPamTerminalRow(orgID, sessionID string) {
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: orgID})
+	tag, err := s.db.Pool.Exec(ctx,
+		`UPDATE pam_entry_sessions SET status = 'ended', ended_at = NOW()
+		  WHERE id = $1 AND org_id = $2 AND status = 'active'`, sessionID, orgID)
+	if err != nil {
+		s.logger.Warn("browser terminal: could not mark its session ended", zap.String("session_id", sessionID), zap.Error(err))
+		return
+	}
+	// A row something else ended first (the sweep, the kill switch, the
+	// sponsor) was published by what ended it.
+	if tag.RowsAffected() == 1 {
+		s.pamSessionEnded(orgID, sessionID, sessionEndTerminalClosed, "")
+	}
 }
 
 // pamEntrySSHHostKey reads the entry's pinned SSH host key from its settings
@@ -463,13 +560,13 @@ func (s *Service) pamLaunchEntryByID(ctx context.Context, entryID, orgID string)
 		       COALESCE(username,''), COALESCE(domain,''), COALESCE(url,''), settings,
 		       COALESCE(vault_secret_id::text,''), COALESCE(credential_entry_id::text,''),
 		       COALESCE(guacamole_connection_id,''), require_approval, record_session,
-		       reach_mode, COALESCE(ziti_intercept_port,0)
+		       reach_mode, COALESCE(ziti_intercept_port,0), require_moderator
 		  FROM pam_entries WHERE id = $1 AND org_id = $2`, entryID, orgID).Scan(
 		&entry.ID, &entry.Name, &entry.EntryType, &entry.Hostname, &entry.Port,
 		&entry.Username, &entry.Domain, &entry.URL, &settingsJSON,
 		&entry.VaultSecretID, &entry.CredentialEntryID,
 		&entry.GuacConnectionID, &entry.RequireApproval, &entry.RecordSession,
-		&entry.ReachMode, &entry.ZitiInterceptPort,
+		&entry.ReachMode, &entry.ZitiInterceptPort, &entry.RequireModerator,
 	); err != nil {
 		return entry, PamEntryType{}, err
 	}

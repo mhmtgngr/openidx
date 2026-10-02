@@ -79,7 +79,7 @@ var publicQueryParams = map[string]string{
 	"actor_id": "object id", "assigned_to": "object id",
 	"requester_id": "object id", "target_id": "object id", "route_id": "object id",
 	"folder_id": "object id", "session_id": "object id", "workflow_id": "object id",
-	"service": "object name", "name": "object name", "domain": "domain name",
+	"vendor_org_id": "object id", "service": "object name", "name": "object name", "domain": "domain name",
 	"username": "the subject's login name, which the log already carries as user_id",
 
 	// OAuth/OIDC parameters that are public BY SPECIFICATION. These are the ones
