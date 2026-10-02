@@ -42,9 +42,11 @@ The Governance Service manages access reviews, certification campaigns, and poli
 | GET | `/api/v1/governance/requests` | List requests (`?requester_id=me` for the caller's own) |
 | POST | `/api/v1/governance/requests` | File a request: `resource_type`, `resource_id`, `resource_name`, `justification`, `priority`, `duration` (`4h`, `1d`, ...; empty for permanent where the type allows it) |
 | GET | `/api/v1/governance/requests/:id` | Get a request |
-| POST | `/api/v1/governance/requests/:id/approve` | Approve, as an approver of the request's current step |
+| POST | `/api/v1/governance/requests/:id/approve` | Approve, as an approver of the request's current step. One person approves at most one step of a request: an approver of an earlier step gets `403` with `four_eyes` |
 | POST | `/api/v1/governance/requests/:id/deny` | Deny, likewise |
 | POST | `/api/v1/governance/requests/:id/cancel` | Cancel a pending request, as its requester |
+
+An external (vendor) user's request starts with a step for their sponsor, and the policy's steps follow, with the sponsor not among their approvers. No auto-approve condition applies to it. A request whose chain has no approver after the sponsor, such as one no policy covers when the default administrator is the sponsor, is refused with `409` and `approval_chain_unbuildable`.
 
 ### Resource types
 

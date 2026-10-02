@@ -385,6 +385,25 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 		`SELECT requester_id FROM access_requests WHERE id = $1 AND org_id = $2`, requestID, org.ID,
 	).Scan(&requesterID)
 
+	// An external (vendor) user's request is approved by their sponsor first
+	// (section 5.6 of the third-party access framework): the person who
+	// vouches for them says the access is for real work, before any step the
+	// policy adds, and the policy's steps follow one place later. The sponsor
+	// is a candidate for none of those steps, so the policy's approvals come
+	// from someone else (four eyes), and no auto-approve condition skips the
+	// sponsor.
+	sponsorID, external, err := s.requesterSponsor(ctx, org.ID, requesterID)
+	if err != nil {
+		return err
+	}
+	offset := 0
+	if external {
+		if err := s.insertApproval(ctx, requestID, sponsorID, 1, 1, org.ID); err != nil {
+			return err
+		}
+		offset = 1
+	}
+
 	// Try to find a matching policy (specific resource first, then generic)
 	var stepsJSON, condJSON []byte
 	var maxWaitHours int
@@ -400,7 +419,11 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 		}
 		// No matching policy — create a default admin approval
 		adminID := "00000000-0000-0000-0000-000000000001"
-		return s.insertApproval(ctx, requestID, adminID, 1, 1, org.ID)
+		if external && adminID == sponsorID {
+			return &chainError{"no approval policy covers " + resourceType + " requests, so the only approver " +
+				"after the external user's sponsor would be the sponsor again: add an approval policy for it"}
+		}
+		return s.insertApproval(ctx, requestID, adminID, 1+offset, 1, org.ID)
 	}
 
 	// V-007: evaluate the policy's typed auto_approve_conditions before
@@ -411,7 +434,7 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 		if uerr := json.Unmarshal(condJSON, &cond); uerr != nil {
 			s.logger.Warn("createApprovalRows: malformed auto_approve_conditions; ignoring",
 				zap.String("request_id", requestID), zap.Error(uerr))
-		} else if s.tryAutoApprove(ctx, requestID, &cond) {
+		} else if !external && s.tryAutoApprove(ctx, requestID, &cond) {
 			return nil
 		}
 	}
@@ -444,11 +467,14 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 			s.logger.Debug("Auto-approval step", zap.Int("step", i+1))
 			continue
 		}
-		order := step.effectiveOrder(i)
+		order := step.effectiveOrder(i) + offset
 		need := step.effectiveMinApprovals()
 		approvers, err := s.resolveStepApprovers(ctx, org.ID, step, requesterID)
 		if err != nil {
 			return err
+		}
+		if external {
+			approvers = withoutApprover(approvers, sponsorID)
 		}
 		if len(approvers) < need {
 			return &chainError{fmt.Sprintf("approval step %d needs %d approvals but has %d eligible approvers",
@@ -774,6 +800,31 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 				active, callerStep),
 			"status": "pending",
 			"step":   active,
+		})
+		return
+	}
+
+	// Four eyes across steps (section 6.7 of the third-party access
+	// framework): one person approves at most one step of a request. Someone
+	// who is a candidate in two steps (a manager who also holds the approver
+	// role, an external user's sponsor) could otherwise carry the request
+	// through every step alone, and a two-step chain would be one person's
+	// decision. They can still deny.
+	var approvedAnotherStep bool
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT EXISTS (SELECT 1 FROM access_request_approvals
+		                 WHERE request_id = $1 AND approver_id = $2 AND org_id = $3
+		                   AND decision = 'approved' AND step_order <> $4)`,
+		id, approverID, org.ID, callerStep,
+	).Scan(&approvedAnotherStep); err != nil {
+		s.logger.Error("Failed to check the approver's other steps", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve request"})
+		return
+	}
+	if approvedAnotherStep {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "you approved an earlier step of this request; this step needs someone else's approval",
+			"code":  "four_eyes",
 		})
 		return
 	}
