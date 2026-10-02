@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The audit trail shows when an administrator got into a PAM entry only by being one.** `pam.entry_connected` now carries `admin_bypass`, plus `admin_bypassed`, which lists the gates skipped: `grant`, `approval`, or both. It covers Connect, the in-browser SSH terminal and Windows app launches. Before, an administrator reaching an entry nobody granted them looked the same as an operator using a grant.
+
 ## [1.39.0] - 2026-09-28
 
 ### Security
