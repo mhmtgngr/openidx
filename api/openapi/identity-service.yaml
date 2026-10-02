@@ -4965,6 +4965,170 @@ paths:
         '409':
           description: Already closed
 
+  /api/v1/identity/external-users:
+    get:
+      tags: [External Users]
+      summary: List external users
+      description: Each external account with its vendor, sponsor, status, end date and second factor; `vendor_org_id` narrows the list to one vendor.
+      operationId: listExternalUsers
+      x-openidx-handler: internal/identity.(*Service).handleListExternalUsers
+      parameters:
+        - name: vendor_org_id
+          in: query
+          required: false
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The external users
+
+  /api/v1/identity/external-users/{id}/suspend:
+    post:
+      tags: [External Users]
+      summary: Suspend an external user
+      description: >
+        Severs the account's access; a new sponsor may reactivate it within the
+        grace period (decision D5). Needs a reason. The tenant's SSF receivers
+        are told `session-revoked`.
+      operationId: suspendExternalUser
+      x-openidx-handler: internal/identity.(*Service).handleSuspendExternalUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string}
+      responses:
+        '200':
+          description: Suspended
+        '409':
+          description: The account's state does not allow it (`external_status_conflict`)
+
+  /api/v1/identity/external-users/{id}/disable:
+    post:
+      tags: [External Users]
+      summary: Disable an external user
+      description: Final; the account comes back only as a new invitation. Needs a reason. The tenant's SSF receivers are told `account-disabled`.
+      operationId: disableExternalUser
+      x-openidx-handler: internal/identity.(*Service).handleDisableExternalUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string}
+      responses:
+        '200':
+          description: Disabled
+        '409':
+          description: The account's state does not allow it (`external_status_conflict`)
+
+  /api/v1/identity/external-users/{id}/extend:
+    post:
+      tags: [External Users]
+      summary: Move an external user's end
+      description: Within a year from now and the vendor's contract, and only while the vendor is active (invariant I1). An external user cannot extend their own account (I12).
+      operationId: extendExternalUser
+      x-openidx-handler: internal/identity.(*Service).handleExtendExternalUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string}
+                account_expires_at: {type: string, format: date-time}
+                extend_days: {type: integer}
+      responses:
+        '200':
+          description: The account's new end
+        '403':
+          description: Past the limits, or the vendor is not active
+        '409':
+          description: The account's state does not allow it
+
+  /api/v1/identity/external-users/{id}/reactivate:
+    post:
+      tags: [External Users]
+      summary: Reactivate a suspended external user
+      description: Needs a valid new sponsor, an active vendor and the grace period (decision D5).
+      operationId: reactivateExternalUser
+      x-openidx-handler: internal/identity.(*Service).handleReactivateExternalUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, sponsor_user_id]
+              properties:
+                reason: {type: string}
+                sponsor_user_id: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Reactivated
+        '403':
+          description: The sponsor or the vendor does not qualify
+        '409':
+          description: Not suspended, or past the grace period
+
+  /api/v1/identity/external-users/{id}/sponsor:
+    post:
+      tags: [External Users]
+      summary: Change an external user's sponsor
+      description: The new sponsor must be an enabled, active internal user of the organization.
+      operationId: changeExternalUserSponsor
+      x-openidx-handler: internal/identity.(*Service).handleChangeExternalSponsor
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, sponsor_user_id]
+              properties:
+                reason: {type: string}
+                sponsor_user_id: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The sponsor is changed
+        '403':
+          description: The sponsor does not qualify
+        '409':
+          description: The account is not live
+
 components:
   responses:
     BadRequest:

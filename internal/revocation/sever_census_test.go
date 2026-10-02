@@ -393,6 +393,7 @@ var signalRegister = map[string]string{
 	// administrator's disable does, but does not yet tell the SSF receivers:
 	// which event a suspension sends (the account can come back under a new
 	// sponsor) is the framework's section 6.10, which lands with the SSF part.
+	"internal/identity/external_accounts.go::endExternal":               "an external account's SSF signal is section 6.10 of the third-party access framework, not yet sent",
 	"internal/identity/external_accounts.go::suspendSponsoredExternals": "an external account's SSF signal is section 6.10 of the third-party access framework, not yet sent",
 	"internal/identity/vendor_orgs.go::handleCloseVendorOrg":            "an external account's SSF signal is section 6.10 of the third-party access framework, not yet sent",
 
