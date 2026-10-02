@@ -173,10 +173,10 @@ func (s *Service) runExternalSweepStep(ctx context.Context, step externalSweepSt
 	}
 }
 
-// severDepartedExternals runs deprovisionUser for each external account that
-// cannot sign in and has not been severed since its status changed, and
-// records the time it did. The routes sever inline; this catches the sweep's
-// own transitions and any sever an earlier attempt did not record.
+// severDepartedExternals severs (severExternal) each external account that
+// cannot sign in and has not been severed since its status changed. The
+// routes sever inline; this catches the sweep's own transitions and any sever
+// an earlier attempt did not record.
 func (s *Service) severDepartedExternals(ctx context.Context) {
 	rows, err := s.db.Pool.Query(ctx,
 		//orgscope:ignore background sweep of external accounts across all orgs; each row's org scopes its severing
@@ -205,9 +205,7 @@ func (s *Service) severDepartedExternals(ctx context.Context) {
 	}
 	for _, d := range due {
 		octx := orgctx.With(ctx, orgctx.Org{ID: d.org})
-		s.deprovisionUser(octx, d.id, d.org, false)
-		if _, err := s.db.Pool.Exec(octx,
-			`UPDATE users SET access_severed_at = NOW() WHERE id = $1::uuid AND org_id = $2`, d.id, d.org); err != nil {
+		if err := s.severExternal(octx, d.org, d.id, d.status); err != nil {
 			s.logger.Warn("external account severed but not recorded; the next sweep repeats it",
 				zap.String("user_id", logsafe.Clean(d.id)), zap.Error(err))
 			continue
