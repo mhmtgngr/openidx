@@ -41,6 +41,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 )
 
 // wsRelayUpgrader upgrades the browser terminal connection. The OAuth Bearer is
@@ -120,8 +121,11 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	userID := c.GetString("user_id")
-	isAdmin := s.pamCallerIsAdmin(c)
+	caller, ok := s.resolvePamCaller(c, org.ID)
+	if !ok {
+		return // resolvePamCaller already wrote the error
+	}
+	userID, isAdmin := caller.UserID, caller.Admin
 
 	entry, typeInfo, ok := s.loadPamLaunchEntry(c, org.ID, entryID)
 	if !ok {
@@ -148,6 +152,20 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 		}
 	}
 	if s.refuseIneffectiveExternal(c, org.ID, userID) {
+		return
+	}
+	// The browser terminal records nothing, and an external user's session is
+	// recorded (I5): they connect through the broker, which records.
+	if caller.External {
+		s.refuseExternalPam(c, "pam.launch_denied", entryID, "pam_entry", http.StatusForbidden,
+			externalid.ErrRecordingUnavailable, map[string]interface{}{"entry_id": entryID, "path": "browser_terminal"})
+		return
+	}
+	// The overlay gate, which this path did not ask before: under
+	// PAM_REQUIRE_ZTNA=enforce a direct-reach SSH entry opened here while its
+	// connect was refused.
+	if v := s.checkPamZTNA(c, org.ID, userID, entryID, entry.ReachMode, typeInfo.Protocol, false); v.Refuse {
+		c.JSON(http.StatusForbidden, gin.H{"error": v.Reason, "code": v.Code})
 		return
 	}
 	// Approval gate — single-use, atomically consumed (admins bypass their own).
