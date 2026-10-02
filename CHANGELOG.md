@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Cloud just-in-time access needs a grant and lasts at most an hour.** `POST /pam/connect/cloud` uses a broker credential only for a caller who holds a `use` grant on it. Before, any signed-in user could name any of the organization's secrets as the broker and assume any role it could. AWS cannot revoke STS credentials, so the session ceiling drops from 12 hours to 60 minutes. Administrators skip the grant but not the cap. Refusals are audited as `pam.cloud_jit_denied`.
+
 ## [1.39.0] - 2026-09-28
 
 ### Security
