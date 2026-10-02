@@ -24,8 +24,12 @@ sequenceDiagram
     A->>A: record session, write audit events
 ```
 
-The user never sees the password or key. Revoking their access (or the
-admin kill switch) terminates the live session, not just future ones.
+The user never sees the password or key. A session lasts as long as the
+access that opened it: when the grant ends (a request's window closes, an
+administrator removes it, the role or group carrying it goes) or the admin
+kill switch is pressed, the live session ends within half a minute, not just
+future ones. A session an administrator opened without a grant is not ended
+for the lack of one.
 
 ## For admins: setting it up
 
@@ -38,7 +42,9 @@ admin kill switch) terminates the live session, not just future ones.
    automated **rotation policies** cover SSH, AWS IAM, GCP service
    accounts, Postgres, MySQL and LDAP credentials.
 3. **Grant access.** PAM entry grants name the users or roles that may
-   connect or reveal, optionally time-bounded. Sensitive entries can
+   connect or reveal, optionally time-bounded. A user can also ask for a
+   time-bound connection through **Access Requests**; approving the request
+   writes the grant, and it ends with the request's window. Sensitive entries can
    require **checkout approval** — the request lands with approvers before
    a session can start. **Break-glass** exists for emergencies and is
    loudly audited.
@@ -67,12 +73,58 @@ admin kill switch) terminates the live session, not just future ones.
    alongside your apps.
 2. Click **Connect**. If the entry needs approval, you'll see the request
    flow; otherwise the terminal or desktop opens right in the browser —
-   nothing to install.
+   nothing to install. An entry listed without **Connect** can be asked for:
+   **Access Requests → Request Access → PAM Connection**, for a duration.
+   Once the request is approved, Connect appears until the window ends.
 3. Need a credential itself (rare, discouraged)? **Reveal** is a separate,
    separately-granted, separately-audited action with checkout semantics —
    return it when done.
 4. Your sessions, requests, and JIT elevations show under **My Access**;
    an admin (or an access-review revoke) can end them at any time.
+
+## External (vendor) users
+
+An external user's session runs under fixed controls, whatever the entry or
+the install's settings say:
+
+- **Approved by their sponsor.** Every launch needs a launch approval, even
+  on an entry that asks for none. The user asks for one with **Request
+  access**. Their sponsor is told, finds it in their queue
+  (`GET /api/v1/access/pam/sponsored/entry-requests`) and approves or denies
+  it (`POST .../sponsored/entry-requests/{id}/approve` or `/deny`, with a fresh
+  second factor). An administrator who is not the sponsor can deny it but not
+  approve it (`external_launch_needs_sponsor`). No administrator bypass
+  applies to the external user, whatever roles their token claims.
+- **Recorded.** The session is recorded, keystrokes included. Without
+  `GUACAMOLE_RECORDING_PATH` the launch is refused
+  (`external_recording_unavailable`).
+- **On the overlay.** The entry's reach mode must be `ziti`, whatever
+  `PAM_REQUIRE_ZTNA` says. A direct-reach entry and a website entry are
+  refused (`ztna_required_direct_reach`, `ztna_required_website_entry`).
+- **On its own broker connection and identity.** The session runs on a
+  broker connection of its own, opened by a broker account that can open
+  nothing else. That needs `GUACAMOLE_PER_USER_IDENTITIES=true`. Without it,
+  or when the account cannot be set up at launch, the launch is refused
+  (`external_broker_identity_required`) rather than handed the shared broker
+  token, which opens every connection on the broker.
+- **Hardened.** Clipboard in both directions, drive redirection, file
+  transfer over the drive or SFTP, and printing are off. The entry's settings
+  cannot turn them back on, or leave the screen, the pointer or touches out of
+  the recording.
+- **A working day at most.** The lifecycle sweep ends the session after 8
+  hours, whatever grant it rides. An idle timeout is not enforced yet: the
+  broker reports no per-session activity to measure one by.
+- **No credential in their hands.** Reveal and break-glass
+  (`external_reveal_forbidden`), SSH certificates
+  (`external_ssh_ca_forbidden`) and cloud keys
+  (`external_cloud_jit_forbidden`) are refused. So is the browser SSH
+  terminal, which records nothing (`external_recording_unavailable`).
+
+The entry list and the broker status show an external user what their launch
+will do: approval and recording on, no Reveal, and the overlay enforced. Each
+refusal is audited: `pam.launch_denied`, `pam.reveal_denied`,
+`pam.ssh_cert_denied`, `pam.cloud_jit_denied` and `pam.ztna.denied`, marked
+`external`.
 
 ## The mental model
 

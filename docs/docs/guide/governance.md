@@ -45,6 +45,17 @@ remember (`StartJITExpirationChecker`). That is the difference between
 Users track their own requests at `GET /requests`, and cancel one with
 `POST /requests/{id}/cancel`.
 
+A **PAM connection** is requested the same way (`resource_type` `pam_entry`).
+The requester picks one of the PAM entries they already see but cannot connect
+to: seeing an entry (a standing grant of any action on it) is what makes them
+eligible to ask, and connecting is what they ask for. The request needs a
+duration. Approving it writes a `connect` grant on the entry that ends with
+the request's window, and the expiry sweep ends that grant, not any other
+grant the user holds on the entry. An entry that asks for a launch approval
+still asks for it at connect: the request says the user may reach the entry in
+this window, and the launch approval says someone knows they are connecting
+now.
+
 ## Approving
 
 Approvers see their queue at **Governance → Access Requests**, or
@@ -54,7 +65,18 @@ Approvers see their queue at **Governance → Access Requests**, or
 Who approves what is an **approval policy** (`/approval-policies`): match on
 the resource, name the approvers, and require one step or several. A
 multi-step policy advances only when each step is satisfied, so
-"manager, then application owner" means both.
+"manager, then application owner" means both, in that order: an approver of a
+later step does not see the request until it reaches them. A step's
+`min_approvals` is how many of its approvers must say yes (one when unset);
+the rest are skipped once it is met. A request nobody answers within the
+policy's `max_wait_hours` expires, with an audit event. A policy whose step
+cannot reach its `min_approvals` refuses the request with the reason rather
+than filing one nobody can approve.
+
+One person approves at most one step of a request. An approver of an earlier
+step who is also an approver of a later one is refused there (`four_eyes`),
+and the later step needs someone else; they can still deny. A chain of two
+steps is two people's decision.
 
 ## Certification campaigns
 
@@ -147,6 +169,51 @@ For the leaver path specifically, the **kill switch** on the user's admin page
 is the synchronous version: it severs tokens, sessions, vault checkouts, live
 privileged sessions and network circuits, and reports which of those failed
 rather than claiming success.
+
+## External (vendor) users
+
+A supplier's or contractor's people get their own accounts, managed on
+**Identity → External Users**. Each account belongs to a vendor organization,
+has an internal sponsor and has an end date. None of the three is optional.
+
+- **Invite.** On the Invitations tab, give the person's address, the vendor
+  and optionally a sponsor, a lifetime and groups. The address must be in one
+  of the vendor's allowed domains, and the lifetime stays within a year and
+  the vendor's contract. Only groups an administrator opened to external users
+  (**Groups → Edit → Open to external (vendor) users**) can be chosen. The
+  invitation link opens a page where the person sets a password and then an
+  authenticator app. The account cannot sign in until the app's code is
+  confirmed.
+- **What an account may hold.** An external account holds only the `user`
+  role and the groups opened to external users. It never approves a request
+  or receives a delegation. Its access requests must name a duration that
+  ends no later than the account does. The database refuses anything else, whichever screen
+  or API asks.
+- **Who approves their requests.** The sponsor, first. An external user's
+  access request starts with a step for their sponsor, before any step the
+  approval policy adds, and the sponsor is not an approver of the policy's
+  steps even when they hold the approver role: the policy's approvals come
+  from someone else. No auto-approve condition skips the sponsor. Without a
+  policy, the default administrator approves after the sponsor. When that
+  administrator is the sponsor, nobody else is left, and the request is
+  refused until a policy covers it. The same holds for a PAM launch approval:
+  the sponsor gives it.
+- **How access ends.** Suspend or disable an account from its row; either
+  signs the person out everywhere at once, and each needs a reason. The
+  identity service also ends accounts on its own every minute:
+  - an account past its end is expired;
+  - an account whose sponsor left or was disabled is suspended;
+  - an account of a closed vendor is disabled;
+  - a suspension nobody reverses within 7 days becomes final.
+- **Bringing one back.** A suspended account can be reactivated within 7 days
+  by naming a new sponsor. An expired or disabled one needs a new invitation.
+
+[Identity API → External users](../api/identity.md#external-users) has the
+routes and the refusal codes. An external user's privileged sessions run under
+fixed controls, whatever the entry says: approved, recorded, on the overlay,
+hardened and at most a working day long, with no credential handed over.
+[Privileged access → External (vendor) users](privileged-access.md#external-vendor-users)
+lists them.
 
 ## Policies that decide, and policies that describe
 

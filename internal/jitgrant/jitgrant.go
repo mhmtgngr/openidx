@@ -112,8 +112,46 @@ func Revoke(ctx context.Context, q Execer, resourceType, userID, resourceID, org
 			`DELETE FROM user_application_assignments WHERE user_id = $1 AND application_id = $2`+filter, args...); err != nil {
 			return fmt.Errorf("revoke application: %w", err)
 		}
+	case "pam_entry":
+		// Ended, not deleted: the row stays as the record of what was held
+		// and until when, the way internal/pamgrant ends it at the kill
+		// switch. Every one of the user's own live grants on the entry ends,
+		// standing or request-made, which is what a review's "revoke this
+		// access" means. A request's own end goes through RevokeRequest,
+		// which ends that request's grant and nothing else.
+		if _, err := q.Exec(ctx,
+			`UPDATE pam_entry_grants SET expires_at = NOW()
+			  WHERE principal_type = 'user' AND principal_id = $1 AND entry_id = $2`+filter+`
+			    AND (expires_at IS NULL OR expires_at > NOW())`, args...); err != nil {
+			return fmt.Errorf("revoke pam entry grant: %w", err)
+		}
 	default:
 		return fmt.Errorf("unsupported revocation resource type %q", resourceType)
+	}
+	return nil
+}
+
+// RevokeRequest ends the access one fulfilled request granted. For every type
+// but pam_entry that is Revoke, because the assignment row is keyed by the
+// (user, resource) pair and nothing else. A PAM entry grant a request wrote
+// carries the request's id (migration v216), so only that grant ends, and a
+// standing grant the user holds on the same entry is left alone: a request
+// that expires must not take an administrator's grant with it.
+func RevokeRequest(ctx context.Context, q Execer, requestID, resourceType, userID, resourceID, orgID string) error {
+	if resourceType != "pam_entry" {
+		return Revoke(ctx, q, resourceType, userID, resourceID, orgID)
+	}
+	filter := ""
+	args := []any{requestID}
+	if orgID != "" {
+		filter = " AND org_id = $2"
+		args = append(args, orgID)
+	}
+	if _, err := q.Exec(ctx,
+		`UPDATE pam_entry_grants SET expires_at = NOW()
+		  WHERE request_id = $1`+filter+`
+		    AND (expires_at IS NULL OR expires_at > NOW())`, args...); err != nil {
+		return fmt.Errorf("revoke pam entry grant of request %s: %w", requestID, err)
 	}
 	return nil
 }
@@ -142,6 +180,9 @@ func Revoke(ctx context.Context, q Execer, resourceType, userID, resourceID, org
 //     vault_access_grants on every reveal, and no claim mirrors it.
 //   - rotation_policy: NO. Disabling a credential rotation policy is not a
 //     removal of anyone's access; there is no user principal involved.
+//   - pam_entry: NO. A PAM entry grant is read from pam_entry_grants at the
+//     moment of every connect and reveal (internal/pamgrant.Holds), and no
+//     claim mirrors it.
 //
 // It answers for every resource-type name a sever path in this product uses,
 // not only the ones Revoke maps, because the question is about the token
@@ -154,7 +195,7 @@ func Revoke(ctx context.Context, q Execer, resourceType, userID, resourceID, org
 // outlives its own expiry.
 func TokenCarries(resourceType string) bool {
 	switch resourceType {
-	case "application", "vault_access", "vault_credential", "rotation_policy":
+	case "application", "vault_access", "vault_credential", "rotation_policy", "pam_entry":
 		return false
 	default:
 		return true
@@ -215,7 +256,7 @@ func EndAllForUser(ctx context.Context, q Querier, userID, orgID string) (int64,
 	}
 	var ended int64
 	for _, e := range elevations {
-		if err := Revoke(ctx, q, e.ResourceType, userID, e.ResourceID, e.OrgID); err != nil {
+		if err := RevokeRequest(ctx, q, e.RequestID, e.ResourceType, userID, e.ResourceID, e.OrgID); err != nil {
 			return ended, fmt.Errorf("end elevation %s: %w", e.RequestID, err)
 		}
 		if _, err := q.Exec(ctx,
@@ -285,7 +326,7 @@ func EndAllForDisabledUsers(ctx context.Context, q Querier) (int64, []string, er
 	var cutTokensFor []string
 	seen := map[string]bool{}
 	for _, r := range pending {
-		if err := Revoke(ctx, q, r.rtype, r.user, r.rid, r.org); err != nil {
+		if err := RevokeRequest(ctx, q, r.id, r.rtype, r.user, r.rid, r.org); err != nil {
 			return ended, cutTokensFor, fmt.Errorf("end elevation %s: %w", r.id, err)
 		}
 		// Collected after the access is actually gone, and only for a type the

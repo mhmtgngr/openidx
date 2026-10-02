@@ -519,12 +519,15 @@ func TestTheLaunchRoutesActuallyCarryTheGate(t *testing.T) {
 
 	for _, want := range []struct{ path, action string }{
 		{"/pam/entries/:id/connect", "pam.connect"},
+		{"/guacamole/connections/:routeId/connect", "pam.connect"},
 		{"/pam/entries/:id/reveal", "pam.reveal"},
 		{"/pam/entries/:id/break-glass", "pam.break_glass"},
 		{"/pam/connect/ssh", "pam.connect_ssh"},
 		{"/pam/connect/cloud", "pam.connect_cloud"},
 		{"/pam/brokered-sessions", "pam.broker_session"},
 		{"/pam/apps/:id/launch", "pam.app_launch"},
+		{"/pam/sponsored/entry-requests/:id/approve", "pam.sponsor_decide"},
+		{"/pam/sponsored/entry-requests/:id/deny", "pam.sponsor_decide"},
 	} {
 		needle := `"` + want.path + `", svc.requireFreshMFA("` + want.action + `")`
 		if !strings.Contains(src, needle) {

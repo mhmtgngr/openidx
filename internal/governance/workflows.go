@@ -3,6 +3,7 @@ package governance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/vault"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
@@ -178,7 +180,9 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		return
 	}
 
-	if body.ResourceType == "" || body.ResourceName == "" {
+	// A pam_entry request takes its name from the entry (pam_entry_requests.go),
+	// so the requester need not send one.
+	if body.ResourceType == "" || (body.ResourceName == "" && body.ResourceType != "pam_entry") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "resource_type and resource_name are required"})
 		return
 	}
@@ -223,6 +227,22 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		}
 	}
 
+	// pam_entry requests: a time-bound connect grant on a PAM entry the
+	// requester already sees (pam_entry_requests.go).
+	if body.ResourceType == "pam_entry" {
+		name, refusal, err := s.checkPamEntryRequest(c.Request.Context(), org.ID, requesterID, callerRoles(c), body.ResourceID, body.Duration)
+		if err != nil {
+			s.logger.Error("could not check a PAM entry request", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create access request"})
+			return
+		}
+		if refusal != nil {
+			c.JSON(refusal.status, gin.H{"error": refusal.msg, "code": refusal.code})
+			return
+		}
+		body.ResourceName = name
+	}
+
 	// Parse duration to calculate expires_at.
 	//
 	// Over the ceiling is refused, not silently shortened: an elevation granted
@@ -244,6 +264,18 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		}
 		t := time.Now().Add(d)
 		expiresAt = &t
+	}
+
+	// Invariant I8 of the third-party access framework: an external (vendor)
+	// user asks for a window that ends, and ends no later than the account.
+	if err := externalid.CheckWindow(c.Request.Context(), s.db.Pool, org.ID, requesterID, expiresAt); err != nil {
+		if r := externalid.Refusal(err); r != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": r.Error(), "code": externalid.Code(r)})
+			return
+		}
+		s.logger.Error("could not check the requester's account window", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create access request"})
+		return
 	}
 
 	id := uuid.New().String()
@@ -278,6 +310,15 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 				"it will sit with an incomplete chain and must be cancelled by hand",
 				logsafe.String("request_id", id), zap.Error(derr))
 		}
+		var unbuildable *chainError
+		if errors.As(err, &unbuildable) {
+			// The policy, not the platform, is what refused: say so, so the
+			// administrator who owns the policy can be told which step.
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "the approval policy for this resource cannot be satisfied: " + unbuildable.reason,
+				"code":  "approval_chain_unbuildable"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "the request could not be routed for approval and was not created; please try again"})
 		return
@@ -307,11 +348,14 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 // for this approver" and the request sits. Missing PART of it is worse and
 // quieter: the approvers who did get a row approve, the pending count reaches
 // zero, and the request is fulfilled having skipped a step the policy required.
-func (s *Service) insertApproval(ctx context.Context, requestID, approverID string, order int, orgID string) error {
+func (s *Service) insertApproval(ctx context.Context, requestID, approverID string, order, minApprovals int, orgID string) error {
+	if minApprovals < 1 {
+		minApprovals = 1
+	}
 	_, err := s.db.Pool.Exec(ctx,
-		`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		uuid.New().String(), requestID, approverID, order, "pending", time.Now(), orgID,
+		`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, step_min_approvals, decision, created_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		uuid.New().String(), requestID, approverID, order, minApprovals, "pending", time.Now(), orgID,
 	)
 	if err != nil {
 		return fmt.Errorf("record the approver for step %d: %w", order, err)
@@ -341,18 +385,45 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 		`SELECT requester_id FROM access_requests WHERE id = $1 AND org_id = $2`, requestID, org.ID,
 	).Scan(&requesterID)
 
+	// An external (vendor) user's request is approved by their sponsor first
+	// (section 5.6 of the third-party access framework): the person who
+	// vouches for them says the access is for real work, before any step the
+	// policy adds, and the policy's steps follow one place later. The sponsor
+	// is a candidate for none of those steps, so the policy's approvals come
+	// from someone else (four eyes), and no auto-approve condition skips the
+	// sponsor.
+	sponsorID, external, err := s.requesterSponsor(ctx, org.ID, requesterID)
+	if err != nil {
+		return err
+	}
+	offset := 0
+	if external {
+		if err := s.insertApproval(ctx, requestID, sponsorID, 1, 1, org.ID); err != nil {
+			return err
+		}
+		offset = 1
+	}
+
 	// Try to find a matching policy (specific resource first, then generic)
 	var stepsJSON, condJSON []byte
+	var maxWaitHours int
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT approval_steps, auto_approve_conditions FROM approval_policies
+		`SELECT approval_steps, auto_approve_conditions, COALESCE(max_wait_hours, 0) FROM approval_policies
 		 WHERE resource_type = $1 AND (resource_id = $2 OR resource_id IS NULL) AND enabled = true AND org_id = $3
 		 ORDER BY resource_id NULLS LAST LIMIT 1`,
 		resourceType, resourceID, org.ID,
-	).Scan(&stepsJSON, &condJSON)
+	).Scan(&stepsJSON, &condJSON, &maxWaitHours)
 	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("look up the approval policy: %w", err)
+		}
 		// No matching policy — create a default admin approval
 		adminID := "00000000-0000-0000-0000-000000000001"
-		return s.insertApproval(ctx, requestID, adminID, 1, org.ID)
+		if external && adminID == sponsorID {
+			return &chainError{"no approval policy covers " + resourceType + " requests, so the only approver " +
+				"after the external user's sponsor would be the sponsor again: add an approval policy for it"}
+		}
+		return s.insertApproval(ctx, requestID, adminID, 1+offset, 1, org.ID)
 	}
 
 	// V-007: evaluate the policy's typed auto_approve_conditions before
@@ -363,8 +434,19 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 		if uerr := json.Unmarshal(condJSON, &cond); uerr != nil {
 			s.logger.Warn("createApprovalRows: malformed auto_approve_conditions; ignoring",
 				zap.String("request_id", requestID), zap.Error(uerr))
-		} else if s.tryAutoApprove(ctx, requestID, &cond) {
+		} else if !external && s.tryAutoApprove(ctx, requestID, &cond) {
 			return nil
+		}
+	}
+
+	// The policy's wait, recorded on the request now so a policy edited while
+	// the request is open does not move it. Zero means the policy sets no
+	// deadline, and the request waits as it always has.
+	if maxWaitHours > 0 {
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE access_requests SET answer_by = NOW() + make_interval(hours => $1)
+			  WHERE id = $2 AND org_id = $3`, maxWaitHours, requestID, org.ID); err != nil {
+			return fmt.Errorf("record the policy's answer-by deadline: %w", err)
 		}
 	}
 
@@ -373,95 +455,35 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 		return nil
 	}
 
+	// Each step expands to the users who may decide it, with the requester
+	// excluded (four eyes) and each user once, and each row records how many
+	// approvals its step needs. A step that cannot reach that number -- a role
+	// with one holder under min_approvals 2, a manager step for a requester
+	// with no manager, a step naming only the requester -- refuses the request
+	// here, with the reason, rather than leaving a request nobody can approve.
 	for i, step := range steps {
-		// Handle different approval step types
-		switch step.Type {
-		case ApprovalStepTypeSpecificUser:
-			if step.ApproverID != "" {
-				if err := s.insertApproval(ctx, requestID, step.ApproverID, step.Order, org.ID); err != nil {
-					return err
-				}
-			}
-		case ApprovalStepTypeRole:
-			if step.RoleID != "" {
-				// Role membership lives in the user_roles join table — users has
-				// no `roles` column, so the old `$1 = ANY(roles)` query errored on
-				// every call, was swallowed, and created ZERO approver rows: a
-				// role-based approval tier silently approved nothing (and a mixed
-				// [user, role] policy auto-fulfilled once the user approved).
-				// DISTINCT guards against a user holding the role via >1 grant.
-				roleRows, err := s.db.Pool.Query(ctx,
-					`SELECT DISTINCT user_id FROM user_roles WHERE role_id = $1 AND org_id = $2`, step.RoleID, org.ID,
-				)
-				if err != nil {
-					s.logger.Error("Failed to query users by role", zap.Error(err), zap.String("role_id", step.RoleID))
-				} else {
-					defer roleRows.Close()
-					for roleRows.Next() {
-						var userID string
-						if err := roleRows.Scan(&userID); err != nil {
-							s.logger.Error("Failed to scan role user", zap.Error(err))
-							continue
-						}
-						if userID == requesterID {
-							continue // four-eyes: never make the requester their own approver
-						}
-						if err := s.insertApproval(ctx, requestID, userID, step.Order, org.ID); err != nil {
-							return err
-						}
-					}
-				}
-			}
-		case ApprovalStepTypeGroup:
-			if step.GroupID != "" {
-				groupRows, err := s.db.Pool.Query(ctx,
-					`SELECT user_id FROM group_memberships WHERE group_id = $1 AND org_id = $2`, step.GroupID, org.ID,
-				)
-				if err != nil {
-					s.logger.Error("Failed to query group members", zap.Error(err), zap.String("group_id", step.GroupID))
-				} else {
-					defer groupRows.Close()
-					for groupRows.Next() {
-						var userID string
-						if err := groupRows.Scan(&userID); err != nil {
-							s.logger.Error("Failed to scan group member", zap.Error(err))
-							continue
-						}
-						if userID == requesterID {
-							continue // four-eyes: never make the requester their own approver
-						}
-						if err := s.insertApproval(ctx, requestID, userID, step.Order, org.ID); err != nil {
-							return err
-						}
-					}
-				}
-			}
-		case ApprovalStepTypeManager:
-			// Look up the requester's manager from the access request
-			var requesterID string
-			err := s.db.Pool.QueryRow(ctx,
-				`SELECT requester_id FROM access_requests WHERE id = $1 AND org_id = $2`, requestID, org.ID,
-			).Scan(&requesterID)
-			if err != nil {
-				s.logger.Error("Failed to get requester for manager approval", zap.Error(err))
-			} else {
-				var managerID *string
-				err = s.db.Pool.QueryRow(ctx,
-					`SELECT manager_id FROM users WHERE id = $1 AND org_id = $2`, requesterID, org.ID,
-				).Scan(&managerID)
-				if err != nil {
-					s.logger.Error("Failed to get manager for requester", zap.Error(err), zap.String("requester_id", requesterID))
-				} else if managerID != nil {
-					if err := s.insertApproval(ctx, requestID, *managerID, step.Order, org.ID); err != nil {
-						return err
-					}
-				}
-			}
-		case ApprovalStepTypeAuto:
+		if step.Type == ApprovalStepTypeAuto {
 			// Automatic approval - no human approver needed
 			s.logger.Debug("Auto-approval step", zap.Int("step", i+1))
-		default:
-			s.logger.Warn("Unknown approval step type", zap.String("type", string(step.Type)))
+			continue
+		}
+		order := step.effectiveOrder(i) + offset
+		need := step.effectiveMinApprovals()
+		approvers, err := s.resolveStepApprovers(ctx, org.ID, step, requesterID)
+		if err != nil {
+			return err
+		}
+		if external {
+			approvers = withoutApprover(approvers, sponsorID)
+		}
+		if len(approvers) < need {
+			return &chainError{fmt.Sprintf("approval step %d needs %d approvals but has %d eligible approvers",
+				order, need, len(approvers))}
+		}
+		for _, approverID := range approvers {
+			if err := s.insertApproval(ctx, requestID, approverID, order, need, org.ID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -752,13 +774,67 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 		return
 	}
 
-	now := time.Now()
+	// Steps run in order, and a step needs the approvals its rows record. The
+	// caller's row must belong to the lowest unsatisfied step: an approver of a
+	// later step is told to wait rather than having a decision recorded that
+	// the chain is not at yet.
+	_, active, _, err := s.approvalProgress(c.Request.Context(), id, org.ID)
+	if err != nil {
+		s.logger.Error("Failed to read approval progress", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve request"})
+		return
+	}
+	callerStep, err := s.callerStep(c.Request.Context(), id, approverID, org.ID)
+	if err != nil {
+		s.logger.Error("Failed to find the caller's approval row", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve request"})
+		return
+	}
+	if callerStep == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No pending approval found for this approver"})
+		return
+	}
+	if callerStep != active {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf("this request is at approval step %d; your approval is for step %d and cannot be given yet",
+				active, callerStep),
+			"status": "pending",
+			"step":   active,
+		})
+		return
+	}
 
+	// Four eyes across steps (section 6.7 of the third-party access
+	// framework): one person approves at most one step of a request. Someone
+	// who is a candidate in two steps (a manager who also holds the approver
+	// role, an external user's sponsor) could otherwise carry the request
+	// through every step alone, and a two-step chain would be one person's
+	// decision. They can still deny.
+	var approvedAnotherStep bool
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT EXISTS (SELECT 1 FROM access_request_approvals
+		                 WHERE request_id = $1 AND approver_id = $2 AND org_id = $3
+		                   AND decision = 'approved' AND step_order <> $4)`,
+		id, approverID, org.ID, callerStep,
+	).Scan(&approvedAnotherStep); err != nil {
+		s.logger.Error("Failed to check the approver's other steps", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve request"})
+		return
+	}
+	if approvedAnotherStep {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "you approved an earlier step of this request; this step needs someone else's approval",
+			"code":  "four_eyes",
+		})
+		return
+	}
+
+	now := time.Now()
 	result, err := s.db.Pool.Exec(c.Request.Context(),
 		`UPDATE access_request_approvals
 		 SET decision = 'approved', comments = $1, decided_at = $2
-		 WHERE request_id = $3 AND approver_id = $4 AND decision = 'pending' AND org_id = $5`,
-		body.Comments, now, id, approverID, org.ID,
+		 WHERE request_id = $3 AND approver_id = $4 AND step_order = $5 AND decision = 'pending' AND org_id = $6`,
+		body.Comments, now, id, approverID, callerStep, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to approve request", zap.Error(err))
@@ -770,19 +846,24 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 		return
 	}
 
-	// Check if ALL approvals for this request are now approved
-	var pendingCount int
-	err = s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT COUNT(*) FROM access_request_approvals WHERE request_id = $1 AND decision = 'pending' AND org_id = $2`,
-		id, org.ID,
-	).Scan(&pendingCount)
+	steps, active, done, err := s.approvalProgress(c.Request.Context(), id, org.ID)
 	if err != nil {
-		s.logger.Error("Failed to check pending approvals", zap.Error(err))
+		s.logger.Error("Failed to check approval status", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check approval status"})
 		return
 	}
+	// The step this decision completed no longer needs its other approvers;
+	// their rows are closed so the queue stops asking them.
+	for _, st := range steps {
+		if st.Order == callerStep && st.satisfied() && st.Pending > 0 {
+			if _, err := s.skipRemainingInStep(c.Request.Context(), id, callerStep, org.ID); err != nil {
+				s.logger.Warn("Failed to skip the remaining approvers of a satisfied step",
+					logsafe.String("request_id", id), zap.Error(err))
+			}
+		}
+	}
 
-	if pendingCount == 0 {
+	if done {
 		_, err = s.db.Pool.Exec(c.Request.Context(),
 			`UPDATE access_requests SET status = 'approved', updated_at = $1 WHERE id = $2 AND org_id = $3`,
 			time.Now(), id, org.ID,
@@ -791,10 +872,16 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 			s.logger.Error("Failed to update request status", zap.Error(err))
 		}
 
+		// The request's window is read back with it: a PAM entry connection, a
+		// vault credential and a network service are granted until it ends, and
+		// refuse an unbounded grant, so without it an approval here was
+		// recorded and granted nothing.
 		var request AccessRequest
 		err = s.db.Pool.QueryRow(c.Request.Context(),
-			`SELECT id, requester_id, resource_type, resource_id, resource_name, status FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
-		).Scan(&request.ID, &request.RequesterID, &request.ResourceType, &request.ResourceID, &request.ResourceName, &request.Status)
+			`SELECT id, requester_id, resource_type, resource_id, resource_name, status, expires_at
+			   FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
+		).Scan(&request.ID, &request.RequesterID, &request.ResourceType, &request.ResourceID, &request.ResourceName, &request.Status,
+			&request.ExpiresAt)
 		if err != nil {
 			s.logger.Error("Failed to reload approved request for fulfillment", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -821,7 +908,11 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Approval recorded; the request is still awaiting other approvers", "status": "pending"})
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Approval recorded; the request is still awaiting other approvers",
+		"status":  "pending",
+		"step":    active,
+	})
 }
 
 // handleDenyRequest denies an access request
@@ -845,13 +936,41 @@ func (s *Service) handleDenyRequest(c *gin.Context) {
 		return
 	}
 
+	// A denial is final, and it is a decision of the step the chain is at:
+	// an approver of a later step waits for their step like they do to approve.
+	_, active, _, err := s.approvalProgress(c.Request.Context(), id, org.ID)
+	if err != nil {
+		s.logger.Error("Failed to read approval progress", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to deny request"})
+		return
+	}
+	callerStep, err := s.callerStep(c.Request.Context(), id, approverID, org.ID)
+	if err != nil {
+		s.logger.Error("Failed to find the caller's approval row", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to deny request"})
+		return
+	}
+	if callerStep == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No pending approval found for this approver"})
+		return
+	}
+	if callerStep != active {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": fmt.Sprintf("this request is at approval step %d; your decision is for step %d and cannot be given yet",
+				active, callerStep),
+			"status": "pending",
+			"step":   active,
+		})
+		return
+	}
+
 	now := time.Now()
 
 	result, err := s.db.Pool.Exec(c.Request.Context(),
 		`UPDATE access_request_approvals
 		 SET decision = 'denied', comments = $1, decided_at = $2
-		 WHERE request_id = $3 AND approver_id = $4 AND decision = 'pending' AND org_id = $5`,
-		body.Comments, now, id, approverID, org.ID,
+		 WHERE request_id = $3 AND approver_id = $4 AND step_order = $5 AND decision = 'pending' AND org_id = $6`,
+		body.Comments, now, id, approverID, callerStep, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to deny request", zap.Error(err))
@@ -948,7 +1067,23 @@ func (s *Service) handleListPendingApprovals(c *gin.Context) {
 		 FROM access_request_approvals a
 		 JOIN access_requests ar ON ar.id = a.request_id AND ar.org_id = a.org_id
 		 LEFT JOIN users ru ON ru.id = ar.requester_id AND ru.org_id = ar.org_id
-		 WHERE a.approver_id = $1 AND a.decision = 'pending' AND a.org_id = $2
+		 JOIN (
+		     -- The step each request is at: the lowest one still short of the
+		     -- approvals its rows say it needs. A row of a later step is not
+		     -- the approver's to decide yet, so the queue does not show it.
+		     SELECT request_id, org_id, MIN(step_order) AS step_order
+		       FROM (
+		         SELECT request_id, org_id, step_order,
+		                MAX(step_min_approvals) AS needed,
+		                COUNT(*) FILTER (WHERE decision = 'approved') AS approved
+		           FROM access_request_approvals
+		          WHERE org_id = $2
+		          GROUP BY request_id, org_id, step_order
+		       ) steps
+		      WHERE approved < needed
+		      GROUP BY request_id, org_id
+		 ) active ON active.request_id = a.request_id AND active.org_id = a.org_id AND active.step_order = a.step_order
+		 WHERE a.approver_id = $1 AND a.decision = 'pending' AND a.org_id = $2 AND ar.status = 'pending'
 		 ORDER BY ar.created_at DESC`, userID, org.ID,
 	)
 	if err != nil {
@@ -1293,8 +1428,8 @@ func (s *Service) checkSoDForRoleGrant(ctx context.Context, userID, targetRoleID
 }
 
 // fulfillRequest provisions the approved access by granting the requested resource
-// to the requester. The supported resource types are exactly the three that
-// access requests can be raised against: role, group, and application. An
+// to the requester: a role, a group, an application, a vault credential
+// checkout, a network service or a PAM entry connection. An
 // unknown resource type is a hard error rather than a silent "marked
 // fulfilled but nothing granted" — the previous warning-only no-op path
 // shipped approved-but-empty requests to production (the P1.1 gap the
@@ -1302,6 +1437,13 @@ func (s *Service) checkSoDForRoleGrant(ctx context.Context, userID, targetRoleID
 func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) error {
 	org, err := orgctx.From(ctx)
 	if err != nil {
+		return err
+	}
+	// Invariant I4 of the third-party access framework: nothing an external
+	// (vendor) user holds takes effect until the account is active with a
+	// strong second factor. The request may be filed and approved before
+	// that; the approval stands and the request stays 'approved'.
+	if err := externalid.CheckEffective(ctx, s.db.Pool, org.ID, request.RequesterID); err != nil {
 		return err
 	}
 	switch request.ResourceType {
@@ -1369,6 +1511,12 @@ func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) er
 			// is visible instead of lost.
 			s.logger.Warn("Failed to write jit_credential.checkout_granted audit event",
 				zap.String("request_id", request.ID), zap.Error(err))
+		}
+	case "pam_entry":
+		// A connect grant on the entry until the request's window ends, carrying
+		// the request's id (pam_entry_requests.go, migration v216).
+		if err := s.grantPamEntryConnect(ctx, org.ID, request); err != nil {
+			return err
 		}
 	case "network_service":
 		// JIT network grant (Wave B1): fulfilling a network_service request adds

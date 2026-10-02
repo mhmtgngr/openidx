@@ -37,7 +37,9 @@ func TestGetAccessOverview_AppsCountIncludesGroupAssignments(t *testing.T) {
 		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID)`,
 		`CREATE TABLE roles (id UUID PRIMARY KEY, name VARCHAR(255))`,
 		`CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID)`,
-		`CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255))`,
+		`CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255),
+    external_allowed BOOLEAN NOT NULL DEFAULT false
+)`,
 		`CREATE TABLE applications (id UUID PRIMARY KEY, name VARCHAR(255), enabled BOOLEAN, route_id UUID, org_id UUID)`,
 		`CREATE TABLE user_application_assignments (user_id UUID, application_id UUID, org_id UUID)`,
 		`CREATE TABLE group_application_assignments (group_id UUID, application_id UUID, org_id UUID)`,
@@ -57,8 +59,10 @@ func TestGetAccessOverview_AppsCountIncludesGroupAssignments(t *testing.T) {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 		`CREATE TABLE guacamole_sessions (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, user_id UUID, status VARCHAR(16))`,
-		`CREATE TABLE guacamole_session_requests (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, requester_id UUID,
+		`CREATE TABLE pam_entries (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, proxy_route_id UUID)`,
+		`CREATE TABLE pam_entry_access_requests (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, entry_id UUID, requester_id UUID,
 			status VARCHAR(16), expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE ziti_identities (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, user_id UUID, enrolled BOOLEAN)`,

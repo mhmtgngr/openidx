@@ -35,6 +35,9 @@ const (
 	TypeSecurity = "security"
 	// TypeBroadcast: an announcement an administrator sent to an audience.
 	TypeBroadcast = "broadcast"
+	// TypeSponsoredAccess: an external (vendor) user this user sponsors needs
+	// them -- today, a privileged launch waiting for their approval.
+	TypeSponsoredAccess = "sponsored_access"
 )
 
 // PreferenceType is one switchable notification type, in the words the person
@@ -76,6 +79,12 @@ var TypeCatalogue = []PreferenceType{
 		Type:        TypeBroadcast,
 		Title:       "Announcements",
 		Description: "Messages an administrator sent to everyone, a role or a group.",
+		Channels:    []string{"in_app", "push"},
+	},
+	{
+		Type:        TypeSponsoredAccess,
+		Title:       "Vendor users you sponsor",
+		Description: "A vendor user you sponsor is waiting for you to approve a privileged session.",
 		Channels:    []string{"in_app", "push"},
 	},
 }

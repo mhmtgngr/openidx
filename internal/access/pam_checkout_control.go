@@ -24,6 +24,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/vault"
 )
 
@@ -312,6 +313,12 @@ func (s *Service) handlePamBreakGlass(c *gin.Context) {
 		return
 	}
 	userID := c.GetString("user_id")
+	// Break-glass shows the credential too, and an external user is never
+	// shown one (I5).
+	if s.refuseExternalCaller(c, org.ID, externalid.ErrRevealForbidden, "pam.reveal_denied", entryID, "pam_entry",
+		map[string]interface{}{"entry_id": entryID, "path": "break_glass"}) {
+		return
+	}
 
 	var secretID string
 	var allowReveal, breakGlassEnabled bool
