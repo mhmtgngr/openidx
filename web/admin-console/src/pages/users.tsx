@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { isAxiosError } from 'axios'
@@ -48,6 +48,11 @@ interface User {
   enabled: boolean
   email_verified: boolean
   created_at: string
+  // An external (vendor) account: its lifecycle status and end come from the
+  // identity service and are read-only here (they change on External Users).
+  user_type: string
+  account_status: string
+  account_expires_at: string
 }
 
 // The /api/v1/identity/users endpoint speaks SCIM (userName, name.givenName,
@@ -68,6 +73,9 @@ function toFlatUser(u: RawUser): User {
     enabled: Boolean(u.enabled ?? u.active ?? false),
     email_verified: Boolean(u.emailVerified ?? u.email_verified ?? false),
     created_at: String(u.createdAt ?? u.created_at ?? ''),
+    user_type: String(u.userType ?? u.user_type ?? 'internal'),
+    account_status: String(u.accountStatus ?? u.account_status ?? ''),
+    account_expires_at: String(u.accountExpiresAt ?? u.account_expires_at ?? ''),
   }
 }
 function toApiUser(d: Partial<User> & { password?: string }): Record<string, unknown> {
@@ -501,9 +509,18 @@ export function UsersPage() {
                         </div>
                       </TableCell>
                       <TableCell className="p-3">
-                        <Badge className={user.enabled ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
-                          {user.enabled ? t('pages.users.badges.active') : t('pages.users.badges.disabled')}
-                        </Badge>
+                        {user.user_type === 'external' ? (
+                          <div className="flex flex-wrap items-center gap-1">
+                            <Badge variant="outline" className="border-amber-300 text-amber-800">{t('pages.users.badges.external')}</Badge>
+                            <Badge className={user.account_status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
+                              {t(`pages.externalUsers.status.${user.account_status}`, { defaultValue: user.account_status })}
+                            </Badge>
+                          </div>
+                        ) : (
+                          <Badge className={user.enabled ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
+                            {user.enabled ? t('pages.users.badges.active') : t('pages.users.badges.disabled')}
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell className="p-3">
                         {zitiMap && zitiMap[user.id] ? (
@@ -674,6 +691,15 @@ export function UsersPage() {
             <DialogTitle>{t('pages.users.editDialog.title')}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleFormSubmit} className="space-y-4">
+            {selectedUser?.user_type === 'external' && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                {t('pages.users.editDialog.externalNote', {
+                  status: t(`pages.externalUsers.status.${selectedUser.account_status}`, { defaultValue: selectedUser.account_status }),
+                  date: selectedUser.account_expires_at ? new Date(selectedUser.account_expires_at).toLocaleDateString() : '—',
+                })}{' '}
+                <Link to="/external-users" className="font-medium underline">{t('pages.users.editDialog.externalLink')}</Link>
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="edit-username">{t('pages.users.addDialog.username')}</Label>
               <Input

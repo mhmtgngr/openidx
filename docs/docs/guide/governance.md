@@ -154,6 +154,38 @@ is the synchronous version: it severs tokens, sessions, vault checkouts, live
 privileged sessions and network circuits, and reports which of those failed
 rather than claiming success.
 
+## External (vendor) users
+
+A supplier's or contractor's people get their own accounts, managed on
+**Identity → External Users**. Each account belongs to a vendor organization,
+has an internal sponsor and has an end date. None of the three is optional.
+
+- **Invite.** On the Invitations tab, give the person's address, the vendor
+  and optionally a sponsor, a lifetime and groups. The address must be in one
+  of the vendor's allowed domains, and the lifetime stays within a year and
+  the vendor's contract. Only groups an administrator opened to external users
+  (**Groups → Edit → Open to external (vendor) users**) can be chosen. The
+  invitation link opens a page where the person sets a password and then an
+  authenticator app. The account cannot sign in until the app's code is
+  confirmed.
+- **What an account may hold.** An external account holds only the `user`
+  role and the groups opened to external users. It never approves a request
+  or receives a delegation. Its access requests must name a duration that
+  ends no later than the account does. The database refuses anything else, whichever screen
+  or API asks.
+- **How access ends.** Suspend or disable an account from its row; either
+  signs the person out everywhere at once, and each needs a reason. The
+  identity service also ends accounts on its own every minute:
+  - an account past its end is expired;
+  - an account whose sponsor left or was disabled is suspended;
+  - an account of a closed vendor is disabled;
+  - a suspension nobody reverses within 7 days becomes final.
+- **Bringing one back.** A suspended account can be reactivated within 7 days
+  by naming a new sponsor. An expired or disabled one needs a new invitation.
+
+[Identity API → External users](../api/identity.md#external-users) has the
+routes and the refusal codes.
+
 ## Policies that decide, and policies that describe
 
 Two policy engines meet here, and the difference matters:
