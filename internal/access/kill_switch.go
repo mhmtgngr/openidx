@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -501,17 +502,35 @@ func (s *Service) endUserPamEntrySessions(ctx context.Context, orgID, userID str
 		warn("list_pam_entry_sessions", err)
 		return 0
 	}
-	type sess struct{ rowID, connID, guacUser, reach string }
-	var sessions []sess
+	return len(s.endPamEntrySessionRows(ctx, orgID, scanPamSessionRows(rows), warn))
+}
+
+// pamSessionRow is one live pam_entry_sessions row, with what the broker needs
+// to find the session it launched.
+type pamSessionRow struct{ rowID, connID, guacUser, reach string }
+
+// scanPamSessionRows reads (id, connection, guac user, reach mode) rows and
+// closes them.
+func scanPamSessionRows(rows pgx.Rows) []pamSessionRow {
+	defer rows.Close()
+	var sessions []pamSessionRow
 	for rows.Next() {
-		var g sess
+		var g pamSessionRow
 		if err := rows.Scan(&g.rowID, &g.connID, &g.guacUser, &g.reach); err == nil {
 			sessions = append(sessions, g)
 		}
 	}
-	rows.Close()
+	return sessions
+}
+
+// endPamEntrySessionRows ends the given live sessions of one organization on
+// their broker and marks each row ended once the broker no longer serves it.
+// It returns the rows it marked ended. A row with no broker connection (a
+// browser terminal, a website launch) is marked ended directly, and the
+// terminal's own watcher closes it (ws_connect.go).
+func (s *Service) endPamEntrySessionRows(ctx context.Context, orgID string, sessions []pamSessionRow, warn func(string, error)) []string {
 	if len(sessions) == 0 {
-		return 0
+		return nil
 	}
 
 	// One listing per broker, however many sessions ride it.
@@ -529,7 +548,7 @@ func (s *Service) endUserPamEntrySessions(ctx context.Context, orgID, userID str
 		return active, err
 	}
 
-	ended := 0
+	var ended []string
 	brokerMissing := false
 	for _, g := range sessions {
 		if g.connID != "" {
@@ -576,7 +595,7 @@ func (s *Service) endUserPamEntrySessions(ctx context.Context, orgID, userID str
 			warn("mark_pam_entry_session", err)
 			continue
 		}
-		ended++
+		ended = append(ended, g.rowID)
 	}
 	if brokerMissing {
 		warn("terminate_pam_entry_sessions", errPamBrokerNotConfigured)

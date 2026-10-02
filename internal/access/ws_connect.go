@@ -245,7 +245,70 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 		"entry_id": entryID, "user_id": userID, "session_id": sessionID, "outcome": "ended",
 	})
 
+	// The terminal lives as long as its ledger row does. The kill switch, the
+	// lifecycle sweep and the end of the grant that opened it mark the row
+	// ended, on whichever replica they run; the watcher here, on the replica
+	// holding the connection, closes the terminal within a tick of that. When
+	// the terminal closes for any other reason, its row is ended here.
+	stop := make(chan struct{})
+	if sessionID != "" {
+		go s.watchPamTerminal(org.ID, sessionID, stop, func() {
+			_ = wsConn.Close()
+			_ = sshClient.Close()
+		})
+	}
 	bridgeSSHOverWebSocket(wsConn, sshClient, s.logger)
+	close(stop)
+	if sessionID != "" {
+		s.endPamTerminalRow(org.ID, sessionID)
+	}
+}
+
+// pamTerminalWatchInterval is how often a browser terminal reads its ledger
+// row. A variable so a test can shorten it.
+var pamTerminalWatchInterval = 10 * time.Second
+
+// watchPamTerminal closes a browser terminal once its pam_entry_sessions row is
+// no longer active (or gone), and returns when stop closes. A read that fails
+// is retried on the next tick rather than taken as an end: the database being
+// briefly unreachable is not a reason to cut a session nobody ended.
+func (s *Service) watchPamTerminal(orgID, sessionID string, stop <-chan struct{}, closeTerminal func()) {
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: orgID})
+	ticker := time.NewTicker(pamTerminalWatchInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			var status string
+			err := s.db.Pool.QueryRow(ctx,
+				`SELECT status FROM pam_entry_sessions WHERE id = $1 AND org_id = $2`, sessionID, orgID).Scan(&status)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				s.logger.Warn("browser terminal: could not read its session row; checking again next tick",
+					zap.String("session_id", sessionID), zap.Error(err))
+				continue
+			}
+			if err != nil || status != "active" {
+				s.logger.Info("browser terminal: its session was ended; closing it",
+					zap.String("session_id", sessionID))
+				closeTerminal()
+				return
+			}
+		}
+	}
+}
+
+// endPamTerminalRow marks a closed browser terminal's ledger row ended. Before
+// this the row stayed active after the terminal closed, so the ledger listed
+// terminals nobody had open.
+func (s *Service) endPamTerminalRow(orgID, sessionID string) {
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: orgID})
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE pam_entry_sessions SET status = 'ended', ended_at = NOW()
+		  WHERE id = $1 AND org_id = $2 AND status = 'active'`, sessionID, orgID); err != nil {
+		s.logger.Warn("browser terminal: could not mark its session ended", zap.String("session_id", sessionID), zap.Error(err))
+	}
 }
 
 // pamEntrySSHHostKey reads the entry's pinned SSH host key from its settings

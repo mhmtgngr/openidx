@@ -83,6 +83,70 @@ func Holds(ctx context.Context, q Querier, orgID, entryID, userID string, roles 
 	return ok, err
 }
 
+// Lister is satisfied by *pgxpool.Pool and pgx.Tx.
+type Lister interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// LapsedSession is a live PAM entry session whose user no longer holds a
+// grant to connect to its entry.
+type LapsedSession struct {
+	ID     string
+	OrgID  string
+	UserID string
+}
+
+// LapsedSessions lists, across the install, up to limit live PAM entry
+// sessions whose user no longer holds a live 'connect' grant on the session's
+// entry: the grant expired (a request's window closed), was removed, or the
+// role or group that carried it is no longer theirs. The access service ends
+// them: a session lasts as long as the access that opened it.
+//
+// It is Holds asked of the session's user, with the roles read from
+// user_roles the way a token's are (internal/oauth: the user's unexpired
+// assignments in the org, by name, as a role grant names them), because the
+// sweep has no token. Two kinds of session are not judged: one an
+// administrator opened without a grant (admin_bypass names 'grant'), since no
+// grant opened it, and one recorded before migration v217 (admin_bypass
+// NULL), since whether a grant opened it is not known.
+func LapsedSessions(ctx context.Context, q Lister, limit int) ([]LapsedSession, error) {
+	rows, err := q.Query(ctx,
+		//orgscope:ignore install-wide sweep of live PAM entry sessions; each grant, role and group is matched in the session's own org
+		`SELECT s.id::text, s.org_id::text, s.user_id::text
+		   FROM pam_entry_sessions s
+		  WHERE s.status = 'active' AND s.user_id IS NOT NULL
+		    AND s.admin_bypass IS NOT NULL AND NOT ('grant' = ANY(s.admin_bypass))
+		    AND NOT EXISTS (
+		          SELECT 1 FROM pam_entry_grants g
+		           WHERE g.org_id = s.org_id AND g.entry_id = s.entry_id
+		             AND 'connect' = ANY(g.actions)
+		             AND (g.expires_at IS NULL OR g.expires_at > NOW())
+		             AND ((g.principal_type = 'user' AND g.principal_id = s.user_id::text)
+		               OR (g.principal_type = 'role' AND g.principal_id IN (
+		                     SELECT r.name FROM user_roles ur
+		                       JOIN roles r ON r.id = ur.role_id
+		                      WHERE ur.user_id = s.user_id AND ur.org_id = s.org_id
+		                        AND (ur.expires_at IS NULL OR ur.expires_at > NOW())))
+		               OR (g.principal_type = 'group' AND g.principal_id IN (
+		                     SELECT gm.group_id::text FROM group_memberships gm
+		                      WHERE gm.user_id = s.user_id AND gm.org_id = s.org_id))))
+		  ORDER BY s.started_at
+		  LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list PAM entry sessions past their grant: %w", err)
+	}
+	defer rows.Close()
+	var out []LapsedSession
+	for rows.Next() {
+		var l LapsedSession
+		if err := rows.Scan(&l.ID, &l.OrgID, &l.UserID); err != nil {
+			return nil, fmt.Errorf("scan a PAM entry session: %w", err)
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
 // Counts reports what one pass ended, per table, so a caller can put the
 // numbers on its response and in its audit event rather than a bare "done".
 type Counts struct {
