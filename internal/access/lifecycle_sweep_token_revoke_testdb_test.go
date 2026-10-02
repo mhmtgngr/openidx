@@ -71,9 +71,9 @@ func revokeSweepSchema(t *testing.T, pool *pgxpool.Pool) {
 		CREATE TABLE access_requests (
 			id uuid primary key, requester_id uuid, resource_type text, resource_id uuid,
 			org_id uuid, status text NOT NULL, expires_at timestamptz, updated_at timestamptz);
-		CREATE TABLE user_roles (user_id uuid, role_id uuid, org_id uuid);
+		CREATE TABLE user_roles (user_id uuid, role_id uuid, org_id uuid, expires_at TIMESTAMPTZ);
 		CREATE TABLE group_memberships (user_id uuid, group_id uuid, org_id uuid);
-		CREATE TABLE user_application_assignments (user_id uuid, application_id uuid, org_id uuid);`)
+		CREATE TABLE user_application_assignments (user_id uuid, application_id uuid, org_id uuid, expires_at TIMESTAMPTZ);`)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS vault_checkouts,
@@ -110,10 +110,14 @@ func addElevationExpiring(t *testing.T, pool *pgxpool.Pool, userID, org, rtype, 
 	require.NoError(t, err)
 
 	assignment := map[string]string{
-		"role":            `INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1,$2,$3)`,
+		// A role assignment and an application assignment carry their
+		// request's window (migrations v223 and v222).
+		"role": `INSERT INTO user_roles (user_id, role_id, org_id, expires_at)
+			SELECT $1, $2, $3, expires_at FROM access_requests WHERE requester_id = $1 AND resource_id = $2 AND org_id = $3`,
 		"privileged_role": `INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1,$2,$3)`,
 		"group":           `INSERT INTO group_memberships (user_id, group_id, org_id) VALUES ($1,$2,$3)`,
-		"application":     `INSERT INTO user_application_assignments (user_id, application_id, org_id) VALUES ($1,$2,$3)`,
+		"application": `INSERT INTO user_application_assignments (user_id, application_id, org_id, expires_at)
+			SELECT $1, $2, $3, expires_at FROM access_requests WHERE requester_id = $1 AND resource_id = $2 AND org_id = $3`,
 	}[rtype]
 	if assignment != "" {
 		_, err = pool.Exec(ctx, assignment, userID, resID, org)

@@ -10,6 +10,7 @@ import { api, QuickLink } from '../lib/api'
 import { openPamSessionWindow } from '../lib/pam-session-handoff'
 import { QueryError } from './query-error'
 import { useToast } from '../hooks/use-toast'
+import { apiErrorBody } from '../lib/api-error'
 import { TerminalSession } from './remote/terminal-session'
 
 // Resolve a lucide icon by name (admin picks one); fall back to Link2.
@@ -49,11 +50,16 @@ export function QuickLinksSection({ search }: { search: string }) {
         toast({ title: t('components.quickLinks.nothingToLaunch'), variant: 'destructive' })
       }
     },
-    onError: (e: Error & { body?: { approval_required?: boolean } }) => {
-      if (e.body?.approval_required || /requires approval/i.test(e.message)) {
+    // The refusal's reason is in the response body (apiErrorBody); the error
+    // itself only says which status came back.
+    onError: (e: Error) => {
+      const body = apiErrorBody(e)
+      if (body?.moderation_required || body?.code === 'moderation_required') {
+        toast({ title: t('components.quickLinks.moderationRequired'), description: t('components.quickLinks.moderationRequiredDesc'), variant: 'destructive' })
+      } else if (body?.approval_required) {
         toast({ title: t('components.quickLinks.approvalRequired'), description: t('components.quickLinks.approvalRequiredDesc'), variant: 'destructive' })
       } else {
-        toast({ title: t('components.quickLinks.launchFailed'), description: e.message, variant: 'destructive' })
+        toast({ title: t('components.quickLinks.launchFailed'), description: typeof body?.error === 'string' ? body.error : e.message, variant: 'destructive' })
       }
     },
   })

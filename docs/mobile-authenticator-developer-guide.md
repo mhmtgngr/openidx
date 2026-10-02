@@ -383,7 +383,9 @@ The app has **three ways to reach an app**, in increasing integration cost:
 Credentials are injected **server-side** and never touch the phone
 (`internal/access/pam_launch.go:150-344`). Flow:
 1. **List** — `GET /api/v1/access/pam/entries` (ACL-filtered) and/or
-   `GET /api/v1/access/guacamole/my-connections`. Launchable types: `rdp, ssh, vnc,
+   `GET /api/v1/access/guacamole/my-connections` (the brokered proxy routes the
+   user holds a connect grant on; a route's connect is the entry launch, with
+   the same grant, approval and step-up). Launchable types: `rdp, ssh, vnc,
    telnet, website`.
 2. **Request access** if required — `POST /api/v1/access/pam/entries/:id/request`
    `{ "reason": "…" }` → `{ "request_id": "…" }` (single-use grant, 1 h). An admin/
