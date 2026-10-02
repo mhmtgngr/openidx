@@ -87,6 +87,9 @@ for the lack of one.
 An external user's session runs under fixed controls, whatever the entry or
 the install's settings say:
 
+- **Only what is open to their vendor.** When their vendor organization is
+  on a closed list, they launch and see only the entries opened to it,
+  whatever grant they hold (`external_target_not_open`).
 - **Approved by their sponsor.** Every launch needs a launch approval, even
   on an entry that asks for none. The user asks for one with **Request
   access**. Their sponsor is told, finds it in their queue

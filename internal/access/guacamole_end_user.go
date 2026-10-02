@@ -117,8 +117,17 @@ func (s *Service) handleListMyGuacConnections(c *gin.Context) {
 		return
 	}
 
+	open, err := s.closedListEntries(ctx, org.ID, caller)
+	if err != nil {
+		s.logger.Error("handleListMyGuacConnections: vendor list query failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list connections"})
+		return
+	}
 	conns := []GuacUserConnection{}
 	for _, cand := range all {
+		if open != nil && !open[cand.entryID] {
+			continue // not open to the caller's vendor (I11)
+		}
 		if !isAdmin {
 			allowed, aclErr := s.pamEntryAllowed(ctx, org.ID, cand.entryID, userID, roles, "connect")
 			if aclErr != nil {

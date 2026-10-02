@@ -210,6 +210,20 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 	// vault_credential requests: validate the secret exists under the caller's org
 	// context (RLS scopes the SELECT to the caller's org) and require a bounded window.
 	if body.ResourceType == "vault_credential" {
+		// Invariant I5 of the third-party access framework: an external
+		// (vendor) user is never handed a credential, so a vault credential is
+		// not theirs to ask for. Refused before the secret is looked up, so the
+		// answer does not tell them which secret ids exist.
+		external, err := externalid.IsExternal(c.Request.Context(), s.db.Pool, org.ID, requesterID)
+		if err != nil {
+			s.logger.Error("could not read whether the requester is external", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create access request"})
+			return
+		}
+		if external {
+			c.JSON(http.StatusForbidden, gin.H{"error": externalid.ErrRevealForbidden.Error(), "code": externalid.Code(externalid.ErrRevealForbidden)})
+			return
+		}
 		var exists bool
 		if err := s.db.Pool.QueryRow(c.Request.Context(),
 			`SELECT EXISTS(SELECT 1 FROM vault_secrets WHERE id=$1 AND org_id=$2)`, body.ResourceID, org.ID).Scan(&exists); err != nil {
@@ -274,6 +288,18 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 			return
 		}
 		s.logger.Error("could not check the requester's account window", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create access request"})
+		return
+	}
+
+	// Invariant I11 at the request: an external user whose vendor is on a
+	// closed list asks only for what was opened to it.
+	if err := externalid.CheckTargetOpen(c.Request.Context(), s.db.Pool, org.ID, requesterID, body.ResourceType, body.ResourceID); err != nil {
+		if errors.Is(err, externalid.ErrTargetNotOpen) {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": externalid.Code(err)})
+			return
+		}
+		s.logger.Error("could not check the requester's vendor list", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create access request"})
 		return
 	}

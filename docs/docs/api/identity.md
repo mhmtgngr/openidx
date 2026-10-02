@@ -28,6 +28,11 @@ An external (vendor) user is a user with `userType` `external`. Such a user carr
 | GET | `/api/v1/identity/vendor-orgs/:id` | Get a vendor organization |
 | PUT | `/api/v1/identity/vendor-orgs/:id` | Update one (status `active` or `suspended`) |
 | POST | `/api/v1/identity/vendor-orgs/:id/close` | Close one, with a `reason`. Its external users are disabled. This cannot be undone |
+| GET | `/api/v1/identity/vendor-orgs/:id/targets` | What is open to a vendor on a closed list: each target's type, id and name |
+| POST | `/api/v1/identity/vendor-orgs/:id/targets` | Open a target: `target_type` (`pam_entry`, `application` or `network_service`) and `target_id`. A PAM entry or an application must exist in the organization (`404`), and a second opening is a `409` |
+| DELETE | `/api/v1/identity/vendor-orgs/:id/targets/:targetId` | Close a target again |
+
+A vendor organization's `closed_list` (create and update; an update that leaves it out keeps it) puts its external users on the closed list: they ask for, and launch, only the PAM entries, applications and network services opened to the vendor. Anything else answers `403` with `external_target_not_open`, and the PAM entry lists show them only what is open. With `closed_list` off, the targets are kept and decide nothing. A closed vendor's targets cannot change (`vendor_org_closed`).
 
 A suspended vendor accepts no new invitations, extensions or reactivations. Its existing accounts keep their state: suspend them, or close the vendor, to end their access.
 
