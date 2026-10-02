@@ -131,13 +131,32 @@ func Revoke(ctx context.Context, q Execer, resourceType, userID, resourceID, org
 	return nil
 }
 
-// RevokeRequest ends the access one fulfilled request granted. For every type
-// but pam_entry that is Revoke, because the assignment row is keyed by the
-// (user, resource) pair and nothing else. A PAM entry grant a request wrote
-// carries the request's id (migration v216), so only that grant ends, and a
-// standing grant the user holds on the same entry is left alone: a request
-// that expires must not take an administrator's grant with it.
+// RevokeRequest ends the access one fulfilled request granted. A PAM entry
+// grant a request wrote carries the request's id (migration v216), so only that
+// grant ends, and a standing grant the user holds on the same entry is left
+// alone: a request that expires must not take an administrator's grant with
+// it. An application assignment carries its window instead (migration v222):
+// the request removes the assignment when its window is the assignment's,
+// and leaves a standing assignment and one a later request carried past this
+// request's end. For every other type it is Revoke, because the assignment row
+// is keyed by the (user, resource) pair and nothing else.
 func RevokeRequest(ctx context.Context, q Execer, requestID, resourceType, userID, resourceID, orgID string) error {
+	if resourceType == "application" {
+		filter := ""
+		args := []any{requestID, userID, resourceID}
+		if orgID != "" {
+			filter = " AND uaa.org_id = $4"
+			args = append(args, orgID)
+		}
+		if _, err := q.Exec(ctx,
+			`DELETE FROM user_application_assignments uaa
+			  USING access_requests r
+			  WHERE r.id = $1 AND uaa.user_id = $2 AND uaa.application_id = $3`+filter+`
+			    AND uaa.expires_at IS NOT NULL AND uaa.expires_at <= r.expires_at`, args...); err != nil {
+			return fmt.Errorf("revoke application assignment of request %s: %w", requestID, err)
+		}
+		return nil
+	}
 	if resourceType != "pam_entry" {
 		return Revoke(ctx, q, resourceType, userID, resourceID, orgID)
 	}

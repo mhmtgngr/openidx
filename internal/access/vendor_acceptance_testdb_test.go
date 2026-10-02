@@ -49,9 +49,13 @@ import (
 //   - out of scope: never asked for.
 //
 // Every request goes through governance's own routes and its own token check,
-// with tokens signed by a key published at the JWKS URL governance reads. The
-// window then closes the way it closes on an install: its end passes and the
-// governance service's expiry tick runs.
+// with tokens signed by a key published at the JWKS URL governance reads.
+//
+// The window then closes the way it closes on an install. Its end passes, and
+// before any sweep has run every enforcement point refuses: OAuth and PAM at
+// once, the proxy once its thirty-second answer has aged, and the overlay at
+// the user sync's next poll. Then governance's expiry tick removes what the
+// window gave, and the lifecycle sweep ends the session opened in it.
 //
 // Each enforcement point is the real one:
 //
@@ -65,16 +69,10 @@ import (
 //   - PAM: connect, on a stand-in broker, and the lifecycle sweep that ends a
 //     session whose grant ended.
 //
-// Not proved here, and said in docs/evidence/display-equals-enforcement.md:
-//
-//   - the end is as late as the sweeps that carry it. An application's
-//     assignment is removed by the governance tick, every five minutes; the
-//     proxy then holds its answer for up to thirty seconds, and the overlay
-//     drops the vendor's attribute at the next sync of their identity. A PAM
-//     grant ends at the window itself;
-//   - a network service, the third kind of target a vendor can be opened. An
-//     approved request for one opens no dial yet: no Dial policy names the
-//     jit-<request-id> attribute it adds.
+// Not proved here, and said in docs/evidence/display-equals-enforcement.md: a
+// network service, the third kind of target a vendor can be opened. An
+// approved request for one opens no dial yet: no Dial policy names the
+// jit-<request-id> attribute it adds.
 func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing.T) {
 	f := newExternalPamFixture(t)
 	ctx := context.Background()
@@ -293,6 +291,8 @@ func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing
 		}
 	}
 	dials := func(a app) bool { return overlay.dials(a.service, vendorIdentity) }
+	// The identity's first sync, which the poller gives it when it creates it.
+	syncVendor()
 
 	// ---- PAM ----
 	connect := func(entryID string) (int, map[string]interface{}) {
@@ -320,7 +320,8 @@ func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing
 			t.Fatalf("request %s is %s, want %s", id, got, want)
 		}
 	}
-	syncVendor()
+	// The poller's next pass re-syncs an identity whose assignment started.
+	zm.resyncChangedAssignments(bypass)
 	if attrs := overlay.attributes(vendorIdentity); !slices.Contains(attrs, "browzer-users") {
 		t.Fatalf("the vendor's identity carries %v: without #browzer-users it is not the clientless user this test is about", attrs)
 	}
@@ -387,48 +388,70 @@ func TestAVendorReachesOnlyWhatTheirSponsorApprovedAndOnlyInTheWindow(t *testing
 	})
 
 	// ---- the window closes ----
-	// The grant governance wrote for the entry ends with the request's window.
+	// What governance wrote ends with the request's window: the entry's grant,
+	// and the application's assignment (migration v222).
 	if same := f.scalar(`SELECT (g.expires_at = r.expires_at)::text FROM pam_entry_grants g
 		JOIN access_requests r ON r.id = g.request_id WHERE g.request_id = $1`, entryRequest); same != "true" {
 		t.Fatal("the entry's grant does not end with the request's window")
 	}
-	// Two hours and a minute pass: the window's end is behind both.
+	if same := f.scalar(`SELECT (a.expires_at = r.expires_at)::text FROM user_application_assignments a
+		JOIN access_requests r ON r.requester_id = a.user_id AND r.resource_id = a.application_id
+		WHERE r.id = $1`, appRequest); same != "true" {
+		t.Fatal("the application's assignment does not end with the request's window")
+	}
+	// Two hours and a minute pass. The windows' ends are behind them, and so is
+	// the vendor identity's last sync, which happened in the window.
 	f.exec(`UPDATE access_requests SET expires_at = expires_at - interval '2 hours 1 minute' WHERE id IN ($1, $2)`, appRequest, entryRequest)
 	f.exec(`UPDATE pam_entry_grants SET expires_at = expires_at - interval '2 hours 1 minute' WHERE request_id = $1`, entryRequest)
-	gsvc.RunJITExpiryOnce(ctx)
-	for _, id := range []string{appRequest, entryRequest} {
-		if got := statusOf(id); got != "expired" {
-			t.Fatalf("request %s is %s after the expiry tick, want expired", id, got)
-		}
-	}
-	// And the sweeps downstream of it run: the proxy's assignment answers are
-	// thirty seconds old, the user sync patches the vendor's identity, and the
-	// lifecycle sweep looks at the live sessions.
+	f.exec(`UPDATE user_application_assignments SET expires_at = expires_at - interval '2 hours 1 minute',
+		assigned_at = assigned_at - interval '2 hours 1 minute' WHERE user_id = $1`, f.external)
+	f.exec(`UPDATE ziti_identities SET group_attrs_synced_at = group_attrs_synced_at - interval '2 hours 1 minute'
+		WHERE ziti_id = $1`, vendorIdentity)
+	// No sweep has run. The proxy's assignment answers are thirty seconds old,
+	// and the user sync polls.
 	f.svc.assignCache.Range(func(k, v interface{}) bool {
 		e := v.(assignCacheEntry)
 		e.at = e.at.Add(-groupCacheTTL)
 		f.svc.assignCache.Store(k, e)
 		return true
 	})
-	syncVendor()
-	f.svc.runLifecycleEnforcement(bypass)
+	zm.resyncChangedAssignments(bypass)
 
-	t.Run("after the window every enforcement point refuses the vendor", func(t *testing.T) {
+	t.Run("at the window's end every enforcement point refuses, before any sweep", func(t *testing.T) {
+		if got := statusOf(appRequest); got != "fulfilled" {
+			t.Fatalf("the application's request is %s: a sweep ran, and this would prove the sweep, not the window", got)
+		}
 		if ok, answer := signsIn(approvedApp); ok || !strings.Contains(answer, "access_denied") {
-			t.Errorf("OAuth: the expired application answered %s, want access_denied", answer)
+			t.Errorf("OAuth: the application whose window ended answered %s, want access_denied", answer)
 		}
 		if ok, code := reaches(approvedApp); ok || code != http.StatusForbidden {
-			t.Errorf("proxy: the expired application answered %d, want 403 before the upstream", code)
+			t.Errorf("proxy: the application whose window ended answered %d, want 403 before the upstream", code)
 		}
 		if dials(approvedApp) {
-			t.Errorf("Ziti: the vendor still dials the expired application: identity %v", overlay.attributes(vendorIdentity))
+			t.Errorf("Ziti: the vendor still dials the application whose window ended: identity %v", overlay.attributes(vendorIdentity))
 		}
 		launch := f.approval(approvedEntry)
 		if code, body := connect(approvedEntry); code != http.StatusForbidden || body["error"] != "not permitted" {
-			t.Errorf("PAM: the expired entry answered %d %v, want 403 not permitted", code, body)
+			t.Errorf("PAM: the entry whose window ended answered %d %v, want 403 not permitted", code, body)
 		}
 		if got := launchStatus(launch); got != "approved" {
 			t.Errorf("PAM: the refused launch spent its approval: %s", got)
+		}
+	})
+
+	// The sweeps then run: governance's expiry tick removes what the window
+	// gave, and the lifecycle sweep looks at the live sessions.
+	gsvc.RunJITExpiryOnce(ctx)
+	f.svc.runLifecycleEnforcement(bypass)
+
+	t.Run("the sweeps end what the window left: the assignment, the requests and the session", func(t *testing.T) {
+		for _, id := range []string{appRequest, entryRequest} {
+			if got := statusOf(id); got != "expired" {
+				t.Errorf("request %s is %s after the expiry tick, want expired", id, got)
+			}
+		}
+		if n := f.scalar(`SELECT count(*)::text FROM user_application_assignments WHERE user_id = $1`, f.external); n != "0" {
+			t.Errorf("the expiry tick left %s of the vendor's application assignments", n)
 		}
 		if f.broker.isServing(session) {
 			t.Error("PAM: the session opened in the window is still served after it")

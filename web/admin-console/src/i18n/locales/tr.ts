@@ -268,6 +268,7 @@ const tr: typeof en = {
       noPrincipals: 'Atanmış hiçbir özne yok — bunu açmak herkesi reddeder.',
       principalsKeepAccess: '{{count}} özne atanmış ve erişimini korur.',
       principalsKeepAccess_other: '{{count}} özne atanmış ve erişimini korur.',
+      until: '{{date}} tarihine kadar (bir erişim talebiyle verildi)',
       currentAccess: 'Mevcut erişim',
       noneAssigned: 'Henüz kimse atanmadı. Yukarıdan bir kullanıcı veya grup atayın.',
       granted: 'Erişim verildi',

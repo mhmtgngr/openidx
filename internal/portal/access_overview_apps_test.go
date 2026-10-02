@@ -41,7 +41,7 @@ func TestGetAccessOverview_AppsCountIncludesGroupAssignments(t *testing.T) {
     external_allowed BOOLEAN NOT NULL DEFAULT false
 )`,
 		`CREATE TABLE applications (id UUID PRIMARY KEY, name VARCHAR(255), enabled BOOLEAN, route_id UUID, org_id UUID)`,
-		`CREATE TABLE user_application_assignments (user_id UUID, application_id UUID, org_id UUID)`,
+		`CREATE TABLE user_application_assignments (user_id UUID, application_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE group_application_assignments (group_id UUID, application_id UUID, org_id UUID)`,
 		`CREATE TABLE group_join_requests (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, status VARCHAR(32))`,
 		`CREATE TABLE vault_access_grants (

@@ -1574,5 +1574,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamEntryModerationUp,
 			DownSQL:     pamEntryModerationDown,
 		},
+		{
+			Version:     222,
+			Name:        "application_assignment_window",
+			Description: "An application assignment carries the window it was granted for. user_application_assignments.expires_at (NULL is a standing assignment) is written by the fulfilment of a time-bound access request, and internal/appaccess reads it, so /oauth/authorize, the proxy and the overlay refuse once the window is over instead of at the next five-minute governance sweep (found by the #975 acceptance test). The backfill gives each row the latest window of the fulfilled requests for its user and application. An external user's assignment joins the I8 triggers of v215: it ends no later than the account, and is cut again when the account's end moves earlier. Down restores v215's functions and drops the trigger, the index and the column.",
+			UpSQL:       applicationAssignmentWindowUp,
+			DownSQL:     applicationAssignmentWindowDown,
+		},
 	}
 }

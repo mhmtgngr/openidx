@@ -66,7 +66,8 @@ Each payload carries `request_id`, `requester_id`, `resource_type`, `resource_id
 
 ### Resource types
 
-- `role`, `group`, `application` — an assignment, ended by the expiry sweep when the request has a duration
+- `role`, `group` — an assignment, ended by the expiry sweep when the request has a duration
+- `application` — an assignment that ends with the request's window (`expires_at`, migration v222). It is refused from the window's end; the expiry sweep then removes it. A standing assignment stays standing, and of two windows on one assignment the later counts
 - `vault_credential` — a time-bound reveal of a vault secret; a duration is required
 - `network_service` — a time-bound Ziti attribute
 - `pam_entry` — a time-bound `connect` grant on a PAM entry, ending with the request's window; a duration is required. The requester must already see the entry (a standing grant of any action on it, directly, through a role or through a group); otherwise the answer is `404` with `pam_entry_not_found`, the same as for an entry that does not exist. A requester who can already connect gets `409` with `pam_entry_already_granted`, and a request with no duration `400` with `pam_entry_duration_required`. The request carries the entry's own name, so `resource_name` may be left out. The entry's launch approval, where the entry asks for one, is still taken at connect.
