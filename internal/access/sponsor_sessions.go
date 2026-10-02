@@ -203,7 +203,8 @@ func (s *Service) handlePamSponsorEndSession(c *gin.Context) {
 		return
 	}
 	s.logAuditEvent(c, "pam.session_ended", row.rowID, "pam_entry_session", map[string]interface{}{
-		"session_id": row.rowID, "entry_id": entryID, "user_id": userID, "reason": "sponsor_ended",
+		"session_id": row.rowID, "entry_id": entryID, "user_id": userID, "reason": sessionEndSponsor,
 	})
+	s.pamSessionEnded(org.ID, row.rowID, sessionEndSponsor, c.GetString("user_id"))
 	c.JSON(http.StatusOK, gin.H{"session_id": row.rowID, "ended": true})
 }

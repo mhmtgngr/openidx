@@ -253,7 +253,7 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 	defer wsConn.Close()
 
 	injected := secretType != "" || username != ""
-	sessionID := s.recordPamLaunch(c, org.ID, &entry, "ssh", "", injected, "")
+	sessionID := s.recordPamLaunch(c, org.ID, &entry, "ssh", "", injected, "", "")
 	s.logAuditEvent(c, "pam.ws_connect", entryID, "pam_entry", map[string]interface{}{
 		"entry_id": entryID, "renderer": "wasm-ssh", "protocol": "ssh",
 		"user_id": userID, "session_id": sessionID, "outcome": "started",
@@ -322,10 +322,17 @@ func (s *Service) watchPamTerminal(orgID, sessionID string, stop <-chan struct{}
 // terminals nobody had open.
 func (s *Service) endPamTerminalRow(orgID, sessionID string) {
 	ctx := orgctx.With(context.Background(), orgctx.Org{ID: orgID})
-	if _, err := s.db.Pool.Exec(ctx,
+	tag, err := s.db.Pool.Exec(ctx,
 		`UPDATE pam_entry_sessions SET status = 'ended', ended_at = NOW()
-		  WHERE id = $1 AND org_id = $2 AND status = 'active'`, sessionID, orgID); err != nil {
+		  WHERE id = $1 AND org_id = $2 AND status = 'active'`, sessionID, orgID)
+	if err != nil {
 		s.logger.Warn("browser terminal: could not mark its session ended", zap.String("session_id", sessionID), zap.Error(err))
+		return
+	}
+	// A row something else ended first (the sweep, the kill switch, the
+	// sponsor) was published by what ended it.
+	if tag.RowsAffected() == 1 {
+		s.pamSessionEnded(orgID, sessionID, sessionEndTerminalClosed, "")
 	}
 }
 

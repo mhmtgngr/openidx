@@ -66,6 +66,17 @@ for the lack of one.
 7. **Quick Links.** Curate a searchable launcher of external tools and
    PAM connections for users (`type=external` opens a vetted URL,
    `type=pam` launches the brokered session clientlessly).
+8. **Send the sessions to your SIEM.** Subscribe a webhook to:
+   - `pam.session.started`: the session, entry, user and protocol, and
+     whether the user is external and the session recorded;
+   - `pam.session.ended`: the same, with `reason`, and `actor_id` when
+     someone asked for the end. The reasons are:
+     - `grant_ended` and `max_duration` (the lifecycle sweep);
+     - `account_disabled`, `kill_switch` and `sponsor_ended`;
+     - `risk_suspended` (the session risk scorer);
+     - `closed` (a browser terminal closed);
+     - `ended` (the user or an administrator ended it).
+   - `pam.break_glass`: the entry, the user and their justification.
 
 ## For users: getting a session
 
@@ -76,6 +87,9 @@ for the lack of one.
    nothing to install. An entry listed without **Connect** can be asked for:
    **Access Requests → Request Access → PAM Connection**, for a duration.
    Once the request is approved, Connect appears until the window ends.
+   You are told when a request of yours is decided, and when the window is
+   about to end and has ended (**Your access requests**). That holds for a
+   launch approval too.
 3. Need a credential itself (rare, discouraged)? **Reveal** is a separate,
    separately-granted, separately-audited action with checkout semantics —
    return it when done.
