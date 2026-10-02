@@ -26,7 +26,17 @@ func (s *Service) StartJITExpirationChecker(ctx context.Context) {
 	if s.redis != nil {
 		rdb = s.redis.Client
 	}
-	leader.RunPeriodic(ctx, rdb, s.logger, "governance:jit-expiry", 5*time.Minute, s.revokeExpiredJITAccess)
+	leader.RunPeriodic(ctx, rdb, s.logger, "governance:jit-expiry", 5*time.Minute, s.RunJITExpiryOnce)
+}
+
+// RunJITExpiryOnce runs one tick of the checker above: windows that have
+// closed end, requests nobody answered in time expire, and access that ends
+// within the hour is warned of. It is exported for the third-party access
+// acceptance test in internal/access, which proves a vendor's window closed at
+// every enforcement point, and must close it with the sweep this service runs
+// rather than with a copy of it.
+func (s *Service) RunJITExpiryOnce(ctx context.Context) {
+	s.revokeExpiredJITAccess(orgctx.WithBypassRLS(ctx))
 }
 
 // revokeExpiredJITAccess finds fulfilled access requests that have passed their
