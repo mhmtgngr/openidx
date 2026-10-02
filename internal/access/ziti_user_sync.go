@@ -620,7 +620,8 @@ func (zm *ZitiManager) StartUserSyncPoller(ctx context.Context) {
 	}()
 }
 
-// runAutoSync is called each tick to sync new users and refresh stale group attributes.
+// runAutoSync is called each tick to sync new users, re-sync the identities whose
+// application assignments changed, and refresh stale group attributes.
 func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 	// Find up to 10 users without Ziti identities
 	rows, err := zm.db.Pool.Query(ctx,
@@ -655,6 +656,8 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 			 WHERE id = (SELECT id FROM ziti_user_sync LIMIT 1)`)
 	}
 
+	zm.resyncChangedAssignments(ctx)
+
 	// Re-sync stale group attributes (older than 5 minutes)
 	staleRows, err := zm.db.Pool.Query(ctx,
 		//orgscope:ignore Ziti user-sync background poller sweep across all orgs; refreshes stale identity attributes
@@ -676,6 +679,41 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 	}
 
 	zm.runDeprovisionSweep(ctx)
+}
+
+// resyncChangedAssignments re-syncs the identities whose application
+// assignments changed since their last sync: one started, or one's window
+// ended (migration v222 gives an assignment its window). Their #app-<id>
+// markers are wrong until then, and the staleness pass below would correct
+// them only five minutes after the last sync; this corrects them on the poll.
+func (zm *ZitiManager) resyncChangedAssignments(ctx context.Context) {
+	rows, err := zm.db.Pool.Query(ctx,
+		//orgscope:ignore Ziti user-sync background poller sweep across all orgs; re-syncs the identities whose application assignments changed since their last sync
+		`SELECT zi.user_id FROM ziti_identities zi
+		  WHERE zi.user_id IS NOT NULL AND zi.group_attrs_synced_at IS NOT NULL
+		    AND EXISTS (SELECT 1 FROM user_application_assignments uaa
+		                 WHERE uaa.user_id = zi.user_id
+		                   AND (uaa.assigned_at > zi.group_attrs_synced_at
+		                        OR (uaa.expires_at > zi.group_attrs_synced_at AND uaa.expires_at <= NOW())))
+		  LIMIT 50`)
+	if err != nil {
+		zm.logger.Warn("auto-sync: changed assignments query failed", zap.Error(err))
+		return
+	}
+	var users []string
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err == nil {
+			users = append(users, userID)
+		}
+	}
+	rows.Close()
+	for _, userID := range users {
+		if err := zm.SyncGroupAttributesForUser(ctx, userID); err != nil {
+			zm.logger.Warn("auto-sync: re-sync after an assignment change failed",
+				zap.String("user_id", userID), zap.Error(err))
+		}
+	}
 }
 
 // runDeprovisionSweep is the revocation half of the users→Ziti mirror: it
