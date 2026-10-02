@@ -137,6 +137,9 @@ func TestARoleOrGroupRequestTellsTheReceiversWhenItBeginsAndEnds(t *testing.T) {
 	if _, err := db.Pool.Exec(ctx, `UPDATE user_application_assignments SET expires_at = expires_at - interval '2 hours 1 minute' WHERE user_id = $1`, requester); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE user_roles SET expires_at = expires_at - interval '2 hours 1 minute' WHERE user_id = $1`, requester); err != nil {
+		t.Fatal(err)
+	}
 	s.RunJITExpiryOnce(bg)
 	want := []string{"access_granted", "access_granted", "access_ended", "access_ended"}
 	if got := signals(); !slices.Equal(got, want) {

@@ -38,7 +38,7 @@ func TestOffboardingIsAllOrNothing(t *testing.T) {
 );
 		CREATE TABLE api_keys (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, status VARCHAR(16), org_id UUID);
 		CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID);
-		CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID);
+		CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ);
 		CREATE TABLE sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID,
 			client_id VARCHAR(255) NOT NULL DEFAULT 'rp-a', revoked BOOLEAN DEFAULT false);
 		CREATE TABLE oauth_refresh_tokens (token VARCHAR(500) PRIMARY KEY, client_id VARCHAR(255),

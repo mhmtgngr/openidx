@@ -60,7 +60,7 @@ func TestDeprovisionUser_RevokesPAMState(t *testing.T) {
 			resource_type VARCHAR(50), resource_id VARCHAR(255), resource_name VARCHAR(255),
 			status VARCHAR(50), expires_at TIMESTAMPTZ,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
-		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID)`,
+		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 		// The PAM entry surface internal/pamgrant ends: the leaver's own
 		// connection grants, launch approvals, exclusive leases, issued
 		// temporary access links and brokered-session ledger rows.
@@ -93,7 +93,9 @@ func TestDeprovisionUser_RevokesPAMState(t *testing.T) {
 		`INSERT INTO vault_access_grants (org_id, secret_id, principal_type, principal_id, actions) VALUES ('` + orgID + `','` + secretID + `','user','` + userID + `','{use,reveal}')`,
 		`INSERT INTO access_requests (requester_id, org_id, resource_type, resource_id, resource_name, status, expires_at)
 		   VALUES ('` + userID + `','` + orgID + `','role','` + deprovRole + `','break-glass','fulfilled',NOW()+'1h')`,
-		`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ('` + userID + `','` + deprovRole + `','` + orgID + `')`,
+		// The assignment the request made, carrying its window (migration v223).
+		`INSERT INTO user_roles (user_id, role_id, org_id, expires_at)
+		   SELECT requester_id, resource_id::uuid, org_id, expires_at FROM access_requests WHERE requester_id = '` + userID + `'`,
 		// Another user's live PAM state — must be untouched.
 		`INSERT INTO vault_checkouts (org_id, secret_id, principal_id, mode, status) VALUES ('` + orgID + `','` + secretID + `','` + otherID + `','reveal','active')`,
 		`INSERT INTO vault_access_grants (org_id, secret_id, principal_type, principal_id, actions) VALUES ('` + orgID + `','` + secretID + `','role','` + otherID + `','{use}')`,

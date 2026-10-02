@@ -44,7 +44,7 @@ func TestCreateApprovalRows_RoleStep(t *testing.T) {
 		CREATE TABLE user_roles (
 			user_id UUID NOT NULL,
 			role_id UUID NOT NULL,
-			org_id UUID NOT NULL);
+			org_id UUID NOT NULL, expires_at TIMESTAMPTZ);
 		CREATE TABLE access_request_approvals (
 			id UUID PRIMARY KEY,
 			request_id UUID NOT NULL,

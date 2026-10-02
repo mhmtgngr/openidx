@@ -52,7 +52,7 @@ func jitExpirySchema(t *testing.T, db *database.PostgresDB, ctx context.Context)
 			id UUID PRIMARY KEY, requester_id UUID, resource_type VARCHAR(50),
 			resource_id UUID, resource_name VARCHAR(255), org_id UUID,
 			status VARCHAR(30), expires_at TIMESTAMPTZ, updated_at TIMESTAMPTZ DEFAULT now());
-		CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID);
+		CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ);
 		CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID);
 		CREATE TABLE user_application_assignments (user_id UUID, application_id UUID, org_id UUID, expires_at TIMESTAMPTZ);
 		CREATE TABLE network_revocation_queue (org_id UUID, user_id UUID, reason TEXT);
@@ -113,8 +113,7 @@ func TestAnExpiredJITRoleCutsTheTokenStillNamingIt(t *testing.T) {
 	general, revoke := jitRedis(t)
 
 	seedExpired(t, db, ctx, "a0000000-0000-0000-0000-000000000001", "role", jitRole)
-	_, err := db.Pool.Exec(ctx, `INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1,$2,$3)`, jitUser, jitRole, jitOrg)
-	require.NoError(t, err)
+	seedRequestedRole(t, db, ctx, "a0000000-0000-0000-0000-000000000001")
 
 	jitSvc(t, db, general, revoke).revokeExpiredJITAccess(ctx)
 
@@ -141,8 +140,7 @@ func TestTheJITSweepWritesToTheRevocationRedisNotTheGeneralOne(t *testing.T) {
 	general, revoke := jitRedis(t)
 
 	seedExpired(t, db, ctx, "a0000000-0000-0000-0000-000000000001", "role", jitRole)
-	_, err := db.Pool.Exec(ctx, `INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1,$2,$3)`, jitUser, jitRole, jitOrg)
-	require.NoError(t, err)
+	seedRequestedRole(t, db, ctx, "a0000000-0000-0000-0000-000000000001")
 
 	jitSvc(t, db, general, revoke).revokeExpiredJITAccess(ctx)
 
@@ -247,8 +245,7 @@ func TestTheJITSweepStillExpiresGrantsWithNoRedis(t *testing.T) {
 	jitExpirySchema(t, db, ctx)
 
 	seedExpired(t, db, ctx, "a0000000-0000-0000-0000-000000000001", "role", jitRole)
-	_, err := db.Pool.Exec(ctx, `INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1,$2,$3)`, jitUser, jitRole, jitOrg)
-	require.NoError(t, err)
+	seedRequestedRole(t, db, ctx, "a0000000-0000-0000-0000-000000000001")
 
 	(&Service{db: db, logger: zap.NewNop()}).revokeExpiredJITAccess(ctx)
 
@@ -256,4 +253,13 @@ func TestTheJITSweepStillExpiresGrantsWithNoRedis(t *testing.T) {
 	require.NoError(t, db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM user_roles WHERE user_id=$1`, jitUser).Scan(&rows))
 	require.Equal(t, 0, rows, "the sweep must still remove expired access without Redis")
+}
+
+// seedRequestedRole writes the role assignment the request made, carrying the
+// request's window as fulfilment writes it (migration v223).
+func seedRequestedRole(t *testing.T, db *database.PostgresDB, ctx context.Context, requestID string) {
+	t.Helper()
+	_, err := db.Pool.Exec(ctx, `INSERT INTO user_roles (user_id, role_id, org_id, expires_at)
+		SELECT $1, $2, $3, expires_at FROM access_requests WHERE id = $4`, jitUser, jitRole, jitOrg, requestID)
+	require.NoError(t, err)
 }
