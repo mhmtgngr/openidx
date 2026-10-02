@@ -129,6 +129,13 @@ func (s *Service) CreateMultiChannelNotification(ctx context.Context, userID, or
 	return err
 }
 
+// Enabled reports whether userID takes notifications of notifType on channel:
+// the question CreateNotification asks before it writes, for a sender that
+// records whether its notification reached the recipient.
+func (s *Service) Enabled(ctx context.Context, userID, channel, notifType string) bool {
+	return s.isNotificationEnabled(ctx, userID, channel, notifType)
+}
+
 // isNotificationEnabled checks whether a user has enabled notifications for the given channel and event type.
 // If no preference record exists, notifications are enabled by default.
 //

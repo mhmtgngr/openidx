@@ -36,7 +36,8 @@ const (
 	// TypeBroadcast: an announcement an administrator sent to an audience.
 	TypeBroadcast = "broadcast"
 	// TypeSponsoredAccess: an external (vendor) user this user sponsors needs
-	// them -- today, a privileged launch waiting for their approval.
+	// them: a privileged launch waiting for their approval, or a privileged
+	// session that started.
 	TypeSponsoredAccess = "sponsored_access"
 )
 
@@ -84,7 +85,7 @@ var TypeCatalogue = []PreferenceType{
 	{
 		Type:        TypeSponsoredAccess,
 		Title:       "Vendor users you sponsor",
-		Description: "A vendor user you sponsor is waiting for you to approve a privileged session.",
+		Description: "A vendor user you sponsor is waiting for you to approve a privileged session, or started one.",
 		Channels:    []string{"in_app", "push"},
 	},
 }
