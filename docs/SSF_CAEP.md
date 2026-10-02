@@ -94,7 +94,19 @@ POST /ssf/streams
 |---|---|
 | `session-revoked` | All of a user's sessions are revoked here, or an external (vendor) account is suspended. A suspended account may come back (a new sponsor can reactivate it), so its sessions end and the account stays |
 | `account-disabled` | A path that severs an account disables or deletes it: offboarding, deletion, an administrator's edit that disables it, a lifecycle policy, the kill switch, a directory deprovision, a SCIM delete or `active:false`, an anomaly lock, a quarantine. An edit or a SCIM push of an account already disabled sends nothing. An external account that expires or is disabled, its vendor closed included |
-| `token-claims-change` | A role or a group an access request gives begins (the request is fulfilled) or ends (its window closes). The event's `claims` carry the user's `roles`, `groups` and `permissions` as a token issued at that moment carries them |
+| `token-claims-change` | A user's roles or groups change, on any of the paths listed below. The event's `claims` carry the user's `roles`, `groups` and `permissions` as a token issued at that moment carries them |
+
+`token-claims-change` is sent when:
+
+- an access request that gives a role or a group is fulfilled, and when its window closes;
+- an administrator grants, removes or deletes a role, or edits a user's role set;
+- a member is added to or removed from a group, or a group is deleted;
+- a lifecycle rule assigns or removes a role or a group;
+- a time-bound role lapses (the role-expiry sweep).
+
+A path that changes nothing sends nothing: a role the user already holds, a role set saved unchanged, a lifecycle removal of something the user does not hold. Each of these paths that takes a role or a group away also cuts the user's outstanding tokens (the revocation marker), because a token issued before still names it.
+
+Not yet sent: the console's bulk operations, a certification's revocation, SCIM and directory group pushes, a self-service group join and a provisioning rule change roles or groups without this event. The ones that take access away cut the tokens as before.
 
 A path outside oauth-service reaches the transmitter through
 `internal/common/ssfsignal`: it writes a row to `ssf_pending_events`

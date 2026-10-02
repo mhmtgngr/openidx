@@ -59,16 +59,19 @@ func (s *Service) cleanupExpiredRoles(ctx context.Context) {
 		//orgscope:ignore background ticker sweep of expired role assignments across all orgs; no request/tenant context
 		`DELETE FROM user_roles
 		WHERE expires_at IS NOT NULL AND expires_at < NOW()
-		RETURNING user_id::text`)
+		RETURNING user_id::text, COALESCE(org_id::text, '')`)
 	if err != nil {
 		s.logger.Error("Failed to cleanup expired roles", zap.Error(err))
 		return
 	}
 
 	var expired []string
+	// Each user's organization, for the SSF signal below: the sweep runs in
+	// none, and the signal goes to the user's own tenant's receivers only.
+	orgOf := map[string]string{}
 	for rows.Next() {
-		var userID string
-		if scanErr := rows.Scan(&userID); scanErr != nil {
+		var userID, orgID string
+		if scanErr := rows.Scan(&userID, &orgID); scanErr != nil {
 			// Keep going: the rows are already deleted, and an id we failed to
 			// read is an id we cannot revoke -- which is the thing to say out
 			// loud rather than a reason to abandon the ones we did read.
@@ -77,6 +80,7 @@ func (s *Service) cleanupExpiredRoles(ctx context.Context) {
 			continue
 		}
 		expired = append(expired, userID)
+		orgOf[userID] = orgID
 	}
 	rows.Close()
 	if rerr := rows.Err(); rerr != nil {
@@ -96,6 +100,12 @@ func (s *Service) cleanupExpiredRoles(ctx context.Context) {
 			continue
 		}
 		seen[userID] = struct{}{}
+		// The tenant's SSF receivers are told, as for every other role loss
+		// (revokeAfterRoleLoss). This sweep is how an administrator's
+		// time-bound role ends, and it ended in silence.
+		if orgID := orgOf[userID]; orgID != "" {
+			s.claimsChangedIn(ctx, orgID, "identity.role_expiry", userID)
+		}
 		if err := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); err != nil {
 			s.logger.Error("a time-bound role expired, but the tokens still carrying it were not revoked",
 				logsafe.String("user_id", userID), zap.Error(err))

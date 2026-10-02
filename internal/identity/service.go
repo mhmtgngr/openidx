@@ -1500,6 +1500,7 @@ func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) er
 		actorIDFromContext(ctx), userID, "user", map[string]interface{}{
 			"group_id": groupID,
 		})
+	s.claimsChanged(ctx, "identity.AddGroupMember", userID)
 	return nil
 }
 
@@ -3866,6 +3867,7 @@ func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, ass
 	}
 	s.logAuditEvent(ctx, "identity", "role_management", "role.assigned", "success",
 		auditActor(ctx, assignedBy), userID, "user", details)
+	s.claimsChanged(ctx, "identity.AssignUserRole", userID)
 	return nil
 }
 
@@ -3998,6 +4000,9 @@ func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []
 	// whose role change then rolled back.
 	if lost := lostRoles(previous, roleIDs); len(lost) > 0 {
 		s.revokeAfterRoleLoss(ctx, "identity.UpdateUserRoles", userID)
+	} else if gained := lostRoles(roleIDs, previous); len(gained) > 0 {
+		// Only gained: no cut, but the receivers are told the claims changed.
+		s.claimsChanged(ctx, "identity.UpdateUserRoles", userID)
 	}
 	return nil
 }
@@ -7355,40 +7360,72 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 		// ever assigned a role. The error was returned and logged by the
 		// caller, which is why a joiner rule appeared to run and granted
 		// nothing.
-		_, err := s.db.Pool.Exec(ctx,
+		tag, err := s.db.Pool.Exec(ctx,
 			"INSERT INTO user_roles (user_id, role_id, assigned_at, org_id) VALUES ($1, $2, NOW(), $3) ON CONFLICT DO NOTHING",
 			userID, roleID, org.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		// Only a role the user did not already hold changes their claims.
+		if tag.RowsAffected() > 0 {
+			s.claimsChanged(ctx, "identity.lifecycle.assign_role", userID)
+		}
+		return nil
 
 	case "remove_role":
 		roleID, ok := action["role_id"].(string)
 		if !ok {
 			return fmt.Errorf("remove_role action missing 'role_id'")
 		}
-		_, err := s.db.Pool.Exec(ctx,
+		tag, err := s.db.Pool.Exec(ctx,
 			"DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3",
 			userID, roleID, org.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		// A role a lifecycle rule takes away is a role loss like the console's
+		// (RemoveUserRole): the user's outstanding tokens still carry it. This
+		// deleted the row and nothing else, so a mover rule left the old role
+		// in every token issued before it ran.
+		if tag.RowsAffected() > 0 {
+			s.revokeAfterRoleLoss(ctx, "identity.lifecycle.remove_role", userID)
+		}
+		return nil
 
 	case "assign_group":
 		groupID, ok := action["group_id"].(string)
 		if !ok {
 			return fmt.Errorf("assign_group action missing 'group_id'")
 		}
-		_, err := s.db.Pool.Exec(ctx,
+		tag, err := s.db.Pool.Exec(ctx,
 			"INSERT INTO group_memberships (group_id, user_id, joined_at, org_id) VALUES ($1, $2, NOW(), $3) ON CONFLICT DO NOTHING",
 			groupID, userID, org.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() > 0 {
+			s.claimsChanged(ctx, "identity.lifecycle.assign_group", userID)
+		}
+		return nil
 
 	case "remove_group":
 		groupID, ok := action["group_id"].(string)
 		if !ok {
 			return fmt.Errorf("remove_group action missing 'group_id'")
 		}
-		_, err := s.db.Pool.Exec(ctx,
+		tag, err := s.db.Pool.Exec(ctx,
 			"DELETE FROM group_memberships WHERE group_id = $1 AND user_id = $2 AND org_id = $3",
 			groupID, userID, org.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		// As remove_role: the token's "groups" claim is built from
+		// group_memberships at issuance, so the user's outstanding tokens
+		// still name the group (RemoveGroupMember).
+		if tag.RowsAffected() > 0 {
+			s.revokeAfterRoleLoss(ctx, "identity.lifecycle.remove_group", userID)
+		}
+		return nil
 
 	case "enable_user":
 		_, err := s.db.Pool.Exec(ctx,
