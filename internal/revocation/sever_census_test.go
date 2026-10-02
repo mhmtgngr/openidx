@@ -66,6 +66,12 @@ var severRegister = map[string]struct{ verdict, reason string }{
 			"so a concurrent refresh grant cannot slip through against a still-present user. Verified by " +
 			"reading that caller; this function is the row removal and nothing else, as its own comment says."},
 
+	"internal/identity/user_repository.go::Update": {revokedByCaller,
+		"Service.UpdateUser calls this and then deprovisionUser -- which writes the marker -- whenever the edit " +
+			"leaves the account disabled. Verified by reading that caller. This function writes the row, and enqueues " +
+			"the account-disabled signal itself on the edit that turns the account off, since only the write can tell " +
+			"that edit apart from an edit of an account already disabled."},
+
 	// ---- the grant shape -------------------------------------------------
 
 	"internal/identity/group_repository.go::Delete": {revokedByCaller,
