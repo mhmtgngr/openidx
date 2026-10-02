@@ -3933,19 +3933,29 @@ func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []
 	// Read the outgoing set before replacing it. A wholesale replacement is
 	// both a grant and a revocation, and an audit line that records only the
 	// new set cannot answer "what did this user lose?".
+	//
+	// And each role's window, because a role the new set keeps keeps it. The
+	// replacement used to write every role back standing, so editing a user's
+	// roles made a time-bound role permanent, one an access request gave
+	// (migration v223) or an administrator gave until a date, and brought
+	// back one whose window had ended and that the role-expiry sweep had not
+	// yet removed. A role the set adds is standing, as before.
 	previous := []string{}
+	windows := map[string]*time.Time{}
 	rows, err := tx.Query(ctx,
-		"SELECT role_id::text FROM user_roles WHERE user_id = $1 AND org_id = $2", userID, org.ID)
+		"SELECT role_id::text, expires_at FROM user_roles WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
+		var window *time.Time
+		if err := rows.Scan(&id, &window); err != nil {
 			rows.Close()
 			return err
 		}
 		previous = append(previous, id)
+		windows[id] = window
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -3958,12 +3968,12 @@ func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []
 		return err
 	}
 
-	// Insert new roles
+	// Insert new roles, each kept one with its window
 	for _, roleID := range roleIDs {
 		_, err = tx.Exec(ctx, `
-			INSERT INTO user_roles (user_id, role_id, assigned_at, org_id)
-			VALUES ($1, $2, NOW(), $3)
-		`, userID, roleID, org.ID)
+			INSERT INTO user_roles (user_id, role_id, assigned_at, org_id, expires_at)
+			VALUES ($1, $2, NOW(), $3, $4)
+		`, userID, roleID, org.ID, windows[strings.ToLower(roleID)])
 		if err != nil {
 			return err
 		}

@@ -82,6 +82,13 @@ var severRegister = map[string]struct{ verdict, reason string }{
 			"paths, after tx.Commit), its JIT expiry sweep, EndAllForUser's two callers (deprovisionUser and " +
 			"the kill switch) and EndAllForDisabledUsers via the lifecycle sweep."},
 
+	"internal/jitgrant/jitgrant.go::RevokeRequest": {revokedByCaller,
+		"the request-scoped twin of Revoke, for the same reason: it takes an Execer so a caller can run it inside " +
+			"its own transaction, and the marker belongs after the commit. Its role branch removes only the assignment " +
+			"whose window is the request's (migration v223). Every caller was read: governance's JIT expiry sweep cuts " +
+			"the tokens after it for a type the token carries, EndAllForUser's two callers (deprovisionUser and the " +
+			"kill switch) write the marker, and EndAllForDisabledUsers returns the users the lifecycle sweep then cuts."},
+
 	"internal/directory/sync.go::deleteSyncedGroup": {revokesIndirectly,
 		"the cascade path, fixed: group_memberships.group_id is ON DELETE CASCADE, so deleting a group the " +
 			"directory no longer has removes every membership without the statement naming the child table. " +

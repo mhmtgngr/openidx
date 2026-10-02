@@ -1506,9 +1506,18 @@ func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) er
 		if err := s.checkSoDForRoleGrant(ctx, request.RequesterID, request.ResourceID); err != nil {
 			return err
 		}
+		// The assignment carries the request's window (migration v223): the
+		// token builder and the role-expiry sweep read user_roles.expires_at,
+		// so the role leaves a newly issued token at the window's end, and
+		// the request's end removes only a row whose window is its own. A
+		// standing assignment stays standing, a request without a window
+		// makes one, and of two windows on one assignment the later counts.
 		_, err := s.db.Pool.Exec(ctx,
-			`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-			request.RequesterID, request.ResourceID, org.ID,
+			`INSERT INTO user_roles (user_id, role_id, org_id, expires_at) VALUES ($1, $2, $3, $4)
+			 ON CONFLICT (user_id, role_id) DO UPDATE SET expires_at =
+			   CASE WHEN user_roles.expires_at IS NULL OR EXCLUDED.expires_at IS NULL THEN NULL
+			        ELSE GREATEST(user_roles.expires_at, EXCLUDED.expires_at) END`,
+			request.RequesterID, request.ResourceID, org.ID, request.ExpiresAt,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to assign role: %w", err)

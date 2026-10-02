@@ -66,7 +66,8 @@ Each payload carries `request_id`, `requester_id`, `resource_type`, `resource_id
 
 ### Resource types
 
-- `role`, `group` — an assignment, ended by the expiry sweep when the request has a duration
+- `role` — an assignment that carries the request's window (`expires_at`, migration v223). A token issued after the window's end no longer carries the role, the role-expiry sweep removes it within a minute and cuts the tokens that still do, and the expiry sweep ends the request. The request's end removes only the assignment its window made: an administrator's standing assignment of the same role stays, and of two windows on one assignment the later counts
+- `group` — a membership, ended by the expiry sweep when the request has a duration
 - `application` — an assignment that ends with the request's window (`expires_at`, migration v222). It is refused from the window's end; the expiry sweep then removes it. A standing assignment stays standing, and of two windows on one assignment the later counts
 - `vault_credential` — a time-bound reveal of a vault secret; a duration is required
 - `network_service` — a time-bound dial to one of the organization's Ziti services, named by its id in the service mirror (`ziti_services`); a duration is required. Fulfilling it gives the requester the attribute `jit-<request-id>`, and the access service writes a Dial policy that opens the service to that attribute alone, until the window ends. A service that does not exist, is another organization's or is disabled answers `404` with `network_service_not_found`, and a request with no duration `400` with `network_service_duration_required`. The request carries the service's own name
