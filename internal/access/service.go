@@ -3514,7 +3514,7 @@ func (s *Service) logAuditEvent(c *gin.Context, action, targetID, targetType str
 		event["actor_type"] = "user"
 	}
 
-	if action == "proxy_access_denied" {
+	if action == "proxy_access_denied" || action == "pam.cloud_jit_denied" {
 		event["outcome"] = "failure"
 	}
 
