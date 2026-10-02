@@ -89,7 +89,35 @@ var (
 	ErrNotActivated       = errors.New("this external account has no second factor enrolled or is not active; nothing it holds takes effect until it is")
 	ErrFactorNotAllowed   = errors.New("external users enroll an authenticator app, a passkey or a push device, not SMS, email or phone call")
 	ErrEmailDomain        = errors.New("the email address is not in one of the vendor organization's allowed domains")
+	ErrWindowRequired     = errors.New("an external user's access needs an end: give the request a duration")
+	ErrWindowPastAccount  = errors.New("the access window may not end after the external user's account does")
 )
+
+// CheckWindow is invariant I8 at a request: an external user's access has an
+// end, and it is not after the account's. until is when the requested access
+// would end (nil for permanent). Nil for a user who is not external.
+//
+// A window past the account is refused, not shortened, for the reason the
+// request ceiling is refused rather than shortened: an approver reads and
+// approves the window the request names, and a grant that silently ends
+// earlier is the same defect as one that ends later.
+func CheckWindow(ctx context.Context, q Querier, orgID, userID string, until *time.Time) error {
+	ext, err := IsExternal(ctx, q, orgID, userID)
+	if err != nil || !ext {
+		return err
+	}
+	if until == nil {
+		return ErrWindowRequired
+	}
+	a, err := Load(ctx, q, orgID, userID)
+	if err != nil {
+		return err
+	}
+	if a.ExpiresAt != nil && until.After(*a.ExpiresAt) {
+		return ErrWindowPastAccount
+	}
+	return nil
+}
 
 // StrongFactors are the second factors an external user may enroll and sign
 // in with (decision D4): an authenticator app (TOTP), a passkey or security
@@ -129,6 +157,9 @@ func HasStrongFactor(ctx context.Context, q Querier, orgID, userID string) (bool
 // effect until the account is active and has a strong second factor. A
 // request may be filed and approved before that; fulfilling it, and
 // launching a privileged session, wait. Nil for a user who is not external.
+//
+// It is also I8 between the account's end and the sweep that records it: an
+// account past its expiry is refused here while it still reads active.
 func CheckEffective(ctx context.Context, q Querier, orgID, userID string) error {
 	ext, err := IsExternal(ctx, q, orgID, userID)
 	if err != nil || !ext {
@@ -144,7 +175,7 @@ func CheckEffective(ctx context.Context, q Querier, orgID, userID string) error 
 	if !a.External() {
 		return nil
 	}
-	if a.Status != StatusActive {
+	if a.Status != StatusActive || (a.ExpiresAt != nil && !a.ExpiresAt.After(time.Now())) {
 		return ErrNotActivated
 	}
 	ok, err := HasStrongFactor(ctx, q, orgID, userID)
@@ -427,7 +458,8 @@ func CheckSponsor(ctx context.Context, q Querier, orgID, sponsorID string) error
 func IsRefusal(err error) bool {
 	for _, r := range []error{ErrRoleCap, ErrGroupNotExternal, ErrExternalApprover, ErrExternalActor,
 		ErrExpiryRequired, ErrExpiryPast, ErrExpiryTooLong, ErrExpiryContract, ErrVendorNotActive, ErrSponsorInvalid,
-		ErrTypeImmutable, ErrGroupHasExternal, ErrIdentityIncomplete, ErrAccountNotLive, ErrNotActivated, ErrFactorNotAllowed, ErrEmailDomain} {
+		ErrTypeImmutable, ErrGroupHasExternal, ErrIdentityIncomplete, ErrAccountNotLive, ErrNotActivated, ErrFactorNotAllowed, ErrEmailDomain,
+		ErrWindowRequired, ErrWindowPastAccount} {
 		if errors.Is(err, r) {
 			return true
 		}
@@ -467,6 +499,8 @@ func Code(err error) string {
 		return "external_factor_not_allowed"
 	case errors.Is(err, ErrEmailDomain):
 		return "external_email_domain"
+	case errors.Is(err, ErrWindowRequired), errors.Is(err, ErrWindowPastAccount):
+		return "external_window_invalid"
 	}
 	return ""
 }

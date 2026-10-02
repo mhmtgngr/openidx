@@ -248,6 +248,18 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		expiresAt = &t
 	}
 
+	// Invariant I8 of the third-party access framework: an external (vendor)
+	// user asks for a window that ends, and ends no later than the account.
+	if err := externalid.CheckWindow(c.Request.Context(), s.db.Pool, org.ID, requesterID, expiresAt); err != nil {
+		if r := externalid.Refusal(err); r != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": r.Error(), "code": externalid.Code(r)})
+			return
+		}
+		s.logger.Error("could not check the requester's account window", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create access request"})
+		return
+	}
+
 	id := uuid.New().String()
 	now := time.Now()
 

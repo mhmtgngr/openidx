@@ -1525,5 +1525,12 @@ func allMigrations() []*Migration {
 			UpSQL:       externalIdentitiesUp,
 			DownSQL:     externalIdentitiesDown,
 		},
+		{
+			Version:     215,
+			Name:        "external_grant_window",
+			Description: "Invariant I8 of the third-party access framework at the grant writers: external_grant_window(), a BEFORE INSERT/UPDATE trigger on user_roles, pam_entry_grants and vault_access_grants (principal_type 'user'), sets an external user's grant to end when the account does when it has no end or a later one. It never lengthens a grant, so it can only end access earlier than the writer asked; an earlier expiry is untouched, and extending the account later does not extend grants written before. external_account_end_moved(), after an update of users.account_expires_at, cuts the same grants to an external account's end when it moves earlier. The request path refuses a window past the account instead (internal/externalid.CheckWindow). Down drops the triggers and the functions; the expiries they wrote stay.",
+			UpSQL:       externalGrantWindowUp,
+			DownSQL:     externalGrantWindowDown,
+		},
 	}
 }

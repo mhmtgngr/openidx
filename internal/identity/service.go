@@ -4189,6 +4189,14 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.PUT("/vendor-orgs/:id", svc.handleUpdateVendorOrg)
 		identity.POST("/vendor-orgs/:id/close", svc.handleCloseVendorOrg)
 
+		// External (vendor) accounts after they exist (external_accounts.go)
+		identity.GET("/external-users", svc.handleListExternalUsers)
+		identity.POST("/external-users/:id/suspend", svc.handleSuspendExternalUser)
+		identity.POST("/external-users/:id/disable", svc.handleDisableExternalUser)
+		identity.POST("/external-users/:id/extend", svc.handleExtendExternalUser)
+		identity.POST("/external-users/:id/reactivate", svc.handleReactivateExternalUser)
+		identity.POST("/external-users/:id/sponsor", svc.handleChangeExternalSponsor)
+
 		// Invitations
 		identity.GET("/invitations", svc.handleListInvitations)
 		identity.POST("/invitations", svc.handleCreateInvitation)

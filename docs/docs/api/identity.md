@@ -29,6 +29,33 @@ An external (vendor) user is a user with `userType` `external`. Such a user carr
 | PUT | `/api/v1/identity/vendor-orgs/:id` | Update one (status `active` or `suspended`) |
 | POST | `/api/v1/identity/vendor-orgs/:id/close` | Close one, with a `reason`. Its external users are disabled. This cannot be undone |
 
+A suspended vendor accepts no new invitations, extensions or reactivations. Its existing accounts keep their state: suspend them, or close the vendor, to end their access.
+
+## External users
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/identity/external-users` | List external accounts, optionally by `vendor_org_id` and `status`, with vendor, sponsor, `expiring_soon` (active, ending within 14 days), `has_strong_factor` and, for a suspended one, `reactivate_until` |
+| POST | `/api/v1/identity/external-users/:id/suspend` | Suspend a live account. It can be reactivated within 7 days |
+| POST | `/api/v1/identity/external-users/:id/disable` | Disable a live or suspended account. This is final; access needs a new invitation |
+| POST | `/api/v1/identity/external-users/:id/extend` | Move the account's end, with `account_expires_at` or `extend_days`, within a year and the vendor's contract |
+| POST | `/api/v1/identity/external-users/:id/reactivate` | Reactivate a suspended account with a new `sponsor_user_id`, within 7 days of its suspension and before its end |
+| POST | `/api/v1/identity/external-users/:id/sponsor` | Hand a live account to another `sponsor_user_id` |
+
+Each `POST` needs a `reason`, which is recorded in the audit trail with the change. An external user cannot call these routes (`external_not_permitted`). A move the account's state does not allow is `409` with `external_status_conflict`. Suspending and disabling end the account's sessions, tokens, API keys, vault checkouts and grants, and time-bound elevations at once. Extending does not lengthen grants already written: they still end on the old date unless they are granted again. Moving the end earlier cuts every grant past it to the new end.
+
+The identity service also ends accounts on its own, every minute, and severs each one once:
+
+| When | The account becomes |
+|------|---------------------|
+| It reaches `account_expires_at` | `expired` |
+| Its vendor is closed | `disabled` |
+| Its invitation lapses before a second factor is enrolled | `expired` |
+| Its sponsor is disabled, or is no longer an active internal user | `suspended` |
+| It stays suspended for 7 days | `disabled` |
+
+An external user's access request must name a duration, ending no later than the account; otherwise it is refused with `400` and `external_window_invalid`. A role, a PAM entry grant or a vault grant written for an external user directly is cut to end when the account does.
+
 ## Invitations
 
 | Method | Path | Description |
