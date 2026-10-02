@@ -67,10 +67,11 @@ func (s *Service) handleListVendorTargets(c *gin.Context) {
 	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT t.id::text, t.target_type, t.target_id::text,
-		       COALESCE(e.name, a.name, ''), t.created_at
+		       COALESCE(e.name, a.name, zs.name, ''), t.created_at
 		  FROM vendor_org_targets t
 		  LEFT JOIN pam_entries e ON t.target_type = 'pam_entry' AND e.id = t.target_id AND e.org_id = t.org_id
 		  LEFT JOIN applications a ON t.target_type = 'application' AND a.id = t.target_id AND a.org_id = t.org_id
+		  LEFT JOIN ziti_services zs ON t.target_type = 'network_service' AND zs.id = t.target_id AND zs.org_id = t.org_id
 		 WHERE t.vendor_org_id::text = $1 AND t.org_id = $2
 		 ORDER BY t.created_at`, c.Param("id"), org.ID)
 	if err != nil {
@@ -98,8 +99,9 @@ func (s *Service) handleListVendorTargets(c *gin.Context) {
 }
 
 // handleAddVendorTarget — POST /vendor-orgs/:id/targets {target_type,
-// target_id}. A PAM entry or an application must exist in the organization;
-// a network service is taken by id. Opening a target twice is a 409.
+// target_id}. A PAM entry, an application or a network service (a service of
+// the organization's Ziti mirror, which a network_service request names) must
+// exist in the organization. Opening a target twice is a 409.
 func (s *Service) handleAddVendorTarget(c *gin.Context) {
 	ctx := c.Request.Context()
 	org, err := orgctx.From(ctx)
@@ -126,7 +128,7 @@ func (s *Service) handleAddVendorTarget(c *gin.Context) {
 	if !s.vendorForTargets(c, org.ID, true) {
 		return
 	}
-	if table := map[string]string{"pam_entry": "pam_entries", "application": "applications"}[req.TargetType]; table != "" {
+	if table := map[string]string{"pam_entry": "pam_entries", "application": "applications", "network_service": "ziti_services"}[req.TargetType]; table != "" {
 		var exists bool
 		if err := s.db.Pool.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM `+table+` WHERE id = $1::uuid AND org_id = $2)`, req.TargetID, org.ID).Scan(&exists); err != nil {
