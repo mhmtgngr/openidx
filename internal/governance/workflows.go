@@ -180,7 +180,9 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		return
 	}
 
-	if body.ResourceType == "" || body.ResourceName == "" {
+	// A pam_entry request takes its name from the entry (pam_entry_requests.go),
+	// so the requester need not send one.
+	if body.ResourceType == "" || (body.ResourceName == "" && body.ResourceType != "pam_entry") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "resource_type and resource_name are required"})
 		return
 	}
@@ -223,6 +225,22 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "vault_credential requests require a duration"})
 			return
 		}
+	}
+
+	// pam_entry requests: a time-bound connect grant on a PAM entry the
+	// requester already sees (pam_entry_requests.go).
+	if body.ResourceType == "pam_entry" {
+		name, refusal, err := s.checkPamEntryRequest(c.Request.Context(), org.ID, requesterID, callerRoles(c), body.ResourceID, body.Duration)
+		if err != nil {
+			s.logger.Error("could not check a PAM entry request", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create access request"})
+			return
+		}
+		if refusal != nil {
+			c.JSON(refusal.status, gin.H{"error": refusal.msg, "code": refusal.code})
+			return
+		}
+		body.ResourceName = name
 	}
 
 	// Parse duration to calculate expires_at.
@@ -1353,8 +1371,8 @@ func (s *Service) checkSoDForRoleGrant(ctx context.Context, userID, targetRoleID
 }
 
 // fulfillRequest provisions the approved access by granting the requested resource
-// to the requester. The supported resource types are exactly the three that
-// access requests can be raised against: role, group, and application. An
+// to the requester: a role, a group, an application, a vault credential
+// checkout, a network service or a PAM entry connection. An
 // unknown resource type is a hard error rather than a silent "marked
 // fulfilled but nothing granted" — the previous warning-only no-op path
 // shipped approved-but-empty requests to production (the P1.1 gap the
@@ -1436,6 +1454,12 @@ func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) er
 			// is visible instead of lost.
 			s.logger.Warn("Failed to write jit_credential.checkout_granted audit event",
 				zap.String("request_id", request.ID), zap.Error(err))
+		}
+	case "pam_entry":
+		// A connect grant on the entry until the request's window ends, carrying
+		// the request's id (pam_entry_requests.go, migration v216).
+		if err := s.grantPamEntryConnect(ctx, org.ID, request); err != nil {
+			return err
 		}
 	case "network_service":
 		// JIT network grant (Wave B1): fulfilling a network_service request adds

@@ -35,12 +35,52 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Execer is satisfied by both *pgxpool.Pool and pgx.Tx.
 type Execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// Querier adds the read half, for the grant check.
+type Querier interface {
+	Execer
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// Holds reports whether userID holds a live grant on entryID that carries
+// action: directly, through one of roles (role names, as the token carries
+// them), or through a group they belong to in orgID. An empty action asks for
+// any action, which is whether the entry is visible to them at all.
+//
+// It is the one statement of the PAM grant check, read at the moment of the
+// call: the access service's connect and reveal paths ask it, and governance
+// asks it before it takes a request for an entry, so the two cannot disagree
+// about who holds what. Every live row counts, so a standing grant and a
+// request's grant on the same entry add up.
+func Holds(ctx context.Context, q Querier, orgID, entryID, userID string, roles []string, action string) (bool, error) {
+	if userID == "" || orgID == "" || entryID == "" {
+		return false, nil
+	}
+	if roles == nil {
+		roles = []string{}
+	}
+	var ok bool
+	err := q.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pam_entry_grants g
+			 WHERE g.org_id = $1 AND g.entry_id = $2
+			   AND ($3 = '' OR $3 = ANY(g.actions))
+			   AND (g.expires_at IS NULL OR g.expires_at > NOW())
+			   AND ((g.principal_type = 'user' AND g.principal_id = $4)
+			     OR (g.principal_type = 'role' AND g.principal_id = ANY($5))
+			     OR (g.principal_type = 'group' AND g.principal_id IN (
+			           SELECT gm.group_id::text FROM group_memberships gm
+			            WHERE gm.user_id = $4::uuid AND gm.org_id = $1))))`,
+		orgID, entryID, action, userID, roles).Scan(&ok)
+	return ok, err
 }
 
 // Counts reports what one pass ended, per table, so a caller can put the

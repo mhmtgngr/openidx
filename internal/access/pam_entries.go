@@ -26,6 +26,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/pamgrant"
 	"github.com/openidx/openidx/internal/vault"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
@@ -152,32 +153,9 @@ func pamCallerRoles(c *gin.Context) []string {
 // action on the entry (directly or via one of their roles). Admins are
 // checked at the call sites and bypass this.
 func (s *Service) pamEntryAllowed(ctx context.Context, orgID, entryID, userID string, roles []string, action string) (bool, error) {
-	if userID == "" {
-		return false, nil
-	}
-	if roles == nil {
-		roles = []string{}
-	}
-	// Group membership grants access too: expand the user's groups so a
-	// ('group', <group_id>) grant on the entry applies to every member.
-	groups, err := s.userGroupIDs(ctx, orgID, userID)
-	if err != nil {
-		return false, err
-	}
-	var ok bool
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM pam_entry_grants
-			WHERE org_id = $1 AND entry_id = $2
-			  AND $3 = ANY(actions)
-			  AND (expires_at IS NULL OR expires_at > NOW())
-			  AND (
-			    (principal_type = 'user' AND principal_id = $4)
-			    OR (principal_type = 'role' AND principal_id = ANY($5))
-			    OR (principal_type = 'group' AND principal_id = ANY($6))
-			  )
-		)`, orgID, entryID, action, userID, roles, groups).Scan(&ok)
-	return ok, err
+	// The predicate lives in internal/pamgrant, where governance asks it too
+	// before taking a request for an entry: one statement of who holds what.
+	return pamgrant.Holds(ctx, s.db.Pool, orgID, entryID, userID, roles, action)
 }
 
 // userGroupIDs returns the group IDs (as strings) the user belongs to in the
@@ -1143,10 +1121,11 @@ func (s *Service) handlePamListEntryGrants(c *gin.Context) {
 	}
 
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, principal_type, principal_id, actions, expires_at, COALESCE(granted_by::text,''), created_at
+		SELECT id, principal_type, principal_id, actions, expires_at, COALESCE(granted_by::text,''),
+		       COALESCE(request_id::text,''), created_at
 		  FROM pam_entry_grants
 		 WHERE org_id = $1 AND entry_id = $2
-		 ORDER BY principal_type, principal_id`, org.ID, entryID)
+		 ORDER BY principal_type, principal_id, request_id NULLS FIRST`, org.ID, entryID)
 	if err != nil {
 		s.logger.Error("handlePamListEntryGrants: query failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list grants"})
@@ -1161,12 +1140,15 @@ func (s *Service) handlePamListEntryGrants(c *gin.Context) {
 		Actions       []string   `json:"actions"`
 		ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 		GrantedBy     string     `json:"granted_by,omitempty"`
-		CreatedAt     time.Time  `json:"created_at"`
+		// RequestID names the access request a grant fulfils (migration
+		// v216); empty for a grant an administrator wrote.
+		RequestID string    `json:"request_id,omitempty"`
+		CreatedAt time.Time `json:"created_at"`
 	}
 	grants := []grantRow{}
 	for rows.Next() {
 		var g grantRow
-		if err := rows.Scan(&g.ID, &g.PrincipalType, &g.PrincipalID, &g.Actions, &g.ExpiresAt, &g.GrantedBy, &g.CreatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.PrincipalType, &g.PrincipalID, &g.Actions, &g.ExpiresAt, &g.GrantedBy, &g.RequestID, &g.CreatedAt); err != nil {
 			s.logger.Warn("handlePamListEntryGrants: scan failed", zap.Error(err))
 			continue
 		}
@@ -1214,7 +1196,7 @@ func (s *Service) handlePamAddEntryGrant(c *gin.Context) {
 	err = s.db.Pool.QueryRow(ctx, `
 		INSERT INTO pam_entry_grants (org_id, entry_id, principal_type, principal_id, actions, granted_by, expires_at)
 		SELECT $1, id, $3, $4, $5, NULLIF($6,'')::uuid, $7 FROM pam_entries WHERE id = $2 AND org_id = $1
-		ON CONFLICT (entry_id, principal_type, principal_id)
+		ON CONFLICT (entry_id, principal_type, principal_id) WHERE request_id IS NULL
 		DO UPDATE SET actions = EXCLUDED.actions, expires_at = EXCLUDED.expires_at
 		RETURNING id`,
 		org.ID, entryID, req.PrincipalType, req.PrincipalID, req.Actions,
