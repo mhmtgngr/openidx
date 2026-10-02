@@ -26,6 +26,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
+	"github.com/openidx/openidx/internal/pamgrant"
 	"github.com/openidx/openidx/internal/vault"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
@@ -152,32 +154,9 @@ func pamCallerRoles(c *gin.Context) []string {
 // action on the entry (directly or via one of their roles). Admins are
 // checked at the call sites and bypass this.
 func (s *Service) pamEntryAllowed(ctx context.Context, orgID, entryID, userID string, roles []string, action string) (bool, error) {
-	if userID == "" {
-		return false, nil
-	}
-	if roles == nil {
-		roles = []string{}
-	}
-	// Group membership grants access too: expand the user's groups so a
-	// ('group', <group_id>) grant on the entry applies to every member.
-	groups, err := s.userGroupIDs(ctx, orgID, userID)
-	if err != nil {
-		return false, err
-	}
-	var ok bool
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM pam_entry_grants
-			WHERE org_id = $1 AND entry_id = $2
-			  AND $3 = ANY(actions)
-			  AND (expires_at IS NULL OR expires_at > NOW())
-			  AND (
-			    (principal_type = 'user' AND principal_id = $4)
-			    OR (principal_type = 'role' AND principal_id = ANY($5))
-			    OR (principal_type = 'group' AND principal_id = ANY($6))
-			  )
-		)`, orgID, entryID, action, userID, roles, groups).Scan(&ok)
-	return ok, err
+	// The predicate lives in internal/pamgrant, where governance asks it too
+	// before taking a request for an entry: one statement of who holds what.
+	return pamgrant.Holds(ctx, s.db.Pool, orgID, entryID, userID, roles, action)
 }
 
 // userGroupIDs returns the group IDs (as strings) the user belongs to in the
@@ -242,14 +221,17 @@ type PamEntry struct {
 	CredentialEntryName string                 `json:"credential_entry_name,omitempty"`
 	AllowReveal         bool                   `json:"allow_reveal"`
 	RequireApproval     bool                   `json:"require_approval"`
-	DualControlRequired bool                   `json:"dual_control_required"`
-	ExclusiveCheckout   bool                   `json:"exclusive_checkout"`
-	BreakGlassEnabled   bool                   `json:"break_glass_enabled"`
-	RecordSession       bool                   `json:"record_session"`
-	ReachMode           string                 `json:"reach_mode"`
-	Renderer            string                 `json:"renderer"`
-	ZitiEnabled         bool                   `json:"ziti_enabled"`
-	Favorite            bool                   `json:"favorite"`
+	// RequireModerator: a session on the entry waits until a moderator
+	// joins to watch it (moderated_sessions.go).
+	RequireModerator    bool   `json:"require_moderator"`
+	DualControlRequired bool   `json:"dual_control_required"`
+	ExclusiveCheckout   bool   `json:"exclusive_checkout"`
+	BreakGlassEnabled   bool   `json:"break_glass_enabled"`
+	RecordSession       bool   `json:"record_session"`
+	ReachMode           string `json:"reach_mode"`
+	Renderer            string `json:"renderer"`
+	ZitiEnabled         bool   `json:"ziti_enabled"`
+	Favorite            bool   `json:"favorite"`
 	// Actions are the grant actions the caller holds on the entry, set by
 	// the entry list so the console offers only what the API will allow.
 	// An administrator, whom the grant checks do not apply to, holds every
@@ -279,6 +261,10 @@ type pamEntryUpsertReq struct {
 	CredentialEntryID string                 `json:"credential_entry_id"`
 	AllowReveal       bool                   `json:"allow_reveal"`
 	RequireApproval   bool                   `json:"require_approval"`
+	// RequireModerator is a pointer so an update that leaves it out keeps it:
+	// the console's entry form predates the field, and saving it must not
+	// clear a moderation requirement it never showed.
+	RequireModerator *bool `json:"require_moderator"`
 	// DualControlRequired, ExclusiveCheckout, BreakGlassEnabled are the v105
 	// checkout controls; all default false so existing entries are unaffected.
 	DualControlRequired bool   `json:"dual_control_required"`
@@ -326,6 +312,11 @@ func validatePamEntry(req *pamEntryUpsertReq) (PamEntryType, error) {
 	}
 	if req.Port < 0 || req.Port > 65535 {
 		return PamEntryType{}, errors.New("port out of range")
+	}
+	// A moderator watches a session, and an entry that opens none has nothing
+	// to watch.
+	if req.RequireModerator != nil && *req.RequireModerator && t.Protocol == "" {
+		return PamEntryType{}, fmt.Errorf("a %s entry opens no session, so it cannot require a moderator", t.Type)
 	}
 	// RemoteApp command-line args must never carry a secret (visible in the
 	// target's process list). Reject on write so the mistake surfaces in the
@@ -511,7 +502,8 @@ const pamEntrySelectColumns = `
 	e.allow_reveal, e.require_approval, e.record_session, e.reach_mode,
 	COALESCE(e.renderer,'guacamole'),
 	e.dual_control_required, e.exclusive_checkout, e.break_glass_enabled,
-	e.last_connected_at, e.connect_count, e.created_at, e.updated_at`
+	e.last_connected_at, e.connect_count, e.created_at, e.updated_at,
+	e.require_moderator`
 
 type pamEntryScanner interface {
 	Scan(dest ...any) error
@@ -529,6 +521,7 @@ func scanPamEntry(row pamEntryScanner) (*PamEntry, error) {
 		&e.Renderer,
 		&e.DualControlRequired, &e.ExclusiveCheckout, &e.BreakGlassEnabled,
 		&e.LastConnectedAt, &e.ConnectCount, &e.CreatedAt, &e.UpdatedAt,
+		&e.RequireModerator,
 	); err != nil {
 		return nil, err
 	}
@@ -572,7 +565,11 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 		 WHERE e.org_id = $1`
 	args := []interface{}{org.ID, userID}
 
-	isAdmin := s.pamCallerIsAdmin(c)
+	caller, ok := s.resolvePamCaller(c, org.ID)
+	if !ok {
+		return // resolvePamCaller already wrote the error
+	}
+	isAdmin := caller.Admin
 	var roles, groups []string
 	if !isAdmin {
 		roles = pamCallerRoles(c)
@@ -640,6 +637,7 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 			&e.Renderer,
 			&e.DualControlRequired, &e.ExclusiveCheckout, &e.BreakGlassEnabled,
 			&e.LastConnectedAt, &e.ConnectCount, &e.CreatedAt, &e.UpdatedAt,
+			&e.RequireModerator,
 			&e.Favorite,
 		); err != nil {
 			s.logger.Warn("handlePamListEntries: scan failed", zap.Error(err))
@@ -685,6 +683,23 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 				entries[i].Actions = []string{}
 			}
 		}
+	}
+	if caller.External {
+		open, oerr := s.closedListEntries(ctx, org.ID, caller)
+		if oerr != nil {
+			s.logger.Error("handlePamListEntries: vendor list query failed", zap.Error(oerr))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list entries"})
+			return
+		}
+		shown := entries[:0]
+		for i := range entries {
+			if open != nil && !open[entries[i].ID] {
+				continue // not open to the caller's vendor (I11)
+			}
+			presentPamEntryToExternal(&entries[i])
+			shown = append(shown, entries[i])
+		}
+		entries = shown
 	}
 
 	c.JSON(http.StatusOK, gin.H{"entries": entries})
@@ -740,8 +755,12 @@ func (s *Service) handlePamGetEntry(c *gin.Context) {
 		return
 	}
 
-	if !s.pamCallerIsAdmin(c) {
-		ok, aclErr := s.pamEntryAllowed(ctx, org.ID, entryID, c.GetString("user_id"), pamCallerRoles(c), "view")
+	caller, ok := s.resolvePamCaller(c, org.ID)
+	if !ok {
+		return // resolvePamCaller already wrote the error
+	}
+	if !caller.Admin {
+		ok, aclErr := s.pamEntryAllowed(ctx, org.ID, entryID, caller.UserID, pamCallerRoles(c), "view")
 		if aclErr != nil || !ok {
 			c.JSON(http.StatusForbidden, gin.H{"error": "not permitted"})
 			return
@@ -762,6 +781,19 @@ func (s *Service) handlePamGetEntry(c *gin.Context) {
 		s.logger.Error("handlePamGetEntry: query failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load entry"})
 		return
+	}
+	if caller.External {
+		open, oerr := s.closedListEntries(ctx, org.ID, caller)
+		if oerr != nil {
+			s.logger.Error("handlePamGetEntry: vendor list query failed", zap.Error(oerr))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load entry"})
+			return
+		}
+		if open != nil && !open[entry.ID] {
+			c.JSON(http.StatusNotFound, gin.H{"error": "entry not found"})
+			return
+		}
+		presentPamEntryToExternal(entry)
 	}
 	c.JSON(http.StatusOK, entry)
 }
@@ -864,17 +896,17 @@ func (s *Service) handlePamCreateEntry(c *gin.Context) {
 		                         hostname, port, username, domain, url, settings,
 		                         vault_secret_id, credential_entry_id,
 		                         allow_reveal, require_approval, record_session, renderer, created_by,
-		                         dual_control_required, exclusive_checkout, break_glass_enabled)
+		                         dual_control_required, exclusive_checkout, break_glass_enabled, require_moderator)
 		VALUES ($1, $2, NULLIF($3,'')::uuid, $4, $5, NULLIF($6,''), $7,
 		        NULLIF($8,''), NULLIF($9,0), NULLIF($10,''), NULLIF($11,''), NULLIF($12,''), $13,
 		        NULLIF($14,'')::uuid, NULLIF($15,'')::uuid,
 		        $16, $17, $18, $19, NULLIF($20,'')::uuid,
-		        $21, $22, $23)`,
+		        $21, $22, $23, COALESCE($24::boolean, false))`,
 		entryID, org.ID, req.FolderID, req.Name, req.EntryType, req.Description, req.Tags,
 		req.Hostname, pamDefaultPort(req.EntryType, req.Port), req.Username, req.Domain, req.URL, settingsJSON,
 		vaultSecretID, req.CredentialEntryID,
 		req.AllowReveal, req.RequireApproval, req.RecordSession, pamNormalizeRenderer(req.Renderer, req.EntryType), userID,
-		req.DualControlRequired, req.ExclusiveCheckout, req.BreakGlassEnabled)
+		req.DualControlRequired, req.ExclusiveCheckout, req.BreakGlassEnabled, req.RequireModerator)
 	if err != nil {
 		if vaultSecretID != "" && s.vaultSvc != nil {
 			if delErr := s.vaultSvc.Delete(ctx, vaultSecretID); delErr != nil {
@@ -889,7 +921,7 @@ func (s *Service) handlePamCreateEntry(c *gin.Context) {
 
 	s.logAuditEvent(c, "pam.entry_created", entryID, "pam_entry", map[string]interface{}{
 		"name": req.Name, "entry_type": req.EntryType, "kind": typeInfo.Kind,
-		"has_secret": vaultSecretID != "",
+		"has_secret": vaultSecretID != "", "require_moderator": req.RequireModerator != nil && *req.RequireModerator,
 	})
 	c.JSON(http.StatusCreated, gin.H{"id": entryID})
 }
@@ -904,7 +936,8 @@ func (s *Service) handlePamUpdateEntry(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if _, err := validatePamEntry(&req); err != nil {
+	typeInfo, err := validatePamEntry(&req)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -990,6 +1023,7 @@ func (s *Service) handlePamUpdateEntry(c *gin.Context) {
 		       allow_reveal = $13, require_approval = $14, record_session = $15,
 		       renderer = $18,
 		       dual_control_required = $19, exclusive_checkout = $20, break_glass_enabled = $21,
+		       require_moderator = ($23::boolean AND COALESCE($22::boolean, require_moderator)),
 		       updated_at = NOW()
 		 WHERE id = $16 AND org_id = $17`,
 		req.FolderID, req.Name, req.Description, req.Tags,
@@ -998,7 +1032,10 @@ func (s *Service) handlePamUpdateEntry(c *gin.Context) {
 		vaultSecretID, req.CredentialEntryID,
 		req.AllowReveal, req.RequireApproval, req.RecordSession,
 		entryID, org.ID, pamNormalizeRenderer(req.Renderer, req.EntryType),
-		req.DualControlRequired, req.ExclusiveCheckout, req.BreakGlassEnabled)
+		req.DualControlRequired, req.ExclusiveCheckout, req.BreakGlassEnabled,
+		// Left out, the requirement stays; an entry that opens no session
+		// cannot keep one.
+		req.RequireModerator, typeInfo.Protocol != "")
 	if err != nil {
 		s.logger.Error("handlePamUpdateEntry: update failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update entry"})
@@ -1143,10 +1180,11 @@ func (s *Service) handlePamListEntryGrants(c *gin.Context) {
 	}
 
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, principal_type, principal_id, actions, expires_at, COALESCE(granted_by::text,''), created_at
+		SELECT id, principal_type, principal_id, actions, expires_at, COALESCE(granted_by::text,''),
+		       COALESCE(request_id::text,''), created_at
 		  FROM pam_entry_grants
 		 WHERE org_id = $1 AND entry_id = $2
-		 ORDER BY principal_type, principal_id`, org.ID, entryID)
+		 ORDER BY principal_type, principal_id, request_id NULLS FIRST`, org.ID, entryID)
 	if err != nil {
 		s.logger.Error("handlePamListEntryGrants: query failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list grants"})
@@ -1161,12 +1199,15 @@ func (s *Service) handlePamListEntryGrants(c *gin.Context) {
 		Actions       []string   `json:"actions"`
 		ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 		GrantedBy     string     `json:"granted_by,omitempty"`
-		CreatedAt     time.Time  `json:"created_at"`
+		// RequestID names the access request a grant fulfils (migration
+		// v216); empty for a grant an administrator wrote.
+		RequestID string    `json:"request_id,omitempty"`
+		CreatedAt time.Time `json:"created_at"`
 	}
 	grants := []grantRow{}
 	for rows.Next() {
 		var g grantRow
-		if err := rows.Scan(&g.ID, &g.PrincipalType, &g.PrincipalID, &g.Actions, &g.ExpiresAt, &g.GrantedBy, &g.CreatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.PrincipalType, &g.PrincipalID, &g.Actions, &g.ExpiresAt, &g.GrantedBy, &g.RequestID, &g.CreatedAt); err != nil {
 			s.logger.Warn("handlePamListEntryGrants: scan failed", zap.Error(err))
 			continue
 		}
@@ -1214,7 +1255,7 @@ func (s *Service) handlePamAddEntryGrant(c *gin.Context) {
 	err = s.db.Pool.QueryRow(ctx, `
 		INSERT INTO pam_entry_grants (org_id, entry_id, principal_type, principal_id, actions, granted_by, expires_at)
 		SELECT $1, id, $3, $4, $5, NULLIF($6,'')::uuid, $7 FROM pam_entries WHERE id = $2 AND org_id = $1
-		ON CONFLICT (entry_id, principal_type, principal_id)
+		ON CONFLICT (entry_id, principal_type, principal_id) WHERE request_id IS NULL
 		DO UPDATE SET actions = EXCLUDED.actions, expires_at = EXCLUDED.expires_at
 		RETURNING id`,
 		org.ID, entryID, req.PrincipalType, req.PrincipalID, req.Actions,
@@ -1290,6 +1331,13 @@ func (s *Service) handlePamRevealEntry(c *gin.Context) {
 		return
 	}
 	userID := c.GetString("user_id")
+	// An external user is never shown a credential (I5), whatever the entry
+	// allows and whatever they hold: asked first, so the answer is the same
+	// for every entry, one that does not exist included.
+	if s.refuseExternalCaller(c, org.ID, externalid.ErrRevealForbidden, "pam.reveal_denied", entryID, "pam_entry",
+		map[string]interface{}{"entry_id": entryID, "path": "reveal"}) {
+		return
+	}
 
 	var secretID, credentialEntryID string
 	var allowReveal bool
