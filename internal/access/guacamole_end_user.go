@@ -48,10 +48,12 @@ type GuacMySessionRequest struct {
 // ---- handleListMyGuacConnections ----
 // GET /api/v1/access/guacamole/my-connections (any authenticated user)
 //
-// Lists the org's brokered Guacamole connections (enabled routes only) with
-// the PAM flags the launcher UI needs: whether pre-session approval is
-// required, whether the session is recorded, and whether a credential is
-// injected server-side.
+// Lists the brokered connections the caller may launch: enabled routes whose
+// entry (guacamole_route_entry.go) the caller holds a connect grant on, or
+// every one for an administrator, with the PAM flags the launcher UI needs
+// read from the entry, since the entry is what the launch enforces. The
+// per-row decision is pamEntryAllowed, the same call connect makes, so the
+// list offers exactly what connect does.
 //
 // The predicate is the scope. This comment used to read "RLS scopes
 // guacamole_connections via the request context; the explicit pr.org_id
@@ -68,13 +70,17 @@ func (s *Service) handleListMyGuacConnections(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
+	userID := c.GetString("user_id")
+	isAdmin := s.pamCallerIsAdmin(c)
+	roles := pamCallerRoles(c)
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT gc.route_id, pr.name, gc.protocol, gc.hostname, gc.port,
-		        gc.require_approval, gc.record_session,
-		        (gc.vault_secret_id IS NOT NULL) AS credential_injected
+		`SELECT gc.route_id, pr.name, gc.protocol, gc.hostname, gc.port, e.id::text,
+		        e.require_approval, e.record_session,
+		        (e.vault_secret_id IS NOT NULL) AS credential_injected
 		   FROM guacamole_connections gc
 		   JOIN proxy_routes pr ON pr.id = gc.route_id
+		   JOIN pam_entries e ON e.proxy_route_id = gc.route_id AND e.org_id = gc.org_id
 		  WHERE gc.org_id = $1 AND pr.org_id = $1 AND pr.enabled = true
 		  ORDER BY pr.name`,
 		org.ID)
@@ -85,22 +91,43 @@ func (s *Service) handleListMyGuacConnections(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	conns := []GuacUserConnection{}
+	type candidate struct {
+		conn    GuacUserConnection
+		entryID string
+	}
+	var all []candidate
 	for rows.Next() {
 		var r GuacUserConnection
+		var entryID string
 		if err := rows.Scan(
-			&r.RouteID, &r.Name, &r.Protocol, &r.Hostname, &r.Port,
+			&r.RouteID, &r.Name, &r.Protocol, &r.Hostname, &r.Port, &entryID,
 			&r.RequireApproval, &r.RecordSession, &r.CredentialInjected,
 		); err != nil {
 			s.logger.Warn("handleListMyGuacConnections: scan failed", zap.Error(err))
 			continue
 		}
-		conns = append(conns, r)
+		all = append(all, candidate{conn: r, entryID: entryID})
 	}
 	if err := rows.Err(); err != nil {
 		s.logger.Error("handleListMyGuacConnections: rows iteration failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list connections"})
 		return
+	}
+
+	conns := []GuacUserConnection{}
+	for _, cand := range all {
+		if !isAdmin {
+			allowed, aclErr := s.pamEntryAllowed(ctx, org.ID, cand.entryID, userID, roles, "connect")
+			if aclErr != nil {
+				s.logger.Error("handleListMyGuacConnections: ACL check failed", zap.Error(aclErr))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list connections"})
+				return
+			}
+			if !allowed {
+				continue
+			}
+		}
+		conns = append(conns, cand.conn)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"connections": conns})
@@ -109,8 +136,8 @@ func (s *Service) handleListMyGuacConnections(c *gin.Context) {
 // ---- handleListMyGuacSessionRequests ----
 // GET /api/v1/access/guacamole/my-session-requests (any authenticated user)
 //
-// Lists the caller's own session requests (all statuses, most recent first)
-// joined with connection/route info, so the end-user UI can show pending /
+// Lists the caller's own requests on route-backed entries (all statuses, most
+// recent first) joined with route info, so the end-user UI can show pending /
 // approved / denied state and offer Launch for approved requests. Scoped to
 // the caller's user id and org.
 func (s *Service) handleListMyGuacSessionRequests(c *gin.Context) {
@@ -130,9 +157,10 @@ func (s *Service) handleListMyGuacSessionRequests(c *gin.Context) {
 
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT r.id, gc.route_id, pr.name, gc.protocol,
-		        r.reason, r.status, r.decided_at, r.expires_at, r.created_at
-		   FROM guacamole_session_requests r
-		   JOIN guacamole_connections gc ON gc.id = r.connection_id
+		        COALESCE(r.reason,''), r.status, r.decided_at, r.expires_at, r.created_at
+		   FROM pam_entry_access_requests r
+		   JOIN pam_entries e ON e.id = r.entry_id AND e.org_id = r.org_id
+		   JOIN guacamole_connections gc ON gc.route_id = e.proxy_route_id AND gc.org_id = e.org_id
 		   JOIN proxy_routes pr ON pr.id = gc.route_id
 		  WHERE r.org_id = $1 AND r.requester_id = $2
 		  ORDER BY r.created_at DESC

@@ -17,6 +17,8 @@ package main
 //     standing invitation to write a query against a table that will never have
 //     rows -- which is how the first kind is born.
 var knownUnwritten = map[string]string{
+	"guacamole_session_requests": "superseded. A proxy route's brokered connection is a PAM entry since v213 (pam_entries.proxy_route_id), and the route's session request is a pam_entry_access_requests row on that entry: filed by POST /guacamole/connections/:routeId/request, decided by the approve and deny routes, consumed once at launch, listed by the Privileged Sessions queue, my-session-requests and the three pending-request counters (admin PAM overview, portal access overview, User Access 360). Nothing reads or writes this table any more; its rows are the last hour's requests from before the change and the history of the ones before that. Dropping it is a migration of its own, for the maintainer to time: the rows are evidence of who asked for what until then.",
+
 	"ai_agent_activity": "the AI-agent registry has no runtime. Nothing outside internal/admin so much as reads ai_agent_credentials, so no agent ever acts through this product and there is no moment at which activity could be recorded. Three reads present the absence as measurement -- the per-agent activity list (LIMIT 100, always empty), the 24-hour top-agents ranking (every agent 0) and the recent-failures count (always 0). Recorded rather than fixed: what is missing is the agent runtime, and writing it is a feature.",
 
 	// upstream_pools and upstream_pool_members have left this register: both are

@@ -28,12 +28,17 @@ func TestCreateApprovalRows_RoleStep(t *testing.T) {
 	ctx := orgctx.With(context.Background(), orgctx.Org{ID: orgID})
 
 	if _, err := db.Pool.Exec(ctx, `
+		CREATE TABLE users (
+			id UUID PRIMARY KEY,
+			org_id UUID NOT NULL,
+			user_type VARCHAR(16) NOT NULL DEFAULT 'internal');
 		CREATE TABLE approval_policies (
 			id UUID PRIMARY KEY,
 			resource_type VARCHAR(50) NOT NULL,
 			resource_id UUID,
 			approval_steps JSONB NOT NULL,
 			auto_approve_conditions JSONB,
+			max_wait_hours INTEGER DEFAULT 0,
 			enabled BOOLEAN DEFAULT true,
 			org_id UUID NOT NULL);
 		CREATE TABLE user_roles (
@@ -45,6 +50,7 @@ func TestCreateApprovalRows_RoleStep(t *testing.T) {
 			request_id UUID NOT NULL,
 			approver_id UUID NOT NULL,
 			step_order INTEGER NOT NULL,
+			step_min_approvals INTEGER NOT NULL DEFAULT 1,
 			decision VARCHAR(20) NOT NULL,
 			created_at TIMESTAMPTZ DEFAULT now(),
 			org_id UUID NOT NULL);

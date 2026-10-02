@@ -171,11 +171,15 @@ func (s *Service) aggregatePAMOverview(ctx context.Context, orgID string) (*PAMO
 	if err != nil {
 		return nil, err
 	}
+	// A route's session request is a pam_entry_access_requests row on the
+	// entry that stands for the route (pam_entries.proxy_route_id, v213); the
+	// guacamole_session_requests table nothing writes any more.
 	err = s.db.Reader().QueryRow(ctx,
 		`SELECT COUNT(*)
-		   FROM guacamole_session_requests
-		  WHERE org_id = $1 AND status = 'pending'
-		    AND (expires_at IS NULL OR expires_at > NOW())`, orgID).
+		   FROM pam_entry_access_requests r
+		   JOIN pam_entries e ON e.id = r.entry_id AND e.org_id = r.org_id
+		  WHERE r.org_id = $1 AND e.proxy_route_id IS NOT NULL AND r.status = 'pending'
+		    AND (r.expires_at IS NULL OR r.expires_at > NOW())`, orgID).
 		Scan(&o.Sessions.PendingRequests)
 	if err != nil {
 		return nil, err
