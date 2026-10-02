@@ -1546,5 +1546,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamSessionAdminBypassUp,
 			DownSQL:     pamSessionAdminBypassDown,
 		},
+		{
+			Version:     218,
+			Name:        "pam_session_sponsor_notified",
+			Description: "Invariant I6 of the third-party access framework: an external user's sponsor is told when the user's privileged session starts. pam_entry_sessions.sponsor_notified_at says when that notification was written; NULL for an internal user's session and for one whose sponsor switched the notification type off. Down drops the column.",
+			UpSQL:       pamSessionSponsorNotifiedUp,
+			DownSQL:     pamSessionSponsorNotifiedDown,
+		},
 	}
 }

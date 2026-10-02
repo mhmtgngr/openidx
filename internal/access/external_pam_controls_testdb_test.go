@@ -35,7 +35,13 @@ type fakeBroker struct {
 	// failAccounts makes the broker refuse to read or create accounts, which
 	// is how a per-user identity fails at the moment of launch.
 	failAccounts bool
+	// active is the sessions the broker is serving, by active-connection id;
+	// profiles the sharing profiles, by id, naming their connection.
+	active   map[string]fakeBrokerActive
+	profiles map[string]string
 }
+
+type fakeBrokerActive struct{ Conn, User string }
 
 type fakeBrokerConn struct {
 	ID, Name, Protocol string
@@ -44,7 +50,8 @@ type fakeBrokerConn struct {
 
 func newFakeBroker(t *testing.T) (*fakeBroker, string) {
 	t.Helper()
-	b := &fakeBroker{conns: map[string]*fakeBrokerConn{}, accounts: map[string]bool{}, permissions: map[string][]string{}}
+	b := &fakeBroker{conns: map[string]*fakeBrokerConn{}, accounts: map[string]bool{}, permissions: map[string][]string{},
+		active: map[string]fakeBrokerActive{}, profiles: map[string]string{}}
 	srv := httptest.NewServer(http.HandlerFunc(b.serve))
 	t.Cleanup(srv.Close)
 	return b, srv.URL
@@ -120,9 +127,63 @@ func (b *fakeBroker) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		b.accounts[body.Username] = true
 		_, _ = w.Write([]byte(`{}`))
+	case path == data+"/activeConnections" && r.Method == http.MethodGet:
+		out := map[string]map[string]string{}
+		for id, a := range b.active {
+			out[id] = map[string]string{"connectionIdentifier": a.Conn, "username": a.User}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	case path == data+"/activeConnections" && r.Method == http.MethodPatch:
+		var ops []map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&ops)
+		for _, op := range ops {
+			if op["op"] == "remove" {
+				delete(b.active, strings.TrimPrefix(op["path"], "/"))
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case strings.HasPrefix(path, data+"/activeConnections/") && strings.Contains(path, "/sharingCredentials/"):
+		if _, live := b.active[strings.Split(strings.TrimPrefix(path, data+"/activeConnections/"), "/")[0]]; !live {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"values":{"key":"share-key"}}`))
+	case path == data+"/sharingProfiles" && r.Method == http.MethodGet:
+		out := map[string]map[string]string{}
+		for id, conn := range b.profiles {
+			out[id] = map[string]string{"identifier": id, "name": "openidx-readonly-share-" + conn, "primaryConnectionIdentifier": conn}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	case path == data+"/sharingProfiles" && r.Method == http.MethodPost:
+		var body struct {
+			Primary string `json:"primaryConnectionIdentifier"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		b.nextID++
+		id := "p" + strconv.Itoa(b.nextID)
+		b.profiles[id] = body.Primary
+		_ = json.NewEncoder(w).Encode(map[string]string{"identifier": id})
 	default:
 		_, _ = w.Write([]byte(`{}`))
 	}
+}
+
+// serving marks connection connID as being used by account, as the browser
+// opening the connect URL would, and returns the active-connection id.
+func (b *fakeBroker) serving(connID, account string) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.nextID++
+	id := "active-" + strconv.Itoa(b.nextID)
+	b.active[id] = fakeBrokerActive{Conn: connID, User: account}
+	return id
+}
+
+func (b *fakeBroker) isServing(activeID string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	_, ok := b.active[activeID]
+	return ok
 }
 
 // conn returns a copy of the named connection, or nil.
@@ -319,6 +380,9 @@ func (f *externalPamFixture) router(userID string, roles ...string) *gin.Engine 
 	r.GET("/pam/sponsored/entry-requests", f.svc.handlePamListSponsoredRequests)
 	r.POST("/pam/sponsored/entry-requests/:id/approve", f.svc.handlePamSponsorApproveRequest)
 	r.POST("/pam/sponsored/entry-requests/:id/deny", f.svc.handlePamSponsorDenyRequest)
+	r.GET("/pam/sponsored/sessions", f.svc.handlePamListSponsoredSessions)
+	r.POST("/pam/sponsored/sessions/:id/watch", f.svc.handlePamSponsorWatchSession)
+	r.POST("/pam/sponsored/sessions/:id/end", f.svc.handlePamSponsorEndSession)
 	r.POST("/pam/apps/:id/launch", f.svc.handleWindowsAppLaunch)
 	r.POST("/pam/entries/:id/reveal", f.svc.handlePamRevealEntry)
 	r.POST("/pam/entries/:id/break-glass", f.svc.handlePamBreakGlass)

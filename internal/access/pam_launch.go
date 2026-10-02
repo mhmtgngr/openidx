@@ -725,6 +725,10 @@ func (s *Service) recordPamLaunch(c *gin.Context, orgID string, entry *pamLaunch
 		"admin_bypass":        len(entry.AdminBypass) > 0,
 		"admin_bypassed":      adminBypassed(entry.AdminBypass),
 	})
+	// An external user's sponsor is told the session started (I6).
+	if entry.External && sessionID != "" {
+		s.notifySponsorOfSession(ctx, orgID, userID, entry, sessionID)
+	}
 	return sessionID
 }
 

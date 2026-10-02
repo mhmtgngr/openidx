@@ -111,6 +111,14 @@ the install's settings say:
   transfer over the drive or SFTP, and printing are off. The entry's settings
   cannot turn them back on, or leave the screen, the pointer or touches out of
   the recording.
+- **Watched by their sponsor.** When the session starts, the sponsor is
+  told, and the session records when (`sponsor_notified_at`; empty when the
+  sponsor switched that notification off). The sponsor lists their external
+  users' live sessions (`GET /api/v1/access/pam/sponsored/sessions`), watches
+  one read-only (`POST .../sponsored/sessions/{id}/watch`) and ends one on the
+  broker (`POST .../sponsored/sessions/{id}/end`), each with a fresh second
+  factor. Watching and ending are audited (`pam.session_watched`,
+  `pam.session_ended` with reason `sponsor_ended`).
 - **A working day at most.** The lifecycle sweep ends the session after 8
   hours, whatever grant it rides. An idle timeout is not enforced yet: the
   broker reports no per-session activity to measure one by.

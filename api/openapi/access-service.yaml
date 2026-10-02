@@ -8881,6 +8881,63 @@ paths:
             Not one of the caller's: a request, session or moderation of an
             external user someone else sponsors answers as if it did not exist
 
+  /api/v1/access/pam/sponsored/sessions:
+    get:
+      tags: [PAM Sponsor]
+      summary: List the live sessions of the caller's external users
+      description: The live privileged sessions of the external users the caller sponsors, which the sponsor may watch and end (invariant I6).
+      operationId: pamListSponsoredSessions
+      x-openidx-handler: internal/access.(*Service).handlePamListSponsoredSessions
+      responses:
+        '200':
+          description: The sessions
+
+  /api/v1/access/pam/sponsored/sessions/{id}/watch:
+    post:
+      tags: [PAM Sponsor]
+      summary: Watch a sponsored user's session
+      description: >
+        A read-only view of a live session of an external user the caller sponsors. Needs a fresh second factor (`pam.sponsor_watch`).
+      operationId: pamSponsorWatchSession
+      x-openidx-handler: internal/access.(*Service).handlePamSponsorWatchSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The view to open
+        '403':
+          description: A fresh second factor is required first (`step_up_required`)
+        '404':
+          description: >
+            Not one of the caller's: a request, session or moderation of an
+            external user someone else sponsors answers as if it did not exist
+
+  /api/v1/access/pam/sponsored/sessions/{id}/end:
+    post:
+      tags: [PAM Sponsor]
+      summary: End a sponsored user's session
+      description: >
+        Ends a live session of an external user the caller sponsors, on the broker, and records why. Needs a fresh second factor (`pam.sponsor_end`).
+      operationId: pamSponsorEndSession
+      x-openidx-handler: internal/access.(*Service).handlePamSponsorEndSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Ended
+        '403':
+          description: A fresh second factor is required first (`step_up_required`)
+        '404':
+          description: >
+            Not one of the caller's: a request, session or moderation of an
+            external user someone else sponsors answers as if it did not exist
+
 components:
   securitySchemes:
     bearerAuth:
