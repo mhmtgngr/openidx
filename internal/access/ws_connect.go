@@ -145,6 +145,9 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 			return
 		}
 	}
+	if s.refuseIneffectiveExternal(c, org.ID, userID) {
+		return
+	}
 	// Approval gate — single-use, atomically consumed (admins bypass their own).
 	if entry.RequireApproval && !isAdmin {
 		consumed, gateErr := s.checkAndConsumePamApproval(ctx, entryID, userID)

@@ -2607,6 +2607,16 @@ func (s *Service) handleLogin(c *gin.Context) {
 
 	// The grace period to add a method the policy requires is over, and the
 	// user has no bypass code to sign in with while they add one.
+	if ev.EnrollmentRequired && ev.External {
+		s.auditMFAGrace(c.Request.Context(), user.ID, clientIP, "mfa_enrollment_required", "failure", ev)
+		c.JSON(403, gin.H{
+			"error": "mfa_enrollment_required",
+			"error_description": "External accounts sign in with an authenticator app, a passkey or a push device, " +
+				"and this account has none. Ask your sponsor for a new invitation.",
+			"required_methods": ev.RequiredMethods,
+		})
+		return
+	}
 	if ev.EnrollmentRequired {
 		s.auditMFAGrace(c.Request.Context(), user.ID, clientIP, "mfa_enrollment_required", "failure", ev)
 		c.JSON(403, gin.H{
