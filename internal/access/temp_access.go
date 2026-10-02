@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -18,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/notifications"
 )
@@ -223,12 +225,14 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 		return
 	}
 
-	// Audit log
-	s.auditLog(c, "temp_access.created", map[string]interface{}{
-		"link_id":     link.ID,
-		"target_host": link.TargetHost,
-		"protocol":    link.Protocol,
-		"expires_at":  link.ExpiresAt,
+	s.recordUnifiedEvent(c, org.ID, "temp_access.created", creatorID, link.ID, "temp_access_link", map[string]interface{}{
+		"link_id":      link.ID,
+		"pam_entry_id": link.PamEntryID,
+		"target_host":  link.TargetHost,
+		"protocol":     link.Protocol,
+		"expires_at":   link.ExpiresAt,
+		"max_uses":     link.MaxUses,
+		"allowed_ips":  len(link.AllowedIPs),
 	})
 
 	c.JSON(http.StatusCreated, link)
@@ -353,8 +357,8 @@ func (s *Service) handleRevokeTempAccess(c *gin.Context) {
 		return
 	}
 
-	// Audit log
-	s.auditLog(c, "temp_access.revoked", map[string]interface{}{"link_id": id})
+	s.recordUnifiedEvent(c, org.ID, "temp_access.revoked", c.GetString("user_id"), id, "temp_access_link",
+		map[string]interface{}{"link_id": id})
 
 	c.JSON(http.StatusOK, gin.H{"message": "access link revoked"})
 }
@@ -502,6 +506,10 @@ type tempLinkVerdict struct {
 	Status  int
 	Title   string
 	Message string
+	// Reason is the machine word the audit row carries: expired, revoked,
+	// exhausted or ip_not_allowed. The page shows Title and Message; the
+	// operator's trail needs something to filter on.
+	Reason string
 }
 
 // tempLinkGate decides whether this redemption may proceed.
@@ -533,20 +541,20 @@ type tempLinkVerdict struct {
 // present behaviour so that fix arrives with a red proof.
 func tempLinkGate(link TempAccessLink, clientIP string, now time.Time) tempLinkVerdict {
 	if now.After(link.ExpiresAt) {
-		return tempLinkVerdict{true, http.StatusGone, "Access Link Expired",
-			"This temporary access link has expired."}
+		return tempLinkVerdict{Refuse: true, Status: http.StatusGone, Title: "Access Link Expired",
+			Message: "This temporary access link has expired.", Reason: "expired"}
 	}
 	if link.Status == "revoked" {
-		return tempLinkVerdict{true, http.StatusForbidden, "Access Link Revoked",
-			"This access link has been revoked by an administrator."}
+		return tempLinkVerdict{Refuse: true, Status: http.StatusForbidden, Title: "Access Link Revoked",
+			Message: "This access link has been revoked by an administrator.", Reason: "revoked"}
 	}
 	if link.MaxUses > 0 && link.CurrentUses >= link.MaxUses {
-		return tempLinkVerdict{true, http.StatusForbidden, "Access Link Exhausted",
-			"This access link has reached its maximum usage limit."}
+		return tempLinkVerdict{Refuse: true, Status: http.StatusForbidden, Title: "Access Link Exhausted",
+			Message: "This access link has reached its maximum usage limit.", Reason: "exhausted"}
 	}
 	if len(link.AllowedIPs) > 0 && !ipAllowed(clientIP, link.AllowedIPs) {
-		return tempLinkVerdict{true, http.StatusForbidden, "Access Denied",
-			"Your IP address is not authorized to use this access link."}
+		return tempLinkVerdict{Refuse: true, Status: http.StatusForbidden, Title: "Access Denied",
+			Message: "Your IP address is not authorized to use this access link.", Reason: "ip_not_allowed"}
 	}
 	return tempLinkVerdict{}
 }
@@ -660,6 +668,13 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 
 	clientIP := c.ClientIP()
 	if v := tempLinkGate(link, clientIP, time.Now()); v.Refuse {
+		// A refusal is an outside party trying a link that no longer admits
+		// them, from an address the operator may want to know about. It is
+		// recorded like a use, with the reason the gate gave.
+		s.recordUnifiedEvent(c, linkOrgID, "temp_access.refused", "", link.ID, "temp_access_link", map[string]interface{}{
+			"link_id": link.ID, "reason": v.Reason, "issuer_id": link.CreatedBy,
+			"user_agent": c.Request.UserAgent(),
+		})
 		renderTempAccessError(c, v.Status, v.Title, v.Message)
 		return
 	}
@@ -671,8 +686,9 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 		// so it is refused rather than falling back to the old redirect, which
 		// would keep the ungated path alive for exactly the links issued while
 		// it was the only path.
-		s.auditLog(c, "temp_access.refused_legacy", map[string]interface{}{
-			"link_id": link.ID, "ip_address": clientIP,
+		s.recordUnifiedEvent(c, linkOrgID, "temp_access.refused", "", link.ID, "temp_access_link", map[string]interface{}{
+			"link_id": link.ID, "reason": "legacy_link", "issuer_id": link.CreatedBy,
+			"user_agent": c.Request.UserAgent(),
 		})
 		renderTempAccessError(c, http.StatusGone, "Access Link Must Be Re-Issued",
 			"This link was created before privileged sessions were required to run through the "+
@@ -706,11 +722,16 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 			zap.String("link_id", link.ID), zap.String("target_host", link.TargetHost), zap.Error(err))
 	}
 
-	// Audit log
-	s.auditLog(c, "temp_access.used", map[string]interface{}{
-		"link_id":     link.ID,
-		"ip_address":  clientIP,
-		"target_host": link.TargetHost,
+	// The record that an outside party reached an internal host through this
+	// link, in the trail the console and the compliance reports read.
+	s.recordUnifiedEvent(c, linkOrgID, "temp_access.used", "", link.ID, "temp_access_link", map[string]interface{}{
+		"link_id":      link.ID,
+		"issuer_id":    link.CreatedBy,
+		"pam_entry_id": link.PamEntryID,
+		"target_host":  link.TargetHost,
+		"protocol":     link.Protocol,
+		"use_number":   link.CurrentUses + 1,
+		"user_agent":   c.Request.UserAgent(),
 	})
 
 	s.notifyTempLinkUsed(redeemCtx, link, linkOrgID, clientIP)
@@ -765,8 +786,9 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 		s.logger.Warn("temp access: launch failed",
 			zap.String("link_id", link.ID), zap.String("code", fail.Code),
 			zap.Int("status", fail.Status), zap.String("detail", fail.Message))
-		s.auditLog(c, "temp_access.launch_failed", map[string]interface{}{
-			"link_id": link.ID, "code": fail.Code, "ip_address": clientIP,
+		s.recordUnifiedEvent(c, linkOrgID, "temp_access.launch_failed", "", link.ID, "temp_access_link", map[string]interface{}{
+			"link_id": link.ID, "issuer_id": link.CreatedBy, "pam_entry_id": link.PamEntryID,
+			"code": fail.Code, "detail": fail.Message,
 		})
 		failTitle, failMessage := tempLinkLaunchFailurePage(link.ID)
 		renderTempAccessError(c, http.StatusServiceUnavailable, failTitle, failMessage)
@@ -831,12 +853,61 @@ func (s *Service) handleGetTempAccessUsage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"usage": usage})
 }
 
-// auditLog helper for audit logging
-func (s *Service) auditLog(c *gin.Context, eventType string, details map[string]interface{}) {
-	// Implementation would send to audit service
-	s.logger.Info("audit event",
-		zap.String("event_type", eventType),
-		zap.Any("details", details),
-		zap.String("ip", c.ClientIP()),
-	)
+// recordUnifiedEvent writes an access-service event to the unified audit trail
+// under the given tenant, or the request's when none is given. The temporary
+// access events are its reason to exist; the Guacamole legal-hold events had
+// the same log-only helper and ride it too.
+//
+// Until this existed every temp_access.* event was a zap log line with a
+// comment saying an implementation "would send to audit service". The link is
+// the one feature in the product that lets an outside party onto an internal
+// host, and the console's Unified Audit page, the compliance reports and the
+// HMAC chain never saw it issued, used, refused or revoked. The usage table
+// recorded the connections; nothing recorded the refusals at all.
+//
+// The tenant is the LINK'S. A redemption arrives with no session and no
+// organization on the context (the vendor is anonymous), so the row is
+// written under the org the token resolved to, the same way the usage row
+// is, and the bypass is the redemption path's own (v148). The actor is the
+// issuer or the revoking administrator when there is one and nobody when
+// there is not; the redeemer is known by address, user agent and the link.
+//
+// An audit write must never fail the thing it records, so a failure is logged
+// at error level with the event it lost rather than returned. An access
+// service built without a unified audit store (tests) logs the event instead
+// and says so.
+func (s *Service) recordUnifiedEvent(c *gin.Context, orgID, eventType, actorUserID, targetID, targetType string, details map[string]interface{}) {
+	if orgID == "" {
+		if org, err := orgctx.From(c.Request.Context()); err == nil {
+			orgID = org.ID
+		}
+	}
+	clientIP := c.ClientIP()
+	// The details carry what the request said about itself (its address, its
+	// user agent, the code a launch failed with), so what reaches the log is
+	// scrubbed the way every other param-derived field in this package is.
+	detailsJSON := ""
+	if b, err := json.Marshal(details); err == nil {
+		detailsJSON = string(b)
+	}
+	if s.auditService == nil {
+		s.logger.Warn("temp access: no unified audit store, event not recorded",
+			zap.String("event_type", eventType), logsafe.String("target_id", targetID),
+			logsafe.String("details", detailsJSON), logsafe.String("ip", clientIP))
+		return
+	}
+	ctx := orgctx.WithBypassRLS(orgctx.With(c.Request.Context(), orgctx.Org{ID: orgID}))
+	if err := s.auditService.RecordEvent(ctx, "openidx", eventType, "", actorUserID, clientIP, details); err != nil {
+		s.logger.Error("temp access: unified audit write failed",
+			zap.String("event_type", eventType), logsafe.String("target_id", targetID),
+			logsafe.String("details", detailsJSON), logsafe.String("ip", clientIP), zap.Error(err))
+	}
+	// The management events have an authenticated actor and an organization
+	// on the request, so they also go to the audit service's own stream, as
+	// every other administrative action in this package does. The anonymous
+	// redemption events do not: that stream resolves the tenant from the
+	// request, which for a vendor's browser would be the default organization.
+	if actorUserID != "" {
+		s.logAuditEvent(c, eventType, targetID, targetType, details)
+	}
 }
