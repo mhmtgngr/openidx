@@ -4200,6 +4200,10 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.GET("/vendor-orgs/:id", svc.handleGetVendorOrg)
 		identity.PUT("/vendor-orgs/:id", svc.handleUpdateVendorOrg)
 		identity.POST("/vendor-orgs/:id/close", svc.handleCloseVendorOrg)
+		// What a vendor on a closed list may ask for and launch (I11, migration v219)
+		identity.GET("/vendor-orgs/:id/targets", svc.handleListVendorTargets)
+		identity.POST("/vendor-orgs/:id/targets", svc.handleAddVendorTarget)
+		identity.DELETE("/vendor-orgs/:id/targets/:targetId", svc.handleRemoveVendorTarget)
 
 		// External (vendor) accounts after they exist (external_accounts.go)
 		identity.GET("/external-users", svc.handleListExternalUsers)

@@ -43,6 +43,9 @@ type VendorOrganization struct {
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
 	ClosedAt             *time.Time `json:"closed_at,omitempty"`
+	// ClosedList is invariant I11: the vendor's external users ask for and
+	// launch only the targets opened to the vendor (/vendor-orgs/:id/targets).
+	ClosedList bool `json:"closed_list"`
 	// ExternalUsers counts the vendor's external users by account status.
 	ExternalUsers map[string]int `json:"external_users"`
 }
@@ -59,6 +62,9 @@ type vendorOrgReq struct {
 	DefaultExpiryDays    int      `json:"default_expiry_days"`
 	DefaultSponsorUserID string   `json:"default_sponsor_user_id"`
 	Notes                string   `json:"notes"`
+	// ClosedList, when given, sets the closed list (I11); left out, an update
+	// keeps what the vendor has and a create starts with it off.
+	ClosedList *bool `json:"closed_list"`
 }
 
 var errVendorOrgNotFound = errors.New("vendor organization not found")
@@ -128,7 +134,7 @@ const vendorOrgSelect = `
 	SELECT v.id::text, v.name, v.status, COALESCE(v.contact_name, ''), COALESCE(v.contact_email, ''),
 	       to_char(v.contract_start, 'YYYY-MM-DD'), to_char(v.contract_end, 'YYYY-MM-DD'),
 	       v.allowed_email_domains, v.default_expiry_days, COALESCE(v.default_sponsor_user_id::text, ''),
-	       COALESCE(v.notes, ''), v.created_at, v.updated_at, v.closed_at,
+	       COALESCE(v.notes, ''), v.created_at, v.updated_at, v.closed_at, v.closed_list,
 	       COALESCE((SELECT jsonb_object_agg(s.account_status, s.n) FROM (
 	           SELECT u.account_status, count(*) AS n FROM users u
 	            WHERE u.vendor_org_id = v.id AND u.org_id = v.org_id GROUP BY u.account_status) s), '{}'::jsonb)
@@ -138,7 +144,7 @@ func scanVendorOrg(row pgx.Row) (*VendorOrganization, error) {
 	var v VendorOrganization
 	if err := row.Scan(&v.ID, &v.Name, &v.Status, &v.ContactName, &v.ContactEmail,
 		&v.ContractStart, &v.ContractEnd, &v.AllowedEmailDomains, &v.DefaultExpiryDays,
-		&v.DefaultSponsorUserID, &v.Notes, &v.CreatedAt, &v.UpdatedAt, &v.ClosedAt, &v.ExternalUsers); err != nil {
+		&v.DefaultSponsorUserID, &v.Notes, &v.CreatedAt, &v.UpdatedAt, &v.ClosedAt, &v.ClosedList, &v.ExternalUsers); err != nil {
 		return nil, err
 	}
 	if v.AllowedEmailDomains == nil {
@@ -243,12 +249,12 @@ func (s *Service) handleCreateVendorOrg(c *gin.Context) {
 	err = s.db.Pool.QueryRow(ctx, `
 		INSERT INTO vendor_organizations
 		    (org_id, name, status, contact_name, contact_email, contract_start, contract_end,
-		     allowed_email_domains, default_expiry_days, default_sponsor_user_id, notes, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6::date, $7::date, $8, $9, $10::uuid, $11, NULLIF($12, '')::uuid)
+		     allowed_email_domains, default_expiry_days, default_sponsor_user_id, notes, created_by, closed_list)
+		VALUES ($1, $2, $3, $4, $5, $6::date, $7::date, $8, $9, $10::uuid, $11, NULLIF($12, '')::uuid, COALESCE($13::boolean, false))
 		RETURNING id::text`,
 		org.ID, req.Name, req.Status, nullIfEmpty(req.ContactName), nullIfEmpty(req.ContactEmail),
 		nullIfEmpty(req.ContractStart), nullIfEmpty(req.ContractEnd), req.AllowedEmailDomains,
-		req.DefaultExpiryDays, nullIfEmpty(req.DefaultSponsorUserID), nullIfEmpty(req.Notes), actor).Scan(&id)
+		req.DefaultExpiryDays, nullIfEmpty(req.DefaultSponsorUserID), nullIfEmpty(req.Notes), actor, req.ClosedList).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "a vendor organization with this name already exists"})
@@ -259,7 +265,7 @@ func (s *Service) handleCreateVendorOrg(c *gin.Context) {
 		return
 	}
 	s.logAuditEvent(ctx, "identity", "external_access", "vendor_org.created", "success", actor, id, "vendor_organization",
-		map[string]interface{}{"name": req.Name, "default_expiry_days": req.DefaultExpiryDays})
+		map[string]interface{}{"name": req.Name, "default_expiry_days": req.DefaultExpiryDays, "closed_list": req.ClosedList != nil && *req.ClosedList})
 	v, err := s.GetVendorOrganization(ctx, id)
 	if err != nil {
 		c.JSON(http.StatusCreated, gin.H{"id": id})
@@ -298,11 +304,12 @@ func (s *Service) handleUpdateVendorOrg(c *gin.Context) {
 		UPDATE vendor_organizations
 		   SET name = $3, status = $4, contact_name = $5, contact_email = $6,
 		       contract_start = $7::date, contract_end = $8::date, allowed_email_domains = $9,
-		       default_expiry_days = $10, default_sponsor_user_id = $11::uuid, notes = $12, updated_at = NOW()
+		       default_expiry_days = $10, default_sponsor_user_id = $11::uuid, notes = $12,
+		       closed_list = COALESCE($13::boolean, closed_list), updated_at = NOW()
 		 WHERE id = $1::uuid AND org_id = $2 AND status <> 'closed'`,
 		id, org.ID, req.Name, req.Status, nullIfEmpty(req.ContactName), nullIfEmpty(req.ContactEmail),
 		nullIfEmpty(req.ContractStart), nullIfEmpty(req.ContractEnd), req.AllowedEmailDomains,
-		req.DefaultExpiryDays, nullIfEmpty(req.DefaultSponsorUserID), nullIfEmpty(req.Notes))
+		req.DefaultExpiryDays, nullIfEmpty(req.DefaultSponsorUserID), nullIfEmpty(req.Notes), req.ClosedList)
 	if err != nil {
 		if isUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "a vendor organization with this name already exists"})
@@ -320,8 +327,12 @@ func (s *Service) handleUpdateVendorOrg(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": errVendorOrgNotFound.Error()})
 		return
 	}
+	updated := map[string]interface{}{"name": req.Name, "status": req.Status}
+	if req.ClosedList != nil {
+		updated["closed_list"] = *req.ClosedList
+	}
 	s.logAuditEvent(ctx, "identity", "external_access", "vendor_org.updated", "success", c.GetString("user_id"), id,
-		"vendor_organization", map[string]interface{}{"name": req.Name, "status": req.Status})
+		"vendor_organization", updated)
 	v, err := s.GetVendorOrganization(ctx, id)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"id": id})

@@ -159,6 +159,9 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 	if s.refuseIneffectiveExternal(c, org.ID, userID) {
 		return
 	}
+	if s.refuseClosedTarget(c, org.ID, caller, chosen.HostEntryID) {
+		return
+	}
 	// The overlay gate, which this path did not ask before: under
 	// PAM_REQUIRE_ZTNA=enforce an app on a direct-reach host launched while a
 	// connect to the same host was refused. An external user is held to it

@@ -670,9 +670,21 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 		}
 	}
 	if caller.External {
-		for i := range entries {
-			presentPamEntryToExternal(&entries[i])
+		open, oerr := s.closedListEntries(ctx, org.ID, caller)
+		if oerr != nil {
+			s.logger.Error("handlePamListEntries: vendor list query failed", zap.Error(oerr))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list entries"})
+			return
 		}
+		shown := entries[:0]
+		for i := range entries {
+			if open != nil && !open[entries[i].ID] {
+				continue // not open to the caller's vendor (I11)
+			}
+			presentPamEntryToExternal(&entries[i])
+			shown = append(shown, entries[i])
+		}
+		entries = shown
 	}
 
 	c.JSON(http.StatusOK, gin.H{"entries": entries})
@@ -756,6 +768,16 @@ func (s *Service) handlePamGetEntry(c *gin.Context) {
 		return
 	}
 	if caller.External {
+		open, oerr := s.closedListEntries(ctx, org.ID, caller)
+		if oerr != nil {
+			s.logger.Error("handlePamGetEntry: vendor list query failed", zap.Error(oerr))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load entry"})
+			return
+		}
+		if open != nil && !open[entry.ID] {
+			c.JSON(http.StatusNotFound, gin.H{"error": "entry not found"})
+			return
+		}
 		presentPamEntryToExternal(entry)
 	}
 	c.JSON(http.StatusOK, entry)

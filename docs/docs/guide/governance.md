@@ -189,6 +189,12 @@ has an internal sponsor and has an end date. None of the three is optional.
   or receives a delegation. Its access requests must name a duration that
   ends no later than the account does. The database refuses anything else, whichever screen
   or API asks.
+- **What they may ask for.** On a vendor's **closed list**, its external
+  users ask only for the PAM entries, applications and network services
+  opened to that vendor (`/vendor-orgs/{id}/targets`), and are shown only
+  those PAM entries. Anything else is refused (`external_target_not_open`).
+  Off by default: an administrator turns it on per vendor. An external user
+  never asks for a vault credential (`external_reveal_forbidden`).
 - **Who approves their requests.** The sponsor, first. An external user's
   access request starts with a step for their sponsor, before any step the
   approval policy adds, and the sponsor is not an approver of the policy's
