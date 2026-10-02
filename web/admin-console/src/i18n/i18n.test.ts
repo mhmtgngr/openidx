@@ -104,6 +104,7 @@ describe('i18n', () => {
       'pages.accessRequests.create.pickerPlaceholder.role',
       'pages.accessRequests.create.pickerPlaceholder.group',
       'pages.accessRequests.create.pickerPlaceholder.application',
+      'pages.accessRequests.create.pickerPlaceholder.pam_entry',
       // lib/compliance tooltip sentences
       'compliance.neverReported',
       // bulk-operations: operationTypes labelKey/descKey pairs

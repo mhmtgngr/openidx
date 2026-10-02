@@ -61,10 +61,10 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 		// Revoke the granted access. vault_credential is special — there is no
 		// stored assignment to delete (the reveal grant auto-expires via its own
 		// expires_at); we only wake the M1b rotation scheduler and write its
-		// specific audit. Every other type removes the actual grant via the shared
-		// revokeResourceAssignment — the single place role/group/application
-		// revocation lives — so a JIT expiry revokes exactly what an access-review
-		// revoke does. Previously "application" (and any unmapped type) hit a
+		// specific audit. Every other type removes the actual grant via
+		// jitgrant.RevokeRequest -- the single place revocation lives -- so a JIT
+		// expiry revokes exactly what an access-review revoke does, except that a
+		// pam_entry request ends only the grant it wrote, by its request id. Previously "application" (and any unmapped type) hit a
 		// log-only default yet the request was still marked expired with a
 		// 'success' audit: the grant persisted forever while the trail claimed it
 		// had been revoked.
@@ -97,7 +97,7 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 			// assignment row for network_service (the attribute lives on the Ziti
 			// identity), so hand off the removal to the access-service worker.
 			s.enqueueNetworkAttributeRemoval(ctx, requesterID, orgID, jitNetworkAttribute(id), "jit_expiry")
-		} else if err := revokeResourceAssignment(ctx, s.db.Pool, resourceType, requesterID, resourceID, orgID); err != nil {
+		} else if err := jitgrant.RevokeRequest(ctx, s.db.Pool, id, resourceType, requesterID, resourceID, orgID); err != nil {
 			// Includes unknown resource types (revokeResourceAssignment fails
 			// loud on those). Skip marking the request expired so we never write
 			// a false 'success' for access that still exists — it is retried on

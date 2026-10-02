@@ -1532,5 +1532,12 @@ func allMigrations() []*Migration {
 			UpSQL:       externalGrantWindowUp,
 			DownSQL:     externalGrantWindowDown,
 		},
+		{
+			Version:     216,
+			Name:        "pam_entry_request_grants",
+			Description: "Section 6.9 of the third-party access framework: a PAM entry connection is a governance request type, and fulfilling one writes a connect grant on the entry. pam_entry_grants.request_id names the access request a grant fulfils (ON DELETE CASCADE). The one-grant-per-(entry, principal) key is split so a request's grant stands beside a standing one: pam_entry_grants_standing_key keeps the old rule among grants no request made, and pam_entry_grants_request_key allows one grant per request. Down deletes the request-made grants and restores the old constraint.",
+			UpSQL:       pamEntryRequestGrantsUp,
+			DownSQL:     pamEntryRequestGrantsDown,
+		},
 	}
 }

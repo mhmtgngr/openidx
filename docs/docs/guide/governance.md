@@ -45,6 +45,17 @@ remember (`StartJITExpirationChecker`). That is the difference between
 Users track their own requests at `GET /requests`, and cancel one with
 `POST /requests/{id}/cancel`.
 
+A **PAM connection** is requested the same way (`resource_type` `pam_entry`).
+The requester picks one of the PAM entries they already see but cannot connect
+to: seeing an entry (a standing grant of any action on it) is what makes them
+eligible to ask, and connecting is what they ask for. The request needs a
+duration. Approving it writes a `connect` grant on the entry that ends with
+the request's window, and the expiry sweep ends that grant, not any other
+grant the user holds on the entry. An entry that asks for a launch approval
+still asks for it at connect: the request says the user may reach the entry in
+this window, and the launch approval says someone knows they are connecting
+now.
+
 ## Approving
 
 Approvers see their queue at **Governance → Access Requests**, or
