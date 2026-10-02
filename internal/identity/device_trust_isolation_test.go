@@ -34,7 +34,9 @@ func TestDeviceTrustRequests_TenantIsolation(t *testing.T) {
 	ctxA := orgctx.With(context.Background(), orgctx.Org{ID: orgA})
 
 	if _, err := db.Pool.Exec(ctxA, `
-		CREATE TABLE users (id UUID PRIMARY KEY, email VARCHAR(255), first_name VARCHAR(255), last_name VARCHAR(255), org_id UUID NOT NULL);
+		CREATE TABLE users (id UUID PRIMARY KEY, email VARCHAR(255), first_name VARCHAR(255), last_name VARCHAR(255), org_id UUID NOT NULL,
+    user_type VARCHAR(16) NOT NULL DEFAULT 'internal', account_status VARCHAR(16) NOT NULL DEFAULT 'active', vendor_org_id UUID, sponsor_user_id UUID, account_expires_at TIMESTAMPTZ, status_changed_at TIMESTAMPTZ, access_severed_at TIMESTAMPTZ
+);
 		CREATE TABLE device_trust_requests (
 			id UUID PRIMARY KEY, user_id UUID, device_id VARCHAR(255), device_fingerprint VARCHAR(255),
 			device_name VARCHAR(255), device_type VARCHAR(50), ip_address VARCHAR(45), user_agent TEXT,

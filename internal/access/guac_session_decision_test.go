@@ -17,18 +17,20 @@ import (
 
 // Approving a remote-desktop session request.
 //
-// `require_approval` on a Guacamole connection means handleGuacamoleConnect
-// will not start the session until a request for it has been approved, and
-// that gate has no administrator bypass. Both decision routes are admin-only,
-// so an administrator who requests a session for a gated connection and then
-// approves it is the gate approving nothing.
+// A route's session request is a pam_entry_access_requests row on the entry
+// standing for the route (guacamole_route_entry.go), and `require_approval`
+// on that entry means connect will not start the session until a request for
+// it has been approved. Both decision routes are admin-only, so an
+// administrator who requests a session for a gated entry and then approves it
+// is the gate approving nothing.
 
 const (
 	guacOrg      = "00000000-0000-0000-0000-000000000010"
 	guacAdmin    = "00000000-0000-0000-0000-0000000000a5"
 	guacOther    = "00000000-0000-0000-0000-0000000000a6"
-	guacConnPK   = "00000000-0000-0000-0000-0000000000c5"
+	guacEntry    = "00000000-0000-0000-0000-0000000000c5"
 	guacOtherOrg = "00000000-0000-0000-0000-0000000000b0"
+	guacOtherEnt = "00000000-0000-0000-0000-0000000000c6"
 )
 
 type guacFixture struct {
@@ -43,6 +45,14 @@ func newGuacDecisionFixture(t *testing.T) *guacFixture {
 	svc := NewService(db, nil, &config.Config{AccessSessionSecret: "guac-decision-test-session-secret"}, zap.NewNop())
 	f := &guacFixture{svc: svc, ctx: orgctx.With(context.Background(), orgctx.Org{ID: guacOrg}), t: t}
 	f.exec(`INSERT INTO organizations (id, name, slug) VALUES ($1,'other','other-guac') ON CONFLICT DO NOTHING`, guacOtherOrg)
+	bypass := orgctx.WithBypassRLS(f.ctx)
+	for _, e := range [][2]string{{guacEntry, guacOrg}, {guacOtherEnt, guacOtherOrg}} {
+		if _, err := db.Pool.Exec(bypass, `
+			INSERT INTO pam_entries (id, org_id, name, entry_type, hostname, port)
+			VALUES ($1, $2, 'bastion', 'ssh', '198.51.100.9', 22) ON CONFLICT DO NOTHING`, e[0], e[1]); err != nil {
+			t.Fatalf("seed entry: %v", err)
+		}
+	}
 	return f
 }
 
@@ -57,14 +67,16 @@ func (f *guacFixture) exec(sql string, args ...interface{}) {
 func (f *guacFixture) sessionRequest(org, requester string) string {
 	f.t.Helper()
 	ctx := f.ctx
+	entry := guacEntry
 	if org != guacOrg {
 		// Written the way the other tenant's own request would write it.
 		ctx = orgctx.WithBypassRLS(f.ctx)
+		entry = guacOtherEnt
 	}
 	var id string
 	if err := f.svc.db.Pool.QueryRow(ctx, `
-		INSERT INTO guacamole_session_requests (org_id, connection_id, requester_id, reason)
-		VALUES ($1,$2,$3,'maintenance') RETURNING id`, org, guacConnPK, requester).Scan(&id); err != nil {
+		INSERT INTO pam_entry_access_requests (org_id, entry_id, requester_id, reason)
+		VALUES ($1,$2,$3,'maintenance') RETURNING id`, org, entry, requester).Scan(&id); err != nil {
 		f.t.Fatalf("create session request: %v", err)
 	}
 	return id
@@ -89,7 +101,7 @@ func (f *guacFixture) status(id string) string {
 	f.t.Helper()
 	var st string
 	if err := f.svc.db.Pool.QueryRow(orgctx.WithBypassRLS(f.ctx),
-		`SELECT status FROM guacamole_session_requests WHERE id = $1`, id).Scan(&st); err != nil {
+		`SELECT status FROM pam_entry_access_requests WHERE id = $1`, id).Scan(&st); err != nil {
 		f.t.Fatalf("read status: %v", err)
 	}
 	return st

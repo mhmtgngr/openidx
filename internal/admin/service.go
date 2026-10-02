@@ -571,7 +571,7 @@ func (s *Service) GetUserDashboard(ctx context.Context, userID string) (*Dashboa
 	err = s.db.Pool.QueryRow(ctx, `
 		SELECT
 			(SELECT COUNT(*) FROM group_memberships WHERE user_id = $1 AND org_id = $2),
-			(SELECT COUNT(*) FROM user_application_assignments WHERE user_id = $1 AND org_id = $2),
+			(SELECT COUNT(*) FROM user_application_assignments WHERE user_id = $1 AND org_id = $2 AND (expires_at IS NULL OR expires_at > NOW())),
 			(SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND expires_at > NOW() AND org_id = $2),
 			(SELECT COUNT(*) FROM review_items ri JOIN access_reviews ar ON ri.review_id = ar.id AND ar.org_id = ri.org_id WHERE ri.org_id = $2 AND ri.user_id = $1 AND ar.status IN ('pending', 'in_progress'))
 	`, userID, org.ID).Scan(&myGroups, &myApps, &mySessions, &myPendingReviews)
@@ -3477,7 +3477,7 @@ func (s *Service) GetEntitlementCatalog(ctx context.Context, offset, limit int, 
 			WHERE g.org_id = $1
 			UNION ALL
 			SELECT a.id, a.name, 'application' as type, COALESCE(a.description, '') as description,
-				(SELECT COUNT(*) FROM user_application_assignments WHERE application_id = a.id AND org_id = $1) as member_count,
+				(SELECT COUNT(*) FROM user_application_assignments WHERE application_id = a.id AND org_id = $1 AND (expires_at IS NULL OR expires_at > NOW())) as member_count,
 				a.created_at
 			FROM applications a
 			WHERE a.org_id = $1
@@ -4280,6 +4280,9 @@ func (s *Service) handleCreateDelegation(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
+		if writeExternalRefusal(c, err) {
+			return
+		}
 		s.logger.Error("failed to create delegation", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -4308,6 +4311,9 @@ func (s *Service) handleUpdateDelegation(c *gin.Context) {
 	if err := s.UpdateDelegation(c.Request.Context(), id, updates); err != nil {
 		if errors.Is(err, errDelegationScope) {
 			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		if writeExternalRefusal(c, err) {
 			return
 		}
 		if strings.Contains(err.Error(), "not found") {
