@@ -886,6 +886,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/entry-requests/:id/approve", svc.requireAdminRole(), svc.handlePamApproveRequest)
 		api.POST("/pam/entry-requests/:id/deny", svc.requireAdminRole(), svc.handlePamDenyRequest)
 		api.GET("/pam/my-entry-requests", svc.handlePamListMyRequests)
+		// The sponsor's queue: an external user's launch is approved by their
+		// sponsor, who need not be an administrator.
+		api.GET("/pam/sponsored/entry-requests", svc.handlePamListSponsoredRequests)
+		api.POST("/pam/sponsored/entry-requests/:id/approve", svc.requireFreshMFA("pam.sponsor_decide"), svc.handlePamSponsorApproveRequest)
+		api.POST("/pam/sponsored/entry-requests/:id/deny", svc.requireFreshMFA("pam.sponsor_decide"), svc.handlePamSponsorDenyRequest)
 		api.GET("/pam/sessions", svc.requireAdminRole(), svc.handlePamListSessions)
 		api.POST("/pam/sessions/:id/end", svc.handlePamEndSession)
 		api.POST("/pam/import/rdm", svc.requireAdminRole(), svc.handlePamImportRDM)

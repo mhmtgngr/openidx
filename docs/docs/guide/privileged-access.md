@@ -87,10 +87,14 @@ for the lack of one.
 An external user's session runs under fixed controls, whatever the entry or
 the install's settings say:
 
-- **Approved.** Every launch needs a launch approval, even on an entry that
-  asks for none. The user asks for one with **Request access**, and an
-  administrator approves it. No administrator bypass applies to them,
-  whatever roles their token claims.
+- **Approved by their sponsor.** Every launch needs a launch approval, even
+  on an entry that asks for none. The user asks for one with **Request
+  access**. Their sponsor is told, finds it in their queue
+  (`GET /api/v1/access/pam/sponsored/entry-requests`) and approves or denies
+  it (`POST .../sponsored/entry-requests/{id}/approve` or `/deny`, with a fresh
+  second factor). An administrator who is not the sponsor can deny it but not
+  approve it (`external_launch_needs_sponsor`). No administrator bypass
+  applies to the external user, whatever roles their token claims.
 - **Recorded.** The session is recorded, keystrokes included. Without
   `GUACAMOLE_RECORDING_PATH` the launch is refused
   (`external_recording_unavailable`).

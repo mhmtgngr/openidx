@@ -827,6 +827,7 @@ func (s *Service) createPamAccessRequest(c *gin.Context, entryID string) {
 			"entry_id": entryID, "requester_id": userID,
 			"expires_at": expiresAt.Format(time.RFC3339),
 		})
+	s.notifySponsorOfLaunchRequest(ctx, org.ID, userID, entryID, requestID, body.Reason)
 	c.JSON(http.StatusCreated, gin.H{"request_id": requestID})
 }
 
@@ -841,6 +842,18 @@ func (s *Service) handlePamDenyRequest(c *gin.Context) {
 }
 
 func (s *Service) decidePamRequest(c *gin.Context, newStatus, auditAction string) {
+	s.decidePamRequestAs(c, newStatus, auditAction, false)
+}
+
+// decidePamRequestAs decides a pending launch request. asSponsor is the
+// sponsor's route: the request must be one of the caller's own external
+// users', whichever the decision.
+//
+// An external (vendor) user's launch is approved by their sponsor (section
+// 5.6 of the third-party access framework), on either route: an
+// administrator who is not the sponsor can deny it but not approve it. The
+// rule is in the statement, so it is atomic with the status check.
+func (s *Service) decidePamRequestAs(c *gin.Context, newStatus, auditAction string, asSponsor bool) {
 	requestID := c.Param("id")
 	approverID := c.GetString("user_id")
 
@@ -855,15 +868,23 @@ func (s *Service) decidePamRequest(c *gin.Context, newStatus, auditAction string
 	// OWN request. Deny is allowed (a requester can effectively withdraw), but
 	// approval requires a different person. Enforced in SQL via requester_id
 	// <> approver so it is atomic with the status check.
-	selfGuard := ""
+	guard := ""
 	if newStatus == "approved" {
-		selfGuard = " AND requester_id <> NULLIF($2,'')::uuid"
+		guard = ` AND r.requester_id <> NULLIF($2,'')::uuid
+		  AND NOT EXISTS (SELECT 1 FROM users u
+		                   WHERE u.id = r.requester_id AND u.org_id = r.org_id AND u.user_type = 'external'
+		                     AND u.sponsor_user_id IS DISTINCT FROM NULLIF($2,'')::uuid)`
+	}
+	if asSponsor {
+		guard += ` AND EXISTS (SELECT 1 FROM users u
+		                        WHERE u.id = r.requester_id AND u.org_id = r.org_id AND u.user_type = 'external'
+		                          AND u.sponsor_user_id = NULLIF($2,'')::uuid)`
 	}
 
 	tag, err := s.db.Pool.Exec(ctx,
-		`UPDATE pam_entry_access_requests
+		`UPDATE pam_entry_access_requests r
 		    SET status = $1, approver_id = NULLIF($2,'')::uuid, decided_at = NOW()
-		  WHERE id = $3 AND org_id = $4 AND status = 'pending'`+selfGuard,
+		  WHERE r.id = $3 AND r.org_id = $4 AND r.status = 'pending'`+guard,
 		newStatus, approverID, requestID, org.ID)
 	if err != nil {
 		s.logger.Error("decidePamRequest: update failed",
@@ -872,24 +893,79 @@ func (s *Service) decidePamRequest(c *gin.Context, newStatus, auditAction string
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		// Distinguish self-approval rejection from not-found for a clear message.
-		if newStatus == "approved" {
-			var requesterID string
-			_ = s.db.Pool.QueryRow(ctx,
-				`SELECT requester_id::text FROM pam_entry_access_requests WHERE id=$1 AND org_id=$2 AND status='pending'`,
-				requestID, org.ID).Scan(&requesterID)
-			if requesterID != "" && requesterID == approverID {
-				c.JSON(http.StatusForbidden, gin.H{"error": "you cannot approve your own access request (four-eyes)"})
-				return
-			}
+		// Say why, for a request that is there and pending; anything else, and
+		// on the sponsor's route a request that is not one of the caller's
+		// external users', is not found.
+		var requesterID, requesterType, sponsorID string
+		_ = s.db.Pool.QueryRow(ctx,
+			`SELECT r.requester_id::text, COALESCE(u.user_type, ''), COALESCE(u.sponsor_user_id::text, '')
+			   FROM pam_entry_access_requests r
+			   LEFT JOIN users u ON u.id = r.requester_id AND u.org_id = r.org_id
+			  WHERE r.id = $1 AND r.org_id = $2 AND r.status = 'pending'`,
+			requestID, org.ID).Scan(&requesterID, &requesterType, &sponsorID)
+		external := requesterType == externalid.TypeExternal
+		switch {
+		case requesterID == "", asSponsor && (!external || sponsorID != approverID):
+			c.JSON(http.StatusNotFound, gin.H{"error": "request not found or not pending"})
+		case newStatus == "approved" && requesterID == approverID:
+			c.JSON(http.StatusForbidden, gin.H{"error": "you cannot approve your own access request (four-eyes)"})
+		case newStatus == "approved" && external && sponsorID != approverID:
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "an external user's launch is approved by their sponsor",
+				"code":  "external_launch_needs_sponsor",
+			})
+		default:
+			c.JSON(http.StatusNotFound, gin.H{"error": "request not found or not pending"})
 		}
-		c.JSON(http.StatusNotFound, gin.H{"error": "request not found or not pending"})
 		return
 	}
 
+	as := "administrator"
+	if asSponsor {
+		as = "sponsor"
+	}
 	s.logAuditEvent(c, auditAction, requestID, "pam_entry_access_request",
-		map[string]interface{}{"request_id": requestID, "approver_id": approverID, "new_status": newStatus})
+		map[string]interface{}{"request_id": requestID, "approver_id": approverID, "new_status": newStatus, "as": as})
 	c.JSON(http.StatusOK, gin.H{"request_id": requestID, "status": newStatus})
+}
+
+// handlePamSponsorApproveRequest — POST /pam/sponsored/entry-requests/:id/approve.
+// The sponsor of an external user approves one of their launch requests.
+func (s *Service) handlePamSponsorApproveRequest(c *gin.Context) {
+	s.decidePamRequestAs(c, "approved", "pam.access_approved", true)
+}
+
+// handlePamSponsorDenyRequest — POST /pam/sponsored/entry-requests/:id/deny.
+func (s *Service) handlePamSponsorDenyRequest(c *gin.Context) {
+	s.decidePamRequestAs(c, "denied", "pam.access_denied", true)
+}
+
+// handlePamListSponsoredRequests — GET /pam/sponsored/entry-requests: the
+// pending, unexpired launch requests of the external users the caller
+// sponsors. Empty for anyone who sponsors no one.
+func (s *Service) handlePamListSponsoredRequests(c *gin.Context) {
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT r.id, r.entry_id, e.name, e.entry_type, r.requester_id::text,
+		       r.reason, r.status, r.approver_id::text, r.decided_at, r.expires_at, r.created_at
+		  FROM pam_entry_access_requests r
+		  JOIN pam_entries e ON e.id = r.entry_id AND e.org_id = r.org_id
+		  JOIN users u ON u.id = r.requester_id AND u.org_id = r.org_id
+		 WHERE r.org_id = $1 AND r.status = 'pending' AND r.expires_at > NOW()
+		   AND u.user_type = 'external' AND u.sponsor_user_id = NULLIF($2,'')::uuid
+		 ORDER BY r.created_at DESC`, org.ID, c.GetString("user_id"))
+	if err != nil {
+		s.logger.Error("handlePamListSponsoredRequests: query failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list requests"})
+		return
+	}
+	defer rows.Close()
+	c.JSON(http.StatusOK, gin.H{"requests": scanPamAccessRequests(rows, s.logger)})
 }
 
 // PamAccessRequest is the API row for the approval queues.

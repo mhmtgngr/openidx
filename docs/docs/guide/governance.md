@@ -73,6 +73,11 @@ policy's `max_wait_hours` expires, with an audit event. A policy whose step
 cannot reach its `min_approvals` refuses the request with the reason rather
 than filing one nobody can approve.
 
+One person approves at most one step of a request. An approver of an earlier
+step who is also an approver of a later one is refused there (`four_eyes`),
+and the later step needs someone else; they can still deny. A chain of two
+steps is two people's decision.
+
 ## Certification campaigns
 
 A campaign asks owners to confirm, item by item, that access is still
@@ -184,6 +189,15 @@ has an internal sponsor and has an end date. None of the three is optional.
   or receives a delegation. Its access requests must name a duration that
   ends no later than the account does. The database refuses anything else, whichever screen
   or API asks.
+- **Who approves their requests.** The sponsor, first. An external user's
+  access request starts with a step for their sponsor, before any step the
+  approval policy adds, and the sponsor is not an approver of the policy's
+  steps even when they hold the approver role: the policy's approvals come
+  from someone else. No auto-approve condition skips the sponsor. Without a
+  policy, the default administrator approves after the sponsor. When that
+  administrator is the sponsor, nobody else is left, and the request is
+  refused until a policy covers it. The same holds for a PAM launch approval:
+  the sponsor gives it.
 - **How access ends.** Suspend or disable an account from its row; either
   signs the person out everywhere at once, and each needs a reason. The
   identity service also ends accounts on its own every minute:

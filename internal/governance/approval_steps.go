@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/externalid"
 )
 
 // The three approval-policy fields that decided nothing.
@@ -302,4 +303,42 @@ func (s *Service) expireUnansweredRequests(ctx context.Context) {
 		s.logger.Info("approval timeout sweep: an unanswered access request expired",
 			logsafe.String("request_id", e.id), logsafe.String("requester_id", e.requester))
 	}
+}
+
+// requesterSponsor reports whether the requester is an external (vendor) user
+// and, if so, their sponsor. An external user with no sponsor cannot have a
+// request approved: the account is suspended, expired or disabled once its
+// sponsor goes, and the request is refused with that said.
+func (s *Service) requesterSponsor(ctx context.Context, orgID, requesterID string) (string, bool, error) {
+	if requesterID == "" {
+		return "", false, nil
+	}
+	// The type first, as I4's check reads it, and the account only for an
+	// external user.
+	external, err := externalid.IsExternal(ctx, s.db.Pool, orgID, requesterID)
+	if err != nil {
+		return "", false, fmt.Errorf("read whether the requester is an external user: %w", err)
+	}
+	if !external {
+		return "", false, nil
+	}
+	acct, err := externalid.Load(ctx, s.db.Pool, orgID, requesterID)
+	if err != nil {
+		return "", true, fmt.Errorf("read the external requester's sponsor: %w", err)
+	}
+	if acct.SponsorUserID == "" {
+		return "", true, &chainError{"an external user's request is approved by their sponsor first, and this account has no sponsor"}
+	}
+	return acct.SponsorUserID, true, nil
+}
+
+// withoutApprover returns ids without id.
+func withoutApprover(ids []string, id string) []string {
+	out := make([]string, 0, len(ids))
+	for _, v := range ids {
+		if v != id {
+			out = append(out, v)
+		}
+	}
+	return out
 }
