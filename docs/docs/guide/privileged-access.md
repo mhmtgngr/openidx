@@ -38,7 +38,9 @@ admin kill switch) terminates the live session, not just future ones.
    automated **rotation policies** cover SSH, AWS IAM, GCP service
    accounts, Postgres, MySQL and LDAP credentials.
 3. **Grant access.** PAM entry grants name the users or roles that may
-   connect or reveal, optionally time-bounded. Sensitive entries can
+   connect or reveal, optionally time-bounded. A user can also ask for a
+   time-bound connection through **Access Requests**; approving the request
+   writes the grant, and it ends with the request's window. Sensitive entries can
    require **checkout approval** — the request lands with approvers before
    a session can start. **Break-glass** exists for emergencies and is
    loudly audited.
@@ -67,7 +69,9 @@ admin kill switch) terminates the live session, not just future ones.
    alongside your apps.
 2. Click **Connect**. If the entry needs approval, you'll see the request
    flow; otherwise the terminal or desktop opens right in the browser —
-   nothing to install.
+   nothing to install. An entry listed without **Connect** can be asked for:
+   **Access Requests → Request Access → PAM Connection**, for a duration.
+   Once the request is approved, Connect appears until the window ends.
 3. Need a credential itself (rare, discouraged)? **Reveal** is a separate,
    separately-granted, separately-audited action with checkout semantics —
    return it when done.

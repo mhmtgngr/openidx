@@ -185,6 +185,37 @@ type pamLaunchEntry struct {
 	RecordSession     bool
 	ReachMode         string
 	ZitiInterceptPort int
+	// AdminBypass names the gates this launch passed only because the caller
+	// is an administrator ("grant", "approval"); empty otherwise. Set by the
+	// launch handler, never loaded, and carried to pam.entry_connected.
+	AdminBypass []string
+}
+
+// pamAdminBypass names the gates an administrator's launch of entry passes
+// only because the caller is an administrator: "grant" when no connect grant
+// (user, role or group) would have admitted them, "approval" when the entry
+// requires an approval, which administrators never spend.
+//
+// Administrators pass both gates on every launch path, and the audit event
+// said nothing about it: an administrator connecting to an entry nobody
+// granted them read the same as an operator using their grant. Called only
+// for administrators. A failed grant lookup counts as a bypass, so an error
+// records the bypass rather than hiding it.
+func (s *Service) pamAdminBypass(ctx context.Context, orgID string, entry *pamLaunchEntry, userID string, roles []string) []string {
+	gates := []string{}
+	allowed, err := s.pamEntryAllowed(ctx, orgID, entry.ID, userID, roles, "connect")
+	if err != nil {
+		s.logger.Warn("pamAdminBypass: grant lookup failed; recording the launch as a grant bypass",
+			zap.String("entry_id", entry.ID), zap.Error(err))
+		allowed = false
+	}
+	if !allowed {
+		gates = append(gates, "grant")
+	}
+	if entry.RequireApproval {
+		gates = append(gates, "approval")
+	}
+	return gates
 }
 
 // dialTarget returns the host:port guacd should open the protocol connection
@@ -213,7 +244,27 @@ func (e *pamLaunchEntry) dialTarget() (host string, port int) {
 // connect URL. Website entries return their URL (no brokering). 403s when a
 // required approval is missing — the UI then offers "request access".
 func (s *Service) handlePamConnect(c *gin.Context) {
-	entryID := c.Param("id")
+	s.connectPamEntry(c, c.Param("id"), pamConnectHooks{})
+}
+
+// pamConnectHooks let a caller that reaches the entry path from elsewhere (the
+// route-based Guacamole connect) add its own gate and ledger around the launch
+// without a second copy of the decision.
+type pamConnectHooks struct {
+	// BeforeLaunch runs after every gate of the entry path has passed and
+	// before a credential is resolved. Returning false means the hook has
+	// written the response and the launch does not happen.
+	BeforeLaunch func(c *gin.Context, entry *pamLaunchEntry) bool
+	// AfterLaunch runs once the session is brokered and ledgered.
+	AfterLaunch func(c *gin.Context, entry *pamLaunchEntry, res *pamSessionResult)
+	// Response is merged into the success body.
+	Response gin.H
+}
+
+// connectPamEntry is the entry launch: ACL, approval, overlay check, then the
+// shared launch core. handlePamConnect is this with no hooks; the route-based
+// connect adds its moderation gate and its own session ledger through them.
+func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConnectHooks) {
 	ctx := c.Request.Context()
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -228,10 +279,12 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 		return // loadPamLaunchEntry already wrote the error
 	}
 
-	if !isAdmin {
+	if isAdmin {
+		entry.AdminBypass = s.pamAdminBypass(ctx, org.ID, &entry, userID, pamCallerRoles(c))
+	} else {
 		allowed, aclErr := s.pamEntryAllowed(ctx, org.ID, entryID, userID, pamCallerRoles(c), "connect")
 		if aclErr != nil {
-			s.logger.Error("handlePamConnect: ACL check failed", zap.Error(aclErr))
+			s.logger.Error("connectPamEntry: ACL check failed", zap.Error(aclErr))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check permissions"})
 			return
 		}
@@ -240,13 +293,16 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 			return
 		}
 	}
+	if s.refuseIneffectiveExternal(c, org.ID, userID) {
+		return
+	}
 
 	// Approval gate — single-use, atomically consumed. Admins (the approvers)
 	// bypass their own gate.
 	if entry.RequireApproval && !isAdmin {
 		consumed, gateErr := s.checkAndConsumePamApproval(ctx, entryID, userID)
 		if gateErr != nil {
-			s.logger.Error("handlePamConnect: approval check failed", zap.Error(gateErr))
+			s.logger.Error("connectPamEntry: approval check failed", zap.Error(gateErr))
 			c.JSON(http.StatusForbidden, gin.H{"error": "session requires approval"})
 			return
 		}
@@ -267,6 +323,10 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 		return
 	}
 
+	if hooks.BeforeLaunch != nil && !hooks.BeforeLaunch(c, &entry) {
+		return
+	}
+
 	// Website entries: no brokering — hand back the URL. The password (if
 	// any) stays in the vault, retrievable only via the audited reveal path.
 	if typeInfo.Protocol == "" {
@@ -282,23 +342,31 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 			if _, err := s.db.Pool.Exec(ctx,
 				`UPDATE pam_entries SET guacamole_connection_id = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
 				connID, entry.ID, org.ID); err != nil {
-				s.logger.Warn("handlePamConnect: persist connection id failed", zap.Error(err))
+				s.logger.Warn("connectPamEntry: persist connection id failed", zap.Error(err))
 			}
 		})
 	if fail != nil {
 		fail.writeJSON(c)
 		return
 	}
+	if hooks.AfterLaunch != nil {
+		hooks.AfterLaunch(c, &entry, res)
+	}
 
-	c.JSON(http.StatusOK, gin.H{
+	body := gin.H{
 		"launch_type":         "guacamole",
 		"connect_url":         res.ConnectURL,
+		"connection_id":       res.ConnID,
 		"entry_id":            entryID,
 		"session_id":          res.SessionID,
 		"credential_injected": res.Injected,
 		"recorded":            entry.RecordSession,
 		"reach_mode":          entry.ReachMode,
-	})
+	}
+	for k, v := range hooks.Response {
+		body[k] = v
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 // pamSessionResult is the outcome of a successful brokered launch.
@@ -308,6 +376,8 @@ type pamSessionResult struct {
 	SessionID  string
 	Injected   bool
 	GuacUser   string
+	// RecordingPath is the file guacd writes when the entry records, else "".
+	RecordingPath string
 }
 
 // pamLaunchFailure is why a brokered launch did not happen.
@@ -477,7 +547,7 @@ func (s *Service) launchPamSession(
 
 	return &pamSessionResult{
 		ConnectURL: connectURL, ConnID: connID, SessionID: sessionID,
-		Injected: injected, GuacUser: guacUser,
+		Injected: injected, GuacUser: guacUser, RecordingPath: recFile,
 	}, nil
 }
 
@@ -580,8 +650,19 @@ func (s *Service) recordPamLaunch(c *gin.Context, orgID string, entry *pamLaunch
 		"user_id":             userID,
 		"credential_injected": injected,
 		"recorded":            entry.RecordSession,
+		"admin_bypass":        len(entry.AdminBypass) > 0,
+		"admin_bypassed":      adminBypassed(entry.AdminBypass),
 	})
 	return sessionID
+}
+
+// adminBypassed renders the bypassed gates for the audit event: always a
+// list, so a filter on the field never has to tell null from empty.
+func adminBypassed(gates []string) []string {
+	if gates == nil {
+		return []string{}
+	}
+	return gates
 }
 
 // ---- Approval lifecycle (pre-connect gate) ----
@@ -619,7 +700,13 @@ func (s *Service) checkAndConsumePamApproval(ctx context.Context, entryID, userI
 // The requester must hold the connect grant (or be admin — pointless but
 // harmless); the approval is an additional, single-use gate on top.
 func (s *Service) handlePamRequestAccess(c *gin.Context) {
-	entryID := c.Param("id")
+	s.createPamAccessRequest(c, c.Param("id"))
+}
+
+// createPamAccessRequest files a pending pam_entry_access_requests row for the
+// caller on entryID and answers 201 {request_id}. Shared by the entry route
+// and the route-based Guacamole request, which resolves its entry first.
+func (s *Service) createPamAccessRequest(c *gin.Context, entryID string) {
 	userID := c.GetString("user_id")
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -658,7 +745,7 @@ func (s *Service) handlePamRequestAccess(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "entry not found"})
 			return
 		}
-		s.logger.Error("handlePamRequestAccess: insert failed", zap.Error(err))
+		s.logger.Error("createPamAccessRequest: insert failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create access request"})
 		return
 	}

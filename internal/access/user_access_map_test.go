@@ -120,9 +120,11 @@ var crossPillarSchema = []string{
 		id UUID PRIMARY KEY, org_id UUID, connection_id UUID, user_id UUID,
 		guac_session_uuid VARCHAR(255), started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		ended_at TIMESTAMPTZ, status VARCHAR(16))`,
-	`CREATE TABLE IF NOT EXISTS guacamole_session_requests (
-		id UUID PRIMARY KEY, org_id UUID, requester_id UUID, status VARCHAR(16),
-		expires_at TIMESTAMPTZ)`,
+	`CREATE TABLE IF NOT EXISTS pam_entries (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, proxy_route_id UUID)`,
+	`CREATE TABLE IF NOT EXISTS pam_entry_access_requests (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, entry_id UUID, requester_id UUID,
+		status VARCHAR(16), expires_at TIMESTAMPTZ)`,
 	`CREATE TABLE IF NOT EXISTS ziti_identities (
 		id UUID PRIMARY KEY, org_id UUID, ziti_id VARCHAR(255), name VARCHAR(255),
 		user_id UUID, enrolled BOOLEAN DEFAULT false, attributes JSONB DEFAULT '[]')`,

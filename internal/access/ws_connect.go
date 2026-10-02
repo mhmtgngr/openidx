@@ -133,7 +133,9 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 	}
 
 	// Permission gate — identical to handlePamConnect. MUST run before upgrade.
-	if !isAdmin {
+	if isAdmin {
+		entry.AdminBypass = s.pamAdminBypass(ctx, org.ID, &entry, userID, pamCallerRoles(c))
+	} else {
 		allowed, aclErr := s.pamEntryAllowed(ctx, org.ID, entryID, userID, pamCallerRoles(c), "connect")
 		if aclErr != nil {
 			s.logger.Error("ws-connect: ACL check failed", zap.Error(aclErr))
@@ -144,6 +146,9 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "not permitted"})
 			return
 		}
+	}
+	if s.refuseIneffectiveExternal(c, org.ID, userID) {
+		return
 	}
 	// Approval gate — single-use, atomically consumed (admins bypass their own).
 	if entry.RequireApproval && !isAdmin {
