@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -732,12 +734,20 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err = tx.Exec(ctx, `
+	// The row's enabled before this write, read under the row's lock in the
+	// same statement, so the push that deactivates the user is told apart
+	// from a later push of a user already inactive. The locking read is
+	// joined in FROM so it runs before the write.
+	var wasActive bool
+	if err = tx.QueryRow(ctx, `
+		WITH before AS (SELECT id, COALESCE(enabled, false) AS enabled FROM users WHERE id = $1 AND org_id = $8 FOR UPDATE)
 		UPDATE users
 		SET username = $2, email = $3, first_name = $4, last_name = $5, enabled = $6, updated_at = $7,
-		    manager_id = COALESCE($9::uuid, manager_id), external_id = NULLIF($10, '')
-		WHERE id = $1 AND org_id = $8
-	`, userID, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, now, org.ID, managerID, user.ExternalID); err != nil {
+		    manager_id = COALESCE($9::uuid, users.manager_id), external_id = NULLIF($10, '')
+		FROM before
+		WHERE users.id = before.id AND users.org_id = $8
+		RETURNING before.enabled
+	`, userID, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, now, org.ID, managerID, user.ExternalID).Scan(&wasActive); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 
@@ -758,6 +768,17 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 	// choke point for both PUT and PATCH(active), so this covers both.
 	if !user.Active {
 		s.deprovisionUser(ctx, userID, org.ID, false)
+	}
+	// And the receivers downstream of this product hear it, as they hear a
+	// SCIM delete: once, on the push that deactivates the user. Best-effort:
+	// the deactivation is committed whether or not the signal is written.
+	if wasActive && !user.Active {
+		if serr := ssfsignal.Enqueue(ctx, s.db.Pool, ssfsignal.Signal{
+			OrgID: org.ID, SubjectID: userID, Claims: map[string]any{"reason": "scim_deactivated"},
+		}); serr != nil {
+			s.logger.Error("SCIM deactivated the user, but the account-disabled signal was not enqueued",
+				logsafe.String("user_id", userID), zap.Error(serr))
+		}
 	}
 
 	// Apply the org's enabled user_updated provisioning rules (best-effort;
