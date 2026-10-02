@@ -58,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was filed under; requests already open keep advancing.
 ### Fixed
 - **An SSH certificate needs a grant.** `openidx-connect ssh` and `POST /pam/connect/ssh` sign only for a host and login registered as an SSH entry that the caller may connect to. If the entry requires approval, each certificate uses up one approved request. Before, any signed-in user could get a certificate for any login, `root` included. Administrators skip the grant but still need a registered entry. Refusals are audited as `pam.ssh_cert_denied`.
+### Fixed
+- **Cloud just-in-time access needs a grant and lasts at most an hour.** `POST /pam/connect/cloud` uses a broker credential only for a caller who holds a `use` grant on it. Before, any signed-in user could name any of the organization's secrets as the broker and assume any role it could. AWS cannot revoke STS credentials, so the session ceiling drops from 12 hours to 60 minutes. Administrators skip the grant but not the cap. Refusals are audited as `pam.cloud_jit_denied`.
 
 ## [1.39.0] - 2026-09-28
 
