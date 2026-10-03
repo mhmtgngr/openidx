@@ -107,3 +107,29 @@ func Enqueue(ctx context.Context, exec Execer, sig Signal) error {
 	}
 	return nil
 }
+
+// EnqueueClaimsChange enqueues token-claims-change for each distinct user, in
+// orgID, with reason as the event's reason: the users' roles or groups have
+// changed, so a token issued for them now says something else. Empty ids are
+// skipped. It enqueues for every user it can and reports the failures
+// together, so one bad row does not keep the others' receivers uninformed.
+func EnqueueClaimsChange(ctx context.Context, exec Execer, orgID, reason string, userIDs ...string) error {
+	seen := make(map[string]struct{}, len(userIDs))
+	var errs []error
+	for _, userID := range userIDs {
+		if userID == "" {
+			continue
+		}
+		if _, dup := seen[userID]; dup {
+			continue
+		}
+		seen[userID] = struct{}{}
+		if err := Enqueue(ctx, exec, Signal{
+			OrgID: orgID, EventType: TokenClaimsChange, SubjectID: userID,
+			Claims: map[string]any{"reason": reason},
+		}); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}

@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Downstream applications are told when a role or a group from an access request begins or ends, and when a vendor user's account ends.** The SSF transmitter now sends `token-claims-change` when a role or group request is fulfilled and when its window ends. The event carries the user's `roles`, `groups` and `permissions` as a token issued at that moment carries them, read by oauth-service when it signs. A suspended external account is told as `session-revoked`, because a new sponsor may bring it back. One that expires or is disabled, its vendor closed included, is told as `account-disabled`. `/.well-known/ssf-configuration` now advertises `token-claims-change`. A stream that already asked for it starts getting it, and its `events_delivered` says so.
 
 ### Fixed
+- **Every role or group change tells the SSF receivers.** These paths changed a user's roles or groups without telling anyone downstream; they now send `token-claims-change`, once, with the path as the reason:
+  - the console's bulk operations and a certification's revocation;
+  - SCIM group pushes, including a group's creation and deletion;
+  - provisioning rules;
+  - the directory sync;
+  - a portal group join.
+
+  #1052 did the same for the identity service's paths. A path that changes nothing sends nothing.
 - **An external user's group membership ends no later than the account.** The user's roles, application assignments and PAM and vault grants already did, through migrations v215 and v222. A membership had no window until v224, so nothing held it to the account's end. Migration v225 caps a membership written for an external user at the account's end, and cuts the memberships again when that end moves earlier. The identity expiry sweep then removes the membership and cuts the tokens that name the group. The migration caps the memberships external users already hold.
 - **A group from an access request ends when its window does, and takes nothing else with it.** Fulfilment writes the request's window on the membership (`group_memberships.expires_at`, migration v224), as it does for a role (v223). The effects:
   - a token issued after the window's end no longer carries the group, and a token that carries it ends no later than the window;
