@@ -98,7 +98,8 @@ CREATE TABLE group_memberships (
     user_id   UUID NOT NULL,
     joined_at TIMESTAMPTZ DEFAULT NOW(),
     org_id    UUID NOT NULL,
-    expires_at TIMESTAMPTZ
+    expires_at TIMESTAMPTZ,
+    PRIMARY KEY (user_id, group_id)
 );
 CREATE TABLE mfa_totp (
     id              UUID PRIMARY KEY,
