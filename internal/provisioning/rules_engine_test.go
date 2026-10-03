@@ -132,8 +132,8 @@ func TestApplyProvisioningRules(t *testing.T) {
 			org_id UUID NOT NULL)`,
 		`CREATE TABLE groups (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(255), org_id UUID NOT NULL)`,
 		`CREATE TABLE roles (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(255), org_id UUID NOT NULL)`,
-		`CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID, PRIMARY KEY (user_id, group_id))`,
-		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID, PRIMARY KEY (user_id, role_id))`,
+		`CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID, joined_at TIMESTAMPTZ DEFAULT NOW(), expires_at TIMESTAMPTZ, PRIMARY KEY (user_id, group_id))`,
+		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID, assigned_at TIMESTAMPTZ DEFAULT NOW(), expires_at TIMESTAMPTZ, PRIMARY KEY (user_id, role_id))`,
 	}
 	for _, q := range ddl {
 		if _, err := db.Pool.Exec(ctx, q); err != nil {
