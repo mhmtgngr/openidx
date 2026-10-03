@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -300,10 +301,16 @@ func (s *Service) sweepStaleGuacGrants(ctx context.Context) {
 // for any mapping whose OpenIDX user is disabled or gone. Deleting the account
 // cascades its connectionPermissions in the postgres auth backend, so lingering
 // grants die with it. Runs under a bypass-RLS background context.
+//
+// The user's own connections go first. An external user's launch runs on a
+// connection of its own per entry (pam-<entry>-x-<user>), holding the
+// credential injected for it, and nothing else ever deletes it: an ended
+// vendor account would leave one per entry it opened, credential included, on
+// the broker for good. A failure keeps the mapping, so the next tick retries.
 func (s *Service) sweepDeprovisionGuacUsers(ctx context.Context) {
 	//orgscope:ignore users,guacamole_users cross-org maintenance sweep runs under a bypass-RLS background context
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT gu.id, gu.broker, gu.guac_username
+		SELECT gu.id, gu.broker, gu.guac_username, COALESCE(gu.user_id::text, '')
 		  FROM guacamole_users gu LEFT JOIN users u ON u.id = gu.user_id
 		 WHERE u.id IS NULL OR u.enabled = false
 		 LIMIT 100`)
@@ -311,11 +318,11 @@ func (s *Service) sweepDeprovisionGuacUsers(ctx context.Context) {
 		s.logger.Warn("sweepDeprovisionGuacUsers: query failed", zap.Error(err))
 		return
 	}
-	type d struct{ rowID, broker, guacUser string }
+	type d struct{ rowID, broker, guacUser, userID string }
 	var targets []d
 	for rows.Next() {
 		var t d
-		if rows.Scan(&t.rowID, &t.broker, &t.guacUser) == nil {
+		if rows.Scan(&t.rowID, &t.broker, &t.guacUser, &t.userID) == nil {
 			targets = append(targets, t)
 		}
 	}
@@ -330,6 +337,11 @@ func (s *Service) sweepDeprovisionGuacUsers(ctx context.Context) {
 		if b == nil {
 			continue
 		}
+		if err := s.deleteUserConnections(ctx, b, t.userID); err != nil {
+			s.logger.Warn("sweepDeprovisionGuacUsers: the user's own connections were not deleted (will retry next tick)",
+				zap.String("row", t.rowID), zap.Error(err))
+			continue
+		}
 		_, status, derr := b.apiRequest("DELETE", "/users/"+t.guacUser, nil)
 		if derr == nil && (status/100 == 2 || status == http.StatusNotFound) {
 			if _, err := s.db.Pool.Exec(ctx,
@@ -339,6 +351,29 @@ func (s *Service) sweepDeprovisionGuacUsers(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// deleteUserConnections deletes the broker connections made for one user
+// alone: the per-user connection an external launch runs on, named
+// <connection>-x-<userID> (launchPamSession).
+func (s *Service) deleteUserConnections(ctx context.Context, b *GuacamoleClient, userID string) error {
+	if userID == "" {
+		return nil
+	}
+	conns, err := b.ListConnections(ctx)
+	if err != nil {
+		return err
+	}
+	suffix := "-x-" + userID
+	var errs []error
+	for _, c := range conns {
+		if strings.HasSuffix(c.Name, suffix) {
+			if err := b.DeleteConnection(c.ID); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // StartGuacGrantSweeper runs the stale-grant + deprovision sweeps every 5 minutes

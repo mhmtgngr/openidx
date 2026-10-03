@@ -33,7 +33,9 @@ func TestHandleCreateMagicLink_DoesNotLeakToken(t *testing.T) {
 			email VARCHAR(255) NOT NULL,
 			enabled BOOLEAN DEFAULT true,
 			org_id UUID NOT NULL
-		);
+		,
+    user_type VARCHAR(16) NOT NULL DEFAULT 'internal', account_status VARCHAR(16) NOT NULL DEFAULT 'active', vendor_org_id UUID, sponsor_user_id UUID, account_expires_at TIMESTAMPTZ, status_changed_at TIMESTAMPTZ, access_severed_at TIMESTAMPTZ
+);
 		CREATE TABLE magic_links (
 			id UUID PRIMARY KEY,
 			org_id UUID NOT NULL,
