@@ -20,9 +20,12 @@ import (
 // The SECOND leg is decided here, per launch, from pam_entries.reach_mode, and
 // it is decided completely: with the gate enforcing, a launch that would dial
 // the target directly is refused before any credential is resolved, and an
-// entry cannot be created or updated into that state. Migration v82 made
-// 'direct' the column default, so this is not a rare case to catch — it is what
-// an entry created without a deliberate choice does.
+// entry on the overlay cannot be moved back to direct reach
+// (handlePamDisableZiti). A new entry still starts direct: migration v82 made
+// 'direct' the column default and the overlay service is enabled on the entry
+// after it exists, so creating one is not refused -- it cannot be launched
+// until its overlay service is on. That is not a rare case to catch; it is
+// what an entry created without a deliberate choice does.
 //
 // The FIRST leg is not decided here, and pretending otherwise would be the
 // worse outcome. Nothing in an HTTP request proves the caller reached this
@@ -137,8 +140,15 @@ func valueOrDirect(v string) string {
 // It is called before credential resolution, not after: a refused launch must
 // not have decrypted a vault secret or pushed it into a Guacamole connection on
 // its way to being refused.
-func (s *Service) checkPamZTNA(c *gin.Context, orgID, userID, entryID, reachMode, protocol string) ztnaVerdict {
+//
+// An external user's launch is held to "enforce" whatever PAM_REQUIRE_ZTNA
+// says (I5 of the third-party access framework): their session stays on the
+// overlay, or it does not start.
+func (s *Service) checkPamZTNA(c *gin.Context, orgID, userID, entryID, reachMode, protocol string, external bool) ztnaVerdict {
 	mode := s.pamZTNAMode()
+	if external {
+		mode = ztnaEnforce
+	}
 	if mode == ztnaOff {
 		return ztnaVerdict{}
 	}
@@ -146,14 +156,19 @@ func (s *Service) checkPamZTNA(c *gin.Context, orgID, userID, entryID, reachMode
 	if ok {
 		return ztnaVerdict{}
 	}
+	if external {
+		reason = "an external user's session stays on the OpenZiti overlay whatever PAM_REQUIRE_ZTNA says, " +
+			"and " + externalOverlayReason(code, reachMode)
+	}
 
 	enforcing := mode == ztnaEnforce
-	s.auditPamZTNA(c, userID, entryID, reachMode, code, enforcing)
+	s.auditPamZTNA(c, userID, entryID, reachMode, code, enforcing, external)
 	s.logger.Warn("PAM launch does not stay on the overlay",
 		zap.String("entry_id", logsafe.Clean(entryID)),
 		zap.String("reach_mode", logsafe.Clean(reachMode)),
 		zap.String("code", code),
-		zap.Bool("enforced", enforcing))
+		zap.Bool("enforced", enforcing),
+		zap.Bool("external", external))
 
 	if enforcing {
 		return ztnaVerdict{Refuse: true, Reason: reason, Code: code}
@@ -161,12 +176,24 @@ func (s *Service) checkPamZTNA(c *gin.Context, orgID, userID, entryID, reachMode
 	return ztnaVerdict{WouldRefuse: true, Reason: reason, Code: code}
 }
 
+// externalOverlayReason is the rest of an external user's refusal: what is
+// wrong with this entry, without the operator's PAM_REQUIRE_ZTNA remedies,
+// which do not apply to them.
+func externalOverlayReason(code, reachMode string) string {
+	if code == "ztna_required_website_entry" {
+		return "this is a website entry: it hands the browser a URL, brokers no session and records nothing. " +
+			"Publish the site to them as an OpenZiti service or a proxy route instead"
+	}
+	return "this entry reaches its target directly (reach_mode=" + valueOrDirect(reachMode) + "). " +
+		"Set its reach mode to ziti and give it an overlay service"
+}
+
 // auditPamZTNA records the decision on the audit trail.
 //
 // Observe mode writes too, and that is the point of observe mode: an operator
 // sizing this change needs the list of entries that would stop working, and a
 // count they can only get by the attempts being recorded.
-func (s *Service) auditPamZTNA(c *gin.Context, userID, entryID, reachMode, code string, enforced bool) {
+func (s *Service) auditPamZTNA(c *gin.Context, userID, entryID, reachMode, code string, enforced, external bool) {
 	action := "pam.ztna.would_deny"
 	if enforced {
 		action = "pam.ztna.denied"
@@ -176,5 +203,6 @@ func (s *Service) auditPamZTNA(c *gin.Context, userID, entryID, reachMode, code 
 		"reach_mode": reachMode,
 		"code":       code,
 		"enforced":   enforced,
+		"external":   external,
 	})
 }

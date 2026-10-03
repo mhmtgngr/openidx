@@ -22,10 +22,13 @@ vi.mock('../lib/api', () => ({
       brokerStatus: vi.fn(),
       enableZiti: vi.fn(),
       disableZiti: vi.fn(),
+      requestModeration: vi.fn(),
+      getModeration: vi.fn(),
     },
   },
 }))
-vi.mock('../hooks/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }))
+const toastSpy = vi.fn()
+vi.mock('../hooks/use-toast', () => ({ useToast: () => ({ toast: toastSpy }) }))
 
 import { PamConnectionsPage } from './pam-connections'
 import { connectionPathSteps, ztnaRefusal } from '../lib/connection-path'
@@ -189,6 +192,19 @@ describe('PamConnectionsPage', () => {
     await waitFor(() => expect(pam.disableZiti).toHaveBeenCalledWith('e1'))
   })
 
+  it('does not offer to take an overlay entry off the overlay under ZTNA enforcement', async () => {
+    pam.brokerStatus.mockResolvedValue({ available: true, reach_modes: ['direct', 'ziti'], require_ztna: 'enforce' })
+    pam.listEntries.mockResolvedValue({
+      entries: [{ ...rdpEntry, reach_mode: 'ziti', ziti_enabled: true }],
+    })
+    renderPage()
+    const card = (await screen.findByText('DC01')).closest('[class*="rounded"]') as HTMLElement
+    const button = await within(card).findByTitle(/ziti reach stays on/i)
+    expect(button).toBeDisabled()
+    fireEvent.click(button)
+    expect(pam.disableZiti).not.toHaveBeenCalled()
+  })
+
   it('shows a RemoteApp badge for entries publishing a single app', async () => {
     pam.listEntries.mockResolvedValue({
       entries: [{ ...rdpEntry, name: 'SQL01 SSMS', settings: { 'remote-app': '||SSMS' } }],
@@ -197,6 +213,71 @@ describe('PamConnectionsPage', () => {
     await screen.findByText('SQL01 SSMS')
     // Badge shows the alias without Guacamole's "||" prefix.
     expect(screen.getByText('app: SSMS')).toBeInTheDocument()
+  })
+
+  // A refusal's reason is in the axios error's response body. The handler
+  // used to read e.body, which the client never sets, so a launch that needed
+  // an approval reported a bare "Request failed with status code 403".
+  const refused = (status: number, data: Record<string, unknown>) =>
+    Object.assign(new Error(`Request failed with status code ${status}`), { response: { status, data } })
+
+  it('asks for a moderator when the session waits for one, and connects once one joins', async () => {
+    pam.connect.mockRejectedValueOnce(refused(428, { code: 'moderation_required', moderation_required: true, entry_id: 'e1' }))
+    pam.requestModeration.mockResolvedValue({ id: 'm1', status: 'pending' })
+    pam.getModeration.mockResolvedValue({ id: 'm1', status: 'active' })
+    renderPage()
+    const card = (await screen.findByText('DC01')).closest('[class*="rounded"]') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: /connect/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /ask for a moderator/i }))
+    await waitFor(() => expect(pam.requestModeration).toHaveBeenCalledWith('e1', undefined))
+    expect(await screen.findByText(/a moderator joined/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^connect$/i }))
+    await waitFor(() => expect(pam.connect).toHaveBeenCalledTimes(2))
+  })
+
+  it('says an approval is needed when the launch is refused for one', async () => {
+    pam.connect.mockRejectedValueOnce(refused(403, { error: 'session requires approval', approval_required: true }))
+    renderPage()
+    const card = (await screen.findByText('DC01')).closest('[class*="rounded"]') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: /connect/i }))
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Approval required' })))
+  })
+
+  it('saves the moderator requirement, and shows what policy holds a vendor user to, locked', async () => {
+    pam.createEntry.mockResolvedValue({ id: 'e9' })
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /new entry/i }))
+    fireEvent.change(screen.getByPlaceholderText('DC01 – Domain Controller'), { target: { value: 'jump' } })
+    const policy = screen.getByLabelText('Enforced by policy for vendor users')
+    for (const box of within(policy).getAllByRole('checkbox')) {
+      expect(box).toBeDisabled()
+    }
+    fireEvent.click(screen.getByRole('checkbox', { name: /require a moderator/i }))
+    fireEvent.click(screen.getByRole('button', { name: /create/i }))
+    await waitFor(() => expect(pam.createEntry).toHaveBeenCalled())
+    expect(pam.createEntry.mock.calls[0][0]).toMatchObject({ require_moderator: true })
+  })
+
+  it('does not offer the browser terminal for an entry that is recorded or moderated', async () => {
+    pam.listEntries.mockResolvedValue({
+      entries: [{ ...rdpEntry, id: 'e3', name: 'jump-ssh', entry_type: 'ssh', port: 22, renderer: 'wasm-ssh', record_session: false }],
+    })
+    renderPage()
+    fireEvent.click((await screen.findAllByTitle('Edit'))[0])
+    const terminal = screen.getByRole('checkbox', { name: /browser terminal/i })
+    expect(terminal).toBeChecked()
+    expect(terminal).toBeEnabled()
+    // Recording rules the terminal out: ticking it switches the terminal off.
+    fireEvent.click(screen.getByRole('checkbox', { name: /^record session$/i }))
+    expect(terminal).not.toBeChecked()
+    expect(terminal).toBeDisabled()
+    // So does a moderator, once recording is off again.
+    fireEvent.click(screen.getByRole('checkbox', { name: /^record session$/i }))
+    expect(terminal).toBeEnabled()
+    fireEvent.click(terminal)
+    fireEvent.click(screen.getByRole('checkbox', { name: /require a moderator/i }))
+    expect(terminal).not.toBeChecked()
+    expect(terminal).toBeDisabled()
   })
 
   it('saves RemoteApp fields into entry settings with the || alias prefix', async () => {

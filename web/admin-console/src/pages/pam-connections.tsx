@@ -31,6 +31,8 @@ import { TerminalSession } from '../components/remote/terminal-session'
 import { connectionPathSteps, ztnaRefusal } from '../lib/connection-path'
 import { remoteAppArgsLookSecret, remoteAppSecretHint } from '../lib/remote-app'
 import { openPamSessionWindow } from '../lib/pam-session-handoff'
+import { ModerationWaitDialog } from '../components/moderation-wait-dialog'
+import { apiErrorBody } from '../lib/api-error'
 
 // Icon + accent per entry type, so the list reads like RDM's typed tree.
 const typeIcon = (t: string) => {
@@ -73,7 +75,7 @@ const emptyForm: PamEntryInput = {
   name: '', entry_type: 'rdp', description: '', tags: [],
   hostname: '', port: 0, username: '', domain: '', url: '',
   settings: {}, secret: '', credential_entry_id: '',
-  allow_reveal: false, require_approval: false, record_session: false,
+  allow_reveal: false, require_approval: false, require_moderator: false, record_session: false,
 }
 
 export function PamConnectionsPage() {
@@ -86,6 +88,8 @@ export function PamConnectionsPage() {
   const [favoritesOnly, setFavoritesOnly] = useState(false)
 
   const [showEntryDialog, setShowEntryDialog] = useState(false)
+  // An entry whose session waits for a moderator, while the user asks for one.
+  const [waitingFor, setWaitingFor] = useState<{ id: string; name: string } | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<PamEntryInput>(emptyForm)
 
@@ -247,8 +251,13 @@ export function PamConnectionsPage() {
         toast({ title: t('pages.pamConnections.toasts.nothingToLaunch'), variant: 'destructive' })
       }
     },
-    onError: (e: Error & { status?: number; body?: PamConnectResult }) => {
-      if (e.body?.approval_required || /requires approval/i.test(e.message)) {
+    // The refusal's reason is in the response body: the error itself only says
+    // which status came back, so a check on its message never matched.
+    onError: (e: Error, vars) => {
+      const body = apiErrorBody(e)
+      if (body?.moderation_required || body?.code === 'moderation_required') {
+        setWaitingFor({ id: vars.id, name: vars.name })
+      } else if (body?.approval_required) {
         toast({
           title: t('pages.pamConnections.toasts.approvalRequired'),
           description: t('pages.pamConnections.toasts.approvalRequiredDesc'),
@@ -257,7 +266,7 @@ export function PamConnectionsPage() {
       } else {
         toast({
           title: t('pages.pamConnections.toasts.launchFailed'),
-          description: e.message,
+          description: typeof body?.error === 'string' ? body.error : e.message,
           variant: 'destructive',
         })
       }
@@ -374,6 +383,7 @@ export function PamConnectionsPage() {
       settings: entry.settings || {},
       secret: '', credential_entry_id: entry.credential_entry_id,
       allow_reveal: entry.allow_reveal, require_approval: entry.require_approval,
+      require_moderator: !!entry.require_moderator,
       record_session: entry.record_session, renderer: entry.renderer,
     })
     setShowEntryDialog(true)
@@ -544,9 +554,15 @@ export function PamConnectionsPage() {
                             size="sm"
                             variant={entry.ziti_enabled ? 'default' : 'outline'}
                             onClick={() => toggleZiti.mutate(entry)}
-                            disabled={toggleZiti.isPending}
+                            // Under enforcement the service refuses to move an
+                            // overlay entry back to direct reach (409
+                            // ztna_required_direct_reach); the button says so
+                            // rather than firing a request that is refused.
+                            disabled={toggleZiti.isPending || (entry.ziti_enabled && requireZTNA === 'enforce')}
                             title={entry.ziti_enabled
-                              ? t('pages.pamConnections.actions.zitiDisable')
+                              ? requireZTNA === 'enforce'
+                                ? t('pages.pamConnections.actions.zitiDisableEnforced')
+                                : t('pages.pamConnections.actions.zitiDisable')
                               : t('pages.pamConnections.actions.zitiEnable')}
                           >
                             <Shield className="h-4 w-4" />
@@ -780,14 +796,51 @@ export function PamConnectionsPage() {
                 {t('pages.pamConnections.entryDialog.requireApproval')}
               </label>
               <label className="flex items-center gap-2 text-sm">
-                <Checkbox checked={form.record_session} onCheckedChange={(v) => setForm((f) => ({ ...f, record_session: !!v }))} />
+                {/* Recording rules out the browser terminal, which records
+                    nothing (the API refuses the pair), so ticking it switches
+                    the terminal off. */}
+                <Checkbox
+                  checked={form.record_session}
+                  onCheckedChange={(v) => setForm((f) => ({ ...f, record_session: !!v, renderer: v && f.renderer === 'wasm-ssh' ? 'guacamole' : f.renderer }))}
+                />
                 {t('pages.pamConnections.entryDialog.recordSession')}
               </label>
+              {/* A moderator watches a session, so an entry that opens none
+                  (a website) cannot require one -- the API refuses it too. */}
+              <label className="flex items-center gap-2 text-sm" title={t('pages.pamConnections.entryDialog.requireModeratorHint')}>
+                <Checkbox
+                  checked={!!form.require_moderator}
+                  disabled={!selectedType?.protocol}
+                  onCheckedChange={(v) => setForm((f) => ({ ...f, require_moderator: !!v, renderer: v && f.renderer === 'wasm-ssh' ? 'guacamole' : f.renderer }))}
+                />
+                {t('pages.pamConnections.entryDialog.requireModerator')}
+              </label>
+            </div>
+            {/* What policy holds an external (vendor) user's session to on any
+                entry, whatever is ticked above (invariants I5 and I7). Shown
+                locked, so the form does not suggest these are this entry's to
+                switch off for a vendor. */}
+            <div className="rounded-md border bg-muted/40 p-3 space-y-2" aria-label={t('pages.pamConnections.entryDialog.externalPolicyTitle')}>
+              <p className="text-sm font-medium">{t('pages.pamConnections.entryDialog.externalPolicyTitle')}</p>
+              <div className="flex flex-wrap gap-4">
+                {(['launchApproval', 'recording', 'overlay', 'hardened'] as const).map((k) => (
+                  <label key={k} className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Checkbox checked disabled />
+                    {t(`pages.pamConnections.entryDialog.externalPolicy.${k}`)}
+                  </label>
+                ))}
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Checkbox checked={false} disabled />
+                  {t('pages.pamConnections.entryDialog.externalPolicy.reveal')}
+                </label>
+              </div>
+              <p className="text-xs text-muted-foreground">{t('pages.pamConnections.entryDialog.externalPolicyNote')}</p>
             </div>
             {selectedType?.protocol === 'ssh' && (
-              <label className="flex items-center gap-2 text-sm pt-1">
+              <label className="flex items-center gap-2 text-sm pt-1" title={t('pages.pamConnections.entryDialog.browserTerminalHint')}>
                 <Checkbox
                   checked={form.renderer === 'wasm-ssh'}
+                  disabled={form.record_session || !!form.require_moderator}
                   onCheckedChange={(v) => setForm((f) => ({ ...f, renderer: v ? 'wasm-ssh' : 'guacamole' }))}
                 />
                 {t('pages.pamConnections.entryDialog.browserTerminal')}
@@ -1001,6 +1054,12 @@ export function PamConnectionsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <ModerationWaitDialog
+        entry={waitingFor}
+        onClose={() => setWaitingFor(null)}
+        onConnect={(e) => connect.mutate(e)}
+      />
 
       {/* Clientless in-browser SSH terminal (wasm-ssh renderer). */}
       <Dialog open={!!terminalEntry} onOpenChange={(o) => { if (!o) setTerminalEntry(null) }}>

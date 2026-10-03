@@ -45,7 +45,8 @@ func (s *Service) userGroupNames(ctx context.Context, userID string) []string {
 		//orgscope:ignore route authorization; keyed by globally-unique user_id (a user belongs to exactly one org), so the membership set is org-bounded
 		`SELECT g.name FROM groups g
 		   JOIN group_memberships gm ON gm.group_id = g.id
-		  WHERE gm.user_id = $1`, userID)
+		  WHERE gm.user_id = $1
+		    AND (gm.expires_at IS NULL OR gm.expires_at > NOW())`, userID)
 	if err != nil {
 		s.logger.Error("route authorization: group lookup failed (treating as no groups)",
 			zap.String("user_id", userID), zap.Error(err))

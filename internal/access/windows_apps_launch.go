@@ -76,8 +76,11 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	userID := c.GetString("user_id")
-	isAdmin := s.pamCallerIsAdmin(c)
+	caller, ok := s.resolvePamCaller(c, org.ID)
+	if !ok {
+		return // resolvePamCaller already wrote the error
+	}
+	userID, isAdmin := caller.UserID, caller.Admin
 
 	app, err := s.loadLaunchApp(ctx, org.ID, appID)
 	if err != nil {
@@ -103,7 +106,7 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 	// If the caller chose to replace a session, end it first so its host frees
 	// a slot for the placement below.
 	if replace := c.Query("replace"); replace != "" {
-		s.endPamSession(ctx, org.ID, replace)
+		s.endPamSession(ctx, org.ID, userID, replace)
 	}
 
 	candidates, err := s.appCandidateHosts(ctx, org.ID, userID, &app)
@@ -137,8 +140,11 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 	if app.RecordSession != nil && *app.RecordSession {
 		entry.RecordSession = true
 	}
+	pinExternalPamPolicy(&entry, caller)
 
-	if !isAdmin {
+	if isAdmin {
+		entry.AdminBypass = s.pamAdminBypass(ctx, org.ID, &entry, userID, pamCallerRoles(c))
+	} else {
 		allowed, aclErr := s.pamEntryAllowed(ctx, org.ID, chosen.HostEntryID, userID, pamCallerRoles(c), "connect")
 		if aclErr != nil {
 			s.logger.Error("handleWindowsAppLaunch: ACL check failed", zap.Error(aclErr))
@@ -149,6 +155,28 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "not permitted"})
 			return
 		}
+	}
+	if s.refuseIneffectiveExternal(c, org.ID, userID) {
+		return
+	}
+	if s.refuseClosedTarget(c, org.ID, caller, chosen.HostEntryID) {
+		return
+	}
+	// The overlay gate, which this path did not ask before: under
+	// PAM_REQUIRE_ZTNA=enforce an app on a direct-reach host launched while a
+	// connect to the same host was refused. An external user is held to it
+	// whatever the setting says (I5).
+	if v := s.checkPamZTNA(c, org.ID, userID, chosen.HostEntryID, entry.ReachMode, typeInfo.Protocol, caller.External); v.Refuse {
+		c.JSON(http.StatusForbidden, gin.H{"error": v.Reason, "code": v.Code})
+		return
+	}
+	if s.refuseExternalLaunch(c, &entry) {
+		return
+	}
+	// The host's moderation gate, as at connect: refused before an approval
+	// is spent, claimed just before the launch, given back if it fails.
+	if s.refuseUnmoderatedLaunch(c, org.ID, &entry, userID) {
+		return
 	}
 	if entry.RequireApproval && !isAdmin {
 		consumed, gateErr := s.checkAndConsumePamApproval(ctx, chosen.HostEntryID, userID)
@@ -168,6 +196,9 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 		extra["remote-app-args"] = app.Args
 	}
 
+	if !s.claimPamModeration(c, org.ID, &entry, userID) {
+		return
+	}
 	connName := fmt.Sprintf("pam-%s-app-%s", chosen.HostEntryID, app.ID)
 	res, fail := s.launchPamSession(c, org.ID, &entry, typeInfo.Protocol, extra, connName, app.GuacConnID,
 		func(ctx context.Context, connID string) {
@@ -178,6 +209,7 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 			}
 		})
 	if fail != nil {
+		s.releasePamModeration(org.ID, &entry)
 		fail.writeJSON(c)
 		return
 	}
@@ -185,7 +217,7 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 	s.logAuditEvent(c, "windows_app.launched", app.ID, "windows_app", map[string]interface{}{
 		"app_name": app.DisplayName, "alias": app.Alias, "host_entry_id": chosen.HostEntryID,
 	})
-	c.JSON(http.StatusOK, gin.H{
+	body := gin.H{
 		"launch_type":   "guacamole",
 		"connect_url":   res.ConnectURL,
 		"app_id":        app.ID,
@@ -193,7 +225,11 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 		"host_name":     chosen.HostName,
 		"session_id":    res.SessionID,
 		"recorded":      entry.RecordSession,
-	})
+	}
+	if entry.External {
+		body["session_policy"] = externalSessionPolicy()
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 // placeApp picks a host and, when none is usable, returns the conflict to
@@ -285,16 +321,27 @@ func (s *Service) appCandidateHosts(ctx context.Context, orgID, userID string, a
 	return out, rows.Err()
 }
 
-// endPamSession marks a session ended, freeing its host's capacity slot. The
-// user explicitly asked to disconnect it (the 409 resolution flow). Best-effort.
-func (s *Service) endPamSession(ctx context.Context, orgID, sessionID string) {
+// endPamSession marks one of the user's own sessions ended, freeing its host's
+// capacity slot. The user explicitly asked to disconnect it (the 409
+// resolution flow). Best-effort.
+//
+// Only the caller's own: the session id comes from the query string, and
+// without the user term any user could end anyone's session in the
+// organization, a browser terminal's included, whose watcher closes it once
+// its row is no longer active.
+func (s *Service) endPamSession(ctx context.Context, orgID, userID, sessionID string) {
 	if _, err := uuid.Parse(sessionID); err != nil {
 		return
 	}
-	if _, err := s.db.Pool.Exec(ctx,
+	tag, err := s.db.Pool.Exec(ctx,
 		`UPDATE pam_entry_sessions SET status = 'ended', ended_at = NOW()
-		  WHERE id = $1 AND org_id = $2 AND status = 'active'`, sessionID, orgID); err != nil {
+		  WHERE id = $1 AND org_id = $2 AND user_id::text = $3 AND status = 'active'`, sessionID, orgID, userID)
+	if err != nil {
 		s.logger.Warn("endPamSession: update failed", zap.String("session_id", logsafe.Clean(sessionID)), zap.Error(err))
+		return
+	}
+	if tag.RowsAffected() == 1 {
+		s.pamSessionEnded(orgID, sessionID, sessionEndRequested, userID)
 	}
 }
 

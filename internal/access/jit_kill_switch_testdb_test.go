@@ -76,9 +76,12 @@ func TestJITElevationEndsAtTheKillSwitch(t *testing.T) {
 			RETURNING id::text`, userID, org, roleID, roleName).Scan(&requestID); err != nil {
 			t.Fatalf("seed elevation request: %v", err)
 		}
+		// The assignment carries the request's window, as fulfilment writes
+		// it (migration v223).
 		if _, err := db.Pool.Exec(ctx, `
-			INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1::uuid, $2::uuid, $3::uuid)`,
-			userID, roleID, org); err != nil {
+			INSERT INTO user_roles (user_id, role_id, org_id, expires_at)
+			SELECT $1::uuid, $2::uuid, $3::uuid, expires_at FROM access_requests WHERE id = $4::uuid`,
+			userID, roleID, org, requestID); err != nil {
 			t.Fatalf("seed role assignment: %v", err)
 		}
 		return requestID

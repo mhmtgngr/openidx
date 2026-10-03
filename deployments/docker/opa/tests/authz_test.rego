@@ -77,3 +77,43 @@ test_a_duty_conflict_overrides_even_the_admin_bypass if {
 	not authz.final_allow with input as caller(["admin", "auditor"], "GET", "/api/v1/users", "user")
 	authz.final_allow with input as caller(["admin"], "GET", "/api/v1/users", "user")
 }
+
+# Access requests: the route gin matched, as OPAAuthz sends it.
+on_route(roles, method, path, route) := {
+	"user": {"id": "u-1", "roles": roles, "authenticated": true},
+	"method": method,
+	"path": path,
+	"resource": {"type": "request", "route": route},
+}
+
+test_a_plain_user_files_reads_and_cancels_their_own_requests if {
+	authz.allow with input as on_route(["user"], "POST", "/api/v1/governance/requests", "/api/v1/governance/requests")
+	authz.allow with input as on_route(["user"], "GET", "/api/v1/governance/requests", "/api/v1/governance/requests")
+	authz.allow with input as on_route(["user"], "GET", "/api/v1/governance/requests/r-1", "/api/v1/governance/requests/:id")
+	authz.allow with input as on_route(["user"], "POST", "/api/v1/governance/requests/r-1/cancel", "/api/v1/governance/requests/:id/cancel")
+}
+
+test_a_sponsor_or_manager_reaches_the_approval_routes if {
+	authz.allow with input as on_route(["user"], "GET", "/api/v1/governance/my-approvals", "/api/v1/governance/my-approvals")
+	authz.allow with input as on_route(["user"], "POST", "/api/v1/governance/requests/r-1/approve", "/api/v1/governance/requests/:id/approve")
+	authz.allow with input as on_route(["user"], "POST", "/api/v1/governance/requests/r-1/deny", "/api/v1/governance/requests/:id/deny")
+}
+
+test_the_access_request_rule_needs_an_authenticated_caller if {
+	not authz.allow with input as {
+		"user": {"id": "", "roles": [], "authenticated": false},
+		"method": "POST",
+		"path": "/api/v1/governance/requests",
+		"resource": {"type": "request", "route": "/api/v1/governance/requests"},
+	}
+}
+
+test_the_access_request_rule_names_its_routes_and_methods_only if {
+	not authz.allow with input as on_route(["user"], "POST", "/api/v1/governance/policies", "/api/v1/governance/policies")
+	not authz.allow with input as on_route(["user"], "DELETE", "/api/v1/governance/requests/r-1", "/api/v1/governance/requests/:id")
+	not authz.allow with input as on_route(["user"], "POST", "/api/v1/governance/reviews/v-1/items/i-1/decision", "/api/v1/governance/reviews/:id/items/:itemId/decision")
+}
+
+test_the_access_request_rule_reads_the_route_not_the_path if {
+	not authz.allow with input as on_route(["user"], "POST", "/api/v1/governance/requests", "/api/v1/governance/policies")
+}

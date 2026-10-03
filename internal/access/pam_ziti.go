@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
@@ -333,6 +334,25 @@ func (s *Service) handlePamDisableZiti(c *gin.Context) {
 		return
 	}
 
+	// Reverting to direct reach is the one write that puts an entry into the
+	// state PAM_REQUIRE_ZTNA=enforce refuses at launch. Under enforcement it is
+	// refused here too, before the overlay service is torn down, so an entry
+	// the gate let launch is not turned into one it refuses by a click on its
+	// page. To retire the entry, delete it. Observe lets it through and says
+	// in the audit event that enforce would not have.
+	mode := s.pamZTNAMode()
+	if reachMode == "ziti" && mode == ztnaEnforce {
+		s.logAuditEvent(c, "pam.ziti_disable_refused", entryID, "pam_entry", map[string]interface{}{
+			"entry_id": entryID, "service_name": serviceName, "reason": "ztna_required_direct_reach",
+		})
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "PAM_REQUIRE_ZTNA=enforce: this entry would reach its target directly, off the OpenZiti overlay, " +
+				"and could no longer be launched. Delete the entry to retire it, or turn PAM_REQUIRE_ZTNA back to observe",
+			"code": "ztna_required_direct_reach",
+		})
+		return
+	}
+
 	// Tear the overlay service down first (best-effort; the DB revert is the
 	// source of truth for reach behaviour).
 	if serviceName != "" {
@@ -358,6 +378,7 @@ func (s *Service) handlePamDisableZiti(c *gin.Context) {
 
 	s.logAuditEvent(c, "pam.ziti_disabled", entryID, "pam_entry", map[string]interface{}{
 		"entry_id": entryID, "service_name": serviceName,
+		"ztna_would_refuse": reachMode == "ziti" && mode == ztnaObserve,
 	})
 	c.JSON(http.StatusOK, gin.H{"id": entryID, "reach_mode": "direct"})
 }
@@ -428,6 +449,22 @@ func (s *Service) handlePamBrokerStatus(c *gin.Context) {
 		"reach_modes":   reachModes,
 		"direct_broker": directOK,
 		"ziti_broker":   zitiOK,
-		"require_ztna":  s.pamZTNAModeName(),
+		"require_ztna":  s.pamZTNAModeNameFor(c),
 	})
+}
+
+// pamZTNAModeNameFor is the mode as it applies to the caller: "enforce" for
+// an external user whatever the setting says, since their launch is held to
+// it (I5 of the third-party access framework), and the setting for anyone
+// else. When the caller's type cannot be read the setting is reported; their
+// launch still reads the type itself and fails closed.
+func (s *Service) pamZTNAModeNameFor(c *gin.Context) string {
+	if s.db != nil {
+		if org, err := orgctx.From(c.Request.Context()); err == nil {
+			if external, err := externalid.IsExternal(c.Request.Context(), s.db.Pool, org.ID, c.GetString("user_id")); err == nil && external {
+				return "enforce"
+			}
+		}
+	}
+	return s.pamZTNAModeName()
 }
