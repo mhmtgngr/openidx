@@ -10,7 +10,13 @@ import (
 // package. Two spellings of one URI is how a receiver subscribed to the
 // advertised event silently receives nothing.
 func TestTheProducerAndTheTransmitterAgreeOnTheEventURI(t *testing.T) {
-	if ssfsignal.AccountDisabled != EventAccountDisabled {
-		t.Fatalf("ssfsignal.AccountDisabled=%q, oauth.EventAccountDisabled=%q", ssfsignal.AccountDisabled, EventAccountDisabled)
+	for _, c := range []struct{ name, producer, transmitter string }{
+		{"AccountDisabled", ssfsignal.AccountDisabled, EventAccountDisabled},
+		{"SessionRevoked", ssfsignal.SessionRevoked, EventSessionRevoked},
+		{"TokenClaimsChange", ssfsignal.TokenClaimsChange, EventTokenClaimsChange},
+	} {
+		if c.producer != c.transmitter {
+			t.Errorf("ssfsignal.%s=%q, oauth.Event%s=%q", c.name, c.producer, c.name, c.transmitter)
+		}
 	}
 }

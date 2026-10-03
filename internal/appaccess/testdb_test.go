@@ -62,9 +62,9 @@ func setupTestDB(t *testing.T) (*database.PostgresDB, func()) {
 	schema := []string{
 		`CREATE TABLE applications (id UUID PRIMARY KEY, name VARCHAR(255), enabled BOOLEAN,
 		    route_id UUID, require_assignment BOOLEAN NOT NULL DEFAULT false, org_id UUID)`,
-		`CREATE TABLE user_application_assignments (user_id UUID, application_id UUID, org_id UUID)`,
+		`CREATE TABLE user_application_assignments (user_id UUID, application_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE group_application_assignments (group_id UUID, application_id UUID, org_id UUID)`,
-		`CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID)`,
+		`CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 	}
 	for _, stmt := range schema {
 		if _, err := db.Pool.Exec(ctx, stmt); err != nil {

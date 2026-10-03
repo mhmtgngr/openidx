@@ -23,6 +23,9 @@ type AppAssignment struct {
 	PrincipalID   string `json:"principal_id"`
 	PrincipalName string `json:"principal_name"`
 	AssignedAt    string `json:"assigned_at"`
+	// ExpiresAt is when a user's assignment ends: the window of the access
+	// request that granted it (migration v222). Absent for a standing one.
+	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
 // handleListAppAssignments handles GET /portal/applications/:id/assignments (admin).
@@ -140,13 +143,16 @@ func (s *Service) ListAppAssignments(ctx context.Context, appID string) ([]AppAs
 	}
 
 	// Users assigned directly, then groups assigned — a stable, name-sorted list.
+	// An assignment whose window has ended is no longer one, though the expiry
+	// sweep has not removed it yet: internal/appaccess refuses it already.
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT 'user' AS principal_type, u.id::text, COALESCE(u.username, u.email, u.id::text) AS name, uaa.assigned_at
+		SELECT 'user' AS principal_type, u.id::text, COALESCE(u.username, u.email, u.id::text) AS name, uaa.assigned_at, uaa.expires_at
 		FROM user_application_assignments uaa
 		JOIN users u ON u.id = uaa.user_id
 		WHERE uaa.application_id = $1 AND uaa.org_id = $2
+		  AND (uaa.expires_at IS NULL OR uaa.expires_at > NOW())
 		UNION ALL
-		SELECT 'group' AS principal_type, g.id::text, g.name, gaa.assigned_at
+		SELECT 'group' AS principal_type, g.id::text, g.name, gaa.assigned_at, NULL::timestamptz
 		FROM group_application_assignments gaa
 		JOIN groups g ON g.id = gaa.group_id
 		WHERE gaa.application_id = $1 AND gaa.org_id = $2
@@ -160,10 +166,14 @@ func (s *Service) ListAppAssignments(ctx context.Context, appID string) ([]AppAs
 	for rows.Next() {
 		var a AppAssignment
 		var ts time.Time
-		if err := rows.Scan(&a.PrincipalType, &a.PrincipalID, &a.PrincipalName, &ts); err != nil {
+		var expires *time.Time
+		if err := rows.Scan(&a.PrincipalType, &a.PrincipalID, &a.PrincipalName, &ts, &expires); err != nil {
 			return nil, err
 		}
 		a.AssignedAt = ts.Format(time.RFC3339)
+		if expires != nil {
+			a.ExpiresAt = expires.Format(time.RFC3339)
+		}
 		assignments = append(assignments, a)
 	}
 	return assignments, rows.Err()
@@ -200,9 +210,14 @@ func (s *Service) CreateAppAssignment(ctx context.Context, appID, principalType,
 		if !exists {
 			return errPrincipalNotFound
 		}
+		// An administrator's assignment is standing. One an access request
+		// made carries the request's window (migration v222), and assigning
+		// the user here lifts it: left alone, the access the administrator
+		// just gave would end with the request.
 		if _, err = s.db.Pool.Exec(ctx,
 			`INSERT INTO user_application_assignments (user_id, application_id, org_id)
-			 VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, principalID, appID, org.ID); err != nil {
+			 VALUES ($1, $2, $3)
+			 ON CONFLICT (user_id, application_id) DO UPDATE SET expires_at = NULL`, principalID, appID, org.ID); err != nil {
 			return err
 		}
 	case "group":
