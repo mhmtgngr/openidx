@@ -1319,18 +1319,24 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 	return group, nil
 }
 
-// membershipsLost returns the ids in removed that are not in kept, each once.
-// It is the group counterpart of identity's lostRoles and directory's function
-// of the same name: a wholesale replacement is a grant and a revocation at
-// once, and treating the two alike would end live sessions on every sync.
+// membershipsLost returns the ids in removed that are not in kept, each once,
+// in lower case. It is the group counterpart of identity's lostRoles and
+// directory's function of the same name: a wholesale replacement is a grant
+// and a revocation at once, and treating the two alike would end live sessions
+// on every sync.
+//
+// Ids compare without case: the database returns a uuid in lower case, and an
+// IdP may send the same id in upper case. A member it sends that way kept the
+// group, and must not be logged out for it.
 func membershipsLost(removed, kept []string) []string {
 	still := make(map[string]struct{}, len(kept))
 	for _, id := range kept {
-		still[id] = struct{}{}
+		still[strings.ToLower(id)] = struct{}{}
 	}
 	var lost []string
 	seen := make(map[string]struct{}, len(removed))
 	for _, id := range removed {
+		id = strings.ToLower(id)
 		if id == "" {
 			continue
 		}
