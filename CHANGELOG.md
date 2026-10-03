@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **The org-wide overviews answer staff only.**
+  - **Dashboard:** `GET /api/v1/dashboard` returns the organization's latest
+    audit events, its failed-login and suspicious-IP counts and its user and
+    session counts. It asked only for a signed-in user. It now needs
+    `operator`, `admin` or `super_admin`, the roles the console's dashboard
+    calls it for (a plain user's dashboard never did).
+  - **Windows Apps catalog:** `GET /api/v1/access/pam/apps` and
+    `/pam/app-pools` name every RemoteApp's executable, arguments and host,
+    and the hosts' state and agents. They now hold the operator tier, like
+    the console page behind them. An end user's launchable apps stay at
+    `/pam/my-apps`.
+
 ## [1.39.0] - 2026-09-28
 
 ### Security
