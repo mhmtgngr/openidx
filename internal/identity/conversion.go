@@ -212,7 +212,10 @@ func (g *GroupDB) ToGroup() Group {
 	if g.OrganizationID != nil {
 		group.OrganizationID = g.OrganizationID
 	}
-	if g.Description != nil || g.ParentID != nil || g.ExternalAllowed != nil {
+	// The membership settings go out as FromGroup reads them, so the console
+	// shows what is stored: a setting that is off or unset is left out.
+	if g.Description != nil || g.ParentID != nil || g.ExternalAllowed != nil ||
+		g.AllowSelfJoin || g.RequireApproval || g.MaxMembers != nil {
 		group.Attributes = make(map[string]string)
 		if g.Description != nil {
 			group.Attributes["description"] = *g.Description
@@ -223,6 +226,15 @@ func (g *GroupDB) ToGroup() Group {
 		if g.ExternalAllowed != nil {
 			group.Attributes[externalAllowedAttr] = strconv.FormatBool(*g.ExternalAllowed)
 		}
+		if g.AllowSelfJoin {
+			group.Attributes["allowSelfJoin"] = "true"
+		}
+		if g.RequireApproval {
+			group.Attributes["requireApproval"] = "true"
+		}
+		if g.MaxMembers != nil {
+			group.Attributes["maxMembers"] = strconv.Itoa(*g.MaxMembers)
+		}
 	}
 
 	return group
@@ -231,6 +243,33 @@ func (g *GroupDB) ToGroup() Group {
 // externalAllowedAttr is the group attribute carrying groups.external_allowed:
 // whether an external (vendor) user may be a member (invariant I3).
 const externalAllowedAttr = "externalAllowed"
+
+// groupSettingsOnUpdate reads the membership settings an update names. Each
+// is nil, or setMax false, when the update leaves it out, so the stored value
+// stays: as with externalAllowed, a client that sends only a new name, the
+// console's edit form among them, must not turn self-join off and drop the
+// member cap. maxMembers "" clears the cap.
+func groupSettingsOnUpdate(attrs map[string]string) (selfJoin, approval *bool, maxMembers *int, setMax bool, err error) {
+	if v, ok := attrs["allowSelfJoin"]; ok {
+		b := v == "true"
+		selfJoin = &b
+	}
+	if v, ok := attrs["requireApproval"]; ok {
+		b := v == "true"
+		approval = &b
+	}
+	if v, ok := attrs["maxMembers"]; ok {
+		setMax = true
+		if v != "" {
+			n, perr := strconv.Atoi(v)
+			if perr != nil || n < 1 {
+				return nil, nil, nil, false, ErrInvalidGroupMaxMembers
+			}
+			maxMembers = &n
+		}
+	}
+	return selfJoin, approval, maxMembers, setMax, nil
+}
 
 // FromGroup converts SCIM Group to GroupDB
 func FromGroup(group Group) GroupDB {
