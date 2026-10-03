@@ -159,7 +159,12 @@ func TestASuspendedVendorHoldsItsAccountsUntilItComesBack(t *testing.T) {
 	}
 
 	// The vendor comes back: nothing is reactivated, and every suspended
-	// account has a fresh window.
+	// account has a fresh window. Restarting the window is not a new
+	// departure: an account already severed is not severed again.
+	signalsBefore := map[string][]string{}
+	for _, id := range []string{live, pending, departed, missed} {
+		signalsBefore[id] = f.signals(id)
+	}
 	setVendor("active")
 	for _, id := range []string{live, pending, departed, missed} {
 		s := f.state(id)
@@ -173,6 +178,11 @@ func TestASuspendedVendorHoldsItsAccountsUntilItComesBack(t *testing.T) {
 	sweep()
 	if s := f.state(departed); s.status != "suspended" {
 		t.Errorf("the sweep disabled an account the minute its vendor came back (%q); its window restarts", s.status)
+	}
+	for id, before := range signalsBefore {
+		if got := f.signals(id); !slices.Equal(got, before) {
+			t.Errorf("account %s was severed again when its vendor came back: signals %v, were %v", id, got, before)
+		}
 	}
 	if u := listed(departed); u["reactivate_until"] == nil {
 		t.Errorf("the list offers no reactivation window once the vendor is back")
