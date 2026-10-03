@@ -47,19 +47,19 @@ var entitlementSourceInserts = []string{
 	   FROM user_roles ur
 	   JOIN roles r ON r.id = ur.role_id AND r.org_id = $1
 	   LEFT JOIN users u ON u.id = ur.user_id AND u.org_id = $1
-	  WHERE ur.org_id = $1`,
+	  WHERE ur.org_id = $1 AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
 
-	// Group memberships (never time-bound at the membership level).
+	// Group memberships (time-bound when expires_at is set, v224).
 	`INSERT INTO entitlement_warehouse
 	    (org_id, user_id, username, entitlement_type, entitlement_id, entitlement_name, source, actions, time_bound, expires_at, orphaned, orphan_reason, snapshot_at)
 	 SELECT $1, gm.user_id, u.username, 'group', gm.group_id::text, g.name, 'group_memberships', '{}'::text[],
-	        false, NULL,
+	        (gm.expires_at IS NOT NULL), gm.expires_at,
 	        (u.id IS NULL OR NOT u.enabled),
 	        CASE WHEN u.id IS NULL THEN 'missing_owner' WHEN NOT u.enabled THEN 'disabled_owner' ELSE NULL END, $2
 	   FROM group_memberships gm
 	   JOIN groups g ON g.id = gm.group_id AND g.org_id = $1
 	   LEFT JOIN users u ON u.id = gm.user_id AND u.org_id = $1
-	  WHERE gm.org_id = $1`,
+	  WHERE gm.org_id = $1 AND (gm.expires_at IS NULL OR gm.expires_at > NOW())`,
 
 	// Direct per-user PAM entry grants. principal_id is a VARCHAR; the regex
 	// guard keeps a non-UUID value from failing the ::uuid cast.

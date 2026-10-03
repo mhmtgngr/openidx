@@ -1536,6 +1536,7 @@ func (s *Service) populateUserAccessItems(ctx context.Context, tx pgx.Tx, review
 		JOIN roles r ON ur.role_id = r.id
 		JOIN users u ON ur.user_id = u.id
 		WHERE u.enabled = true AND u.org_id = $1 AND ur.org_id = $1 AND r.org_id = $1
+		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 	`, org.ID)
 	if err != nil {
 		return err
@@ -1596,6 +1597,7 @@ func (s *Service) populateRoleAssignmentItems(ctx context.Context, tx pgx.Tx, re
 			FROM user_roles ur
 			JOIN users u ON u.id = ur.user_id
 			WHERE u.enabled = true AND u.org_id = $1 AND ur.org_id = $1
+			  AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 			UNION
 			SELECT r.user_id, r.root_role, cr.child_role_id, r.depth + 1
 			FROM reach r
@@ -1661,6 +1663,7 @@ func (s *Service) populateApplicationAccessItems(ctx context.Context, tx pgx.Tx,
 		JOIN groups g ON gm.group_id = g.id
 		JOIN users u ON gm.user_id = u.id
 		WHERE u.enabled = true AND u.org_id = $1 AND gm.org_id = $1 AND g.org_id = $1
+		AND (gm.expires_at IS NULL OR gm.expires_at > NOW())
 	`, org.ID)
 	if err != nil {
 		return err
@@ -1700,6 +1703,7 @@ func (s *Service) populatePrivilegedAccessItems(ctx context.Context, tx pgx.Tx, 
 		WHERE u.enabled = true
 		AND r.name IN ('admin', 'manager', 'auditor')
 		AND u.org_id = $1 AND ur.org_id = $1 AND r.org_id = $1
+		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 	`, org.ID)
 	if err != nil {
 		return err
