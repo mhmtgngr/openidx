@@ -90,6 +90,7 @@ var anonymousIdentityRoutes = map[string]string{
 	"GET /api/v1/identity/providers":                  "the login page must list the configured SSO buttons before authentication; returns provider names and types only, never a client secret",
 	"POST /api/v1/identity/federation/discover":       "home-realm discovery: the login page maps an email domain to an IdP before the user has any credential",
 	"POST /api/v1/identity/invitations/:token/accept": "accepting an invitation is how an account first exists; the single-use invitation token in the path IS the credential",
+	"POST /api/v1/identity/invitations/:token/mfa":    "an external invitee enrolls the authenticator their accepted invitation handed out; the account cannot sign in until then, so the invitation token in the path IS the credential, and only an external invitation whose account still waits for its second factor answers",
 	"POST /api/v1/identity/mfa/push/enroll/complete":  "a fresh authenticator binds itself using the single-use ticket from the scanned QR, so it cannot first log in as the target user; the ticket's org must match the tenant context",
 	"POST /api/v1/identity/users/forgot-password":     "starting a password reset is by definition pre-authentication; answers identically for a known and an unknown address so it cannot be used to enumerate accounts",
 	"POST /api/v1/identity/users/reset-password":      "completing a password reset: the single-use reset token in the body IS the credential, and the user has no other one by construction",
