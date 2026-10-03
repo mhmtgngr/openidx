@@ -4634,6 +4634,9 @@ const en = {
         unconfigured: 'Guacamole is not configured.',
         empty: 'No active sessions.',
         via: 'via {{username}}',
+        overlay: 'Overlay',
+        overlayHint: 'Runs on the OpenZiti overlay broker',
+        unavailable: 'The sessions on the {{brokers}} broker could not be listed; this list may be incomplete.',
         monitor: 'Monitor',
         terminate: 'Terminate',
         table: {

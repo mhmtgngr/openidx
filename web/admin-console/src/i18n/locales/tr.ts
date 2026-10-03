@@ -4627,6 +4627,9 @@ const tr: typeof en = {
         unconfigured: 'Guacamole yapılandırılmamış.',
         empty: 'Etkin oturum yok.',
         via: '{{username}} üzerinden',
+        overlay: 'Overlay',
+        overlayHint: 'OpenZiti overlay aracısında çalışıyor',
+        unavailable: '{{brokers}} aracısındaki oturumlar listelenemedi; bu liste eksik olabilir.',
         monitor: 'İzle',
         terminate: 'Sonlandır',
         table: {
