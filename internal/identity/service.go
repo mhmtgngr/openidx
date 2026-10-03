@@ -3242,7 +3242,7 @@ func (s *Service) ListRoles(ctx context.Context, offset, limit int) ([]Role, int
 	}
 
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, description, is_composite, created_at
+		SELECT id, name, COALESCE(description, ''), is_composite, created_at
 		FROM roles
 		WHERE org_id = $1
 		ORDER BY name
@@ -3277,7 +3277,7 @@ func (s *Service) GetRole(ctx context.Context, roleID string) (*Role, error) {
 
 	var role Role
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, name, description, is_composite, created_at
+		SELECT id, name, COALESCE(description, ''), is_composite, created_at
 		FROM roles WHERE id = $1 AND org_id = $2
 	`, roleID, org.ID).Scan(&role.ID, &role.Name, &role.Description, &role.IsComposite, &role.CreatedAt)
 	if err != nil {
@@ -3453,7 +3453,7 @@ func (s *Service) GetUserRoles(ctx context.Context, userID string) ([]Role, erro
 	}
 
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT r.id, r.name, r.description, r.is_composite, r.created_at
+		SELECT r.id, r.name, COALESCE(r.description, ''), r.is_composite, r.created_at
 		FROM roles r
 		JOIN user_roles ur ON r.id = ur.role_id
 		WHERE ur.user_id = $1
@@ -3489,7 +3489,7 @@ func (s *Service) GetUserRoleAssignments(ctx context.Context, userID string) ([]
 	}
 
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT r.id, r.name, r.description, r.is_composite, r.created_at,
+		SELECT r.id, r.name, COALESCE(r.description, ''), r.is_composite, r.created_at,
 		       COALESCE(ur.assigned_by::text, ''), ur.assigned_at, ur.expires_at
 		FROM roles r
 		JOIN user_roles ur ON r.id = ur.role_id
