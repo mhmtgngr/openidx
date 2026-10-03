@@ -15,6 +15,7 @@ export const Groups = lazy(() => import('./groups').then((m) => ({ default: m.Gr
 export const Roles = lazy(() => import('./roles').then((m) => ({ default: m.RolesPage })))
 export const Directories = lazy(() => import('./directories').then((m) => ({ default: m.DirectoriesPage })))
 export const ServiceAccounts = lazy(() => import('./service-accounts').then((m) => ({ default: m.ServiceAccountsPage })))
+export const ExternalUsers = lazy(() => import('./external-users').then((m) => ({ default: m.ExternalUsersPage })))
 export const IdentityProviders = lazy(() => import('./identity-providers').then((m) => ({ default: m.IdentityProvidersPage })))
 
 // Applications
@@ -119,6 +120,7 @@ export const Landing = lazy(() => import('./landing').then((m) => ({ default: m.
 export const ForgotPassword = lazy(() => import('./forgot-password').then((m) => ({ default: m.ForgotPasswordPage })))
 export const ResetPassword = lazy(() => import('./reset-password').then((m) => ({ default: m.ResetPasswordPage })))
 export const MagicLinkVerify = lazy(() => import('./magic-link-verify').then((m) => ({ default: m.MagicLinkVerifyPage })))
+export const AcceptInvite = lazy(() => import('./accept-invite').then((m) => ({ default: m.AcceptInvitePage })))
 
 // My Pages
 export const UserProfile = lazy(() => import('./user-profile').then((m) => ({ default: m.UserProfilePage })))

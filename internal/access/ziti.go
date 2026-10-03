@@ -542,6 +542,23 @@ func (zm *ZitiManager) reconcileHosting() {
 
 // forwardHTTPConnection serves HTTP on a Ziti edge connection, injecting identity headers
 // from the caller's Ziti identity before forwarding to the upstream target.
+// callerIdentity reads the email, name and roles forwarded to the upstream
+// for a Ziti caller. A role counts only while its window is open (v223): the
+// upstream may authorize on the roles header, and the expiry sweep deletes an
+// ended role only within a minute.
+func (zm *ZitiManager) callerIdentity(ctx context.Context, callerID string) (email, name, roles string, err error) {
+	err = zm.db.Pool.QueryRow(ctx,
+		//orgscope:ignore data-plane Ziti edge connection identity enrichment; keyed by globally-unique ziti identity name (= user id)
+		`SELECT COALESCE(u.email,''), COALESCE(u.first_name||' '||u.last_name,''), COALESCE(string_agg(r.name,','),'')
+		 FROM users u
+		 LEFT JOIN user_roles ur ON ur.user_id = u.id
+		      AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+		 LEFT JOIN roles r ON r.id = ur.role_id
+		 WHERE u.id = $1
+		 GROUP BY u.id`, callerID).Scan(&email, &name, &roles)
+	return email, name, roles, err
+}
+
 func (zm *ZitiManager) forwardHTTPConnection(zitiConn edge.Conn, targetAddr, serviceName string) {
 	callerID := zitiConn.SourceIdentifier()
 
@@ -557,14 +574,8 @@ func (zm *ZitiManager) forwardHTTPConnection(zitiConn edge.Conn, targetAddr, ser
 		// with no resolved org; keyed by the globally-unique ziti identity (= user id).
 		ctx, cancel := context.WithTimeout(orgctx.WithBypassRLS(context.Background()), 5*time.Second)
 		defer cancel()
-		err := zm.db.Pool.QueryRow(ctx,
-			//orgscope:ignore data-plane Ziti edge connection identity enrichment; keyed by globally-unique ziti identity name (= user id)
-			`SELECT COALESCE(u.email,''), COALESCE(u.first_name||' '||u.last_name,''), COALESCE(string_agg(r.name,','),'')
-			 FROM users u
-			 LEFT JOIN user_roles ur ON ur.user_id = u.id
-			 LEFT JOIN roles r ON r.id = ur.role_id
-			 WHERE u.id = $1
-			 GROUP BY u.id`, callerID).Scan(&email, &name, &roles)
+		var err error
+		email, name, roles, err = zm.callerIdentity(ctx, callerID)
 		if err != nil {
 			zm.logger.Warn("Failed to lookup user for Ziti identity",
 				zap.String("caller_id", callerID), zap.Error(err))
