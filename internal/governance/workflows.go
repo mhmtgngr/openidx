@@ -681,13 +681,27 @@ func (s *Service) handleGetAccessRequest(c *gin.Context) {
 	var requesterName *string
 	var expiresAt *time.Time
 
+	// Who may read it. An administrator reads any request in the
+	// organization; anyone else reads one they filed, one they are or were an
+	// approver of, and one an external user they sponsor filed -- the people
+	// the request is addressed to. Anyone else's reads as not found, as the
+	// list already pins a non-administrator to their own. This was the one
+	// request route with no check of its own: a signed-in user could read any
+	// request, its justification included, by its id.
+	isAdmin, _ := auth.IsAdminInContext(c)
+	caller := c.GetString("user_id")
+
 	err = s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT ar.id, ar.requester_id, COALESCE(NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), u.username, ''),
 		 ar.resource_type, ar.resource_id, ar.resource_name, ar.justification,
 		 ar.status, ar.priority, ar.expires_at, ar.created_at, ar.updated_at
 		 FROM access_requests ar
 		 LEFT JOIN users u ON u.id = ar.requester_id AND u.org_id = ar.org_id
-		 WHERE ar.id = $1 AND ar.org_id = $2`, id, org.ID,
+		 WHERE ar.id = $1 AND ar.org_id = $2
+		   AND ($3 OR ar.requester_id::text = $4
+		        OR EXISTS (SELECT 1 FROM access_request_approvals a
+		                    WHERE a.request_id = ar.id AND a.org_id = ar.org_id AND a.approver_id::text = $4)
+		        OR (u.user_type = 'external' AND u.sponsor_user_id::text = $4))`, id, org.ID, isAdmin, caller,
 	).Scan(&r.ID, &r.RequesterID, &requesterName,
 		&r.ResourceType, &r.ResourceID, &r.ResourceName, &r.Justification,
 		&r.Status, &r.Priority, &expiresAt, &r.CreatedAt, &r.UpdatedAt)
