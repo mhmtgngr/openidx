@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Without OPA, only an administrator runs the governance program.** With `ENABLE_OPA_AUTHZ=false`, the default, governance-service checked who was signed in and nothing else. Any user, an external (vendor) user included, could write an approval policy, an ABAC policy, a governance policy, a campaign or an access review, and run the SoD, privileged-account and entitlement jobs. Approval policies decide who is granted what, so a user who could write one could grant themselves access. These writes now need `admin` or `super_admin` when OPA is off, and answer `403` with `admin_required` to anyone else. Filing, cancelling and deciding access requests, deciding a review one is the reviewer of, and the evaluate routes are unchanged. With OPA on, its role table decides these writes as before.
+
 ## [1.39.0] - 2026-09-28
 
 ### Security
