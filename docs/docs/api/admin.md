@@ -8,7 +8,7 @@ The Admin API powers the Admin Console dashboard and system configuration.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/dashboard` | Get dashboard statistics |
+| GET | `/api/v1/dashboard` | Get dashboard statistics (operator, admin, super_admin) |
 
 Returns: total users, active users, groups, applications, sessions, pending reviews, security alerts, recent activity, auth stats (logins by method/day), and security alert details.
 

@@ -58,7 +58,7 @@ hold e2e/device-management.spec.ts  expects an enrolled device with a Ziti ident
 hold e2e/dashboard-load.spec.ts  page objects locate stat cards as `.grid > div` filtered by text; the cards are not that shape.
 hold e2e/users-management.spec.ts  same class, plus rows expected for seeded users.
 hold e2e/access-reviews-flow.spec.ts  same class, against the review campaign table.
-hold e2e/dashboard-role.spec.ts  expects a heading named exactly "OpenIDX".
+hold e2e/dashboard-role.spec.ts  expects a heading named exactly "OpenIDX", and GET /api/v1/dashboard answering a plain user, which it refuses (operators and above only).
 hold e2e/jsmith-all-pages.spec.ts  same heading assertion, walked across every page.
 hold e2e/landing.spec.ts  asserts marketing copy ("Enterprise-Grade Security") the truthful landing rewrite removed.
 hold e2e/login.noauth.spec.ts  asserts the pre-SPA login page's URL and copy.

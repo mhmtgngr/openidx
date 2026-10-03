@@ -96,6 +96,10 @@ paths:
     get:
       tags: [Dashboard]
       summary: Get dashboard statistics
+      description: |
+        The organization's user and session counts, its latest audit events
+        and its failed-login and suspicious-IP counts. Operators and above
+        (operator, admin, super_admin) only.
       operationId: getDashboard
       responses:
         '200':
@@ -104,6 +108,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Dashboard'
+        '403': { description: Not an operator, admin or super_admin }
 
   /api/v1/settings:
     get:

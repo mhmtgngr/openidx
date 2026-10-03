@@ -15,8 +15,8 @@ import (
 
 // THE CONSOLE'S OPERATOR PAGES, THROUGH THE ROUTES BEHIND THEM.
 //
-// Remote Support, Agent Fleet, Devices, Users, the Ops Cockpit and Network
-// Topology are operator pages in the console. Every route below backs one of
+// Remote Support, Agent Fleet, Devices, Users, the Ops Cockpit, Network
+// Topology and Windows Apps are operator pages in the console. Every route below backs one of
 // them, and each is driven through RegisterRoutes:
 //
 //   - a plain user, an auditor and a compliance_reader are refused with 403,
@@ -96,6 +96,9 @@ func TestOperatorPagesNeedTheOperatorTier(t *testing.T) {
 		{http.MethodGet, "/api/v1/access/ziti/certificates", ""},
 		{http.MethodGet, "/api/v1/access/ziti/certificates/expiry-alerts", ""},
 		{http.MethodGet, "/api/v1/access/devices/enriched", ""},
+		// Windows Apps: the catalog, its hosts' state and agents, and the pools.
+		{http.MethodGet, "/api/v1/access/pam/apps", ""},
+		{http.MethodGet, "/api/v1/access/pam/app-pools", ""},
 	}
 
 	type state struct {
