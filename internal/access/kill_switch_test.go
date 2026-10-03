@@ -34,14 +34,16 @@ func TestKillSwitch_SeversAllPillars(t *testing.T) {
 		`INSERT INTO vault_secrets (id, org_id, name, type) VALUES ('` + secretID + `','` + testOrg + `','db-root','password')`,
 		`INSERT INTO vault_checkouts (id, org_id, secret_id, principal_id, mode, status) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','` + testUser + `','reveal','active')`,
 		`INSERT INTO vault_access_grants (id, org_id, secret_id, principal_type, principal_id, actions) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','user','` + testUser + `','{use,reveal}')`,
-		// A live time-bound elevation and the role it granted. This used to be
-		// a jit_grants row: a table NOTHING IN THE PRODUCT WRITES, so the test
-		// proved the kill switch could revoke a row invented for it while a
-		// real elevation survived untouched.
+		// A live time-bound elevation and the role it granted, carrying the
+		// request's window as fulfilment writes it (migration v223). This used
+		// to be a jit_grants row: a table NOTHING IN THE PRODUCT WRITES, so the
+		// test proved the kill switch could revoke a row invented for it while
+		// a real elevation survived untouched.
 		`INSERT INTO roles (id, name) VALUES ('` + killRole + `','break-glass') ON CONFLICT DO NOTHING`,
 		`INSERT INTO access_requests (id, requester_id, org_id, resource_type, resource_id, resource_name, status, expires_at)
 		   VALUES (gen_random_uuid(),'` + testUser + `','` + testOrg + `','role','` + killRole + `','break-glass','fulfilled',NOW()+'2h')`,
-		`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ('` + testUser + `','` + killRole + `','` + testOrg + `')`,
+		`INSERT INTO user_roles (user_id, role_id, org_id, expires_at)
+		   SELECT requester_id, resource_id::uuid, org_id, expires_at FROM access_requests WHERE requester_id = '` + testUser + `'`,
 		`INSERT INTO guacamole_sessions (id, org_id, connection_id, user_id, guac_session_uuid, status) VALUES (gen_random_uuid(),'` + testOrg + `',gen_random_uuid(),'` + testUser + `','guac-1','active')`,
 		`INSERT INTO ziti_identities (id, org_id, ziti_id, name, user_id, enrolled) VALUES (gen_random_uuid(),'` + testOrg + `','zid-bob','bob','` + testUser + `',true)`,
 	}
@@ -185,13 +187,15 @@ func TestLifecycleSweep_RevokesDisabledUsersPAM(t *testing.T) {
 		`INSERT INTO vault_access_grants (id, org_id, secret_id, principal_type, principal_id, actions) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','user','` + disabledUser + `','{use}')`,
 		`INSERT INTO access_requests (id, requester_id, org_id, resource_type, resource_id, resource_name, status, expires_at)
 		   VALUES (gen_random_uuid(),'` + disabledUser + `','` + testOrg + `','role','` + killRole + `','admin','fulfilled',NOW()+'1h')`,
-		`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ('` + disabledUser + `','` + killRole + `','` + testOrg + `')`,
+		`INSERT INTO user_roles (user_id, role_id, org_id, expires_at)
+		   SELECT requester_id, resource_id::uuid, org_id, expires_at FROM access_requests WHERE requester_id = '` + disabledUser + `'`,
 		// Active user's state — must be untouched.
 		`INSERT INTO vault_checkouts (id, org_id, secret_id, principal_id, mode, status) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','` + activeUser + `','reveal','active')`,
 		`INSERT INTO vault_access_grants (id, org_id, secret_id, principal_type, principal_id, actions) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','role','` + activeUser + `','{use}')`,
 		`INSERT INTO access_requests (id, requester_id, org_id, resource_type, resource_id, resource_name, status, expires_at)
 		   VALUES (gen_random_uuid(),'` + activeUser + `','` + testOrg + `','role','` + killRole + `','ops','fulfilled',NOW()+'1h')`,
-		`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ('` + activeUser + `','` + killRole + `','` + testOrg + `')`,
+		`INSERT INTO user_roles (user_id, role_id, org_id, expires_at)
+		   SELECT requester_id, resource_id::uuid, org_id, expires_at FROM access_requests WHERE requester_id = '` + activeUser + `'`,
 		// Orphaned checkout: principal's user row no longer exists.
 		`INSERT INTO vault_checkouts (id, org_id, secret_id, principal_id, mode, status) VALUES (gen_random_uuid(),'` + testOrg + `','` + secretID + `','99999999-0000-0000-0000-000000000009','reveal','active')`,
 		// Disabled user's live guacamole session: with no client configured it

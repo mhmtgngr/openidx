@@ -152,7 +152,8 @@ var reportSchema = []string{
 		id UUID PRIMARY KEY, org_id UUID NOT NULL, name VARCHAR(255) NOT NULL,
 		route_id UUID, enabled BOOLEAN NOT NULL DEFAULT true)`,
 	`CREATE TABLE IF NOT EXISTS user_application_assignments (
-		user_id UUID NOT NULL, application_id UUID NOT NULL, org_id UUID NOT NULL)`,
+		user_id UUID NOT NULL, application_id UUID NOT NULL, org_id UUID NOT NULL,
+		expires_at TIMESTAMPTZ)`,
 	`CREATE TABLE IF NOT EXISTS group_application_assignments (
 		group_id UUID NOT NULL, application_id UUID NOT NULL, org_id UUID NOT NULL)`,
 	`ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS ziti_service_name VARCHAR(255)`,

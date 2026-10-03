@@ -3,6 +3,7 @@ package provisioning
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -71,6 +72,7 @@ func scimGroupFixture(t *testing.T, db *database.PostgresDB, ctx context.Context
 			group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
 			joined_at TIMESTAMPTZ DEFAULT NOW(),
 			org_id UUID NOT NULL,
+			expires_at TIMESTAMPTZ,
 			PRIMARY KEY (user_id, group_id));
 		CREATE TABLE audit_events (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), event_type VARCHAR(50), category VARCHAR(50),
@@ -145,6 +147,29 @@ func TestASCIMGroupUpdateThatChangesNothingCutsNobody(t *testing.T) {
 
 	require.False(t, scimCut(t, revoke, scimKeep), "nobody lost anything")
 	require.False(t, scimCut(t, revoke, scimGone), "nobody lost anything")
+}
+
+// An IdP may send a member's id in upper case. Postgres reads it as the same
+// uuid, so the member keeps the group, and must keep their session too.
+func TestASCIMGroupUpdateInUpperCaseCutsNobody(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: scimOrg})
+	scimGroupFixture(t, db, ctx)
+	general, revoke := scimRedis(t)
+
+	_, err := scimSvc(t, db, general, revoke).UpdateSCIMGroup(ctx, scimGroup, &SCIMGroup{
+		DisplayName: "engineering",
+		Members:     []SCIMMember{{Value: strings.ToUpper(scimKeep)}},
+	})
+	require.NoError(t, err)
+
+	require.True(t, scimCut(t, revoke, scimGone), "the dropped member's token still asserts the group")
+	require.False(t, scimCut(t, revoke, scimKeep), "the member the IdP sent in upper case kept the group")
+	require.False(t, scimCut(t, revoke, strings.ToUpper(scimKeep)), "a marker under the upper-case id")
 }
 
 // A push with no Members at all touches no membership, so it must cut nobody —

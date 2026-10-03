@@ -203,11 +203,13 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 			if roleID == "" {
 				errMsg = "role_id parameter required"
 			} else {
-				_, err := s.db.Pool.Exec(ctx,
+				tag, err := s.db.Pool.Exec(ctx,
 					`INSERT INTO user_roles (user_id, role_id, assigned_at, org_id) VALUES ($1, $2, NOW(), $3)
 					 ON CONFLICT (user_id, role_id) DO NOTHING`, uid, roleID, orgID)
 				if err != nil {
 					errMsg = err.Error()
+				} else if tag.RowsAffected() > 0 {
+					s.claimsChanged(ctx, orgID, uid, "bulk assign_role")
 				}
 			}
 		case "remove_role":
@@ -232,6 +234,7 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 					errMsg = err.Error()
 				} else if tag.RowsAffected() > 0 {
 					s.revokeAfterSever(ctx, uid, "bulk remove_role")
+					s.claimsChanged(ctx, orgID, uid, "bulk remove_role")
 				}
 			}
 		case "add_to_group":
@@ -239,11 +242,13 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 			if groupID == "" {
 				errMsg = "group_id parameter required"
 			} else {
-				_, err := s.db.Pool.Exec(ctx,
+				tag, err := s.db.Pool.Exec(ctx,
 					`INSERT INTO group_memberships (user_id, group_id, joined_at, org_id) VALUES ($1, $2, NOW(), $3)
 					 ON CONFLICT DO NOTHING`, uid, groupID, orgID)
 				if err != nil {
 					errMsg = err.Error()
+				} else if tag.RowsAffected() > 0 {
+					s.claimsChanged(ctx, orgID, uid, "bulk add_to_group")
 				}
 			}
 		case "remove_from_group":
@@ -258,6 +263,7 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 					errMsg = err.Error()
 				} else if tag.RowsAffected() > 0 {
 					s.revokeAfterSever(ctx, uid, "bulk remove_from_group")
+					s.claimsChanged(ctx, orgID, uid, "bulk remove_from_group")
 				}
 			}
 		case "reset_passwords":

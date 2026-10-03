@@ -89,6 +89,8 @@ func cacheKey(in Input) string {
 	b.WriteByte('|')
 	b.WriteString(in.Resource.Type)
 	b.WriteByte('|')
+	b.WriteString(in.Resource.Route)
+	b.WriteByte('|')
 	b.WriteString(in.Method)
 	b.WriteByte('|')
 	b.WriteString(in.Path)
