@@ -431,7 +431,13 @@ func (s *Service) handleUpdateVendorOrg(c *gin.Context) {
 // still needs a sponsor to take it back.
 func restartVendorGrace(ctx context.Context, tx pgx.Tx, orgID, vendorID string) (int64, error) {
 	tag, err := tx.Exec(ctx, `
-		UPDATE users SET status_changed_at = NOW(), updated_at = NOW()
+		UPDATE users SET status_changed_at = NOW(), updated_at = NOW(),
+		       -- A restarted window is not a new departure. An account already
+		       -- severed since its last change keeps that true, or the sweep
+		       -- (severDepartedExternals) would sever it a second time; one
+		       -- whose severing was never recorded is left for the sweep.
+		       access_severed_at = CASE WHEN access_severed_at >= status_changed_at
+		                                THEN NOW() ELSE access_severed_at END
 		 WHERE vendor_org_id = $1::uuid AND org_id = $2 AND user_type = 'external'
 		   AND account_status = 'suspended'`, vendorID, orgID)
 	if err != nil {
