@@ -104,6 +104,7 @@ describe('i18n', () => {
       'pages.accessRequests.create.pickerPlaceholder.role',
       'pages.accessRequests.create.pickerPlaceholder.group',
       'pages.accessRequests.create.pickerPlaceholder.application',
+      'pages.accessRequests.create.pickerPlaceholder.pam_entry',
       // lib/compliance tooltip sentences
       'compliance.neverReported',
       // bulk-operations: operationTypes labelKey/descKey pairs
@@ -253,6 +254,21 @@ describe('i18n', () => {
         'system',
       ].map((k) => `pages.auditLogs.eventTypes.${k}`),
       ...['success', 'failure', 'pending'].map((k) => `pages.auditLogs.outcomes.${k}`),
+      // external-users: status badges, the per-action toasts and dialogs, and
+      // the invitation and vendor status badges are keyed by the API's value
+      ...['invited', 'pending_mfa', 'active', 'suspended', 'expired', 'disabled'].map(
+        (k) => `pages.externalUsers.status.${k}`,
+      ),
+      ...['suspend', 'disable', 'extend', 'reactivate', 'sponsor'].map(
+        (k) => `pages.externalUsers.toasts.${k}`,
+      ),
+      ...['reactivate', 'sponsor'].flatMap((k) => [
+        `pages.externalUsers.${k}Dialog.title`,
+        `pages.externalUsers.${k}Dialog.description`,
+        `pages.externalUsers.actions.${k}`,
+      ]),
+      ...['pending', 'accepted'].map((k) => `pages.externalUsers.invitations.status.${k}`),
+      ...['active', 'suspended', 'closed'].map((k) => `pages.externalUsers.vendors.status.${k}`),
       // admin-audit-log: ACTION_TYPES / TARGET_TYPES carry labelKey, not a label
       ...[
         'all',

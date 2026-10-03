@@ -33,9 +33,11 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS roles  (id UUID PRIMARY KEY, name TEXT, org_id UUID);
 CREATE TABLE IF NOT EXISTS groups (id UUID PRIMARY KEY, name TEXT, org_id UUID);
 CREATE TABLE IF NOT EXISTS user_roles (
-    user_id UUID, role_id UUID, org_id UUID, assigned_by UUID, PRIMARY KEY (user_id, role_id));
+    user_id UUID, role_id UUID, org_id UUID, assigned_by UUID, PRIMARY KEY (user_id, role_id),
+    expires_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS group_memberships (
-    user_id UUID, group_id UUID, org_id UUID, PRIMARY KEY (user_id, group_id));
+    user_id UUID, group_id UUID, org_id UUID, PRIMARY KEY (user_id, group_id),
+    expires_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS policies (
     id UUID PRIMARY KEY, name TEXT, type TEXT, enabled BOOLEAN DEFAULT TRUE, org_id UUID);
 CREATE TABLE IF NOT EXISTS policy_rules (
