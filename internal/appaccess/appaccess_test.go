@@ -15,7 +15,11 @@ const (
 	bothApp  = "33333333-0000-0000-0000-0000000000a3"
 	otherApp = "33333333-0000-0000-0000-0000000000a4"
 	offApp   = "33333333-0000-0000-0000-0000000000a5"
-	routeID  = "44444444-0000-0000-0000-0000000000a1"
+	// windowApp and lapsedApp are assigned for a window (migration v222):
+	// one still open, one over.
+	windowApp = "33333333-0000-0000-0000-0000000000a6"
+	lapsedApp = "33333333-0000-0000-0000-0000000000a7"
+	routeID   = "44444444-0000-0000-0000-0000000000a1"
 )
 
 func TestAllowed(t *testing.T) {
@@ -32,13 +36,18 @@ func TestAllowed(t *testing.T) {
 		   ('` + groupApp + `','ViaGroup',true,NULL,'` + orgID + `'),
 		   ('` + bothApp + `','Both',true,NULL,'` + orgID + `'),
 		   ('` + otherApp + `','Unassigned',true,NULL,'` + orgID + `'),
-		   ('` + offApp + `','Disabled',false,NULL,'` + orgID + `')`,
+		   ('` + offApp + `','Disabled',false,NULL,'` + orgID + `'),
+		   ('` + windowApp + `','Window',true,NULL,'` + orgID + `'),
+		   ('` + lapsedApp + `','Lapsed',true,NULL,'` + orgID + `')`,
 		`INSERT INTO group_memberships (user_id, group_id, org_id) VALUES
 		   ('` + userID + `','` + groupID + `','` + orgID + `')`,
 		`INSERT INTO user_application_assignments (user_id, application_id, org_id) VALUES
 		   ('` + userID + `','` + directID + `','` + orgID + `'),
 		   ('` + userID + `','` + bothApp + `','` + orgID + `'),
 		   ('` + userID + `','` + offApp + `','` + orgID + `')`,
+		`INSERT INTO user_application_assignments (user_id, application_id, org_id, expires_at) VALUES
+		   ('` + userID + `','` + windowApp + `','` + orgID + `', NOW() + interval '1 hour'),
+		   ('` + userID + `','` + lapsedApp + `','` + orgID + `', NOW() - interval '1 minute')`,
 		`INSERT INTO group_application_assignments (group_id, application_id, org_id) VALUES
 		   ('` + groupID + `','` + groupApp + `','` + orgID + `'),
 		   ('` + groupID + `','` + bothApp + `','` + orgID + `')`,
@@ -61,6 +70,8 @@ func TestAllowed(t *testing.T) {
 		{"unassigned denied", otherApp, orgID, false},
 		{"disabled application denied even when assigned", offApp, orgID, false},
 		{"other org denied", directID, otherOrg, false},
+		{"assigned for a window still open", windowApp, orgID, true},
+		{"assigned for a window that is over denied", lapsedApp, orgID, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,8 +89,13 @@ func TestAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppsForUser: %v", err)
 	}
-	if len(apps) != 3 {
-		t.Fatalf("AppsForUser returned %d apps, want 3 (direct + group + both, deduped, excluding disabled and unassigned)", len(apps))
+	if len(apps) != 4 {
+		t.Fatalf("AppsForUser returned %d apps, want 4 (direct + group + both + the open window, deduped, excluding disabled, unassigned and the window that is over)", len(apps))
+	}
+	for _, a := range apps {
+		if a.ID == lapsedApp {
+			t.Error("AppsForUser lists an application whose window is over")
+		}
 	}
 	var withRoute int
 	for _, a := range apps {
@@ -97,5 +113,14 @@ func TestAllowed(t *testing.T) {
 	}
 	if len(p.UserIDs) != 1 || len(p.GroupIDs) != 1 {
 		t.Errorf("PrincipalsForApp = %+v, want 1 user and 1 group", p)
+	}
+	for app, want := range map[string]int{windowApp: 1, lapsedApp: 0} {
+		p, err := PrincipalsForApp(ctx, db, app, orgID)
+		if err != nil {
+			t.Fatalf("PrincipalsForApp: %v", err)
+		}
+		if len(p.UserIDs) != want {
+			t.Errorf("PrincipalsForApp(%s) names %d users, want %d", app, len(p.UserIDs), want)
+		}
 	}
 }

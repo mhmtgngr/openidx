@@ -34,7 +34,7 @@ func TestEventsDeliveredIsTheRequestReducedToWhatIsEmitted(t *testing.T) {
 		{"a supported event is delivered", []string{EventSessionRevoked}, []string{EventSessionRevoked}},
 		{"an unsupported event is dropped, the supported one kept",
 			[]string{EventCredentialChange, EventAccountDisabled}, []string{EventAccountDisabled}},
-		{"only unsupported events deliver nothing", []string{EventCredentialChange, EventTokenClaimsChange}, []string{}},
+		{"only unsupported events deliver nothing", []string{EventCredentialChange, EventAssuranceLevelChange}, []string{}},
 		{"an unknown URI is not a supported event", []string{"https://example.test/not-an-event"}, []string{}},
 	}
 	for _, tc := range cases {

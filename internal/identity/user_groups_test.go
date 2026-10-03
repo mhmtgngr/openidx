@@ -22,8 +22,10 @@ func TestUserGroupNames(t *testing.T) {
 
 	ctx := context.Background()
 	if _, err := db.Pool.Exec(ctx, `
-		CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255), org_id UUID);
-		CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID);
+		CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255), org_id UUID,
+    external_allowed BOOLEAN NOT NULL DEFAULT false
+);
+		CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID, expires_at TIMESTAMPTZ);
 	`); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
@@ -73,7 +75,9 @@ func TestUserGroupNames_RequiresRealTable(t *testing.T) {
 	ctx := context.Background()
 	// Only the phantom table exists here; group_memberships does not.
 	if _, err := db.Pool.Exec(ctx, `
-		CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255), org_id UUID);
+		CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255), org_id UUID,
+    external_allowed BOOLEAN NOT NULL DEFAULT false
+);
 		CREATE TABLE user_groups (user_id UUID, group_id UUID);
 	`); err != nil {
 		t.Fatalf("schema: %v", err)
