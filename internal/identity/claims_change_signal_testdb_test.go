@@ -27,8 +27,8 @@ import (
 //   - the console's group member add and removal, and group deletion;
 //   - a lifecycle rule's assign_role, remove_role, assign_group and
 //     remove_group. The removals cut no token before this;
-//   - the role-expiry sweep, which runs in no organization and tells the
-//     user's own.
+//   - the expiry sweep, which runs in no organization and tells the user's
+//     own, for a lapsed role and a lapsed group membership.
 func TestEveryRoleAndGroupChangeTellsTheReceivers(t *testing.T) {
 	db, cleanup := setupMigratedDB(t)
 	if db == nil {
@@ -68,6 +68,9 @@ func TestEveryRoleAndGroupChangeTellsTheReceivers(t *testing.T) {
 	}
 	joins := func(userID, groupID string) {
 		exec(`INSERT INTO group_memberships (user_id, group_id, org_id) VALUES ($1, $2, $3)`, userID, groupID, org)
+	}
+	joinsUntil := func(userID, groupID string, until time.Time) {
+		exec(`INSERT INTO group_memberships (user_id, group_id, org_id, expires_at) VALUES ($1, $2, $3, $4)`, userID, groupID, org, until)
 	}
 
 	mini := miniredis.RunT(t)
@@ -203,14 +206,29 @@ func TestEveryRoleAndGroupChangeTellsTheReceivers(t *testing.T) {
 	lifecycle(departer, map[string]interface{}{"type": "remove_group", "group_id": staff})
 	expect("lifecycle remove_group", departer, true, "identity.lifecycle.remove_group")
 
-	// The role-expiry sweep, in no organization.
+	// The expiry sweep, in no organization: a role and a group membership
+	// whose window has ended, and one of each whose window has not.
 	lapsed, current := user("cc-lapsed"), user("cc-current")
+	lapsedMember, currentMember := user("cc-lapsed-member"), user("cc-current-member")
 	ago, ahead := time.Now().Add(-time.Minute), time.Now().Add(time.Hour)
 	holds(lapsed, auditor, &ago)
 	holds(current, auditor, &ahead)
-	svc.cleanupExpiredRoles(orgctx.WithBypassRLS(context.Background()))
-	expect("the role-expiry sweep, a lapsed role", lapsed, true, "identity.role_expiry")
-	expect("the role-expiry sweep, a current role", current, false)
+	joinsUntil(lapsedMember, staff, ago)
+	joinsUntil(currentMember, staff, ahead)
+	svc.cleanupExpiredAccess(orgctx.WithBypassRLS(context.Background()))
+	expect("the expiry sweep, a lapsed role", lapsed, true, "identity.role_expiry")
+	expect("the expiry sweep, a current role", current, false)
+	expect("the expiry sweep, a lapsed group membership", lapsedMember, true, "identity.group_expiry")
+	expect("the expiry sweep, a current group membership", currentMember, false)
+	memberships := func(userID string) string {
+		return scalar(`SELECT count(*)::text FROM group_memberships WHERE user_id = $1`, userID)
+	}
+	if n := memberships(lapsedMember); n != "0" {
+		t.Errorf("the expiry sweep left %s lapsed group memberships", n)
+	}
+	if n := memberships(currentMember); n != "1" {
+		t.Errorf("the expiry sweep removed a current group membership: %s left", n)
+	}
 
 	// Nothing went anywhere else: one signal for each change above.
 	var total int
@@ -218,7 +236,7 @@ func TestEveryRoleAndGroupChangeTellsTheReceivers(t *testing.T) {
 		ssfsignal.TokenClaimsChange).Scan(&total); err != nil {
 		t.Fatalf("count the signals: %v", err)
 	}
-	if total != 15 {
-		t.Errorf("%d token-claims-change signals in all, want 15", total)
+	if total != 16 {
+		t.Errorf("%d token-claims-change signals in all, want 16", total)
 	}
 }

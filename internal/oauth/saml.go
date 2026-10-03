@@ -777,6 +777,7 @@ func (s *Service) getUserGroups(ctx context.Context, userID string) []string {
 		FROM groups g
 		INNER JOIN group_memberships ug ON ug.group_id = g.id
 		WHERE ug.user_id = $1 AND g.org_id = $2
+		AND (ug.expires_at IS NULL OR ug.expires_at > NOW())
 	`, userID, org.ID)
 	if err != nil {
 		return nil

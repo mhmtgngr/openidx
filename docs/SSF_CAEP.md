@@ -102,7 +102,7 @@ POST /ssf/streams
 - an administrator grants, removes or deletes a role, or edits a user's role set;
 - a member is added to or removed from a group, or a group is deleted;
 - a lifecycle rule assigns or removes a role or a group;
-- a time-bound role lapses (the role-expiry sweep).
+- a time-bound role or group membership lapses (the identity expiry sweep).
 
 A path that changes nothing sends nothing: a role the user already holds, a role set saved unchanged, a lifecycle removal of something the user does not hold. Each of these paths that takes a role or a group away also cuts the user's outstanding tokens (the revocation marker), because a token issued before still names it.
 
