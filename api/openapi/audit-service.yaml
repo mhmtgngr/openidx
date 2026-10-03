@@ -10,6 +10,11 @@ info:
     `x-openidx-handler` extension naming the Go handler that serves them; where a
     payload shape is not yet pinned the body is shown as a free-form JSON object
     rather than invented.
+
+    The read, report, export, scheduled-report and stream routes need a role
+    holding audit:read (super_admin, admin, operator, auditor,
+    compliance_reader); any other caller gets 403 with code
+    audit_reader_required. The webhook routes need admin or super_admin.
   version: 1.39.0
   license:
     name: Apache 2.0
