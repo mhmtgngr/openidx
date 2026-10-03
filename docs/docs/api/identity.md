@@ -40,7 +40,7 @@ Suspending a vendor (`PUT` with `status` `suspended`) suspends each of its live 
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/identity/external-users` | List external accounts, optionally by `vendor_org_id` and `status`, with vendor, sponsor, `expiring_soon` (active, ending within 14 days), `has_strong_factor` and, for a suspended one, `reactivate_until` |
+| GET | `/api/v1/identity/external-users` | List external accounts, optionally by `vendor_org_id` and `status`, with vendor, sponsor, `expiring_soon` (active, ending within 14 days), `has_strong_factor` and, for a suspended one whose vendor is active, `reactivate_until` |
 | POST | `/api/v1/identity/external-users/:id/suspend` | Suspend a live account. It can be reactivated within 7 days |
 | POST | `/api/v1/identity/external-users/:id/disable` | Disable a live or suspended account. This is final; access needs a new invitation |
 | POST | `/api/v1/identity/external-users/:id/extend` | Move the account's end, with `account_expires_at` or `extend_days`, within a year and the vendor's contract |
