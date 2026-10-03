@@ -773,6 +773,7 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 	// someone out of access a rollback gave back.
 	if cutTokensFor != "" {
 		s.revokeAfterSever(ctx, cutTokensFor, "attestation.revoked")
+		s.claimsChanged(ctx, org.ID, cutTokensFor, "attestation.revoked")
 	}
 
 	// Check if all items are decided - auto-complete campaign.

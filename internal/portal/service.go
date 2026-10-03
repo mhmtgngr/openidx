@@ -21,6 +21,7 @@ import (
 	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/jitgrant"
 )
@@ -302,13 +303,16 @@ func (s *Service) RequestGroupJoin(ctx context.Context, userID, groupID, justifi
 
 	if !requireApproval {
 		// Add the user directly to the group
-		_, err := s.db.Pool.Exec(ctx,
+		tag, err := s.db.Pool.Exec(ctx,
 			`INSERT INTO group_memberships (group_id, user_id, joined_at, org_id) VALUES ($1, $2, $3, $4)
 			 ON CONFLICT DO NOTHING`,
 			groupID, userID, time.Now().UTC(), org.ID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to add user to group: %w", err)
+		}
+		if tag.RowsAffected() > 0 {
+			s.claimsChanged(ctx, org.ID, "portal.group_join", userID)
 		}
 		return nil
 	}
@@ -556,13 +560,16 @@ func (s *Service) ReviewGroupRequest(ctx context.Context, requestID, reviewerID,
 			return fmt.Errorf("failed to fetch request details: %w", err)
 		}
 
-		_, err = s.db.Pool.Exec(ctx,
+		tag, err := s.db.Pool.Exec(ctx,
 			`INSERT INTO group_memberships (group_id, user_id, joined_at, org_id) VALUES ($1, $2, $3, $4)
 			 ON CONFLICT DO NOTHING`,
 			groupID, userID, now, org.ID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to add user to group: %w", err)
+		}
+		if tag.RowsAffected() > 0 {
+			s.claimsChanged(ctx, org.ID, "portal.group_join_approved", userID)
 		}
 	}
 
@@ -1074,4 +1081,15 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 
 	// My security insights (caller-scoped; plain-language self-assessment)
 	router.GET("/portal/security-insights", svc.handleGetSecurityInsights)
+}
+
+// claimsChanged tells the tenant's SSF receivers that a group joined through
+// the portal is now in what a token issued for the user carries (CAEP
+// token-claims-change). Best-effort: the join has been made, and a failure is
+// logged.
+func (s *Service) claimsChanged(ctx context.Context, orgID, why, userID string) {
+	if err := ssfsignal.EnqueueClaimsChange(ctx, s.db.Pool, orgID, why, userID); err != nil {
+		s.logger.Error("a group was joined, but the token-claims-change signal was not enqueued",
+			zap.String("path", why), zap.Error(err))
+	}
 }
