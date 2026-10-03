@@ -34,9 +34,11 @@ func TestGetAccessOverview_CrossPillar(t *testing.T) {
 		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID)`,
 		`CREATE TABLE roles (id UUID PRIMARY KEY, name VARCHAR(255))`,
 		`CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID)`,
-		`CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255))`,
+		`CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255),
+    external_allowed BOOLEAN NOT NULL DEFAULT false
+)`,
 		`CREATE TABLE applications (id UUID PRIMARY KEY, name VARCHAR(255), enabled BOOLEAN, route_id UUID, org_id UUID)`,
-		`CREATE TABLE user_application_assignments (user_id UUID, application_id UUID, org_id UUID)`,
+		`CREATE TABLE user_application_assignments (user_id UUID, application_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE group_application_assignments (group_id UUID, application_id UUID, org_id UUID)`,
 		`CREATE TABLE group_join_requests (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID, status VARCHAR(32))`,
 		`CREATE TABLE vault_access_grants (
@@ -54,8 +56,10 @@ func TestGetAccessOverview_CrossPillar(t *testing.T) {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 		`CREATE TABLE guacamole_sessions (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, user_id UUID, status VARCHAR(16))`,
-		`CREATE TABLE guacamole_session_requests (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, requester_id UUID,
+		`CREATE TABLE pam_entries (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, proxy_route_id UUID)`,
+		`CREATE TABLE pam_entry_access_requests (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, entry_id UUID, requester_id UUID,
 			status VARCHAR(16), expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE ziti_identities (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, user_id UUID, enrolled BOOLEAN)`,
@@ -81,7 +85,12 @@ func TestGetAccessOverview_CrossPillar(t *testing.T) {
 		`INSERT INTO access_requests (requester_id, org_id, resource_type, resource_id, resource_name, status, expires_at)
 		   VALUES ('` + userID + `','` + orgID + `','role',gen_random_uuid()::text,'break-glass','fulfilled',NOW()+'1h')`,
 		`INSERT INTO guacamole_sessions (org_id, user_id, status) VALUES ('` + orgID + `','` + userID + `','active')`,
-		`INSERT INTO guacamole_session_requests (org_id, requester_id, status) VALUES ('` + orgID + `','` + userID + `','pending')`,
+		// The user's pending session request on a route-backed entry, and one on a
+		// plain entry, which the session counter does not count.
+		`INSERT INTO pam_entries (id, org_id, proxy_route_id) VALUES ('00000000-0000-0000-0000-00000000e001','` + orgID + `', gen_random_uuid())`,
+		`INSERT INTO pam_entries (id, org_id) VALUES ('00000000-0000-0000-0000-00000000e002','` + orgID + `')`,
+		`INSERT INTO pam_entry_access_requests (org_id, entry_id, requester_id, status) VALUES ('` + orgID + `','00000000-0000-0000-0000-00000000e001','` + userID + `','pending')`,
+		`INSERT INTO pam_entry_access_requests (org_id, entry_id, requester_id, status) VALUES ('` + orgID + `','00000000-0000-0000-0000-00000000e002','` + userID + `','pending')`,
 		`INSERT INTO ziti_identities (org_id, user_id, enrolled) VALUES ('` + orgID + `','` + userID + `',true)`,
 		`INSERT INTO enrolled_agents (enrolled_by_user_id, org_id) VALUES ('` + userID + `','` + orgID + `')`,
 		`INSERT INTO known_devices (user_id, org_id, trusted) VALUES ('` + userID + `','` + orgID + `',true)`,
