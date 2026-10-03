@@ -57,3 +57,17 @@ func (s *Service) revokeAfterSever(ctx context.Context, userID, why string) {
 			zap.String("path", why), logsafe.String("user_id", userID), zap.Error(err))
 	}
 }
+
+// claimsChanged tells the tenant's SSF receivers that what a token issued for
+// the user says has changed (CAEP token-claims-change): a role or a group was
+// given to them or taken away. Best-effort like the token cut: the change has
+// been made, and a failure is logged.
+func (s *Service) claimsChanged(ctx context.Context, orgID, userID, why string) {
+	if s.db == nil || s.db.Pool == nil || userID == "" {
+		return
+	}
+	if err := ssfsignal.EnqueueClaimsChange(ctx, s.db.Pool, orgID, why, userID); err != nil {
+		s.logger.Error("a role or group changed, but the token-claims-change signal was not enqueued",
+			zap.String("path", why), logsafe.String("user_id", userID), zap.Error(err))
+	}
+}
