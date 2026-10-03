@@ -262,6 +262,13 @@ the OPA server. From then on, OPA refuses any request the policy does not
 grant. Read the policy's role table first: a caller whose roles are not in it
 is refused.
 
+Access requests are the exception. Any signed-in user can file a request, read
+and cancel their own, and approve or deny one they are an approver of, such as
+a manager or the sponsor of an external user. The policy allows these routes
+(`access_request_routes`, matched on `input.resource.route`, the route the
+service matched). governance-service then checks each caller against the
+request itself.
+
 ### Multi-factor authentication
 
 | Variable | Type | Default | Description |
