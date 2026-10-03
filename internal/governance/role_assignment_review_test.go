@@ -34,7 +34,7 @@ func TestRoleAssignmentReviewNamesTheReach(t *testing.T) {
 	if _, err := db.Pool.Exec(ctx, `
 		CREATE TABLE users (id UUID PRIMARY KEY, org_id UUID NOT NULL, enabled BOOLEAN NOT NULL DEFAULT true);
 		CREATE TABLE roles (id UUID PRIMARY KEY, name VARCHAR(255) NOT NULL, org_id UUID NOT NULL);
-		CREATE TABLE user_roles (user_id UUID NOT NULL, role_id UUID NOT NULL, org_id UUID NOT NULL, PRIMARY KEY (user_id, role_id));
+		CREATE TABLE user_roles (user_id UUID NOT NULL, role_id UUID NOT NULL, org_id UUID NOT NULL, expires_at TIMESTAMPTZ, PRIMARY KEY (user_id, role_id));
 		CREATE TABLE composite_roles (parent_role_id UUID NOT NULL, child_role_id UUID NOT NULL, org_id UUID NOT NULL, PRIMARY KEY (parent_role_id, child_role_id));
 		CREATE TABLE review_items (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

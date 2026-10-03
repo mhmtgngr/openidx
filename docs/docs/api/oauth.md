@@ -60,6 +60,10 @@ POST /oauth/token
 - `refresh_token` — rotate refresh tokens
 - `client_credentials` — service-to-service
 
+### Token lifetime
+
+An access token lives for its client's `access_token_lifetime` (an hour by default). A token that carries a time-bound role or group ends no later than the earliest of their windows: a role an access request gave or an administrator gave until a date, or a group membership an access request gave (migration v224). The `authorization_code`, `refresh_token` and device grants cut the access token, its `expires_in` and the ID token to that end, so a client refreshes when the window closes and gets a token without the role or group.
+
 ## UserInfo
 
 | Method | Path | Description | Auth |

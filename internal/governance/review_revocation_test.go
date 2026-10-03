@@ -41,11 +41,13 @@ func TestSubmitReviewDecision_ActuallyRevokes(t *testing.T) {
 		CREATE TABLE user_roles (
 			user_id UUID NOT NULL,
 			role_id UUID NOT NULL,
-			org_id UUID NOT NULL);
+			org_id UUID NOT NULL,
+			expires_at TIMESTAMPTZ);
 		CREATE TABLE group_memberships (
 			user_id UUID NOT NULL,
 			group_id UUID NOT NULL,
-			org_id UUID NOT NULL);
+			org_id UUID NOT NULL,
+			expires_at TIMESTAMPTZ);
 		CREATE TABLE audit_events (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			timestamp TIMESTAMPTZ DEFAULT NOW(),

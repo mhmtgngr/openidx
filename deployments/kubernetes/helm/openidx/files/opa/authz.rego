@@ -168,6 +168,63 @@ allow if {
     contains(input.path, "/notifications")
 }
 
+# Access requests are self-service, and governance decides who may do what.
+# Any signed-in user files their own request, reads and cancels their own,
+# and decides one they are an approver of: a manager, a sponsor, a role- or
+# group-based approver step. governance-service checks each of those against
+# the request itself (its requester, an approver of its step, the
+# requester's sponsor), which this policy cannot see. Without this rule,
+# turning OPA on stopped every non-administrator at the door: nobody could
+# file a request, and only an administrator could approve one. Keyed on the
+# route gin matched (input.resource.route), never on the path the caller
+# wrote.
+allow if {
+    input.user.authenticated
+    input.resource.route in access_request_routes[input.method]
+}
+
+access_request_routes := {
+    "GET": {
+        "/api/v1/governance/requests",
+        "/api/v1/governance/requests/:id",
+        "/api/v1/governance/my-approvals"
+    },
+    "POST": {
+        "/api/v1/governance/requests",
+        "/api/v1/governance/requests/:id/approve",
+        "/api/v1/governance/requests/:id/deny",
+        "/api/v1/governance/requests/:id/cancel",
+        "/api/v1/governance/requests/:id/credential",
+        "/api/v1/governance/requests/:id/return"
+    }
+}
+
+# Access reviews are decided by the reviewer each one names, who need not be
+# an auditor: a manager reviewing their reports, an application owner. Any
+# signed-in user reaches the reviewer's routes (the list, a review, its items,
+# a decision on one item or many), and governance-service decides who may do
+# each: the reads pin a caller who is neither an administrator nor an auditor
+# to the reviews they are the reviewer of, and a decision needs the assigned
+# reviewer or an administrator. Without this rule, turning OPA on stopped every
+# reviewer who was not an auditor at the door. Creating, editing and moving a
+# review stay with the role table above. Keyed on the route gin matched.
+allow if {
+    input.user.authenticated
+    input.resource.route in review_reviewer_routes[input.method]
+}
+
+review_reviewer_routes := {
+    "GET": {
+        "/api/v1/governance/reviews",
+        "/api/v1/governance/reviews/:id",
+        "/api/v1/governance/reviews/:id/items"
+    },
+    "POST": {
+        "/api/v1/governance/reviews/:id/items/:itemId/decision",
+        "/api/v1/governance/reviews/:id/items/batch-decision"
+    }
+}
+
 # ─── Groups-based access ────────────────────────────────────────
 # Members of admin-group get full access
 allow if {
