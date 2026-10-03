@@ -72,7 +72,9 @@ CREATE TABLE user_roles (
     assigned_by VARCHAR(255),
     assigned_at TIMESTAMPTZ DEFAULT NOW(),
     expires_at  TIMESTAMPTZ,
-    org_id      UUID NOT NULL
+    org_id      UUID NOT NULL,
+    expiry_notified BOOLEAN NOT NULL DEFAULT false,
+    PRIMARY KEY (user_id, role_id)
 );
 CREATE TABLE composite_roles (
     parent_role_id UUID NOT NULL,
