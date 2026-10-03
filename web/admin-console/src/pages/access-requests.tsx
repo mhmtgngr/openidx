@@ -15,6 +15,8 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '../components/ui/alert-dialog'
 import { QueryError } from '../components/query-error'
+import { SessionQueue } from '../components/session-queue'
+import { useSessionQueue } from '../hooks/use-session-queue'
 import { api, VaultSecretMeta } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { useAuth } from '../lib/auth'
@@ -44,6 +46,12 @@ type RawResource = { id?: unknown; name?: unknown; displayName?: unknown }
 interface AppResource {
   id: string
   name: string
+}
+// A PAM entry the caller sees, with the grant actions they hold on it.
+interface PamEntryOption {
+  id: string
+  name: string
+  actions?: string[]
 }
 
 const statusBadge = (status: string) => {
@@ -104,6 +112,12 @@ export function AccessRequestsPage() {
     queryFn: () => api.get<{ pending_approvals: AccessRequest[] }>('/api/v1/governance/my-approvals'),
   })
   const pendingApprovals = pendingData?.pending_approvals || []
+  // The privileged-session decisions waiting for the caller -- launch
+  // approvals, moderation requests, and the sessions they sponsor or
+  // moderate -- sit in the same queue (components/session-queue.tsx).
+  const sessionQueue = useSessionQueue(isAdmin)
+  const sessionWork = sessionQueue.count + sessionQueue.moderated.length + sessionQueue.sessions.length
+  const waiting = pendingApprovals.length + sessionQueue.count
 
   const { data: allData, isLoading: allLoading, isError: allError, error: allErrorObj } = useQuery({
     queryKey: ['all-requests', statusFilter],
@@ -141,6 +155,14 @@ export function AccessRequestsPage() {
     queryFn: () => api.getWithHeaders<AppResource[]>('/api/v1/applications'),
     enabled: newReq.resource_type === 'application',
   })
+  // PAM entries: the ones the caller sees and cannot yet connect to. Seeing an
+  // entry is the eligibility the identity service checks (a standing grant of
+  // any action); connecting is what the request asks for.
+  const { data: pamEntriesData } = useQuery({
+    queryKey: ['ar-pam-entries'],
+    queryFn: () => api.get<{ entries: PamEntryOption[] }>('/api/v1/access/pam/entries'),
+    enabled: newReq.resource_type === 'pam_entry',
+  })
 
   // Normalize each type's list to { id, name } picker options. Guard against
   // non-array payloads (some list endpoints wrap in {data:[]} / {items:[]}).
@@ -160,11 +182,16 @@ export function AccessRequestsPage() {
           }))
         : newReq.resource_type === 'application'
           ? asArray<AppResource>(appsData?.data).map(a => ({ id: a.id, name: a.name }))
-          : []
+          : newReq.resource_type === 'pam_entry'
+            ? (pamEntriesData?.entries ?? [])
+                .filter(e => !(e.actions ?? []).includes('connect'))
+                .map(e => ({ id: e.id, name: e.name }))
+            : []
   const isPickerType =
     newReq.resource_type === 'role' ||
     newReq.resource_type === 'group' ||
-    newReq.resource_type === 'application'
+    newReq.resource_type === 'application' ||
+    newReq.resource_type === 'pam_entry'
 
   const createMutation = useMutation({
     mutationFn: (data: typeof newReq) => {
@@ -282,11 +309,15 @@ export function AccessRequestsPage() {
   }
 
   const isVaultType = newReq.resource_type === 'vault_credential'
-  const submitDisabled = isVaultType
+  const isPamType = newReq.resource_type === 'pam_entry'
+  // A vault checkout and a PAM connection are always time-bound: the API
+  // refuses either without a duration.
+  const needsDuration = isVaultType || isPamType
+  const submitDisabled = needsDuration
     ? (!newReq.secretId || !newReq.duration || createMutation.isPending)
     : (!newReq.resource_type || !newReq.resource_name || createMutation.isPending)
 
-  const durationOptions = isVaultType
+  const durationOptions = needsDuration
     ? DURATION_OPTIONS.filter(opt => opt.value !== '')
     : DURATION_OPTIONS
 
@@ -307,10 +338,10 @@ export function AccessRequestsPage() {
           <TabsTrigger value="my-requests"><GitPullRequest className="mr-2 h-4 w-4" />{t('pages.accessRequests.tabs.my')}</TabsTrigger>
           {/* Approver queue: caller-scoped (only requests awaiting THIS user).
               Hidden for standard users who aren't approvers and have none. */}
-          {(isAdmin || pendingApprovals.length > 0) && (
+          {(isAdmin || pendingApprovals.length > 0 || sessionWork > 0) && (
             <TabsTrigger value="pending-approvals">
               <Clock className="mr-2 h-4 w-4" />{t('pages.accessRequests.tabs.pending')}
-              {pendingApprovals.length > 0 && <Badge variant="secondary" className="ml-1">{pendingApprovals.length}</Badge>}
+              {waiting > 0 && <Badge variant="secondary" className="ml-1">{waiting}</Badge>}
             </TabsTrigger>
           )}
           {/* Org-wide view — admins only. */}
@@ -396,7 +427,7 @@ export function AccessRequestsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="pending-approvals">
+        <TabsContent value="pending-approvals" className="space-y-4">
           <Card>
             <CardHeader><CardTitle>{t('pages.accessRequests.tabs.pending')}</CardTitle></CardHeader>
             <CardContent>
@@ -429,6 +460,7 @@ export function AccessRequestsPage() {
               )}
             </CardContent>
           </Card>
+          <SessionQueue isAdmin={isAdmin} />
         </TabsContent>
 
         <TabsContent value="all-requests">
@@ -498,6 +530,7 @@ export function AccessRequestsPage() {
                   <SelectItem value="group">{t('pages.accessRequests.create.types.group')}</SelectItem>
                   <SelectItem value="application">{t('pages.accessRequests.create.types.application')}</SelectItem>
                   <SelectItem value="vault_credential">{t('pages.accessRequests.create.types.vault')}</SelectItem>
+                  <SelectItem value="pam_entry">{t('pages.accessRequests.create.types.pamEntry')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -529,6 +562,8 @@ export function AccessRequestsPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              ) : isPamType ? (
+                <p className="text-sm text-muted-foreground">{t('pages.accessRequests.create.noPamEntries')}</p>
               ) : (
                 <Input
                   placeholder={newReq.resource_type ? t('pages.accessRequests.create.namePlaceholder') : t('pages.accessRequests.create.nameFirst')}
@@ -555,9 +590,9 @@ export function AccessRequestsPage() {
               </Select>
             </div>
             <div>
-              <label className="text-sm font-medium">{t('pages.accessRequests.create.durationLabel')}{isVaultType && <span className="text-red-500 ml-1">*</span>}</label>
+              <label className="text-sm font-medium">{t('pages.accessRequests.create.durationLabel')}{needsDuration && <span className="text-red-500 ml-1">*</span>}</label>
               <Select value={newReq.duration} onValueChange={v => setNewReq(p => ({ ...p, duration: v }))}>
-                <SelectTrigger aria-label={t('pages.accessRequests.create.durationLabel')}><SelectValue placeholder={isVaultType ? t('pages.accessRequests.create.durationRequired') : t('pages.accessRequests.durations.permanent')} /></SelectTrigger>
+                <SelectTrigger aria-label={t('pages.accessRequests.create.durationLabel')}><SelectValue placeholder={needsDuration ? t('pages.accessRequests.create.durationRequired') : t('pages.accessRequests.durations.permanent')} /></SelectTrigger>
                 <SelectContent>
                   {durationOptions.map(opt => (
                     <SelectItem key={opt.value || 'permanent'} value={opt.value || 'permanent'}>
@@ -569,7 +604,9 @@ export function AccessRequestsPage() {
               <p className="text-xs text-muted-foreground mt-1">
                 {isVaultType
                   ? t('pages.accessRequests.create.durationHintVault')
-                  : newReq.duration ? t('pages.accessRequests.create.durationHintExpires') : t('pages.accessRequests.create.durationHintPermanent')}
+                  : isPamType
+                    ? t('pages.accessRequests.create.durationHintPam')
+                    : newReq.duration ? t('pages.accessRequests.create.durationHintExpires') : t('pages.accessRequests.create.durationHintPermanent')}
               </p>
             </div>
             <div className="flex justify-end gap-2">

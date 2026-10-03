@@ -25,7 +25,9 @@ import (
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/jitgrant"
+	"github.com/openidx/openidx/internal/pamgrant"
 	"github.com/openidx/openidx/internal/revocation"
 )
 
@@ -118,6 +120,21 @@ func (s *Service) runLifecycleEnforcement(ctx context.Context) {
 		}
 	}
 
+	// The PAM entry surface of disabled/deleted users: their own connection
+	// grants, launch approvals, exclusive leases, issued temporary access
+	// links and brokered-session ledger rows. The same five writes the kill
+	// switch and deprovisionUser make, so a user disabled by SCIM, a directory
+	// sync or a lifecycle policy loses them within one tick too.
+	if pam, pamErrs := pamgrant.EndForDisabledUsers(ctx, s.db.Pool); len(pamErrs) > 0 {
+		for _, err := range pamErrs {
+			s.logger.Warn("lifecycle sweep: ending the PAM entry surface of disabled users failed", zap.Error(err))
+		}
+	} else if pam.Total() > 0 {
+		s.logger.Info("lifecycle sweep: ended the PAM entry surface of disabled users", zap.Stringer("counts", pam))
+	}
+	s.endPamEntrySessionsOfDisabledUsers(ctx)
+	s.endLapsedPamEntrySessions(ctx)
+
 	// Live privileged sessions of disabled/deleted users. Rows are marked
 	// terminated only after Guacamole confirms the kill, so a configured-but-
 	// unreachable Guacamole retries next tick instead of silently "succeeding".
@@ -169,5 +186,109 @@ func (s *Service) runLifecycleEnforcement(ctx context.Context) {
 		}
 		s.logger.Info("lifecycle sweep: terminated privileged session of disabled user",
 			zap.String("user_id", d.userID))
+	}
+}
+
+// endPamEntrySessionsOfDisabledUsers ends the live PAM entry sessions of
+// disabled or deleted users through the same broker-honest path the kill
+// switch uses (endUserPamEntrySessions): a ledger row is marked ended only
+// once the broker no longer serves the session, so a configured-but-
+// unreachable broker retries next tick rather than "succeeding" on paper.
+// The sweep runs install-wide; each user's sessions are ended under that
+// user's own organization.
+func (s *Service) endPamEntrySessionsOfDisabledUsers(ctx context.Context) {
+	rows, err := s.db.Pool.Query(ctx,
+		//orgscope:ignore install-wide lifecycle reconcile sweep (disabled/deleted users -> PAM teardown); each session is ended under the org of its own row
+		`SELECT DISTINCT ps.org_id::text, ps.user_id::text
+		   FROM pam_entry_sessions ps
+		   LEFT JOIN users u ON u.id = ps.user_id
+		  WHERE ps.status = 'active' AND ps.user_id IS NOT NULL
+		    AND (u.id IS NULL OR u.enabled = false)
+		  LIMIT 20`)
+	if err != nil {
+		s.logger.Warn("lifecycle sweep: PAM entry session query failed", zap.Error(err))
+		return
+	}
+	type owner struct{ orgID, userID string }
+	var owners []owner
+	for rows.Next() {
+		var o owner
+		if err := rows.Scan(&o.orgID, &o.userID); err == nil {
+			owners = append(owners, o)
+		}
+	}
+	rows.Close()
+	for _, o := range owners {
+		warn := func(step string, err error) {
+			s.logger.Warn("lifecycle sweep: PAM entry session of disabled user not ended (will retry next tick)",
+				zap.String("step", step), zap.String("user_id", logsafe.Clean(o.userID)), zap.Error(err))
+		}
+		if n := s.endUserPamEntrySessions(ctx, o.orgID, o.userID, sessionEndAccountOff, "", warn); n > 0 {
+			s.logger.Info("lifecycle sweep: ended PAM entry sessions of disabled user",
+				zap.String("user_id", logsafe.Clean(o.userID)), zap.Int("count", n))
+		}
+	}
+}
+
+// endLapsedPamEntrySessions ends the live PAM entry sessions that have to end
+// (pamgrant.LapsedSessions):
+//
+//   - those whose user no longer holds the grant that let them connect: a
+//     request's window closed, an administrator removed the grant, or the
+//     role or group that carried it is no longer theirs. A session lasts as
+//     long as the access that opened it, which is what makes a four-hour
+//     request four hours rather than four hours to start a session that then
+//     runs on;
+//   - an external user's session older than externalid.MaxPamSession (I7 of
+//     the third-party access framework), whatever grant it rides.
+//
+// The same broker-honest path as the kill switch: a row is marked ended only
+// once the broker no longer serves the session, so an unreachable broker
+// retries next tick. Without per-user broker identities the broker cannot tell
+// whose session it is looking at, and every live session on the entry's
+// connection ends with it, as at the kill switch; the warning says so. Each
+// ended session is audited as pam.session_ended with its reason, grant_ended
+// or max_duration.
+func (s *Service) endLapsedPamEntrySessions(ctx context.Context) {
+	lapsed, err := pamgrant.LapsedSessions(ctx, s.db.Pool, externalid.MaxPamSession, 200)
+	if err != nil {
+		s.logger.Warn("lifecycle sweep: listing PAM entry sessions that have to end failed", zap.Error(err))
+		return
+	}
+	byOrg := map[string][]string{}
+	userOf := map[string]string{}
+	reasonOf := map[string]string{}
+	for _, l := range lapsed {
+		byOrg[l.OrgID] = append(byOrg[l.OrgID], l.ID)
+		userOf[l.ID] = l.UserID
+		reasonOf[l.ID] = l.Reason
+	}
+	for orgID, ids := range byOrg {
+		octx := orgctx.With(ctx, orgctx.Org{ID: orgID})
+		rows, err := s.db.Pool.Query(octx,
+			`SELECT s.id, COALESCE(s.guac_connection_id, ''), COALESCE(s.guac_username, ''), COALESCE(e.reach_mode, '')
+			   FROM pam_entry_sessions s
+			   JOIN pam_entries e ON e.id = s.entry_id AND e.org_id = s.org_id
+			  WHERE s.id = ANY($1::uuid[]) AND s.org_id = $2 AND s.status = 'active'`, ids, orgID)
+		if err != nil {
+			s.logger.Warn("lifecycle sweep: reading PAM entry sessions that have to end failed", zap.Error(err))
+			continue
+		}
+		warn := func(step string, err error) {
+			s.logger.Warn("lifecycle sweep: a PAM entry session that has to end was not ended (will retry next tick)",
+				zap.String("step", step), zap.String("org_id", logsafe.Clean(orgID)), zap.Error(err))
+		}
+		for _, id := range s.endPamEntrySessionRows(octx, orgID, scanPamSessionRows(rows), warn) {
+			s.logger.Info("lifecycle sweep: ended a PAM entry session",
+				zap.String("session_id", id), zap.String("user_id", logsafe.Clean(userOf[id])),
+				zap.String("reason", reasonOf[id]))
+			s.pamSessionEnded(orgID, id, reasonOf[id], "")
+			if s.auditService != nil {
+				if err := s.auditService.RecordEvent(octx, "openidx", "pam.session_ended", "", userOf[id], "",
+					map[string]interface{}{"session_id": id, "reason": reasonOf[id]}); err != nil {
+					s.logger.Warn("lifecycle sweep: could not audit an ended PAM entry session", zap.Error(err))
+				}
+			}
+		}
 	}
 }

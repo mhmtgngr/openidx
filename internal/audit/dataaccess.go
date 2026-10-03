@@ -20,12 +20,17 @@ package audit
 //
 // SO WHAT IS A DATA ACCESS HERE. The audit trail records reads as an action
 // under event_type 'authorization' (internal/access's logAuditEvent stamps that
-// event type for every proxy and PAM event). Five of those actions are somebody
+// event type for every proxy and PAM event). Four of those actions are somebody
 // reading protected data:
 //
 //	pam.entry_revealed              a stored credential shown to a person
-//	pam.credential_injected         a stored credential handed to a session
-//	guacamole_credential_injected   the same, on the Guacamole path
+//	pam.credential_injected         a stored credential handed to a session,
+//	                                on the entry launch and on a proxy route's
+//	                                brokered connect, which is the entry launch
+//	                                since v213 (guacamole_credential_injected
+//	                                was the route path's own name for it, and
+//	                                nothing writes it now; rows from before
+//	                                the change keep the old name)
 //	guacamole.recording_downloaded  a session recording taken off the system --
 //	                                everything that was typed and seen
 //	guacamole.transcript_downloaded the same, as text
@@ -41,7 +46,6 @@ package audit
 var DataAccessActions = []string{
 	"pam.entry_revealed",
 	"pam.credential_injected",
-	"guacamole_credential_injected",
 	"guacamole.recording_downloaded",
 	"guacamole.transcript_downloaded",
 }

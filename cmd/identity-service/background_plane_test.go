@@ -33,6 +33,7 @@ import (
 // behind the profile check.
 var adminPlaneStarters = map[string]string{
 	"StartRoleExpirationChecker": "deletes expired time-bound role assignments across every org and revokes the tokens carrying them; nothing about it belongs to a login",
+	"StartExternalAccountSweep":  "expires, suspends and disables external (vendor) accounts across every org and severs their access; nothing about it belongs to a login",
 }
 
 // everyProfileStarters run in every profile, with the reason. These are not

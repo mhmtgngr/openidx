@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -17,6 +17,17 @@ vi.mock('../lib/api', () => ({
     delete: vi.fn(() => Promise.resolve({})),
     vault: {
       listSecrets: vi.fn(() => Promise.resolve({ secrets: [{ id: 'sec-1', name: 'db-root', type: 'password', current_version: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }] })),
+    },
+    // The privileged-session queue beside the access requests: empty unless a
+    // test fills one.
+    pam: {
+      listRequests: vi.fn(() => Promise.resolve({ requests: [] })),
+      listSponsoredRequests: vi.fn(() => Promise.resolve({ requests: [] })),
+      listPendingModeration: vi.fn(() => Promise.resolve({ pending: [] })),
+      listSponsoredModeration: vi.fn(() => Promise.resolve({ pending: [] })),
+      listModerating: vi.fn(() => Promise.resolve({ moderations: [] })),
+      listSponsoredSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
+      approveSponsoredRequest: vi.fn(() => Promise.resolve({ status: 'approved' })),
     },
   },
 }))
@@ -120,6 +131,14 @@ function routeGet(url: string) {
       { id: 'grp-2', displayName: 'Developers' },
     ])
   }
+  if (url.includes('/access/pam/entries')) {
+    return Promise.resolve({
+      entries: [
+        { id: 'pam-view', name: 'prod-db-01', actions: ['view'] },
+        { id: 'pam-conn', name: 'build-agent', actions: ['view', 'connect'] },
+      ],
+    })
+  }
   if (url.includes('requester_id=me')) {
     return Promise.resolve({ requests: [myRequest] })
   }
@@ -163,6 +182,26 @@ describe('AccessRequestsPage', () => {
     // And the org-wide list is never fetched.
     const urls = vi.mocked(api.get).mock.calls.map((c) => c[0] as string)
     expect(urls.some((u) => u === '/api/v1/governance/requests' || u.startsWith('/api/v1/governance/requests?status'))).toBe(false)
+  })
+
+  it('shows a sponsor who is not an administrator the vendor launch waiting for them, in the approvals tab', async () => {
+    authState.isAdmin = false
+    // Not once: the page and its approvals tab read the same list, and the tab
+    // reads it again as it mounts.
+    vi.mocked(api.pam.listSponsoredRequests).mockResolvedValue({ requests: [{
+      id: 'pr-1', entry_id: 'e-1', entry_name: 'prod-db', entry_type: 'ssh', requester_id: 'v-1',
+      requester: 'vendor@supplier.example.test', external: true, status: 'pending', created_at: '2026-10-02T10:00:00Z',
+    }] } as never)
+    const user = userEvent.setup()
+    render(<AccessRequestsPage />, { wrapper: createWrapper() })
+    const tab = await screen.findByRole('tab', { name: /pending approvals/i })
+    // The badge counts the access request waiting and the launch together.
+    await waitFor(() => expect(within(tab).getByText('2')).toBeInTheDocument())
+    await user.click(tab)
+    const launchRow = (await screen.findByText('prod-db')).closest('tr') as HTMLElement
+    await user.click(within(launchRow).getByRole('button', { name: /^approve$/i }))
+    await waitFor(() => expect(api.pam.approveSponsoredRequest).toHaveBeenCalledWith('pr-1'))
+    vi.mocked(api.pam.listSponsoredRequests).mockResolvedValue({ requests: [] } as never)
   })
 
   it('renders the page heading and Request Access button', async () => {
@@ -428,6 +467,47 @@ describe('AccessRequestsPage', () => {
           resource_id: 'role-2',
           resource_name: 'auditor',
           duration: '',
+        }),
+      )
+    })
+  })
+
+  it('PAM Connection offers only entries the user cannot yet connect to, and needs a duration', async () => {
+    const user = userEvent.setup()
+    render(<AccessRequestsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Access Requests')
+
+    fireEvent.click(screen.getByRole('button', { name: /request access/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText(/explain why you need access/i)).toBeInTheDocument())
+
+    await user.click(screen.getByRole('combobox', { name: /resource type/i }))
+    await user.click(await screen.findByRole('option', { name: /^pam connection$/i }))
+
+    await user.click(await screen.findByRole('combobox', { name: /resource name/i }))
+    expect(await screen.findByRole('option', { name: /^prod-db-01$/i })).toBeInTheDocument()
+    // An entry the user can already connect to is not offered.
+    expect(screen.queryByRole('option', { name: /^build-agent$/i })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: /^prod-db-01$/i }))
+
+    // A PAM connection is always time-bound: no Permanent, and Submit waits
+    // for a duration.
+    const submit = screen.getByRole('button', { name: /submit request/i })
+    expect(submit).toBeDisabled()
+    await user.click(screen.getByRole('combobox', { name: /access duration/i }))
+    expect(screen.queryByRole('option', { name: /^permanent$/i })).not.toBeInTheDocument()
+    await user.click(await screen.findByRole('option', { name: /4 hours/i }))
+
+    fireEvent.change(screen.getByPlaceholderText(/explain why you need access/i), { target: { value: 'Patch window' } })
+    await user.click(submit)
+
+    await waitFor(() => {
+      expect(vi.mocked(api.post)).toHaveBeenCalledWith(
+        '/api/v1/governance/requests',
+        expect.objectContaining({
+          resource_type: 'pam_entry',
+          resource_id: 'pam-view',
+          resource_name: 'prod-db-01',
+          duration: '4h',
         }),
       )
     })

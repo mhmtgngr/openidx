@@ -112,7 +112,8 @@ const userSelectColumns = `
 	COALESCE(last_name, '')  AS last_name,
 	enabled, email_verified,
 	created_at, updated_at, last_login_at, password_changed_at,
-	password_must_change, failed_login_count, last_failed_login_at, locked_until`
+	password_must_change, failed_login_count, last_failed_login_at, locked_until,
+	user_type, account_status, vendor_org_id::text, sponsor_user_id::text, account_expires_at`
 
 // scanUser scans one row (in userSelectColumns order) into a UserDB.
 func scanUser(row pgx.Row) (*UserDB, error) {
@@ -122,6 +123,7 @@ func scanUser(row pgx.Row) (*UserDB, error) {
 		&u.Enabled, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt,
 		&u.PasswordChangedAt, &u.PasswordMustChange, &u.FailedLoginCount,
 		&u.LastFailedLoginAt, &u.LockedUntil,
+		&u.UserType, &u.AccountStatus, &u.VendorOrgID, &u.SponsorUserID, &u.AccountExpiresAt,
 	)
 	if err != nil {
 		return nil, err
@@ -258,23 +260,44 @@ func (r *PostgresUserRepository) Update(ctx context.Context, user *User) error {
 	dbUser := FromUser(*user)
 	dbUser.UpdatedAt = time.Now()
 
-	result, err := r.db.Pool.Exec(ctx, `
+	// The row's enabled before this write, read under the row's lock in the
+	// same statement: an edit that disables the account is told apart from an
+	// edit of an account already disabled, which must not tell anyone again.
+	// The locking read is joined in FROM so it runs before the write; read in
+	// RETURNING alone, it would run after and skip the row the write changed.
+	var wasEnabled bool
+	err = r.db.Pool.QueryRow(ctx, `
+		WITH before AS (SELECT id, COALESCE(enabled, false) AS enabled FROM users WHERE id = $1 AND org_id = $9 FOR UPDATE)
 		UPDATE users
 		SET username = $2, email = $3, first_name = $4, last_name = $5,
 		    enabled = $6, email_verified = $7, updated_at = $8
-		WHERE id = $1 AND org_id = $9
+		FROM before
+		WHERE users.id = before.id AND users.org_id = $9
+		RETURNING before.enabled
 	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
-		dbUser.Enabled, dbUser.EmailVerified, dbUser.UpdatedAt, org.ID)
+		dbUser.Enabled, dbUser.EmailVerified, dbUser.UpdatedAt, org.ID).Scan(&wasEnabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrUserNotFound
+	}
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrUserAlreadyExists
 		}
 		return fmt.Errorf("update user: %w", err)
 	}
-	if result.RowsAffected() == 0 {
-		return ErrUserNotFound
-	}
 	user.UpdatedAt = dbUser.UpdatedAt
+	// An administrator's edit that disables the account is a sever like any
+	// other: the receivers that subscribed to account-disabled are told, once,
+	// on the edit that turns the account off. Best-effort by the same contract
+	// as Delete below: the account is disabled whether or not the signal is
+	// written.
+	if wasEnabled && !dbUser.Enabled {
+		if serr := ssfsignal.Enqueue(ctx, r.db.Pool, ssfsignal.Signal{
+			OrgID: org.ID, SubjectID: dbUser.ID, Claims: map[string]any{"reason": "disabled"},
+		}); serr != nil {
+			zap.L().Warn("user disabled but the account-disabled signal was not enqueued", logsafe.String("user_id", dbUser.ID), zap.Error(serr))
+		}
+	}
 	return nil
 }
 
