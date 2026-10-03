@@ -53,7 +53,9 @@ func TestCreateApprovalRows_RoleStep(t *testing.T) {
 			step_min_approvals INTEGER NOT NULL DEFAULT 1,
 			decision VARCHAR(20) NOT NULL,
 			created_at TIMESTAMPTZ DEFAULT now(),
-			org_id UUID NOT NULL);
+			org_id UUID NOT NULL,
+			approver_basis VARCHAR(16),
+			approver_basis_id UUID);
 	`); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
