@@ -1465,16 +1465,24 @@ func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) er
 
 	// Use a single atomic query that checks the member limit and inserts in one step,
 	// avoiding the TOCTOU race between counting members and inserting.
+	//
+	// A membership whose window has ended (v224) is not one: the expiry sweep
+	// deletes the row within a minute, and until then adding the user again
+	// takes the row over as a standing membership, rather than answering that
+	// they are already a member. Nor does it count against the cap.
 	result, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO group_memberships (group_id, user_id, joined_at, org_id)
 		SELECT $1, $2, NOW(), $3
-		WHERE NOT EXISTS (SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2 AND org_id = $3)
-		AND (
+		WHERE (
 			SELECT COUNT(*) FROM group_memberships WHERE group_id = $1 AND org_id = $3
+			   AND (expires_at IS NULL OR expires_at > NOW())
 		) < COALESCE(
 			(SELECT max_members FROM groups WHERE id = $1 AND org_id = $3),
 			2147483647
 		)
+		ON CONFLICT (user_id, group_id) DO UPDATE SET joined_at = NOW(), expires_at = NULL
+		 WHERE group_memberships.org_id = $3
+		   AND group_memberships.expires_at IS NOT NULL AND group_memberships.expires_at <= NOW()
 	`, groupID, userID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to add member: %w", err)
@@ -1483,7 +1491,8 @@ func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) er
 	if result.RowsAffected() == 0 {
 		// Check why the insert didn't happen: either already a member or limit reached
 		var exists bool
-		err = s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2 AND org_id = $3)", groupID, userID, org.ID).Scan(&exists)
+		err = s.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2 AND org_id = $3
+			AND (expires_at IS NULL OR expires_at > NOW()))`, groupID, userID, org.ID).Scan(&exists)
 		if err != nil {
 			return err
 		}
