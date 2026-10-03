@@ -181,7 +181,9 @@ the install's settings say:
   nothing else. That needs `GUACAMOLE_PER_USER_IDENTITIES=true`. Without it,
   or when the account cannot be set up at launch, the launch is refused
   (`external_broker_identity_required`) rather than handed the shared broker
-  token, which opens every connection on the broker.
+  token, which opens every connection on the broker. When the account ends,
+  the broker sweep (every 5 minutes) deletes the user's own connections,
+  with the credential each holds, and then the broker account.
 - **Hardened.** Clipboard in both directions, drive redirection, file
   transfer over the drive or SFTP, and printing are off. The entry's settings
   cannot turn them back on, or leave the screen, the pointer or touches out of
