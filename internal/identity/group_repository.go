@@ -135,12 +135,21 @@ func (r *PostgresGroupRepository) Create(ctx context.Context, group *Group) erro
 	group.CreatedAt = now
 	group.UpdatedAt = now
 	dbGroup := FromGroup(*group)
+	// The membership settings, read as an update reads them: one left out
+	// takes the column's default, and a bad cap is refused rather than
+	// dropped.
+	selfJoin, approval, maxMembers, _, err := groupSettingsOnUpdate(group.Attributes)
+	if err != nil {
+		return err
+	}
 
 	_, err = r.db.Pool.Exec(ctx, `
-		INSERT INTO groups (id, name, description, parent_id, created_at, updated_at, org_id, external_allowed)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, false))
+		INSERT INTO groups (id, name, description, parent_id, created_at, updated_at, org_id, external_allowed,
+		                    allow_self_join, require_approval, max_members)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, false), COALESCE($9, false), COALESCE($10, false), $11)
 	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID,
-		dbGroup.CreatedAt, dbGroup.UpdatedAt, org.ID, dbGroup.ExternalAllowed)
+		dbGroup.CreatedAt, dbGroup.UpdatedAt, org.ID, dbGroup.ExternalAllowed,
+		selfJoin, approval, maxMembers)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrGroupAlreadyExists

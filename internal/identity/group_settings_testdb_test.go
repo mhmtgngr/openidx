@@ -196,3 +196,93 @@ func TestAGroupReadCountsItsMembers(t *testing.T) {
 		t.Errorf("the group read gives memberCount %v; want 2", one["memberCount"])
 	}
 }
+
+// TestAGroupIsCreatedWithItsSettings: creating a group wrote its name,
+// description, parent and external flag, and dropped self-join, approval and
+// the member cap, so a group created with a cap had none. A duplicate name,
+// on create or on a rename, and an update of a group that does not exist,
+// answered 500. Now the settings are written as an update writes them, a bad
+// cap is refused, a duplicate answers 409 and a missing group 404.
+func TestAGroupIsCreatedWithItsSettings(t *testing.T) {
+	db, cleanup := setupMigratedDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+	gin.SetMode(gin.TestMode)
+
+	const org = "00000000-0000-0000-0000-000000000010"
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: org})
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	svc := NewService(db, nil, &config.Config{}, zap.NewNop())
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: org}))
+		c.Set("roles", []string{"admin"})
+		c.Next()
+	})
+	r.POST("/groups", svc.handleCreateGroup)
+	r.PUT("/groups/:id", svc.handleUpdateGroup)
+	call := func(method, path, body string) (int, map[string]interface{}) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		out := map[string]interface{}{}
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return w.Code, out
+	}
+
+	code, body := call(http.MethodPost, "/groups",
+		`{"displayName":"capped-`+suffix+`","attributes":{"allowSelfJoin":"true","requireApproval":"true","maxMembers":"8"}}`)
+	id, _ := body["id"].(string)
+	if code != http.StatusCreated || id == "" {
+		t.Fatalf("create: %d %v", code, body)
+	}
+	var selfJoin, approval bool
+	var cap *int
+	if err := db.Pool.QueryRow(ctx, `SELECT allow_self_join, require_approval, max_members FROM groups WHERE id = $1`, id).
+		Scan(&selfJoin, &approval, &cap); err != nil {
+		t.Fatalf("read the group: %v", err)
+	}
+	if !selfJoin || !approval || cap == nil || *cap != 8 {
+		t.Errorf("the created group has selfJoin=%v approval=%v cap=%v; want true, true, 8", selfJoin, approval, cap)
+	}
+
+	code, body = call(http.MethodPost, "/groups", `{"displayName":"plain-`+suffix+`"}`)
+	plain, _ := body["id"].(string)
+	if code != http.StatusCreated || plain == "" {
+		t.Fatalf("create without settings: %d %v", code, body)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT allow_self_join, require_approval, max_members FROM groups WHERE id = $1`, plain).
+		Scan(&selfJoin, &approval, &cap); err != nil {
+		t.Fatalf("read the group: %v", err)
+	}
+	if selfJoin || approval || cap != nil {
+		t.Errorf("a group created without settings has selfJoin=%v approval=%v cap=%v; want the defaults", selfJoin, approval, cap)
+	}
+
+	for _, tc := range []struct {
+		what, method, path, body string
+		status                   int
+		code                     interface{}
+	}{
+		{"a create with a cap of 0", http.MethodPost, "/groups",
+			`{"displayName":"zero-` + suffix + `","attributes":{"maxMembers":"0"}}`, http.StatusBadRequest, "invalid_max_members"},
+		{"a create of a name in use", http.MethodPost, "/groups",
+			`{"displayName":"capped-` + suffix + `"}`, http.StatusConflict, "group_exists"},
+		{"a rename onto a name in use", http.MethodPut, "/groups/" + plain,
+			`{"displayName":"capped-` + suffix + `"}`, http.StatusConflict, "group_exists"},
+		{"an update of a group that does not exist", http.MethodPut, "/groups/00000000-0000-0000-0000-00000000dead",
+			`{"displayName":"ghost-` + suffix + `"}`, http.StatusNotFound, nil},
+	} {
+		if code, body := call(tc.method, tc.path, tc.body); code != tc.status || body["code"] != tc.code {
+			t.Errorf("%s: %d %v; want %d %v", tc.what, code, body, tc.status, tc.code)
+		}
+	}
+	var n int
+	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM groups WHERE name = $1`, "zero-"+suffix).Scan(&n); err != nil || n != 0 {
+		t.Errorf("the refused create left %d groups (%v)", n, err)
+	}
+}
