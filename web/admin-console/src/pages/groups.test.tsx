@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -109,6 +109,26 @@ describe('GroupsPage', () => {
       expect(screen.getByText('5')).toBeInTheDocument()
       expect(screen.getByText('15')).toBeInTheDocument()
     })
+  })
+
+  it('reads the member count the identity service sends', async () => {
+    // The API's own shape: SCIM's displayName, and memberCount left out for an
+    // empty group.
+    vi.mocked(api.getWithHeaders).mockResolvedValue({
+      data: [
+        { id: '3', displayName: 'Auditors', attributes: { description: 'Read-only reviewers' }, memberCount: 7 },
+        { id: '4', displayName: 'Contractors', attributes: { description: 'Nobody yet' } },
+      ],
+      headers: { 'x-total-count': '2' },
+    })
+    const wrapper = createWrapper()
+
+    render(<GroupsPage />, { wrapper })
+
+    const auditors = (await screen.findByText('Auditors')).closest('tr')!
+    const contractors = screen.getByText('Contractors').closest('tr')!
+    expect(within(auditors).getByText('7')).toBeInTheDocument()
+    expect(within(contractors).getByText('0')).toBeInTheDocument()
   })
 
   it('has add group button', async () => {

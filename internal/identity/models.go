@@ -35,6 +35,15 @@ type User struct {
 	LdapDN         *string           `json:"ldapDN,omitempty" db:"ldap_dn"`
 	Source         *string           `json:"source,omitempty" db:"source"` // e.g., "ldap", "scim", "manual"
 
+	// External identity (migration v214). Read-only through this model: an
+	// external account is created by an external invitation and changed by
+	// the external-account routes; a user write never sets these.
+	UserType         string     `json:"userType,omitempty" db:"user_type"`
+	AccountStatus    string     `json:"accountStatus,omitempty" db:"account_status"`
+	VendorOrgID      *string    `json:"vendorOrgId,omitempty" db:"vendor_org_id"`
+	SponsorUserID    *string    `json:"sponsorUserId,omitempty" db:"sponsor_user_id"`
+	AccountExpiresAt *time.Time `json:"accountExpiresAt,omitempty" db:"account_expires_at"`
+
 	// Password & Security Fields
 	PasswordHash       *string    `json:"-" db:"password_hash"` // Never expose in JSON
 	PasswordChangedAt  *time.Time `json:"passwordChangedAt,omitempty" db:"password_changed_at"`
@@ -198,6 +207,10 @@ type Group struct {
 	Attributes     map[string]string `json:"attributes,omitempty" db:"attributes"`
 	DirectoryID    *string           `json:"directoryId,omitempty" db:"directory_id"` // For external sync
 	Source         *string           `json:"source,omitempty" db:"source"`
+	// MemberCount is the group's member count where the read counted them,
+	// left out where it did not or the group is empty. Read-only: an update
+	// ignores it.
+	MemberCount int `json:"memberCount,omitempty" db:"member_count"`
 
 	// Timestamps
 	CreatedAt time.Time  `json:"createdAt" db:"created_at"`

@@ -180,12 +180,20 @@ func (s *Service) applyRuleAction(ctx context.Context, orgID, userID string, a R
 			SELECT $1, id, $3 FROM groups WHERE (id::text = $2 OR name = $2) AND org_id = $3
 			ON CONFLICT DO NOTHING`, userID, target, orgID)
 		s.reportRuleAction(ctx, ruleName, a, userID, res.RowsAffected(), err)
+		if err == nil && res.RowsAffected() > 0 {
+			// A group or a role the user did not hold: the receivers are told.
+			s.claimsChanged(ctx, orgID, "provisioning rule "+a.Type, userID)
+		}
 	case "assign_role":
 		res, err := s.db.Pool.Exec(ctx, `
 			INSERT INTO user_roles (user_id, role_id, org_id)
 			SELECT $1, id, $3 FROM roles WHERE (id::text = $2 OR name = $2) AND org_id = $3
 			ON CONFLICT DO NOTHING`, userID, target, orgID)
 		s.reportRuleAction(ctx, ruleName, a, userID, res.RowsAffected(), err)
+		if err == nil && res.RowsAffected() > 0 {
+			// A group or a role the user did not hold: the receivers are told.
+			s.claimsChanged(ctx, orgID, "provisioning rule "+a.Type, userID)
+		}
 	default:
 		s.logger.Warn("provisioning rule action type is not auto-executed; skipped",
 			zap.String("rule", ruleName), zap.String("type", a.Type), zap.String("target", target))
