@@ -165,6 +165,10 @@ func (s *Service) handlePamWSConnect(c *gin.Context) {
 	if refuseModeratedEntry(c, &entry, "the browser terminal") {
 		return
 	}
+	// Nor anything that records it.
+	if refuseRecordedEntry(c, entry.RecordSession, "the browser terminal") {
+		return
+	}
 	// The overlay gate, which this path did not ask before: under
 	// PAM_REQUIRE_ZTNA=enforce a direct-reach SSH entry opened here while its
 	// connect was refused.

@@ -318,6 +318,17 @@ func validatePamEntry(req *pamEntryUpsertReq) (PamEntryType, error) {
 	if req.RequireModerator != nil && *req.RequireModerator && t.Protocol == "" {
 		return PamEntryType{}, fmt.Errorf("a %s entry opens no session, so it cannot require a moderator", t.Type)
 	}
+	// The browser terminal records nothing and runs no session a moderator
+	// can watch, so it refuses an entry that asks for either, and an entry
+	// set to open there could never be opened.
+	if pamNormalizeRenderer(req.Renderer, req.EntryType) == "wasm-ssh" {
+		if req.RecordSession {
+			return PamEntryType{}, errors.New("the browser terminal records nothing, so an entry whose sessions are recorded cannot open there: turn off one of the two")
+		}
+		if req.RequireModerator != nil && *req.RequireModerator {
+			return PamEntryType{}, errors.New("the browser terminal runs no session a moderator can watch, so a moderated entry cannot open there: turn off one of the two")
+		}
+	}
 	// RemoteApp command-line args must never carry a secret (visible in the
 	// target's process list). Reject on write so the mistake surfaces in the
 	// entry dialog, not as an opaque failure at launch.
