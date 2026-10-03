@@ -625,7 +625,10 @@ geliştirici + ajan içindir ve onaylandığında GitHub issue'larına taşını
 - Konsol: Erişim Talepleri tek kuyruk; PAM kaydı formunda kilitli alanlar.
 - Kanıt: "onaylı pencerede dış kullanıcı yalnızca onaylı hedefe ulaşır; süresi
   dolmuş, onaysız ya da kapsam dışı girişim OAuth, proxy, Ziti dial ve PAM'de
-  reddedilir" (#975 kabul ölçütü) entegrasyon testi.
+  reddedilir" (#975 kabul ölçütü) kabul testi. Test göç edilmiş Postgres
+  üzerinde, birim işinde koşar: governance, OAuth ve proxy kendi route'larıyla
+  süreç içinde çalışır; Ziti denetleyicisi ve PAM aracısı yerine taklit
+  kullanılır (§10).
 - Efor: 2 hafta.
 
 ### Faz 3 — İşletilebilirlik (M3, #975 V2)
@@ -709,7 +712,7 @@ Postgres / servislere karşı entegrasyon).
 | §6.6 break-glass | Uygun kullanıcı gerekçe ve taze MFA ile açar; olay, webhook, inceleme kalemi, rotasyon | Uygun olmayan ya da dış kullanıcı 403; eşik aşımında kapı kapalı | DB + birim |
 | §6.5 token ömrü | 30 dk yükseltmede token 30 dk | Süre sonrası token ile PAM bağlan 401/403 | Birim + entegrasyon |
 | §5.9 kapanış raporu | Rapor her yetki ve oturumu listeler | Başka kuruluşun dış kullanıcısı için 404 | DB |
-| #975 kabul ölçütü | Onaylı pencerede onaylı hedef ulaşılır | Süresi dolmuş/onaysız/kapsam dışı girişim OAuth, proxy, Ziti dial ve PAM'de reddedilir | Entegrasyon |
+| #975 kabul ölçütü | Onaylı pencerede onaylı hedef ulaşılır | Süresi dolmuş/onaysız/kapsam dışı girişim OAuth, proxy, Ziti dial ve PAM'de reddedilir | DB (birim işi `internal/access`: servislerin kendi route'ları süreç içinde; Ziti denetleyicisi ve PAM aracısı taklit) |
 
 Her satır tamamlandığında [display-equals-enforcement.md](../evidence/display-equals-enforcement.md)
 tablosuna bir satır eklenir.
