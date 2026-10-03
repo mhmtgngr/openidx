@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY, org_id UUID, username VAR
 CREATE TABLE IF NOT EXISTS roles (id UUID PRIMARY KEY, name VARCHAR(255), org_id UUID);
 CREATE TABLE IF NOT EXISTS user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ, PRIMARY KEY (user_id, role_id));
 CREATE TABLE IF NOT EXISTS groups (id UUID PRIMARY KEY, name VARCHAR(255), org_id UUID);
-CREATE TABLE IF NOT EXISTS group_memberships (user_id UUID, group_id UUID, org_id UUID, PRIMARY KEY (user_id, group_id));
+CREATE TABLE IF NOT EXISTS group_memberships (user_id UUID, group_id UUID, org_id UUID, PRIMARY KEY (user_id, group_id), expires_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS policies (id UUID PRIMARY KEY, name TEXT, type TEXT, enabled BOOLEAN DEFAULT TRUE, org_id UUID);
 CREATE TABLE IF NOT EXISTS policy_rules (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     policy_id UUID REFERENCES policies(id) ON DELETE CASCADE, rule_type TEXT,

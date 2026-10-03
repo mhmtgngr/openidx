@@ -52,6 +52,7 @@ func (zm *ZitiManager) getUserGroupNames(ctx context.Context, userID string) ([]
 		`SELECT g.name, g.org_id FROM groups g
 		 JOIN group_memberships gm ON gm.group_id = g.id
 		 WHERE gm.user_id = $1
+		   AND (gm.expires_at IS NULL OR gm.expires_at > NOW())
 		 ORDER BY g.name`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("query group memberships: %w", err)

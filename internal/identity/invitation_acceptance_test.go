@@ -186,7 +186,7 @@ func TestTheInvitedAccountGetsItsPasswordAndItsGrantsOrNeither(t *testing.T) {
     external_allowed BOOLEAN NOT NULL DEFAULT false
 );
 		CREATE TABLE user_roles (user_id UUID NOT NULL, role_id UUID NOT NULL, org_id UUID NOT NULL);
-		CREATE TABLE group_memberships (user_id UUID NOT NULL, group_id UUID NOT NULL, org_id UUID NOT NULL);
+		CREATE TABLE group_memberships (user_id UUID NOT NULL, group_id UUID NOT NULL, org_id UUID NOT NULL, expires_at TIMESTAMPTZ);
 	`); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}

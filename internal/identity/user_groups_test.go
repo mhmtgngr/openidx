@@ -25,7 +25,7 @@ func TestUserGroupNames(t *testing.T) {
 		CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255), org_id UUID,
     external_allowed BOOLEAN NOT NULL DEFAULT false
 );
-		CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID);
+		CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID, expires_at TIMESTAMPTZ);
 	`); err != nil {
 		t.Fatalf("schema: %v", err)
 	}

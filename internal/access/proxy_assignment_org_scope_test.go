@@ -113,7 +113,7 @@ func TestAssignmentAllowed_BypassesRLS(t *testing.T) {
 			expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE group_application_assignments (
 			group_id UUID NOT NULL, application_id UUID NOT NULL, org_id UUID NOT NULL)`,
-		`CREATE TABLE group_memberships (user_id UUID NOT NULL, group_id UUID NOT NULL, org_id UUID NOT NULL)`,
+		`CREATE TABLE group_memberships (user_id UUID NOT NULL, group_id UUID NOT NULL, org_id UUID NOT NULL, expires_at TIMESTAMPTZ)`,
 	}
 	setup = append(setup, orgScopePolicy("applications")...)
 	setup = append(setup, orgScopePolicy("user_application_assignments")...)
