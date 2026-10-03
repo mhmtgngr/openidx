@@ -428,7 +428,8 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 			 FROM user_application_assignments uaa
 			 JOIN users u ON uaa.user_id = u.id AND u.org_id = uaa.org_id
 			 JOIN applications a ON uaa.application_id = a.id AND a.org_id = uaa.org_id
-			 WHERE uaa.org_id = $1 AND u.enabled = true`, org.ID)
+			 WHERE uaa.org_id = $1 AND u.enabled = true
+			   AND (uaa.expires_at IS NULL OR uaa.expires_at > NOW())`, org.ID)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -772,6 +773,7 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 	// someone out of access a rollback gave back.
 	if cutTokensFor != "" {
 		s.revokeAfterSever(ctx, cutTokensFor, "attestation.revoked")
+		s.claimsChanged(ctx, org.ID, cutTokensFor, "attestation.revoked")
 	}
 
 	// Check if all items are decided - auto-complete campaign.

@@ -366,6 +366,17 @@ func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) (
 				appAttrs = append(appAttrs, appMarkerAttr(r.ID))
 			}
 		}
+		// A live JIT network grant: a fulfilled network_service request whose
+		// window is open carries its jit-<request-id> attribute, which its own
+		// Dial policy names (network_grant_worker.go). The sync rewrites the
+		// whole set, so it keeps that attribute while the window lasts, and
+		// leaves it out once the window has ended.
+		jit, jerr := zm.liveJITAttributes(ctx, userID, orgID)
+		if jerr != nil {
+			zm.logger.Warn("failed to load JIT network grants for ziti attributes",
+				zap.String("user_id", userID), zap.Error(jerr))
+		}
+		appAttrs = append(appAttrs, jit...)
 	}
 
 	attrs := assembleAttributes(groups, hasTrusted, browzer, appAttrs)
@@ -380,6 +391,29 @@ func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) (
 		}
 	}
 	return attrs, nil
+}
+
+// liveJITAttributes returns the jit-<request-id> attributes of the user's
+// network_service requests whose window is open.
+func (zm *ZitiManager) liveJITAttributes(ctx context.Context, userID, orgID string) ([]string, error) {
+	rows, err := zm.db.Pool.Query(ctx,
+		`SELECT 'jit-' || id::text FROM access_requests
+		  WHERE requester_id = $1 AND org_id = $2 AND resource_type = 'network_service'
+		    AND status = 'fulfilled' AND expires_at > NOW()
+		  ORDER BY id`, userID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var attr string
+		if err := rows.Scan(&attr); err != nil {
+			return nil, err
+		}
+		out = append(out, attr)
+	}
+	return out, rows.Err()
 }
 
 // userOrgID returns the user's org_id (or "" on miss). Small helper so
@@ -409,7 +443,8 @@ func appMarkerAttr(appID string) string { return "app-" + appID }
 //   - #enrolled-users on EVERY identity (Tier 1 dial gate: any enrolled user),
 //   - #device-trusted iff the user has a trusted device (Tier 2 dial gate),
 //   - #browzer-users iff BrowZer is enabled,
-//   - one #app-<uuid> per route-linked application the user is assigned.
+//   - one #app-<uuid> per route-linked application the user is assigned, and
+//     one #jit-<request-id> per network_service request whose window is open.
 //
 // This is the whole roleAttributes set; the periodic group-attribute reconcile
 // replaces roleAttributes wholesale, so anything omitted here is stripped off.
@@ -620,7 +655,8 @@ func (zm *ZitiManager) StartUserSyncPoller(ctx context.Context) {
 	}()
 }
 
-// runAutoSync is called each tick to sync new users and refresh stale group attributes.
+// runAutoSync is called each tick to sync new users, re-sync the identities whose
+// application assignments changed, and refresh stale group attributes.
 func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 	// Find up to 10 users without Ziti identities
 	rows, err := zm.db.Pool.Query(ctx,
@@ -655,6 +691,8 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 			 WHERE id = (SELECT id FROM ziti_user_sync LIMIT 1)`)
 	}
 
+	zm.resyncChangedAssignments(ctx)
+
 	// Re-sync stale group attributes (older than 5 minutes)
 	staleRows, err := zm.db.Pool.Query(ctx,
 		//orgscope:ignore Ziti user-sync background poller sweep across all orgs; refreshes stale identity attributes
@@ -676,6 +714,46 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 	}
 
 	zm.runDeprovisionSweep(ctx)
+}
+
+// resyncChangedAssignments re-syncs the identities whose grants changed since
+// their last sync: an application assignment started, or its window ended
+// (migration v222 gives an assignment its window), or a network_service
+// request's window ended. Their #app-<id> and #jit-<request-id> attributes are
+// wrong until then, and the staleness pass below would correct them only five
+// minutes after the last sync; this corrects them on the poll.
+func (zm *ZitiManager) resyncChangedAssignments(ctx context.Context) {
+	rows, err := zm.db.Pool.Query(ctx,
+		//orgscope:ignore Ziti user-sync background poller sweep across all orgs; re-syncs the identities whose application assignments changed since their last sync
+		`SELECT zi.user_id FROM ziti_identities zi
+		  WHERE zi.user_id IS NOT NULL AND zi.group_attrs_synced_at IS NOT NULL
+		    AND (EXISTS (SELECT 1 FROM user_application_assignments uaa
+		                  WHERE uaa.user_id = zi.user_id
+		                    AND (uaa.assigned_at > zi.group_attrs_synced_at
+		                         OR (uaa.expires_at > zi.group_attrs_synced_at AND uaa.expires_at <= NOW())))
+		         OR EXISTS (SELECT 1 FROM access_requests r
+		                     WHERE r.requester_id = zi.user_id AND r.resource_type = 'network_service'
+		                       AND r.status = 'fulfilled'
+		                       AND r.expires_at > zi.group_attrs_synced_at AND r.expires_at <= NOW()))
+		  LIMIT 50`)
+	if err != nil {
+		zm.logger.Warn("auto-sync: changed assignments query failed", zap.Error(err))
+		return
+	}
+	var users []string
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err == nil {
+			users = append(users, userID)
+		}
+	}
+	rows.Close()
+	for _, userID := range users {
+		if err := zm.SyncGroupAttributesForUser(ctx, userID); err != nil {
+			zm.logger.Warn("auto-sync: re-sync after an assignment change failed",
+				zap.String("user_id", userID), zap.Error(err))
+		}
+	}
 }
 
 // runDeprovisionSweep is the revocation half of the users→Ziti mirror: it
