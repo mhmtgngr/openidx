@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and the hosts' state and agents. They now hold the operator tier, like
     the console page behind them. An end user's launchable apps stay at
     `/pam/my-apps`.
+  - **Moderation status:** `GET /api/v1/access/pam/moderation/:id` named
+    the moderator and the live connection to anyone in the organization who
+    knew the id. It now answers the same parties as ending it does: the
+    requester, the moderator and an administrator.
 
 ## [1.39.0] - 2026-09-28
 

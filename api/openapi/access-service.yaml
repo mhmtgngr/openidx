@@ -2499,7 +2499,10 @@ paths:
     get:
       tags: [PAM Moderation]
       summary: Get moderation status
-      description: Requester or moderator polls until `active` (or a terminal state).
+      description: >-
+        Requester or moderator polls until `active` (or a terminal state).
+        Answers the requester, the moderator and an administrator; anyone
+        else gets 404, as for an unknown id.
       operationId: pamGetModerationStatus
       parameters:
         - $ref: '#/components/parameters/IdPath'
