@@ -398,22 +398,24 @@ const approverEligibleSQL = `(CASE a.approver_basis
 	                             WHERE rq.id = ar.requester_id AND rq.org_id = ar.org_id AND rq.sponsor_user_id = a.approver_id)
 	ELSE TRUE END)`
 
-// approverStillEligible reports whether the caller's pending row at step still
-// stands on its basis (approverEligibleSQL). The chain is built when the
-// request is filed, from the roles, groups, manager and sponsor of that day;
-// an approver who has since lost what put them on it no longer decides.
+// approverStillEligible reports whether any of the caller's pending rows at
+// step still stands on its basis (approverEligibleSQL). The chain is built when
+// the request is filed, from the roles, groups, manager and sponsor of that
+// day; an approver who has since lost what put them on it no longer decides.
+//
+// Any, not one: two steps of a policy can share a step order, so one approver
+// can hold two rows there on two bases (the requester's manager who also holds
+// the step's role). The queue shows the request while either stands, and the
+// decision has to agree with it; a single row read with LIMIT 1 was whichever
+// one the database returned first.
 func (s *Service) approverStillEligible(ctx context.Context, requestID, approverID string, step int, orgID string) (bool, error) {
 	var ok bool
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT `+approverEligibleSQL+`
+		SELECT COALESCE(bool_or(`+approverEligibleSQL+`), false)
 		  FROM access_request_approvals a
 		  JOIN access_requests ar ON ar.id = a.request_id AND ar.org_id = a.org_id
 		 WHERE a.request_id = $1 AND a.approver_id = $2 AND a.step_order = $3
-		   AND a.decision = 'pending' AND a.org_id = $4
-		 LIMIT 1`, requestID, approverID, step, orgID).Scan(&ok)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
+		   AND a.decision = 'pending' AND a.org_id = $4`, requestID, approverID, step, orgID).Scan(&ok)
 	if err != nil {
 		return false, fmt.Errorf("re-check the approver's basis: %w", err)
 	}

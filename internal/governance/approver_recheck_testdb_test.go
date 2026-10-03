@@ -226,6 +226,27 @@ func TestAnApproverWhoLostTheirBasisNoLongerDecides(t *testing.T) {
 		}
 	})
 
+	// Two steps can share a step order, so one approver can hold two rows there
+	// on two bases. While either stands, the queue shows the request, and the
+	// decision agrees with it rather than reading whichever row comes first.
+	t.Run("an approver with two rows at one step decides while either stands", func(t *testing.T) {
+		twoRows := user("ar-two-rows")
+		heldRole := newRole("ar-two-rows-role")
+		exec(`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1, $2, $3)`, twoRows, heldRole, org)
+		target := policy("ar-two-rows", fmt.Sprintf(`[{"type":"role","role_id":%q,"min_approvals":1}]`, heldRole))
+		req := file(requester, target)
+		exec(`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, step_min_approvals, decision, created_at, org_id, approver_basis)
+			SELECT gen_random_uuid(), request_id, approver_id, step_order, step_min_approvals, 'pending', NOW(), org_id, 'user'
+			  FROM access_request_approvals WHERE request_id = $1 AND approver_id = $2`, req, twoRows)
+		exec(`UPDATE user_roles SET expires_at = NOW() - interval '1 minute' WHERE user_id = $1 AND role_id = $2`, twoRows, heldRole)
+		if !queued(twoRows, req) {
+			t.Fatalf("the queue no longer shows the request, though the approver's second row stands")
+		}
+		if code, c := decide(twoRows, req, "approve"); code != http.StatusOK {
+			t.Errorf("the decision refused what the queue offers: %d %q, want 200", code, c)
+		}
+	})
+
 	t.Run("a row written before v226 is decided as before", func(t *testing.T) {
 		exec(`UPDATE user_roles SET expires_at = NULL WHERE user_id = $1 AND role_id = $2`, roleHolder1, approverRole)
 		req := file(requester, byRoleLegacy)
