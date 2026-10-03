@@ -70,6 +70,8 @@ interface GuacActiveSession {
   /** Real OpenIDX user who launched the session (Guacamole itself only sees the
    * shared broker account). Present when resolvable from OpenIDX's ledger. */
   openidx_user?: string
+  /** The broker the session runs on: 'ziti' is the OpenZiti overlay broker. */
+  broker?: 'direct' | 'ziti'
 }
 
 /** Row from the guacamole_sessions DB table. */
@@ -269,7 +271,7 @@ function ActiveSessionsTab() {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['guac-active-sessions'],
     queryFn: () =>
-      api.get<{ sessions: GuacActiveSession[] }>('/api/v1/access/guacamole/sessions'),
+      api.get<{ sessions: GuacActiveSession[]; unavailable?: string[] }>('/api/v1/access/guacamole/sessions'),
     retry: (_, err: unknown) => {
       // Don't retry on 503 (Guacamole unconfigured)
       const status = (err as { response?: { status?: number } })?.response?.status
@@ -323,6 +325,7 @@ function ActiveSessionsTab() {
     (error as { response?: { status?: number } })?.response?.status === 503
 
   const sessions: GuacActiveSession[] = data?.sessions ?? []
+  const unavailable: string[] = data?.unavailable ?? []
 
   return (
     <>
@@ -345,6 +348,12 @@ function ActiveSessionsTab() {
           ) : isError ? (
             <QueryError error={error} resource={t('pages.guacSessions.active.resourceName')} />
           ) : (
+            <>
+            {unavailable.length > 0 && (
+              <p role="status" className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                {t('pages.guacSessions.active.unavailable', { brokers: unavailable.join(', ') })}
+              </p>
+            )}
             <Table>
               <TableHeader>
                 <TableRow>
@@ -369,6 +378,11 @@ function ActiveSessionsTab() {
                     <TableCell className="font-mono text-xs">{s.remoteHost}</TableCell>
                     <TableCell className="font-mono text-xs">
                       {s.connectionIdentifier}
+                      {s.broker === 'ziti' && (
+                        <Badge variant="outline" className="ml-2 font-sans" title={t('pages.guacSessions.active.overlayHint')}>
+                          {t('pages.guacSessions.active.overlay')}
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {new Date(s.startDate).toLocaleString()}
@@ -412,6 +426,7 @@ function ActiveSessionsTab() {
                 )}
               </TableBody>
             </Table>
+            </>
           )}
         </CardContent>
       </Card>

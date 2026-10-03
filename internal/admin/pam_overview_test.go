@@ -198,9 +198,27 @@ func TestAggregatePAMOverview(t *testing.T) {
 		heldSessionID, orgA); err != nil {
 		t.Fatalf("seed legal hold: %v", err)
 	}
+	// A pending request on a route-backed entry (the route's session request
+	// since v213), and one on a plain entry, which the sessions counter does
+	// not count.
 	if _, err := db.Pool.Exec(ctx, `
-		INSERT INTO guacamole_session_requests (org_id, connection_id, requester_id, status, expires_at)
-		VALUES ($1::uuid, gen_random_uuid(), gen_random_uuid(), 'pending', NOW() + INTERVAL '1 hour')`,
+		WITH route AS (
+			INSERT INTO proxy_routes (org_id, name, from_url, to_url, enabled)
+			VALUES ($1::uuid, 'overview-bastion', 'https://overview-bastion.example.test', 'ssh://198.51.100.9:22', true)
+			RETURNING id
+		), routed AS (
+			INSERT INTO pam_entries (org_id, proxy_route_id, name, entry_type, hostname, port)
+			SELECT $1::uuid, id, 'overview-bastion', 'ssh', '198.51.100.9', 22 FROM route
+			RETURNING id
+		), plain AS (
+			INSERT INTO pam_entries (org_id, name, entry_type, hostname, port)
+			VALUES ($1::uuid, 'plain-entry', 'ssh', '198.51.100.10', 22)
+			RETURNING id
+		)
+		INSERT INTO pam_entry_access_requests (org_id, entry_id, requester_id, status, expires_at)
+		SELECT $1::uuid, id, gen_random_uuid(), 'pending', NOW() + INTERVAL '1 hour' FROM routed
+		UNION ALL
+		SELECT $1::uuid, id, gen_random_uuid(), 'pending', NOW() + INTERVAL '1 hour' FROM plain`,
 		orgA); err != nil {
 		t.Fatalf("seed session request: %v", err)
 	}

@@ -59,7 +59,8 @@ func OPAAuthz(client *opa.Client, logger *zap.Logger, devMode bool) gin.HandlerF
 				Authenticated: uid != "",
 			},
 			Resource: opa.ResourceContext{
-				Type: resourceType,
+				Type:  resourceType,
+				Route: c.FullPath(),
 			},
 			Method: c.Request.Method,
 			Path:   c.Request.URL.Path,
