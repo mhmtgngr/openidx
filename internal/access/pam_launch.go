@@ -898,7 +898,11 @@ func (s *Service) decidePamRequestAs(c *gin.Context, newStatus, auditAction stri
 	// <> approver so it is atomic with the status check.
 	guard := ""
 	if newStatus == "approved" {
+		// A launch request lives an hour, and an approval past that is one
+		// checkAndConsumePamApproval never honours: refused here, not recorded
+		// as an approval nobody can use.
 		guard = ` AND r.requester_id <> NULLIF($2,'')::uuid
+		  AND (r.expires_at IS NULL OR r.expires_at > NOW())
 		  AND NOT EXISTS (SELECT 1 FROM users u
 		                   WHERE u.id = r.requester_id AND u.org_id = r.org_id AND u.user_type = 'external'
 		                     AND u.sponsor_user_id IS DISTINCT FROM NULLIF($2,'')::uuid)`
@@ -925,16 +929,23 @@ func (s *Service) decidePamRequestAs(c *gin.Context, newStatus, auditAction stri
 		// on the sponsor's route a request that is not one of the caller's
 		// external users', is not found.
 		var requesterID, requesterType, sponsorID string
+		var expired bool
 		_ = s.db.Pool.QueryRow(ctx,
-			`SELECT r.requester_id::text, COALESCE(u.user_type, ''), COALESCE(u.sponsor_user_id::text, '')
+			`SELECT r.requester_id::text, COALESCE(u.user_type, ''), COALESCE(u.sponsor_user_id::text, ''),
+			        COALESCE(r.expires_at <= NOW(), false)
 			   FROM pam_entry_access_requests r
 			   LEFT JOIN users u ON u.id = r.requester_id AND u.org_id = r.org_id
 			  WHERE r.id = $1 AND r.org_id = $2 AND r.status = 'pending'`,
-			requestID, org.ID).Scan(&requesterID, &requesterType, &sponsorID)
+			requestID, org.ID).Scan(&requesterID, &requesterType, &sponsorID, &expired)
 		external := requesterType == externalid.TypeExternal
 		switch {
 		case requesterID == "", asSponsor && (!external || sponsorID != approverID):
 			c.JSON(http.StatusNotFound, gin.H{"error": "request not found or not pending"})
+		case newStatus == "approved" && expired:
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "this launch request has expired; the requester can file a new one",
+				"code":  "launch_request_expired",
+			})
 		case newStatus == "approved" && requesterID == approverID:
 			c.JSON(http.StatusForbidden, gin.H{"error": "you cannot approve your own access request (four-eyes)"})
 		case newStatus == "approved" && external && sponsorID != approverID:
@@ -1037,7 +1048,8 @@ func scanPamAccessRequests(rows pgx.Rows, logger *zap.Logger) []PamAccessRequest
 	return requests
 }
 
-// handlePamListRequests — GET /pam/entry-requests (admin): pending queue.
+// handlePamListRequests — GET /pam/entry-requests (admin): the pending queue,
+// without the requests whose hour has passed (they can no longer be approved).
 func (s *Service) handlePamListRequests(c *gin.Context) {
 	ctx := c.Request.Context()
 	org, err := orgctx.From(ctx)
@@ -1053,7 +1065,7 @@ func (s *Service) handlePamListRequests(c *gin.Context) {
 		  FROM pam_entry_access_requests r
 		  JOIN pam_entries e ON e.id = r.entry_id
 		  LEFT JOIN users u ON u.id = r.requester_id AND u.org_id = r.org_id
-		 WHERE r.org_id = $1 AND r.status = 'pending'
+		 WHERE r.org_id = $1 AND r.status = 'pending' AND (r.expires_at IS NULL OR r.expires_at > NOW())
 		 ORDER BY r.created_at DESC`, org.ID)
 	if err != nil {
 		s.logger.Error("handlePamListRequests: query failed", zap.Error(err))
