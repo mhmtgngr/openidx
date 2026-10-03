@@ -219,14 +219,35 @@ func (s *Service) handleListGuacSessionHistory(c *gin.Context) {
 // Returns all currently active Guacamole connections via the Guacamole
 // activeConnections API.
 func (s *Service) handleListActiveGuacSessions(c *gin.Context) {
-	if s.guacamoleClient == nil {
+	brokers := s.guacBrokers()
+	if len(brokers) == 0 {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Guacamole is not configured"})
 		return
 	}
 
-	sessions, err := s.guacamoleClient.ListActiveSessions(c.Request.Context())
-	if err != nil {
-		apperrors.HandleErrorWithLogger(c, apperrors.Internal("handleListActiveGuacSessions: failed to list active sessions", err), s.logger)
+	// Every broker's sessions. This listed the direct broker only, so a
+	// session on the overlay broker -- every external user's, and every one
+	// under PAM_REQUIRE_ZTNA=enforce -- was not on the page at all. A broker
+	// that cannot be listed is named in "unavailable" rather than failing the
+	// page for the other.
+	sessions := []GuacActiveSession{}
+	unavailable := []string{}
+	for _, b := range brokers {
+		listed, err := b.client.ListActiveSessions(c.Request.Context())
+		if err != nil {
+			s.logger.Warn("handleListActiveGuacSessions: a broker's sessions could not be listed",
+				zap.String("broker", b.name), zap.Error(err))
+			unavailable = append(unavailable, b.name)
+			continue
+		}
+		for i := range listed {
+			listed[i].Broker = b.name
+		}
+		sessions = append(sessions, listed...)
+	}
+	if len(unavailable) == len(brokers) {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("handleListActiveGuacSessions: failed to list active sessions",
+			errors.New("no broker could be listed")), s.logger)
 		return
 	}
 
@@ -234,7 +255,54 @@ func (s *Service) handleListActiveGuacSessions(c *gin.Context) {
 	// user who launched each session from our own ledger (best-effort).
 	s.annotateGuacSessionUsers(c.Request.Context(), sessions)
 
-	c.JSON(http.StatusOK, gin.H{"sessions": sessions})
+	c.JSON(http.StatusOK, gin.H{"sessions": sessions, "unavailable": unavailable})
+}
+
+// guacBroker is one configured Guacamole broker and the name the session
+// list gives it.
+type guacBroker struct {
+	name   string
+	client *GuacamoleClient
+}
+
+// guacBrokers is every configured broker, the direct one first.
+func (s *Service) guacBrokers() []guacBroker {
+	var out []guacBroker
+	if s.guacamoleClient != nil {
+		out = append(out, guacBroker{"direct", s.guacamoleClient})
+	}
+	if s.guacamoleZitiClient != nil {
+		out = append(out, guacBroker{"ziti", s.guacamoleZitiClient})
+	}
+	return out
+}
+
+// errNoSuchActiveSession is an active connection no broker is running.
+var errNoSuchActiveSession = errors.New("no broker is running that active connection")
+
+// brokerHolding finds the broker an active connection runs on, and the
+// session as that broker lists it. A broker that cannot be listed is skipped;
+// when no broker has the session, the answer is errNoSuchActiveSession, or
+// the listing error when a broker could not be asked.
+func (s *Service) brokerHolding(ctx context.Context, activeConnID string) (*GuacamoleClient, GuacActiveSession, error) {
+	var listErr error
+	for _, b := range s.guacBrokers() {
+		sessions, err := b.client.ListActiveSessions(ctx)
+		if err != nil {
+			listErr = err
+			continue
+		}
+		for _, sess := range sessions {
+			if sess.Identifier == activeConnID {
+				sess.Broker = b.name
+				return b.client, sess, nil
+			}
+		}
+	}
+	if listErr != nil {
+		return nil, GuacActiveSession{}, listErr
+	}
+	return nil, GuacActiveSession{}, errNoSuchActiveSession
 }
 
 // annotateGuacSessionUsers fills OpenIDXUser on each active session by matching
@@ -296,7 +364,7 @@ func (s *Service) annotateGuacSessionUsers(ctx context.Context, sessions []GuacA
 // Force-terminates an active Guacamole session by its active-connection UUID.
 // Also marks the corresponding guacamole_sessions row as terminated (best-effort).
 func (s *Service) handleTerminateGuacSession(c *gin.Context) {
-	if s.guacamoleClient == nil {
+	if len(s.guacBrokers()) == 0 {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Guacamole is not configured"})
 		return
 	}
@@ -310,30 +378,34 @@ func (s *Service) handleTerminateGuacSession(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	// The broker the session runs on. This asked the direct broker only, so a
+	// session on the overlay broker could not be ended from here.
+	broker, held, herr := s.brokerHolding(ctx, activeConnID)
+	if errors.Is(herr, errNoSuchActiveSession) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "active session not found"})
+		return
+	}
+	if herr != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("terminate guac session", herr), s.logger)
+		return
+	}
+
 	// Capture the per-user owner + connection BEFORE terminating (terminate
 	// removes the active connection, after which it can't be resolved) so the
 	// READ grant can be revoked. Best-effort; the stale-grant sweep is the backstop.
 	var termConnID, termGuacUser string
-	if (s.guacamoleClient != nil && s.guacamoleClient.perUserIdentities) ||
-		(s.guacamoleZitiClient != nil && s.guacamoleZitiClient.perUserIdentities) {
-		if sessions, lerr := s.guacamoleClient.ListActiveSessions(ctx); lerr == nil {
-			for _, sess := range sessions {
-				if sess.Identifier == activeConnID {
-					termConnID = sess.ConnectionIdentifier
-					break
-				}
-			}
-			if termConnID != "" {
-				_ = s.db.Pool.QueryRow(ctx,
-					//orgscope:ignore pam_entry_sessions RLS enforces org scope via the request ctx; the lookup key is the global Guacamole connection identifier
-					`SELECT COALESCE(guac_username,'') FROM pam_entry_sessions
-					  WHERE guac_connection_id = $1 AND guac_username IS NOT NULL
-					  ORDER BY started_at DESC LIMIT 1`, termConnID).Scan(&termGuacUser)
-			}
+	if broker.perUserIdentities {
+		termConnID = held.ConnectionIdentifier
+		if termConnID != "" {
+			_ = s.db.Pool.QueryRow(ctx,
+				//orgscope:ignore pam_entry_sessions RLS enforces org scope via the request ctx; the lookup key is the global Guacamole connection identifier
+				`SELECT COALESCE(guac_username,'') FROM pam_entry_sessions
+				  WHERE guac_connection_id = $1 AND guac_username IS NOT NULL
+				  ORDER BY started_at DESC LIMIT 1`, termConnID).Scan(&termGuacUser)
 		}
 	}
 
-	if err := s.guacamoleClient.TerminateSession(ctx, activeConnID); err != nil {
+	if err := broker.TerminateSession(ctx, activeConnID); err != nil {
 		s.logger.Error("handleTerminateGuacSession: failed to terminate session",
 			logsafe.String("active_conn_id", activeConnID), zap.Error(err))
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("terminate guac session", err), s.logger)
@@ -371,6 +443,7 @@ func (s *Service) handleTerminateGuacSession(c *gin.Context) {
 	s.logAuditEvent(c, "guacamole.session_terminated", activeConnID, "guacamole_session",
 		map[string]interface{}{
 			"active_conn_id": activeConnID,
+			"broker":         held.Broker,
 			"reason":         body.Reason,
 		})
 
@@ -387,7 +460,7 @@ func (s *Service) handleTerminateGuacSession(c *gin.Context) {
 // does not implement the sharingProfiles endpoint, e.g. < 1.3) the handler
 // responds 501 with a helpful fallback message. Audits guacamole.session_shared.
 func (s *Service) handleShareGuacSession(c *gin.Context) {
-	if s.guacamoleClient == nil {
+	if len(s.guacBrokers()) == 0 {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Guacamole is not configured"})
 		return
 	}
@@ -400,7 +473,17 @@ func (s *Service) handleShareGuacSession(c *gin.Context) {
 		return
 	}
 
-	gc := s.guacamoleClient
+	// The broker the session runs on: a monitor link minted on the other
+	// broker names a connection that broker does not have.
+	gc, held, herr := s.brokerHolding(ctx, activeConnID)
+	if errors.Is(herr, errNoSuchActiveSession) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "active session not found"})
+		return
+	}
+	if herr != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("share guac session", herr), s.logger)
+		return
+	}
 	var shareURL string
 	var err error
 	if gc.perUserIdentities {
@@ -431,6 +514,7 @@ func (s *Service) handleShareGuacSession(c *gin.Context) {
 	s.logAuditEvent(c, "guacamole.session_shared", activeConnID, "guacamole_session",
 		map[string]interface{}{
 			"active_conn_id": activeConnID,
+			"broker":         held.Broker,
 		})
 
 	c.JSON(http.StatusOK, gin.H{"share_url": shareURL})
