@@ -98,7 +98,8 @@ func (s *Service) loadUserAssignments(ctx context.Context, orgID string) (map[st
 		  FROM user_roles ur
 		  JOIN roles r ON r.id = ur.role_id
 		  JOIN users u ON u.id = ur.user_id
-		 WHERE u.enabled = true AND u.org_id = $1 AND ur.org_id = $1 AND r.org_id = $1`, orgID)
+		 WHERE u.enabled = true AND u.org_id = $1 AND ur.org_id = $1 AND r.org_id = $1
+		   AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +118,8 @@ func (s *Service) loadUserAssignments(ctx context.Context, orgID string) (map[st
 		  FROM group_memberships gm
 		  JOIN groups g ON g.id = gm.group_id
 		  JOIN users u ON u.id = gm.user_id
-		 WHERE u.enabled = true AND u.org_id = $1 AND gm.org_id = $1 AND g.org_id = $1`, orgID)
+		 WHERE u.enabled = true AND u.org_id = $1 AND gm.org_id = $1 AND g.org_id = $1
+		   AND (gm.expires_at IS NULL OR gm.expires_at > NOW())`, orgID)
 	if err != nil {
 		return nil, err
 	}

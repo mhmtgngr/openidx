@@ -54,6 +54,8 @@ CREATE TABLE users (
     source               VARCHAR(50),
     directory_id         UUID,
     org_id               UUID NOT NULL
+,
+    user_type VARCHAR(16) NOT NULL DEFAULT 'internal', account_status VARCHAR(16) NOT NULL DEFAULT 'active', vendor_org_id UUID, sponsor_user_id UUID, account_expires_at TIMESTAMPTZ, status_changed_at TIMESTAMPTZ, access_severed_at TIMESTAMPTZ
 );
 CREATE TABLE roles (
     id           UUID PRIMARY KEY,
@@ -70,7 +72,9 @@ CREATE TABLE user_roles (
     assigned_by VARCHAR(255),
     assigned_at TIMESTAMPTZ DEFAULT NOW(),
     expires_at  TIMESTAMPTZ,
-    org_id      UUID NOT NULL
+    org_id      UUID NOT NULL,
+    expiry_notified BOOLEAN NOT NULL DEFAULT false,
+    PRIMARY KEY (user_id, role_id)
 );
 CREATE TABLE composite_roles (
     parent_role_id UUID NOT NULL,
@@ -88,12 +92,16 @@ CREATE TABLE groups (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     org_id           UUID NOT NULL
+,
+    external_allowed BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE group_memberships (
     group_id  UUID NOT NULL,
     user_id   UUID NOT NULL,
     joined_at TIMESTAMPTZ DEFAULT NOW(),
-    org_id    UUID NOT NULL
+    org_id    UUID NOT NULL,
+    expires_at TIMESTAMPTZ,
+    PRIMARY KEY (user_id, group_id)
 );
 CREATE TABLE mfa_totp (
     id              UUID PRIMARY KEY,

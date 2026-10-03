@@ -50,6 +50,16 @@ const (
 	EventReviewCompleted = "review.completed"
 
 	EventRefreshTokenReuse = "oauth.refresh_token.reuse_detected"
+
+	EventAccessRequestCreated  = "access_request.created"
+	EventAccessRequestApproved = "access_request.approved"
+	EventAccessRequestDenied   = "access_request.denied"
+	EventAccessRequestExpiring = "access_request.expiring"
+	EventAccessRequestEnded    = "access_request.ended"
+
+	EventPamSessionStarted = "pam.session.started"
+	EventPamSessionEnded   = "pam.session.ended"
+	EventPamBreakGlass     = "pam.break_glass"
 )
 
 // EventType is one deliverable event, with the sentence an operator reads when
@@ -85,6 +95,16 @@ var EventCatalogue = []EventType{
 	{EventReviewCompleted, "governance", "An access-certification campaign finished."},
 
 	{EventRefreshTokenReuse, "security", "A refresh token was presented twice: the family was revoked."},
+
+	{EventAccessRequestCreated, "access", "An access request was filed and waits for its approvers."},
+	{EventAccessRequestApproved, "access", "An access request was approved and the access granted, for its window if it has one."},
+	{EventAccessRequestDenied, "access", "An access request was denied."},
+	{EventAccessRequestExpiring, "access", "The access a request gave ends within the hour."},
+	{EventAccessRequestEnded, "access", "The access a request gave ended with its window, or the request expired unanswered."},
+
+	{EventPamSessionStarted, "privileged_access", "A privileged session started on a PAM entry; says whether the user is external and the session recorded."},
+	{EventPamSessionEnded, "privileged_access", "A privileged session ended, with why: its grant ended, its maximum length, its moderation ended, a sponsor, the kill switch, the user."},
+	{EventPamBreakGlass, "privileged_access", "A break-glass reveal of a PAM entry's credential."},
 }
 
 // KnownEventType reports whether t is in the catalogue. Subscriptions are

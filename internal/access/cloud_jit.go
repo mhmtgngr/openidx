@@ -34,12 +34,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 )
 
+// cloudJITMaxTTL is the ceiling on an STS session. STS credentials cannot be
+// revoked: the kill switch, deprovisioning and the lifecycle sweep end the
+// brokered_sessions row, but the keys keep working at AWS until they expire.
+// The ceiling is therefore the longest a severed user can keep cloud access,
+// and the framework's decision D6 sets it to an hour (it was twelve).
+// cloudJITMinTTL is STS's own floor (900 seconds).
 const (
 	cloudJITDefaultTTL = 60 * time.Minute
-	cloudJITMaxTTL     = 12 * time.Hour
+	cloudJITMaxTTL     = 60 * time.Minute
 	cloudJITMinTTL     = 15 * time.Minute
 )
 
@@ -74,12 +82,17 @@ type cloudConnectReq struct {
 	Region     string `json:"region"`      // defaults us-east-1
 	SecretID   string `json:"secret_id"`   // vault secret holding broker creds (JSON access_key_id/secret_access_key)
 	Reason     string `json:"reason"`      // audited
-	TTLMinutes int    `json:"ttl_minutes"` // clamped to [15, 720]
+	TTLMinutes int    `json:"ttl_minutes"` // clamped to [15, 60]
 	Console    bool   `json:"console"`     // also return a federated console URL
 }
 
 // handleCloudConnect — POST /pam/connect/cloud. Brokers short-lived cloud
 // credentials via STS AssumeRole and (optionally) a federated console URL.
+//
+// The broker credential is the secret the caller names, so the caller must
+// hold a `use` grant on it (vault UseAs; administrators skip the grant, as on
+// reveal). Whoever may use a broker credential may assume any role it can
+// assume, so the grant on the credential is the grant on those roles.
 func (s *Service) handleCloudConnect(c *gin.Context) {
 	var req cloudConnectReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -113,6 +126,12 @@ func (s *Service) handleCloudConnect(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
+	// An external user is not issued cloud keys (I5): they would hold an STS
+	// session of their own, used from anywhere, outside every session control.
+	if s.refuseExternalCaller(c, org.ID, externalid.ErrCloudJITForbidden, "pam.cloud_jit_denied", userID, "user",
+		map[string]interface{}{"provider": req.Provider, "role_arn": req.RoleARN, "secret_id": req.SecretID}) {
+		return
+	}
 	if s.vaultSvc == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "credential vault is not configured"})
 		return
@@ -134,12 +153,18 @@ func (s *Service) handleCloudConnect(c *gin.Context) {
 	}
 
 	// Pull the broker credentials server-side. They never leave the service.
+	// One refusal for "no grant" and "no such secret", so the endpoint does not
+	// tell a member which secret ids exist.
 	bctx := orgctx.WithBypassRLS(ctx)
-	rawSecret, err := s.vaultSvc.Use(bctx, org.ID, req.SecretID)
+	rawSecret, err := s.vaultSvc.UseAs(bctx, org.ID, req.SecretID, userID, pamCallerRoles(c), s.pamCallerIsAdmin(c), req.Reason)
 	if err != nil {
 		s.logger.Warn("handleCloudConnect: broker credential unavailable",
-			zap.String("secret_id", req.SecretID), zap.Error(err))
-		c.JSON(http.StatusForbidden, gin.H{"error": "broker credential unavailable"})
+			zap.String("secret_id", logsafe.Clean(req.SecretID)), zap.Error(err))
+		s.logAuditEvent(c, "pam.cloud_jit_denied", userID, "user", map[string]interface{}{
+			"provider": "aws", "role_arn": req.RoleARN, "secret_id": req.SecretID, "user_id": userID,
+			"code": "broker_credential_unavailable",
+		})
+		c.JSON(http.StatusForbidden, gin.H{"error": "broker credential unavailable", "code": "broker_credential_unavailable"})
 		return
 	}
 	var broker struct {
@@ -167,7 +192,7 @@ func (s *Service) handleCloudConnect(c *gin.Context) {
 	})
 	if err != nil {
 		s.logger.Warn("handleCloudConnect: AssumeRole failed",
-			zap.String("role_arn", req.RoleARN), zap.Error(err))
+			zap.String("role_arn", logsafe.Clean(req.RoleARN)), zap.Error(err))
 		c.JSON(http.StatusForbidden, gin.H{"error": "AssumeRole failed: " + err.Error()})
 		return
 	}
