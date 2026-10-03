@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -90,6 +91,13 @@ func (s *Service) drainNetworkRevocations(ctx context.Context) {
 		var failure error
 		if it.attribute != "" {
 			if err := s.removeUserZitiAttribute(ctx, it.userID, it.attribute); err != nil {
+				failure = err
+			}
+		}
+		// A network_service request's attribute came with a Dial policy of
+		// its own, which goes with it.
+		if requestID, ok := strings.CutPrefix(it.attribute, "jit-"); ok && requestID != "" {
+			if err := s.closeJITDial(ctx, it.orgID, requestID); err != nil && failure == nil {
 				failure = err
 			}
 		}

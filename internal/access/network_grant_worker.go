@@ -2,17 +2,24 @@ package access
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
 
 // JIT network grant worker (Wave B1): drains network_grant_queue, which the
 // governance service writes when a network_service access request is fulfilled,
-// and adds the time-bound Ziti role attribute to the requester's identity so the
-// dial opens. Expiry removal is handled by the network revocation worker via the
-// attribute column (Wave B2 path).
+// and adds the time-bound Ziti role attribute to the requester's identity. The
+// attribute opens nothing by itself: the worker also writes the request's own
+// Dial policy, which opens the requested service to that attribute alone
+// (openJITDial). Until it did, an approved request read fulfilled and reached
+// nothing, and the user sync stripped the attribute within five minutes.
+// Expiry is handled by the network revocation worker via the attribute column
+// (Wave B2 path), which also deletes the policy (closeJITDial).
 
 // StartNetworkGrantWorker launches the grant drain loop. No-op-safe: idle when
 // the queue is empty or the overlay is off.
@@ -45,7 +52,8 @@ func (s *Service) drainNetworkGrants(ctx context.Context) {
              SELECT id FROM network_grant_queue
               WHERE state='pending'
               ORDER BY id ASC LIMIT 50 FOR UPDATE SKIP LOCKED)
-        RETURNING q.id, q.user_id::text, q.attribute, q.attempts, COALESCE(q.org_id::text,'')`)
+        RETURNING q.id, q.user_id::text, q.attribute, q.attempts, COALESCE(q.org_id::text,''),
+                  COALESCE(q.request_id::text,'')`)
 	if err != nil {
 		s.logger.Warn("network grant: claim failed", zap.Error(err))
 		return
@@ -56,6 +64,7 @@ func (s *Service) drainNetworkGrants(ctx context.Context) {
 		attribute string
 		attempts  int
 		orgID     string
+		requestID string
 	}
 	var items []item
 	for rows.Next() {
@@ -64,7 +73,7 @@ func (s *Service) drainNetworkGrants(ctx context.Context) {
 		// leaving it stuck in 'processing' forever. org_id is COALESCEd above
 		// for the same reason: v101 left the column nullable, and a legacy
 		// NULL-tenant row must still be applied, not silently skipped.
-		if err := rows.Scan(&it.id, &it.userID, &it.attribute, &it.attempts, &it.orgID); err != nil {
+		if err := rows.Scan(&it.id, &it.userID, &it.attribute, &it.attempts, &it.orgID, &it.requestID); err != nil {
 			s.logger.Warn("network grant: claimed item skipped", zap.Error(err))
 			continue
 		}
@@ -86,8 +95,76 @@ func (s *Service) drainNetworkGrants(ctx context.Context) {
 				it.orgID, it.userID, "attribute="+it.attribute, err)
 			continue
 		}
+		if it.requestID != "" {
+			if err := s.openJITDial(ctx, it.orgID, it.requestID, it.attribute); err != nil {
+				s.logger.Warn("network grant: open the request's dial failed",
+					zap.String("request_id", it.requestID), zap.Error(err))
+				s.retryOrDeadLetterNetworkItem(ctx, "network_grant_queue", it.id, it.attempts,
+					it.orgID, it.userID, "attribute="+it.attribute, err)
+				continue
+			}
+		}
 		s.completeNetworkItem(ctx, "network_grant_queue", it.id)
 	}
+}
+
+// jitDialPolicyName names the Dial policy a network_service request opens. The
+// grant worker writes it and the revocation worker deletes it by this name.
+func jitDialPolicyName(requestID string) string { return "openidx-jit-" + requestID }
+
+// openJITDial writes the Dial policy a fulfilled network_service request opens:
+// the requested service, by its controller id, to the request's own attribute
+// and nothing else. The service is read from the request and the service
+// mirror in the request's organization, so a request can only open its own
+// organization's service. No-op when the overlay is off.
+func (s *Service) openJITDial(ctx context.Context, orgID, requestID, attribute string) error {
+	zm := s.ziti()
+	if zm == nil {
+		return nil
+	}
+	var service string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT zs.ziti_id FROM access_requests r
+		   JOIN ziti_services zs ON zs.id = r.resource_id AND zs.org_id = r.org_id
+		  WHERE r.id = $1::uuid AND r.org_id = $2::uuid AND r.resource_type = 'network_service'`,
+		requestID, orgID).Scan(&service)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("the network service of request %s is not one of its organization's", requestID)
+	}
+	if err != nil {
+		return fmt.Errorf("read the network service of request %s: %w", requestID, err)
+	}
+	_, err = zm.EnsureServicePolicyForOrg(ctx, orgID, jitDialPolicyName(requestID), "Dial",
+		[]string{"@" + service}, []string{"#" + attribute})
+	return err
+}
+
+// closeJITDial deletes the Dial policy openJITDial wrote for a request, on the
+// controller and in the mirror. A policy already gone is success.
+func (s *Service) closeJITDial(ctx context.Context, orgID, requestID string) error {
+	zm := s.ziti()
+	if zm == nil {
+		return nil
+	}
+	p, err := zm.GetServicePolicyByName(ctx, jitDialPolicyName(requestID))
+	if err != nil {
+		return fmt.Errorf("find the dial of request %s: %w", requestID, err)
+	}
+	if p == nil {
+		return nil
+	}
+	if err := zm.DeleteServicePolicy(ctx, p.ID); err != nil {
+		return fmt.Errorf("delete the dial of request %s: %w", requestID, err)
+	}
+	if _, err := s.db.Pool.Exec(ctx,
+		`DELETE FROM ziti_service_policies WHERE ziti_id = $1 AND org_id = $2::uuid`, p.ID, orgID); err != nil {
+		// The controller no longer has the policy, so nothing can dial through
+		// it; the mirror the access map reads still shows it until the
+		// mirror's own refresh.
+		s.logger.Warn("network revocation: deleted a request's dial on the controller but not in the mirror",
+			zap.String("request_id", requestID), zap.Error(err))
+	}
+	return nil
 }
 
 // addUserZitiAttribute adds a role attribute to the user's Ziti identity
