@@ -137,8 +137,15 @@ func valueOrDirect(v string) string {
 // It is called before credential resolution, not after: a refused launch must
 // not have decrypted a vault secret or pushed it into a Guacamole connection on
 // its way to being refused.
-func (s *Service) checkPamZTNA(c *gin.Context, orgID, userID, entryID, reachMode, protocol string) ztnaVerdict {
+//
+// An external user's launch is held to "enforce" whatever PAM_REQUIRE_ZTNA
+// says (I5 of the third-party access framework): their session stays on the
+// overlay, or it does not start.
+func (s *Service) checkPamZTNA(c *gin.Context, orgID, userID, entryID, reachMode, protocol string, external bool) ztnaVerdict {
 	mode := s.pamZTNAMode()
+	if external {
+		mode = ztnaEnforce
+	}
 	if mode == ztnaOff {
 		return ztnaVerdict{}
 	}
@@ -146,14 +153,19 @@ func (s *Service) checkPamZTNA(c *gin.Context, orgID, userID, entryID, reachMode
 	if ok {
 		return ztnaVerdict{}
 	}
+	if external {
+		reason = "an external user's session stays on the OpenZiti overlay whatever PAM_REQUIRE_ZTNA says, " +
+			"and " + externalOverlayReason(code, reachMode)
+	}
 
 	enforcing := mode == ztnaEnforce
-	s.auditPamZTNA(c, userID, entryID, reachMode, code, enforcing)
+	s.auditPamZTNA(c, userID, entryID, reachMode, code, enforcing, external)
 	s.logger.Warn("PAM launch does not stay on the overlay",
 		zap.String("entry_id", logsafe.Clean(entryID)),
 		zap.String("reach_mode", logsafe.Clean(reachMode)),
 		zap.String("code", code),
-		zap.Bool("enforced", enforcing))
+		zap.Bool("enforced", enforcing),
+		zap.Bool("external", external))
 
 	if enforcing {
 		return ztnaVerdict{Refuse: true, Reason: reason, Code: code}
@@ -161,12 +173,24 @@ func (s *Service) checkPamZTNA(c *gin.Context, orgID, userID, entryID, reachMode
 	return ztnaVerdict{WouldRefuse: true, Reason: reason, Code: code}
 }
 
+// externalOverlayReason is the rest of an external user's refusal: what is
+// wrong with this entry, without the operator's PAM_REQUIRE_ZTNA remedies,
+// which do not apply to them.
+func externalOverlayReason(code, reachMode string) string {
+	if code == "ztna_required_website_entry" {
+		return "this is a website entry: it hands the browser a URL, brokers no session and records nothing. " +
+			"Publish the site to them as an OpenZiti service or a proxy route instead"
+	}
+	return "this entry reaches its target directly (reach_mode=" + valueOrDirect(reachMode) + "). " +
+		"Set its reach mode to ziti and give it an overlay service"
+}
+
 // auditPamZTNA records the decision on the audit trail.
 //
 // Observe mode writes too, and that is the point of observe mode: an operator
 // sizing this change needs the list of entries that would stop working, and a
 // count they can only get by the attempts being recorded.
-func (s *Service) auditPamZTNA(c *gin.Context, userID, entryID, reachMode, code string, enforced bool) {
+func (s *Service) auditPamZTNA(c *gin.Context, userID, entryID, reachMode, code string, enforced, external bool) {
 	action := "pam.ztna.would_deny"
 	if enforced {
 		action = "pam.ztna.denied"
@@ -176,5 +200,6 @@ func (s *Service) auditPamZTNA(c *gin.Context, userID, entryID, reachMode, code 
 		"reach_mode": reachMode,
 		"code":       code,
 		"enforced":   enforced,
+		"external":   external,
 	})
 }

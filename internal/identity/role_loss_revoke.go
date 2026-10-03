@@ -6,8 +6,60 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/ssfsignal"
 	"github.com/openidx/openidx/internal/revocation"
 )
+
+// claimsChanged tells the tenant's SSF receivers that what a token issued for
+// these users says has changed: a role or a group was given to them or taken
+// from them (CAEP token-claims-change). Unlike the token cut below, it goes in
+// both directions: a downstream application that caches a user's roles is as
+// out of date after a grant as after a removal, though only the removal is a
+// security failure for this product's own enforcement point.
+//
+// The event goes through internal/common/ssfsignal; oauth-service's drainer
+// reads the claims' new values when it signs. why names the path, and is the
+// event's reason. Best-effort, like the marker: the change has been made, and
+// a failure is logged.
+func (s *Service) claimsChanged(ctx context.Context, why string, userIDs ...string) {
+	if s.db == nil || s.db.Pool == nil {
+		return
+	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		s.logger.Error("a role or group changed, but the SSF signal has no organization to go to",
+			zap.String("path", why), zap.Error(err))
+		return
+	}
+	seen := make(map[string]struct{}, len(userIDs))
+	for _, userID := range userIDs {
+		if userID == "" {
+			continue
+		}
+		if _, dup := seen[userID]; dup {
+			continue
+		}
+		seen[userID] = struct{}{}
+		s.claimsChangedIn(ctx, org.ID, why, userID)
+	}
+}
+
+// claimsChangedIn is claimsChanged for one user of a named organization, for
+// a caller that runs in none: the role-expiry sweep, which reads every
+// organization's rows at once.
+func (s *Service) claimsChangedIn(ctx context.Context, orgID, why, userID string) {
+	if s.db == nil || s.db.Pool == nil {
+		return
+	}
+	if err := ssfsignal.Enqueue(ctx, s.db.Pool, ssfsignal.Signal{
+		OrgID: orgID, EventType: ssfsignal.TokenClaimsChange, SubjectID: userID,
+		Claims: map[string]any{"reason": why},
+	}); err != nil {
+		s.logger.Error("a role or group changed, but the token-claims-change signal was not enqueued",
+			zap.String("path", why), logsafe.String("user_id", userID), zap.Error(err))
+	}
+}
 
 // revokeAfterRoleLoss cuts the outstanding tokens of users who have just LOST a
 // role, and is deliberately not called when they have only gained one.
@@ -40,6 +92,9 @@ import (
 // needs in the record. why names the path, so the line says which control left
 // a live credential.
 func (s *Service) revokeAfterRoleLoss(ctx context.Context, why string, userIDs ...string) {
+	// The receivers are told as well (claimsChanged), so every path that takes
+	// a role or a group away through here tells them.
+	s.claimsChanged(ctx, why, userIDs...)
 	seen := make(map[string]struct{}, len(userIDs))
 	for _, userID := range userIDs {
 		if userID == "" {
