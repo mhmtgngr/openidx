@@ -9,6 +9,7 @@ import {
   Roles,
   Directories,
   ServiceAccounts,
+  ExternalUsers,
   AccessReviews,
   Policies,
   ApprovalPolicies,
@@ -94,6 +95,7 @@ import {
   ForgotPassword,
   ResetPassword,
   MagicLinkVerify,
+  AcceptInvite,
   UserProfile,
   MyAccess,
   MyDevices,
@@ -213,6 +215,9 @@ function App() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/magic-link-verify" element={<MagicLinkVerify />} />
+      {/* The invitation email links here (internal/email: /accept-invite?token=).
+          Public: the token in the link is the credential. */}
+      <Route path="/accept-invite" element={<AcceptInvite />} />
 
       {/* Standalone pop-out viewer: protected but chrome-less (no sidebar), so
           a relay session can live in its own window / second monitor. */}
@@ -278,6 +283,7 @@ function App() {
         <Route path="roles" element={<Roles />} />
         <Route path="directories" element={<Directories />} />
         <Route path="service-accounts" element={<ServiceAccounts />} />
+        <Route path="external-users" element={<AdminRoute><ExternalUsers /></AdminRoute>} />
 
         {/* Applications - Admin Protected. The OAuth client, SAML service
             provider, proxy route and upstream pool APIs answer administrators

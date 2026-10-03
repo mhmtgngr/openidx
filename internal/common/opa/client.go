@@ -51,8 +51,14 @@ type UserContext struct {
 // really live. Anything added here must be something the middleware can fill
 // from the request, or it invites the same rule again --
 // internal/common/opa/policy_input_test.go is the guard.
+//
+// Route is the route template gin matched (c.FullPath(), e.g.
+// "/api/v1/governance/requests/:id/approve"): known before the handler runs,
+// and chosen by the router rather than written by the caller, so a rule can
+// name one route exactly where Type, the last segment, names many.
 type ResourceContext struct {
-	Type string `json:"type,omitempty"`
+	Type  string `json:"type,omitempty"`
+	Route string `json:"route,omitempty"`
 }
 
 // Decision represents OPA's authorization response

@@ -303,17 +303,18 @@ func TestInputCarriesNothingTheAuthorizerCannotFill(t *testing.T) {
 
 	// The hard part: every field must be fillable from the request alone.
 	// ResourceContext is the one that invited a rule it could not serve, so it is
-	// pinned by name — Type is derived from the matched route, and there is
-	// nothing else the authorizer knows about the resource.
+	// pinned by name. Both fields come from the route gin matched: Route is that
+	// template (c.FullPath()), and Type is derived from it. There is nothing
+	// else the authorizer knows about the resource.
 	rt := reflect.TypeOf(ResourceContext{})
-	if rt.NumField() != 1 || rt.Field(0).Name != "Type" {
+	if rt.NumField() != 2 || rt.Field(0).Name != "Type" || rt.Field(1).Name != "Route" {
 		var got []string
 		for i := 0; i < rt.NumField(); i++ {
 			got = append(got, rt.Field(i).Name)
 		}
 		t.Errorf("ResourceContext now carries %v. OPAAuthz builds its input before the handler "+
 			"runs and never loads the row being authorized, so the only thing it can say about "+
-			"the resource is the type it derives from the matched route. A field it cannot fill "+
+			"the resource is the matched route and the type it derives from it. A field it cannot fill "+
 			"reads as available in the policy contract and invites a rule that never fires -- "+
 			"which is exactly what the deleted Owner field did. If the authorizer can genuinely "+
 			"fill this one, populate it in OPAAuthz and update this test to say so.", got)
