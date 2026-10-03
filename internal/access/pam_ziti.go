@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 )
@@ -428,6 +429,22 @@ func (s *Service) handlePamBrokerStatus(c *gin.Context) {
 		"reach_modes":   reachModes,
 		"direct_broker": directOK,
 		"ziti_broker":   zitiOK,
-		"require_ztna":  s.pamZTNAModeName(),
+		"require_ztna":  s.pamZTNAModeNameFor(c),
 	})
+}
+
+// pamZTNAModeNameFor is the mode as it applies to the caller: "enforce" for
+// an external user whatever the setting says, since their launch is held to
+// it (I5 of the third-party access framework), and the setting for anyone
+// else. When the caller's type cannot be read the setting is reported; their
+// launch still reads the type itself and fails closed.
+func (s *Service) pamZTNAModeNameFor(c *gin.Context) string {
+	if s.db != nil {
+		if org, err := orgctx.From(c.Request.Context()); err == nil {
+			if external, err := externalid.IsExternal(c.Request.Context(), s.db.Pool, org.ID, c.GetString("user_id")); err == nil && external {
+				return "enforce"
+			}
+		}
+	}
+	return s.pamZTNAModeName()
 }

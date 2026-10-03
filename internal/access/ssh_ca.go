@@ -11,6 +11,7 @@
 package access
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
@@ -26,6 +27,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/vault"
 )
 
@@ -181,16 +183,108 @@ type sshConnectReq struct {
 	TTLMinutes int    `json:"ttl_minutes"`
 }
 
+// errSSHTargetNotGranted means no SSH entry the caller may connect to names
+// the requested host and login. One error for "no such entry" and "an entry
+// you hold no grant on", so the refusal does not tell an org member which
+// hosts and logins are registered.
+var errSSHTargetNotGranted = errors.New("no SSH entry you may connect to matches this host and principal")
+
+// sshCertTarget is the PAM entry a certificate is issued against.
+type sshCertTarget struct {
+	EntryID         string
+	RequireApproval bool
+	// RequireModerator: the entry's sessions are moderated, and a
+	// certificate opens a login no moderator can watch.
+	RequireModerator bool
+	// RecordSession: the entry's sessions are recorded, and a certificate
+	// opens a login nothing records.
+	RecordSession bool
+}
+
+// normalizeSSHHost folds a host name the way the entry's hostname is folded
+// in sshCertTargetFor: trimmed, lower-cased, without a trailing root dot.
+func normalizeSSHHost(h string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
+}
+
+// sshCertTargetFor finds the SSH entry a certificate for (host, principal) is
+// issued against.
+//
+// A certificate is a credential for a login, and every host whose sshd trusts
+// the org CA accepts it for that login. So the CA signs only for a pair an
+// administrator registered as an SSH entry (the entry's hostname, and its
+// username or the username of the credential entry it links to), and only for
+// a caller who may connect to that entry: a user, role or group grant
+// carrying connect, as on POST /pam/entries/:id/connect. An administrator
+// passes the grant check, as on that route, but still only for a registered
+// pair. Several entries can name the same pair; the first one the caller may
+// connect to wins: unmoderated ones first, then unrecorded ones, then those
+// without an approval requirement.
+func (s *Service) sshCertTargetFor(ctx context.Context, orgID, userID string, roles []string, isAdmin bool, host, principal string) (sshCertTarget, error) {
+	host = normalizeSSHHost(host)
+	principal = strings.TrimSpace(principal)
+	if host == "" || principal == "" {
+		return sshCertTarget{}, errSSHTargetNotGranted
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT e.id::text, e.require_approval, e.require_moderator, e.record_session
+		  FROM pam_entries e
+		  LEFT JOIN pam_entries ce ON ce.id = e.credential_entry_id AND ce.org_id = e.org_id
+		 WHERE e.org_id = $1
+		   AND e.entry_type = 'ssh'
+		   AND rtrim(lower(btrim(COALESCE(e.hostname, ''))), '.') = $2
+		   AND COALESCE(NULLIF(btrim(e.username), ''), btrim(ce.username)) = $3
+		 ORDER BY e.require_moderator, e.record_session, e.require_approval, e.created_at, e.id`, orgID, host, principal)
+	if err != nil {
+		return sshCertTarget{}, err
+	}
+	var candidates []sshCertTarget
+	for rows.Next() {
+		var t sshCertTarget
+		if err := rows.Scan(&t.EntryID, &t.RequireApproval, &t.RequireModerator, &t.RecordSession); err != nil {
+			rows.Close()
+			return sshCertTarget{}, err
+		}
+		candidates = append(candidates, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return sshCertTarget{}, err
+	}
+	for _, t := range candidates {
+		if isAdmin {
+			return t, nil
+		}
+		ok, err := s.pamEntryAllowed(ctx, orgID, t.EntryID, userID, roles, "connect")
+		if err != nil {
+			return sshCertTarget{}, err
+		}
+		if ok {
+			return t, nil
+		}
+	}
+	return sshCertTarget{}, errSSHTargetNotGranted
+}
+
 // handleSSHConnect — POST /pam/connect/ssh. Signs a short-lived SSH user
 // certificate for the caller and records the brokered session. If the caller
 // supplies no public key, an ephemeral keypair is generated and the private key
 // is returned once (never stored).
+//
+// The certificate is issued against a PAM entry (sshCertTargetFor): the host
+// and principal must be an SSH entry the caller may connect to, and an entry
+// that requires approval consumes one approved request per certificate, the
+// same single-use gate as the entry's own connect.
 func (s *Service) handleSSHConnect(c *gin.Context) {
 	var req sshConnectReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "host and principal are required"})
 		return
 	}
+	// The principal is signed into the certificate as given, so it is
+	// trimmed here, once, rather than matched trimmed and signed untrimmed.
+	req.Host = strings.TrimSpace(req.Host)
+	req.Principal = strings.TrimSpace(req.Principal)
 	ctx := c.Request.Context()
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -202,6 +296,52 @@ func (s *Service) handleSSHConnect(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
+
+	// An external user is not issued certificates (I5): a certificate is a
+	// credential in their hands, used from their own machine, past the
+	// broker's recording and the overlay. Asked before the entry lookup, so
+	// the answer says nothing about which hosts are registered.
+	if s.refuseExternalCaller(c, org.ID, externalid.ErrSSHCAForbidden, "pam.ssh_cert_denied", userID, "user",
+		map[string]interface{}{"host": req.Host, "principal": req.Principal}) {
+		return
+	}
+
+	// Which entry is this certificate for? Asked before anything else, so a
+	// caller without a grant learns nothing about the CA's state.
+	isAdmin := s.pamCallerIsAdmin(c)
+	target, err := s.sshCertTargetFor(ctx, org.ID, userID, pamCallerRoles(c), isAdmin, req.Host, req.Principal)
+	if err != nil {
+		if errors.Is(err, errSSHTargetNotGranted) {
+			s.logAuditEvent(c, "pam.ssh_cert_denied", userID, "user", map[string]interface{}{
+				"host": req.Host, "principal": req.Principal, "user_id": userID, "code": "ssh_target_not_granted",
+			})
+			c.JSON(http.StatusForbidden, gin.H{"error": errSSHTargetNotGranted.Error(), "code": "ssh_target_not_granted"})
+			return
+		}
+		s.logger.Error("handleSSHConnect: entry lookup failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check permissions"})
+		return
+	}
+	// A moderated entry is reached only through the session broker, where its
+	// moderator watches; a certificate would open a login nobody can.
+	if target.RequireModerator {
+		s.logAuditEvent(c, "pam.ssh_cert_denied", userID, "user", map[string]interface{}{
+			"host": req.Host, "principal": req.Principal, "user_id": userID, "entry_id": target.EntryID,
+			"code": "moderated_entry_needs_broker",
+		})
+		refuseModeratedEntry(c, &pamLaunchEntry{ID: target.EntryID, RequireModerator: true}, "an SSH certificate")
+		return
+	}
+	// A recorded entry likewise: a certificate opens a login nothing records.
+	if target.RecordSession {
+		s.logAuditEvent(c, "pam.ssh_cert_denied", userID, "user", map[string]interface{}{
+			"host": req.Host, "principal": req.Principal, "user_id": userID, "entry_id": target.EntryID,
+			"code": "recorded_entry_needs_broker",
+		})
+		refuseRecordedEntry(c, true, "an SSH certificate")
+		return
+	}
+
 	if s.vaultSvc == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "credential vault is not configured"})
 		return
@@ -245,6 +385,25 @@ func (s *Service) handleSSHConnect(c *gin.Context) {
 			return
 		}
 		ephemeralPrivPEM = pem.EncodeToMemory(blk)
+	}
+
+	// Approval gate, last before signing so a malformed key or an
+	// uninitialized CA does not spend the caller's approval. Single-use and
+	// atomically consumed, as on the entry's connect; administrators (the
+	// approvers) pass it there and here.
+	if target.RequireApproval && !isAdmin {
+		consumed, gateErr := s.checkAndConsumePamApproval(ctx, target.EntryID, userID)
+		if gateErr != nil {
+			s.logger.Error("handleSSHConnect: approval check failed", zap.Error(gateErr))
+			c.JSON(http.StatusForbidden, gin.H{"error": "certificate requires approval"})
+			return
+		}
+		if !consumed {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "certificate requires approval", "approval_required": true, "entry_id": target.EntryID,
+			})
+			return
+		}
 	}
 
 	signer, err := s.caSigner(c, org.ID, userID, rec)
@@ -299,6 +458,7 @@ func (s *Service) handleSSHConnect(c *gin.Context) {
 	}
 	s.logAuditEvent(c, "pam.ssh_cert_issued", sessionID, "brokered_session", map[string]interface{}{
 		"host": req.Host, "principal": req.Principal, "user_id": userID, "serial": serial, "ttl_minutes": int(ttl.Minutes()),
+		"entry_id": target.EntryID,
 	})
 
 	resp := gin.H{
@@ -306,6 +466,7 @@ func (s *Service) handleSSHConnect(c *gin.Context) {
 		"certificate": certAuthorized,
 		"principal":   req.Principal,
 		"expires_at":  expiresAt,
+		"entry_id":    target.EntryID,
 	}
 	if ephemeralPrivPEM != nil {
 		resp["private_key"] = string(ephemeralPrivPEM)
