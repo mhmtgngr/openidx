@@ -88,7 +88,8 @@ func (s *Service) resolveStepApprovers(ctx context.Context, orgID string, step A
 			return nil, &chainError{"an approval step of type role names no role"}
 		}
 		rows, err := s.db.Pool.Query(ctx,
-			`SELECT DISTINCT user_id FROM user_roles WHERE role_id = $1 AND org_id = $2`, step.RoleID, orgID)
+			`SELECT DISTINCT user_id FROM user_roles WHERE role_id = $1 AND org_id = $2
+			   AND (expires_at IS NULL OR expires_at > NOW())`, step.RoleID, orgID)
 		if err != nil {
 			return nil, fmt.Errorf("list the holders of the approver role: %w", err)
 		}
@@ -105,7 +106,8 @@ func (s *Service) resolveStepApprovers(ctx context.Context, orgID string, step A
 			return nil, &chainError{"an approval step of type group names no group"}
 		}
 		rows, err := s.db.Pool.Query(ctx,
-			`SELECT DISTINCT user_id FROM group_memberships WHERE group_id = $1 AND org_id = $2`, step.GroupID, orgID)
+			`SELECT DISTINCT user_id FROM group_memberships WHERE group_id = $1 AND org_id = $2
+			   AND (expires_at IS NULL OR expires_at > NOW())`, step.GroupID, orgID)
 		if err != nil {
 			return nil, fmt.Errorf("list the members of the approver group: %w", err)
 		}
