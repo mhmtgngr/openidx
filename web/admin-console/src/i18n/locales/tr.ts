@@ -4378,6 +4378,7 @@ const tr: typeof en = {
         revealSecret: 'Gizli bilgiyi göster',
         zitiEnable: 'Ziti erişimini etkinleştir (hedefe sıfır güven örtüsü)',
         zitiDisable: 'Ziti erişimini kapat (doğrudan erişime dön)',
+        zitiDisableEnforced: 'Ziti erişimi açık kalır: PAM_REQUIRE_ZTNA=enforce doğrudan erişimi reddeder. Kaydı kaldırmak için silin.',
         launchPath: 'Başlatma yolu',
         edit: 'Düzenle',
         delete: 'Sil',

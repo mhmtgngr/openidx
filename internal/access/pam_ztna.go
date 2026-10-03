@@ -20,9 +20,12 @@ import (
 // The SECOND leg is decided here, per launch, from pam_entries.reach_mode, and
 // it is decided completely: with the gate enforcing, a launch that would dial
 // the target directly is refused before any credential is resolved, and an
-// entry cannot be created or updated into that state. Migration v82 made
-// 'direct' the column default, so this is not a rare case to catch — it is what
-// an entry created without a deliberate choice does.
+// entry on the overlay cannot be moved back to direct reach
+// (handlePamDisableZiti). A new entry still starts direct: migration v82 made
+// 'direct' the column default and the overlay service is enabled on the entry
+// after it exists, so creating one is not refused -- it cannot be launched
+// until its overlay service is on. That is not a rare case to catch; it is
+// what an entry created without a deliberate choice does.
 //
 // The FIRST leg is not decided here, and pretending otherwise would be the
 // worse outcome. Nothing in an HTTP request proves the caller reached this
