@@ -2,6 +2,7 @@ package identity
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -155,6 +156,19 @@ func TestReplacingASetWithItselfDoesNotRevoke(t *testing.T) {
 	require.False(t, revoked(t, revoke, user), "a no-op replacement cut a live session")
 }
 
+// The same set with its ids in upper case is still the same set: Postgres
+// reads either case as one uuid, and the user keeps every role.
+func TestReplacingASetWithItselfInUpperCaseDoesNotRevoke(t *testing.T) {
+	svc, pool, _, revoke, ctx, org := roleLossFixture(t)
+	user := uuid.NewString()
+	role := seedRole(t, pool, org, "reader")
+	seedHeld(t, pool, org, user, role)
+
+	require.NoError(t, svc.UpdateUserRoles(ctx, user, []string{strings.ToUpper(role)}, "admin"))
+
+	require.False(t, revoked(t, revoke, user), "an upper-case id for a held role cut a live session")
+}
+
 // lostRoles is the whole of the grant/revoke distinction, so it is pinned
 // directly as well as through the paths above.
 func TestLostRolesIsTheDifferenceNotTheUnion(t *testing.T) {
@@ -163,4 +177,6 @@ func TestLostRolesIsTheDifferenceNotTheUnion(t *testing.T) {
 	require.Equal(t, []string{"a"}, lostRoles([]string{"a"}, nil), "an empty new set loses everything")
 	require.Nil(t, lostRoles(nil, []string{"a"}))
 	require.Nil(t, lostRoles([]string{"a"}, []string{"a"}))
+	require.Nil(t, lostRoles([]string{"ab"}, []string{"AB"}), "the same id in upper case is not a role lost")
+	require.Nil(t, lostRoles([]string{"AB"}, []string{"ab"}), "nor one gained")
 }

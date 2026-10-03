@@ -34,7 +34,7 @@ func TestRevokeExpiredJITAccess_LandsAuditRow(t *testing.T) {
 			updated_at TIMESTAMPTZ DEFAULT NOW(),
 			org_id UUID NOT NULL);
 		CREATE TABLE user_roles (
-			user_id UUID NOT NULL, role_id UUID NOT NULL, org_id UUID NOT NULL);
+			user_id UUID NOT NULL, role_id UUID NOT NULL, org_id UUID NOT NULL, expires_at TIMESTAMPTZ);
 		CREATE TABLE audit_events (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			timestamp TIMESTAMPTZ DEFAULT NOW(),
@@ -69,8 +69,10 @@ func TestRevokeExpiredJITAccess_LandsAuditRow(t *testing.T) {
 	`, user, roleID, orgID); err != nil {
 		t.Fatalf("seed request: %v", err)
 	}
+	// The assignment the request made, carrying its window (migration v223).
 	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1,$2,$3)`, user, roleID, orgID); err != nil {
+		`INSERT INTO user_roles (user_id, role_id, org_id, expires_at)
+		 SELECT $1, $2, $3, expires_at FROM access_requests WHERE requester_id = $1 AND resource_id = $2`, user, roleID, orgID); err != nil {
 		t.Fatalf("seed user_role: %v", err)
 	}
 

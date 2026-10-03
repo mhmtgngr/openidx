@@ -649,6 +649,12 @@ paths:
       responses:
         '201':
           description: Group created
+        '400':
+          description: >-
+            The body is malformed, or `attributes.maxMembers` is not a positive
+            whole number (`invalid_max_members`).
+        '409':
+          description: A group of that name already exists (`group_exists`).
 
   /api/v1/identity/groups/{id}:
     get:
@@ -676,9 +682,22 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/GroupCreate'
+      description: >-
+        The group's membership settings travel as the attributes
+        `allowSelfJoin`, `requireApproval` and `maxMembers`, as a read returns
+        them. An update keeps any of them it leaves out; an empty `maxMembers`
+        removes the member cap.
       responses:
         '200':
           description: Group updated
+        '400':
+          description: >-
+            The body is malformed, or `attributes.maxMembers` is not a positive
+            whole number (`invalid_max_members`).
+        '404':
+          description: No such group in the caller's organization.
+        '409':
+          description: Another group already has that name (`group_exists`).
     delete:
       tags: [Groups]
       summary: Delete group
@@ -4819,6 +4838,383 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
+
+  # ---- External (vendor) users and vendor organizations (third-party access
+  # framework, Phase 1 and the vendor closed list of Phase 2) ----
+
+  /api/v1/identity/invitations/{token}/mfa:
+    post:
+      tags: [Public]
+      summary: Confirm an external invitation's authenticator
+      description: >
+        The second step of an external (vendor) user's invitation (invariant
+        I4). The account the accepted invitation made cannot sign in until its
+        owner confirms an authenticator-app code for the secret it was shown;
+        the account then becomes `active`.
+      operationId: completeExternalInvitationMFA
+      x-openidx-handler: internal/identity.(*Service).handleCompleteInvitationMFA
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [secret, code]
+              properties:
+                secret: {type: string}
+                code: {type: string}
+      responses:
+        '200':
+          description: The authenticator is confirmed and the account is active
+        '400':
+          description: >
+            The secret or the code is missing, the token is not an accepted
+            external invitation that still answers, or the code does not verify
+
+  /api/v1/identity/vendor-orgs:
+    get:
+      tags: [Vendor Organizations]
+      summary: List vendor organizations
+      description: The organization's vendors, with their status, contract end and closed-list switch.
+      operationId: listVendorOrganizations
+      x-openidx-handler: internal/identity.(*Service).handleListVendorOrgs
+      responses:
+        '200':
+          description: The vendor organizations
+    post:
+      tags: [Vendor Organizations]
+      summary: Create a vendor organization
+      description: >
+        A supplier whose people can be invited as external users. The name is
+        unique in the organization; allowed e-mail domains are normalised; the
+        default account lifetime is at most a year.
+      operationId: createVendorOrganization
+      x-openidx-handler: internal/identity.(*Service).handleCreateVendorOrg
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '201':
+          description: The vendor organization
+        '400':
+          description: The request is not valid
+        '409':
+          description: A vendor organization of that name exists
+
+  /api/v1/identity/vendor-orgs/{id}:
+    get:
+      tags: [Vendor Organizations]
+      summary: Get a vendor organization
+      operationId: getVendorOrganization
+      x-openidx-handler: internal/identity.(*Service).handleGetVendorOrg
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The vendor organization
+        '404':
+          description: Not found
+    put:
+      tags: [Vendor Organizations]
+      summary: Update a vendor organization
+      description: A closed vendor organization cannot be edited (`409`, `vendor_org_closed`).
+      operationId: updateVendorOrganization
+      x-openidx-handler: internal/identity.(*Service).handleUpdateVendorOrg
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: The vendor organization
+        '404':
+          description: Not found
+        '409':
+          description: The vendor organization is closed
+
+  /api/v1/identity/vendor-orgs/{id}/close:
+    post:
+      tags: [Vendor Organizations]
+      summary: Close a vendor organization
+      description: >
+        Final. Disables every external user of the vendor and severs their
+        access; needs a reason, which goes to the audit trail.
+      operationId: closeVendorOrganization
+      x-openidx-handler: internal/identity.(*Service).handleCloseVendorOrg
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string}
+      responses:
+        '200':
+          description: Closed, with the number of users disabled
+        '400':
+          description: No reason given
+        '409':
+          description: Already closed
+
+  /api/v1/identity/vendor-orgs/{id}/targets:
+    get:
+      tags: [Vendor Organizations]
+      summary: List what a vendor on a closed list may reach
+      description: The PAM entries, applications and network services opened to the vendor (invariant I11), with their names.
+      operationId: listVendorTargets
+      x-openidx-handler: internal/identity.(*Service).handleListVendorTargets
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The targets
+    post:
+      tags: [Vendor Organizations]
+      summary: Open a target to a vendor
+      description: The target must be one of the organization's PAM entries, applications or network services (`404` otherwise).
+      operationId: addVendorTarget
+      x-openidx-handler: internal/identity.(*Service).handleAddVendorTarget
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_type, target_id]
+              properties:
+                target_type: {type: string, enum: [pam_entry, application, network_service]}
+                target_id: {type: string, format: uuid}
+      responses:
+        '201':
+          description: The target is open
+        '400':
+          description: The target type or id is not valid
+        '404':
+          description: No such vendor organization, or no such target in the organization
+        '409':
+          description: The target is already open, or the vendor organization is closed
+
+  /api/v1/identity/vendor-orgs/{id}/targets/{targetId}:
+    delete:
+      tags: [Vendor Organizations]
+      summary: Withdraw a target from a vendor
+      operationId: removeVendorTarget
+      x-openidx-handler: internal/identity.(*Service).handleRemoveVendorTarget
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: targetId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '204':
+          description: Withdrawn
+        '404':
+          description: Not found
+
+  /api/v1/identity/external-users:
+    get:
+      tags: [External Users]
+      summary: List external users
+      description: Each external account with its vendor, sponsor, status, end date and second factor; `vendor_org_id` narrows the list to one vendor.
+      operationId: listExternalUsers
+      x-openidx-handler: internal/identity.(*Service).handleListExternalUsers
+      parameters:
+        - name: vendor_org_id
+          in: query
+          required: false
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The external users
+
+  /api/v1/identity/external-users/{id}/suspend:
+    post:
+      tags: [External Users]
+      summary: Suspend an external user
+      description: >
+        Severs the account's access; a new sponsor may reactivate it within the
+        grace period (decision D5). Needs a reason. The tenant's SSF receivers
+        are told `session-revoked`.
+      operationId: suspendExternalUser
+      x-openidx-handler: internal/identity.(*Service).handleSuspendExternalUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string}
+      responses:
+        '200':
+          description: Suspended
+        '409':
+          description: The account's state does not allow it (`external_status_conflict`)
+
+  /api/v1/identity/external-users/{id}/disable:
+    post:
+      tags: [External Users]
+      summary: Disable an external user
+      description: Final; the account comes back only as a new invitation. Needs a reason. The tenant's SSF receivers are told `account-disabled`.
+      operationId: disableExternalUser
+      x-openidx-handler: internal/identity.(*Service).handleDisableExternalUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string}
+      responses:
+        '200':
+          description: Disabled
+        '409':
+          description: The account's state does not allow it (`external_status_conflict`)
+
+  /api/v1/identity/external-users/{id}/extend:
+    post:
+      tags: [External Users]
+      summary: Move an external user's end
+      description: Within a year from now and the vendor's contract, and only while the vendor is active (invariant I1). An external user cannot extend their own account (I12).
+      operationId: extendExternalUser
+      x-openidx-handler: internal/identity.(*Service).handleExtendExternalUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string}
+                account_expires_at: {type: string, format: date-time}
+                extend_days: {type: integer}
+      responses:
+        '200':
+          description: The account's new end
+        '403':
+          description: Past the limits, or the vendor is not active
+        '409':
+          description: The account's state does not allow it
+
+  /api/v1/identity/external-users/{id}/reactivate:
+    post:
+      tags: [External Users]
+      summary: Reactivate a suspended external user
+      description: Needs a valid new sponsor, an active vendor and the grace period (decision D5).
+      operationId: reactivateExternalUser
+      x-openidx-handler: internal/identity.(*Service).handleReactivateExternalUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, sponsor_user_id]
+              properties:
+                reason: {type: string}
+                sponsor_user_id: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Reactivated
+        '403':
+          description: The sponsor or the vendor does not qualify
+        '409':
+          description: Not suspended, or past the grace period
+
+  /api/v1/identity/external-users/{id}/sponsor:
+    post:
+      tags: [External Users]
+      summary: Change an external user's sponsor
+      description: The new sponsor must be an enabled, active internal user of the organization.
+      operationId: changeExternalUserSponsor
+      x-openidx-handler: internal/identity.(*Service).handleChangeExternalSponsor
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, sponsor_user_id]
+              properties:
+                reason: {type: string}
+                sponsor_user_id: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The sponsor is changed
+        '403':
+          description: The sponsor does not qualify
+        '409':
+          description: The account is not live
+
 components:
   responses:
     BadRequest:
@@ -5042,31 +5438,60 @@ components:
 
     Group:
       type: object
+      description: >-
+        A group as the identity service returns it, in SCIM's shape: the name
+        is `displayName` and the rest are string `attributes`. An attribute
+        that is unset, or a setting that is off, is left out.
       properties:
         id:
           type: string
-        name:
+        displayName:
           type: string
-        description:
-          type: string
-        parent_id:
-          type: string
-        member_count:
+        attributes:
+          $ref: '#/components/schemas/GroupAttributes'
+        memberCount:
           type: integer
-        created_at:
+          description: >-
+            The group's member count, where the read counted it; left out for
+            an empty group. Read-only.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
           type: string
           format: date-time
 
-    GroupCreate:
+    GroupAttributes:
       type: object
-      required: [name]
       properties:
-        name:
-          type: string
         description:
           type: string
-        parent_id:
+        parentId:
           type: string
+        externalAllowed:
+          type: string
+          enum: ['true', 'false']
+          description: Whether an external (vendor) user may be a member.
+        allowSelfJoin:
+          type: string
+          enum: ['true', 'false']
+        requireApproval:
+          type: string
+          enum: ['true', 'false']
+        maxMembers:
+          type: string
+          description: >-
+            The member cap, a positive whole number. On an update, an empty
+            string removes it.
+
+    GroupCreate:
+      type: object
+      required: [displayName]
+      properties:
+        displayName:
+          type: string
+        attributes:
+          $ref: '#/components/schemas/GroupAttributes'
 
     Session:
       type: object
