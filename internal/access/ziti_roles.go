@@ -72,9 +72,12 @@ var zitiUserAttrs = map[string]bool{
 }
 
 // zitiManagedAttr reports whether OpenIDX manages an identity attribute: an
-// organization's admin may neither add nor remove it.
+// organization's admin may neither add nor remove it. jit-<request-id> is a
+// network_service request's own attribute, which the request's Dial policy
+// names: added and removed with the request's window, by nobody else.
 func zitiManagedAttr(a string) bool {
-	return zitiHostingAttrs[a] || zitiUserAttrs[a] || strings.HasPrefix(a, "org-") || strings.HasPrefix(a, "app-")
+	return zitiHostingAttrs[a] || zitiUserAttrs[a] || strings.HasPrefix(a, "org-") || strings.HasPrefix(a, "app-") ||
+		strings.HasPrefix(a, "jit-")
 }
 
 // zitiManagedServiceAttrs are service attributes OpenIDX sets itself:
@@ -253,7 +256,7 @@ func (f *zitiFabric) checkIdentityRoles(roles []string) error {
 			}
 			continue
 		}
-		if zitiUserAttrs[v] || strings.HasPrefix(v, "app-") ||
+		if zitiUserAttrs[v] || strings.HasPrefix(v, "app-") || strings.HasPrefix(v, "jit-") ||
 			(strings.HasPrefix(v, "org-") && v != orgMarkerAttr(f.orgID) && !strings.HasPrefix(v, orgMarkerAttr(f.orgID)+"-")) {
 			return refuseRole(http.StatusForbidden, "identity role %q matches identities of other organizations", role)
 		}

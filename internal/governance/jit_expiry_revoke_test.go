@@ -33,8 +33,8 @@ func TestRevokeExpiredJITAccess_RevokesApplication(t *testing.T) {
 			id UUID PRIMARY KEY, requester_id UUID, resource_type VARCHAR(50),
 			resource_id UUID, resource_name VARCHAR(255), org_id UUID,
 			status VARCHAR(30), expires_at TIMESTAMPTZ, updated_at TIMESTAMPTZ DEFAULT now());
-		CREATE TABLE user_application_assignments (user_id UUID, application_id UUID, org_id UUID);
-		CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID);
+		CREATE TABLE user_application_assignments (user_id UUID, application_id UUID, org_id UUID, expires_at TIMESTAMPTZ);
+		CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ);
 		CREATE TABLE audit_events (
 			id UUID PRIMARY KEY, event_type VARCHAR(50), category VARCHAR(50), action VARCHAR(100),
 			outcome VARCHAR(20), actor_id UUID, actor_ip VARCHAR(45), target_id UUID,
@@ -62,12 +62,16 @@ func TestRevokeExpiredJITAccess_RevokesApplication(t *testing.T) {
 		exec(`INSERT INTO access_requests (id, requester_id, resource_type, resource_id, resource_name, org_id, status, expires_at)
 		      VALUES ($1, $2, $3, $4, 'r', $5, 'fulfilled', NOW() - INTERVAL '1 hour')`, id, user, rtype, rid, org)
 	}
-	// Expired application grant + its assignment (the gap).
+	// Expired application grant + its assignment (the gap), carrying the
+	// request's window as fulfilment writes it (migration v222).
 	req(appReq, "application", appID)
-	exec(`INSERT INTO user_application_assignments (user_id, application_id, org_id) VALUES ($1,$2,$3)`, user, appID, org)
-	// Expired role grant + its assignment (regression: still revoked).
+	exec(`INSERT INTO user_application_assignments (user_id, application_id, org_id, expires_at)
+	      SELECT $1, $2, $3, expires_at FROM access_requests WHERE id = $4`, user, appID, org, appReq)
+	// Expired role grant + its assignment (regression: still revoked),
+	// carrying the request's window as fulfilment writes it (migration v223).
 	req(roleReq, "role", roleID)
-	exec(`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1,$2,$3)`, user, roleID, org)
+	exec(`INSERT INTO user_roles (user_id, role_id, org_id, expires_at)
+	      SELECT $1, $2, $3, expires_at FROM access_requests WHERE id = $4`, user, roleID, org, roleReq)
 	// Expired grant of an unmapped type (must fail loud, stay fulfilled).
 	req(bogusReq, "widget", bogusRes)
 
