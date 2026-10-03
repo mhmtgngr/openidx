@@ -122,7 +122,7 @@ func TestAnAccessReviewIsReadByItsReviewerAnAuditorAndAnAdministrator(t *testing
 	if got := listed(stranger, "user"); len(got) != 0 {
 		t.Errorf("a user who reviews nothing lists %v, want none", got)
 	}
-	for _, role := range []string{"auditor", "admin"} {
+	for _, role := range []string{"auditor", "admin", "super_admin"} {
 		if got := listed(auditor, role); !slices.Equal(got, both) {
 			t.Errorf("an %s lists %v, want both reviews", role, got)
 		}
