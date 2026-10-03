@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **The SCIM server answers an identity provider's machine credential or an administrator, not every signed-in user.** `/scim/v2/Users` and `/scim/v2/Groups` accepted any OpenIDX bearer token, and a signed-in person's own token is one, so any user could change the directory through them. They now answer a `client_credentials` token, which names no user and is minted only for an application an administrator gave API access, and `admin` or `super_admin`. Anyone else gets a SCIM `403`. Upstream identity providers, which call with a machine credential, are unaffected. The discovery routes are unchanged.
+
 ## [1.39.0] - 2026-09-28
 
 ### Security

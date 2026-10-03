@@ -92,7 +92,9 @@ func newSCIMHarness(t *testing.T) *scimHarness {
 func (h *scimHarness) mint(key *rsa.PrivateKey, issuer string) string {
 	h.t.Helper()
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"iss": issuer, "sub": "scim-client", "exp": time.Now().Add(time.Hour).Unix(),
+		// The shape oauth-service mints for a client_credentials grant, the
+		// one an upstream identity provider uses: no user, the client named.
+		"iss": issuer, "sub": "", "client_id": "scim-client", "exp": time.Now().Add(time.Hour).Unix(),
 		middleware.OrgIDClaim: scimTestOrg, middleware.APIAccessClaim: true,
 	})
 	tok.Header["typ"] = middleware.AccessTokenType

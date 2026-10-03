@@ -1013,6 +1013,38 @@ func (s *Service) listSCIMUsers(ctx context.Context, startIndex, count int, pred
 // to.
 var requireAdminRole = middleware.RequireRoles("admin", "super_admin")
 
+// requireSCIMProvisioner admits the SCIM server's callers to its users and
+// groups: a machine credential -- a client_credentials token, which names no
+// user (an empty subject) and is minted only for an application an
+// administrator gave API access -- or an administrator (admin or
+// super_admin). Those routes create, change and delete the organization's
+// users and group memberships, and read the whole directory. They asked only
+// for an OpenIDX bearer token, and a signed-in person's own token is one: any
+// user could add themselves to a group, or disable another account. The
+// upstream identity providers the server is for call it with a machine
+// credential and are unaffected. Anyone else is refused with a SCIM 403. The
+// discovery routes (schemas, resource types, provider configuration) are not
+// gated.
+func requireSCIMProvisioner(c *gin.Context) {
+	if c.GetString("user_id") == "" {
+		c.Next()
+		return
+	}
+	if roles, ok := c.Get("roles"); ok {
+		if list, ok := roles.([]string); ok {
+			for _, r := range list {
+				if r == "admin" || r == "super_admin" {
+					c.Next()
+					return
+				}
+			}
+		}
+	}
+	writeSCIMError(c, http.StatusForbidden,
+		"the SCIM server answers an identity provider's machine credential or an administrator, not a signed-in user's own token")
+	c.Abort()
+}
+
 // RegisterRoutes registers provisioning service routes
 func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.HandlerFunc) {
 	// SCIM 2.0 endpoints
@@ -1024,20 +1056,20 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 	}
 	{
 		// Users
-		scim.GET("/Users", svc.handleListUsers)
-		scim.POST("/Users", svc.handleCreateUser)
-		scim.GET("/Users/:id", svc.handleGetUser)
-		scim.PUT("/Users/:id", svc.handleReplaceUser)
-		scim.PATCH("/Users/:id", svc.handlePatchUser)
-		scim.DELETE("/Users/:id", svc.handleDeleteUser)
+		scim.GET("/Users", requireSCIMProvisioner, svc.handleListUsers)
+		scim.POST("/Users", requireSCIMProvisioner, svc.handleCreateUser)
+		scim.GET("/Users/:id", requireSCIMProvisioner, svc.handleGetUser)
+		scim.PUT("/Users/:id", requireSCIMProvisioner, svc.handleReplaceUser)
+		scim.PATCH("/Users/:id", requireSCIMProvisioner, svc.handlePatchUser)
+		scim.DELETE("/Users/:id", requireSCIMProvisioner, svc.handleDeleteUser)
 
 		// Groups
-		scim.GET("/Groups", svc.handleListGroups)
-		scim.POST("/Groups", svc.handleCreateGroup)
-		scim.GET("/Groups/:id", svc.handleGetGroup)
-		scim.PUT("/Groups/:id", svc.handleReplaceGroup)
-		scim.PATCH("/Groups/:id", svc.handlePatchGroup)
-		scim.DELETE("/Groups/:id", svc.handleDeleteGroup)
+		scim.GET("/Groups", requireSCIMProvisioner, svc.handleListGroups)
+		scim.POST("/Groups", requireSCIMProvisioner, svc.handleCreateGroup)
+		scim.GET("/Groups/:id", requireSCIMProvisioner, svc.handleGetGroup)
+		scim.PUT("/Groups/:id", requireSCIMProvisioner, svc.handleReplaceGroup)
+		scim.PATCH("/Groups/:id", requireSCIMProvisioner, svc.handlePatchGroup)
+		scim.DELETE("/Groups/:id", requireSCIMProvisioner, svc.handleDeleteGroup)
 
 		// Schema discovery
 		scim.GET("/Schemas", svc.handleGetSchemas)
@@ -1049,9 +1081,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 
 	// Internal provisioning API: the organization's provisioning rules and its
 	// outbound SCIM targets. Administrators only, behind the same
-	// authentication; see requireAdminRole. The SCIM server above keeps its
-	// bearer-token authentication as it is: its callers are the upstream
-	// identity providers an organization points at it.
+	// authentication; see requireAdminRole. The SCIM server above answers its
+	// callers, the upstream identity providers an organization points at it,
+	// and administrators; see requireSCIMProvisioner.
 	prov := router.Group("/api/v1/provisioning")
 	prov.Use(svc.openIDXAuthMiddleware(), requireAdminRole)
 	for _, mw := range extraMiddleware {

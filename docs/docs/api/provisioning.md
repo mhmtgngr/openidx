@@ -17,6 +17,11 @@ The Provisioning Service implements SCIM 2.0 (RFC 7643/7644) for automated user 
 
 Content type: `application/scim+json`
 
+The user and group routes answer a machine credential (the `client_credentials`
+token of an application an administrator gave API access, as an upstream
+identity provider uses) and an administrator (`admin` or `super_admin`). A
+signed-in person's own token gets `403`.
+
 ### Filtering
 
 ```
