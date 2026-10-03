@@ -60,13 +60,15 @@ func (s *Service) handleSSFConfiguration(c *gin.Context) {
 		// misconfigured on either side and nothing to debug. It asked for what
 		// it was offered.
 		//
-		// The six that left are not abandoned, they are unbuilt, and the
+		// The six that left were not abandoned, they were unbuilt, and the
 		// reason is structural rather than an oversight: EmitCAEPEvent is a
 		// method on this service, so the paths that cause those events cannot
 		// call it. Disabling an account happens in identity, access, admin,
-		// directory and provisioning; a posture change happens in access. The
-		// outbox (internal/common/events) is the seam that reaches them, and
-		// the plan carries the design.
+		// directory and provisioning; a posture change happens in access.
+		// internal/common/ssfsignal is the seam that reaches them, and they
+		// come back through it one at a time: account-disabled first, then
+		// token-claims-change, for the roles and groups an access request
+		// gives and takes back.
 		//
 		// TestEverySSFEventAdvertisedIsActuallyEmitted holds both directions,
 		// so this list grows again exactly when an emitter appears and not
@@ -84,10 +86,16 @@ func (s *Service) handleSSFConfiguration(c *gin.Context) {
 // census in ssf_advertised_census_test.go holds it to the EmitCAEPEvent calls
 // in both directions.
 var ssfEventsSupported = []string{
+	// Emitted when a user's sessions are revoked here, and by the signal
+	// drainer (ssf_signal_drain.go) when an external account is suspended.
 	EventSessionRevoked,
-	// Emitted by the signal drainer (ssf_signal_drain.go) for every path that
-	// disables or deletes a user, via internal/common/ssfsignal.
+	// Emitted by the signal drainer for every path that disables or deletes a
+	// user, via internal/common/ssfsignal.
 	EventAccountDisabled,
+	// Emitted by the signal drainer when a role or a group a user holds
+	// through an access request begins or ends (governance), with the claims'
+	// new values.
+	EventTokenClaimsChange,
 }
 
 func (s *Service) handleListSSFStreams(c *gin.Context) {

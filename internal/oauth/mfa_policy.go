@@ -7,6 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/identity"
 )
 
@@ -53,6 +54,9 @@ type mfaEvaluation struct {
 	// EnrollmentRequired means the grace period is over and the user has neither
 	// a required method nor a bypass code: the login must be refused.
 	EnrollmentRequired bool
+	// External marks an external (vendor) user, whose sign-in is held to
+	// strong factors by holdExternalToStrongFactors.
+	External bool
 	// Challenge is the final answer: this login must be completed with a second
 	// factor before an authorization code may be issued.
 	Challenge   bool
@@ -61,11 +65,68 @@ type mfaEvaluation struct {
 	RiskFactors []string
 }
 
-// evaluateMFA decides whether a just-authenticated password login has to be
+// evaluateMFA decides whether a just-authenticated login has to be completed
+// with a second factor: evaluateMFAPolicies, then, for an external user,
+// holdExternalToStrongFactors.
+func (s *Service) evaluateMFA(
+	ctx context.Context,
+	user *identity.User,
+	clientIP, userAgent, fingerprint, location string,
+	deviceTrusted bool,
+	riskScore int,
+	riskFactors []string,
+) mfaEvaluation {
+	return holdExternalToStrongFactors(user,
+		s.evaluateMFAPolicies(ctx, user, clientIP, userAgent, fingerprint, location, deviceTrusted, riskScore, riskFactors))
+}
+
+// holdExternalToStrongFactors is the sign-in half of the external-user rules
+// (third-party access framework, decision D4). An external user is always
+// challenged, whatever the risk engine, a policy or a remembered browser
+// says; only an authenticator app, a passkey or a push device counts (their
+// own backup codes are offered beside one, an administrator's bypass code is
+// not); and an external user with none of them is refused, because such an
+// account is created with one at its invitation and has no business signing
+// in without it.
+func holdExternalToStrongFactors(user *identity.User, ev mfaEvaluation) mfaEvaluation {
+	if user == nil || user.UserType != externalid.TypeExternal {
+		return ev
+	}
+	ev.External = true
+	methods := []string{}
+	strong := 0
+	for _, m := range ev.Methods {
+		switch {
+		case externalid.FactorAllowed(externalid.TypeExternal, m):
+			methods = append(methods, m)
+			strong++
+		case m == "backup":
+			methods = append(methods, m)
+		}
+	}
+	ev.SkipMFA = false
+	ev.EnrollmentDue = nil
+	ev.GraceBegan = false
+	if strong == 0 {
+		ev.Methods = nil
+		ev.Challenge = false
+		ev.EnrollmentRequired = true
+		ev.RequiredMethods = append([]string(nil), externalid.StrongFactors...)
+		return ev
+	}
+	ev.Methods = methods
+	ev.Enabled = true
+	ev.RequireMFA = true
+	ev.EnrollmentRequired = false
+	ev.Challenge = true
+	return ev
+}
+
+// evaluateMFAPolicies decides whether a just-authenticated password login has to be
 // completed with a second factor. riskScore/riskFactors are the caller's
 // pre-computed values (the risk service already ran for the login record); they
 // are returned back, possibly refined by the adaptive assessment.
-func (s *Service) evaluateMFA(
+func (s *Service) evaluateMFAPolicies(
 	ctx context.Context,
 	user *identity.User,
 	clientIP, userAgent, fingerprint, location string,
