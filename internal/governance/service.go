@@ -1928,19 +1928,18 @@ func (s *Service) handleGetReview(c *gin.Context) {
 }
 
 // reviewReaderScope says which access reviews the caller reads. An
-// administrator or an auditor reads every review of the organization, and
-// gets "". Anyone else reads the reviews they are the reviewer of and no
-// other, and gets their own id. A review's items name who holds what across
+// administrator (admin or super_admin) or an auditor reads every review of the
+// organization, and gets "". Anyone else reads the reviews they are the
+// reviewer of and no other, and gets their own id. A review's items name who holds what across
 // the organization, so a review is not read by everyone signed in: that was
 // the case without OPA, and with OPA on these routes are open to every
 // signed-in caller so that a reviewer who is not an auditor reaches their own
 // review. Writes 401 and answers false for a caller with no id.
 func reviewReaderScope(c *gin.Context) (string, bool) {
-	if isAdmin, _ := auth.HasRoleInContext(c, auth.RoleAdmin); isAdmin {
-		return "", true
-	}
-	if isAuditor, _ := auth.HasRoleInContext(c, auth.RoleAuditor); isAuditor {
-		return "", true
+	for _, role := range []auth.Role{auth.RoleSuperAdmin, auth.RoleAdmin, auth.RoleAuditor} {
+		if ok, _ := auth.HasRoleInContext(c, role); ok {
+			return "", true
+		}
 	}
 	userID, _ := c.Get("user_id")
 	callerID, _ := userID.(string)
