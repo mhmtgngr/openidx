@@ -57,7 +57,8 @@ func SubjectAttributes(ctx context.Context, db *database.PostgresDB, userID, org
 	roles, err := stringColumn(ctx, db, `
 		SELECT r.name FROM user_roles ur
 		JOIN roles r ON r.id = ur.role_id AND r.org_id = ur.org_id
-		WHERE ur.user_id = $1 AND ur.org_id = $2`, userID, orgID)
+		WHERE ur.user_id = $1 AND ur.org_id = $2
+		  AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`, userID, orgID)
 	if err != nil {
 		return attrs, err
 	}
@@ -66,7 +67,8 @@ func SubjectAttributes(ctx context.Context, db *database.PostgresDB, userID, org
 	groups, err := stringColumn(ctx, db, `
 		SELECT g.name FROM group_memberships gm
 		JOIN groups g ON g.id = gm.group_id AND g.org_id = gm.org_id
-		WHERE gm.user_id = $1 AND gm.org_id = $2`, userID, orgID)
+		WHERE gm.user_id = $1 AND gm.org_id = $2
+		  AND (gm.expires_at IS NULL OR gm.expires_at > NOW())`, userID, orgID)
 	if err != nil {
 		return attrs, err
 	}
