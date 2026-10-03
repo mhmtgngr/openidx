@@ -790,7 +790,13 @@ export function PamConnectionsPage() {
                 {t('pages.pamConnections.entryDialog.requireApproval')}
               </label>
               <label className="flex items-center gap-2 text-sm">
-                <Checkbox checked={form.record_session} onCheckedChange={(v) => setForm((f) => ({ ...f, record_session: !!v }))} />
+                {/* Recording rules out the browser terminal, which records
+                    nothing (the API refuses the pair), so ticking it switches
+                    the terminal off. */}
+                <Checkbox
+                  checked={form.record_session}
+                  onCheckedChange={(v) => setForm((f) => ({ ...f, record_session: !!v, renderer: v && f.renderer === 'wasm-ssh' ? 'guacamole' : f.renderer }))}
+                />
                 {t('pages.pamConnections.entryDialog.recordSession')}
               </label>
               {/* A moderator watches a session, so an entry that opens none
@@ -799,7 +805,7 @@ export function PamConnectionsPage() {
                 <Checkbox
                   checked={!!form.require_moderator}
                   disabled={!selectedType?.protocol}
-                  onCheckedChange={(v) => setForm((f) => ({ ...f, require_moderator: !!v }))}
+                  onCheckedChange={(v) => setForm((f) => ({ ...f, require_moderator: !!v, renderer: v && f.renderer === 'wasm-ssh' ? 'guacamole' : f.renderer }))}
                 />
                 {t('pages.pamConnections.entryDialog.requireModerator')}
               </label>
@@ -825,9 +831,10 @@ export function PamConnectionsPage() {
               <p className="text-xs text-muted-foreground">{t('pages.pamConnections.entryDialog.externalPolicyNote')}</p>
             </div>
             {selectedType?.protocol === 'ssh' && (
-              <label className="flex items-center gap-2 text-sm pt-1">
+              <label className="flex items-center gap-2 text-sm pt-1" title={t('pages.pamConnections.entryDialog.browserTerminalHint')}>
                 <Checkbox
                   checked={form.renderer === 'wasm-ssh'}
+                  disabled={form.record_session || !!form.require_moderator}
                   onCheckedChange={(v) => setForm((f) => ({ ...f, renderer: v ? 'wasm-ssh' : 'guacamole' }))}
                 />
                 {t('pages.pamConnections.entryDialog.browserTerminal')}
