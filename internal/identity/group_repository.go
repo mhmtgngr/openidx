@@ -24,6 +24,10 @@ import (
 // ErrGroupNotFound is the sentinel for a group miss within the tenant (→404).
 var ErrGroupNotFound = errors.New("group not found")
 
+// ErrInvalidGroupMaxMembers refuses a member cap that is not a positive
+// whole number (→400). "" clears the cap.
+var ErrInvalidGroupMaxMembers = errors.New("maxMembers must be a positive whole number, or empty for no limit")
+
 // GroupRepository is the data-access port for groups. Depending on the
 // interface keeps group business logic unit-testable with a fake.
 type GroupRepository interface {
@@ -159,16 +163,22 @@ func (r *PostgresGroupRepository) Update(ctx context.Context, group *Group) erro
 	}
 	group.UpdatedAt = time.Now()
 	dbGroup := FromGroup(*group)
+	selfJoin, approval, maxMembers, setMax, err := groupSettingsOnUpdate(group.Attributes)
+	if err != nil {
+		return err
+	}
 
 	result, err := r.db.Pool.Exec(ctx, `
 		UPDATE groups
-		SET name = $2, description = $3, parent_id = $4, allow_self_join = $5,
-		    require_approval = $6, max_members = $7, updated_at = $8,
+		SET name = $2, description = $3, parent_id = $4,
+		    allow_self_join = COALESCE($5, allow_self_join),
+		    require_approval = COALESCE($6, require_approval),
+		    max_members = CASE WHEN $11 THEN $7 ELSE max_members END, updated_at = $8,
 		    external_allowed = COALESCE($10, external_allowed)
 		WHERE id = $1 AND org_id = $9
 	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID,
-		dbGroup.AllowSelfJoin, dbGroup.RequireApproval, dbGroup.MaxMembers, dbGroup.UpdatedAt, org.ID,
-		dbGroup.ExternalAllowed)
+		selfJoin, approval, maxMembers, dbGroup.UpdatedAt, org.ID,
+		dbGroup.ExternalAllowed, setMax)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrGroupAlreadyExists

@@ -73,10 +73,10 @@ function toFlatGroup(g: RawGroup): Group {
     name: String(g.displayName ?? g.name ?? ''),
     description: String(attrs.description ?? g.description ?? ''),
     parent_id: (attrs.parentId ?? g.parent_id ?? null) as string | null,
-    allow_self_join: Boolean(g.allow_self_join ?? false),
-    require_approval: Boolean(g.require_approval ?? false),
+    allow_self_join: attrs.allowSelfJoin === 'true' || g.allow_self_join === true,
+    require_approval: attrs.requireApproval === 'true' || g.require_approval === true,
     external_allowed: attrs.externalAllowed === 'true',
-    max_members: (g.max_members ?? null) as number | null,
+    max_members: attrs.maxMembers ? Number(attrs.maxMembers) : ((g.max_members ?? null) as number | null),
     member_count: Number(g.member_count ?? members.length ?? 0),
     created_at: String(g.createdAt ?? g.created_at ?? ''),
     updated_at: String(g.updatedAt ?? g.updated_at ?? ''),
@@ -88,6 +88,10 @@ function toApiGroup(d: Partial<Group>): Record<string, unknown> {
   if (d.parent_id) attributes.parentId = d.parent_id
   // Sent only when the form sets it: an update without it keeps the stored value.
   if (d.external_allowed !== undefined) attributes.externalAllowed = String(d.external_allowed)
+  // The settings dialog's fields, kept the same way; an empty maxMembers clears the cap.
+  if (d.allow_self_join !== undefined) attributes.allowSelfJoin = String(d.allow_self_join)
+  if (d.require_approval !== undefined) attributes.requireApproval = String(d.require_approval)
+  if (d.max_members !== undefined) attributes.maxMembers = d.max_members == null ? '' : String(d.max_members)
   const body: Record<string, unknown> = {}
   if (d.name !== undefined) body.displayName = d.name
   if (Object.keys(attributes).length) body.attributes = attributes
