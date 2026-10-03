@@ -39,12 +39,14 @@ type externalSweepStep struct {
 
 // externalSweepSteps, in order. The account's end comes first, so an account
 // past it is expired whatever else happened to it; a closed vendor comes
-// before a departed sponsor, so its accounts go straight to disabled.
+// before a departed sponsor, so its accounts go straight to disabled; a
+// suspended vendor's accounts are suspended before the sponsor step looks.
 //
 // The routes that change an account sever it themselves. These are the
 // transitions nobody makes by hand: the clock, a sponsor disabled by a writer
 // that does not know about sponsorship (directory sync, a lifecycle policy, the
-// kill switch), a vendor closed by a close that failed half-way.
+// kill switch), a vendor closed by a close that failed half-way, or suspended
+// by an update whose accounts were not all reached.
 var externalSweepSteps = []externalSweepStep{
 	{
 		// I8: the account's end.
@@ -62,6 +64,17 @@ var externalSweepSteps = []externalSweepStep{
 			u.account_status IN ('invited', 'pending_mfa', 'active', 'suspended')
 			AND EXISTS (SELECT 1 FROM vendor_organizations v
 			             WHERE v.id = u.vendor_org_id AND v.org_id = u.org_id AND v.status = 'closed')`),
+	},
+	{
+		// The vendor's suspension, for an account the update route did not
+		// reach. Suspended, not disabled: the account comes back when the
+		// vendor does.
+		action: "external.suspended",
+		reason: "the vendor organization is suspended",
+		sql: externalSweepMove("suspended", `
+			u.account_status IN ('invited', 'pending_mfa', 'active')
+			AND EXISTS (SELECT 1 FROM vendor_organizations v
+			             WHERE v.id = u.vendor_org_id AND v.org_id = u.org_id AND v.status = 'suspended')`),
 	},
 	{
 		// An account that waits for its second factor after its invitation
@@ -91,13 +104,18 @@ var externalSweepSteps = []externalSweepStep{
 	},
 	{
 		// D5: nobody took the account over in time; the departure is final.
-		// A suspension with no recorded time is past any grace.
+		// A suspension with no recorded time is past any grace. The window
+		// does not run while the vendor is suspended, since nobody can
+		// reactivate the account then; the vendor's reactivation restarts
+		// it (restartVendorGrace).
 		action: "external.disabled",
 		reason: "not reactivated within the sponsor grace period",
 		sql: externalSweepMove("disabled", `
 			u.account_status = 'suspended'
 			AND (u.status_changed_at IS NULL
-			     OR u.status_changed_at <= NOW() - make_interval(days => `+strconv.Itoa(externalid.SponsorGraceDays)+`))`),
+			     OR u.status_changed_at <= NOW() - make_interval(days => `+strconv.Itoa(externalid.SponsorGraceDays)+`))
+			AND NOT EXISTS (SELECT 1 FROM vendor_organizations v
+			                 WHERE v.id = u.vendor_org_id AND v.org_id = u.org_id AND v.status = 'suspended')`),
 	},
 }
 

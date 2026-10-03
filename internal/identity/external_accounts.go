@@ -109,8 +109,8 @@ type ExternalUser struct {
 	// HasStrongFactor: an authenticator app, passkey or push device is
 	// enrolled (decision D4).
 	HasStrongFactor bool `json:"has_strong_factor"`
-	// ReactivateUntil: for a suspended account, the end of the window in
-	// which a new sponsor can reactivate it (decision D5).
+	// ReactivateUntil: for a suspended account of an active vendor, the end
+	// of the window in which a new sponsor can reactivate it (decision D5).
 	ReactivateUntil *time.Time `json:"reactivate_until,omitempty"`
 }
 
@@ -428,7 +428,7 @@ func (s *Service) handleListExternalUsers(c *gin.Context) {
 		SELECT u.id::text, u.username, u.email, COALESCE(u.first_name, ''), COALESCE(u.last_name, ''),
 		       u.account_status, COALESCE(u.enabled, false), u.vendor_org_id::text, COALESCE(v.name, ''),
 		       u.sponsor_user_id::text, COALESCE(NULLIF(trim(COALESCE(sp.first_name, '') || ' ' || COALESCE(sp.last_name, '')), ''), sp.username, ''),
-		       u.account_expires_at, u.status_changed_at, u.last_login_at, u.created_at,
+		       u.account_expires_at, u.status_changed_at, u.last_login_at, u.created_at, COALESCE(v.status, ''),
 		       EXISTS (SELECT 1 FROM mfa_totp t WHERE t.user_id = u.id AND t.org_id = u.org_id AND t.enabled)
 		    OR EXISTS (SELECT 1 FROM mfa_webauthn w WHERE w.user_id = u.id AND w.org_id = u.org_id)
 		    OR EXISTS (SELECT 1 FROM mfa_push_devices p WHERE p.user_id = u.id AND p.org_id = u.org_id AND COALESCE(p.enabled, true))
@@ -450,9 +450,10 @@ func (s *Service) handleListExternalUsers(c *gin.Context) {
 	out := []ExternalUser{}
 	for rows.Next() {
 		var u ExternalUser
+		var vendorStatus string
 		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName, &u.Status, &u.Enabled,
 			&u.VendorOrgID, &u.VendorName, &u.SponsorUserID, &u.SponsorName, &u.AccountExpiresAt,
-			&u.StatusChangedAt, &u.LastLoginAt, &u.CreatedAt, &u.HasStrongFactor); err != nil {
+			&u.StatusChangedAt, &u.LastLoginAt, &u.CreatedAt, &vendorStatus, &u.HasStrongFactor); err != nil {
 			s.logger.Error("scan external user failed", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list external users"})
 			return
@@ -460,7 +461,9 @@ func (s *Service) handleListExternalUsers(c *gin.Context) {
 		if u.Status == externalid.StatusActive && u.AccountExpiresAt != nil && u.AccountExpiresAt.Sub(now) < externalExpiringSoon {
 			u.ExpiringSoon = true
 		}
-		if u.Status == externalid.StatusSuspended && u.StatusChangedAt != nil {
+		// Only while the vendor is active: the reactivation route refuses
+		// any other, and the window is held until the vendor comes back.
+		if u.Status == externalid.StatusSuspended && u.StatusChangedAt != nil && vendorStatus == "active" {
 			until := u.StatusChangedAt.AddDate(0, 0, externalid.SponsorGraceDays)
 			u.ReactivateUntil = &until
 		}
