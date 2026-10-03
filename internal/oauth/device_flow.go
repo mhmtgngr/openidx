@@ -391,7 +391,9 @@ func (s *Service) handleDeviceCodeGrant(c *gin.Context) {
 		return
 	}
 
-	accessToken, err := s.GenerateJWT(ctx, claimedUser, clientID, rec.Scope, client.EffectiveAccessTokenLifetime(), "")
+	// A token that carries a time-bound role ends with it (§6.5).
+	lifetime := s.accessTokenLifetime(ctx, claimedUser, client.EffectiveAccessTokenLifetime())
+	accessToken, err := s.GenerateJWT(ctx, claimedUser, clientID, rec.Scope, lifetime, "")
 	if err != nil {
 		s.logger.Error("failed to mint device grant access token", zap.Error(err))
 		c.JSON(500, gin.H{"error": "server_error"})
@@ -401,11 +403,11 @@ func (s *Service) handleDeviceCodeGrant(c *gin.Context) {
 	resp := TokenResponse{
 		AccessToken: accessToken,
 		TokenType:   "Bearer",
-		ExpiresIn:   client.EffectiveAccessTokenLifetime(),
+		ExpiresIn:   lifetime,
 		Scope:       rec.Scope,
 	}
 	if scopeGrants(rec.Scope, scopeOpenID) {
-		if idToken, ierr := s.GenerateIDToken(ctx, claimedUser, clientID, "", rec.Scope, client.EffectiveAccessTokenLifetime(), ""); ierr == nil {
+		if idToken, ierr := s.GenerateIDToken(ctx, claimedUser, clientID, "", rec.Scope, lifetime, ""); ierr == nil {
 			resp.IDToken = idToken
 		}
 	}

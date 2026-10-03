@@ -31,6 +31,8 @@ interface AppAssignment {
   principal_id: string
   principal_name: string
   assigned_at: string
+  /** When an assignment an access request made ends; absent for a standing one. */
+  expires_at?: string
 }
 
 interface PickerItem {
@@ -295,6 +297,11 @@ export function ManageAppAccessDialog({
                         {a.principal_type}
                       </Badge>
                       {a.principal_name || a.principal_id}
+                      {a.expires_at && (
+                        <span className="text-xs text-muted-foreground">
+                          {t('components.manageAppAccess.until', { date: new Date(a.expires_at).toLocaleString() })}
+                        </span>
+                      )}
                     </span>
                     <Button
                       variant="ghost"

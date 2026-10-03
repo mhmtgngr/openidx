@@ -82,7 +82,8 @@ func (s *Service) handlePlaceGuacLegalHold(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to place hold"})
 		return
 	}
-	s.auditLog(c, "guacamole.legal_hold_placed", map[string]interface{}{"session_id": sessionID, "reason": req.Reason})
+	s.recordUnifiedEvent(c, "", "guacamole.legal_hold_placed", c.GetString("user_id"), sessionID, "guacamole_session",
+		map[string]interface{}{"session_id": sessionID, "reason": req.Reason})
 	c.JSON(http.StatusCreated, gin.H{"id": id, "session_id": sessionID, "reason": req.Reason})
 }
 
@@ -125,7 +126,8 @@ func (s *Service) handleReleaseGuacLegalHold(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no active legal hold for this session"})
 		return
 	}
-	s.auditLog(c, "guacamole.legal_hold_released", map[string]interface{}{"session_id": sessionID, "reason": req.Reason})
+	s.recordUnifiedEvent(c, "", "guacamole.legal_hold_released", c.GetString("user_id"), sessionID, "guacamole_session",
+		map[string]interface{}{"session_id": sessionID, "reason": req.Reason})
 	c.JSON(http.StatusOK, gin.H{"status": "released", "session_id": sessionID})
 }
 

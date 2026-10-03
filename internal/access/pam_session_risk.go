@@ -200,6 +200,8 @@ func (p *PAMSessionRiskScorer) scoreActiveSessions(ctx context.Context) {
 			  WHERE id = $1 AND org_id = $2`, a.SessionID, a.OrgID); err != nil {
 			p.logger.Error("pam risk: could not mark the session suspended",
 				logsafe.String("session_id", a.SessionID), zap.Error(err))
+		} else {
+			p.svc.pamSessionEnded(a.OrgID, a.SessionID, sessionEndRiskSuspended, "")
 		}
 		p.logger.Warn("PAM session auto-suspended (enforce)",
 			zap.String("session_id", a.SessionID), zap.String("user_id", a.UserID), zap.Int("score", score))

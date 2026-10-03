@@ -24,6 +24,10 @@ import (
 // ErrGroupNotFound is the sentinel for a group miss within the tenant (→404).
 var ErrGroupNotFound = errors.New("group not found")
 
+// ErrInvalidGroupMaxMembers refuses a member cap that is not a positive
+// whole number (→400). "" clears the cap.
+var ErrInvalidGroupMaxMembers = errors.New("maxMembers must be a positive whole number, or empty for no limit")
+
 // GroupRepository is the data-access port for groups. Depending on the
 // interface keeps group business logic unit-testable with a fake.
 type GroupRepository interface {
@@ -66,13 +70,15 @@ func NewPostgresGroupRepository(db *database.PostgresDB) *PostgresGroupRepositor
 const groupSelectColumns = `
 	g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval,
 	g.max_members, g.created_at, g.updated_at,
-	COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) AS member_count`
+	COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) AS member_count,
+	g.external_allowed`
 
 func scanGroup(row pgx.Row) (*GroupDB, error) {
 	var g GroupDB
 	err := row.Scan(
 		&g.ID, &g.DisplayName, &g.Description, &g.ParentID, &g.AllowSelfJoin,
 		&g.RequireApproval, &g.MaxMembers, &g.CreatedAt, &g.UpdatedAt, &g.MemberCount,
+		&g.ExternalAllowed,
 	)
 	if err != nil {
 		return nil, err
@@ -131,10 +137,10 @@ func (r *PostgresGroupRepository) Create(ctx context.Context, group *Group) erro
 	dbGroup := FromGroup(*group)
 
 	_, err = r.db.Pool.Exec(ctx, `
-		INSERT INTO groups (id, name, description, parent_id, created_at, updated_at, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO groups (id, name, description, parent_id, created_at, updated_at, org_id, external_allowed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, false))
 	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID,
-		dbGroup.CreatedAt, dbGroup.UpdatedAt, org.ID)
+		dbGroup.CreatedAt, dbGroup.UpdatedAt, org.ID, dbGroup.ExternalAllowed)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrGroupAlreadyExists
@@ -157,14 +163,22 @@ func (r *PostgresGroupRepository) Update(ctx context.Context, group *Group) erro
 	}
 	group.UpdatedAt = time.Now()
 	dbGroup := FromGroup(*group)
+	selfJoin, approval, maxMembers, setMax, err := groupSettingsOnUpdate(group.Attributes)
+	if err != nil {
+		return err
+	}
 
 	result, err := r.db.Pool.Exec(ctx, `
 		UPDATE groups
-		SET name = $2, description = $3, parent_id = $4, allow_self_join = $5,
-		    require_approval = $6, max_members = $7, updated_at = $8
+		SET name = $2, description = $3, parent_id = $4,
+		    allow_self_join = COALESCE($5, allow_self_join),
+		    require_approval = COALESCE($6, require_approval),
+		    max_members = CASE WHEN $11 THEN $7 ELSE max_members END, updated_at = $8,
+		    external_allowed = COALESCE($10, external_allowed)
 		WHERE id = $1 AND org_id = $9
 	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID,
-		dbGroup.AllowSelfJoin, dbGroup.RequireApproval, dbGroup.MaxMembers, dbGroup.UpdatedAt, org.ID)
+		selfJoin, approval, maxMembers, dbGroup.UpdatedAt, org.ID,
+		dbGroup.ExternalAllowed, setMax)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrGroupAlreadyExists
