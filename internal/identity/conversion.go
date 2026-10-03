@@ -245,7 +245,7 @@ func (g *GroupDB) ToGroup() Group {
 // whether an external (vendor) user may be a member (invariant I3).
 const externalAllowedAttr = "externalAllowed"
 
-// groupSettingsOnUpdate reads the membership settings an update names. Each
+// groupSettingsOnUpdate reads the membership settings a write names. Each
 // is nil, or setMax false, when the update leaves it out, so the stored value
 // stays: as with externalAllowed, a client that sends only a new name, the
 // console's edit form among them, must not turn self-join off and drop the

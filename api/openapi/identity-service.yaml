@@ -649,6 +649,12 @@ paths:
       responses:
         '201':
           description: Group created
+        '400':
+          description: >-
+            The body is malformed, or `attributes.maxMembers` is not a positive
+            whole number (`invalid_max_members`).
+        '409':
+          description: A group of that name already exists (`group_exists`).
 
   /api/v1/identity/groups/{id}:
     get:
@@ -688,6 +694,10 @@ paths:
           description: >-
             The body is malformed, or `attributes.maxMembers` is not a positive
             whole number (`invalid_max_members`).
+        '404':
+          description: No such group in the caller's organization.
+        '409':
+          description: Another group already has that name (`group_exists`).
     delete:
       tags: [Groups]
       summary: Delete group
@@ -5428,31 +5438,60 @@ components:
 
     Group:
       type: object
+      description: >-
+        A group as the identity service returns it, in SCIM's shape: the name
+        is `displayName` and the rest are string `attributes`. An attribute
+        that is unset, or a setting that is off, is left out.
       properties:
         id:
           type: string
-        name:
+        displayName:
           type: string
-        description:
-          type: string
-        parent_id:
-          type: string
-        member_count:
+        attributes:
+          $ref: '#/components/schemas/GroupAttributes'
+        memberCount:
           type: integer
-        created_at:
+          description: >-
+            The group's member count, where the read counted it; left out for
+            an empty group. Read-only.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
           type: string
           format: date-time
 
-    GroupCreate:
+    GroupAttributes:
       type: object
-      required: [name]
       properties:
-        name:
-          type: string
         description:
           type: string
-        parent_id:
+        parentId:
           type: string
+        externalAllowed:
+          type: string
+          enum: ['true', 'false']
+          description: Whether an external (vendor) user may be a member.
+        allowSelfJoin:
+          type: string
+          enum: ['true', 'false']
+        requireApproval:
+          type: string
+          enum: ['true', 'false']
+        maxMembers:
+          type: string
+          description: >-
+            The member cap, a positive whole number. On an update, an empty
+            string removes it.
+
+    GroupCreate:
+      type: object
+      required: [displayName]
+      properties:
+        displayName:
+          type: string
+        attributes:
+          $ref: '#/components/schemas/GroupAttributes'
 
     Session:
       type: object
