@@ -521,7 +521,7 @@ func (s *Service) GetAccessReview(ctx context.Context, reviewID string) (*Access
 
 	var review AccessReview
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, name, description, type, status, reviewer_id,
+		SELECT id, name, COALESCE(description, ''), type, COALESCE(status, ''), COALESCE(reviewer_id::text, ''),
 		       start_date, end_date, created_at, completed_at
 		FROM access_reviews WHERE id = $1 AND org_id = $2
 	`, reviewID, org.ID).Scan(
@@ -533,6 +533,12 @@ func (s *Service) GetAccessReview(ctx context.Context, reviewID string) (*Access
 
 // ListAccessReviews retrieves all access reviews, optionally filtered by status
 func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int, status string) ([]AccessReview, int, error) {
+	return s.ListAccessReviewsFor(ctx, offset, limit, status, "")
+}
+
+// ListAccessReviewsFor lists the org's access reviews, only those whose
+// reviewer is reviewerID when it is not empty.
+func (s *Service) ListAccessReviewsFor(ctx context.Context, offset, limit int, status, reviewerID string) ([]AccessReview, int, error) {
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -543,8 +549,12 @@ func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int, stat
 	countQuery := "SELECT COUNT(*) FROM access_reviews WHERE org_id = $1"
 
 	if status != "" {
-		countQuery += " AND status = $2"
 		countArgs = append(countArgs, status)
+		countQuery += " AND status = $" + strconv.Itoa(len(countArgs))
+	}
+	if reviewerID != "" {
+		countArgs = append(countArgs, reviewerID)
+		countQuery += " AND reviewer_id::text = $" + strconv.Itoa(len(countArgs))
 	}
 
 	err = s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
@@ -553,7 +563,7 @@ func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int, stat
 	}
 
 	baseQuery := `
-		SELECT ar.id, ar.name, ar.description, ar.type, ar.status, ar.reviewer_id,
+		SELECT ar.id, ar.name, COALESCE(ar.description, ''), ar.type, COALESCE(ar.status, ''), COALESCE(ar.reviewer_id::text, ''),
 		       ar.start_date, ar.end_date, ar.created_at, ar.completed_at,
 		       COUNT(ri.id) as total_items,
 		       COUNT(CASE WHEN ri.decision != 'pending' THEN 1 END) as reviewed_items
@@ -568,6 +578,11 @@ func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int, stat
 	if status != "" {
 		baseQuery += " AND ar.status = $" + strconv.Itoa(paramIdx)
 		args = append(args, status)
+		paramIdx++
+	}
+	if reviewerID != "" {
+		baseQuery += " AND ar.reviewer_id::text = $" + strconv.Itoa(paramIdx)
+		args = append(args, reviewerID)
 		paramIdx++
 	}
 
@@ -1871,7 +1886,11 @@ func (s *Service) handleListReviews(c *gin.Context) {
 		}
 	}
 
-	reviews, total, err := s.ListAccessReviews(c.Request.Context(), offset, limit, status)
+	reviewer, ok := reviewReaderScope(c)
+	if !ok {
+		return
+	}
+	reviews, total, err := s.ListAccessReviewsFor(c.Request.Context(), offset, limit, status, reviewer)
 	if err != nil {
 		s.logger.Error("failed to list access reviews", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -1896,12 +1915,40 @@ func (s *Service) handleCreateReview(c *gin.Context) {
 }
 
 func (s *Service) handleGetReview(c *gin.Context) {
+	reviewer, ok := reviewReaderScope(c)
+	if !ok {
+		return
+	}
 	review, err := s.GetAccessReview(c.Request.Context(), c.Param("id"))
-	if err != nil {
+	if err != nil || (reviewer != "" && review.ReviewerID != reviewer) {
 		c.JSON(404, gin.H{"error": "review not found"})
 		return
 	}
 	c.JSON(200, review)
+}
+
+// reviewReaderScope says which access reviews the caller reads. An
+// administrator or an auditor reads every review of the organization, and
+// gets "". Anyone else reads the reviews they are the reviewer of and no
+// other, and gets their own id. A review's items name who holds what across
+// the organization, so a review is not read by everyone signed in: that was
+// the case without OPA, and with OPA on these routes are open to every
+// signed-in caller so that a reviewer who is not an auditor reaches their own
+// review. Writes 401 and answers false for a caller with no id.
+func reviewReaderScope(c *gin.Context) (string, bool) {
+	if isAdmin, _ := auth.HasRoleInContext(c, auth.RoleAdmin); isAdmin {
+		return "", true
+	}
+	if isAuditor, _ := auth.HasRoleInContext(c, auth.RoleAuditor); isAuditor {
+		return "", true
+	}
+	userID, _ := c.Get("user_id")
+	callerID, _ := userID.(string)
+	if callerID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return "", false
+	}
+	return callerID, true
 }
 
 func (s *Service) handleUpdateReview(c *gin.Context) {
@@ -1963,6 +2010,18 @@ func (s *Service) handleListReviewItems(c *gin.Context) {
 	}
 
 	decisionFilter := c.Query("decision")
+
+	reviewer, ok := reviewReaderScope(c)
+	if !ok {
+		return
+	}
+	if reviewer != "" {
+		review, err := s.GetAccessReview(c.Request.Context(), c.Param("id"))
+		if err != nil || review.ReviewerID != reviewer {
+			c.JSON(404, gin.H{"error": "review not found"})
+			return
+		}
+	}
 
 	items, total, err := s.ListReviewItems(c.Request.Context(), c.Param("id"), offset, limit, decisionFilter)
 	if err != nil {

@@ -110,6 +110,7 @@ paths:
     get:
       tags: [Access Reviews]
       summary: List access reviews
+      description: Every review for an administrator or an auditor; for anyone else, only the reviews they are the reviewer of.
       operationId: listReviews
       parameters:
         - name: offset
@@ -162,6 +163,7 @@ paths:
     get:
       tags: [Access Reviews]
       summary: Get access review
+      description: Answers its reviewer, an auditor and an administrator; anyone else gets `404`.
       operationId: getReview
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -216,6 +218,7 @@ paths:
     get:
       tags: [Review Items]
       summary: List review items
+      description: Answers the review's reviewer, an auditor and an administrator; anyone else gets `404`.
       operationId: listReviewItems
       parameters:
         - $ref: '#/components/parameters/IdPath'
