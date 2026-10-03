@@ -22,6 +22,7 @@ import (
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/opa"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
 	"github.com/openidx/openidx/internal/governance"
@@ -30,6 +31,7 @@ import (
 	"github.com/openidx/openidx/internal/organization"
 	"github.com/openidx/openidx/internal/server"
 	"github.com/openidx/openidx/internal/vault"
+	"github.com/openidx/openidx/internal/webhooks"
 )
 
 var (
@@ -262,6 +264,17 @@ func main() {
 		log.Fatal("vault service init failed", zap.Error(err))
 	}
 	governanceService.SetVaultService(vaultSvc)
+
+	// The access-request events go to the tenant's webhook subscribers. This
+	// service only publishes them; the webhook workers of the admin, identity
+	// and OAuth services deliver them. The cipher is the one those services
+	// seal subscription secrets with, though publishing never opens one.
+	webhookCipher, err := secretcrypt.New(cfg.EncryptionKey)
+	if err != nil {
+		log.Warn("webhook signing secrets are not encrypted at rest; set a 32-byte ENCRYPTION_KEY", zap.Error(err))
+		webhookCipher = secretcrypt.NewNoop()
+	}
+	governanceService.SetWebhookPublisher(webhooks.NewService(db, redis, log, webhookCipher))
 
 	// Register routes (with optional OPA authorization)
 	var opaMiddleware []gin.HandlerFunc

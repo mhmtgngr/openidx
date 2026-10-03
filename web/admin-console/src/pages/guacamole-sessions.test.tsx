@@ -181,6 +181,28 @@ describe('GuacamoleSessionsPage', () => {
     expect(screen.getByText('conn-web-01')).toBeInTheDocument()
   })
 
+  it('marks an overlay session, and says when a broker could not be listed', async () => {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url.includes('/sessions') && !url.includes('/transcript') && !url.includes('/session-')) {
+        return Promise.resolve({
+          sessions: [activeSession, { ...activeSession, identifier: 'act-z', connectionIdentifier: 'conn-vendor', broker: 'ziti' }],
+          unavailable: ['direct'],
+        }) as ReturnType<typeof api.get>
+      }
+      return routeGet(url) as ReturnType<typeof api.get>
+    })
+    const user = userEvent.setup()
+    render(<GuacamoleSessionsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Pending Session Requests')
+    await user.click(screen.getByRole('tab', { name: /active sessions/i }))
+
+    const overlayRow = (await screen.findByText('conn-vendor')).closest('tr')!
+    expect(within(overlayRow).getByText('Overlay')).toBeInTheDocument()
+    const directRow = screen.getByText('conn-web-01').closest('tr')!
+    expect(within(directRow).queryByText('Overlay')).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('direct')
+  })
+
   it('Monitor button calls the share endpoint and opens share_url', async () => {
     const user = userEvent.setup()
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)

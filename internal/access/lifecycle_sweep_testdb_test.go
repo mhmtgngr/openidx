@@ -76,9 +76,9 @@ func seedLifecycle(t *testing.T, pool *pgxpool.Pool) (*Service, string) {
 		CREATE TABLE access_requests (
 			id uuid primary key, requester_id uuid, resource_type text, resource_id uuid,
 			org_id uuid, status text NOT NULL, expires_at timestamptz, updated_at timestamptz);
-		CREATE TABLE user_roles (user_id uuid, role_id uuid, org_id uuid);
+		CREATE TABLE user_roles (user_id uuid, role_id uuid, org_id uuid, expires_at TIMESTAMPTZ);
 		CREATE TABLE group_memberships (user_id uuid, group_id uuid, org_id uuid);
-		CREATE TABLE user_application_assignments (user_id uuid, application_id uuid, org_id uuid);`)
+		CREATE TABLE user_application_assignments (user_id uuid, application_id uuid, org_id uuid, expires_at TIMESTAMPTZ);`)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS vault_checkouts,
@@ -107,7 +107,11 @@ func seedLifecycle(t *testing.T, pool *pgxpool.Pool) (*Service, string) {
 		{`INSERT INTO access_requests (id, requester_id, resource_type, resource_id, org_id, status, expires_at)
 			VALUES (gen_random_uuid(), $1, 'role', $3, $4, 'fulfilled', NOW() + interval '1 day'),
 			       (gen_random_uuid(), $2, 'role', $3, $4, 'fulfilled', NOW() + interval '1 day')`, fourArgs},
-		{`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1, $3, $4), ($2, $3, $4)`, fourArgs},
+		// The assignments carry their request's window, as fulfilment writes
+		// it (migration v223).
+		{`INSERT INTO user_roles (user_id, role_id, org_id, expires_at)
+			SELECT requester_id, resource_id, org_id, expires_at FROM access_requests
+			 WHERE requester_id IN ($1, $2) AND resource_id = $3 AND org_id = $4`, fourArgs},
 	} {
 		_, err = pool.Exec(ctx, seed.sql, seed.args...)
 		require.NoError(t, err, seed.sql)

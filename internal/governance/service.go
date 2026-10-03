@@ -143,6 +143,9 @@ type Service struct {
 	config   *config.Config
 	logger   *zap.Logger
 	vaultSvc *vault.Service
+	// webhooks publishes the access-request events (request_notify.go); nil
+	// when the service runs without it, and then nothing is published.
+	webhooks WebhookPublisher
 
 	jwksCacheMu     sync.RWMutex
 	jwksCachedKey   *rsa.PublicKey
@@ -151,6 +154,15 @@ type Service struct {
 
 // SetVaultService injects the in-process vault used for JIT credential checkout.
 func (s *Service) SetVaultService(v *vault.Service) { s.vaultSvc = v }
+
+// WebhookPublisher is what governance needs of internal/webhooks.
+type WebhookPublisher interface {
+	Publish(ctx context.Context, eventType string, payload interface{}) error
+}
+
+// SetWebhookPublisher wires the webhook service the access-request events go
+// out through.
+func (s *Service) SetWebhookPublisher(w WebhookPublisher) { s.webhooks = w }
 
 // NewService creates a new governance service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger) *Service {

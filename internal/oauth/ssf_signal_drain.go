@@ -132,6 +132,27 @@ func (s *Service) drainSSFSignals(ctx context.Context) (int, error) {
 		switch p.eventType {
 		case ssfsignal.AccountDisabled:
 			n = s.EmitCAEPEvent(ctx, p.orgID, EventAccountDisabled, p.subjectEmail, p.subjectID, claims)
+		case ssfsignal.SessionRevoked:
+			n = s.EmitCAEPEvent(ctx, p.orgID, EventSessionRevoked, p.subjectEmail, p.subjectID, claims)
+		case ssfsignal.TokenClaimsChange:
+			// The new values are read here, by the service that issues the
+			// tokens, from the rows it issues them from, at the moment it
+			// signs. Whatever the row carries under "claims" is replaced: a
+			// producer names the subject, and a poisoned row cannot make the
+			// issuer assert a role. A read that fails is not signed (a SET
+			// saying "no roles" would be false); the claim is handed back
+			// after the stale grace and tried again, up to the attempts cap.
+			roles, groups, permissions, err := s.authorizationClaims(ctx, p.subjectID, p.orgID)
+			if err != nil {
+				s.logger.Warn("SSF token-claims-change: could not read the subject's claims; it is retried",
+					zap.Int64("id", p.id), zap.Error(err))
+				continue
+			}
+			if claims == nil {
+				claims = map[string]interface{}{}
+			}
+			claims["claims"] = map[string]interface{}{"roles": roles, "groups": groups, "permissions": permissions}
+			n = s.EmitCAEPEvent(ctx, p.orgID, EventTokenClaimsChange, p.subjectEmail, p.subjectID, claims)
 		default:
 			s.logger.Warn("SSF signal names an event type this drainer does not emit; marking it published with zero streams",
 				zap.Int64("id", p.id), zap.String("event_type", p.eventType))

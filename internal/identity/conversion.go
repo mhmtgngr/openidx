@@ -29,6 +29,11 @@ type UserDB struct {
 	DirectoryID        *string    `json:"directory_id,omitempty" db:"directory_id"`
 	LdapDN             *string    `json:"ldap_dn,omitempty" db:"ldap_dn"`
 	OrganizationID     *string    `json:"organization_id,omitempty" db:"org_id"`
+	UserType           string     `json:"user_type" db:"user_type"`
+	AccountStatus      string     `json:"account_status" db:"account_status"`
+	VendorOrgID        *string    `json:"vendor_org_id,omitempty" db:"vendor_org_id"`
+	SponsorUserID      *string    `json:"sponsor_user_id,omitempty" db:"sponsor_user_id"`
+	AccountExpiresAt   *time.Time `json:"account_expires_at,omitempty" db:"account_expires_at"`
 }
 
 // ToUser converts UserDB to SCIM-compatible User model
@@ -50,6 +55,11 @@ func (u *UserDB) ToUser() User {
 		Source:             u.Source,
 		DirectoryID:        u.DirectoryID,
 		LdapDN:             u.LdapDN,
+		UserType:           u.UserType,
+		AccountStatus:      u.AccountStatus,
+		VendorOrgID:        u.VendorOrgID,
+		SponsorUserID:      u.SponsorUserID,
+		AccountExpiresAt:   u.AccountExpiresAt,
 	}
 
 	// Set OrganizationID if present
@@ -172,14 +182,17 @@ func (u *UserDB) GetLastName() string {
 
 // GroupDB represents a group with flat database-compatible fields
 type GroupDB struct {
-	ID              string    `db:"id"`
-	DisplayName     string    `db:"display_name"`
-	Description     *string   `db:"description"`
-	ParentID        *string   `db:"parent_id"`
-	OrganizationID  *string   `db:"organization_id"`
-	AllowSelfJoin   bool      `db:"allow_self_join"`
-	RequireApproval bool      `db:"require_approval"`
-	MaxMembers      *int      `db:"max_members"`
+	ID              string  `db:"id"`
+	DisplayName     string  `db:"display_name"`
+	Description     *string `db:"description"`
+	ParentID        *string `db:"parent_id"`
+	OrganizationID  *string `db:"organization_id"`
+	AllowSelfJoin   bool    `db:"allow_self_join"`
+	RequireApproval bool    `db:"require_approval"`
+	MaxMembers      *int    `db:"max_members"`
+	// ExternalAllowed is nil on a write that did not name it, so an update
+	// that leaves the attribute out keeps the stored value (v214).
+	ExternalAllowed *bool     `db:"external_allowed"`
 	MemberCount     int       `db:"member_count"`
 	CreatedAt       time.Time `db:"created_at"`
 	UpdatedAt       time.Time `db:"updated_at"`
@@ -199,7 +212,10 @@ func (g *GroupDB) ToGroup() Group {
 	if g.OrganizationID != nil {
 		group.OrganizationID = g.OrganizationID
 	}
-	if g.Description != nil || g.ParentID != nil {
+	// The membership settings go out as FromGroup reads them, so the console
+	// shows what is stored: a setting that is off or unset is left out.
+	if g.Description != nil || g.ParentID != nil || g.ExternalAllowed != nil ||
+		g.AllowSelfJoin || g.RequireApproval || g.MaxMembers != nil {
 		group.Attributes = make(map[string]string)
 		if g.Description != nil {
 			group.Attributes["description"] = *g.Description
@@ -207,9 +223,52 @@ func (g *GroupDB) ToGroup() Group {
 		if g.ParentID != nil {
 			group.Attributes["parentId"] = *g.ParentID
 		}
+		if g.ExternalAllowed != nil {
+			group.Attributes[externalAllowedAttr] = strconv.FormatBool(*g.ExternalAllowed)
+		}
+		if g.AllowSelfJoin {
+			group.Attributes["allowSelfJoin"] = "true"
+		}
+		if g.RequireApproval {
+			group.Attributes["requireApproval"] = "true"
+		}
+		if g.MaxMembers != nil {
+			group.Attributes["maxMembers"] = strconv.Itoa(*g.MaxMembers)
+		}
 	}
 
 	return group
+}
+
+// externalAllowedAttr is the group attribute carrying groups.external_allowed:
+// whether an external (vendor) user may be a member (invariant I3).
+const externalAllowedAttr = "externalAllowed"
+
+// groupSettingsOnUpdate reads the membership settings an update names. Each
+// is nil, or setMax false, when the update leaves it out, so the stored value
+// stays: as with externalAllowed, a client that sends only a new name, the
+// console's edit form among them, must not turn self-join off and drop the
+// member cap. maxMembers "" clears the cap.
+func groupSettingsOnUpdate(attrs map[string]string) (selfJoin, approval *bool, maxMembers *int, setMax bool, err error) {
+	if v, ok := attrs["allowSelfJoin"]; ok {
+		b := v == "true"
+		selfJoin = &b
+	}
+	if v, ok := attrs["requireApproval"]; ok {
+		b := v == "true"
+		approval = &b
+	}
+	if v, ok := attrs["maxMembers"]; ok {
+		setMax = true
+		if v != "" {
+			n, perr := strconv.Atoi(v)
+			if perr != nil || n < 1 {
+				return nil, nil, nil, false, ErrInvalidGroupMaxMembers
+			}
+			maxMembers = &n
+		}
+	}
+	return selfJoin, approval, maxMembers, setMax, nil
 }
 
 // FromGroup converts SCIM Group to GroupDB
@@ -235,6 +294,10 @@ func FromGroup(group Group) GroupDB {
 		}
 		if requireApproval, ok := group.Attributes["requireApproval"]; ok {
 			dbGroup.RequireApproval = requireApproval == "true"
+		}
+		if ext, ok := group.Attributes[externalAllowedAttr]; ok {
+			v := ext == "true"
+			dbGroup.ExternalAllowed = &v
 		}
 		// Extract max members
 		if maxMembersStr, ok := group.Attributes["maxMembers"]; ok {

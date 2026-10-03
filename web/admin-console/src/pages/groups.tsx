@@ -51,6 +51,9 @@ interface Group {
   parent_id: string | null
   allow_self_join: boolean
   require_approval: boolean
+  // Invariant I3 of the third-party access framework: an external (vendor)
+  // user may join only a group an administrator opened to external users.
+  external_allowed: boolean
   max_members: number | null
   member_count: number
   created_at: string
@@ -70,9 +73,10 @@ function toFlatGroup(g: RawGroup): Group {
     name: String(g.displayName ?? g.name ?? ''),
     description: String(attrs.description ?? g.description ?? ''),
     parent_id: (attrs.parentId ?? g.parent_id ?? null) as string | null,
-    allow_self_join: Boolean(g.allow_self_join ?? false),
-    require_approval: Boolean(g.require_approval ?? false),
-    max_members: (g.max_members ?? null) as number | null,
+    allow_self_join: attrs.allowSelfJoin === 'true' || g.allow_self_join === true,
+    require_approval: attrs.requireApproval === 'true' || g.require_approval === true,
+    external_allowed: attrs.externalAllowed === 'true',
+    max_members: attrs.maxMembers ? Number(attrs.maxMembers) : ((g.max_members ?? null) as number | null),
     member_count: Number(g.member_count ?? members.length ?? 0),
     created_at: String(g.createdAt ?? g.created_at ?? ''),
     updated_at: String(g.updatedAt ?? g.updated_at ?? ''),
@@ -82,11 +86,22 @@ function toApiGroup(d: Partial<Group>): Record<string, unknown> {
   const attributes: Record<string, string> = {}
   if (d.description !== undefined) attributes.description = d.description ?? ''
   if (d.parent_id) attributes.parentId = d.parent_id
+  // Sent only when the form sets it: an update without it keeps the stored value.
+  if (d.external_allowed !== undefined) attributes.externalAllowed = String(d.external_allowed)
+  // The settings dialog's fields, kept the same way; an empty maxMembers clears the cap.
+  if (d.allow_self_join !== undefined) attributes.allowSelfJoin = String(d.allow_self_join)
+  if (d.require_approval !== undefined) attributes.requireApproval = String(d.require_approval)
+  if (d.max_members !== undefined) attributes.maxMembers = d.max_members == null ? '' : String(d.max_members)
   const body: Record<string, unknown> = {}
   if (d.name !== undefined) body.displayName = d.name
   if (Object.keys(attributes).length) body.attributes = attributes
   return body
 }
+
+// The identity service says why it refused (an external member in a group being
+// closed to external users, say); axios' own message only gives the status.
+const apiErrorText = (error: Error) =>
+  (error as Error & { response?: { data?: { error?: string } } }).response?.data?.error || error.message
 
 interface GroupMember {
   user_id: string
@@ -133,6 +148,7 @@ export function GroupsPage() {
     name: '',
     description: '',
     parent_id: '',
+    external_allowed: false,
   })
   const [groupSettings, setGroupSettings] = useState({
     allowSelfJoin: false,
@@ -199,12 +215,12 @@ export function GroupsPage() {
         variant: 'success',
       })
       setCreateGroupModal(false)
-      setFormData({ name: '', description: '', parent_id: '' })
+      setFormData({ name: '', description: '', parent_id: '', external_allowed: false })
     },
     onError: (error: Error) => {
       toast({
         title: t('common.error'),
-        description: t('pages.groups.toasts.createFailed', { message: error.message }),
+        description: t('pages.groups.toasts.createFailed', { message: apiErrorText(error) }),
         variant: 'destructive',
       })
     },
@@ -228,7 +244,7 @@ export function GroupsPage() {
     onError: (error: Error) => {
       toast({
         title: t('common.error'),
-        description: t('pages.groups.toasts.updateFailed', { message: error.message }),
+        description: t('pages.groups.toasts.updateFailed', { message: apiErrorText(error) }),
         variant: 'destructive',
       })
     },
@@ -350,7 +366,7 @@ export function GroupsPage() {
   )
 
   const handleCreateGroup = () => {
-    setFormData({ name: '', description: '', parent_id: '' })
+    setFormData({ name: '', description: '', parent_id: '', external_allowed: false })
     setCreateGroupModal(true)
   }
 
@@ -360,6 +376,7 @@ export function GroupsPage() {
       name: group.name,
       description: group.description || '',
       parent_id: group.parent_id || '',
+      external_allowed: group.external_allowed,
     })
     setEditGroupModal(true)
   }
@@ -423,6 +440,7 @@ export function GroupsPage() {
         name: formData.name,
         description: formData.description,
         parent_id: formData.parent_id || null,
+        external_allowed: formData.external_allowed,
       })
     } else if (editGroupModal && selectedGroup) {
       updateGroupMutation.mutate({
@@ -430,6 +448,7 @@ export function GroupsPage() {
         name: formData.name,
         description: formData.description,
         parent_id: formData.parent_id || null,
+        external_allowed: formData.external_allowed,
       })
     }
   }
@@ -541,6 +560,9 @@ export function GroupsPage() {
                           </Badge>
                           {group.allow_self_join && (
                             <Badge variant="outline" className="text-xs">{t('pages.groups.badges.selfJoin')}</Badge>
+                          )}
+                          {group.external_allowed && (
+                            <Badge variant="outline" className="text-xs border-amber-300 text-amber-800">{t('pages.groups.badges.externalAllowed')}</Badge>
                           )}
                         </div>
                       </TableCell>
@@ -675,6 +697,19 @@ export function GroupsPage() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="flex items-start gap-2">
+              <input
+                id="external_allowed"
+                type="checkbox"
+                className="mt-1"
+                checked={formData.external_allowed}
+                onChange={(e) => setFormData(prev => ({ ...prev, external_allowed: e.target.checked }))}
+              />
+              <div>
+                <Label htmlFor="external_allowed">{t('pages.groups.externalAllowed.label')}</Label>
+                <p className="text-xs text-muted-foreground">{t('pages.groups.externalAllowed.hint')}</p>
+              </div>
+            </div>
             <div className="flex justify-end gap-2 pt-4">
               <Button
                 type="button"
@@ -739,6 +774,19 @@ export function GroupsPage() {
                     ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="flex items-start gap-2">
+              <input
+                id="edit-external_allowed"
+                type="checkbox"
+                className="mt-1"
+                checked={formData.external_allowed}
+                onChange={(e) => setFormData(prev => ({ ...prev, external_allowed: e.target.checked }))}
+              />
+              <div>
+                <Label htmlFor="edit-external_allowed">{t('pages.groups.externalAllowed.label')}</Label>
+                <p className="text-xs text-muted-foreground">{t('pages.groups.externalAllowed.hint')}</p>
+              </div>
             </div>
             <div className="flex justify-end gap-2 pt-4">
               <Button
