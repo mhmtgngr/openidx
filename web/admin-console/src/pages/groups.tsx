@@ -77,7 +77,8 @@ function toFlatGroup(g: RawGroup): Group {
     require_approval: attrs.requireApproval === 'true' || g.require_approval === true,
     external_allowed: attrs.externalAllowed === 'true',
     max_members: attrs.maxMembers ? Number(attrs.maxMembers) : ((g.max_members ?? null) as number | null),
-    member_count: Number(g.member_count ?? members.length ?? 0),
+    // The API sends memberCount, and leaves it out for an empty group.
+    member_count: Number(g.memberCount ?? g.member_count ?? members.length ?? 0),
     created_at: String(g.createdAt ?? g.created_at ?? ''),
     updated_at: String(g.updatedAt ?? g.updated_at ?? ''),
   }

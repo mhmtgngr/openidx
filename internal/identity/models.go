@@ -207,6 +207,10 @@ type Group struct {
 	Attributes     map[string]string `json:"attributes,omitempty" db:"attributes"`
 	DirectoryID    *string           `json:"directoryId,omitempty" db:"directory_id"` // For external sync
 	Source         *string           `json:"source,omitempty" db:"source"`
+	// MemberCount is the group's member count where the read counted them,
+	// left out where it did not or the group is empty. Read-only: an update
+	// ignores it.
+	MemberCount int `json:"memberCount,omitempty" db:"member_count"`
 
 	// Timestamps
 	CreatedAt time.Time  `json:"createdAt" db:"created_at"`
