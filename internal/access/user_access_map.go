@@ -255,7 +255,8 @@ func (s *Service) collectIAMPillar(ctx context.Context, orgID, userID string, ou
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT r.id, r.name
 		   FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-		  WHERE ur.user_id = $1 AND ur.org_id = $2 ORDER BY r.name`, userID, orgID)
+		  WHERE ur.user_id = $1 AND ur.org_id = $2
+		    AND (ur.expires_at IS NULL OR ur.expires_at > NOW()) ORDER BY r.name`, userID, orgID)
 	if err != nil {
 		return err
 	}
@@ -275,7 +276,8 @@ func (s *Service) collectIAMPillar(ctx context.Context, orgID, userID string, ou
 	rows, err = s.db.Pool.Query(ctx,
 		`SELECT g.id, g.name
 		   FROM group_memberships gm JOIN groups g ON g.id = gm.group_id
-		  WHERE gm.user_id = $1 AND gm.org_id = $2 ORDER BY g.name`, userID, orgID)
+		  WHERE gm.user_id = $1 AND gm.org_id = $2
+		    AND (gm.expires_at IS NULL OR gm.expires_at > NOW()) ORDER BY g.name`, userID, orgID)
 	if err != nil {
 		return err
 	}
@@ -335,6 +337,7 @@ func (s *Service) collectPAMPillar(ctx context.Context, orgID, userID string, ou
 		   JOIN vault_secrets vs ON vs.id = vg.secret_id
 		   JOIN roles r          ON r.id  = vg.principal_id
 		   JOIN user_roles ur    ON ur.role_id = r.id AND ur.user_id = $1 AND ur.org_id = $2
+		                        AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 		  WHERE vg.org_id = $2 AND vg.principal_type = 'role'
 		    AND (vg.expires_at IS NULL OR vg.expires_at > NOW())
 		 ORDER BY 2`, userID, orgID)
