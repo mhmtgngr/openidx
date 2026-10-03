@@ -299,8 +299,29 @@ func (s *Service) handleUpdateVendorOrg(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check the default sponsor"})
 		return
 	}
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		s.logger.Error("update vendor organization: begin failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update vendor organization"})
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// The status before the update, locked, so the accounts follow the
+	// transition this update makes and no other.
+	var prevStatus string
+	err = tx.QueryRow(ctx, `SELECT status FROM vendor_organizations WHERE id = $1::uuid AND org_id = $2 FOR UPDATE`,
+		id, org.ID).Scan(&prevStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": errVendorOrgNotFound.Error()})
+		return
+	}
+	if err != nil {
+		s.logger.Error("update vendor organization: read failed", logsafe.String("id", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update vendor organization"})
+		return
+	}
 	// A closed vendor stays closed: the update names status <> 'closed'.
-	tag, err := s.db.Pool.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		UPDATE vendor_organizations
 		   SET name = $3, status = $4, contact_name = $5, contact_email = $6,
 		       contract_start = $7::date, contract_end = $8::date, allowed_email_domains = $9,
@@ -320,18 +341,77 @@ func (s *Service) handleUpdateVendorOrg(c *gin.Context) {
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		if v, gerr := s.GetVendorOrganization(ctx, id); gerr == nil && v.Status == "closed" {
-			c.JSON(http.StatusConflict, gin.H{"error": "a closed vendor organization cannot be changed", "code": "vendor_org_closed"})
-			return
-		}
-		c.JSON(http.StatusNotFound, gin.H{"error": errVendorOrgNotFound.Error()})
+		c.JSON(http.StatusConflict, gin.H{"error": "a closed vendor organization cannot be changed", "code": "vendor_org_closed"})
 		return
 	}
+	// The vendor's accounts follow its status. Suspending it suspends each
+	// live account (invited, pending_mfa, active), to be severed after the
+	// commit. A suspension, not a disable: the accounts come back when the
+	// vendor does, through the reactivation a departed sponsor's accounts
+	// take. Reactivating it restarts the reactivation window of its suspended
+	// accounts (restartVendorGrace). Any other transition moves no account.
+	var suspended []string
+	var restarted int64
+	switch {
+	case prevStatus != "suspended" && req.Status == "suspended":
+		rows, err := tx.Query(ctx, `
+			UPDATE users SET account_status = 'suspended', enabled = false, status_changed_at = NOW(), updated_at = NOW()
+			 WHERE vendor_org_id = $1::uuid AND org_id = $2 AND user_type = 'external'
+			   AND account_status IN ('invited', 'pending_mfa', 'active')
+			RETURNING id::text`, id, org.ID)
+		if err != nil {
+			s.logger.Error("suspend vendor organization: suspend users failed", logsafe.String("id", id), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update vendor organization"})
+			return
+		}
+		for rows.Next() {
+			var uid string
+			if err := rows.Scan(&uid); err != nil {
+				rows.Close()
+				s.logger.Error("suspend vendor organization: scan failed", zap.Error(err))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update vendor organization"})
+				return
+			}
+			suspended = append(suspended, uid)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			s.logger.Error("suspend vendor organization: suspend users failed", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update vendor organization"})
+			return
+		}
+	case prevStatus == "suspended" && req.Status == "active":
+		if restarted, err = restartVendorGrace(ctx, tx, org.ID, id); err != nil {
+			s.logger.Error("reactivate vendor organization: restarting its accounts' window failed", logsafe.String("id", id), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update vendor organization"})
+			return
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		s.logger.Error("update vendor organization: commit failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update vendor organization"})
+		return
+	}
+	// After the commit, as the close does: a revocation for a suspension a
+	// rolled-back update would not have made is a lie the other way.
+	actor := c.GetString("user_id")
+	for _, uid := range suspended {
+		if err := s.severExternal(ctx, org.ID, uid, externalid.StatusSuspended); err != nil {
+			s.logger.Warn("suspend vendor organization: could not record the severing", zap.Error(err))
+		}
+		s.logAuditEvent(ctx, "identity", "external_access", "external.suspended", "success", actor, uid, "user",
+			map[string]interface{}{"vendor_org_id": id, "reason": "vendor organization suspended"})
+	}
 	updated := map[string]interface{}{"name": req.Name, "status": req.Status}
+	if prevStatus != req.Status {
+		updated["previous_status"] = prevStatus
+		updated["users_suspended"] = len(suspended)
+		updated["users_grace_restarted"] = restarted
+	}
 	if req.ClosedList != nil {
 		updated["closed_list"] = *req.ClosedList
 	}
-	s.logAuditEvent(ctx, "identity", "external_access", "vendor_org.updated", "success", c.GetString("user_id"), id,
+	s.logAuditEvent(ctx, "identity", "external_access", "vendor_org.updated", "success", actor, id,
 		"vendor_organization", updated)
 	v, err := s.GetVendorOrganization(ctx, id)
 	if err != nil {
@@ -339,6 +419,25 @@ func (s *Service) handleUpdateVendorOrg(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, v)
+}
+
+// restartVendorGrace restarts the reactivation window
+// (externalid.SponsorGraceDays, decision D5) of a reactivated vendor's
+// suspended accounts, inside the update's transaction. The sweep does not run
+// that window down while the vendor is suspended, and the reactivation route
+// refuses an account whose vendor is not active, so without the restart an
+// account held longer than the window would be disabled by the sweep the
+// minute its vendor came back. Nothing is reactivated here: each account
+// still needs a sponsor to take it back.
+func restartVendorGrace(ctx context.Context, tx pgx.Tx, orgID, vendorID string) (int64, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE users SET status_changed_at = NOW(), updated_at = NOW()
+		 WHERE vendor_org_id = $1::uuid AND org_id = $2 AND user_type = 'external'
+		   AND account_status = 'suspended'`, vendorID, orgID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // handleCloseVendorOrg — POST /vendor-orgs/:id/close {reason}. Closes the
