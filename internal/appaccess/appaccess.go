@@ -35,10 +35,13 @@ type Principals struct {
 }
 
 // assignedPredicate matches an application assigned to the user directly OR
-// through a group they belong to. $1 = user id, $2 = org id.
+// through a group they belong to. $1 = user id, $2 = org id. A direct
+// assignment counts until its window ends (migration v222); one with no window
+// is standing.
 const assignedPredicate = `(
 	EXISTS (SELECT 1 FROM user_application_assignments uaa
-	         WHERE uaa.application_id = a.id AND uaa.user_id = $1 AND uaa.org_id = $2)
+	         WHERE uaa.application_id = a.id AND uaa.user_id = $1 AND uaa.org_id = $2
+	           AND (uaa.expires_at IS NULL OR uaa.expires_at > NOW()))
 	OR EXISTS (SELECT 1 FROM group_application_assignments gaa
 	            JOIN group_memberships gm ON gm.group_id = gaa.group_id
 	           WHERE gaa.application_id = a.id AND gm.user_id = $1 AND gaa.org_id = $2)
@@ -98,7 +101,8 @@ func PrincipalsForApp(ctx context.Context, db *database.PostgresDB, appID, orgID
 		return p, nil
 	}
 	rows, err := db.Pool.Query(ctx,
-		`SELECT user_id FROM user_application_assignments WHERE application_id = $1 AND org_id = $2`,
+		`SELECT user_id FROM user_application_assignments WHERE application_id = $1 AND org_id = $2
+		   AND (expires_at IS NULL OR expires_at > NOW())`,
 		appID, orgID)
 	if err != nil {
 		return p, fmt.Errorf("appaccess: principals (users): %w", err)

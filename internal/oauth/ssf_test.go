@@ -282,7 +282,7 @@ func TestSSFStreamCRUDAndEnqueue(t *testing.T) {
 	// is created, and told which one it will get; a read gives the same answer.
 	mixed, err := svc.CreateSSFStream(dbctx, orgID, &SSFStreamInput{
 		Audience: "https://rp2.example.com", DeliveryEndpoint: "https://rp2.example.com/ssf",
-		EventsRequested: []string{EventTokenClaimsChange, EventSessionRevoked},
+		EventsRequested: []string{EventCredentialChange, EventSessionRevoked},
 	})
 	if err != nil {
 		t.Fatalf("CreateSSFStream (mixed): %v", err)

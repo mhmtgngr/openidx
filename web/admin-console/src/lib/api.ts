@@ -598,6 +598,42 @@ export const api = {
       api.post<{ reach_mode: string; ziti_service_name?: string; ziti_intercept_port?: number }>(`/api/v1/access/pam/entries/${id}/ziti/enable`),
     disableZiti: (id: string) =>
       api.post<{ reach_mode: string }>(`/api/v1/access/pam/entries/${id}/ziti/disable`),
+    // The sponsor's side (section 6.10 of the third-party access framework):
+    // their external users' launch approvals, live sessions and moderation
+    // requests. Each answers only for the caller's own external users, and is
+    // empty for anyone who sponsors no one.
+    listSponsoredRequests: () =>
+      api.get<{ requests: PamAccessRequest[] }>('/api/v1/access/pam/sponsored/entry-requests'),
+    approveSponsoredRequest: (id: string) =>
+      api.post<{ status: string }>(`/api/v1/access/pam/sponsored/entry-requests/${id}/approve`),
+    denySponsoredRequest: (id: string) =>
+      api.post<{ status: string }>(`/api/v1/access/pam/sponsored/entry-requests/${id}/deny`),
+    listSponsoredSessions: () =>
+      api.get<{ sessions: SponsoredSession[] }>('/api/v1/access/pam/sponsored/sessions'),
+    watchSponsoredSession: (id: string) =>
+      api.post<{ share_url: string; read_only: boolean }>(`/api/v1/access/pam/sponsored/sessions/${id}/watch`),
+    endSponsoredSession: (id: string) =>
+      api.post<{ ended: boolean }>(`/api/v1/access/pam/sponsored/sessions/${id}/end`),
+    listSponsoredModeration: () =>
+      api.get<{ pending: SponsoredModerationRequest[] }>('/api/v1/access/pam/sponsored/moderation'),
+    joinSponsoredModeration: (id: string) =>
+      api.post<{ status: string }>(`/api/v1/access/pam/sponsored/moderation/${id}/join`),
+    // Moderation: a session on an entry that requires a moderator waits until
+    // one joins. The user asks; an administrator (or the sponsor) joins.
+    requestModeration: (entryId: string, reason?: string) =>
+      api.post<{ id: string; status: string }>('/api/v1/access/pam/moderation/request', { entry_id: entryId, reason }),
+    getModeration: (id: string) =>
+      api.get<PamModerationStatus>(`/api/v1/access/pam/moderation/${id}`),
+    listPendingModeration: () =>
+      api.get<{ pending: PamModerationRequest[] | null }>('/api/v1/access/pam/moderation/pending'),
+    joinModeration: (id: string) =>
+      api.post<{ status: string }>(`/api/v1/access/pam/moderation/${id}/join`),
+    listModerating: () =>
+      api.get<{ moderations: PamModeratedSession[] }>('/api/v1/access/pam/moderation/moderating'),
+    watchModeration: (id: string) =>
+      api.post<{ share_url: string; read_only: boolean }>(`/api/v1/access/pam/moderation/${id}/watch`),
+    endModeration: (id: string) =>
+      api.post<{ status: string }>(`/api/v1/access/pam/moderation/${id}/end`),
   },
   windowsApps: {
     // Apps + pools + host posture, in one call so the catalog page renders in
@@ -740,6 +776,8 @@ export interface PamEntry {
   credential_entry_name?: string
   allow_reveal: boolean
   require_approval: boolean
+  // A session on the entry waits until a moderator joins to watch it.
+  require_moderator?: boolean
   record_session: boolean
   reach_mode: string
   renderer?: string
@@ -770,6 +808,7 @@ export interface PamEntryInput {
   credential_entry_id?: string
   allow_reveal?: boolean
   require_approval?: boolean
+  require_moderator?: boolean
   record_session?: boolean
   renderer?: string
 }
@@ -807,12 +846,77 @@ export interface PamAccessRequest {
   entry_name: string
   entry_type: string
   requester_id: string
+  // Who asked, and whether they are an external (vendor) user, whose launch
+  // only their sponsor approves.
+  requester?: string
+  external?: boolean
   reason?: string
   status: string
   approver_id?: string
   decided_at?: string
   expires_at?: string
   created_at: string
+}
+
+// A live PAM entry session of an external user, as their sponsor sees it.
+export interface SponsoredSession {
+  id: string
+  entry_id: string
+  entry_name: string
+  user_id: string
+  user: string
+  started_at: string
+  recorded: boolean
+  sponsor_notified_at?: string
+}
+
+// A moderation request waiting for a moderator: a route-based connection's
+// (connection_id) or a PAM entry's (entry_id).
+export interface PamModerationRequest {
+  id: string
+  connection_id?: string
+  connection?: string
+  entry_id?: string
+  entry_name?: string
+  requester_id: string
+  requester?: string
+  reason?: string
+  created_at: string
+  expires_at?: string
+}
+
+// An external user's moderation request, as their sponsor sees it.
+export interface SponsoredModerationRequest {
+  id: string
+  entry_id: string
+  entry_name: string
+  user_id: string
+  user: string
+  reason?: string
+  created_at: string
+  expires_at?: string
+}
+
+// An entry moderation the caller joined and has not ended, with whether the
+// session it admitted is live (so it can be watched).
+export interface PamModeratedSession {
+  id: string
+  entry_id: string
+  entry_name: string
+  requester_id: string
+  requester: string
+  joined_at?: string
+  session_live: boolean
+}
+
+// The state of one moderation request, which a launch waiting for its
+// moderator polls.
+export interface PamModerationStatus {
+  id: string
+  status: 'pending' | 'active' | 'ended' | 'expired' | 'denied'
+  moderator_id?: string
+  joined_at?: string
+  expires_at?: string
 }
 
 export interface PamEntrySession {

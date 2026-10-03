@@ -21,6 +21,8 @@ import (
 	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/ssfsignal"
+	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/jitgrant"
 )
 
@@ -145,7 +147,13 @@ func (s *Service) GetMyApplications(ctx context.Context, userID string) ([]UserA
 	// (migration v136) is the intended way to grant access. Flip
 	// SHOW_ALL_APPS_WHEN_UNASSIGNED=true to restore the old open behaviour.
 	if len(refs) == 0 && s.showAllAppsWhenUnassigned {
-		return s.allEnabledApplications(ctx, org.ID)
+		fallback, err := s.unassignedFallbackApplies(ctx, org.ID, userID)
+		if err != nil {
+			return nil, err
+		}
+		if fallback {
+			return s.allEnabledApplications(ctx, org.ID)
+		}
 	}
 
 	ids := make([]string, 0, len(refs))
@@ -153,6 +161,19 @@ func (s *Service) GetMyApplications(ctx context.Context, userID string) ([]UserA
 		ids = append(ids, r.ID)
 	}
 	return s.applicationsByID(ctx, org.ID, ids)
+}
+
+// unassignedFallbackApplies says whether SHOW_ALL_APPS_WHEN_UNASSIGNED may
+// show userID every enabled application. Never for an external (vendor)
+// user: an external user has no default access (invariant I3), and an
+// install that opened its catalogue to unassigned employees did not open it
+// to its suppliers.
+func (s *Service) unassignedFallbackApplies(ctx context.Context, orgID, userID string) (bool, error) {
+	ext, err := externalid.IsExternal(ctx, s.db.Pool, orgID, userID)
+	if err != nil {
+		return false, err
+	}
+	return !ext, nil
 }
 
 // scanApplications drains the rows of a query projecting
@@ -221,6 +242,8 @@ func (s *Service) GetAvailableGroups(ctx context.Context, userID string) ([]map[
 		       EXISTS(SELECT 1 FROM group_join_requests gjr WHERE gjr.group_id = g.id AND gjr.user_id = $1 AND gjr.org_id = $2 AND gjr.status = 'pending') AS has_pending_request
 		FROM groups g
 		WHERE g.allow_self_join = true AND g.org_id = $2
+		  AND (g.external_allowed
+		       OR NOT EXISTS (SELECT 1 FROM users u WHERE u.id = $1 AND u.org_id = $2 AND u.user_type = 'external'))
 		ORDER BY g.name`
 
 	rows, err := s.db.Pool.Query(ctx, query, userID, org.ID)
@@ -271,16 +294,25 @@ func (s *Service) RequestGroupJoin(ctx context.Context, userID, groupID, justifi
 	if !allowSelfJoin {
 		return fmt.Errorf("group does not allow self-join")
 	}
+	// An external user may join only a group open to external users (I3).
+	// Asked here, before a join request is filed, so the request an approver
+	// would see is never one the database would refuse to fulfil.
+	if err := externalid.CheckGroup(ctx, s.db.Pool, org.ID, userID, groupID); err != nil {
+		return err
+	}
 
 	if !requireApproval {
 		// Add the user directly to the group
-		_, err := s.db.Pool.Exec(ctx,
+		tag, err := s.db.Pool.Exec(ctx,
 			`INSERT INTO group_memberships (group_id, user_id, joined_at, org_id) VALUES ($1, $2, $3, $4)
 			 ON CONFLICT DO NOTHING`,
 			groupID, userID, time.Now().UTC(), org.ID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to add user to group: %w", err)
+		}
+		if tag.RowsAffected() > 0 {
+			s.claimsChanged(ctx, org.ID, "portal.group_join", userID)
 		}
 		return nil
 	}
@@ -375,11 +407,17 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 	}
 	overview.AppsCount = len(appRefs)
 	if overview.AppsCount == 0 && s.showAllAppsWhenUnassigned {
-		allApps, err := s.allEnabledApplications(ctx, org.ID)
+		fallback, err := s.unassignedFallbackApplies(ctx, org.ID, userID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to count apps: %w", err)
 		}
-		overview.AppsCount = len(allApps)
+		if fallback {
+			allApps, err := s.allEnabledApplications(ctx, org.ID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to count apps: %w", err)
+			}
+			overview.AppsCount = len(allApps)
+		}
 	}
 
 	// Count pending requests
@@ -456,9 +494,10 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 		     WHERE requester_id = $1 AND org_id = $2 AND `+jitgrant.ActiveForUserPredicate+`),
 		   (SELECT COUNT(*) FROM guacamole_sessions
 		     WHERE user_id = $1 AND org_id = $2 AND status = 'active'),
-		   (SELECT COUNT(*) FROM guacamole_session_requests
-		     WHERE requester_id = $1 AND org_id = $2 AND status = 'pending'
-		       AND (expires_at IS NULL OR expires_at > NOW()))`,
+		   (SELECT COUNT(*) FROM pam_entry_access_requests r
+		     JOIN pam_entries e ON e.id = r.entry_id AND e.org_id = r.org_id
+		     WHERE r.requester_id = $1 AND r.org_id = $2 AND e.proxy_route_id IS NOT NULL
+		       AND r.status = 'pending' AND (r.expires_at IS NULL OR r.expires_at > NOW()))`,
 		userID, org.ID,
 	).Scan(&overview.Privileged.VaultGrants, &overview.Privileged.ActiveCheckouts,
 		&overview.Privileged.ActiveJITGrants, &overview.Privileged.ActiveSessions,
@@ -521,13 +560,16 @@ func (s *Service) ReviewGroupRequest(ctx context.Context, requestID, reviewerID,
 			return fmt.Errorf("failed to fetch request details: %w", err)
 		}
 
-		_, err = s.db.Pool.Exec(ctx,
+		tag, err := s.db.Pool.Exec(ctx,
 			`INSERT INTO group_memberships (group_id, user_id, joined_at, org_id) VALUES ($1, $2, $3, $4)
 			 ON CONFLICT DO NOTHING`,
 			groupID, userID, now, org.ID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to add user to group: %w", err)
+		}
+		if tag.RowsAffected() > 0 {
+			s.claimsChanged(ctx, org.ID, "portal.group_join_approved", userID)
 		}
 	}
 
@@ -620,6 +662,10 @@ func (s *Service) handleRequestGroupJoin(c *gin.Context) {
 
 	err := s.RequestGroupJoin(c.Request.Context(), userIDStr, req.GroupID, req.Justification)
 	if err != nil {
+		if r := externalid.Refusal(err); r != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": r.Error(), "code": externalid.Code(r)})
+			return
+		}
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to request group join", err), s.logger)
 		return
 	}
@@ -1035,4 +1081,15 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 
 	// My security insights (caller-scoped; plain-language self-assessment)
 	router.GET("/portal/security-insights", svc.handleGetSecurityInsights)
+}
+
+// claimsChanged tells the tenant's SSF receivers that a group joined through
+// the portal is now in what a token issued for the user carries (CAEP
+// token-claims-change). Best-effort: the join has been made, and a failure is
+// logged.
+func (s *Service) claimsChanged(ctx context.Context, orgID, why, userID string) {
+	if err := ssfsignal.EnqueueClaimsChange(ctx, s.db.Pool, orgID, why, userID); err != nil {
+		s.logger.Error("a group was joined, but the token-claims-change signal was not enqueued",
+			zap.String("path", why), zap.Error(err))
+	}
 }

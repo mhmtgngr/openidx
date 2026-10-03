@@ -71,6 +71,7 @@ func scimGroupFixture(t *testing.T, db *database.PostgresDB, ctx context.Context
 			group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
 			joined_at TIMESTAMPTZ DEFAULT NOW(),
 			org_id UUID NOT NULL,
+			expires_at TIMESTAMPTZ,
 			PRIMARY KEY (user_id, group_id));
 		CREATE TABLE audit_events (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), event_type VARCHAR(50), category VARCHAR(50),
