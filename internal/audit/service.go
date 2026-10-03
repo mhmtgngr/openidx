@@ -1290,11 +1290,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 	ingest.POST("/events", svc.requireInternalService(), svc.handleLogEvent)
 
 	// Everything else reads/exports the audit trail (sensitive security data) and
-	// MUST be authenticated. extraMiddleware carries the JWT auth middleware.
+	// MUST be authenticated. extraMiddleware carries the JWT auth middleware;
+	// behind it, only a role holding audit:read gets through (reader_gate.go).
 	audit := router.Group("/api/v1/audit")
 	for _, mw := range extraMiddleware {
 		audit.Use(mw)
 	}
+	audit.Use(svc.requireAuditReader())
 	{
 		// Events (read)
 		audit.GET("/events", svc.handleListEvents)

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Only the audit roles read the audit trail.** audit-service's read,
+  search, statistics, chain-verify, report, export, scheduled-report and
+  live-stream routes asked only for a signed-in user. Any account in the
+  organization, an external one included, could read and export the whole
+  trail and schedule reports over it. They now need a role holding
+  `audit:read`: `super_admin`, `admin`, `operator`, `auditor` or
+  `compliance_reader`, the same roles the console shows these pages to.
+  Anyone else gets 403 `audit_reader_required`.
+  - **Upgrade note:** an integration that reads the trail with a token
+    carrying none of these roles needs one.
+
 ## [1.39.0] - 2026-09-28
 
 ### Security
