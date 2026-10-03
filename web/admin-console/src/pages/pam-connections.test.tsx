@@ -192,6 +192,19 @@ describe('PamConnectionsPage', () => {
     await waitFor(() => expect(pam.disableZiti).toHaveBeenCalledWith('e1'))
   })
 
+  it('does not offer to take an overlay entry off the overlay under ZTNA enforcement', async () => {
+    pam.brokerStatus.mockResolvedValue({ available: true, reach_modes: ['direct', 'ziti'], require_ztna: 'enforce' })
+    pam.listEntries.mockResolvedValue({
+      entries: [{ ...rdpEntry, reach_mode: 'ziti', ziti_enabled: true }],
+    })
+    renderPage()
+    const card = (await screen.findByText('DC01')).closest('[class*="rounded"]') as HTMLElement
+    const button = await within(card).findByTitle(/ziti reach stays on/i)
+    expect(button).toBeDisabled()
+    fireEvent.click(button)
+    expect(pam.disableZiti).not.toHaveBeenCalled()
+  })
+
   it('shows a RemoteApp badge for entries publishing a single app', async () => {
     pam.listEntries.mockResolvedValue({
       entries: [{ ...rdpEntry, name: 'SQL01 SSMS', settings: { 'remote-app': '||SSMS' } }],
