@@ -4447,6 +4447,7 @@ const en = {
         externalPolicyNote:
           'An external (vendor) user\'s session runs under these whatever this entry says; the settings above apply to everyone else.',
         browserTerminal: 'Open in browser terminal (clientless SSH, no Guacamole tab)',
+        browserTerminalHint: 'The browser terminal records nothing and runs no session a moderator can watch, so it is not offered for an entry whose sessions are recorded or moderated.',
         save: 'Save',
         create: 'Create',
       },
