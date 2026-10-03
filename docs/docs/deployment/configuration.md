@@ -262,6 +262,19 @@ the OPA server. From then on, OPA refuses any request the policy does not
 grant. Read the policy's role table first: a caller whose roles are not in it
 is refused.
 
+Without OPA, governance-service still keeps the writes that run the
+governance program to an administrator (`admin` or `super_admin`): approval,
+ABAC and governance policies, campaigns, creating, editing and moving access
+reviews, and the SoD, privileged-account and entitlement jobs. Anyone else
+gets `403` with `admin_required`. Filing, cancelling and deciding access
+requests, deciding the items of a review one is the reviewer of, and the
+evaluate routes stay open to signed-in users; their handlers decide who may do
+each. Reading the program's own data, the policies, campaigns, SoD violations,
+privileged accounts and entitlements, needs an administrator, an operator or
+an auditor (`reader_required` for anyone else); a user's requests and
+approvals, and the reviews they are the reviewer of, stay theirs to read. With
+OPA on, the policy's role table decides these writes and reads as before.
+
 ### Multi-factor authentication
 
 | Variable | Type | Default | Description |
