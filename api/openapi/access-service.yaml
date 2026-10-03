@@ -2213,6 +2213,11 @@ paths:
                 $ref: '#/components/schemas/PamRequestDecisionResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: >
+            The launch request's hour has passed (`launch_request_expired`):
+            an approval would never be honoured at launch, so the requester
+            files a new one
 
   /api/v1/access/pam/entry-requests/{id}/deny:
     post:
@@ -8892,6 +8897,8 @@ paths:
           description: >
             Not one of the caller's: a request, session or moderation of an
             external user someone else sponsors answers as if it did not exist
+        '409':
+          description: The launch request's hour has passed (`launch_request_expired`)
 
   /api/v1/access/pam/sponsored/entry-requests/{id}/deny:
     post:
