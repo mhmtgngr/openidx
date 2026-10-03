@@ -70,7 +70,8 @@ func TestGetUserGroupNamesPerOrg(t *testing.T) {
 	);
 	CREATE TABLE group_memberships (
 		group_id UUID NOT NULL,
-		user_id UUID NOT NULL
+		user_id UUID NOT NULL,
+		expires_at TIMESTAMPTZ
 	);`
 	if _, err := db.Pool.Exec(ctx, schema); err != nil {
 		t.Fatalf("schema: %v", err)

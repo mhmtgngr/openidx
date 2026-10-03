@@ -115,6 +115,7 @@ func (s *Service) autoApproveConditionsMet(ctx context.Context, orgID, requester
 			SELECT COUNT(*) FROM user_roles ur
 			JOIN roles r ON ur.role_id = r.id AND r.org_id = ur.org_id
 			WHERE ur.user_id = $1 AND ur.org_id = $2
+			  AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 			  AND (r.name = ANY($3) OR r.id::text = ANY($3))`,
 			requesterID, orgID, cond.AllowedRoles).Scan(&n); err != nil || n == 0 {
 			return false
@@ -128,6 +129,7 @@ func (s *Service) autoApproveConditionsMet(ctx context.Context, orgID, requester
 			SELECT COUNT(*) FROM group_memberships gm
 			JOIN groups g ON gm.group_id = g.id AND g.org_id = gm.org_id
 			WHERE gm.user_id = $1 AND gm.org_id = $2
+			  AND (gm.expires_at IS NULL OR gm.expires_at > NOW())
 			  AND (g.name = ANY($3) OR g.id::text = ANY($3))`,
 			requesterID, orgID, cond.AllowedGroups).Scan(&n); err != nil || n == 0 {
 			return false
