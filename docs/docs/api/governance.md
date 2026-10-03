@@ -42,7 +42,7 @@ The Governance Service manages access reviews, certification campaigns, and poli
 | GET | `/api/v1/governance/requests` | List requests (`?requester_id=me` for the caller's own) |
 | POST | `/api/v1/governance/requests` | File a request: `resource_type`, `resource_id`, `resource_name`, `justification`, `priority`, `duration` (`4h`, `1d`, ...; empty for permanent where the type allows it) |
 | GET | `/api/v1/governance/requests/:id` | Get a request |
-| POST | `/api/v1/governance/requests/:id/approve` | Approve, as an approver of the request's current step. One person approves at most one step of a request: an approver of an earlier step gets `403` with `four_eyes` |
+| POST | `/api/v1/governance/requests/:id/approve` | Approve, as an approver of the request's current step. One person approves at most one step of a request: an approver of an earlier step gets `403` with `four_eyes`. An approver who no longer holds what made them one (the step's role or group, being the requester's manager or sponsor) gets `403` with `approver_no_longer_eligible`, on approve and on deny |
 | POST | `/api/v1/governance/requests/:id/deny` | Deny, likewise |
 | POST | `/api/v1/governance/requests/:id/cancel` | Cancel a pending request, as its requester |
 

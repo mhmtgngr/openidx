@@ -78,6 +78,16 @@ step who is also an approver of a later one is refused there (`four_eyes`),
 and the later step needs someone else; they can still deny. A chain of two
 steps is two people's decision.
 
+An approver is held at the decision to what put them on the request when it
+was filed. Someone named through a role or a group must still hold the role
+or the membership, with its window open. Someone named as the requester's
+manager must still be their manager, and an external user's sponsor must
+still be their sponsor. If not, they can neither approve nor deny
+(`approver_no_longer_eligible`), and the request leaves their queue. The other
+approvers of the step decide it, or the request expires at the policy's
+`max_wait_hours`. A step that names a user is not re-checked, and neither is a
+request filed before this check existed.
+
 ### Who is told
 
 - **The approvers of the step a request waits at** are told when it reaches

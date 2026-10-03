@@ -345,3 +345,77 @@ func withoutApprover(ids []string, id string) []string {
 	}
 	return out
 }
+
+// approverBasis is why an approver is on an approval row (migration v226):
+// the step that named them, and the role or group a role or group step named.
+// The approver is held to it when they decide.
+type approverBasis struct {
+	kind string // basisUser, basisRole, basisGroup, basisManager, basisSponsor, basisDefault
+	id   string // the role or group, for basisRole and basisGroup
+}
+
+const (
+	basisUser    = "user"    // a specific_user step names them: nothing to re-check
+	basisRole    = "role"    // they held the step's role when the request was filed
+	basisGroup   = "group"   // they were in the step's group
+	basisManager = "manager" // they were the requester's manager
+	basisSponsor = "sponsor" // they were the external requester's sponsor
+	basisDefault = "default" // no policy covers the request: the default approver
+)
+
+// basis is the approverBasis of the rows a step expands to.
+func (st ApprovalStep) basis() approverBasis {
+	switch st.Type {
+	case ApprovalStepTypeRole:
+		return approverBasis{kind: basisRole, id: st.RoleID}
+	case ApprovalStepTypeGroup:
+		return approverBasis{kind: basisGroup, id: st.GroupID}
+	case ApprovalStepTypeManager:
+		return approverBasis{kind: basisManager}
+	default:
+		return approverBasis{kind: basisUser}
+	}
+}
+
+// approverEligibleSQL is true when the approver of approval row a, on request
+// ar, still stands where their row's basis put them: a role or a group step's
+// approver still holds the role or the membership, live (its window open); a
+// manager step's approver is still the requester's manager; a sponsor is
+// still the external requester's sponsor. A row naming a user, the default
+// approver's row, and a row written before v226 (no basis) are not
+// re-checked. The approver's queue and the decision read the same predicate,
+// so the queue offers nothing the decision refuses.
+const approverEligibleSQL = `(CASE a.approver_basis
+	WHEN 'role' THEN EXISTS (SELECT 1 FROM user_roles ur
+	                          WHERE ur.user_id = a.approver_id AND ur.role_id = a.approver_basis_id AND ur.org_id = a.org_id
+	                            AND (ur.expires_at IS NULL OR ur.expires_at > NOW()))
+	WHEN 'group' THEN EXISTS (SELECT 1 FROM group_memberships gm
+	                           WHERE gm.user_id = a.approver_id AND gm.group_id = a.approver_basis_id AND gm.org_id = a.org_id
+	                             AND (gm.expires_at IS NULL OR gm.expires_at > NOW()))
+	WHEN 'manager' THEN EXISTS (SELECT 1 FROM users rq
+	                             WHERE rq.id = ar.requester_id AND rq.org_id = ar.org_id AND rq.manager_id = a.approver_id)
+	WHEN 'sponsor' THEN EXISTS (SELECT 1 FROM users rq
+	                             WHERE rq.id = ar.requester_id AND rq.org_id = ar.org_id AND rq.sponsor_user_id = a.approver_id)
+	ELSE TRUE END)`
+
+// approverStillEligible reports whether the caller's pending row at step still
+// stands on its basis (approverEligibleSQL). The chain is built when the
+// request is filed, from the roles, groups, manager and sponsor of that day;
+// an approver who has since lost what put them on it no longer decides.
+func (s *Service) approverStillEligible(ctx context.Context, requestID, approverID string, step int, orgID string) (bool, error) {
+	var ok bool
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT `+approverEligibleSQL+`
+		  FROM access_request_approvals a
+		  JOIN access_requests ar ON ar.id = a.request_id AND ar.org_id = a.org_id
+		 WHERE a.request_id = $1 AND a.approver_id = $2 AND a.step_order = $3
+		   AND a.decision = 'pending' AND a.org_id = $4
+		 LIMIT 1`, requestID, approverID, step, orgID).Scan(&ok)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("re-check the approver's basis: %w", err)
+	}
+	return ok, nil
+}

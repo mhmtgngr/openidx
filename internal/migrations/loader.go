@@ -1602,5 +1602,12 @@ func allMigrations() []*Migration {
 			UpSQL:       externalGroupWindowUp,
 			DownSQL:     externalGroupWindowDown,
 		},
+		{
+			Version:     226,
+			Name:        "approval_row_basis",
+			Description: "An approval row records why its approver is on it, so the approver is held to that at the decision. access_request_approvals gains approver_basis ('user', 'role', 'group', 'manager', 'sponsor', 'default') and approver_basis_id (the role or group a 'role' or 'group' row came from). governance-service writes both when it builds a request's chain and re-reads the basis when the approver decides: a holder whose role or membership has ended, a manager the requester no longer reports to, or a sponsor who handed the account over, no longer decides the request. A row written before this migration has no basis and is decided as before. Down drops the constraint and the columns.",
+			UpSQL:       approvalRowBasisUp,
+			DownSQL:     approvalRowBasisDown,
+		},
 	}
 }
