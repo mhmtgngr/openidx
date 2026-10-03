@@ -380,7 +380,8 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 
 	// Count roles
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM user_roles WHERE user_id = $1 AND org_id = $2`, userID, org.ID,
+		`SELECT COUNT(*) FROM user_roles WHERE user_id = $1 AND org_id = $2
+		   AND (expires_at IS NULL OR expires_at > NOW())`, userID, org.ID,
 	).Scan(&overview.RolesCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count roles: %w", err)
@@ -388,7 +389,8 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 
 	// Count groups
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM group_memberships WHERE user_id = $1 AND org_id = $2`, userID, org.ID,
+		`SELECT COUNT(*) FROM group_memberships WHERE user_id = $1 AND org_id = $2
+		   AND (expires_at IS NULL OR expires_at > NOW())`, userID, org.ID,
 	).Scan(&overview.GroupsCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count groups: %w", err)
@@ -430,7 +432,8 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 
 	// Get role names
 	roleRows, err := s.db.Pool.Query(ctx,
-		`SELECT r.id, r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 AND ur.org_id = $2 ORDER BY r.name`, userID, org.ID,
+		`SELECT r.id, r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 AND ur.org_id = $2
+		   AND (ur.expires_at IS NULL OR ur.expires_at > NOW()) ORDER BY r.name`, userID, org.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query roles: %w", err)
@@ -454,7 +457,8 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 
 	// Get group names
 	groupRows, err := s.db.Pool.Query(ctx,
-		`SELECT g.id, g.name FROM group_memberships gm JOIN groups g ON g.id = gm.group_id WHERE gm.user_id = $1 AND gm.org_id = $2 ORDER BY g.name`, userID, org.ID,
+		`SELECT g.id, g.name FROM group_memberships gm JOIN groups g ON g.id = gm.group_id WHERE gm.user_id = $1 AND gm.org_id = $2
+		   AND (gm.expires_at IS NULL OR gm.expires_at > NOW()) ORDER BY g.name`, userID, org.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query groups: %w", err)
@@ -487,7 +491,8 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 		       AND (vg.expires_at IS NULL OR vg.expires_at > NOW())
 		       AND ((vg.principal_type = 'user' AND vg.principal_id = $1)
 		         OR (vg.principal_type = 'role' AND vg.principal_id IN
-		              (SELECT role_id FROM user_roles WHERE user_id = $1 AND org_id = $2)))),
+		              (SELECT role_id FROM user_roles WHERE user_id = $1 AND org_id = $2
+		                 AND (expires_at IS NULL OR expires_at > NOW()))))),
 		   (SELECT COUNT(*) FROM vault_checkouts
 		     WHERE principal_id = $1 AND org_id = $2 AND status = 'active'),
 		   (SELECT COUNT(*) FROM access_requests

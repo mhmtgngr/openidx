@@ -34,7 +34,7 @@ func TestGetAccessOverview_AppsCountIncludesGroupAssignments(t *testing.T) {
 	ctx := orgctx.With(context.Background(), orgctx.Org{ID: orgID})
 
 	schema := []string{
-		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID)`,
+		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE roles (id UUID PRIMARY KEY, name VARCHAR(255))`,
 		`CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255),

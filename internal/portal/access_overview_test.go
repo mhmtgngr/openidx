@@ -31,7 +31,7 @@ func TestGetAccessOverview_CrossPillar(t *testing.T) {
 	ctx := orgctx.With(context.Background(), orgctx.Org{ID: orgID})
 
 	schema := []string{
-		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID)`,
+		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE roles (id UUID PRIMARY KEY, name VARCHAR(255))`,
 		`CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE groups (id UUID PRIMARY KEY, name VARCHAR(255),
@@ -82,6 +82,14 @@ func TestGetAccessOverview_CrossPillar(t *testing.T) {
 		`INSERT INTO vault_access_grants (org_id, secret_id, principal_type, principal_id) VALUES ('` + orgID + `','` + secretID + `','user','` + userID + `')`,
 		`INSERT INTO vault_access_grants (org_id, secret_id, principal_type, principal_id) VALUES ('` + orgID + `','` + secretID + `','role','` + roleID + `')`,
 		`INSERT INTO vault_checkouts (org_id, principal_id, status) VALUES ('` + orgID + `','` + userID + `','active')`,
+		// A role and a group membership whose window has ended, with a grant on
+		// another secret through the role: the overview counts and lists
+		// neither, nor the secret, though the expiry sweep has not deleted them.
+		`INSERT INTO roles (id, name) VALUES ('22222222-0000-0000-0000-0000000000e2','Ended')`,
+		`INSERT INTO user_roles (user_id, role_id, org_id, expires_at) VALUES ('` + userID + `','22222222-0000-0000-0000-0000000000e2','` + orgID + `', NOW() - interval '5 minutes')`,
+		`INSERT INTO vault_access_grants (org_id, secret_id, principal_type, principal_id) VALUES ('` + orgID + `','44444444-0000-0000-0000-0000000000e2','role','22222222-0000-0000-0000-0000000000e2')`,
+		`INSERT INTO groups (id, name) VALUES ('33333333-0000-0000-0000-0000000000e2','ended-group')`,
+		`INSERT INTO group_memberships (user_id, group_id, org_id, expires_at) VALUES ('` + userID + `','33333333-0000-0000-0000-0000000000e2','` + orgID + `', NOW() - interval '5 minutes')`,
 		`INSERT INTO access_requests (requester_id, org_id, resource_type, resource_id, resource_name, status, expires_at)
 		   VALUES ('` + userID + `','` + orgID + `','role',gen_random_uuid()::text,'break-glass','fulfilled',NOW()+'1h')`,
 		`INSERT INTO guacamole_sessions (org_id, user_id, status) VALUES ('` + orgID + `','` + userID + `','active')`,
@@ -107,8 +115,11 @@ func TestGetAccessOverview_CrossPillar(t *testing.T) {
 		t.Fatalf("GetAccessOverview: %v", err)
 	}
 
-	if ov.RolesCount != 1 {
-		t.Errorf("roles_count = %d, want 1", ov.RolesCount)
+	if ov.RolesCount != 1 || len(ov.Roles) != 1 {
+		t.Errorf("roles_count = %d and %d roles listed, want 1 and 1: an ended role is not held", ov.RolesCount, len(ov.Roles))
+	}
+	if ov.GroupsCount != 0 || len(ov.Groups) != 0 {
+		t.Errorf("groups_count = %d and %d groups listed, want none: the only membership has ended", ov.GroupsCount, len(ov.Groups))
 	}
 	// PAM slice.
 	if ov.Privileged.VaultGrants != 1 {
