@@ -32,7 +32,7 @@ func groupSchema(t *testing.T, pool *pgxpool.Pool) {
 		CREATE TABLE IF NOT EXISTS groups (id uuid PRIMARY KEY, name text, org_id uuid,
     external_allowed BOOLEAN NOT NULL DEFAULT false
 );
-		CREATE TABLE IF NOT EXISTS group_memberships (user_id uuid, group_id uuid, org_id uuid);`)
+		CREATE TABLE IF NOT EXISTS group_memberships (user_id uuid, group_id uuid, org_id uuid, expires_at TIMESTAMPTZ);`)
 	require.NoError(t, err)
 }
 

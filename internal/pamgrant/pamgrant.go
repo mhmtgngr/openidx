@@ -79,7 +79,8 @@ func Holds(ctx context.Context, q Querier, orgID, entryID, userID string, roles 
 			     OR (g.principal_type = 'role' AND g.principal_id = ANY($5))
 			     OR (g.principal_type = 'group' AND g.principal_id IN (
 			           SELECT gm.group_id::text FROM group_memberships gm
-			            WHERE gm.user_id = $4::uuid AND gm.org_id = $1))))`,
+			            WHERE gm.user_id = $4::uuid AND gm.org_id = $1
+			              AND (gm.expires_at IS NULL OR gm.expires_at > NOW())))))`,
 		orgID, entryID, action, userID, roles).Scan(&ok)
 	return ok, err
 }
@@ -148,7 +149,8 @@ func LapsedSessions(ctx context.Context, q Lister, maxExternal time.Duration, li
 		                                 AND (ur.expires_at IS NULL OR ur.expires_at > NOW())))
 		                        OR (g.principal_type = 'group' AND g.principal_id IN (
 		                              SELECT gm.group_id::text FROM group_memberships gm
-		                               WHERE gm.user_id = s.user_id AND gm.org_id = s.org_id))))) AS lapsed,
+		                               WHERE gm.user_id = s.user_id AND gm.org_id = s.org_id
+		                                 AND (gm.expires_at IS NULL OR gm.expires_at > NOW())))))) AS lapsed,
 		            (s.moderation_id IS NOT NULL
 		             AND NOT EXISTS (SELECT 1 FROM guacamole_moderation_sessions m
 		                              WHERE m.id = s.moderation_id AND m.org_id = s.org_id AND m.status = 'active')) AS unmoderated,

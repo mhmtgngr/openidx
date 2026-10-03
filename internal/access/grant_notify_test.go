@@ -19,7 +19,7 @@ func TestNotifyPamGrant(t *testing.T) {
 	ctx := context.Background()
 	schema := []string{
 		`CREATE TABLE pam_entries (id UUID PRIMARY KEY, org_id UUID, name VARCHAR(255))`,
-		`CREATE TABLE group_memberships (group_id UUID, user_id UUID, org_id UUID)`,
+		`CREATE TABLE group_memberships (group_id UUID, user_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 		`CREATE TABLE notifications (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			user_id UUID NOT NULL, org_id UUID, channel VARCHAR(50), type VARCHAR(100),

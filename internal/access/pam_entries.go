@@ -168,7 +168,8 @@ func (s *Service) userGroupIDs(ctx context.Context, orgID, userID string) ([]str
 		return nil, nil
 	}
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT group_id::text FROM group_memberships WHERE user_id = $1 AND org_id = $2`,
+		`SELECT group_id::text FROM group_memberships WHERE user_id = $1 AND org_id = $2
+		    AND (expires_at IS NULL OR expires_at > NOW())`,
 		userID, orgID)
 	if err != nil {
 		return nil, err
