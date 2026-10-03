@@ -204,6 +204,7 @@ func (g *GroupDB) ToGroup() Group {
 		ID:          g.ID,
 		DisplayName: g.DisplayName,
 		Members:     []Member{}, // Would need separate query for members
+		MemberCount: g.MemberCount,
 		CreatedAt:   g.CreatedAt,
 		UpdatedAt:   g.UpdatedAt,
 	}

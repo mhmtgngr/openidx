@@ -121,3 +121,78 @@ func TestAGroupEditKeepsTheSettingsItDoesNotName(t *testing.T) {
 		t.Errorf("after the refused edits the group has %s", got)
 	}
 }
+
+// TestAGroupReadCountsItsMembers: the list and the single read counted each
+// group's members and dropped the count on the way out, so the console's
+// Groups page showed 0 members for every group. A read that counted them now
+// returns memberCount; an empty group leaves it out.
+func TestAGroupReadCountsItsMembers(t *testing.T) {
+	db, cleanup := setupMigratedDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+	gin.SetMode(gin.TestMode)
+
+	const org = "00000000-0000-0000-0000-000000000010"
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: org})
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	scalar := func(q string, args ...interface{}) string {
+		t.Helper()
+		var v string
+		if err := db.Pool.QueryRow(ctx, q, args...).Scan(&v); err != nil {
+			t.Fatalf("seed (%s): %v", q, err)
+		}
+		return v
+	}
+	full := scalar(`INSERT INTO groups (org_id, name) VALUES ($1, $2) RETURNING id::text`, org, "counted-"+suffix)
+	empty := scalar(`INSERT INTO groups (org_id, name) VALUES ($1, $2) RETURNING id::text`, org, "counted-"+suffix+"-empty")
+	for _, name := range []string{"first", "second"} {
+		u := scalar(`INSERT INTO users (org_id, username, email) VALUES ($1, $2::text, $2::text || '@example.test') RETURNING id::text`,
+			org, name+"-"+suffix)
+		scalar(`INSERT INTO group_memberships (user_id, group_id, org_id) VALUES ($1, $2, $3) RETURNING user_id::text`, u, full, org)
+	}
+
+	svc := NewService(db, nil, &config.Config{}, zap.NewNop())
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: org}))
+		c.Set("roles", []string{"admin"})
+		c.Next()
+	})
+	r.GET("/groups", svc.handleListGroups)
+	r.GET("/groups/:id", svc.handleGetGroup)
+	get := func(path string, out interface{}) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, w.Code, w.Body.String())
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), out); err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+	}
+
+	var list []map[string]interface{}
+	get("/groups?search=counted-"+suffix, &list)
+	counts := map[string]interface{}{}
+	for _, g := range list {
+		counts[g["id"].(string)] = g["memberCount"]
+	}
+	if counts[full] != float64(2) {
+		t.Errorf("the list gives the group with two members memberCount %v; want 2", counts[full])
+	}
+	if _, listed := counts[empty]; !listed {
+		t.Fatalf("the list did not return the empty group: %v", list)
+	}
+	if counts[empty] != nil {
+		t.Errorf("the list gives the empty group memberCount %v; want it left out", counts[empty])
+	}
+
+	var one map[string]interface{}
+	get("/groups/"+full, &one)
+	if one["memberCount"] != float64(2) {
+		t.Errorf("the group read gives memberCount %v; want 2", one["memberCount"])
+	}
+}
