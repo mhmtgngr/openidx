@@ -31,7 +31,7 @@ func TestAutoApproveConditions(t *testing.T) {
 		`CREATE TABLE roles (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(255), org_id UUID NOT NULL)`,
 		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ, PRIMARY KEY (user_id, role_id))`,
 		`CREATE TABLE groups (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(255), org_id UUID NOT NULL)`,
-		`CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID, PRIMARY KEY (user_id, group_id))`,
+		`CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID, expires_at TIMESTAMPTZ, PRIMARY KEY (user_id, group_id))`,
 		`CREATE TABLE mfa_totp (user_id UUID, enabled BOOLEAN, org_id UUID)`,
 		`CREATE TABLE mfa_webauthn (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID)`,
 		`CREATE TABLE audit_events (id UUID PRIMARY KEY, event_type VARCHAR(50), category VARCHAR(50),

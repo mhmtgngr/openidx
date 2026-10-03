@@ -1588,5 +1588,12 @@ func allMigrations() []*Migration {
 			UpSQL:       roleAssignmentWindowUp,
 			DownSQL:     roleAssignmentWindowDown,
 		},
+		{
+			Version:     224,
+			Name:        "group_membership_window",
+			Description: "A group membership an access request gave carries the request's window. group_memberships gains expires_at (NULL is a standing membership, as before), which fulfilment writes, the token builder reads (a token carries only a live membership and ends no later than it), and the identity expiry sweep removes at its end. The request's end removes only a membership whose window is its own: before this, it deleted the (user, group) row whatever had made it, so a request's end took a membership the user held before the request with it, and the first of two requests cut the second one short. The backfill gives the rows a live request made the latest window of the fulfilled requests for their user and group, as v223 did for roles. Down drops the index and the column.",
+			UpSQL:       groupMembershipWindowUp,
+			DownSQL:     groupMembershipWindowDown,
+		},
 	}
 }
