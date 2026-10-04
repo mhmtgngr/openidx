@@ -2,6 +2,7 @@ package identity
 
 import (
 	"context"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -119,14 +120,18 @@ func (s *Service) revokeAfterRoleLoss(ctx context.Context, why string, userIDs .
 // A wholesale role replacement is BOTH a grant and a revocation, and only the
 // revocation half needs a token cut. Computing the difference is what keeps a
 // pure addition from ending the user's session.
+//
+// Ids compare without case: previous is read back from the database, which
+// writes a uuid in lower case, and next is what the caller sent, which may
+// not be. The same role in upper case is not a role lost.
 func lostRoles(previous, next []string) []string {
 	keep := make(map[string]struct{}, len(next))
 	for _, id := range next {
-		keep[id] = struct{}{}
+		keep[strings.ToLower(id)] = struct{}{}
 	}
 	var lost []string
 	for _, id := range previous {
-		if _, still := keep[id]; !still {
+		if _, still := keep[strings.ToLower(id)]; !still {
 			lost = append(lost, id)
 		}
 	}
