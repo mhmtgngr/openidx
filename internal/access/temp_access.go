@@ -157,6 +157,15 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load the target entry"})
 		return
 	}
+	// Issuing a link authorizes its launches, but puts no moderator in front
+	// of them, and a moderated entry's session waits for one.
+	if entry.RequireModerator {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "this entry's sessions are moderated, and a temporary access link cannot bring a moderator",
+			"code":  "moderated_entry_needs_broker",
+		})
+		return
+	}
 
 	// Protocol/host/port/username are copied from the entry so the list view can
 	// show what a link points at without joining. They are a DISPLAY copy: the
@@ -753,6 +762,18 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 			zap.String("link_id", link.ID), zap.Error(err))
 		renderTempAccessError(c, http.StatusGone, "Target Unavailable",
 			"The target this link points at is no longer available.")
+		return
+	}
+
+	// An entry that became moderated after the link was issued: the link
+	// brings no moderator, and the session would wait for one.
+	if entry.RequireModerator {
+		s.recordUnifiedEvent(c, linkOrgID, "temp_access.launch_failed", "", link.ID, "temp_access_link", map[string]interface{}{
+			"link_id": link.ID, "issuer_id": link.CreatedBy, "pam_entry_id": link.PamEntryID,
+			"code": "moderated_entry_needs_broker",
+		})
+		renderTempAccessError(c, http.StatusForbidden, "Access Denied",
+			"This connection has to be watched by a moderator, which a link cannot arrange. Ask the person who sent it.")
 		return
 	}
 

@@ -530,6 +530,8 @@ func TestTheLaunchRoutesActuallyCarryTheGate(t *testing.T) {
 		{"/pam/sponsored/entry-requests/:id/deny", "pam.sponsor_decide"},
 		{"/pam/sponsored/sessions/:id/watch", "pam.sponsor_watch"},
 		{"/pam/sponsored/sessions/:id/end", "pam.sponsor_end"},
+		{"/pam/sponsored/moderation/:id/join", "pam.sponsor_moderate"},
+		{"/pam/moderation/:id/watch", "pam.moderation_watch"},
 	} {
 		needle := `"` + want.path + `", svc.requireFreshMFA("` + want.action + `")`
 		if !strings.Contains(src, needle) {

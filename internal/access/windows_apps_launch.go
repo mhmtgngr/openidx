@@ -173,6 +173,11 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 	if s.refuseExternalLaunch(c, &entry) {
 		return
 	}
+	// The host's moderation gate, as at connect: refused before an approval
+	// is spent, claimed just before the launch, given back if it fails.
+	if s.refuseUnmoderatedLaunch(c, org.ID, &entry, userID) {
+		return
+	}
 	if entry.RequireApproval && !isAdmin {
 		consumed, gateErr := s.checkAndConsumePamApproval(ctx, chosen.HostEntryID, userID)
 		if gateErr != nil || !consumed {
@@ -191,6 +196,9 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 		extra["remote-app-args"] = app.Args
 	}
 
+	if !s.claimPamModeration(c, org.ID, &entry, userID) {
+		return
+	}
 	connName := fmt.Sprintf("pam-%s-app-%s", chosen.HostEntryID, app.ID)
 	res, fail := s.launchPamSession(c, org.ID, &entry, typeInfo.Protocol, extra, connName, app.GuacConnID,
 		func(ctx context.Context, connID string) {
@@ -201,6 +209,7 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 			}
 		})
 	if fail != nil {
+		s.releasePamModeration(org.ID, &entry)
 		fail.writeJSON(c)
 		return
 	}

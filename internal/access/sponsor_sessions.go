@@ -124,19 +124,36 @@ func (s *Service) handlePamSponsorWatchSession(c *gin.Context) {
 	if !ok {
 		return
 	}
+	shareURL, ok := s.shareLiveSession(c, org.ID, row)
+	if !ok {
+		return // shareLiveSession already wrote the error
+	}
+	s.logAuditEvent(c, "pam.session_watched", row.rowID, "pam_entry_session", map[string]interface{}{
+		"session_id": row.rowID, "entry_id": entryID, "user_id": userID, "read_only": true, "as": "sponsor",
+	})
+	c.JSON(http.StatusOK, gin.H{"share_url": shareURL, "read_only": true})
+}
+
+// shareLiveSession mints a read-only share key for a live session, as the
+// session's own broker account, on the broker that serves it. That needs the
+// session to run under a broker account of its own: a share key minted on a
+// shared account's connection would watch whoever else is on it. Reports
+// false once it has answered.
+func (s *Service) shareLiveSession(c *gin.Context, orgID string, row pamSessionRow) (string, bool) {
+	ctx := c.Request.Context()
 	broker := s.brokerFor(row.reach)
 	if broker == nil || !broker.perUserIdentities || row.connID == "" || row.guacUser == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "this session cannot be watched: its broker does not run it under the user's own broker account",
 			"code":  "watch_unavailable",
 		})
-		return
+		return "", false
 	}
 	active, err := broker.ListActiveSessions(ctx)
 	if err != nil {
 		s.logger.Warn("watch: listing the broker's sessions failed", zap.Error(err))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "the session broker could not be reached", "code": "broker_unreachable"})
-		return
+		return "", false
 	}
 	activeID := ""
 	for _, a := range active {
@@ -147,36 +164,33 @@ func (s *Service) handlePamSponsorWatchSession(c *gin.Context) {
 	}
 	if activeID == "" {
 		c.JSON(http.StatusConflict, gin.H{"error": "the broker is not serving this session", "code": "session_not_live"})
-		return
+		return "", false
 	}
 	var encPw string
 	if err := s.db.Pool.QueryRow(ctx,
 		`SELECT guac_password_enc FROM guacamole_users WHERE broker = $1 AND guac_username = $2 AND org_id = $3 LIMIT 1`,
-		broker.component, row.guacUser, org.ID).Scan(&encPw); err != nil {
+		broker.component, row.guacUser, orgID).Scan(&encPw); err != nil {
 		s.logger.Warn("watch: the session's broker account is not on record", zap.Error(err))
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "this session cannot be watched", "code": "watch_unavailable"})
-		return
+		return "", false
 	}
 	pw, err := broker.tokenCipher.Decrypt(encPw)
 	if err != nil {
 		s.logger.Error("watch: the session's broker account could not be read", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare the watch"})
-		return
+		return "", false
 	}
 	shareURL, err := broker.ShareActiveConnectionForOwner(ctx, activeID, row.guacUser, pw)
 	if errors.Is(err, ErrSharingUnsupported) {
 		c.JSON(http.StatusNotImplemented, gin.H{"error": "the session broker does not support watching a session", "code": "watch_unsupported"})
-		return
+		return "", false
 	}
 	if err != nil {
 		s.logger.Warn("watch: minting the share failed", zap.Error(err))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "the session broker could not share the session", "code": "broker_unreachable"})
-		return
+		return "", false
 	}
-	s.logAuditEvent(c, "pam.session_watched", row.rowID, "pam_entry_session", map[string]interface{}{
-		"session_id": row.rowID, "entry_id": entryID, "user_id": userID, "read_only": true, "as": "sponsor",
-	})
-	c.JSON(http.StatusOK, gin.H{"share_url": shareURL, "read_only": true})
+	return shareURL, true
 }
 
 // handlePamSponsorEndSession — POST /pam/sponsored/sessions/:id/end: ends the

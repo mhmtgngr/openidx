@@ -95,8 +95,9 @@ type LapsedSession struct {
 	OrgID  string
 	UserID string
 	// Reason is "grant_ended" when the user no longer holds a grant to
-	// connect to the entry, "max_duration" when an external user's session
-	// has run past its ceiling.
+	// connect to the entry, "moderation_ended" when the moderation that
+	// admitted the session ended, "max_duration" when an external user's
+	// session has run past its ceiling.
 	Reason string
 }
 
@@ -107,6 +108,11 @@ type LapsedSession struct {
 //     session's entry: the grant expired (a request's window closed), was
 //     removed, or the role or group that carried it is no longer theirs. A
 //     session lasts as long as the access that opened it.
+//   - moderation_ended: a moderation admitted the session
+//     (pam_entry_sessions.moderation_id, migration v221), and it is no
+//     longer active: its moderator or its requester ended it, and the end
+//     did not reach the broker. A moderated session runs only while it is
+//     moderated.
 //   - max_duration: the user is external and the session started more than
 //     maxExternal ago (invariant I7 of the third-party access framework),
 //     whatever grant it rides. A maxExternal of zero turns this off.
@@ -118,12 +124,14 @@ type LapsedSession struct {
 // administrator opened without a grant (admin_bypass names 'grant'), since no
 // grant opened it, and one recorded before migration v217 (admin_bypass
 // NULL), since whether a grant opened it is not known. The duration half
-// judges every external session, those two kinds included. When both apply,
-// the reason is grant_ended.
+// judges every external session, those two kinds included. When more than one
+// applies, the reason is the first of grant_ended, moderation_ended and
+// max_duration.
 func LapsedSessions(ctx context.Context, q Lister, maxExternal time.Duration, limit int) ([]LapsedSession, error) {
 	rows, err := q.Query(ctx,
 		//orgscope:ignore install-wide sweep of live PAM entry sessions; each grant, role, group and user is matched in the session's own org
-		`SELECT id, org_id, user_id, CASE WHEN lapsed THEN 'grant_ended' ELSE 'max_duration' END
+		`SELECT id, org_id, user_id,
+		        CASE WHEN lapsed THEN 'grant_ended' WHEN unmoderated THEN 'moderation_ended' ELSE 'max_duration' END
 		   FROM (
 		     SELECT s.id::text AS id, s.org_id::text AS org_id, s.user_id::text AS user_id, s.started_at,
 		            (s.admin_bypass IS NOT NULL AND NOT ('grant' = ANY(s.admin_bypass))
@@ -141,13 +149,16 @@ func LapsedSessions(ctx context.Context, q Lister, maxExternal time.Duration, li
 		                        OR (g.principal_type = 'group' AND g.principal_id IN (
 		                              SELECT gm.group_id::text FROM group_memberships gm
 		                               WHERE gm.user_id = s.user_id AND gm.org_id = s.org_id))))) AS lapsed,
+		            (s.moderation_id IS NOT NULL
+		             AND NOT EXISTS (SELECT 1 FROM guacamole_moderation_sessions m
+		                              WHERE m.id = s.moderation_id AND m.org_id = s.org_id AND m.status = 'active')) AS unmoderated,
 		            ($2::bigint > 0 AND s.started_at < NOW() - make_interval(secs => $2::bigint)
 		             AND EXISTS (SELECT 1 FROM users u
 		                          WHERE u.id = s.user_id AND u.org_id = s.org_id AND u.user_type = 'external')) AS overlong
 		       FROM pam_entry_sessions s
 		      WHERE s.status = 'active' AND s.user_id IS NOT NULL
 		   ) judged
-		  WHERE lapsed OR overlong
+		  WHERE lapsed OR unmoderated OR overlong
 		  ORDER BY started_at
 		  LIMIT $1`, limit, int64(maxExternal/time.Second))
 	if err != nil {
@@ -188,6 +199,12 @@ type Counts struct {
 	// recalled and expire by their own TTL; a caller that reports this number
 	// says so next to it.
 	BrokeredEnded int64
+	// ModerationsEnded is the pending and active moderations
+	// (guacamole_moderation_sessions) the user asked for or moderates: a
+	// moderation a moderator joined admits a session, and one whose moderator
+	// was severed no longer has anyone watching. The lifecycle sweep then
+	// ends the sessions they admitted (LapsedSessions, moderation_ended).
+	ModerationsEnded int64
 }
 
 // StepError names the write that failed. Every step is attempted whatever the
@@ -230,6 +247,9 @@ func EndForUser(ctx context.Context, q Execer, userID, orgID string) (Counts, []
 	run("end_brokered_sessions", &c.BrokeredEnded,
 		`UPDATE brokered_sessions SET status = 'ended', ended_at = NOW()
 		  WHERE user_id = $1 AND org_id = $2 AND status = 'active'`)
+	run("end_moderations", &c.ModerationsEnded,
+		`UPDATE guacamole_moderation_sessions SET status = 'ended', ended_at = NOW()
+		  WHERE (requester_id::text = $1 OR moderator_id::text = $1) AND org_id = $2 AND status IN ('pending', 'active')`)
 	return c, errs
 }
 
@@ -275,16 +295,24 @@ func EndForDisabledUsers(ctx context.Context, q Execer) (Counts, []error) {
 		`UPDATE brokered_sessions b SET status = 'ended', ended_at = NOW()
 		  WHERE b.status = 'active'
 		    AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = b.user_id AND u.enabled = true)`)
+	run("end_moderations", &c.ModerationsEnded,
+		//orgscope:ignore install-wide lifecycle reconcile sweep (disabled/deleted users -> PAM teardown)
+		`UPDATE guacamole_moderation_sessions m SET status = 'ended', ended_at = NOW()
+		  WHERE m.status IN ('pending', 'active')
+		    AND (NOT EXISTS (SELECT 1 FROM users u WHERE u.id = m.requester_id AND u.enabled = true)
+		      OR (m.moderator_id IS NOT NULL
+		          AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = m.moderator_id AND u.enabled = true)))`)
 	return c, errs
 }
 
 // Total is the number of rows a pass ended, for a log line.
 func (c Counts) Total() int64 {
-	return c.GrantsExpired + c.ApprovalsRevoked + c.LeasesReleased + c.TempLinksRevoked + c.BrokeredEnded
+	return c.GrantsExpired + c.ApprovalsRevoked + c.LeasesReleased + c.TempLinksRevoked + c.BrokeredEnded +
+		c.ModerationsEnded
 }
 
 // String is the log form.
 func (c Counts) String() string {
-	return fmt.Sprintf("grants=%d approvals=%d leases=%d temp_links=%d brokered=%d",
-		c.GrantsExpired, c.ApprovalsRevoked, c.LeasesReleased, c.TempLinksRevoked, c.BrokeredEnded)
+	return fmt.Sprintf("grants=%d approvals=%d leases=%d temp_links=%d brokered=%d moderations=%d",
+		c.GrantsExpired, c.ApprovalsRevoked, c.LeasesReleased, c.TempLinksRevoked, c.BrokeredEnded, c.ModerationsEnded)
 }

@@ -9535,7 +9535,7 @@ const en = {
         broadcast: 'Announcements an administrator sends to you',
         approval_pending: 'When an access request is waiting for your approval',
         request_update: 'When a request of yours is decided, or the access it gave is about to end or has ended',
-        sponsored_access: 'When a vendor user you sponsor waits for your approval, or starts a privileged session',
+        sponsored_access: 'When a vendor user you sponsor waits for your approval or for a moderator, or starts a privileged session',
       },
     },
     // The chrome-less window one PAM session runs in. The connection's own

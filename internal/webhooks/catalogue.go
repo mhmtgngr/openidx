@@ -103,7 +103,7 @@ var EventCatalogue = []EventType{
 	{EventAccessRequestEnded, "access", "The access a request gave ended with its window, or the request expired unanswered."},
 
 	{EventPamSessionStarted, "privileged_access", "A privileged session started on a PAM entry; says whether the user is external and the session recorded."},
-	{EventPamSessionEnded, "privileged_access", "A privileged session ended, with why: its grant ended, its maximum length, a sponsor, the kill switch, the user."},
+	{EventPamSessionEnded, "privileged_access", "A privileged session ended, with why: its grant ended, its maximum length, its moderation ended, a sponsor, the kill switch, the user."},
 	{EventPamBreakGlass, "privileged_access", "A break-glass reveal of a PAM entry's credential."},
 }
 

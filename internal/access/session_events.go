@@ -44,6 +44,7 @@ const (
 	sessionEndRiskSuspended  = "risk_suspended"   // the session risk scorer suspended it
 	sessionEndTerminalClosed = "closed"           // the browser terminal closed
 	sessionEndRequested      = "ended"            // someone asked for it to end; the event names who
+	sessionEndModeration     = "moderation_ended" // the moderation that admitted it ended
 )
 
 // publishPamEvent publishes eventType to orgID's webhook subscribers, and
