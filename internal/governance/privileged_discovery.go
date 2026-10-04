@@ -91,6 +91,7 @@ func (s *Service) RunPrivilegedDiscovery(ctx context.Context, orgID string) (*Pr
 		  JOIN roles r ON r.id = ur.role_id
 		  JOIN users u ON u.id = ur.user_id
 		 WHERE u.enabled = true AND u.org_id = $1 AND ur.org_id = $1 AND r.org_id = $1
+		   AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 		   AND (LOWER(r.name) = ANY($2) OR LOWER(r.name) LIKE '%admin%')`, orgID, privRoleNames)
 	if err != nil {
 		return nil, err
@@ -111,13 +112,15 @@ func (s *Service) RunPrivilegedDiscovery(ctx context.Context, orgID string) (*Pr
 	}
 	roleRows.Close()
 
-	// 2) Privileged group members. Group membership has no expiry → standing.
+	// 2) Privileged group members. standing = the membership does not expire
+	// (v224 gave memberships a window).
 	groupRows, err := s.db.Pool.Query(ctx, `
-		SELECT gm.user_id::text, u.username, COALESCE(u.email,''), u.last_login_at, g.name
+		SELECT gm.user_id::text, u.username, COALESCE(u.email,''), u.last_login_at, g.name, (gm.expires_at IS NULL)
 		  FROM group_memberships gm
 		  JOIN groups g ON g.id = gm.group_id
 		  JOIN users u ON u.id = gm.user_id
 		 WHERE u.enabled = true AND u.org_id = $1 AND gm.org_id = $1 AND g.org_id = $1
+		   AND (gm.expires_at IS NULL OR gm.expires_at > NOW())
 		   AND (LOWER(g.name) LIKE '%admin%' OR LOWER(g.name) LIKE '%privileg%'
 		        OR LOWER(g.name) LIKE '%sudo%' OR LOWER(g.name) LIKE '%root%')`, orgID)
 	if err != nil {
@@ -126,13 +129,16 @@ func (s *Service) RunPrivilegedDiscovery(ctx context.Context, orgID string) (*Pr
 	for groupRows.Next() {
 		var userID, username, email, groupName string
 		var lastLogin *time.Time
-		if err := groupRows.Scan(&userID, &username, &email, &lastLogin, &groupName); err != nil {
+		var standing bool
+		if err := groupRows.Scan(&userID, &username, &email, &lastLogin, &groupName, &standing); err != nil {
 			groupRows.Close()
 			return nil, err
 		}
 		d := get(userID, username, email, lastLogin)
 		d.addSource("group:" + groupName)
-		d.standing = true
+		if standing {
+			d.standing = true
+		}
 	}
 	groupRows.Close()
 
