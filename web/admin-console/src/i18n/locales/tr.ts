@@ -1926,7 +1926,7 @@ const tr: typeof en = {
         description: 'Hesap ömrü hiçbir zaman sözleşme bitişini geçmez. İzin verilen e-posta alan adları tanımlıysa davetler yalnızca bu alan adları için kabul edilir.',
         name: 'Ad',
         status: 'Durum',
-        suspendedHint: 'Askıdaki bir tedarikçi yeni davet, uzatma ya da yeniden etkinleştirme kabul etmez. Mevcut hesapları durumlarını korur.',
+        suspendedHint: 'Tedarikçiyi askıya almak hesaplarını da askıya alır ve oturumlarını kapatır. Yeniden etkin olana kadar yeni davet, uzatma ya da yeniden etkinleştirme kabul etmez; sonra her hesap, bir sponsorun geri alması için 7 gün bekler.',
         contactName: 'İletişim kişisi',
         contactEmail: 'İletişim e-postası',
         contractStart: 'Sözleşme başlangıcı',

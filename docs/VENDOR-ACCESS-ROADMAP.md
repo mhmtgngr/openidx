@@ -8,6 +8,13 @@
 > **Status.** This is a design and roadmap document, not a description of
 > shipped behaviour. §2 is what exists today and is true now. §3 is a defect
 > report and is also true now. §4 onward is the plan.
+>
+> **V1 and V2 design.** The framework for V1/V2 — the external identity, the
+> sponsor, the account expiry, the forced PAM controls, and the same spine for
+> internal temporary privilege — is in
+> [docs/plans/2026-09-28-ucuncu-taraf-erisimi-ve-gecici-yetkilendirme-cercevesi.md](./plans/2026-09-28-ucuncu-taraf-erisimi-ve-gecici-yetkilendirme-cercevesi.md)
+> (Turkish), with the decisions it needs in [ADR 0002](./adr/0002-third-party-access-and-temporary-privilege.md)
+> (proposed). This document stays the record of V0 and of what exists today.
 
 ## 1. The short answer
 
