@@ -399,10 +399,16 @@ func main() {
 	//
 	// The unsplit process is ProfileAll, which serves ADMIN, so a default
 	// install is unchanged.
+	//
+	// The external-account sweep is admin-plane work for the same reasons: it
+	// expires, suspends and disables vendor accounts across every org and
+	// severs their access (invariants I8 and I9 of the third-party access
+	// framework).
 	if serviceProfile.ServesAdmin() {
 		identityService.StartRoleExpirationChecker(bgCtx)
+		identityService.StartExternalAccountSweep(bgCtx)
 	} else {
-		log.Info("role expiration sweep not started: this process serves the ISSUE plane only",
+		log.Info("role expiration and external account sweeps not started: this process serves the ISSUE plane only",
 			zap.String("service_profile", string(serviceProfile)),
 			zap.String("runs_in", "the SERVICE_PROFILE=admin half"))
 	}

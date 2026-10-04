@@ -29,17 +29,22 @@ func appAccessSchema(t *testing.T, s *Service) {
 			username VARCHAR(255),
 			email VARCHAR(255),
 			org_id UUID NOT NULL
-		)`,
+		,
+    user_type VARCHAR(16) NOT NULL DEFAULT 'internal', account_status VARCHAR(16) NOT NULL DEFAULT 'active', vendor_org_id UUID, sponsor_user_id UUID, account_expires_at TIMESTAMPTZ, status_changed_at TIMESTAMPTZ, access_severed_at TIMESTAMPTZ
+)`,
 		`CREATE TABLE groups (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			name VARCHAR(255) NOT NULL,
 			org_id UUID NOT NULL
-		)`,
+		,
+    external_allowed BOOLEAN NOT NULL DEFAULT false
+)`,
 		`CREATE TABLE group_memberships (
 			group_id UUID NOT NULL,
 			user_id UUID NOT NULL,
 			joined_at TIMESTAMPTZ DEFAULT NOW(),
-			org_id UUID NOT NULL
+			org_id UUID NOT NULL,
+			expires_at TIMESTAMPTZ
 		)`,
 		`CREATE TABLE user_application_assignments (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -47,6 +52,7 @@ func appAccessSchema(t *testing.T, s *Service) {
 			application_id UUID NOT NULL,
 			org_id UUID NOT NULL,
 			assigned_at TIMESTAMPTZ DEFAULT NOW(),
+			expires_at TIMESTAMPTZ,
 			UNIQUE(user_id, application_id)
 		)`,
 		`CREATE TABLE group_application_assignments (
@@ -195,6 +201,50 @@ func TestCreateAndListAppAssignment(t *testing.T) {
 	list, _ = s.ListAppAssignments(octx, app)
 	if len(list) != 1 || list[0].PrincipalType != "user" {
 		t.Fatalf("after revoke want 1 user assignment, got %+v", list)
+	}
+}
+
+// TestAppAssignmentsFollowTheirWindow covers what migration v222 gives an
+// assignment, at the admin list and the admin grant: an assignment an access
+// request made is listed with its end while its window lasts and not after,
+// and an administrator assigning the same user makes it standing, so the access
+// they gave does not end with the request.
+func TestAppAssignmentsFollowTheirWindow(t *testing.T) {
+	db, cleanup := setupPortalTestDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+
+	s := &Service{db: db, logger: zap.NewNop()}
+	appAccessSchema(t, s)
+	const (
+		org     = "00000000-0000-0000-0000-000000000010"
+		admin   = "99999999-9999-9999-9999-999999999999"
+		current = "11111111-1111-1111-1111-111111111112"
+		ended   = "11111111-1111-1111-1111-111111111113"
+		app     = "aaaaaaaa-0000-0000-0000-000000000002"
+	)
+	mustExec(t, s, `INSERT INTO users (id, username, email, org_id) VALUES ($1,'current','c@x',$3), ($2,'ended','e@x',$3)`, current, ended, org)
+	mustExec(t, s, `INSERT INTO applications (id, name, enabled, org_id) VALUES ($1,'App',true,$2)`, app, org)
+	mustExec(t, s, `INSERT INTO user_application_assignments (user_id, application_id, org_id, expires_at) VALUES
+		($1, $3, $4, NOW() + interval '1 hour'), ($2, $3, $4, NOW() - interval '1 minute')`, current, ended, app, org)
+	octx := orgctx.With(context.Background(), orgctx.Org{ID: org})
+
+	list, err := s.ListAppAssignments(octx, app)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 || list[0].PrincipalID != current || list[0].ExpiresAt == "" {
+		t.Fatalf("want only the assignment whose window lasts, with its end; got %+v", list)
+	}
+
+	if err := s.CreateAppAssignment(octx, app, "user", current, admin); err != nil {
+		t.Fatalf("assign the user: %v", err)
+	}
+	list, _ = s.ListAppAssignments(octx, app)
+	if len(list) != 1 || list[0].ExpiresAt != "" {
+		t.Fatalf("an administrator's assignment left the request's window on it: %+v", list)
 	}
 }
 

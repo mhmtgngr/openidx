@@ -739,7 +739,8 @@ func (s *Service) extractSAMLUserFromSession(ctx context.Context, sessionID stri
 	}, nil
 }
 
-// getUserRoles fetches role names for a user
+// getUserRoles fetches the names of the roles a user holds now: a role whose
+// window has ended (v223) is not asserted, as it is not in an OAuth token.
 func (s *Service) getUserRoles(ctx context.Context, userID string) []string {
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -750,6 +751,7 @@ func (s *Service) getUserRoles(ctx context.Context, userID string) []string {
 		FROM roles r
 		INNER JOIN user_roles ur ON ur.role_id = r.id
 		WHERE ur.user_id = $1 AND ur.org_id = $2
+		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 	`, userID, org.ID)
 	if err != nil {
 		return nil
@@ -777,6 +779,7 @@ func (s *Service) getUserGroups(ctx context.Context, userID string) []string {
 		FROM groups g
 		INNER JOIN group_memberships ug ON ug.group_id = g.id
 		WHERE ug.user_id = $1 AND g.org_id = $2
+		AND (ug.expires_at IS NULL OR ug.expires_at > NOW())
 	`, userID, org.ID)
 	if err != nil {
 		return nil

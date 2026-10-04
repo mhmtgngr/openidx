@@ -8,6 +8,13 @@
 > **Status.** This is a design and roadmap document, not a description of
 > shipped behaviour. §2 is what exists today and is true now. §3 is a defect
 > report and is also true now. §4 onward is the plan.
+>
+> **V1 and V2 design.** The framework for V1/V2 — the external identity, the
+> sponsor, the account expiry, the forced PAM controls, and the same spine for
+> internal temporary privilege — is in
+> [docs/plans/2026-09-28-ucuncu-taraf-erisimi-ve-gecici-yetkilendirme-cercevesi.md](./plans/2026-09-28-ucuncu-taraf-erisimi-ve-gecici-yetkilendirme-cercevesi.md)
+> (Turkish), with the decisions it needs in [ADR 0002](./adr/0002-third-party-access-and-temporary-privilege.md)
+> (proposed). This document stays the record of V0 and of what exists today.
 
 ## 1. The short answer
 
@@ -237,6 +244,23 @@ Order is by risk, and each item is independently shippable.
    are one row every organization shares, and only a platform administrator
    may write them) and keep handing them out because only the per-user
    preference was ever asked.
+
+8. ~~**Put the link's events in the audit trail.**~~ **Done.** Every
+   `temp_access.*` event was a zap log line behind a comment saying an
+   implementation "would send to audit service", so the Unified Audit page,
+   the compliance reports and the HMAC chain never saw a link issued, used,
+   refused or revoked, and a refusal was not recorded anywhere. They now land
+   in `unified_audit_events` under the issuing tenant: `temp_access.created`
+   and `temp_access.revoked` with the administrator as actor, and the
+   anonymous `temp_access.used`, `temp_access.refused` (with the gate's
+   reason: expired, revoked, exhausted, ip_not_allowed, legacy_link) and
+   `temp_access.launch_failed` with the redeemer's address and user agent and
+   the issuer in the details. An unknown token lands nothing, so the trail is
+   not a place a stranger can write into by guessing.
+   `TestTempAccessEventsLandInTheUnifiedAuditTrail` drives each through the
+   handlers on the migrated schema and checks the other tenant sees none.
+   The Guacamole legal-hold events shared the same log-only helper and ride
+   the same write now.
 
 Each item needs a red proof, as everything else on this branch has.
 

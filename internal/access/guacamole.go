@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/resilience"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
@@ -538,29 +538,6 @@ func (gc *GuacamoleClient) ListGuacConnections(ctx context.Context) ([]GuacConne
 
 // ---- Pure helpers ----
 
-// buildInjectedParams assembles the Guacamole connection parameters for a brokered
-// session: the credential goes to password (or private-key for ssh_key secrets), the
-// username from the connection config, and guacd recording params when recording is on.
-func buildInjectedParams(secretType, injectUsername string, cred []byte, record bool, recordingPath, recordingName string) map[string]string {
-	params := map[string]string{}
-	if len(cred) > 0 {
-		if injectUsername != "" {
-			params["username"] = injectUsername
-		}
-		if secretType == "ssh_key" {
-			params["private-key"] = string(cred)
-		} else {
-			params["password"] = string(cred)
-		}
-	}
-	if record {
-		params["recording-path"] = recordingPath
-		params["recording-name"] = recordingName
-		params["recording-include-keys"] = "true"
-	}
-	return params
-}
-
 // ---- HTTP Handlers ----
 
 // handleListGuacamoleConnections lists all Guacamole connections
@@ -579,15 +556,24 @@ func (s *Service) handleListGuacamoleConnections(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"connections": conns})
 }
 
-// handleGuacamoleConnect returns the URL to connect to a Guacamole session for a
-// route, applying credential injection, approval gating, and session recording
-// as configured on the guacamole_connections row (PAM M3, Task 7).
+// handleGuacamoleConnect — POST /guacamole/connections/:routeId/connect.
+//
+// The route's brokered connection is a PAM entry (v213, guacamole_route_entry.go),
+// and this launch is the entry launch: connect grant, single-use approval on
+// the entry, overlay check, the shared launch core, a pam_entry_sessions row.
+// What stays this handler's own is the route: it is looked up in the caller's
+// organization and answers 404 otherwise, which is the whole tenant isolation
+// of the path (v151); the moderation gate, which keys on the connection
+// record; and the guacamole_sessions ledger row the Privileged Sessions page
+// reads for recordings, transcripts and legal holds.
+//
+// The handler used to be a launch path of its own. It read the connection
+// record, consumed a guacamole_session_requests approval, injected the vault
+// secret and returned the URL, and asked nothing about the caller: any
+// authenticated user of the organization who knew a route id got a session
+// onto that route's host with that route's credential. Now the entry decides,
+// and a route no administrator has granted refuses everyone but administrators.
 func (s *Service) handleGuacamoleConnect(c *gin.Context) {
-	if s.guacamoleClient == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Guacamole is not configured"})
-		return
-	}
-
 	routeID := c.Param("routeId")
 	userID := c.GetString("user_id")
 	ctx := c.Request.Context()
@@ -597,147 +583,64 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 		return
 	}
 
-	// Load the connection row including PAM config columns.
-	//
-	// The org predicate is the whole security of this handler. Before v151 this
-	// read by route_id alone: it resolved the caller's organization, refused
-	// when there was none, and then never used it. Everything below acts on
-	// whatever row came back — the vault secret is read under bypass-RLS and
-	// injected, and a connect URL is returned — so any authenticated user who
-	// knew another tenant's route id got a live session onto that tenant's host
-	// with that tenant's credential. The approval and moderation gates cannot
-	// substitute for this: both key on the connection id and read tables belted
-	// to the CALLER's organization, so a request opened against another tenant's
-	// connection is approved at home and passes.
-	var connectionPK, connID, protocol, hostname, secretID, injectUser string
-	var port int
-	var requireApproval, recordSession, requireModerator bool
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, guacamole_connection_id, protocol, hostname, port,
-		        COALESCE(vault_secret_id::text,''), COALESCE(inject_username,''),
-		        require_approval, record_session, require_moderator
-		 FROM guacamole_connections WHERE route_id=$1 AND org_id=$2`, routeID, org.ID).
-		Scan(&connectionPK, &connID, &protocol, &hostname, &port,
-			&secretID, &injectUser, &requireApproval, &recordSession, &requireModerator)
+	rc, err := s.resolveRouteConnection(ctx, org.ID, routeID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no Guacamole connection found for this route"})
+		if errors.Is(err, errRouteNotBrokered) {
+			c.JSON(http.StatusNotFound, gin.H{"error": errRouteNotBrokered.Error()})
+			return
+		}
+		s.logger.Error("handleGuacamoleConnect: route entry lookup failed",
+			logsafe.String("route_id", routeID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up connection"})
 		return
 	}
 
-	// Approval gate — single-use, atomic consume.
-	if requireApproval {
-		ok, err := s.checkAndConsumeApproval(ctx, org.ID, connectionPK, userID)
-		if err != nil {
-			s.logger.Error("handleGuacamoleConnect: checkAndConsumeApproval failed",
-				zap.String("connection_id", connectionPK), zap.Error(err))
-			c.JSON(http.StatusForbidden, gin.H{"error": "session requires approval"})
-			return
-		}
-		if !ok {
-			c.JSON(http.StatusForbidden, gin.H{"error": "session requires approval"})
-			return
-		}
-	}
-
-	// Moderation gate (PAM C3) — the session must not start until a moderator
-	// has joined to watch it live (Teleport-style four-eyes). Unlike the
-	// approval gate (decided before the session and consumed here), moderation
-	// is a live-presence requirement: block the connect until a moderator has
-	// claimed the pending moderation row for this (connection, requester).
-	if requireModerator {
-		ok, err := s.checkModerationActive(ctx, org.ID, connectionPK, userID)
-		if err != nil {
-			s.logger.Error("handleGuacamoleConnect: checkModerationActive failed",
-				zap.String("connection_id", connectionPK), zap.Error(err))
-			c.JSON(http.StatusForbidden, gin.H{"error": "session requires an active moderator"})
-			return
-		}
-		if !ok {
-			// No moderator has joined yet. Signal the client to request
-			// moderation (POST .../moderation) and poll until active.
-			c.Header("X-Moderation-Required", "true")
-			c.JSON(http.StatusPreconditionRequired, gin.H{
-				"error":               "session requires a moderator to join before it can start",
-				"moderation_required": true,
-			})
-			return
-		}
-	}
-
-	// Build server-side injected params — credential never leaves the server.
-	var cred []byte
-	var secretType string
-	if secretID != "" && s.vaultSvc != nil {
-		bctx := orgctx.WithBypassRLS(ctx)
-		var err error
-		cred, err = s.vaultSvc.Use(bctx, org.ID, secretID)
-		if err != nil {
-			s.logger.Warn("handleGuacamoleConnect: vault credential unavailable",
-				zap.String("secret_id", secretID), zap.Error(err))
-			c.JSON(http.StatusForbidden, gin.H{"error": "credential unavailable"})
-			return
-		}
-
-		// Determine which connection parameter to inject based on the secret type.
-		// ssh_key → private-key; anything else (password, api_key, …) → password.
-		// bctx carries an explicit bypass, so RLS does not scope this: the tenant
-		// term is the only thing that does. The directive that used to stand here
-		// named the bypass as if it were the reason no predicate was needed.
-		_ = s.db.Pool.QueryRow(bctx,
-			`SELECT type FROM vault_secrets WHERE id=$1 AND org_id=$2`, secretID, org.ID).Scan(&secretType)
-	}
-
-	recPath := s.config.GuacamoleRecordingPath
-	recName := fmt.Sprintf("%s-%d", connID, time.Now().UnixMilli())
-	// recFile is the full filesystem path to the recording artifact that guacd
-	// will write. guacd itself receives dir (recording-path) + name (recording-name)
-	// separately so that it can rotate/suffix files correctly; we compute the
-	// joined path here so the session ledger row stores the exact file to purge
-	// rather than the directory root (which would cause RemoveAll to wipe the
-	// entire recordings directory — data-loss bug fixed in v60).
-	recFile := filepath.Join(recPath, recName)
-	params := buildInjectedParams(secretType, injectUser, cred, recordSession, recPath, recName)
-
-	// Zero the plaintext credential slice immediately after buildInjectedParams copies
-	// it into the params map. The string values in params are independent copies; we
-	// accept that caveat (same approach as M1/M2b elsewhere in this package).
-	for i := range cred {
-		cred[i] = 0
-	}
-
-	if secretID != "" && s.vaultSvc != nil {
-		s.logAuditEvent(c, "guacamole_credential_injected", routeID, "guacamole_connection",
-			map[string]interface{}{
-				"route_id":  routeID,
-				"secret_id": secretID,
-				"user_id":   userID,
-				// Credential value intentionally omitted from audit.
-			})
-	}
-
-	// Recording side-effects — guacd-native session recording.
-	if recordSession {
-		if _, err := s.recordGuacSession(ctx, org.ID, connectionPK, userID, recFile); err != nil {
-			s.logger.Warn("handleGuacamoleConnect: recordGuacSession failed (best-effort)",
-				zap.String("connection_id", connectionPK), zap.Error(err))
-		}
-	}
-
-	// Push injected params to Guacamole only when there is something to inject.
-	if len(params) > 0 {
-		if err := s.guacamoleClient.UpdateConnection(connID, connID, protocol, hostname, port, params); err != nil {
-			s.logger.Error("handleGuacamoleConnect: UpdateConnection failed",
-				zap.String("conn_id", connID), zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "prepare session"})
-			return
-		}
-	}
-
-	connectURL, _ := s.connectURLForBroker(ctx, s.guacamoleClient, org.ID, userID, connID, realClientIP(c))
-	c.JSON(http.StatusOK, gin.H{
-		"connect_url":   connectURL,
-		"connection_id": connID,
-		"route_id":      routeID,
+	s.connectPamEntry(c, rc.EntryID, pamConnectHooks{
+		// Moderation gate (PAM C3) — the session must not start until a
+		// moderator has joined to watch it live (Teleport-style four-eyes).
+		// Unlike the approval gate (decided before the session and consumed by
+		// the entry path), moderation is a live-presence requirement: block the
+		// connect until a moderator has claimed the pending moderation row for
+		// this (connection, requester). Runs after the entry's own gates so a
+		// caller the entry refuses is never told to go find a moderator.
+		BeforeLaunch: func(c *gin.Context, _ *pamLaunchEntry) bool {
+			if !rc.RequireModerator {
+				return true
+			}
+			ok, err := s.checkModerationActive(ctx, org.ID, rc.ID, userID)
+			if err != nil {
+				s.logger.Error("handleGuacamoleConnect: checkModerationActive failed",
+					zap.String("connection_id", rc.ID), zap.Error(err))
+				c.JSON(http.StatusForbidden, gin.H{"error": "session requires an active moderator"})
+				return false
+			}
+			if !ok {
+				// No moderator has joined yet. Signal the client to request
+				// moderation (POST .../moderation) and poll until active.
+				c.Header("X-Moderation-Required", "true")
+				c.JSON(http.StatusPreconditionRequired, gin.H{
+					"error":               "session requires a moderator to join before it can start",
+					"moderation_required": true,
+				})
+				return false
+			}
+			return true
+		},
+		// The route's own ledger, kept beside the entry's: the Privileged
+		// Sessions page, the kill switch and the retention sweep read
+		// guacamole_sessions for this route's recordings, transcripts, legal
+		// holds and termination, and a recorded launch that left no row there
+		// would be a recording nothing could find or purge.
+		AfterLaunch: func(c *gin.Context, entry *pamLaunchEntry, res *pamSessionResult) {
+			if !entry.RecordSession {
+				return
+			}
+			if _, err := s.recordGuacSession(ctx, org.ID, rc.ID, userID, res.RecordingPath); err != nil {
+				s.logger.Warn("handleGuacamoleConnect: recordGuacSession failed (best-effort)",
+					zap.String("connection_id", rc.ID), zap.Error(err))
+			}
+		},
+		Response: gin.H{"route_id": routeID},
 	})
 }
 
@@ -817,6 +720,17 @@ func (s *Service) handleSetGuacCredential(c *gin.Context) {
 		return
 	}
 
+	// The entry is what the launch enforces, so the saved settings go to it
+	// now rather than at the next launch, and a failure is the administrator's
+	// to see: a credential the route shows and the entry does not carry would
+	// be the display/enforcement split this file exists to close.
+	if _, err := s.syncRouteEntry(ctx, org.ID, routeID); err != nil {
+		s.logger.Error("handleSetGuacCredential: entry sync failed",
+			logsafe.String("route_id", routeID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update the route's PAM entry"})
+		return
+	}
+
 	userID, _ := c.Get("user_id")
 	s.logAuditEvent(c, "guacamole_credential_set", routeID, "guacamole_connection", map[string]interface{}{
 		"route_id":         routeID,
@@ -856,6 +770,16 @@ func (s *Service) provisionGuacamoleForRoute(ctx context.Context, route *ProxyRo
 	// Save mapping
 	if err := s.guacamoleClient.SaveGuacConnection(ctx, route.ID, connID, route.RouteType, route.RemoteHost, route.RemotePort, params); err != nil {
 		return fmt.Errorf("failed to save guacamole connection mapping: %w", err)
+	}
+
+	// The entry that gates the route's launch (guacamole_route_entry.go): made
+	// here, on the first provisioning, and refreshed on every later one so
+	// the target it brokers to is the route's current one.
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		if _, err := s.syncRouteEntry(ctx, org.ID, route.ID); err != nil {
+			return fmt.Errorf("guacamole connection %s was created but the route's PAM entry could not be "+
+				"written; it will be provisioned again on the next attempt: %w", connID, err)
+		}
 	}
 
 	// Update route with connection ID.
@@ -1024,6 +948,10 @@ type GuacActiveSession struct {
 	// OpenIDX's own ledger. Guacamole only knows the shared broker account, so
 	// Username above is always that account; this surfaces the actual user.
 	OpenIDXUser string `json:"openidx_user,omitempty"`
+	// Broker is the Guacamole broker the session runs on: "direct", or "ziti"
+	// for the OpenZiti overlay broker, which every external user's session and
+	// every session under PAM_REQUIRE_ZTNA=enforce uses.
+	Broker string `json:"broker,omitempty"`
 }
 
 // realClientIP returns the end-user's client address as seen through OpenIDX's

@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -732,12 +734,20 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err = tx.Exec(ctx, `
+	// The row's enabled before this write, read under the row's lock in the
+	// same statement, so the push that deactivates the user is told apart
+	// from a later push of a user already inactive. The locking read is
+	// joined in FROM so it runs before the write.
+	var wasActive bool
+	if err = tx.QueryRow(ctx, `
+		WITH before AS (SELECT id, COALESCE(enabled, false) AS enabled FROM users WHERE id = $1 AND org_id = $8 FOR UPDATE)
 		UPDATE users
 		SET username = $2, email = $3, first_name = $4, last_name = $5, enabled = $6, updated_at = $7,
-		    manager_id = COALESCE($9::uuid, manager_id), external_id = NULLIF($10, '')
-		WHERE id = $1 AND org_id = $8
-	`, userID, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, now, org.ID, managerID, user.ExternalID); err != nil {
+		    manager_id = COALESCE($9::uuid, users.manager_id), external_id = NULLIF($10, '')
+		FROM before
+		WHERE users.id = before.id AND users.org_id = $8
+		RETURNING before.enabled
+	`, userID, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, now, org.ID, managerID, user.ExternalID).Scan(&wasActive); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 
@@ -758,6 +768,17 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 	// choke point for both PUT and PATCH(active), so this covers both.
 	if !user.Active {
 		s.deprovisionUser(ctx, userID, org.ID, false)
+	}
+	// And the receivers downstream of this product hear it, as they hear a
+	// SCIM delete: once, on the push that deactivates the user. Best-effort:
+	// the deactivation is committed whether or not the signal is written.
+	if wasActive && !user.Active {
+		if serr := ssfsignal.Enqueue(ctx, s.db.Pool, ssfsignal.Signal{
+			OrgID: org.ID, SubjectID: userID, Claims: map[string]any{"reason": "scim_deactivated"},
+		}); serr != nil {
+			s.logger.Error("SCIM deactivated the user, but the account-disabled signal was not enqueued",
+				logsafe.String("user_id", userID), zap.Error(serr))
+		}
 	}
 
 	// Apply the org's enabled user_updated provisioning rules (best-effort;
@@ -1156,6 +1177,8 @@ func (s *Service) CreateSCIMGroup(ctx context.Context, group *SCIMGroup) (*SCIMG
 			zap.Error(err))
 	} else {
 		s.fanOutGroupChange(ctx, org.ID, groupID, OpCreate, group.DisplayName, members)
+		// Each member has a group a token issued for them now carries.
+		s.claimsChanged(ctx, org.ID, "scim.CreateSCIMGroup", members...)
 	}
 
 	return group, nil
@@ -1256,19 +1279,26 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 
 		// Clear existing members. RETURNING, because the users this drops for
 		// good have to have their tokens cut and a row count cannot be revoked.
+		//
+		// And each membership's window (migration v224), because a member the
+		// push keeps keeps it: a membership an access request gave would
+		// otherwise come back standing, and outlive its request.
 		rows, err := tx.Query(ctx,
-			"DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2 RETURNING user_id::text", groupID, org.ID)
+			"DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2 RETURNING user_id::text, expires_at", groupID, org.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to clear group members: %w", err)
 		}
 		var removed []string
+		windows := map[string]*time.Time{}
 		for rows.Next() {
 			var uid string
-			if serr := rows.Scan(&uid); serr != nil {
+			var window *time.Time
+			if serr := rows.Scan(&uid, &window); serr != nil {
 				rows.Close()
 				return nil, fmt.Errorf("failed to read the members being replaced: %w", serr)
 			}
 			removed = append(removed, uid)
+			windows[uid] = window
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -1279,10 +1309,10 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 		kept := make([]string, 0, len(group.Members))
 		for _, member := range group.Members {
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO group_memberships (user_id, group_id, joined_at, org_id)
-				VALUES ($1, $2, $3, $4)
+				INSERT INTO group_memberships (user_id, group_id, joined_at, org_id, expires_at)
+				VALUES ($1, $2, $3, $4, $5)
 				ON CONFLICT DO NOTHING
-			`, member.Value, groupID, now, org.ID); err != nil {
+			`, member.Value, groupID, now, org.ID, windows[strings.ToLower(member.Value)]); err != nil {
 				return nil, fmt.Errorf("failed to add group member: %w", err)
 			}
 			kept = append(kept, member.Value)
@@ -1305,6 +1335,10 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 		// commonest way a membership is taken away in this product, and
 		// "groups" is a claim on the access token.
 		s.revokeAfterMembershipLoss(ctx, "scim.UpdateSCIMGroup", membershipsLost(removed, kept)...)
+		// The receivers are told about both halves: the members the push
+		// dropped and the ones it added.
+		changed := append(membershipsLost(removed, kept), membershipsLost(kept, removed)...)
+		s.claimsChanged(ctx, org.ID, "scim.UpdateSCIMGroup", changed...)
 	}
 
 	if members, err := s.groupMembers(ctx, groupID, org.ID); err != nil {
@@ -1317,18 +1351,24 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 	return group, nil
 }
 
-// membershipsLost returns the ids in removed that are not in kept, each once.
-// It is the group counterpart of identity's lostRoles and directory's function
-// of the same name: a wholesale replacement is a grant and a revocation at
-// once, and treating the two alike would end live sessions on every sync.
+// membershipsLost returns the ids in removed that are not in kept, each once,
+// in lower case. It is the group counterpart of identity's lostRoles and
+// directory's function of the same name: a wholesale replacement is a grant
+// and a revocation at once, and treating the two alike would end live sessions
+// on every sync.
+//
+// Ids compare without case: the database returns a uuid in lower case, and an
+// IdP may send the same id in upper case. A member it sends that way kept the
+// group, and must not be logged out for it.
 func membershipsLost(removed, kept []string) []string {
 	still := make(map[string]struct{}, len(kept))
 	for _, id := range kept {
-		still[id] = struct{}{}
+		still[strings.ToLower(id)] = struct{}{}
 	}
 	var lost []string
 	seen := make(map[string]struct{}, len(removed))
 	for _, id := range removed {
+		id = strings.ToLower(id)
 		if id == "" {
 			continue
 		}
@@ -1365,6 +1405,21 @@ func (s *Service) revokeAfterMembershipLoss(ctx context.Context, why string, use
 	}
 }
 
+// claimsChanged tells the tenant's SSF receivers that what a token issued for
+// these users says has changed (CAEP token-claims-change): a SCIM push or a
+// provisioning rule gave them a group or a role, or took one away.
+// Best-effort, like the token cut: the change has been made, and a failure is
+// logged.
+func (s *Service) claimsChanged(ctx context.Context, orgID, why string, userIDs ...string) {
+	if s.db == nil || s.db.Pool == nil {
+		return
+	}
+	if err := ssfsignal.EnqueueClaimsChange(ctx, s.db.Pool, orgID, why, userIDs...); err != nil {
+		s.logger.Error("a role or group changed, but the token-claims-change signal was not enqueued",
+			zap.String("path", why), zap.Error(err))
+	}
+}
+
 // DeleteSCIMGroup deletes a group via SCIM
 func (s *Service) DeleteSCIMGroup(ctx context.Context, groupID string) error {
 	s.logger.Info("Deleting SCIM group", zap.String("group_id", groupID))
@@ -1398,6 +1453,7 @@ func (s *Service) DeleteSCIMGroup(ctx context.Context, groupID string) error {
 		return err
 	}
 	s.revokeAfterMembershipLoss(ctx, "scim.DeleteSCIMGroup", members...)
+	s.claimsChanged(ctx, org.ID, "scim.DeleteSCIMGroup", members...)
 	s.fanOutGroupChange(ctx, org.ID, groupID, OpDelete, "", nil)
 	return nil
 }

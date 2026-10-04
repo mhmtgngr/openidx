@@ -83,7 +83,8 @@ func ssoSetupDB(t *testing.T) (*Service, *database.PostgresDB) {
 		`CREATE TABLE user_application_assignments (
 			application_id UUID NOT NULL,
 			user_id UUID NOT NULL,
-			org_id UUID NOT NULL
+			org_id UUID NOT NULL,
+			expires_at TIMESTAMPTZ
 		)`,
 		`CREATE TABLE group_application_assignments (
 			application_id UUID NOT NULL,
@@ -92,7 +93,8 @@ func ssoSetupDB(t *testing.T) (*Service, *database.PostgresDB) {
 		)`,
 		`CREATE TABLE group_memberships (
 			group_id UUID NOT NULL,
-			user_id UUID NOT NULL
+			user_id UUID NOT NULL,
+			expires_at TIMESTAMPTZ
 		)`,
 		`CREATE TABLE oauth_user_consents (
 			org_id UUID NOT NULL,
