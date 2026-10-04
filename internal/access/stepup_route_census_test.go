@@ -526,6 +526,8 @@ func TestTheLaunchRoutesActuallyCarryTheGate(t *testing.T) {
 		{"/pam/connect/cloud", "pam.connect_cloud"},
 		{"/pam/brokered-sessions", "pam.broker_session"},
 		{"/pam/apps/:id/launch", "pam.app_launch"},
+		{"/pam/sponsored/entry-requests/:id/approve", "pam.sponsor_decide"},
+		{"/pam/sponsored/entry-requests/:id/deny", "pam.sponsor_decide"},
 	} {
 		needle := `"` + want.path + `", svc.requireFreshMFA("` + want.action + `")`
 		if !strings.Contains(src, needle) {

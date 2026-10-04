@@ -8819,6 +8819,68 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
+
+  # ---- Sponsors and moderators (third-party access framework, Phase 2) ----
+
+  /api/v1/access/pam/sponsored/entry-requests:
+    get:
+      tags: [PAM Sponsor]
+      summary: List the launch requests of the caller's external users
+      description: >
+        The pending privileged launch requests of the external (vendor) users
+        the caller sponsors (invariant I6).
+      operationId: pamListSponsoredRequests
+      x-openidx-handler: internal/access.(*Service).handlePamListSponsoredRequests
+      responses:
+        '200':
+          description: The requests
+
+  /api/v1/access/pam/sponsored/entry-requests/{id}/approve:
+    post:
+      tags: [PAM Sponsor]
+      summary: Approve a sponsored user's launch request
+      description: >
+        The sponsor's decision on a launch request of an external user they sponsor. Needs a fresh second factor (`pam.sponsor_decide`).
+      operationId: pamSponsorApproveRequest
+      x-openidx-handler: internal/access.(*Service).handlePamSponsorApproveRequest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Approved
+        '403':
+          description: A fresh second factor is required first (`step_up_required`)
+        '404':
+          description: >
+            Not one of the caller's: a request, session or moderation of an
+            external user someone else sponsors answers as if it did not exist
+
+  /api/v1/access/pam/sponsored/entry-requests/{id}/deny:
+    post:
+      tags: [PAM Sponsor]
+      summary: Deny a sponsored user's launch request
+      description: >
+        The sponsor's decision on a launch request of an external user they sponsor. Needs a fresh second factor (`pam.sponsor_decide`).
+      operationId: pamSponsorDenyRequest
+      x-openidx-handler: internal/access.(*Service).handlePamSponsorDenyRequest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Denied
+        '403':
+          description: A fresh second factor is required first (`step_up_required`)
+        '404':
+          description: >
+            Not one of the caller's: a request, session or moderation of an
+            external user someone else sponsors answers as if it did not exist
+
 components:
   securitySchemes:
     bearerAuth:
