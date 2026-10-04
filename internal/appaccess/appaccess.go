@@ -36,15 +36,16 @@ type Principals struct {
 
 // assignedPredicate matches an application assigned to the user directly OR
 // through a group they belong to. $1 = user id, $2 = org id. A direct
-// assignment counts until its window ends (migration v222); one with no window
-// is standing.
+// assignment counts until its window ends (migration v222), and a group
+// membership until its own (v224); one with no window is standing.
 const assignedPredicate = `(
 	EXISTS (SELECT 1 FROM user_application_assignments uaa
 	         WHERE uaa.application_id = a.id AND uaa.user_id = $1 AND uaa.org_id = $2
 	           AND (uaa.expires_at IS NULL OR uaa.expires_at > NOW()))
 	OR EXISTS (SELECT 1 FROM group_application_assignments gaa
 	            JOIN group_memberships gm ON gm.group_id = gaa.group_id
-	           WHERE gaa.application_id = a.id AND gm.user_id = $1 AND gaa.org_id = $2)
+	           WHERE gaa.application_id = a.id AND gm.user_id = $1 AND gaa.org_id = $2
+	             AND (gm.expires_at IS NULL OR gm.expires_at > NOW()))
 )`
 
 // Allowed reports whether the user may reach the application. A disabled

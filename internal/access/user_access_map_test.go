@@ -92,7 +92,7 @@ var crossPillarSchema = []string{
 	`CREATE TABLE IF NOT EXISTS roles (id UUID PRIMARY KEY, name VARCHAR(255) NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 	`CREATE TABLE IF NOT EXISTS groups (id UUID PRIMARY KEY, name VARCHAR(255) NOT NULL)`,
-	`CREATE TABLE IF NOT EXISTS group_memberships (user_id UUID, group_id UUID, org_id UUID)`,
+	`CREATE TABLE IF NOT EXISTS group_memberships (user_id UUID, group_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 	`CREATE TABLE IF NOT EXISTS sessions (
 		id UUID PRIMARY KEY, user_id UUID, org_id UUID, revoked BOOLEAN,
 		revoked_at TIMESTAMPTZ, expires_at TIMESTAMPTZ)`,

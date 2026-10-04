@@ -77,7 +77,7 @@ func seedLifecycle(t *testing.T, pool *pgxpool.Pool) (*Service, string) {
 			id uuid primary key, requester_id uuid, resource_type text, resource_id uuid,
 			org_id uuid, status text NOT NULL, expires_at timestamptz, updated_at timestamptz);
 		CREATE TABLE user_roles (user_id uuid, role_id uuid, org_id uuid, expires_at TIMESTAMPTZ);
-		CREATE TABLE group_memberships (user_id uuid, group_id uuid, org_id uuid);
+		CREATE TABLE group_memberships (user_id uuid, group_id uuid, org_id uuid, expires_at TIMESTAMPTZ);
 		CREATE TABLE user_application_assignments (user_id uuid, application_id uuid, org_id uuid, expires_at TIMESTAMPTZ);`)
 	require.NoError(t, err)
 	t.Cleanup(func() {

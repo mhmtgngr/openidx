@@ -84,7 +84,8 @@ func TestBuildUserAttributesIncludesAppMarkers(t *testing.T) {
 	);
 	CREATE TABLE group_memberships (
 		group_id UUID NOT NULL,
-		user_id UUID NOT NULL
+		user_id UUID NOT NULL,
+		expires_at TIMESTAMPTZ
 	);
 	CREATE TABLE known_devices (
 		user_id UUID NOT NULL,
