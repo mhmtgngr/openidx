@@ -34,13 +34,13 @@ An external (vendor) user is a user with `userType` `external`. Such a user carr
 
 A vendor organization's `closed_list` (create and update; an update that leaves it out keeps it) puts its external users on the closed list: they ask for, and launch, only the PAM entries, applications and network services opened to the vendor. Anything else answers `403` with `external_target_not_open`, and the PAM entry lists show them only what is open. With `closed_list` off, the targets are kept and decide nothing. A closed vendor's targets cannot change (`vendor_org_closed`).
 
-A suspended vendor accepts no new invitations, extensions or reactivations. Its existing accounts keep their state: suspend them, or close the vendor, to end their access.
+Suspending a vendor (`PUT` with `status` `suspended`) suspends each of its live accounts at once, with the same severing as an account's own suspension, and tells the SSF receivers `session-revoked`. While suspended, the vendor accepts no new invitations, extensions or reactivations, and the 7-day reactivation window of its accounts does not run. Setting it `active` again reactivates no account: it restarts each suspended account's 7-day window, in which a sponsor takes the account back with `reactivate`. Closing the vendor ends its accounts for good.
 
 ## External users
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/identity/external-users` | List external accounts, optionally by `vendor_org_id` and `status`, with vendor, sponsor, `expiring_soon` (active, ending within 14 days), `has_strong_factor` and, for a suspended one, `reactivate_until` |
+| GET | `/api/v1/identity/external-users` | List external accounts, optionally by `vendor_org_id` and `status`, with vendor, sponsor, `expiring_soon` (active, ending within 14 days), `has_strong_factor` and, for a suspended one whose vendor is active, `reactivate_until` |
 | POST | `/api/v1/identity/external-users/:id/suspend` | Suspend a live account. It can be reactivated within 7 days |
 | POST | `/api/v1/identity/external-users/:id/disable` | Disable a live or suspended account. This is final; access needs a new invitation |
 | POST | `/api/v1/identity/external-users/:id/extend` | Move the account's end, with `account_expires_at` or `extend_days`, within a year and the vendor's contract |
@@ -55,9 +55,10 @@ The identity service also ends accounts on its own, every minute, and severs eac
 |------|---------------------|
 | It reaches `account_expires_at` | `expired` |
 | Its vendor is closed | `disabled` |
+| Its vendor is suspended | `suspended` |
 | Its invitation lapses before a second factor is enrolled | `expired` |
 | Its sponsor is disabled, or is no longer an active internal user | `suspended` |
-| It stays suspended for 7 days | `disabled` |
+| It stays suspended for 7 days, while its vendor is not suspended | `disabled` |
 
 An external user's access request must name a duration, ending no later than the account; otherwise it is refused with `400` and `external_window_invalid`. A role, a PAM entry grant or a vault grant written for an external user directly is cut to end when the account does.
 

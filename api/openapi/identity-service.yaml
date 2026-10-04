@@ -4930,7 +4930,11 @@ paths:
     put:
       tags: [Vendor Organizations]
       summary: Update a vendor organization
-      description: A closed vendor organization cannot be edited (`409`, `vendor_org_closed`).
+      description: >-
+        A closed vendor organization cannot be edited (`409`, `vendor_org_closed`).
+        Moving `status` to `suspended` suspends the vendor's live external
+        accounts and severs them; moving it back to `active` reactivates none
+        and restarts the reactivation window of its suspended accounts.
       operationId: updateVendorOrganization
       x-openidx-handler: internal/identity.(*Service).handleUpdateVendorOrg
       parameters:
