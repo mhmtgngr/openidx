@@ -3927,18 +3927,20 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	// the moment the code was issued, not from this exchange, for the per-user
 	// revocation cutoff: a code issued before a logout yields a token that the
 	// logout's marker revokes, however late it is exchanged.
-	accessToken, _ := s.GenerateJWT(withGrantedAt(c.Request.Context(), authCode.CreatedAt), authCode.UserID, clientID, authCode.Scope, client.EffectiveAccessTokenLifetime(), sessionID)
+	// A token that carries a time-bound role ends with it (§6.5).
+	lifetime := s.accessTokenLifetime(c.Request.Context(), authCode.UserID, client.EffectiveAccessTokenLifetime())
+	accessToken, _ := s.GenerateJWT(withGrantedAt(c.Request.Context(), authCode.CreatedAt), authCode.UserID, clientID, authCode.Scope, lifetime, sessionID)
 
 	response := TokenResponse{
 		AccessToken: accessToken,
 		TokenType:   "Bearer",
-		ExpiresIn:   client.EffectiveAccessTokenLifetime(),
+		ExpiresIn:   lifetime,
 		Scope:       authCode.Scope,
 	}
 
 	// Generate ID token if openid scope is requested
 	if scopeGrants(authCode.Scope, scopeOpenID) {
-		idToken, _ := s.GenerateIDToken(c.Request.Context(), authCode.UserID, clientID, authCode.Nonce, authCode.Scope, client.EffectiveAccessTokenLifetime(), sessionID)
+		idToken, _ := s.GenerateIDToken(c.Request.Context(), authCode.UserID, clientID, authCode.Nonce, authCode.Scope, lifetime, sessionID)
 		response.IDToken = idToken
 	}
 
@@ -4131,12 +4133,14 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 	// Generate new access token (with session ID linkage). It carries when
 	// this grant began, to the microsecond: a per-user revocation earlier in
 	// the same second must not refuse a token the grant mints after it.
-	accessToken, _ := s.GenerateJWT(withGrantedAt(c.Request.Context(), grantedAt), token.UserID, clientID, token.Scope, client.EffectiveAccessTokenLifetime(), token.SessionID)
+	// A token that carries a time-bound role ends with it (§6.5).
+	lifetime := s.accessTokenLifetime(c.Request.Context(), token.UserID, client.EffectiveAccessTokenLifetime())
+	accessToken, _ := s.GenerateJWT(withGrantedAt(c.Request.Context(), grantedAt), token.UserID, clientID, token.Scope, lifetime, token.SessionID)
 
 	response := TokenResponse{
 		AccessToken: accessToken,
 		TokenType:   "Bearer",
-		ExpiresIn:   client.EffectiveAccessTokenLifetime(),
+		ExpiresIn:   lifetime,
 		Scope:       token.Scope,
 	}
 
