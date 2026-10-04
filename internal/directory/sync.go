@@ -131,6 +131,10 @@ func (e *SyncEngine) replaceDirectoryMemberships(ctx context.Context, groupID, d
 	for _, userID := range membershipsLost(removed, memberUserIDs) {
 		e.revokeTokens(ctx, userID, "directory sync: removed from a synced group")
 	}
+	// The receivers are told about both halves: the members the sync dropped
+	// and the ones it added.
+	changed := append(membershipsLost(removed, memberUserIDs), membershipsLost(memberUserIDs, removed)...)
+	e.signalClaimsChanged(ctx, orgID, "directory sync: group membership changed", changed...)
 	return nil
 }
 
@@ -164,6 +168,7 @@ func (e *SyncEngine) deleteSyncedGroup(ctx context.Context, groupID, orgID, why 
 	for _, userID := range members {
 		e.revokeTokens(ctx, userID, why)
 	}
+	e.signalClaimsChanged(ctx, orgID, why, members...)
 	return nil
 }
 
@@ -1108,4 +1113,17 @@ func (e *SyncEngine) revokeTokens(ctx context.Context, userID, why string) {
 		return
 	}
 	e.revoke(ctx, userID, why)
+}
+
+// signalClaimsChanged enqueues CAEP token-claims-change for users whose group
+// memberships this sync changed: a token issued for them now says something
+// else. Best-effort by the same contract as revokeTokens.
+func (e *SyncEngine) signalClaimsChanged(ctx context.Context, orgID, reason string, userIDs ...string) {
+	if len(userIDs) == 0 {
+		return
+	}
+	if err := ssfsignal.EnqueueClaimsChange(ctx, e.db.Pool, orgID, reason, userIDs...); err != nil {
+		e.logger.Warn("a synced group's members changed but the token-claims-change signal was not enqueued",
+			zap.String("reason", reason), zap.Error(err))
+	}
 }

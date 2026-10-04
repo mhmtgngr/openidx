@@ -68,8 +68,11 @@ func (s *Service) checkModerationActive(ctx context.Context, orgID, connectionID
 
 // ---- requester side ----
 
+// moderationRequestBody names what the moderation is for: a route-based
+// Guacamole connection (route_id) or a PAM entry (entry_id), exactly one.
 type moderationRequestBody struct {
-	RouteID string `json:"route_id" binding:"required"`
+	RouteID string `json:"route_id"`
+	EntryID string `json:"entry_id"`
 	Reason  string `json:"reason"`
 }
 
@@ -80,8 +83,12 @@ type moderationRequestBody struct {
 // once active, retries the Guacamole connect.
 func (s *Service) handleRequestModeration(c *gin.Context) {
 	var body moderationRequestBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "route_id is required"})
+	if err := c.ShouldBindJSON(&body); err != nil || (body.RouteID == "") == (body.EntryID == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name either route_id or entry_id"})
+		return
+	}
+	if body.EntryID != "" {
+		s.requestEntryModeration(c, body)
 		return
 	}
 	ctx := c.Request.Context()
@@ -220,10 +227,14 @@ func (s *Service) handleListPendingModeration(c *gin.Context) {
 	// because the connection behind it could not be resolved. Out-of-org, the
 	// hostname comes back empty and the request is still actionable.
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT m.id, m.connection_id, m.requester_id::text, COALESCE(m.reason,''),
-		        m.created_at, m.expires_at, COALESCE(gc.hostname,'')
+		`SELECT m.id, COALESCE(m.connection_id::text, ''), m.requester_id::text, COALESCE(m.reason,''),
+		        m.created_at, m.expires_at, COALESCE(gc.hostname,''),
+		        COALESCE(m.entry_id::text, ''), COALESCE(pe.name, ''),
+		        COALESCE(NULLIF(u.email, ''), u.username, '')
 		   FROM guacamole_moderation_sessions m
 		   LEFT JOIN guacamole_connections gc ON gc.id = m.connection_id AND gc.org_id = $1
+		   LEFT JOIN pam_entries pe ON pe.id = m.entry_id AND pe.org_id = $1
+		   LEFT JOIN users u ON u.id = m.requester_id AND u.org_id = $1
 		  WHERE m.org_id = $1 AND m.status = 'pending'
 		    AND (m.expires_at IS NULL OR m.expires_at > NOW())
 		  ORDER BY m.created_at ASC`, org.ID)
@@ -241,12 +252,18 @@ func (s *Service) handleListPendingModeration(c *gin.Context) {
 		CreatedAt    time.Time  `json:"created_at"`
 		ExpiresAt    *time.Time `json:"expires_at"`
 		Connection   string     `json:"connection"`
+		// EntryID and EntryName name the PAM entry of an entry's request;
+		// ConnectionID and Connection a route's.
+		EntryID   string `json:"entry_id,omitempty"`
+		EntryName string `json:"entry_name,omitempty"`
+		// Requester names who asked, for the queue a moderator reads.
+		Requester string `json:"requester"`
 	}
 	var out []item
 	for rows.Next() {
 		var it item
 		if err := rows.Scan(&it.ID, &it.ConnectionID, &it.RequesterID, &it.Reason,
-			&it.CreatedAt, &it.ExpiresAt, &it.Connection); err != nil {
+			&it.CreatedAt, &it.ExpiresAt, &it.Connection, &it.EntryID, &it.EntryName, &it.Requester); err != nil {
 			s.logger.Warn("handleListPendingModeration: scan failed", zap.Error(err))
 			continue
 		}
@@ -329,13 +346,14 @@ func (s *Service) handleEndModeration(c *gin.Context) {
 	party := isModerationAdmin(pamCallerRoles(c))
 
 	var activeConnID *string
+	var entryID string
 	err = s.db.Pool.QueryRow(ctx,
 		`UPDATE guacamole_moderation_sessions
 		    SET status = 'ended', ended_at = NOW()
 		  WHERE id = $1 AND org_id = $2 AND status IN ('pending','active')
 		    AND ($3 OR requester_id::text = $4 OR moderator_id::text = $4)
-		  RETURNING active_conn_id`,
-		id, org.ID, party, actor).Scan(&activeConnID)
+		  RETURNING active_conn_id, COALESCE(entry_id::text, '')`,
+		id, org.ID, party, actor).Scan(&activeConnID, &entryID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(http.StatusConflict, gin.H{
 			"error": "moderation session is not active, or you are not the requester or moderator"})
@@ -351,6 +369,10 @@ func (s *Service) handleEndModeration(c *gin.Context) {
 			s.logger.Warn("handleEndModeration: terminate underlying session failed",
 				zap.String("active_conn_id", *activeConnID), zap.Error(termErr))
 		}
+	}
+	// An entry's moderation ends the session it admitted, on its broker.
+	if entryID != "" {
+		s.endModeratedSessions(c, org.ID, id, actor)
 	}
 	s.logAuditEvent(c, "pam.moderation.ended", id, "moderation_session", map[string]interface{}{
 		"ended_by": actor,

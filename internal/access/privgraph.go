@@ -14,7 +14,8 @@
 //   - role grants → user_roles, including composite_roles (role→role) transitively,
 //   - group grants → group_memberships.
 //
-// Expired grants are excluded. All queries run under the request's org via FORCE
+// Expired grants are excluded, and so are roles and group memberships whose
+// window has ended (v223, v224) though the expiry sweep has not yet deleted them. All queries run under the request's org via FORCE
 // RLS on the pooled connection, so results are tenant-scoped.
 package access
 
@@ -83,6 +84,7 @@ reachers AS (
            'role: ' || COALESCE(r.name, er.role_id::text) AS path, er.actions
     FROM expanded_roles er
     JOIN user_roles ur ON ur.role_id = er.role_id
+                       AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
     LEFT JOIN roles r ON r.id = er.role_id
     UNION ALL
     -- group grants → members
@@ -90,6 +92,7 @@ reachers AS (
            'group: ' || COALESCE(gr.name, lg.principal_id) AS path, lg.actions
     FROM live_grants lg
     JOIN group_memberships gm ON gm.group_id = lg.principal_id::uuid
+                             AND (gm.expires_at IS NULL OR gm.expires_at > NOW())
     LEFT JOIN groups gr ON gr.id = lg.principal_id::uuid
     WHERE lg.principal_type = 'group'
 )
@@ -183,6 +186,7 @@ WITH RECURSIVE user_roles_all AS (
     -- roles held directly, expanded through composite_roles (parent→child means
     -- holding the parent grants the child's privileges)
     SELECT ur.role_id FROM user_roles ur WHERE ur.user_id = $1
+      AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
     UNION
     SELECT cr.child_role_id
     FROM user_roles_all ura
@@ -190,6 +194,7 @@ WITH RECURSIVE user_roles_all AS (
 ),
 user_groups AS (
     SELECT gm.group_id FROM group_memberships gm WHERE gm.user_id = $1
+      AND (gm.expires_at IS NULL OR gm.expires_at > NOW())
 ),
 live_grants AS (
     -- normalize principal_id to text (uuid in vault, varchar in pam); cast to

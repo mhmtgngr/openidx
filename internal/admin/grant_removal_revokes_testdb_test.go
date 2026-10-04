@@ -140,9 +140,9 @@ func TestABulkRoleRemovalCutsTheTokensOfEveryUserItTouched(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := pool.Exec(ctx, `
-		CREATE TABLE user_roles (user_id uuid, role_id uuid, org_id uuid, assigned_at timestamptz,
+		CREATE TABLE user_roles (user_id uuid, role_id uuid, org_id uuid, assigned_at timestamptz, expires_at timestamptz,
 			PRIMARY KEY (user_id, role_id));
-		CREATE TABLE group_memberships (user_id uuid, group_id uuid, org_id uuid, joined_at timestamptz);
+		CREATE TABLE group_memberships (user_id uuid, group_id uuid, org_id uuid, joined_at timestamptz, expires_at timestamptz);
 		CREATE TABLE bulk_operations (id uuid PRIMARY KEY, org_id uuid, status text,
 			processed_items int, success_count int, error_count int, errors jsonb, completed_at timestamptz);
 		CREATE TABLE bulk_operation_items (operation_id uuid, entity_id uuid, org_id uuid,
@@ -189,8 +189,8 @@ func TestABulkGroupRemovalCutsTheTokensOfEveryUserItTouched(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := pool.Exec(ctx, `
-		CREATE TABLE user_roles (user_id uuid, role_id uuid, org_id uuid, assigned_at timestamptz);
-		CREATE TABLE group_memberships (user_id uuid, group_id uuid, org_id uuid, joined_at timestamptz);
+		CREATE TABLE user_roles (user_id uuid, role_id uuid, org_id uuid, assigned_at timestamptz, expires_at timestamptz);
+		CREATE TABLE group_memberships (user_id uuid, group_id uuid, org_id uuid, joined_at timestamptz, expires_at timestamptz);
 		CREATE TABLE bulk_operations (id uuid PRIMARY KEY, org_id uuid, status text,
 			processed_items int, success_count int, error_count int, errors jsonb, completed_at timestamptz);
 		CREATE TABLE bulk_operation_items (operation_id uuid, entity_id uuid, org_id uuid,
@@ -235,9 +235,9 @@ func TestABulkRoleAssignmentCutsNobody(t *testing.T) {
 	_ = general
 
 	if _, err := pool.Exec(ctx, `
-		CREATE TABLE user_roles (user_id uuid, role_id uuid, org_id uuid, assigned_at timestamptz,
+		CREATE TABLE user_roles (user_id uuid, role_id uuid, org_id uuid, assigned_at timestamptz, expires_at timestamptz,
 			PRIMARY KEY (user_id, role_id));
-		CREATE TABLE group_memberships (user_id uuid, group_id uuid, org_id uuid, joined_at timestamptz);
+		CREATE TABLE group_memberships (user_id uuid, group_id uuid, org_id uuid, joined_at timestamptz, expires_at timestamptz);
 		CREATE TABLE bulk_operations (id uuid PRIMARY KEY, org_id uuid, status text,
 			processed_items int, success_count int, error_count int, errors jsonb, completed_at timestamptz);
 		CREATE TABLE bulk_operation_items (operation_id uuid, entity_id uuid, org_id uuid,
