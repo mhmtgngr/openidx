@@ -1553,5 +1553,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamSessionSponsorNotifiedUp,
 			DownSQL:     pamSessionSponsorNotifiedDown,
 		},
+		{
+			Version:     219,
+			Name:        "vendor_closed_list",
+			Description: "Invariant I11 of the third-party access framework: a vendor organization on a closed list (vendor_organizations.closed_list, off by default) has its external users ask for and launch only what was opened to it: vendor_org_targets names a PAM entry, an application or a network service per vendor. A tenant table under FORCE RLS on org_id; a target row goes with its vendor. Down drops the table and the column.",
+			UpSQL:       vendorClosedListUp,
+			DownSQL:     vendorClosedListDown,
+		},
 	}
 }

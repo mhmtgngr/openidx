@@ -4965,6 +4965,73 @@ paths:
         '409':
           description: Already closed
 
+  /api/v1/identity/vendor-orgs/{id}/targets:
+    get:
+      tags: [Vendor Organizations]
+      summary: List what a vendor on a closed list may reach
+      description: The PAM entries, applications and network services opened to the vendor (invariant I11), with their names.
+      operationId: listVendorTargets
+      x-openidx-handler: internal/identity.(*Service).handleListVendorTargets
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The targets
+    post:
+      tags: [Vendor Organizations]
+      summary: Open a target to a vendor
+      description: The target must be one of the organization's PAM entries, applications or network services (`404` otherwise).
+      operationId: addVendorTarget
+      x-openidx-handler: internal/identity.(*Service).handleAddVendorTarget
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_type, target_id]
+              properties:
+                target_type: {type: string, enum: [pam_entry, application, network_service]}
+                target_id: {type: string, format: uuid}
+      responses:
+        '201':
+          description: The target is open
+        '400':
+          description: The target type or id is not valid
+        '404':
+          description: No such vendor organization, or no such target in the organization
+        '409':
+          description: The target is already open, or the vendor organization is closed
+
+  /api/v1/identity/vendor-orgs/{id}/targets/{targetId}:
+    delete:
+      tags: [Vendor Organizations]
+      summary: Withdraw a target from a vendor
+      operationId: removeVendorTarget
+      x-openidx-handler: internal/identity.(*Service).handleRemoveVendorTarget
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: targetId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '204':
+          description: Withdrawn
+        '404':
+          description: Not found
+
   /api/v1/identity/external-users:
     get:
       tags: [External Users]

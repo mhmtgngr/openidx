@@ -111,6 +111,7 @@ func TestFromDBAndCodes(t *testing.T) {
 		ErrCloudJITForbidden:      "external_cloud_jit_forbidden",
 		ErrRecordingUnavailable:   "external_recording_unavailable",
 		ErrBrokerIdentityRequired: "external_broker_identity_required",
+		ErrTargetNotOpen:          "external_target_not_open",
 	} {
 		if !IsRefusal(fmt.Errorf("wrapped: %w", err)) {
 			t.Errorf("%v is not counted as a refusal", err)

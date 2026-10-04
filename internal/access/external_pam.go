@@ -19,6 +19,8 @@ package access
 // run without them.
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -200,4 +202,65 @@ func presentPamEntryToExternal(e *PamEntry) {
 		}
 	}
 	e.Actions = actions
+}
+
+// refuseClosedTarget is invariant I11 at a launch: an external user whose
+// vendor organization is on a closed list launches only an entry opened to
+// the vendor, whatever grant they hold. It answers 403
+// external_target_not_open, audited as pam.launch_denied, and reports true
+// when it wrote a response (a 500 when the list could not be read).
+func (s *Service) refuseClosedTarget(c *gin.Context, orgID string, caller pamCaller, entryID string) bool {
+	if !caller.External {
+		return false
+	}
+	err := externalid.CheckTargetOpen(c.Request.Context(), s.db.Pool, orgID, caller.UserID, "pam_entry", entryID)
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, externalid.ErrTargetNotOpen) {
+		s.refuseExternalPam(c, "pam.launch_denied", entryID, "pam_entry", http.StatusForbidden, err,
+			map[string]interface{}{"entry_id": entryID})
+		return true
+	}
+	s.logger.Error("could not read the caller's vendor list", zap.Error(err))
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check permissions"})
+	return true
+}
+
+// closedListEntries is the set of PAM entries open to an external caller's
+// vendor organization when it is on a closed list (I11), for the lists an
+// external user reads; nil when no list applies, which hides nothing.
+func (s *Service) closedListEntries(ctx context.Context, orgID string, caller pamCaller) (map[string]bool, error) {
+	if !caller.External {
+		return nil, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT v.closed_list, COALESCE(t.target_id::text, '')
+		  FROM users u
+		  JOIN vendor_organizations v ON v.id = u.vendor_org_id AND v.org_id = u.org_id
+		  LEFT JOIN vendor_org_targets t
+		         ON t.vendor_org_id = v.id AND t.org_id = v.org_id AND t.target_type = 'pam_entry'
+		 WHERE u.id = $1::uuid AND u.org_id = $2 AND u.user_type = 'external'`, caller.UserID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var open map[string]bool
+	for rows.Next() {
+		var closed bool
+		var target string
+		if err := rows.Scan(&closed, &target); err != nil {
+			return nil, err
+		}
+		if !closed {
+			return nil, nil
+		}
+		if open == nil {
+			open = map[string]bool{}
+		}
+		if target != "" {
+			open[target] = true
+		}
+	}
+	return open, rows.Err()
 }

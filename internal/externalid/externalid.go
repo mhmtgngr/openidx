@@ -18,6 +18,8 @@
 //     install's ceiling and the vendor's contract.
 //   - I12: an external user cannot invite, create groups or extend their own
 //     account.
+//   - I11, the closed list: a vendor an administrator put on one has its
+//     external users ask for, and launch, only what was opened to it.
 //   - I5 and I7, the PAM half: an external user is never handed a credential
 //     (reveal, break-glass, an SSH certificate, cloud keys), and their session
 //     is recorded, approved, on the overlay and hardened whatever the entry
@@ -110,6 +112,9 @@ var (
 	ErrCloudJITForbidden      = errors.New("an external user is not issued cloud credentials: they connect through the recorded broker")
 	ErrRecordingUnavailable   = errors.New("an external user's session is recorded, and this launch cannot record it")
 	ErrBrokerIdentityRequired = errors.New("an external user's session needs its own broker identity: the shared broker token can open every connection on the broker")
+
+	// I11.
+	ErrTargetNotOpen = errors.New("this is not open to your vendor organization")
 )
 
 // CheckWindow is invariant I8 at a request: an external user's access has an
@@ -479,7 +484,7 @@ func IsRefusal(err error) bool {
 		ErrExpiryRequired, ErrExpiryPast, ErrExpiryTooLong, ErrExpiryContract, ErrVendorNotActive, ErrSponsorInvalid,
 		ErrTypeImmutable, ErrGroupHasExternal, ErrIdentityIncomplete, ErrAccountNotLive, ErrNotActivated, ErrFactorNotAllowed, ErrEmailDomain,
 		ErrWindowRequired, ErrWindowPastAccount, ErrRevealForbidden, ErrSSHCAForbidden, ErrCloudJITForbidden,
-		ErrRecordingUnavailable, ErrBrokerIdentityRequired} {
+		ErrRecordingUnavailable, ErrBrokerIdentityRequired, ErrTargetNotOpen} {
 		if errors.Is(err, r) {
 			return true
 		}
@@ -531,6 +536,48 @@ func Code(err error) string {
 		return "external_recording_unavailable"
 	case errors.Is(err, ErrBrokerIdentityRequired):
 		return "external_broker_identity_required"
+	case errors.Is(err, ErrTargetNotOpen):
+		return "external_target_not_open"
 	}
 	return ""
+}
+
+// ClosedListTargetTypes are the targets a vendor's closed list opens (I11).
+// The other request types are bounded for an external user already: a role
+// by the role ceiling (I2), a group by external_allowed (I3), a vault
+// credential by the reveal ban (I5).
+var ClosedListTargetTypes = map[string]bool{"pam_entry": true, "application": true, "network_service": true}
+
+// CheckTargetOpen is invariant I11: when userID is an external user whose
+// vendor organization is on a closed list, the target must be one opened to
+// that vendor (vendor_org_targets, migration v219). Nil for an internal user,
+// for a vendor not on a closed list, and for a target type the list does not
+// cover.
+func CheckTargetOpen(ctx context.Context, q Querier, orgID, userID, targetType, targetID string) error {
+	if !ClosedListTargetTypes[targetType] {
+		return nil
+	}
+	if orgID == "" {
+		return errors.New("externalid: organization required")
+	}
+	var closed, open bool
+	err := q.QueryRow(ctx, `
+		SELECT v.closed_list,
+		       EXISTS (SELECT 1 FROM vendor_org_targets t
+		                WHERE t.vendor_org_id = v.id AND t.org_id = v.org_id
+		                  AND t.target_type = $3 AND t.target_id::text = $4)
+		  FROM users u
+		  JOIN vendor_organizations v ON v.id = u.vendor_org_id AND v.org_id = u.org_id
+		 WHERE u.id = $1::uuid AND u.org_id = $2::uuid AND u.user_type = 'external'`,
+		userID, orgID, targetType, targetID).Scan(&closed, &open)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if closed && !open {
+		return ErrTargetNotOpen
+	}
+	return nil
 }
