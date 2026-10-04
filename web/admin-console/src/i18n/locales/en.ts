@@ -270,6 +270,7 @@ const en = {
       noPrincipals: 'No principals are assigned — enabling this would refuse everyone.',
       principalsKeepAccess: '{{count}} principal assigned and would keep access.',
       principalsKeepAccess_other: '{{count}} principals assigned and would keep access.',
+      until: 'until {{date}} (granted by an access request)',
       currentAccess: 'Current access',
       noneAssigned: 'No one is assigned yet. Assign a user or group above.',
       granted: 'Access granted',
