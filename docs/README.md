@@ -103,7 +103,7 @@ Design docs, plans, audits and reviews. Read them for the *why*; verify
 any *what* against the code before relying on it.
 
 - **Plans & designs**: [plans/](./plans/) (the convergence rollout plan
-  lives here), [access-model-redesign.md](./access-model-redesign.md),
+  and the third-party access and temporary privilege framework live here), [access-model-redesign.md](./access-model-redesign.md),
   [access-and-login-convergence-design.md](./access-and-login-convergence-design.md),
   [architecture/](./architecture/) (per-topic design notes and reviews),
   [v2-multitenancy-design.md](./v2-multitenancy-design.md) (the June 2026
