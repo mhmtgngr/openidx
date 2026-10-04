@@ -188,6 +188,7 @@ var tickerCensus = map[string]sweep{
 	"internal/metrics/prometheus.go":       {how: coordPerProcess, reason: "each replica reports its own metrics; gating would leave every non-leader pod reporting nothing"},
 	"internal/metrics/db.go":               {how: coordPerProcess, reason: "samples THIS process's pool gauges; the numbers are per-pod by definition"},
 	"internal/audit/stream.go":             {how: coordPerProcess, reason: "websocket keepalive for one client connection, not a sweep"},
+	"internal/access/ws_connect.go":        {how: coordPerProcess, reason: "one browser terminal watching its own ledger row, not a sweep: only the replica holding the connection can close it, and the watcher returns with the connection"},
 	"internal/oauth/signer.go": {how: coordPerProcess, reason: "refreshes this process's signing-key cache, and gating it would be the defect: eleven of twelve " +
 		"oauth-service replicas would serve a stale JWKS. READ TWICE, because the tick is not only a read -- it also " +
 		"calls signingkeys.PruneExpired, a DELETE of retired keys past their grace, which is a predicate delete and " +

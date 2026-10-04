@@ -1582,6 +1582,9 @@ paths:
     get:
       tags: [Guacamole]
       summary: List active Guacamole sessions
+      description: >
+        Every configured broker's sessions: the direct broker's and the
+        OpenZiti overlay broker's. Each session names its broker.
       operationId: listGuacActiveSessions
       responses:
         '200':
@@ -1595,6 +1598,11 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/GuacActiveSession'
+                  unavailable:
+                    type: array
+                    description: Brokers whose sessions could not be listed (`direct`, `ziti`)
+                    items:
+                      type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '503':
@@ -2213,6 +2221,11 @@ paths:
                 $ref: '#/components/schemas/PamRequestDecisionResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: >
+            The launch request's hour has passed (`launch_request_expired`):
+            an approval would never be honoured at launch, so the requester
+            files a new one
 
   /api/v1/access/pam/entry-requests/{id}/deny:
     post:
@@ -8828,6 +8841,196 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
+
+  # ---- Sponsors and moderators (third-party access framework, Phase 2) ----
+
+  /api/v1/access/pam/moderation/moderating:
+    get:
+      tags: [PAM Moderation]
+      summary: List the sessions the caller moderates
+      description: >
+        The live PAM entry sessions a moderation the caller joined admitted,
+        with Watch and End in the console.
+      operationId: pamListModerating
+      x-openidx-handler: internal/access.(*Service).handleListModerating
+      responses:
+        '200':
+          description: The sessions
+
+  /api/v1/access/pam/moderation/{id}/watch:
+    post:
+      tags: [PAM Moderation]
+      summary: Watch a moderated session
+      description: >
+        A read-only view of the session the moderation admitted, for its
+        moderator. Needs a fresh second factor (`pam.moderation_watch`).
+      operationId: pamWatchModeratedSession
+      x-openidx-handler: internal/access.(*Service).handleWatchModeratedSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The view to open
+        '403':
+          description: A fresh second factor is required first (`step_up_required`)
+        '404':
+          description: Not a session the caller moderates
+
+  /api/v1/access/pam/sponsored/entry-requests:
+    get:
+      tags: [PAM Sponsor]
+      summary: List the launch requests of the caller's external users
+      description: >
+        The pending privileged launch requests of the external (vendor) users
+        the caller sponsors (invariant I6).
+      operationId: pamListSponsoredRequests
+      x-openidx-handler: internal/access.(*Service).handlePamListSponsoredRequests
+      responses:
+        '200':
+          description: The requests
+
+  /api/v1/access/pam/sponsored/entry-requests/{id}/approve:
+    post:
+      tags: [PAM Sponsor]
+      summary: Approve a sponsored user's launch request
+      description: >
+        The sponsor's decision on a launch request of an external user they sponsor. Needs a fresh second factor (`pam.sponsor_decide`).
+      operationId: pamSponsorApproveRequest
+      x-openidx-handler: internal/access.(*Service).handlePamSponsorApproveRequest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Approved
+        '403':
+          description: A fresh second factor is required first (`step_up_required`)
+        '404':
+          description: >
+            Not one of the caller's: a request, session or moderation of an
+            external user someone else sponsors answers as if it did not exist
+        '409':
+          description: The launch request's hour has passed (`launch_request_expired`)
+
+  /api/v1/access/pam/sponsored/entry-requests/{id}/deny:
+    post:
+      tags: [PAM Sponsor]
+      summary: Deny a sponsored user's launch request
+      description: >
+        The sponsor's decision on a launch request of an external user they sponsor. Needs a fresh second factor (`pam.sponsor_decide`).
+      operationId: pamSponsorDenyRequest
+      x-openidx-handler: internal/access.(*Service).handlePamSponsorDenyRequest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Denied
+        '403':
+          description: A fresh second factor is required first (`step_up_required`)
+        '404':
+          description: >
+            Not one of the caller's: a request, session or moderation of an
+            external user someone else sponsors answers as if it did not exist
+
+  /api/v1/access/pam/sponsored/sessions:
+    get:
+      tags: [PAM Sponsor]
+      summary: List the live sessions of the caller's external users
+      description: The live privileged sessions of the external users the caller sponsors, which the sponsor may watch and end (invariant I6).
+      operationId: pamListSponsoredSessions
+      x-openidx-handler: internal/access.(*Service).handlePamListSponsoredSessions
+      responses:
+        '200':
+          description: The sessions
+
+  /api/v1/access/pam/sponsored/sessions/{id}/watch:
+    post:
+      tags: [PAM Sponsor]
+      summary: Watch a sponsored user's session
+      description: >
+        A read-only view of a live session of an external user the caller sponsors. Needs a fresh second factor (`pam.sponsor_watch`).
+      operationId: pamSponsorWatchSession
+      x-openidx-handler: internal/access.(*Service).handlePamSponsorWatchSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The view to open
+        '403':
+          description: A fresh second factor is required first (`step_up_required`)
+        '404':
+          description: >
+            Not one of the caller's: a request, session or moderation of an
+            external user someone else sponsors answers as if it did not exist
+
+  /api/v1/access/pam/sponsored/sessions/{id}/end:
+    post:
+      tags: [PAM Sponsor]
+      summary: End a sponsored user's session
+      description: >
+        Ends a live session of an external user the caller sponsors, on the broker, and records why. Needs a fresh second factor (`pam.sponsor_end`).
+      operationId: pamSponsorEndSession
+      x-openidx-handler: internal/access.(*Service).handlePamSponsorEndSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Ended
+        '403':
+          description: A fresh second factor is required first (`step_up_required`)
+        '404':
+          description: >
+            Not one of the caller's: a request, session or moderation of an
+            external user someone else sponsors answers as if it did not exist
+
+  /api/v1/access/pam/sponsored/moderation:
+    get:
+      tags: [PAM Sponsor]
+      summary: List the moderation requests of the caller's external users
+      description: The pending moderation requests of the external users the caller sponsors; the sponsor may moderate them.
+      operationId: pamListSponsoredModeration
+      x-openidx-handler: internal/access.(*Service).handlePamListSponsoredModeration
+      responses:
+        '200':
+          description: The requests
+
+  /api/v1/access/pam/sponsored/moderation/{id}/join:
+    post:
+      tags: [PAM Sponsor]
+      summary: Moderate a sponsored user's session
+      description: >
+        The sponsor joins a moderation request of an external user they sponsor, which admits the session. Needs a fresh second factor (`pam.sponsor_moderate`).
+      operationId: pamSponsorJoinModeration
+      x-openidx-handler: internal/access.(*Service).handlePamSponsorJoinModeration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Joined
+        '403':
+          description: A fresh second factor is required first (`step_up_required`)
+        '404':
+          description: >
+            Not one of the caller's: a request, session or moderation of an
+            external user someone else sponsors answers as if it did not exist
+
 components:
   securitySchemes:
     bearerAuth:
@@ -9642,6 +9845,13 @@ components:
         startDate:
           type: integer
           description: Session start time as epoch milliseconds
+        openidx_user:
+          type: string
+          description: The OpenIDX user who launched the session, from OpenIDX's own ledger
+        broker:
+          type: string
+          enum: [direct, ziti]
+          description: The broker the session runs on; `ziti` is the OpenZiti overlay broker
 
     GuacSessionRow:
       type: object
