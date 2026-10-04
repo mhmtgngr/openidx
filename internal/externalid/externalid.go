@@ -18,6 +18,11 @@
 //     install's ceiling and the vendor's contract.
 //   - I12: an external user cannot invite, create groups or extend their own
 //     account.
+//   - I5 and I7, the PAM half: an external user is never handed a credential
+//     (reveal, break-glass, an SSH certificate, cloud keys), and their session
+//     is recorded, approved, on the overlay and hardened whatever the entry
+//     says. The refusals and the session ceiling are here; the access service
+//     applies them, since only it brokers sessions.
 //
 // WHY A LEAF PACKAGE. Roles are written by identity, admin, governance,
 // provisioning and SCIM; group memberships by identity, governance and
@@ -70,6 +75,13 @@ const (
 	SponsorGraceDays = 7
 )
 
+// MaxPamSession is the longest an external user's PAM session runs (I7): a
+// working day. The access service's lifecycle sweep ends a session older than
+// this, whatever grant it rides. It is a constant, as the account bounds above
+// are, until the organization policy that section 7 of the framework describes
+// exists to hold it.
+const MaxPamSession = 8 * time.Hour
+
 // Refusals. Each is a 4xx at an API, never a 500, and names the invariant.
 var (
 	ErrRoleCap            = errors.New("an external user may hold only the user role")
@@ -91,6 +103,13 @@ var (
 	ErrEmailDomain        = errors.New("the email address is not in one of the vendor organization's allowed domains")
 	ErrWindowRequired     = errors.New("an external user's access needs an end: give the request a duration")
 	ErrWindowPastAccount  = errors.New("the access window may not end after the external user's account does")
+
+	// I5 and I7 at the PAM paths.
+	ErrRevealForbidden        = errors.New("an external user is never shown a credential: their session has it injected on the broker")
+	ErrSSHCAForbidden         = errors.New("an external user is not issued SSH certificates: they connect through the recorded broker")
+	ErrCloudJITForbidden      = errors.New("an external user is not issued cloud credentials: they connect through the recorded broker")
+	ErrRecordingUnavailable   = errors.New("an external user's session is recorded, and this launch cannot record it")
+	ErrBrokerIdentityRequired = errors.New("an external user's session needs its own broker identity: the shared broker token can open every connection on the broker")
 )
 
 // CheckWindow is invariant I8 at a request: an external user's access has an
@@ -459,7 +478,8 @@ func IsRefusal(err error) bool {
 	for _, r := range []error{ErrRoleCap, ErrGroupNotExternal, ErrExternalApprover, ErrExternalActor,
 		ErrExpiryRequired, ErrExpiryPast, ErrExpiryTooLong, ErrExpiryContract, ErrVendorNotActive, ErrSponsorInvalid,
 		ErrTypeImmutable, ErrGroupHasExternal, ErrIdentityIncomplete, ErrAccountNotLive, ErrNotActivated, ErrFactorNotAllowed, ErrEmailDomain,
-		ErrWindowRequired, ErrWindowPastAccount} {
+		ErrWindowRequired, ErrWindowPastAccount, ErrRevealForbidden, ErrSSHCAForbidden, ErrCloudJITForbidden,
+		ErrRecordingUnavailable, ErrBrokerIdentityRequired} {
 		if errors.Is(err, r) {
 			return true
 		}
@@ -501,6 +521,16 @@ func Code(err error) string {
 		return "external_email_domain"
 	case errors.Is(err, ErrWindowRequired), errors.Is(err, ErrWindowPastAccount):
 		return "external_window_invalid"
+	case errors.Is(err, ErrRevealForbidden):
+		return "external_reveal_forbidden"
+	case errors.Is(err, ErrSSHCAForbidden):
+		return "external_ssh_ca_forbidden"
+	case errors.Is(err, ErrCloudJITForbidden):
+		return "external_cloud_jit_forbidden"
+	case errors.Is(err, ErrRecordingUnavailable):
+		return "external_recording_unavailable"
+	case errors.Is(err, ErrBrokerIdentityRequired):
+		return "external_broker_identity_required"
 	}
 	return ""
 }

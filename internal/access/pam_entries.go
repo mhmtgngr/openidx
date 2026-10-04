@@ -26,6 +26,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/pamgrant"
 	"github.com/openidx/openidx/internal/vault"
 
@@ -550,7 +551,11 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 		 WHERE e.org_id = $1`
 	args := []interface{}{org.ID, userID}
 
-	isAdmin := s.pamCallerIsAdmin(c)
+	caller, ok := s.resolvePamCaller(c, org.ID)
+	if !ok {
+		return // resolvePamCaller already wrote the error
+	}
+	isAdmin := caller.Admin
 	var roles, groups []string
 	if !isAdmin {
 		roles = pamCallerRoles(c)
@@ -664,6 +669,11 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 			}
 		}
 	}
+	if caller.External {
+		for i := range entries {
+			presentPamEntryToExternal(&entries[i])
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{"entries": entries})
 }
@@ -718,8 +728,12 @@ func (s *Service) handlePamGetEntry(c *gin.Context) {
 		return
 	}
 
-	if !s.pamCallerIsAdmin(c) {
-		ok, aclErr := s.pamEntryAllowed(ctx, org.ID, entryID, c.GetString("user_id"), pamCallerRoles(c), "view")
+	caller, ok := s.resolvePamCaller(c, org.ID)
+	if !ok {
+		return // resolvePamCaller already wrote the error
+	}
+	if !caller.Admin {
+		ok, aclErr := s.pamEntryAllowed(ctx, org.ID, entryID, caller.UserID, pamCallerRoles(c), "view")
 		if aclErr != nil || !ok {
 			c.JSON(http.StatusForbidden, gin.H{"error": "not permitted"})
 			return
@@ -740,6 +754,9 @@ func (s *Service) handlePamGetEntry(c *gin.Context) {
 		s.logger.Error("handlePamGetEntry: query failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load entry"})
 		return
+	}
+	if caller.External {
+		presentPamEntryToExternal(entry)
 	}
 	c.JSON(http.StatusOK, entry)
 }
@@ -1272,6 +1289,13 @@ func (s *Service) handlePamRevealEntry(c *gin.Context) {
 		return
 	}
 	userID := c.GetString("user_id")
+	// An external user is never shown a credential (I5), whatever the entry
+	// allows and whatever they hold: asked first, so the answer is the same
+	// for every entry, one that does not exist included.
+	if s.refuseExternalCaller(c, org.ID, externalid.ErrRevealForbidden, "pam.reveal_denied", entryID, "pam_entry",
+		map[string]interface{}{"entry_id": entryID, "path": "reveal"}) {
+		return
+	}
 
 	var secretID, credentialEntryID string
 	var allowReveal bool

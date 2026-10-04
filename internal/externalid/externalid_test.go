@@ -104,4 +104,19 @@ func TestFromDBAndCodes(t *testing.T) {
 	if Code(ErrRoleCap) != "external_role_cap" {
 		t.Errorf("Code(ErrRoleCap) = %q", Code(ErrRoleCap))
 	}
+	// The PAM refusals (I5, I7) are refusals with codes the console switches on.
+	for err, want := range map[error]string{
+		ErrRevealForbidden:        "external_reveal_forbidden",
+		ErrSSHCAForbidden:         "external_ssh_ca_forbidden",
+		ErrCloudJITForbidden:      "external_cloud_jit_forbidden",
+		ErrRecordingUnavailable:   "external_recording_unavailable",
+		ErrBrokerIdentityRequired: "external_broker_identity_required",
+	} {
+		if !IsRefusal(fmt.Errorf("wrapped: %w", err)) {
+			t.Errorf("%v is not counted as a refusal", err)
+		}
+		if got := Code(err); got != want {
+			t.Errorf("Code(%v) = %q, want %q", err, got, want)
+		}
+	}
 }

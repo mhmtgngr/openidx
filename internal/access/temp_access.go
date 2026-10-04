@@ -759,7 +759,7 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 	// The overlay gate, before a credential is resolved — the same ordering and
 	// the same reason as handlePamConnect. userID is empty: the actor here is the
 	// link, and the audit row carries its id.
-	if v := s.checkPamZTNA(c, linkOrgID, "", entry.ID, entry.ReachMode, typeInfo.Protocol); v.Refuse {
+	if v := s.checkPamZTNA(c, linkOrgID, "", entry.ID, entry.ReachMode, typeInfo.Protocol, false); v.Refuse {
 		renderTempAccessError(c, http.StatusForbidden, "Access Denied", v.Reason)
 		return
 	}
