@@ -123,8 +123,11 @@ func TestV223GivesARequestedRoleItsWindow(t *testing.T) {
 	check("a role an administrator gave until a date", ends(internal, timed), &adminEnd)
 	check("an external user's requested role", ends(external, userRole), &accountEnd)
 
-	if err := m.MigrateTo(ctx, 222); err != nil {
+	if err := m.RollbackTo(ctx, 222); err != nil {
 		t.Fatalf("roll back to 222: %v", err)
+	}
+	if v, err := m.Version(ctx); err != nil || v != 222 {
+		t.Fatalf("after the rollback the schema is at %d (%v); want 222", v, err)
 	}
 	check("after the rollback, the backfilled role", ends(internal, requested), &second)
 	check("after the rollback, the standing role", ends(internal, standing), nil)
