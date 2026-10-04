@@ -245,6 +245,28 @@ describe('PamConnectionsPage', () => {
     expect(pam.createEntry.mock.calls[0][0]).toMatchObject({ require_moderator: true })
   })
 
+  it('does not offer the browser terminal for an entry that is recorded or moderated', async () => {
+    pam.listEntries.mockResolvedValue({
+      entries: [{ ...rdpEntry, id: 'e3', name: 'jump-ssh', entry_type: 'ssh', port: 22, renderer: 'wasm-ssh', record_session: false }],
+    })
+    renderPage()
+    fireEvent.click((await screen.findAllByTitle('Edit'))[0])
+    const terminal = screen.getByRole('checkbox', { name: /browser terminal/i })
+    expect(terminal).toBeChecked()
+    expect(terminal).toBeEnabled()
+    // Recording rules the terminal out: ticking it switches the terminal off.
+    fireEvent.click(screen.getByRole('checkbox', { name: /^record session$/i }))
+    expect(terminal).not.toBeChecked()
+    expect(terminal).toBeDisabled()
+    // So does a moderator, once recording is off again.
+    fireEvent.click(screen.getByRole('checkbox', { name: /^record session$/i }))
+    expect(terminal).toBeEnabled()
+    fireEvent.click(terminal)
+    fireEvent.click(screen.getByRole('checkbox', { name: /require a moderator/i }))
+    expect(terminal).not.toBeChecked()
+    expect(terminal).toBeDisabled()
+  })
+
   it('saves RemoteApp fields into entry settings with the || alias prefix', async () => {
     pam.createEntry.mockResolvedValue({ id: 'e9' })
     renderPage()

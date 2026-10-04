@@ -4439,6 +4439,7 @@ const tr: typeof en = {
         externalPolicyNote:
           'Bir dış (tedarikçi) kullanıcının oturumu, bu kayıt ne derse desin bunlarla çalışır; yukarıdaki ayarlar diğer herkes için geçerlidir.',
         browserTerminal: 'Tarayıcı terminalinde aç (istemcisiz SSH, Guacamole sekmesi yok)',
+        browserTerminalHint: 'Tarayıcı terminali hiçbir şeyi kaydetmez ve bir moderatörün izleyebileceği bir oturum açmaz; bu yüzden oturumları kaydedilen ya da moderatör gerektiren bir kayıt için sunulmaz.',
         save: 'Kaydet',
         create: 'Oluştur',
       },
