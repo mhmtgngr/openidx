@@ -49,3 +49,42 @@ func (s *Service) notifySponsorOfLaunchRequest(ctx context.Context, orgID, userI
 		s.logger.Warn("notify sponsor failed", zap.String("sponsor_id", acct.SponsorUserID), zap.Error(err))
 	}
 }
+
+// notifySponsorOfSession tells an external (vendor) user's sponsor that the
+// user's privileged session on entry started (invariant I6 of the third-party
+// access framework), and stamps the session's sponsor_notified_at once the
+// notification is written. A sponsor who switched the notification type off is
+// not told, and the row says so by staying NULL. Best-effort: the session is
+// already running, and a failure here is logged rather than ending it.
+func (s *Service) notifySponsorOfSession(ctx context.Context, orgID, userID string, entry *pamLaunchEntry, sessionID string) {
+	acct, err := externalid.Load(ctx, s.db.Pool, orgID, userID)
+	if err != nil {
+		s.logger.Warn("notify sponsor of a session: could not read the user's account", zap.Error(err))
+		return
+	}
+	if !acct.External() || acct.SponsorUserID == "" {
+		return
+	}
+	notif := notifications.NewService(s.db, s.logger)
+	if !notif.Enabled(ctx, acct.SponsorUserID, "in_app", notifications.TypeSponsoredAccess) {
+		return
+	}
+	var who string
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(NULLIF(email, ''), username) FROM users WHERE id = $1::uuid AND org_id = $2`,
+		userID, orgID).Scan(&who); err != nil {
+		s.logger.Warn("notify sponsor of a session: could not read the user's name", zap.Error(err))
+		return
+	}
+	if err := notif.CreateMultiChannelNotification(ctx, acct.SponsorUserID, orgID, notifications.TypeSponsoredAccess,
+		"A vendor user you sponsor started a privileged session",
+		fmt.Sprintf("%s opened a recorded session on %s. You can watch it or end it.", who, entry.Name), "",
+		map[string]interface{}{"session_id": sessionID, "entry_id": entry.ID, "user_id": userID, "kind": "pam_session_started"}); err != nil {
+		s.logger.Warn("notify sponsor of a session failed", zap.String("sponsor_id", acct.SponsorUserID), zap.Error(err))
+		return
+	}
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE pam_entry_sessions SET sponsor_notified_at = NOW() WHERE id = $1 AND org_id = $2`, sessionID, orgID); err != nil {
+		s.logger.Warn("notify sponsor of a session: could not record it on the session", zap.Error(err))
+	}
+}

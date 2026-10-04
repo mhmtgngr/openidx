@@ -891,6 +891,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/pam/sponsored/entry-requests", svc.handlePamListSponsoredRequests)
 		api.POST("/pam/sponsored/entry-requests/:id/approve", svc.requireFreshMFA("pam.sponsor_decide"), svc.handlePamSponsorApproveRequest)
 		api.POST("/pam/sponsored/entry-requests/:id/deny", svc.requireFreshMFA("pam.sponsor_decide"), svc.handlePamSponsorDenyRequest)
+		// And the sessions those launches opened: watch read-only, or end.
+		api.GET("/pam/sponsored/sessions", svc.handlePamListSponsoredSessions)
+		api.POST("/pam/sponsored/sessions/:id/watch", svc.requireFreshMFA("pam.sponsor_watch"), svc.handlePamSponsorWatchSession)
+		api.POST("/pam/sponsored/sessions/:id/end", svc.requireFreshMFA("pam.sponsor_end"), svc.handlePamSponsorEndSession)
 		api.GET("/pam/sessions", svc.requireAdminRole(), svc.handlePamListSessions)
 		api.POST("/pam/sessions/:id/end", svc.handlePamEndSession)
 		api.POST("/pam/import/rdm", svc.requireAdminRole(), svc.handlePamImportRDM)
