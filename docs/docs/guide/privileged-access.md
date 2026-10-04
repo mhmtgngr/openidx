@@ -60,7 +60,11 @@ for the lack of one.
    "which of my entries accept any host key" is a question you can answer.
    Set `PAM_SSH_REQUIRE_HOST_KEY=true` to refuse unpinned entries outright.
 6. **Recordings & retention.** Sessions are recorded encrypted at rest,
-   with retention policies and **legal holds**. Recordings and transcripts
+   with retention policies and **legal holds**. The session broker records;
+   the browser SSH terminal and an SSH certificate record nothing, so an
+   entry whose sessions are recorded (`record_session`) refuses both
+   (`recorded_entry_needs_broker`), and an entry cannot be both recorded and
+   set to open in the browser terminal. Recordings and transcripts
    are reviewable from the console; the audit trail links session,
    credential, and user.
 7. **Quick Links.** Curate a searchable launcher of external tools and
@@ -145,6 +149,7 @@ entry (`moderated_entry_needs_broker`):
 - an SSH certificate;
 - a temporary access link, at issuing and at redemption.
 
+An entry cannot be both moderated and set to open in the browser terminal.
 A Windows app on a moderated host waits for a moderator like a connect.
 An update that leaves `require_moderator` out keeps it, and an entry that
 opens no session, such as a website, cannot require one.

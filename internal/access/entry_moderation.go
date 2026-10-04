@@ -142,6 +142,24 @@ func refuseModeratedEntry(c *gin.Context, entry *pamLaunchEntry, path string) bo
 	return true
 }
 
+// refuseRecordedEntry answers for a path that records nothing (the browser
+// terminal, an SSH certificate) when the entry says its sessions are
+// recorded. The setting is a promise about every session on the entry, and
+// these paths opened sessions it never covered: only the session broker
+// records. An external user is refused these paths whatever the entry says
+// (I5); this is the same rule for everyone else, on an entry that asks for it.
+func refuseRecordedEntry(c *gin.Context, recorded bool, path string) bool {
+	if !recorded {
+		return false
+	}
+	c.JSON(http.StatusForbidden, gin.H{
+		"error": "this entry's sessions are recorded, and " + path +
+			" records nothing: connect through the session broker",
+		"code": "recorded_entry_needs_broker",
+	})
+	return true
+}
+
 // requestEntryModeration opens, or hands back, the caller's moderation request
 // for a PAM entry that requires a moderator. The caller must be one who may
 // connect to the entry: anyone else is told it does not exist. An external
