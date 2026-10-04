@@ -4979,6 +4979,10 @@ func (s *Service) handleUpdateGroup(c *gin.Context) {
 		if writeExternalRefusal(c, err) {
 			return
 		}
+		if errors.Is(err, ErrInvalidGroupMaxMembers) {
+			c.JSON(400, gin.H{"error": err.Error(), "code": "invalid_max_members"})
+			return
+		}
 		s.logger.Error("failed to update group", logsafe.String("group_id", groupID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return

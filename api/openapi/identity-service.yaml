@@ -676,9 +676,18 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/GroupCreate'
+      description: >-
+        The group's membership settings travel as the attributes
+        `allowSelfJoin`, `requireApproval` and `maxMembers`, as a read returns
+        them. An update keeps any of them it leaves out; an empty `maxMembers`
+        removes the member cap.
       responses:
         '200':
           description: Group updated
+        '400':
+          description: >-
+            The body is malformed, or `attributes.maxMembers` is not a positive
+            whole number (`invalid_max_members`).
     delete:
       tags: [Groups]
       summary: Delete group
