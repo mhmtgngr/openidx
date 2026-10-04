@@ -1560,5 +1560,12 @@ func allMigrations() []*Migration {
 			UpSQL:       vendorClosedListUp,
 			DownSQL:     vendorClosedListDown,
 		},
+		{
+			Version:     220,
+			Name:        "access_request_expiry_warned",
+			Description: "Section 6.10 of the third-party access framework: the requester of a time-bound access request is warned before the access ends. access_requests.expiry_warned_at is stamped by the governance JIT expiry sweep when it warns a fulfilled request whose window closes within the hour, so each request is warned once: the access_request.expiring webhook event is published and the requester notified unless they switched those notifications off. Existing rows get NULL; a fulfilled request already inside its last hour is warned on the next tick. Down drops the column.",
+			UpSQL:       accessRequestExpiryWarnedUp,
+			DownSQL:     accessRequestExpiryWarnedDown,
+		},
 	}
 }

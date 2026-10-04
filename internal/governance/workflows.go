@@ -349,6 +349,7 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 			"error": "the request could not be routed for approval and was not created; please try again"})
 		return
 	}
+	s.requestFiled(c.Request.Context(), org.ID, id)
 
 	c.JSON(http.StatusCreated, AccessRequest{
 		ID:            id,
@@ -930,10 +931,16 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 			})
 			return
 		}
+		s.requestApproved(c.Request.Context(), org.ID, id)
 		c.JSON(http.StatusOK, gin.H{"message": "Request approved and fulfilled", "status": "fulfilled"})
 		return
 	}
 
+	// A satisfied step hands the request to the next one, whose approvers are
+	// told; another approval within the same step tells no one again.
+	if active != callerStep {
+		s.requestAdvanced(c.Request.Context(), org.ID, id, active)
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Approval recorded; the request is still awaiting other approvers",
 		"status":  "pending",
@@ -1014,6 +1021,8 @@ func (s *Service) handleDenyRequest(c *gin.Context) {
 	)
 	if err != nil {
 		s.logger.Error("Failed to update request status to denied", zap.Error(err))
+	} else {
+		s.requestDenied(c.Request.Context(), org.ID, id)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Request denied"})

@@ -26,6 +26,7 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/vault"
+	"github.com/openidx/openidx/internal/webhooks"
 )
 
 // pamCheckoutLeaseTTL is how long a recorded reveal lease holds an exclusive
@@ -320,12 +321,12 @@ func (s *Service) handlePamBreakGlass(c *gin.Context) {
 		return
 	}
 
-	var secretID string
+	var secretID, entryName string
 	var allowReveal, breakGlassEnabled bool
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(vault_secret_id::text,''), allow_reveal, break_glass_enabled
+		SELECT COALESCE(vault_secret_id::text,''), allow_reveal, break_glass_enabled, name
 		  FROM pam_entries WHERE id = $1 AND org_id = $2`, entryID, org.ID).
-		Scan(&secretID, &allowReveal, &breakGlassEnabled)
+		Scan(&secretID, &allowReveal, &breakGlassEnabled, &entryName)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "entry not found"})
@@ -374,6 +375,10 @@ func (s *Service) handlePamBreakGlass(c *gin.Context) {
 		"entry_id": entryID, "reason": req.Reason, "user_id": userID, "severity": "high",
 	})
 	s.pamRecordCheckout(ctx, org.ID, entryID, userID, "break_glass", req.Reason, true)
+	// And to the tenant's SIEM, as it happens (session_events.go).
+	s.publishPamEvent(org.ID, webhooks.EventPamBreakGlass, map[string]interface{}{
+		"entry_id": entryID, "entry_name": entryName, "user_id": userID, "reason": req.Reason,
+	})
 
 	c.JSON(http.StatusOK, gin.H{"value": string(pt), "break_glass": true})
 	for i := range pt {

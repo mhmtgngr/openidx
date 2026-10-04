@@ -48,6 +48,22 @@ The Governance Service manages access reviews, certification campaigns, and poli
 
 An external (vendor) user's request starts with a step for their sponsor, and the policy's steps follow, with the sponsor not among their approvers. No auto-approve condition applies to it. A request whose chain has no approver after the sponsor, such as one no policy covers when the default administrator is the sponsor, is refused with `409` and `approval_chain_unbuildable`.
 
+A request tells the people it concerns, under notification types each can switch off:
+- the approvers of the step it waits at, when it reaches them (`approval_pending`);
+- the requester, when it is approved, denied, within the hour before its access ends, and when that access ends or the request expires unanswered (`request_update`, with `kind` in the metadata: `approved`, `denied`, `expiring`, `window`, `unanswered`).
+
+The same moments are published to the organization's webhook subscribers:
+
+| Event | When |
+|---|---|
+| `access_request.created` | A request is filed |
+| `access_request.approved` | The last approval granted the access; the payload carries `expires_at` for a time-bound one |
+| `access_request.denied` | A request is denied |
+| `access_request.expiring` | The access ends within the hour; published once per request |
+| `access_request.ended` | The access ended with its window, or the request expired unanswered |
+
+Each payload carries `request_id`, `requester_id`, `resource_type`, `resource_id`, `resource_name` and `status`.
+
 ### Resource types
 
 - `role`, `group`, `application` — an assignment, ended by the expiry sweep when the request has a duration

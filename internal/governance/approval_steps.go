@@ -302,6 +302,7 @@ func (s *Service) expireUnansweredRequests(ctx context.Context) {
 		}
 		s.logger.Info("approval timeout sweep: an unanswered access request expired",
 			logsafe.String("request_id", e.id), logsafe.String("requester_id", e.requester))
+		s.requestEnded(ctx, e.org, e.id, "unanswered")
 	}
 }
 

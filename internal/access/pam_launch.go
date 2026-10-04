@@ -346,7 +346,7 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 	// Website entries: no brokering — hand back the URL. The password (if
 	// any) stays in the vault, retrievable only via the audited reveal path.
 	if typeInfo.Protocol == "" {
-		s.recordPamLaunch(c, org.ID, &entry, "", "", false, "")
+		s.recordPamLaunch(c, org.ID, &entry, "", "", false, "", "")
 		c.JSON(http.StatusOK, gin.H{"launch_type": "url", "url": entry.URL, "entry_id": entryID})
 		return
 	}
@@ -588,14 +588,7 @@ func (s *Service) launchPamSession(
 		return nil, &pamLaunchFailure{http.StatusServiceUnavailable, "external_broker_identity_required", refusal.Error()}
 	}
 
-	sessionID := s.recordPamLaunch(c, orgID, entry, protocol, connID, injected, guacUser)
-	if entry.RecordSession && sessionID != "" && recFile != "" {
-		if _, err := s.db.Pool.Exec(ctx,
-			//orgscope:ignore pam_entry_sessions UPDATE keyed by its own primary key immediately after the org-scoped INSERT
-			`UPDATE pam_entry_sessions SET recording_path = $2 WHERE id = $1`, sessionID, recFile); err != nil {
-			s.logger.Warn("launchPamSession: recording path update failed", zap.Error(err))
-		}
-	}
+	sessionID := s.recordPamLaunch(c, orgID, entry, protocol, connID, injected, guacUser, recFile)
 
 	return &pamSessionResult{
 		ConnectURL: connectURL, ConnID: connID, SessionID: sessionID,
@@ -697,16 +690,21 @@ func (s *Service) findGuacConnectionIDByName(ctx context.Context, broker *Guacam
 // (admin_bypass, migration v217), so the lifecycle sweep can tell a session a
 // grant opened, which ends with the grant, from one an administrator opened
 // without any.
-func (s *Service) recordPamLaunch(c *gin.Context, orgID string, entry *pamLaunchEntry, protocol, guacConnID string, injected bool, guacUsername string) string {
+//
+// recordingPath is where the broker records the session, empty when nothing
+// records it. It is written with the row, so everything the launch tells --
+// the sponsor's notification, the pam.session.started event -- reads a
+// session that already says whether it is recorded.
+func (s *Service) recordPamLaunch(c *gin.Context, orgID string, entry *pamLaunchEntry, protocol, guacConnID string, injected bool, guacUsername, recordingPath string) string {
 	ctx := c.Request.Context()
 	userID := c.GetString("user_id")
 
 	var sessionID string
 	if err := s.db.Pool.QueryRow(ctx, `
-		INSERT INTO pam_entry_sessions (org_id, entry_id, user_id, protocol, guac_connection_id, credential_injected, guac_username, admin_bypass)
-		VALUES ($1, $2, NULLIF($3,'')::uuid, NULLIF($4,''), NULLIF($5,''), $6, NULLIF($7,''), $8)
+		INSERT INTO pam_entry_sessions (org_id, entry_id, user_id, protocol, guac_connection_id, credential_injected, guac_username, admin_bypass, recording_path)
+		VALUES ($1, $2, NULLIF($3,'')::uuid, NULLIF($4,''), NULLIF($5,''), $6, NULLIF($7,''), $8, NULLIF($9,''))
 		RETURNING id`,
-		orgID, entry.ID, userID, protocol, guacConnID, injected, guacUsername, adminBypassed(entry.AdminBypass)).Scan(&sessionID); err != nil {
+		orgID, entry.ID, userID, protocol, guacConnID, injected, guacUsername, adminBypassed(entry.AdminBypass), recordingPath).Scan(&sessionID); err != nil {
 		s.logger.Warn("recordPamLaunch: session ledger insert failed",
 			zap.String("entry_id", entry.ID), zap.Error(err))
 	}
@@ -731,6 +729,9 @@ func (s *Service) recordPamLaunch(c *gin.Context, orgID string, entry *pamLaunch
 	// An external user's sponsor is told the session started (I6).
 	if entry.External && sessionID != "" {
 		s.notifySponsorOfSession(ctx, orgID, userID, entry, sessionID)
+	}
+	if sessionID != "" {
+		s.pamSessionStarted(orgID, sessionID, userID, entry, protocol, recordingPath != "")
 	}
 	return sessionID
 }
@@ -933,6 +934,7 @@ func (s *Service) decidePamRequestAs(c *gin.Context, newStatus, auditAction stri
 	}
 	s.logAuditEvent(c, auditAction, requestID, "pam_entry_access_request",
 		map[string]interface{}{"request_id": requestID, "approver_id": approverID, "new_status": newStatus, "as": as})
+	s.notifyPamLaunchDecision(ctx, org.ID, requestID, newStatus)
 	c.JSON(http.StatusOK, gin.H{"request_id": requestID, "status": newStatus})
 }
 
@@ -1150,6 +1152,7 @@ func (s *Service) handlePamEndSession(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "active session not found"})
 		return
 	}
+	s.pamSessionEnded(org.ID, sessionID, sessionEndRequested, userID)
 
 	// Best-effort JIT revoke of the per-user connection READ grant on the broker
 	// that served this session (per-user identities path only).

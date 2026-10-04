@@ -36,6 +36,8 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 	// same tick, the same leader, and the same "nothing is left standing"
 	// reason. See approval_steps.go.
 	s.expireUnansweredRequests(ctx)
+	// And the requesters whose access ends within the hour are warned, once.
+	s.warnEndingAccess(ctx)
 
 	// Background cross-org sweep: find expired fulfilled requests across all orgs.
 	// org_id is selected so each request's revocation/audit writes below stay scoped
@@ -157,6 +159,7 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 			s.logger.Warn("Failed to write jit_access_expired audit event",
 				zap.String("request_id", id), zap.Error(err))
 		}
+		s.requestEnded(ctx, orgID, id, "window")
 
 		revokedCount++
 		s.logger.Info("Revoked expired JIT access",
