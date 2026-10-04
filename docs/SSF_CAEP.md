@@ -93,7 +93,7 @@ POST /ssf/streams
 | Event | Sent when |
 |---|---|
 | `session-revoked` | All of a user's sessions are revoked here, or an external (vendor) account is suspended. A suspended account may come back (a new sponsor can reactivate it), so its sessions end and the account stays |
-| `account-disabled` | A path that severs an account disables or deletes it: offboarding, deletion, a lifecycle policy, the kill switch, a directory or SCIM deprovision, an anomaly lock, a quarantine. An external account that expires or is disabled, its vendor closed included |
+| `account-disabled` | A path that severs an account disables or deletes it: offboarding, deletion, an administrator's edit that disables it, a lifecycle policy, the kill switch, a directory deprovision, a SCIM delete or `active:false`, an anomaly lock, a quarantine. An edit or a SCIM push of an account already disabled sends nothing. An external account that expires or is disabled, its vendor closed included |
 | `token-claims-change` | A role or a group an access request gives begins (the request is fulfilled) or ends (its window closes). The event's `claims` carry the user's `roles`, `groups` and `permissions` as a token issued at that moment carries them |
 
 A path outside oauth-service reaches the transmitter through
