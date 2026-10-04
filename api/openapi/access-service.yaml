@@ -1582,6 +1582,9 @@ paths:
     get:
       tags: [Guacamole]
       summary: List active Guacamole sessions
+      description: >
+        Every configured broker's sessions: the direct broker's and the
+        OpenZiti overlay broker's. Each session names its broker.
       operationId: listGuacActiveSessions
       responses:
         '200':
@@ -1595,6 +1598,11 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/GuacActiveSession'
+                  unavailable:
+                    type: array
+                    description: Brokers whose sessions could not be listed (`direct`, `ziti`)
+                    items:
+                      type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '503':
@@ -9828,6 +9836,13 @@ components:
         startDate:
           type: integer
           description: Session start time as epoch milliseconds
+        openidx_user:
+          type: string
+          description: The OpenIDX user who launched the session, from OpenIDX's own ledger
+        broker:
+          type: string
+          enum: [direct, ziti]
+          description: The broker the session runs on; `ziti` is the OpenZiti overlay broker
 
     GuacSessionRow:
       type: object

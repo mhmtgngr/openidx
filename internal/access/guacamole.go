@@ -948,6 +948,10 @@ type GuacActiveSession struct {
 	// OpenIDX's own ledger. Guacamole only knows the shared broker account, so
 	// Username above is always that account; this surfaces the actual user.
 	OpenIDXUser string `json:"openidx_user,omitempty"`
+	// Broker is the Guacamole broker the session runs on: "direct", or "ziti"
+	// for the OpenZiti overlay broker, which every external user's session and
+	// every session under PAM_REQUIRE_ZTNA=enforce uses.
+	Broker string `json:"broker,omitempty"`
 }
 
 // realClientIP returns the end-user's client address as seen through OpenIDX's
