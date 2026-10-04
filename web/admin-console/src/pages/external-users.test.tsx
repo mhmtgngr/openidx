@@ -13,6 +13,7 @@ vi.mock('../lib/api', () => ({
     post: vi.fn(),
     put: vi.fn(),
     delete: vi.fn(),
+    pam: { listEntries: vi.fn() },
   },
 }))
 
@@ -62,6 +63,15 @@ const vendors: VendorOrg[] = [
     id: 'v-2', name: 'Paused Vendor', status: 'suspended', contact_name: '', contact_email: '',
     allowed_email_domains: [], default_expiry_days: 30, default_sponsor_user_id: '', notes: '',
   },
+  {
+    id: 'v-3', name: 'Listed Vendor', status: 'active', contact_name: '', contact_email: '',
+    allowed_email_domains: ['listed.example.test'], default_expiry_days: 30, default_sponsor_user_id: '', notes: '',
+    closed_list: true,
+  },
+]
+
+const targets = [
+  { id: 't-1', target_type: 'pam_entry', target_id: 'e-1', target_name: 'prod-db', created_at: '2026-09-01T00:00:00Z' },
 ]
 
 const invitations = [
@@ -70,6 +80,7 @@ const invitations = [
 ]
 
 function routeGet(url: string) {
+  if (url.endsWith('/targets')) return Promise.resolve({ targets })
   if (url.startsWith('/api/v1/identity/vendor-orgs')) return Promise.resolve({ vendor_organizations: vendors })
   if (url.startsWith('/api/v1/identity/external-users')) return Promise.resolve({ external_users: accounts })
   if (url.startsWith('/api/v1/identity/invitations')) return Promise.resolve({ invitations })
@@ -299,5 +310,45 @@ describe('ExternalUsersPage', () => {
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith('/api/v1/identity/vendor-orgs/v-1/close', { reason: 'contract ended' }),
     )
+  })
+
+  it('puts a vendor on a closed list from its form', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.put).mockResolvedValue({} as never)
+    renderPage()
+    await user.click(screen.getByRole('tab', { name: 'Vendor organizations' }))
+    const row = (await screen.findByText('supplier.example.test')).closest('tr')!
+    expect(within(row).queryByRole('button', { name: 'Targets' })).not.toBeInTheDocument()
+    await user.click(within(row).getByRole('button', { name: 'Edit' }))
+    await user.click(await screen.findByRole('checkbox', { name: /closed list/i }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/v1/identity/vendor-orgs/v-1', expect.objectContaining({ closed_list: true })),
+    )
+  })
+
+  it('lists, opens and closes what is open to a vendor on a closed list', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.pam.listEntries).mockResolvedValue({ entries: [{ id: 'e-1', name: 'prod-db' }, { id: 'e-2', name: 'jump-01' }] } as never)
+    vi.mocked(api.delete).mockResolvedValue({} as never)
+    renderPage()
+    await user.click(screen.getByRole('tab', { name: 'Vendor organizations' }))
+    const row = (await screen.findByText('listed.example.test')).closest('tr')!
+    expect(within(row).getByText('Closed list')).toBeInTheDocument()
+    await user.click(within(row).getByRole('button', { name: 'Targets' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText('prod-db')).toBeInTheDocument()
+    // An entry already open is not offered again.
+    const picker = await within(dialog).findByLabelText('Target')
+    await waitFor(() => expect(within(picker).getByRole('option', { name: 'jump-01' })).toBeInTheDocument())
+    expect(within(picker).queryByRole('option', { name: 'prod-db' })).not.toBeInTheDocument()
+    await user.selectOptions(picker, 'e-2')
+    await user.click(within(dialog).getByRole('button', { name: 'Open' }))
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/api/v1/identity/vendor-orgs/v-3/targets', { target_type: 'pam_entry', target_id: 'e-2' }),
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Withdraw' }))
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith('/api/v1/identity/vendor-orgs/v-3/targets/t-1'))
   })
 })

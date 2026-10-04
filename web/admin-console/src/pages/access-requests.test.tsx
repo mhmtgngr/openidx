@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -17,6 +17,17 @@ vi.mock('../lib/api', () => ({
     delete: vi.fn(() => Promise.resolve({})),
     vault: {
       listSecrets: vi.fn(() => Promise.resolve({ secrets: [{ id: 'sec-1', name: 'db-root', type: 'password', current_version: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }] })),
+    },
+    // The privileged-session queue beside the access requests: empty unless a
+    // test fills one.
+    pam: {
+      listRequests: vi.fn(() => Promise.resolve({ requests: [] })),
+      listSponsoredRequests: vi.fn(() => Promise.resolve({ requests: [] })),
+      listPendingModeration: vi.fn(() => Promise.resolve({ pending: [] })),
+      listSponsoredModeration: vi.fn(() => Promise.resolve({ pending: [] })),
+      listModerating: vi.fn(() => Promise.resolve({ moderations: [] })),
+      listSponsoredSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
+      approveSponsoredRequest: vi.fn(() => Promise.resolve({ status: 'approved' })),
     },
   },
 }))
@@ -171,6 +182,26 @@ describe('AccessRequestsPage', () => {
     // And the org-wide list is never fetched.
     const urls = vi.mocked(api.get).mock.calls.map((c) => c[0] as string)
     expect(urls.some((u) => u === '/api/v1/governance/requests' || u.startsWith('/api/v1/governance/requests?status'))).toBe(false)
+  })
+
+  it('shows a sponsor who is not an administrator the vendor launch waiting for them, in the approvals tab', async () => {
+    authState.isAdmin = false
+    // Not once: the page and its approvals tab read the same list, and the tab
+    // reads it again as it mounts.
+    vi.mocked(api.pam.listSponsoredRequests).mockResolvedValue({ requests: [{
+      id: 'pr-1', entry_id: 'e-1', entry_name: 'prod-db', entry_type: 'ssh', requester_id: 'v-1',
+      requester: 'vendor@supplier.example.test', external: true, status: 'pending', created_at: '2026-10-02T10:00:00Z',
+    }] } as never)
+    const user = userEvent.setup()
+    render(<AccessRequestsPage />, { wrapper: createWrapper() })
+    const tab = await screen.findByRole('tab', { name: /pending approvals/i })
+    // The badge counts the access request waiting and the launch together.
+    await waitFor(() => expect(within(tab).getByText('2')).toBeInTheDocument())
+    await user.click(tab)
+    const launchRow = (await screen.findByText('prod-db')).closest('tr') as HTMLElement
+    await user.click(within(launchRow).getByRole('button', { name: /^approve$/i }))
+    await waitFor(() => expect(api.pam.approveSponsoredRequest).toHaveBeenCalledWith('pr-1'))
+    vi.mocked(api.pam.listSponsoredRequests).mockResolvedValue({ requests: [] } as never)
   })
 
   it('renders the page heading and Request Access button', async () => {

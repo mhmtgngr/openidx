@@ -61,6 +61,19 @@ export interface VendorOrg {
   notes: string
   closed_at?: string
   external_users?: Record<string, number>
+  // On a closed list, the vendor's users ask for and launch only the targets
+  // opened to it (invariant I11 of the third-party access framework).
+  closed_list?: boolean
+}
+
+// A PAM entry, an application or a network service opened to a vendor on a
+// closed list.
+interface VendorTarget {
+  id: string
+  target_type: 'pam_entry' | 'application' | 'network_service'
+  target_id: string
+  target_name: string
+  created_at: string
 }
 
 interface Invitation {
@@ -775,6 +788,7 @@ function VendorsTab() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [editing, setEditing] = useState<VendorOrg | 'new' | null>(null)
+  const [targetsFor, setTargetsFor] = useState<VendorOrg | null>(null)
   const { data: vendors = [], isLoading, isError, error } = useVendors()
 
   const close = useMutation({
@@ -831,7 +845,12 @@ function VendorsTab() {
                 {vendors.map((v) => (
                   <TableRow key={v.id} className="border-b">
                     <TableCell className="p-3">
-                      <p className="font-medium">{v.name}</p>
+                      <p className="font-medium">
+                        {v.name}
+                        {v.closed_list && (
+                          <Badge variant="outline" className="ml-2">{t('pages.externalUsers.vendors.closedList')}</Badge>
+                        )}
+                      </p>
                       {(v.allowed_email_domains ?? []).length > 0 && (
                         <p className="text-xs text-muted-foreground">{(v.allowed_email_domains ?? []).join(', ')}</p>
                       )}
@@ -843,6 +862,9 @@ function VendorsTab() {
                     <TableCell className="p-3">{t('pages.externalUsers.vendors.days', { n: v.default_expiry_days })}</TableCell>
                     <TableCell className="p-3 text-sm">{counts(v)}</TableCell>
                     <TableCell className="p-3 text-right space-x-2">
+                      {v.closed_list && (
+                        <Button variant="outline" size="sm" onClick={() => setTargetsFor(v)}>{t('pages.externalUsers.vendors.targets')}</Button>
+                      )}
                       {v.status !== 'closed' && (
                         <>
                           <Button variant="outline" size="sm" onClick={() => setEditing(v)}>{t('pages.externalUsers.vendors.edit')}</Button>
@@ -871,6 +893,7 @@ function VendorsTab() {
         )}
       </CardContent>
       {editing && <VendorDialog vendor={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+      {targetsFor && <VendorTargetsDialog vendor={targetsFor} onClose={() => setTargetsFor(null)} />}
     </Card>
   )
 }
@@ -890,6 +913,7 @@ function VendorDialog({ vendor, onClose }: { vendor: VendorOrg | null; onClose: 
     default_expiry_days: String(vendor?.default_expiry_days ?? 90),
     default_sponsor_user_id: vendor?.default_sponsor_user_id ?? '',
     notes: vendor?.notes ?? '',
+    closed_list: !!vendor?.closed_list,
   })
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }))
@@ -908,6 +932,7 @@ function VendorDialog({ vendor, onClose }: { vendor: VendorOrg | null; onClose: 
         default_expiry_days: parseInt(form.default_expiry_days, 10) || 90,
         default_sponsor_user_id: form.default_sponsor_user_id,
         notes: form.notes,
+        closed_list: form.closed_list,
       }
       return vendor
         ? api.put(`/api/v1/identity/vendor-orgs/${vendor.id}`, body)
@@ -979,11 +1004,143 @@ function VendorDialog({ vendor, onClose }: { vendor: VendorOrg | null; onClose: 
             <Label htmlFor="xv-notes">{t('pages.externalUsers.vendorDialog.notes')}</Label>
             <Textarea id="xv-notes" value={form.notes} onChange={set('notes')} />
           </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              id="xv-closed-list"
+              type="checkbox"
+              className="mt-1"
+              checked={form.closed_list}
+              onChange={(e) => setForm((f) => ({ ...f, closed_list: e.target.checked }))}
+            />
+            <span>
+              <span className="font-medium">{t('pages.externalUsers.vendorDialog.closedList')}</span>
+              <span className="block text-xs text-muted-foreground">{t('pages.externalUsers.vendorDialog.closedListHint')}</span>
+            </span>
+          </label>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
             <Button type="submit" disabled={!form.name.trim() || save.isPending}>{t('pages.externalUsers.vendorDialog.save')}</Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// VendorTargetsDialog lists what is opened to a vendor on a closed list, and
+// opens or closes a target. A closed vendor's list is read-only, as the API
+// holds it.
+function VendorTargetsDialog({ vendor, onClose }: { vendor: VendorOrg; onClose: () => void }) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const editable = vendor.status !== 'closed'
+  const [type, setType] = useState<VendorTarget['target_type']>('pam_entry')
+  const [target, setTarget] = useState('')
+  const key = ['vendor-targets', vendor.id]
+  const { data: targets = [], isLoading, isError, error } = useQuery({
+    queryKey: key,
+    queryFn: async () =>
+      (await api.get<{ targets: VendorTarget[] }>(`/api/v1/identity/vendor-orgs/${vendor.id}/targets`)).targets ?? [],
+  })
+  const { data: entries = [] } = useQuery({
+    queryKey: ['vendor-targets-pam-entries'],
+    enabled: editable && type === 'pam_entry',
+    queryFn: async () => (await api.pam.listEntries()).entries ?? [],
+  })
+  const { data: apps = [] } = useQuery({
+    queryKey: ['vendor-targets-apps'],
+    enabled: editable && type === 'application',
+    queryFn: async () => {
+      const res = await api.getWithHeaders<Array<{ id: string; name: string }>>('/api/v1/applications')
+      return Array.isArray(res.data) ? res.data : []
+    },
+  })
+  const options = type === 'pam_entry' ? entries : type === 'application' ? apps : []
+  const opened = new Set(targets.map((x) => `${x.target_type}:${x.target_id}`))
+
+  const done = () => queryClient.invalidateQueries({ queryKey: key })
+  const failed = (err: unknown) =>
+    toast({ title: t('common.error'), description: apiErrorText(err, t('pages.externalUsers.toasts.failed')), variant: 'destructive' })
+  const open = useMutation({
+    mutationFn: () => api.post(`/api/v1/identity/vendor-orgs/${vendor.id}/targets`, { target_type: type, target_id: target.trim() }),
+    onSuccess: () => { done(); setTarget('') },
+    onError: failed,
+  })
+  const closeTarget = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/identity/vendor-orgs/${vendor.id}/targets/${id}`),
+    onSuccess: done,
+    onError: failed,
+  })
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t('pages.externalUsers.targetsDialog.title', { name: vendor.name })}</DialogTitle>
+          <DialogDescription>{t('pages.externalUsers.targetsDialog.description')}</DialogDescription>
+        </DialogHeader>
+        {isLoading ? (
+          <TableSkeleton rows={3} cols={3} />
+        ) : isError ? (
+          <QueryError error={error} resource={t('pages.externalUsers.targetsDialog.resourceName')} />
+        ) : targets.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t('pages.externalUsers.targetsDialog.empty')}</p>
+        ) : (
+          <Table>
+            <TableBody>
+              {targets.map((x) => (
+                <TableRow key={x.id}>
+                  <TableCell className="p-2">
+                    <Badge variant="outline">{t(`pages.externalUsers.targetsDialog.types.${x.target_type}`)}</Badge>
+                  </TableCell>
+                  <TableCell className="p-2">{x.target_name || x.target_id}</TableCell>
+                  <TableCell className="p-2 text-right">
+                    {editable && (
+                      <Button variant="ghost" size="sm" className="text-red-600" disabled={closeTarget.isPending}
+                        onClick={() => closeTarget.mutate(x.id)}>
+                        {t('pages.externalUsers.targetsDialog.withdraw')}
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {editable && (
+          <form className="flex flex-wrap items-end gap-2 pt-2" onSubmit={(e) => { e.preventDefault(); if (target.trim()) open.mutate() }}>
+            <div className="space-y-1">
+              <Label htmlFor="xt-type">{t('pages.externalUsers.targetsDialog.type')}</Label>
+              <select id="xt-type" value={type}
+                onChange={(e) => { setType(e.target.value as VendorTarget['target_type']); setTarget('') }}
+                className="flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm">
+                {(['pam_entry', 'application', 'network_service'] as const).map((k) => (
+                  <option key={k} value={k}>{t(`pages.externalUsers.targetsDialog.types.${k}`)}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1 flex-1 min-w-[12rem]">
+              <Label htmlFor="xt-target">{t('pages.externalUsers.targetsDialog.target')}</Label>
+              {type === 'network_service' ? (
+                <Input id="xt-target" placeholder={t('pages.externalUsers.targetsDialog.serviceId')} value={target}
+                  onChange={(e) => setTarget(e.target.value)} />
+              ) : (
+                <select id="xt-target" value={target} onChange={(e) => setTarget(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm">
+                  <option value="">{t('pages.externalUsers.targetsDialog.choose')}</option>
+                  {options.filter((o) => !opened.has(`${type}:${o.id}`)).map((o) => (
+                    <option key={o.id} value={o.id}>{o.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <Button type="submit" disabled={!target.trim() || open.isPending}>{t('pages.externalUsers.targetsDialog.open')}</Button>
+          </form>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>{t('common.close')}</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

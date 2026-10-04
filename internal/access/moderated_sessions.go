@@ -229,10 +229,12 @@ func (s *Service) handleListPendingModeration(c *gin.Context) {
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT m.id, COALESCE(m.connection_id::text, ''), m.requester_id::text, COALESCE(m.reason,''),
 		        m.created_at, m.expires_at, COALESCE(gc.hostname,''),
-		        COALESCE(m.entry_id::text, ''), COALESCE(pe.name, '')
+		        COALESCE(m.entry_id::text, ''), COALESCE(pe.name, ''),
+		        COALESCE(NULLIF(u.email, ''), u.username, '')
 		   FROM guacamole_moderation_sessions m
 		   LEFT JOIN guacamole_connections gc ON gc.id = m.connection_id AND gc.org_id = $1
 		   LEFT JOIN pam_entries pe ON pe.id = m.entry_id AND pe.org_id = $1
+		   LEFT JOIN users u ON u.id = m.requester_id AND u.org_id = $1
 		  WHERE m.org_id = $1 AND m.status = 'pending'
 		    AND (m.expires_at IS NULL OR m.expires_at > NOW())
 		  ORDER BY m.created_at ASC`, org.ID)
@@ -254,12 +256,14 @@ func (s *Service) handleListPendingModeration(c *gin.Context) {
 		// ConnectionID and Connection a route's.
 		EntryID   string `json:"entry_id,omitempty"`
 		EntryName string `json:"entry_name,omitempty"`
+		// Requester names who asked, for the queue a moderator reads.
+		Requester string `json:"requester"`
 	}
 	var out []item
 	for rows.Next() {
 		var it item
 		if err := rows.Scan(&it.ID, &it.ConnectionID, &it.RequesterID, &it.Reason,
-			&it.CreatedAt, &it.ExpiresAt, &it.Connection, &it.EntryID, &it.EntryName); err != nil {
+			&it.CreatedAt, &it.ExpiresAt, &it.Connection, &it.EntryID, &it.EntryName, &it.Requester); err != nil {
 			s.logger.Warn("handleListPendingModeration: scan failed", zap.Error(err))
 			continue
 		}

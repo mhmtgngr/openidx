@@ -396,3 +396,59 @@ func (s *Service) endModeratedSessions(c *gin.Context, orgID, moderationID, acto
 		s.pamSessionEnded(orgID, id, sessionEndModeration, actor)
 	}
 }
+
+// ModeratedSession is an active entry moderation the caller moderates, with
+// whether the session it admitted is live.
+type ModeratedSession struct {
+	ID          string     `json:"id"`
+	EntryID     string     `json:"entry_id"`
+	EntryName   string     `json:"entry_name"`
+	RequesterID string     `json:"requester_id"`
+	Requester   string     `json:"requester"`
+	JoinedAt    *time.Time `json:"joined_at,omitempty"`
+	SessionLive bool       `json:"session_live"`
+}
+
+// handleListModerating — GET /pam/moderation/moderating: the entry
+// moderations the caller joined and has not ended, so a moderator can watch
+// the session once it starts, and end it.
+func (s *Service) handleListModerating(c *gin.Context) {
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT m.id::text, m.entry_id::text, e.name, m.requester_id::text, COALESCE(NULLIF(u.email, ''), u.username, ''),
+		       m.joined_at,
+		       EXISTS (SELECT 1 FROM pam_entry_sessions s
+		                WHERE s.moderation_id = m.id AND s.org_id = m.org_id AND s.status = 'active')
+		  FROM guacamole_moderation_sessions m
+		  JOIN pam_entries e ON e.id = m.entry_id AND e.org_id = m.org_id
+		  LEFT JOIN users u ON u.id = m.requester_id AND u.org_id = m.org_id
+		 WHERE m.org_id = $1 AND m.status = 'active' AND m.moderator_id = NULLIF($2,'')::uuid
+		 ORDER BY m.joined_at DESC`, org.ID, c.GetString("user_id"))
+	if err != nil {
+		s.logger.Error("handleListModerating: query failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list moderated sessions"})
+		return
+	}
+	defer rows.Close()
+	out := []ModeratedSession{}
+	for rows.Next() {
+		var m ModeratedSession
+		if err := rows.Scan(&m.ID, &m.EntryID, &m.EntryName, &m.RequesterID, &m.Requester, &m.JoinedAt, &m.SessionLive); err != nil {
+			s.logger.Error("handleListModerating: scan failed", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list moderated sessions"})
+			return
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		s.logger.Error("handleListModerating: rows failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list moderated sessions"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"moderations": out})
+}

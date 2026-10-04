@@ -15,6 +15,8 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '../components/ui/alert-dialog'
 import { QueryError } from '../components/query-error'
+import { SessionQueue } from '../components/session-queue'
+import { useSessionQueue } from '../hooks/use-session-queue'
 import { api, VaultSecretMeta } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { useAuth } from '../lib/auth'
@@ -110,6 +112,12 @@ export function AccessRequestsPage() {
     queryFn: () => api.get<{ pending_approvals: AccessRequest[] }>('/api/v1/governance/my-approvals'),
   })
   const pendingApprovals = pendingData?.pending_approvals || []
+  // The privileged-session decisions waiting for the caller -- launch
+  // approvals, moderation requests, and the sessions they sponsor or
+  // moderate -- sit in the same queue (components/session-queue.tsx).
+  const sessionQueue = useSessionQueue(isAdmin)
+  const sessionWork = sessionQueue.count + sessionQueue.moderated.length + sessionQueue.sessions.length
+  const waiting = pendingApprovals.length + sessionQueue.count
 
   const { data: allData, isLoading: allLoading, isError: allError, error: allErrorObj } = useQuery({
     queryKey: ['all-requests', statusFilter],
@@ -330,10 +338,10 @@ export function AccessRequestsPage() {
           <TabsTrigger value="my-requests"><GitPullRequest className="mr-2 h-4 w-4" />{t('pages.accessRequests.tabs.my')}</TabsTrigger>
           {/* Approver queue: caller-scoped (only requests awaiting THIS user).
               Hidden for standard users who aren't approvers and have none. */}
-          {(isAdmin || pendingApprovals.length > 0) && (
+          {(isAdmin || pendingApprovals.length > 0 || sessionWork > 0) && (
             <TabsTrigger value="pending-approvals">
               <Clock className="mr-2 h-4 w-4" />{t('pages.accessRequests.tabs.pending')}
-              {pendingApprovals.length > 0 && <Badge variant="secondary" className="ml-1">{pendingApprovals.length}</Badge>}
+              {waiting > 0 && <Badge variant="secondary" className="ml-1">{waiting}</Badge>}
             </TabsTrigger>
           )}
           {/* Org-wide view — admins only. */}
@@ -419,7 +427,7 @@ export function AccessRequestsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="pending-approvals">
+        <TabsContent value="pending-approvals" className="space-y-4">
           <Card>
             <CardHeader><CardTitle>{t('pages.accessRequests.tabs.pending')}</CardTitle></CardHeader>
             <CardContent>
@@ -452,6 +460,7 @@ export function AccessRequestsPage() {
               )}
             </CardContent>
           </Card>
+          <SessionQueue isAdmin={isAdmin} />
         </TabsContent>
 
         <TabsContent value="all-requests">

@@ -397,6 +397,7 @@ func (f *externalPamFixture) router(userID string, roles ...string) *gin.Engine 
 	r.PUT("/pam/entries/:id", f.svc.handlePamUpdateEntry)
 	r.POST("/pam/moderation/request", f.svc.handleRequestModeration)
 	r.GET("/pam/moderation/pending", f.svc.handleListPendingModeration)
+	r.GET("/pam/moderation/moderating", f.svc.handleListModerating)
 	r.POST("/pam/moderation/:id/join", f.svc.handleJoinModeration)
 	r.POST("/pam/moderation/:id/end", f.svc.handleEndModeration)
 	r.POST("/pam/moderation/:id/watch", f.svc.handleWatchModeratedSession)
