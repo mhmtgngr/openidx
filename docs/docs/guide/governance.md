@@ -234,12 +234,16 @@ has an internal sponsor and has an end date. None of the three is optional.
   refused until a policy covers it. The same holds for a PAM launch approval:
   the sponsor gives it.
 - **How access ends.** Suspend or disable an account from its row; either
-  signs the person out everywhere at once, and each needs a reason. The
+  signs the person out everywhere at once, and each needs a reason.
+  Suspending a vendor suspends all its accounts the same way. The
   identity service also ends accounts on its own every minute:
   - an account past its end is expired;
   - an account whose sponsor left or was disabled is suspended;
   - an account of a closed vendor is disabled;
-  - a suspension nobody reverses within 7 days becomes final.
+  - an account of a suspended vendor is suspended;
+  - a suspension nobody reverses within 7 days becomes final. The 7 days do
+    not run while the vendor is suspended, and start again when it is
+    active.
 - **Bringing one back.** A suspended account can be reactivated within 7 days
   by naming a new sponsor. An expired or disabled one needs a new invitation.
 

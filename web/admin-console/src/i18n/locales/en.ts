@@ -1937,7 +1937,7 @@ const en = {
         description: 'Account lifetimes never pass the contract end. Invitations are accepted only for the allowed email domains, when any are set.',
         name: 'Name',
         status: 'Status',
-        suspendedHint: 'A suspended vendor accepts no new invitations, extensions or reactivations. Its existing accounts keep their state.',
+        suspendedHint: 'Suspending the vendor suspends its accounts and signs them out. It accepts no new invitations, extensions or reactivations until it is active again; then each account waits 7 days for a sponsor to take it back.',
         contactName: 'Contact name',
         contactEmail: 'Contact email',
         contractStart: 'Contract start',
