@@ -1145,6 +1145,8 @@ func (s *Service) CreateSCIMGroup(ctx context.Context, group *SCIMGroup) (*SCIMG
 			zap.Error(err))
 	} else {
 		s.fanOutGroupChange(ctx, org.ID, groupID, OpCreate, group.DisplayName, members)
+		// Each member has a group a token issued for them now carries.
+		s.claimsChanged(ctx, org.ID, "scim.CreateSCIMGroup", members...)
 	}
 
 	return group, nil
@@ -1301,6 +1303,10 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 		// commonest way a membership is taken away in this product, and
 		// "groups" is a claim on the access token.
 		s.revokeAfterMembershipLoss(ctx, "scim.UpdateSCIMGroup", membershipsLost(removed, kept)...)
+		// The receivers are told about both halves: the members the push
+		// dropped and the ones it added.
+		changed := append(membershipsLost(removed, kept), membershipsLost(kept, removed)...)
+		s.claimsChanged(ctx, org.ID, "scim.UpdateSCIMGroup", changed...)
 	}
 
 	if members, err := s.groupMembers(ctx, groupID, org.ID); err != nil {
@@ -1361,6 +1367,21 @@ func (s *Service) revokeAfterMembershipLoss(ctx context.Context, why string, use
 	}
 }
 
+// claimsChanged tells the tenant's SSF receivers that what a token issued for
+// these users says has changed (CAEP token-claims-change): a SCIM push or a
+// provisioning rule gave them a group or a role, or took one away.
+// Best-effort, like the token cut: the change has been made, and a failure is
+// logged.
+func (s *Service) claimsChanged(ctx context.Context, orgID, why string, userIDs ...string) {
+	if s.db == nil || s.db.Pool == nil {
+		return
+	}
+	if err := ssfsignal.EnqueueClaimsChange(ctx, s.db.Pool, orgID, why, userIDs...); err != nil {
+		s.logger.Error("a role or group changed, but the token-claims-change signal was not enqueued",
+			zap.String("path", why), zap.Error(err))
+	}
+}
+
 // DeleteSCIMGroup deletes a group via SCIM
 func (s *Service) DeleteSCIMGroup(ctx context.Context, groupID string) error {
 	s.logger.Info("Deleting SCIM group", zap.String("group_id", groupID))
@@ -1394,6 +1415,7 @@ func (s *Service) DeleteSCIMGroup(ctx context.Context, groupID string) error {
 		return err
 	}
 	s.revokeAfterMembershipLoss(ctx, "scim.DeleteSCIMGroup", members...)
+	s.claimsChanged(ctx, org.ID, "scim.DeleteSCIMGroup", members...)
 	s.fanOutGroupChange(ctx, org.ID, groupID, OpDelete, "", nil)
 	return nil
 }

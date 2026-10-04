@@ -102,11 +102,15 @@ POST /ssf/streams
 - an administrator grants, removes or deletes a role, or edits a user's role set;
 - a member is added to or removed from a group, or a group is deleted;
 - a lifecycle rule assigns or removes a role or a group;
+- a bulk operation in the console assigns or removes a role or a group, or a certification revokes one;
+- a SCIM push or a directory sync changes a group's members, or deletes the group;
+- a provisioning rule adds a group or a role;
+- a user joins a group through the portal, directly or when a join request is approved;
 - a time-bound role or group membership lapses (the identity expiry sweep).
 
 A path that changes nothing sends nothing: a role the user already holds, a role set saved unchanged, a lifecycle removal of something the user does not hold. Each of these paths that takes a role or a group away also cuts the user's outstanding tokens (the revocation marker), because a token issued before still names it.
 
-Not yet sent: the console's bulk operations, a certification's revocation, SCIM and directory group pushes, a self-service group join and a provisioning rule change roles or groups without this event. The ones that take access away cut the tokens as before.
+A path that creates an account sends nothing for its roles and groups: the new account has no token yet (an invitation, a bulk import).
 
 A path outside oauth-service reaches the transmitter through
 `internal/common/ssfsignal`: it writes a row to `ssf_pending_events`
