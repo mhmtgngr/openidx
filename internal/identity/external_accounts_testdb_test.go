@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +116,30 @@ func (f *externalFixture) state(id string) externalState {
 	return s
 }
 
+// signals reads the SSF signals enqueued about a user (ssf_pending_events),
+// oldest first, by the last segment of their event type: "session-revoked",
+// "account-disabled".
+func (f *externalFixture) signals(id string) []string {
+	f.t.Helper()
+	rows, err := f.db.Pool.Query(f.ctx, `SELECT event_type FROM ssf_pending_events WHERE subject_id = $1 ORDER BY id`, id)
+	if err != nil {
+		f.t.Fatalf("read the SSF signals: %v", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var ev string
+		if err := rows.Scan(&ev); err != nil {
+			f.t.Fatalf("read an SSF signal: %v", err)
+		}
+		out = append(out, ev[strings.LastIndex(ev, "/")+1:])
+	}
+	if err := rows.Err(); err != nil {
+		f.t.Fatalf("read the SSF signals: %v", err)
+	}
+	return out
+}
+
 // auditCount waits briefly for the asynchronous audit writes, then counts
 // the events of action about target.
 func (f *externalFixture) auditCount(target, action string, want int) int {
@@ -142,7 +167,10 @@ func (f *externalFixture) auditCount(target, action string, want int) int {
 //   - every route needs a reason, refuses an external caller (I12) and
 //     answers 404 for an internal user's id;
 //   - suspending and disabling sever the account (the session is revoked and
-//     the severing recorded); neither repeats on an account already there;
+//     the severing recorded) and tell the tenant's SSF receivers: a
+//     suspension as session-revoked, since the account may come back, and a
+//     disable as account-disabled; neither repeats on an account already
+//     there;
 //   - extending stays within a year and the vendor's contract, and only while
 //     the vendor is active;
 //   - reactivating needs a suspended account, a valid new sponsor, an active
@@ -216,8 +244,14 @@ func TestExternalAccountsAreManagedWithinTheirLifecycle(t *testing.T) {
 		if s.status != "suspended" || s.enabled || s.severed == nil || s.liveSess != 0 {
 			t.Fatalf("after suspend: %+v; want suspended, disabled, severed, no live session", s)
 		}
+		if got := f.signals(vendorUser); !slices.Equal(got, []string{"session-revoked"}) {
+			t.Errorf("SSF signals after suspend: %v, want [session-revoked]: the account may come back, so its sessions end", got)
+		}
 		code, body = call(http.MethodPost, "/external-users/"+vendorUser+"/suspend", `{"reason":"again"}`)
 		expect(t, "suspending a suspended account", code, body, http.StatusConflict, "external_status_conflict")
+		if got := f.signals(vendorUser); len(got) != 1 {
+			t.Errorf("a refused suspend enqueued another signal: %v", got)
+		}
 		code, body = call(http.MethodPost, "/external-users/"+vendorUser+"/sponsor", `{"reason":"handover","sponsor_user_id":"`+f.sponsor2+`"}`)
 		expect(t, "changing the sponsor of a suspended account", code, body, http.StatusConflict, "external_status_conflict")
 		if n := f.auditCount(vendorUser, "external.suspended", 1); n != 1 {
@@ -290,9 +324,17 @@ func TestExternalAccountsAreManagedWithinTheirLifecycle(t *testing.T) {
 		if s := f.state(vendorUser); s.status != "disabled" || s.enabled || s.severed == nil {
 			t.Fatalf("after disable: %+v", s)
 		}
+		// The suspension before the reactivation, then this.
+		wantSignals := []string{"session-revoked", "account-disabled"}
+		if got := f.signals(vendorUser); !slices.Equal(got, wantSignals) {
+			t.Errorf("SSF signals after disable: %v, want %v", got, wantSignals)
+		}
 		for _, path := range []string{"disable", "suspend"} {
 			code, body = call(http.MethodPost, "/external-users/"+vendorUser+"/"+path, `{"reason":"again"}`)
 			expect(t, path+" a disabled account", code, body, http.StatusConflict, "external_status_conflict")
+		}
+		if got := f.signals(vendorUser); !slices.Equal(got, wantSignals) {
+			t.Errorf("a refused change enqueued another signal: %v", got)
 		}
 		code, body = call(http.MethodPost, "/external-users/"+vendorUser+"/reactivate", `{"reason":"back","sponsor_user_id":"`+f.sponsor+`"}`)
 		expect(t, "reactivating a disabled account", code, body, http.StatusConflict, "external_status_conflict")
@@ -344,8 +386,9 @@ func TestExternalAccountsAreManagedWithinTheirLifecycle(t *testing.T) {
 //   - an account still waiting for its second factor after its invitation
 //     lapsed is expired;
 //   - each is severed once (the session revoked, access_severed_at set, one
-//     external.access_severed event), and the second run moves and severs
-//     nothing.
+//     external.access_severed event) and signalled once to the tenant's SSF
+//     receivers: session-revoked for a suspension, account-disabled for an
+//     end; the second run moves, severs and signals nothing.
 //
 // The controls: a live account with a valid sponsor and time left, a pending
 // account whose invitation still answers, a suspension inside the grace
@@ -414,14 +457,14 @@ func TestExternalAccountSweepEndsWhatTheClockAndDeparturesEnd(t *testing.T) {
 	svc.sweepExternalAccounts(sweepCtx)
 
 	want := []struct {
-		name, id, status, action string
+		name, id, status, action, signal string
 	}{
-		{"an account past its end", ended, "expired", "external.expired"},
-		{"a suspended account past its end", endedWhileSuspended, "expired", "external.expired"},
-		{"an account whose sponsor was disabled", orphaned, "suspended", "external.suspended"},
-		{"an account of a closed vendor", ofClosed, "disabled", "external.disabled"},
-		{"a suspension past the grace period", lapsedGrace, "disabled", "external.disabled"},
-		{"a pending account whose invitation lapsed", lapsedInvite, "expired", "external.expired"},
+		{"an account past its end", ended, "expired", "external.expired", "account-disabled"},
+		{"a suspended account past its end", endedWhileSuspended, "expired", "external.expired", "account-disabled"},
+		{"an account whose sponsor was disabled", orphaned, "suspended", "external.suspended", "session-revoked"},
+		{"an account of a closed vendor", ofClosed, "disabled", "external.disabled", "account-disabled"},
+		{"a suspension past the grace period", lapsedGrace, "disabled", "external.disabled", "account-disabled"},
+		{"a pending account whose invitation lapsed", lapsedInvite, "expired", "external.expired", "account-disabled"},
 	}
 	first := map[string]time.Time{}
 	for _, w := range want {
@@ -440,6 +483,9 @@ func TestExternalAccountSweepEndsWhatTheClockAndDeparturesEnd(t *testing.T) {
 		if n := f.auditCount(w.id, "external.access_severed", 1); n != 1 {
 			t.Errorf("%s: %d external.access_severed events, want 1", w.name, n)
 		}
+		if got := f.signals(w.id); !slices.Equal(got, []string{w.signal}) {
+			t.Errorf("%s: SSF signals %v, want [%s]", w.name, got, w.signal)
+		}
 	}
 
 	untouched := []struct {
@@ -455,6 +501,9 @@ func TestExternalAccountSweepEndsWhatTheClockAndDeparturesEnd(t *testing.T) {
 		s := f.state(u.id)
 		if s.status != u.status || s.enabled != u.enabled || s.liveSess != u.liveSess {
 			t.Errorf("%s was touched: %+v", u.name, s)
+		}
+		if got := f.signals(u.id); len(got) != 0 {
+			t.Errorf("%s was signalled: %v", u.name, got)
 		}
 	}
 	var internalStatus string
@@ -482,6 +531,9 @@ func TestExternalAccountSweepEndsWhatTheClockAndDeparturesEnd(t *testing.T) {
 			}
 			if n := f.auditCount(w.id, w.action, 1); n != 1 {
 				t.Errorf("%s: %d %s events after the second run, want 1", w.name, n, w.action)
+			}
+			if got := f.signals(w.id); len(got) != 1 {
+				t.Errorf("%s: SSF signals %v after the second run, want one", w.name, got)
 			}
 		}
 	})

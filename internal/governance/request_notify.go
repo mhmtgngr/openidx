@@ -154,12 +154,14 @@ func (s *Service) requestAdvanced(ctx context.Context, orgID, requestID string, 
 	s.notifyStepApprovers(ctx, f, step)
 }
 
-// requestGranted tells the requester the access is theirs and publishes
-// access_request.approved.
+// requestGranted tells the requester the access is theirs, publishes
+// access_request.approved, and, for a role or a group, tells the tenant's SSF
+// receivers that the requester's token claims changed (claims_signal.go).
 func (s *Service) requestGranted(ctx context.Context, f requestFacts) {
 	s.notifyRequester(ctx, f, "Your access request was approved",
 		fmt.Sprintf("You now have %s.", f.what()), "approved")
 	s.publishRequestEvent(f, webhooks.EventAccessRequestApproved)
+	s.tokenClaimsChanged(ctx, f.OrgID, f.RequesterID, f.ResourceType, "access_granted")
 }
 
 // requestApproved is requestGranted for a request known by id.

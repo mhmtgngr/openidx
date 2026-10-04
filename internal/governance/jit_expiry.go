@@ -170,6 +170,9 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 				zap.String("request_id", id), zap.Error(err))
 		}
 		s.requestEnded(ctx, orgID, id, "window")
+		// A role or a group is in the requester's token: the receivers that
+		// hold one are told its claims changed (claims_signal.go).
+		s.tokenClaimsChanged(ctx, orgID, requesterID, resourceType, "access_ended")
 
 		revokedCount++
 		s.logger.Info("Revoked expired JIT access",
