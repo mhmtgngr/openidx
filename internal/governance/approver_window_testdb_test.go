@@ -91,3 +91,55 @@ func TestAnEndedRoleOrGroupNeitherApprovesNorAutoApproves(t *testing.T) {
 		}
 	}
 }
+
+// The SoD detective reads what each user holds and reports a pair of
+// conflicting roles or groups as a violation. It read every row, so a role or
+// membership whose window had ended -- held by nobody any more, but not yet
+// deleted by the expiry sweep -- could still be reported in a conflict. On the
+// migrated schema, a user's assignments are the live role and group only.
+func TestTheSoDDetectiveReadsOnlyLiveAssignments(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+	bg := context.Background()
+	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(bg, -1); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	const org = "00000000-0000-0000-0000-000000000010"
+	ctx := orgctx.With(bg, orgctx.Org{ID: org})
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	scalar := func(q string, args ...interface{}) string {
+		t.Helper()
+		var v string
+		if err := db.Pool.QueryRow(ctx, q, args...).Scan(&v); err != nil {
+			t.Fatalf("(%s): %v", q, err)
+		}
+		return v
+	}
+	user := scalar(`INSERT INTO users (org_id, username, email) VALUES ($1, $2::text, $2::text || '@example.test') RETURNING id::text`,
+		org, "sod-held-"+suffix)
+	for _, w := range []struct{ name, ends string }{{"sod-live-" + suffix, "1 hour"}, {"sod-ended-" + suffix, "-5 minutes"}} {
+		role := scalar(`INSERT INTO roles (org_id, name, description) VALUES ($1, $2, '') RETURNING id::text`, org, w.name+"-role")
+		scalar(`INSERT INTO user_roles (user_id, role_id, org_id, expires_at) VALUES ($1, $2, $3, NOW() + $4::interval)
+			RETURNING user_id::text`, user, role, org, w.ends)
+		group := scalar(`INSERT INTO groups (org_id, name) VALUES ($1, $2) RETURNING id::text`, org, w.name+"-group")
+		scalar(`INSERT INTO group_memberships (user_id, group_id, org_id, expires_at) VALUES ($1, $2, $3, NOW() + $4::interval)
+			RETURNING user_id::text`, user, group, org, w.ends)
+	}
+
+	s := &Service{db: db, config: &config.Config{}, logger: zap.NewNop()}
+	held, err := s.loadUserAssignments(ctx, org)
+	if err != nil {
+		t.Fatalf("loadUserAssignments: %v", err)
+	}
+	got := []string{}
+	for name := range held[user] {
+		got = append(got, name)
+	}
+	slices.Sort(got)
+	if want := []string{"sod-live-" + suffix + "-group", "sod-live-" + suffix + "-role"}; !slices.Equal(got, want) {
+		t.Errorf("the SoD detective's assignments for the user = %v; want %v", got, want)
+	}
+}
