@@ -99,8 +99,10 @@ func TestExternalUsersHoldOnlyWhatTheyMay(t *testing.T) {
 		_ = json.Unmarshal(w.Body.Bytes(), &out)
 		return w.Code, out
 	}
-	// signals reads the SSF signals enqueued about a user, oldest first, by
-	// the last segment of their event type.
+	// signals reads the account-level SSF signals enqueued about a user,
+	// oldest first, by the last segment of their event type. The role and the
+	// group the vendor user is given below also send token-claims-change;
+	// TestEveryRoleAndGroupChangeTellsTheReceivers holds those.
 	signals := func(userID string) []string {
 		t.Helper()
 		rows, err := db.Pool.Query(ctx, `SELECT event_type FROM ssf_pending_events WHERE subject_id = $1 ORDER BY id`, userID)
@@ -114,7 +116,9 @@ func TestExternalUsersHoldOnlyWhatTheyMay(t *testing.T) {
 			if err := rows.Scan(&ev); err != nil {
 				t.Fatalf("read an SSF signal: %v", err)
 			}
-			out = append(out, ev[strings.LastIndex(ev, "/")+1:])
+			if name := ev[strings.LastIndex(ev, "/")+1:]; name != "token-claims-change" {
+				out = append(out, name)
+			}
 		}
 		return out
 	}
