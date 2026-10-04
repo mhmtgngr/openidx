@@ -245,6 +245,23 @@ Order is by risk, and each item is independently shippable.
    may write them) and keep handing them out because only the per-user
    preference was ever asked.
 
+8. ~~**Put the link's events in the audit trail.**~~ **Done.** Every
+   `temp_access.*` event was a zap log line behind a comment saying an
+   implementation "would send to audit service", so the Unified Audit page,
+   the compliance reports and the HMAC chain never saw a link issued, used,
+   refused or revoked, and a refusal was not recorded anywhere. They now land
+   in `unified_audit_events` under the issuing tenant: `temp_access.created`
+   and `temp_access.revoked` with the administrator as actor, and the
+   anonymous `temp_access.used`, `temp_access.refused` (with the gate's
+   reason: expired, revoked, exhausted, ip_not_allowed, legacy_link) and
+   `temp_access.launch_failed` with the redeemer's address and user agent and
+   the issuer in the details. An unknown token lands nothing, so the trail is
+   not a place a stranger can write into by guessing.
+   `TestTempAccessEventsLandInTheUnifiedAuditTrail` drives each through the
+   handlers on the migrated schema and checks the other tenant sees none.
+   The Guacamole legal-hold events shared the same log-only helper and ride
+   the same write now.
+
 Each item needs a red proof, as everything else on this branch has.
 
 ### V1 — The vendor as a real, time-boxed identity (~2–3 weeks)

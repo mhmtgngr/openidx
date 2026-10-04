@@ -93,7 +93,18 @@ CREATE TABLE IF NOT EXISTS guacamole_connections (
     route_id UUID UNIQUE, org_id UUID,
     guacamole_connection_id VARCHAR(255), protocol VARCHAR(32),
     hostname VARCHAR(255), port INTEGER, parameters JSONB,
-    created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());`
+    vault_secret_id UUID, inject_username VARCHAR(255),
+    require_approval BOOLEAN NOT NULL DEFAULT false, record_session BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS pam_entries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID NOT NULL, proxy_route_id UUID,
+    name VARCHAR(255) NOT NULL, entry_type VARCHAR(32) NOT NULL, description TEXT,
+    hostname VARCHAR(512), port INTEGER, username VARCHAR(255), vault_secret_id UUID,
+    guacamole_connection_id VARCHAR(255),
+    require_approval BOOLEAN NOT NULL DEFAULT false, record_session BOOLEAN NOT NULL DEFAULT false,
+    reach_mode VARCHAR(16) NOT NULL DEFAULT 'direct',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pam_entries_proxy_route ON pam_entries(proxy_route_id) WHERE proxy_route_id IS NOT NULL;`
 
 const (
 	guacMirrorOrg   = "00000000-0000-0000-0000-0000000000e1"
@@ -155,6 +166,20 @@ func TestProvisioningGuacamolePointsTheRouteAtTheConnection(t *testing.T) {
 	if connID == nil || *connID != "conn-1" {
 		t.Errorf("the route names connection %v after a successful provision; this column is what it "+
 			"brokers to", connID)
+	}
+
+	// And the entry that gates the route's launch stands for it, describing
+	// the same target and connection.
+	var entryType, host, entryConn string
+	var port int
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT entry_type, hostname, port, COALESCE(guacamole_connection_id,'')
+		  FROM pam_entries WHERE proxy_route_id = $1::uuid AND org_id = $2::uuid`,
+		guacMirrorRoute, guacMirrorOrg).Scan(&entryType, &host, &port, &entryConn); err != nil {
+		t.Fatalf("the provisioned route has no PAM entry: %v", err)
+	}
+	if entryType != "ssh" || host != "jump.internal" || port != 22 || entryConn != "conn-1" {
+		t.Errorf("the route's entry is %s %s:%d on %q; want ssh jump.internal:22 on conn-1", entryType, host, port, entryConn)
 	}
 }
 
