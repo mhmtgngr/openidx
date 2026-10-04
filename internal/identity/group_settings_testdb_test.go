@@ -388,3 +388,72 @@ func TestAnEndedMembershipNeitherBlocksNorCounts(t *testing.T) {
 			code, body, windowIn(open, other))
 	}
 }
+
+// TestARoleWhoseWindowEndedCanBeAssignedAgain: an assignment whose window has
+// ended (v223) stays until the expiry sweep deletes it. Assigning the role
+// again in that minute passed the "already has this role" check, which reads
+// only live rows, and then collided with the ended row on the primary key:
+// the administrator got the database's duplicate-key error. Now the assignment takes the row over, with
+// the new window and a fresh expiry notice; a live assignment is still held.
+func TestARoleWhoseWindowEndedCanBeAssignedAgain(t *testing.T) {
+	db, cleanup := setupMigratedDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+	gin.SetMode(gin.TestMode)
+
+	const org = "00000000-0000-0000-0000-000000000010"
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: org})
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	scalar := func(q string, args ...interface{}) string {
+		t.Helper()
+		var v string
+		if err := db.Pool.QueryRow(ctx, q, args...).Scan(&v); err != nil {
+			t.Fatalf("(%s): %v", q, err)
+		}
+		return v
+	}
+	user := scalar(`INSERT INTO users (org_id, username, email) VALUES ($1, $2::text, $2::text || '@example.test') RETURNING id::text`,
+		org, "reassigned-"+suffix)
+	admin := scalar(`INSERT INTO users (org_id, username, email) VALUES ($1, $2::text, $2::text || '@example.test') RETURNING id::text`,
+		org, "assigner-"+suffix)
+	role := scalar(`INSERT INTO roles (org_id, name, description) VALUES ($1, $2, '') RETURNING id::text`, org, "on-call-"+suffix)
+	scalar(`INSERT INTO user_roles (user_id, role_id, org_id, expires_at, expiry_notified)
+		VALUES ($1, $2, $3, NOW() - interval '5 minutes', true) RETURNING user_id::text`, user, role, org)
+
+	svc := NewService(db, nil, &config.Config{}, zap.NewNop())
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: org}))
+		c.Set("user_id", admin)
+		c.Set("roles", []string{"admin"})
+		c.Next()
+	})
+	r.POST("/users/:id/roles", svc.handleAssignUserRole)
+	assign := func(body string) (int, string) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/users/"+user+"/roles", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		return w.Code, w.Body.String()
+	}
+
+	ends := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
+	if code, body := assign(`{"role_id":"` + role + `","expires_at":"` + ends.Format(time.RFC3339) + `"}`); code != http.StatusOK {
+		t.Fatalf("assigning a role whose earlier assignment has ended: %d %s; want 200", code, body)
+	}
+	var got time.Time
+	var notified bool
+	if err := db.Pool.QueryRow(ctx, `SELECT expires_at, expiry_notified FROM user_roles WHERE user_id = $1 AND role_id = $2`, user, role).
+		Scan(&got, &notified); err != nil {
+		t.Fatalf("read the assignment: %v", err)
+	}
+	if !got.Equal(ends) || notified {
+		t.Errorf("the assignment ends %v, expiry notified %v; want %v and a fresh notice", got, notified, ends)
+	}
+	if code, body := assign(`{"role_id":"` + role + `"}`); code != http.StatusBadRequest || !strings.Contains(body, "already has this role") {
+		t.Errorf("assigning a live role again: %d %s; want 400 already has this role", code, body)
+	}
+}

@@ -3858,13 +3858,25 @@ func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, ass
 		return fmt.Errorf("user already has this role")
 	}
 
-	// Insert role assignment
-	_, err = s.db.Pool.Exec(ctx, `
+	// Insert role assignment. An assignment whose window has ended (v223)
+	// stays until the expiry sweep deletes it, and the check above does not
+	// count it; the insert takes that row over rather than colliding with it
+	// on the primary key. A row that is live by now -- a concurrent
+	// assignment -- is left alone, and reported as held.
+	tag, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at, expires_at, org_id)
 		VALUES ($1, $2, $3, NOW(), $4, $5)
+		ON CONFLICT (user_id, role_id) DO UPDATE
+		   SET assigned_by = EXCLUDED.assigned_by, assigned_at = NOW(), expires_at = EXCLUDED.expires_at,
+		       expiry_notified = false
+		 WHERE user_roles.org_id = $5
+		   AND user_roles.expires_at IS NOT NULL AND user_roles.expires_at <= NOW()
 	`, userID, roleID, assignedBy, expiresAt, org.ID)
 	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("user already has this role")
 	}
 
 	// A role grant is the single most consequential thing this service does:
