@@ -1595,5 +1595,12 @@ func allMigrations() []*Migration {
 			UpSQL:       groupMembershipWindowUp,
 			DownSQL:     groupMembershipWindowDown,
 		},
+		{
+			Version:     225,
+			Name:        "external_group_window",
+			Description: "An external user's group membership ends no later than the account (invariant I8), as the user's roles, application assignments and PAM and vault grants already do through v215's and v222's triggers. A membership had no window until v224, so those triggers could not hold it. external_grant_window() now caps a membership written for an external user at the account's end, a trigger on group_memberships runs it, and external_account_end_moved() cuts the memberships again when the account's end moves earlier. The identity expiry sweep removes a membership at its end and cuts the tokens that name the group. The backfill caps the memberships external users already hold. Down puts back v222's functions and drops the trigger; the windows stay.",
+			UpSQL:       externalGroupWindowUp,
+			DownSQL:     externalGroupWindowDown,
+		},
 	}
 }
