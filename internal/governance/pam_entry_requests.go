@@ -32,20 +32,20 @@ import (
 // eligibility, not privilege), and it keeps an entry nobody showed the
 // requester from being probed by id.
 
-// pamEntryRefusal is a pam_entry request the API turns down, with its status
+// requestRefusal is a request the API turns down, with its status
 // and stable code.
-type pamEntryRefusal struct {
+type requestRefusal struct {
 	status int
 	code   string
 	msg    string
 }
 
 var (
-	refusePamEntryNotFound = &pamEntryRefusal{http.StatusNotFound, "pam_entry_not_found",
+	refusePamEntryNotFound = &requestRefusal{http.StatusNotFound, "pam_entry_not_found",
 		"PAM entry not found"}
-	refusePamEntryHeld = &pamEntryRefusal{http.StatusConflict, "pam_entry_already_granted",
+	refusePamEntryHeld = &requestRefusal{http.StatusConflict, "pam_entry_already_granted",
 		"you can already connect to this PAM entry"}
-	refusePamEntryDuration = &pamEntryRefusal{http.StatusBadRequest, "pam_entry_duration_required",
+	refusePamEntryDuration = &requestRefusal{http.StatusBadRequest, "pam_entry_duration_required",
 		"a PAM entry request needs a duration: the connect grant it writes ends with it"}
 )
 
@@ -64,7 +64,7 @@ func callerRoles(c *gin.Context) []string {
 // name, which goes on the request in place of whatever the requester typed:
 // an approver reads what the requester will reach. An entry that does not
 // exist and one the requester cannot see answer the same 404.
-func (s *Service) checkPamEntryRequest(ctx context.Context, orgID, userID string, roles []string, entryID, duration string) (string, *pamEntryRefusal, error) {
+func (s *Service) checkPamEntryRequest(ctx context.Context, orgID, userID string, roles []string, entryID, duration string) (string, *requestRefusal, error) {
 	if _, err := uuid.Parse(entryID); err != nil {
 		return "", refusePamEntryNotFound, nil
 	}

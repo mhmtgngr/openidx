@@ -47,6 +47,8 @@ func TestAVendorsClosedListNamesWhatIsOpen(t *testing.T) {
 	entry := scalar(`INSERT INTO pam_entries (org_id, name, entry_type, hostname, port)
 		VALUES ($1, $2, 'ssh', 'target.example.test', 22) RETURNING id::text`, org, "vt-db-"+suffix)
 	app := scalar(`INSERT INTO applications (org_id, name, client_id, type) VALUES ($1, $2, $2, 'web') RETURNING id::text`, org, "vt-app-"+suffix)
+	service := scalar(`INSERT INTO ziti_services (org_id, ziti_id, name, host, port) VALUES ($1, $2, $3, 'db.example.test', 5432) RETURNING id::text`,
+		org, "zsvc-vt-"+suffix, "vt-svc-"+suffix)
 
 	svc := NewService(db, nil, &config.Config{}, zap.NewNop())
 	r := gin.New()
@@ -95,7 +97,7 @@ func TestAVendorsClosedListNamesWhatIsOpen(t *testing.T) {
 	if code, body := open("application", app); code != http.StatusCreated {
 		t.Errorf("open the application: %d %v", code, body)
 	}
-	if code, body := open("network_service", "00000000-0000-0000-0000-0000000000ab"); code != http.StatusCreated {
+	if code, body := open("network_service", service); code != http.StatusCreated {
 		t.Errorf("open a network service: %d %v", code, body)
 	}
 	for _, c := range []struct {
@@ -105,6 +107,7 @@ func TestAVendorsClosedListNamesWhatIsOpen(t *testing.T) {
 		{"a type the list does not cover", "role", entry, http.StatusBadRequest},
 		{"an id that is not one", "pam_entry", "db-01", http.StatusBadRequest},
 		{"a PAM entry that does not exist", "pam_entry", "00000000-0000-0000-0000-0000000000cd", http.StatusNotFound},
+		{"a network service that is not one of the organization's", "network_service", "00000000-0000-0000-0000-0000000000ab", http.StatusNotFound},
 		{"the same entry twice", "pam_entry", entry, http.StatusConflict},
 	} {
 		if code, body := open(c.targetType, c.targetID); code != c.status {
@@ -118,7 +121,7 @@ func TestAVendorsClosedListNamesWhatIsOpen(t *testing.T) {
 		m, _ := x.(map[string]interface{})
 		names = append(names, fmt.Sprintf("%v:%v", m["target_type"], m["target_name"]))
 	}
-	if got, want := strings.Join(names, " "), "pam_entry:vt-db-"+suffix+" application:vt-app-"+suffix+" network_service:"; got != want {
+	if got, want := strings.Join(names, " "), "pam_entry:vt-db-"+suffix+" application:vt-app-"+suffix+" network_service:vt-svc-"+suffix; got != want {
 		t.Errorf("the vendor's targets read %q, want %q", got, want)
 	}
 
