@@ -178,7 +178,8 @@ func (s *Service) applyRuleAction(ctx context.Context, orgID, userID string, a R
 		res, err := s.db.Pool.Exec(ctx, `
 			INSERT INTO group_memberships (user_id, group_id, org_id)
 			SELECT $1, id, $3 FROM groups WHERE (id::text = $2 OR name = $2) AND org_id = $3
-			ON CONFLICT DO NOTHING`, userID, target, orgID)
+			ON CONFLICT (user_id, group_id) DO UPDATE SET joined_at = EXCLUDED.joined_at, expires_at = NULL
+			 WHERE group_memberships.expires_at IS NOT NULL AND group_memberships.expires_at <= NOW()`, userID, target, orgID)
 		s.reportRuleAction(ctx, ruleName, a, userID, res.RowsAffected(), err)
 		if err == nil && res.RowsAffected() > 0 {
 			// A group or a role the user did not hold: the receivers are told.
@@ -188,7 +189,8 @@ func (s *Service) applyRuleAction(ctx context.Context, orgID, userID string, a R
 		res, err := s.db.Pool.Exec(ctx, `
 			INSERT INTO user_roles (user_id, role_id, org_id)
 			SELECT $1, id, $3 FROM roles WHERE (id::text = $2 OR name = $2) AND org_id = $3
-			ON CONFLICT DO NOTHING`, userID, target, orgID)
+			ON CONFLICT (user_id, role_id) DO UPDATE SET assigned_at = EXCLUDED.assigned_at, expires_at = NULL
+			 WHERE user_roles.expires_at IS NOT NULL AND user_roles.expires_at <= NOW()`, userID, target, orgID)
 		s.reportRuleAction(ctx, ruleName, a, userID, res.RowsAffected(), err)
 		if err == nil && res.RowsAffected() > 0 {
 			// A group or a role the user did not hold: the receivers are told.

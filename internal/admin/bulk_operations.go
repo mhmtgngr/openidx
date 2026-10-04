@@ -205,7 +205,8 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 			} else {
 				tag, err := s.db.Pool.Exec(ctx,
 					`INSERT INTO user_roles (user_id, role_id, assigned_at, org_id) VALUES ($1, $2, NOW(), $3)
-					 ON CONFLICT (user_id, role_id) DO NOTHING`, uid, roleID, orgID)
+					 ON CONFLICT (user_id, role_id) DO UPDATE SET assigned_at = EXCLUDED.assigned_at, expires_at = NULL
+					 WHERE user_roles.expires_at IS NOT NULL AND user_roles.expires_at <= NOW()`, uid, roleID, orgID)
 				if err != nil {
 					errMsg = err.Error()
 				} else if tag.RowsAffected() > 0 {
@@ -244,7 +245,8 @@ func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []str
 			} else {
 				tag, err := s.db.Pool.Exec(ctx,
 					`INSERT INTO group_memberships (user_id, group_id, joined_at, org_id) VALUES ($1, $2, NOW(), $3)
-					 ON CONFLICT DO NOTHING`, uid, groupID, orgID)
+					 ON CONFLICT (user_id, group_id) DO UPDATE SET joined_at = EXCLUDED.joined_at, expires_at = NULL
+					 WHERE group_memberships.expires_at IS NOT NULL AND group_memberships.expires_at <= NOW()`, uid, groupID, orgID)
 				if err != nil {
 					errMsg = err.Error()
 				} else if tag.RowsAffected() > 0 {

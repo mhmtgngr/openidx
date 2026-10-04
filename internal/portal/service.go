@@ -238,7 +238,8 @@ func (s *Service) GetAvailableGroups(ctx context.Context, userID string) ([]map[
 
 	query := `
 		SELECT g.id, g.name, COALESCE(g.description, '') AS description,
-		       EXISTS(SELECT 1 FROM group_memberships gm WHERE gm.group_id = g.id AND gm.user_id = $1 AND gm.org_id = $2) AS is_member,
+		       EXISTS(SELECT 1 FROM group_memberships gm WHERE gm.group_id = g.id AND gm.user_id = $1 AND gm.org_id = $2
+		                AND (gm.expires_at IS NULL OR gm.expires_at > NOW())) AS is_member,
 		       EXISTS(SELECT 1 FROM group_join_requests gjr WHERE gjr.group_id = g.id AND gjr.user_id = $1 AND gjr.org_id = $2 AND gjr.status = 'pending') AS has_pending_request
 		FROM groups g
 		WHERE g.allow_self_join = true AND g.org_id = $2
@@ -305,7 +306,8 @@ func (s *Service) RequestGroupJoin(ctx context.Context, userID, groupID, justifi
 		// Add the user directly to the group
 		tag, err := s.db.Pool.Exec(ctx,
 			`INSERT INTO group_memberships (group_id, user_id, joined_at, org_id) VALUES ($1, $2, $3, $4)
-			 ON CONFLICT DO NOTHING`,
+			 ON CONFLICT (user_id, group_id) DO UPDATE SET joined_at = EXCLUDED.joined_at, expires_at = NULL
+			 WHERE group_memberships.expires_at IS NOT NULL AND group_memberships.expires_at <= NOW()`,
 			groupID, userID, time.Now().UTC(), org.ID,
 		)
 		if err != nil {
@@ -567,7 +569,8 @@ func (s *Service) ReviewGroupRequest(ctx context.Context, requestID, reviewerID,
 
 		tag, err := s.db.Pool.Exec(ctx,
 			`INSERT INTO group_memberships (group_id, user_id, joined_at, org_id) VALUES ($1, $2, $3, $4)
-			 ON CONFLICT DO NOTHING`,
+			 ON CONFLICT (user_id, group_id) DO UPDATE SET joined_at = EXCLUDED.joined_at, expires_at = NULL
+			 WHERE group_memberships.expires_at IS NOT NULL AND group_memberships.expires_at <= NOW()`,
 			groupID, userID, now, org.ID,
 		)
 		if err != nil {
