@@ -286,3 +286,105 @@ func TestAGroupIsCreatedWithItsSettings(t *testing.T) {
 		t.Errorf("the refused create left %d groups (%v)", n, err)
 	}
 }
+
+// TestAnEndedMembershipNeitherBlocksNorCounts: a membership whose window has
+// ended (v224) stays until the expiry sweep deletes it. Adding the user again
+// in that minute answered "already a member", and the ended row counted
+// against the group's member cap. Now the add takes the row over as a
+// standing membership, and the cap counts live members only.
+func TestAnEndedMembershipNeitherBlocksNorCounts(t *testing.T) {
+	db, cleanup := setupMigratedDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+	gin.SetMode(gin.TestMode)
+
+	const org = "00000000-0000-0000-0000-000000000010"
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: org})
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	scalar := func(q string, args ...interface{}) string {
+		t.Helper()
+		var v string
+		if err := db.Pool.QueryRow(ctx, q, args...).Scan(&v); err != nil {
+			t.Fatalf("(%s): %v", q, err)
+		}
+		return v
+	}
+	user := func(name string) string {
+		return scalar(`INSERT INTO users (org_id, username, email) VALUES ($1, $2::text, $2::text || '@example.test') RETURNING id::text`,
+			org, name+"-"+suffix)
+	}
+	group := scalar(`INSERT INTO groups (org_id, name, max_members) VALUES ($1, $2, 1) RETURNING id::text`, org, "capped-one-"+suffix)
+	former, returning, other := user("former"), user("returning"), user("other")
+	scalar(`INSERT INTO group_memberships (user_id, group_id, org_id, expires_at)
+		VALUES ($1, $2, $3, NOW() - interval '5 minutes') RETURNING user_id::text`, former, group, org)
+
+	svc := NewService(db, nil, &config.Config{}, zap.NewNop())
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: org}))
+		c.Set("roles", []string{"admin"})
+		c.Next()
+	})
+	r.POST("/groups/:id/members", svc.handleAddGroupMember)
+	addTo := func(groupID, userID string) (int, string) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/groups/"+groupID+"/members", strings.NewReader(`{"user_id":"`+userID+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		return w.Code, w.Body.String()
+	}
+	add := func(userID string) (int, string) { return addTo(group, userID) }
+	windowIn := func(groupID, userID string) string {
+		t.Helper()
+		var ends *time.Time
+		if err := db.Pool.QueryRow(ctx, `SELECT expires_at FROM group_memberships WHERE user_id = $1 AND group_id = $2`, userID, groupID).
+			Scan(&ends); err != nil {
+			return "none"
+		}
+		if ends == nil {
+			return "standing"
+		}
+		if ends.After(time.Now()) {
+			return "live"
+		}
+		return "ended"
+	}
+	window := func(userID string) string { return windowIn(group, userID) }
+
+	// The former member's ended row does not fill the one place.
+	if code, body := add(returning); code != http.StatusOK {
+		t.Fatalf("adding a member to a group whose only row has ended: %d %s", code, body)
+	}
+	// The returning member's membership ends; adding them again takes it over.
+	if _, err := db.Pool.Exec(ctx, `UPDATE group_memberships SET expires_at = NOW() - interval '1 minute' WHERE user_id = $1 AND group_id = $2`,
+		returning, group); err != nil {
+		t.Fatalf("end the membership: %v", err)
+	}
+	if code, body := add(returning); code != http.StatusOK || window(returning) != "standing" {
+		t.Errorf("adding back a member whose membership ended: %d %s, membership %s; want 200 and standing", code, body, window(returning))
+	}
+	// The place is now taken, and a live member is a member.
+	if code, body := add(other); code != http.StatusBadRequest || !strings.Contains(body, "maximum member limit") {
+		t.Errorf("adding a second member to a group of one: %d %s; want 400 maximum member limit", code, body)
+	}
+	if code, body := add(returning); code != http.StatusBadRequest || !strings.Contains(body, "already a member") {
+		t.Errorf("adding a live member again: %d %s; want 400 already a member", code, body)
+	}
+	// The former member's ended row is untouched: the add took over only its own.
+	if got := window(former); got != "ended" {
+		t.Errorf("the former member's membership is %s; want it left ended for the sweep", got)
+	}
+
+	// A live membership with a window, in a group with room: adding the user
+	// again is still "already a member", and the window stays.
+	open := scalar(`INSERT INTO groups (org_id, name) VALUES ($1, $2) RETURNING id::text`, org, "open-"+suffix)
+	scalar(`INSERT INTO group_memberships (user_id, group_id, org_id, expires_at)
+		VALUES ($1, $2, $3, NOW() + interval '1 hour') RETURNING user_id::text`, other, open, org)
+	if code, body := addTo(open, other); code != http.StatusBadRequest || !strings.Contains(body, "already a member") || windowIn(open, other) != "live" {
+		t.Errorf("adding a member whose membership is live: %d %s, membership %s; want 400 already a member, window kept",
+			code, body, windowIn(open, other))
+	}
+}
