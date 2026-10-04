@@ -188,7 +188,7 @@ gate without seeing which gates are open.
 | `PAM_SESSION_RISK_GATE` | string | `off` | `off`, `observe` or `enforce` for the PAM session risk score. |
 | `PAM_SESSION_RISK_THRESHOLD` | int | `70` | Score at or above which the gate bites. |
 | `PAM_SSH_REQUIRE_HOST_KEY` | bool | `false` | Refuse an SSH session to a host whose key is not pinned. |
-| `PAM_REQUIRE_ZTNA` | string | `off` | `off`, `observe` or `enforce` for whether a privileged session may reach its target off the overlay. In `enforce`, a launch is refused unless the entry's `reach_mode` is `ziti`, and a website entry — which returns a raw URL and brokers nothing — is refused outright. `observe` refuses nothing and audits every launch that `enforce` would refuse, so the affected entries can be counted first. **`enforce` also refuses to start** unless `GUACAMOLE_ZITI_PUBLIC_URL` is set and differs from `GUACAMOLE_PUBLIC_URL`: the broker&rarr;target leg is this service's decision, but the user&rarr;broker leg is closed by the overlay broker being published at an overlay address and nowhere else, and that is the configuration it needs. The mode is reported to the launcher as `require_ztna` on `GET /pam/broker/status`, so the console disables Connect on an entry `enforce` would refuse instead of firing a request that returns `403`; what is reported is what the service will do, so an unrecognised value reads `off` there too. |
+| `PAM_REQUIRE_ZTNA` | string | `off` | `off`, `observe` or `enforce` for whether a privileged session may reach its target off the overlay. In `enforce`, a launch is refused unless the entry's `reach_mode` is `ziti`, and a website entry — which returns a raw URL and brokers nothing — is refused outright. `observe` refuses nothing and audits every launch that `enforce` would refuse, so the affected entries can be counted first. **`enforce` also refuses to start** unless `GUACAMOLE_ZITI_PUBLIC_URL` is set and differs from `GUACAMOLE_PUBLIC_URL`: the broker&rarr;target leg is this service's decision, but the user&rarr;broker leg is closed by the overlay broker being published at an overlay address and nowhere else, and that is the configuration it needs. The mode is reported to the launcher as `require_ztna` on `GET /pam/broker/status`, so the console disables Connect on an entry `enforce` would refuse instead of firing a request that returns `403`; what is reported is what the service will do, so an unrecognised value reads `off` there too. The gate holds at every launch path: an entry's Connect, a Windows app launch and the browser SSH terminal. An external (vendor) user's launch is held to `enforce` whatever this says, and `require_ztna` reads `enforce` for them. |
 | `POSTURE_DEVICE_TRUST_GATE` | string | `off` | `off`, `observe` or `enforce` for the device-trust posture check. |
 | `STEPUP_GATE` | string | `off` | `off`, `observe` or `enforce` for MFA freshness. In `enforce`, a PAM launch or credential reveal, and any write made with admin authority, is refused with `step_up_required` when the session's last verified second factor is older than the window. Reads are never gated; API keys, service accounts and client-credentials tokens are never gated. Read by admin-api, access-service and oauth-service (OAuth client, SAML service-provider and SSF stream management); set it on all three. |
 | `STEPUP_MAX_AGE` | duration | `15m` | The freshness window `STEPUP_GATE` applies. The console's Security &rarr; re-authentication interval (`security.reauth_interval`, in seconds) overrides it when set above zero. |
@@ -261,6 +261,13 @@ governance-service and provisioning-service, and make sure `OPA_URL` reaches
 the OPA server. From then on, OPA refuses any request the policy does not
 grant. Read the policy's role table first: a caller whose roles are not in it
 is refused.
+
+Access requests are the exception. Any signed-in user can file a request, read
+and cancel their own, and approve or deny one they are an approver of, such as
+a manager or the sponsor of an external user. The policy allows these routes
+(`access_request_routes`, matched on `input.resource.route`, the route the
+service matched). governance-service then checks each caller against the
+request itself.
 
 Without OPA, governance-service still keeps the writes that run the
 governance program to an administrator (`admin` or `super_admin`): approval,

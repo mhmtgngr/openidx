@@ -17,6 +17,15 @@ defaults:
   run:
     working-directory: web/admin-console
 
+# A newer push to a pull request supersedes the runs of the one before it.
+# Those runs' results are not what the PR is reviewed on, and with this
+# repository's ~20 concurrent jobs they hold runners the new head needs.
+# Every other event (a push to main, dev or a tag, a schedule, a manual run)
+# gets a group of its own (run_id), so it is never cancelled or held back.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
