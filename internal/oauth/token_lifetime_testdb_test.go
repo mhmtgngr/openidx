@@ -100,6 +100,53 @@ func TestATokenCarryingATimeBoundRoleEndsWithIt(t *testing.T) {
 		t.Errorf("the token carries %v; want the three live roles", roles)
 	}
 
+	// A time-bound group membership (migration v224) ends the token the same
+	// way, and a lapsed one is not in it.
+	group := func(name string) string {
+		t.Helper()
+		var id string
+		if err := f.db.Pool.QueryRow(ctx, `INSERT INTO groups (org_id, name) VALUES ($1::uuid, $2) RETURNING id::text`,
+			sessionEndOrg, name+"-"+f.suffix).Scan(&id); err != nil {
+			t.Fatalf("seed group %s: %v", name, err)
+		}
+		return id
+	}
+	join := func(userID, groupID, until string) {
+		t.Helper()
+		if until == "" {
+			exec(`INSERT INTO group_memberships (user_id, group_id, org_id) VALUES ($1::uuid, $2::uuid, $3::uuid)`, userID, groupID, sessionEndOrg)
+			return
+		}
+		exec(`INSERT INTO group_memberships (user_id, group_id, org_id, expires_at) VALUES ($1::uuid, $2::uuid, $3::uuid, NOW() + $4::interval)`,
+			userID, groupID, sessionEndOrg, until)
+	}
+	standingGroup, shortGroup, lapsedGroup := group("tl-standing"), group("tl-short"), group("tl-lapsed")
+	member := f.seedUser(t, "tl-member")
+	assign(member, standingRole, "")
+	join(member, standingGroup, "")
+	join(member, shortGroup, "10 minutes")
+	join(member, lapsedGroup, "-1 minute")
+	_, tok := f.newSession(t, member)
+	code, _, body := f.refresh(t, tok)
+	access, _ := body["access_token"].(string)
+	if code != 200 || access == "" {
+		t.Fatalf("refresh for the group member: %d %v", code, body)
+	}
+	memberClaims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(access, memberClaims); err != nil {
+		t.Fatalf("parse the group member's access token: %v", err)
+	}
+	groupIn, _ := body["expires_in"].(float64)
+	groupExp, _ := memberClaims["exp"].(float64)
+	groupIat, _ := memberClaims["iat"].(float64)
+	if groupIn > 600 || groupIn < 590 || int64(groupExp-groupIat) != int64(groupIn) {
+		t.Errorf("a group until ten minutes from now: expires_in %v, token lifetime %d; want both about 600",
+			groupIn, int64(groupExp-groupIat))
+	}
+	if groups, _ := memberClaims["groups"].([]interface{}); len(groups) != 2 {
+		t.Errorf("the token carries the groups %v; want the standing and the short one, not the lapsed one", groups)
+	}
+
 	// The other two grants that mint a user's token take the same lifetime,
 	// for the ID token too.
 	lifeOf := func(raw string) int64 {

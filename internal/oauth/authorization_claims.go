@@ -8,9 +8,9 @@ import (
 )
 
 // authorizationClaims reads the authorization facts a token issued now carries
-// for the user: the names of their roles (a time-bound assignment only while
-// its window lasts), the names of their groups, and the permissions their
-// roles give.
+// for the user: the names of their roles and of their groups (a time-bound
+// assignment or membership only while its window lasts), and the permissions
+// their roles give.
 //
 // It is the one place both answers come from: the access token and the ID
 // token are built from it (GenerateJWT, GenerateIDToken), and so is the
@@ -57,6 +57,7 @@ func (s *Service) authorizationClaims(ctx context.Context, userID, orgID string)
 		SELECT g.name FROM groups g
 		JOIN group_memberships gm ON g.id = gm.group_id
 		WHERE gm.user_id = $1 AND gm.org_id = $2
+		AND (gm.expires_at IS NULL OR gm.expires_at > NOW())
 	`)
 	read(&permissions, `
 		SELECT DISTINCT p.resource || ':' || p.action
@@ -71,8 +72,9 @@ func (s *Service) authorizationClaims(ctx context.Context, userID, orgID string)
 
 // accessTokenLifetime is how long a token issued now for the user lives, in
 // seconds: the client's lifetime, cut to the end of the earliest window among
-// the time-bound roles the token carries. Section 6.5 of the third-party
-// access framework: a token that carries an elevation does not outlive it.
+// the time-bound roles and groups the token carries. Section 6.5 of the
+// third-party access framework: a token that carries an elevation does not
+// outlive it.
 //
 // The role leaves a token issued after its window (authorizationClaims reads
 // only live assignments), and the role-expiry sweep cuts the tokens that still
@@ -96,11 +98,20 @@ func (s *Service) accessTokenLifetime(ctx context.Context, userID string, config
 	}
 	var left *float64
 	if err := s.db.Pool.QueryRow(ctx, `
-		SELECT EXTRACT(EPOCH FROM MIN(ur.expires_at) - NOW())::float8
-		FROM roles r
-		JOIN user_roles ur ON r.id = ur.role_id
-		WHERE ur.user_id = $1 AND ur.org_id = $2
-		AND ur.expires_at IS NOT NULL AND ur.expires_at > NOW()
+		SELECT EXTRACT(EPOCH FROM MIN(w.ends) - NOW())::float8
+		FROM (
+			SELECT ur.expires_at AS ends
+			FROM roles r
+			JOIN user_roles ur ON r.id = ur.role_id
+			WHERE ur.user_id = $1 AND ur.org_id = $2
+			AND ur.expires_at IS NOT NULL AND ur.expires_at > NOW()
+			UNION ALL
+			SELECT gm.expires_at
+			FROM groups g
+			JOIN group_memberships gm ON g.id = gm.group_id
+			WHERE gm.user_id = $1 AND gm.org_id = $2
+			AND gm.expires_at IS NOT NULL AND gm.expires_at > NOW()
+		) w
 	`, userID, org.ID).Scan(&left); err != nil || left == nil {
 		return configured
 	}

@@ -1245,19 +1245,26 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 
 		// Clear existing members. RETURNING, because the users this drops for
 		// good have to have their tokens cut and a row count cannot be revoked.
+		//
+		// And each membership's window (migration v224), because a member the
+		// push keeps keeps it: a membership an access request gave would
+		// otherwise come back standing, and outlive its request.
 		rows, err := tx.Query(ctx,
-			"DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2 RETURNING user_id::text", groupID, org.ID)
+			"DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2 RETURNING user_id::text, expires_at", groupID, org.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to clear group members: %w", err)
 		}
 		var removed []string
+		windows := map[string]*time.Time{}
 		for rows.Next() {
 			var uid string
-			if serr := rows.Scan(&uid); serr != nil {
+			var window *time.Time
+			if serr := rows.Scan(&uid, &window); serr != nil {
 				rows.Close()
 				return nil, fmt.Errorf("failed to read the members being replaced: %w", serr)
 			}
 			removed = append(removed, uid)
+			windows[uid] = window
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -1268,10 +1275,10 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 		kept := make([]string, 0, len(group.Members))
 		for _, member := range group.Members {
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO group_memberships (user_id, group_id, joined_at, org_id)
-				VALUES ($1, $2, $3, $4)
+				INSERT INTO group_memberships (user_id, group_id, joined_at, org_id, expires_at)
+				VALUES ($1, $2, $3, $4, $5)
 				ON CONFLICT DO NOTHING
-			`, member.Value, groupID, now, org.ID); err != nil {
+			`, member.Value, groupID, now, org.ID, windows[strings.ToLower(member.Value)]); err != nil {
 				return nil, fmt.Errorf("failed to add group member: %w", err)
 			}
 			kept = append(kept, member.Value)

@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Downstream applications are told when a role or a group from an access request begins or ends, and when a vendor user's account ends.** The SSF transmitter now sends `token-claims-change` when a role or group request is fulfilled and when its window ends. The event carries the user's `roles`, `groups` and `permissions` as a token issued at that moment carries them, read by oauth-service when it signs. A suspended external account is told as `session-revoked`, because a new sponsor may bring it back. One that expires or is disabled, its vendor closed included, is told as `account-disabled`. `/.well-known/ssf-configuration` now advertises `token-claims-change`. A stream that already asked for it starts getting it, and its `events_delivered` says so.
 
 ### Fixed
+- **A group from an access request ends when its window does, and takes nothing else with it.** Fulfilment writes the request's window on the membership (`group_memberships.expires_at`, migration v224), as it does for a role (v223). The effects:
+  - a token issued after the window's end no longer carries the group, and a token that carries it ends no later than the window;
+  - the identity expiry sweep removes the membership within a minute of its end, cuts the tokens that still name the group, and tells the SSF receivers;
+  - SAML assertions leave out a lapsed group.
+
+  Before, the request's end deleted the (user, group) row whatever had made it. A membership the user held before the request went with it, and the first of two requests cut the second one short. Now the request's end removes only the membership its window made. A SCIM push of the group keeps each kept member's window, so a requested membership does not come back standing. The backfill gives the memberships live requests made the latest of their windows.
 - **A lifecycle rule that removes a role or a group cuts the tokens that carry it, and every identity role or group change tells the SSF receivers.** A lifecycle rule's `remove_role` and `remove_group` deleted the assignment and nothing else. A token issued before the rule ran kept naming the role or group until it expired. Like the console's removals, they now cut the user's outstanding tokens. These identity paths now send `token-claims-change`, once, on the change, with the path as its reason:
   - the console's role grant, role-set edit, role removal and role deletion;
   - a group member added or removed, and a group deleted;

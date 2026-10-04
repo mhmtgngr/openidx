@@ -135,12 +135,12 @@ func Revoke(ctx context.Context, q Execer, resourceType, userID, resourceID, org
 // grant a request wrote carries the request's id (migration v216), so only that
 // grant ends, and a standing grant the user holds on the same entry is left
 // alone: a request that expires must not take an administrator's grant with
-// it. An application assignment and a role assignment carry their window
-// instead (migrations v222 and v223): the request removes the assignment when
-// its window is the assignment's, and leaves a standing assignment and one a
-// later request carried past this request's end. For every other type it is
-// Revoke, because the assignment row is keyed by the (user, resource) pair and
-// nothing else.
+// it. An application assignment, a role assignment and a group membership
+// carry their window instead (migrations v222, v223 and v224): the request
+// removes the row when its window is the row's, and leaves a standing row and
+// one a later request carried past this request's end. For every other type it
+// is Revoke, because the assignment row is keyed by the (user, resource) pair
+// and nothing else.
 func RevokeRequest(ctx context.Context, q Execer, requestID, resourceType, userID, resourceID, orgID string) error {
 	if resourceType == "role" {
 		filter := ""
@@ -155,6 +155,22 @@ func RevokeRequest(ctx context.Context, q Execer, requestID, resourceType, userI
 			  WHERE r.id = $1 AND ur.user_id = $2 AND ur.role_id = $3`+filter+`
 			    AND ur.expires_at IS NOT NULL AND ur.expires_at <= r.expires_at`, args...); err != nil {
 			return fmt.Errorf("revoke role assignment of request %s: %w", requestID, err)
+		}
+		return nil
+	}
+	if resourceType == "group" {
+		filter := ""
+		args := []any{requestID, userID, resourceID}
+		if orgID != "" {
+			filter = " AND gm.org_id = $4"
+			args = append(args, orgID)
+		}
+		if _, err := q.Exec(ctx,
+			`DELETE FROM group_memberships gm
+			  USING access_requests r
+			  WHERE r.id = $1 AND gm.user_id = $2 AND gm.group_id = $3`+filter+`
+			    AND gm.expires_at IS NOT NULL AND gm.expires_at <= r.expires_at`, args...); err != nil {
+			return fmt.Errorf("revoke group membership of request %s: %w", requestID, err)
 		}
 		return nil
 	}

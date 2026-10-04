@@ -53,7 +53,7 @@ func jitExpirySchema(t *testing.T, db *database.PostgresDB, ctx context.Context)
 			resource_id UUID, resource_name VARCHAR(255), org_id UUID,
 			status VARCHAR(30), expires_at TIMESTAMPTZ, updated_at TIMESTAMPTZ DEFAULT now());
 		CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ);
-		CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID);
+		CREATE TABLE group_memberships (user_id UUID, group_id UUID, org_id UUID, expires_at TIMESTAMPTZ);
 		CREATE TABLE user_application_assignments (user_id UUID, application_id UUID, org_id UUID, expires_at TIMESTAMPTZ);
 		CREATE TABLE network_revocation_queue (org_id UUID, user_id UUID, reason TEXT);
 		CREATE TABLE audit_events (
@@ -162,7 +162,10 @@ func TestAnExpiredJITGroupAlsoCutsTheToken(t *testing.T) {
 	general, revoke := jitRedis(t)
 
 	seedExpired(t, db, ctx, "a0000000-0000-0000-0000-000000000001", "group", jitGroup)
-	_, err := db.Pool.Exec(ctx, `INSERT INTO group_memberships (user_id, group_id, org_id) VALUES ($1,$2,$3)`, jitUser, jitGroup, jitOrg)
+	// The membership carries its request's window, as fulfilment writes it
+	// (migration v224).
+	_, err := db.Pool.Exec(ctx, `INSERT INTO group_memberships (user_id, group_id, org_id, expires_at)
+		SELECT $1, $2, $3, expires_at FROM access_requests WHERE id = 'a0000000-0000-0000-0000-000000000001'`, jitUser, jitGroup, jitOrg)
 	require.NoError(t, err)
 
 	jitSvc(t, db, general, revoke).revokeExpiredJITAccess(ctx)

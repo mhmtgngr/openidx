@@ -25,7 +25,14 @@ func (s *Service) StartRoleExpirationChecker(ctx context.Context) {
 	if s.redis != nil {
 		rdb = s.redis.Client
 	}
-	leader.RunPeriodic(ctx, rdb, s.logger, "identity:role-expiry", 1*time.Minute, s.cleanupExpiredRoles)
+	leader.RunPeriodic(ctx, rdb, s.logger, "identity:role-expiry", 1*time.Minute, s.cleanupExpiredAccess)
+}
+
+// cleanupExpiredAccess is one tick of the expiry sweep: the time-bound role
+// assignments and group memberships whose window has ended.
+func (s *Service) cleanupExpiredAccess(ctx context.Context) {
+	s.cleanupExpiredRoles(ctx)
+	s.cleanupExpiredGroupMemberships(ctx)
 }
 
 // cleanupExpiredRoles removes role assignments whose expires_at has passed AND
@@ -115,6 +122,71 @@ func (s *Service) cleanupExpiredRoles(ctx context.Context) {
 	}
 
 	s.logger.Info("Cleaned up expired role assignments",
+		zap.Int("count", len(expired)),
+		zap.Int("users_revoked", revoked))
+}
+
+// cleanupExpiredGroupMemberships does for a time-bound group membership what
+// cleanupExpiredRoles does for a role: it removes the memberships whose window
+// has ended (migration v224), cuts the tokens that still carry the group, and
+// tells each user's organization's SSF receivers. A membership an access
+// request gave carries the request's window, and governance removes it at the
+// request's end; this sweep ends it whether or not governance-service runs,
+// as the role-expiry sweep does for a requested role.
+func (s *Service) cleanupExpiredGroupMemberships(ctx context.Context) {
+	rows, err := s.db.Pool.Query(ctx,
+		//orgscope:ignore background ticker sweep of expired group memberships across all orgs; no request/tenant context
+		`DELETE FROM group_memberships
+		WHERE expires_at IS NOT NULL AND expires_at < NOW()
+		RETURNING user_id::text, COALESCE(org_id::text, '')`)
+	if err != nil {
+		s.logger.Error("Failed to cleanup expired group memberships", zap.Error(err))
+		return
+	}
+
+	var expired []string
+	orgOf := map[string]string{}
+	for rows.Next() {
+		var userID, orgID string
+		if scanErr := rows.Scan(&userID, &orgID); scanErr != nil {
+			s.logger.Error("expired group membership removed but its user could not be read; that token will not be cut",
+				zap.Error(scanErr))
+			continue
+		}
+		expired = append(expired, userID)
+		orgOf[userID] = orgID
+	}
+	rows.Close()
+	if rerr := rows.Err(); rerr != nil {
+		s.logger.Error("the expired-membership list is incomplete; some groups were removed without their tokens being cut",
+			zap.Error(rerr), zap.Int("revocable", len(expired)))
+	}
+	if len(expired) == 0 {
+		return
+	}
+
+	seen := make(map[string]struct{}, len(expired))
+	revoked := 0
+	for _, userID := range expired {
+		if _, dup := seen[userID]; dup {
+			continue
+		}
+		seen[userID] = struct{}{}
+		if orgID := orgOf[userID]; orgID != "" {
+			s.claimsChangedIn(ctx, orgID, "identity.group_expiry", userID)
+		}
+		// "groups" is a claim on the access token, built from
+		// group_memberships at issuance: a token issued before the window
+		// ended still names the group.
+		if err := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); err != nil {
+			s.logger.Error("a time-bound group membership expired, but the tokens still carrying it were not revoked",
+				logsafe.String("user_id", userID), zap.Error(err))
+			continue
+		}
+		revoked++
+	}
+
+	s.logger.Info("Cleaned up expired group memberships",
 		zap.Int("count", len(expired)),
 		zap.Int("users_revoked", revoked))
 }
