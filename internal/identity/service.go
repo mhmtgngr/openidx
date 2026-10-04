@@ -4956,6 +4956,14 @@ func (s *Service) handleCreateGroup(c *gin.Context) {
 	}
 
 	if err := s.CreateGroup(auditCtx(c), &group); err != nil {
+		if errors.Is(err, ErrInvalidGroupMaxMembers) {
+			c.JSON(400, gin.H{"error": err.Error(), "code": "invalid_max_members"})
+			return
+		}
+		if errors.Is(err, ErrGroupAlreadyExists) {
+			c.JSON(409, gin.H{"error": err.Error(), "code": "group_exists"})
+			return
+		}
 		s.logger.Error("failed to create group", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -4981,6 +4989,14 @@ func (s *Service) handleUpdateGroup(c *gin.Context) {
 		}
 		if errors.Is(err, ErrInvalidGroupMaxMembers) {
 			c.JSON(400, gin.H{"error": err.Error(), "code": "invalid_max_members"})
+			return
+		}
+		if errors.Is(err, ErrGroupAlreadyExists) {
+			c.JSON(409, gin.H{"error": err.Error(), "code": "group_exists"})
+			return
+		}
+		if errors.Is(err, ErrGroupNotFound) {
+			c.JSON(404, gin.H{"error": "group not found"})
 			return
 		}
 		s.logger.Error("failed to update group", logsafe.String("group_id", groupID), zap.Error(err))
