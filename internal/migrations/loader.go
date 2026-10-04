@@ -1581,5 +1581,12 @@ func allMigrations() []*Migration {
 			UpSQL:       applicationAssignmentWindowUp,
 			DownSQL:     applicationAssignmentWindowDown,
 		},
+		{
+			Version:     223,
+			Name:        "role_assignment_window",
+			Description: "A role an access request gave carries the request's window. Fulfilment writes user_roles.expires_at, which the token builder and the role-expiry sweep already read, so the role leaves a newly issued token at its window's end instead of at the next five-minute governance sweep; and the request's end removes the row only when its window is the request's, so an administrator's standing assignment of the same role, and a later request's window, survive it. The backfill gives each row a live request made the latest window of the fulfilled requests for its user and role; without it those rows would read as standing and never end. Down is a no-op: the windows stay, and the earlier code removes the row at the request's end whatever they say.",
+			UpSQL:       roleAssignmentWindowUp,
+			DownSQL:     roleAssignmentWindowDown,
+		},
 	}
 }
