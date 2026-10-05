@@ -33,10 +33,11 @@ func (h *handler) statusProvider() ipc.Status {
 			zitiUp = true
 		}
 	}
-	var rsActive, rsControlled bool
+	var rsActive, rsControlled, revoked bool
 	h.mu.Lock()
 	if h.agent != nil {
 		rsActive, rsControlled = h.agent.RemoteSupportState()
+		revoked = h.agent.Revoked()
 	}
 	h.mu.Unlock()
 	return ipc.Status{
@@ -45,6 +46,7 @@ func (h *handler) statusProvider() ipc.Status {
 		DeviceID:                cfg.DeviceID,
 		ServerURL:               cfg.ServerURL,
 		ZitiEnrolled:            zitiUp,
+		Revoked:                 revoked,
 		RemoteSupportActive:     rsActive,
 		RemoteSupportControlled: rsControlled,
 	}

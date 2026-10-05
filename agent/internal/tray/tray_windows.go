@@ -142,17 +142,38 @@ func (a *app) updateStatus() {
 	}
 	devPart := "device: unknown"
 	if st, err := ipc.Query(); err == nil && st != nil {
-		if st.Enrolled {
+		switch {
+		case st.Revoked:
+			// The server refuses this device: nothing it asks for will be
+			// granted, so say so and offer no connections. The user's session
+			// is bound to the device and ends with it; the session refresh
+			// finds that out on its own.
+			devPart = "device: REVOKED by an administrator"
+			a.hideConnections()
+		case st.Enrolled:
 			devPart = "device: enrolled"
 			if st.ZitiEnrolled {
 				devPart += " · ziti"
 			}
-		} else {
+		default:
 			devPart = "device: not enrolled"
 		}
 		a.updateBanner(st.RemoteSupportActive, st.RemoteSupportControlled)
 	}
 	a.mStatus.SetTitle(signPart + " · " + devPart)
+}
+
+// hideConnections empties the My Connections menu, so a click can launch
+// nothing, without touching the sign-in state.
+func (a *app) hideConnections() {
+	a.mu.Lock()
+	for i := range a.slotID {
+		a.slotID[i] = ""
+	}
+	a.mu.Unlock()
+	for _, mi := range a.connSlot {
+		mi.Hide()
+	}
 }
 
 // updateBanner raises or clears the remote-support notice at the top of the
