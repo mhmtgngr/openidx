@@ -11,20 +11,29 @@ import (
 
 type Loader struct {
 	pluginDir string
+	policy    Policy
 	logger    *zap.Logger
 }
 
-func NewLoader(pluginDir string, logger *zap.Logger) *Loader {
-	return &Loader{pluginDir: pluginDir, logger: logger}
+// NewLoader returns a Loader for pluginDir. The policy is a required argument,
+// not an option with a default, because its zero value loads nothing: a caller
+// that forgets to pass a publisher gets no plugins rather than unsigned ones.
+func NewLoader(pluginDir string, policy Policy, logger *zap.Logger) *Loader {
+	return &Loader{pluginDir: pluginDir, policy: policy, logger: logger}
 }
 
 // Discover scans the plugin directory for valid plugins.
 //
 // Every path this returns has passed requireTrustedPath: the root, the plugin's
-// own directory and the executable. The callers of LoadPlugins are daemons — one
-// of them the Windows service, running as SYSTEM — and what comes back from here
-// is handed to exec.CommandContext, so "who else can write this" is the question
-// that has to be answered before the answer matters.
+// own directory, its manifest and the executable. The callers of LoadPlugins are
+// daemons — one of them the Windows service, running as SYSTEM — and what comes
+// back from here is handed to exec.CommandContext, so "who else can write this"
+// is the question that has to be answered before the answer matters.
+//
+// Each plugin has also passed the policy: signed by the trusted publisher
+// (signature.go) unless the policy allows unsigned plugins, and declaring no
+// reserved check type. Each PluginCheck carries the executable's digest as it
+// was verified here, and Run checks it again before every execution.
 func (l *Loader) Discover() ([]*PluginCheck, error) {
 	entries, err := os.ReadDir(l.pluginDir)
 	if err != nil {
@@ -52,7 +61,22 @@ func (l *Loader) Discover() ([]*PluginCheck, error) {
 				zap.String("dir", entry.Name()), zap.Error(err))
 			continue
 		}
-		manifest, err := LoadManifest(pluginPath)
+		// The manifest decides the check types and the timeout, so who could
+		// have written it is the same question as for the executable.
+		manifestPath := filepath.Join(pluginPath, manifestFileName)
+		if err := requireTrustedPath(manifestPath); err != nil {
+			l.logger.Warn("Skipping plugin: manifest is missing or not safe to obey",
+				zap.String("dir", entry.Name()), zap.Error(err))
+			continue
+		}
+		// Read once: these bytes are both parsed and hashed for the signature.
+		manifestBytes, err := os.ReadFile(manifestPath)
+		if err != nil {
+			l.logger.Warn("Skipping plugin: invalid manifest",
+				zap.String("dir", entry.Name()), zap.Error(fmt.Errorf("read manifest: %w", err)))
+			continue
+		}
+		manifest, err := parseManifest(manifestBytes)
 		if err != nil {
 			l.logger.Warn("Skipping plugin: invalid manifest",
 				zap.String("dir", entry.Name()), zap.Error(err))
@@ -64,6 +88,17 @@ func (l *Loader) Discover() ([]*PluginCheck, error) {
 			l.logger.Debug("Skipping plugin: unsupported platform",
 				zap.String("plugin", manifest.Name),
 				zap.String("platform", runtime.GOOS))
+			continue
+		}
+
+		// A plugin may not take a built-in check's name. The registry keeps the
+		// last registration under a name, and plugins are registered after the
+		// built-in checks, so a plugin declaring disk_encryption would replace
+		// the agent's own check with whatever the plugin reports. This applies
+		// to signed plugins too: a publisher's own checks get their own names.
+		if reserved := l.reservedCheckType(manifest.CheckTypes); reserved != "" {
+			l.logger.Warn("Skipping plugin: it declares a check type the agent provides itself",
+				zap.String("plugin", manifest.Name), zap.String("check_type", reserved))
 			continue
 		}
 
@@ -82,14 +117,33 @@ func (l *Loader) Discover() ([]*PluginCheck, error) {
 			continue
 		}
 
+		execSum, err := sha256File(execPath)
+		if err != nil {
+			l.logger.Warn("Skipping plugin: executable cannot be read",
+				zap.String("plugin", manifest.Name), zap.Error(err))
+			continue
+		}
+		content := &signedContent{
+			manifest:    manifest,
+			manifestSum: sha256Hex(manifestBytes),
+			execPath:    execPath,
+			execSum:     execSum,
+		}
+		if err := l.checkSignature(pluginPath, content); err != nil {
+			l.logger.Warn("Skipping plugin: it is not signed by the trusted publisher",
+				zap.String("plugin", manifest.Name), zap.Error(err))
+			continue
+		}
+
 		// Create a PluginCheck for each check type
 		for _, checkType := range manifest.CheckTypes {
-			plugins = append(plugins, NewPluginCheck(manifest, execPath, checkType))
+			plugins = append(plugins, NewPluginCheck(manifest, execPath, execSum, checkType))
 		}
 
 		l.logger.Info("Plugin discovered",
 			zap.String("plugin", manifest.Name),
-			zap.Int("check_types", len(manifest.CheckTypes)))
+			zap.Int("check_types", len(manifest.CheckTypes)),
+			zap.Bool("signature_checked", !l.policy.AllowUnsigned))
 	}
 
 	return plugins, nil

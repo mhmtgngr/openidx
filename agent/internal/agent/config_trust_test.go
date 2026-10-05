@@ -39,13 +39,15 @@ func TestConfigTrustedReadsTheModeBits(t *testing.T) {
 }
 
 // TestPluginsAreNotLoadedFromAnUntrustedConfig: the same plugin directory is
-// loaded from a 0600 agent.json and ignored from a 0666 one.
+// loaded from a 0600 agent.json and ignored from a 0666 one. Both configs set
+// allow_unsigned_plugins, which shows that the switch is not obeyed from an
+// untrusted file either.
 func TestPluginsAreNotLoadedFromAnUntrustedConfig(t *testing.T) {
 	plugins := t.TempDir()
 	writeHelloPlugin(t, plugins)
 
 	trusted := t.TempDir()
-	saveTestConfig(t, trusted, &AgentConfig{ServerURL: "https://openidx.test", AgentID: "a1", AuthToken: "tok", PluginDir: plugins})
+	saveTestConfig(t, trusted, &AgentConfig{ServerURL: "https://openidx.test", AgentID: "a1", AuthToken: "tok", PluginDir: plugins, AllowUnsignedPlugins: true})
 	a, err := NewAgent(zap.NewNop(), trusted)
 	require.NoError(t, err)
 	a.LoadPlugins()
@@ -53,7 +55,7 @@ func TestPluginsAreNotLoadedFromAnUntrustedConfig(t *testing.T) {
 	require.True(t, ok, "a plugin named by a trusted config is registered")
 
 	untrusted := t.TempDir()
-	saveTestConfig(t, untrusted, &AgentConfig{ServerURL: "https://openidx.test", AgentID: "a1", AuthToken: "tok", PluginDir: plugins})
+	saveTestConfig(t, untrusted, &AgentConfig{ServerURL: "https://openidx.test", AgentID: "a1", AuthToken: "tok", PluginDir: plugins, AllowUnsignedPlugins: true})
 	require.NoError(t, os.Chmod(ConfigPath(untrusted), 0o666))
 	b, err := NewAgent(zap.NewNop(), untrusted)
 	require.NoError(t, err)

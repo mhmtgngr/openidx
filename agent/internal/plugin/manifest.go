@@ -17,11 +17,23 @@ type Manifest struct {
 	TimeoutSeconds int      `json:"timeout_seconds"`
 }
 
+// manifestFileName is the file in each plugin folder that names the plugin and
+// the check types it provides.
+const manifestFileName = "manifest.json"
+
 func LoadManifest(dir string) (*Manifest, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	data, err := os.ReadFile(filepath.Join(dir, manifestFileName))
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
+	return parseManifest(data)
+}
+
+// parseManifest parses manifest.json from bytes already read, so that the
+// loader can hash and parse the same bytes. Reading the file a second time to
+// parse it would let the manifest that is obeyed differ from the one whose
+// digest the signature covers.
+func parseManifest(data []byte) (*Manifest, error) {
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse manifest: %w", err)

@@ -20,6 +20,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/checks"
 	"github.com/openidx/openidx/agent/internal/control"
 	"github.com/openidx/openidx/agent/internal/enrollment"
+	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/remotesupport"
 	"github.com/openidx/openidx/agent/internal/sso"
 	"github.com/openidx/openidx/agent/internal/tray"
@@ -456,6 +457,42 @@ var capabilitiesCmd = &cobra.Command{
 	},
 }
 
+var pluginCmd = &cobra.Command{
+	Use:   "plugin",
+	Short: "Tools for publishing posture-check plugins",
+}
+
+// pluginDigestCmd prints what a plugin publisher signs. The agent never holds
+// the publisher's private key, so it does not sign; it only states the exact
+// bytes, and the publisher signs them with their own tooling (openssl, a
+// hardware token, a signing service) to produce plugin.sig.
+var pluginDigestCmd = &cobra.Command{
+	Use:   "digest",
+	Short: "Print the exact bytes a publisher signs to produce a plugin's plugin.sig",
+	Long: `Print the signing input for the plugin folder given by --dir: the manifest's
+name and version, the SHA-256 of manifest.json, and the executable's file name
+and SHA-256. Sign these bytes, unchanged, with RSA PKCS#1 v1.5 over SHA-256 and
+write the base64 result to plugin.sig in the same folder, for example:
+
+  openidx-agent plugin digest --dir ./hello > input.txt
+  openssl dgst -sha256 -sign key.pem input.txt | base64 -w0 > ./hello/plugin.sig
+
+Run it on the platform the plugin is for: the executable's file name is part of
+what is signed, and the names the agent looks for differ by platform.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dir, _ := cmd.Flags().GetString("dir")
+		input, err := plugin.SigningInput(dir)
+		if err != nil {
+			return err
+		}
+		// Written as raw bytes, with nothing added: a trailing newline or a
+		// re-encoding here would make every signature over it fail to verify.
+		_, err = cmd.OutOrStdout().Write(input)
+		return err
+	},
+}
+
 var serviceInstallCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install and start the OpenIDX agent service (LocalSystem, auto-start)",
@@ -507,6 +544,9 @@ func init() {
 	trayCmd.Flags().Bool("autostart", false, "started at sign-in by the Run key; honours the user's Start-when-I-sign-in preference")
 	updateCmd.Flags().String("manifest-url", "", "version manifest URL (defaults to config update_manifest_url)")
 	updateCmd.Flags().Bool("apply", false, "download and install the update if one is available")
+	pluginDigestCmd.Flags().String("dir", "", "the plugin folder (holding manifest.json and the executable)")
+	_ = pluginDigestCmd.MarkFlagRequired("dir")
+	pluginCmd.AddCommand(pluginDigestCmd)
 
 	rootCmd.AddCommand(enrollCmd)
 	rootCmd.AddCommand(runCmd)
@@ -517,4 +557,5 @@ func init() {
 	rootCmd.AddCommand(trayCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(capabilitiesCmd)
+	rootCmd.AddCommand(pluginCmd)
 }
