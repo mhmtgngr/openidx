@@ -1,8 +1,11 @@
 # Finalize plan: from v1.39.0 to v2.0 LTS
 
 *Written 2026-10-05 against `main` at `df43b39`, by an AI session, for the
-maintainer (@mhmtgngr) to decide on. Nothing here changes a priority until the
-maintainer confirms it; the proposed ROADMAP edits are in §7.*
+maintainer (@mhmtgngr) to decide on. Re-checked the same day at 12:30 UTC
+against `5380aa8`, after the maintainer merged the open pull requests; §9 holds
+the re-check log and every figure below is the re-checked one. Nothing here
+changes a priority until the maintainer confirms it; the proposed ROADMAP edits
+are in §7.*
 
 The maintainer has asked several sessions to "finish the project" and it has
 not finished. This document says why, defines what finished means in a way
@@ -14,13 +17,13 @@ session reads first.
 
 - **Neden bitmiyor:** "Bitti" tanımı M1'in 16 çıkış kriteri; 5'i kapandı, 11'i
   açık. Açıkların üçü yalnızca proje sahibinin yapabileceği işler (pentest
-  bütçesi, mağaza hesapları, GitHub ayarları). Bu arada 5 Ekim'de tek günde 45
-  PR birleşti ve neredeyse hepsi M3 kapsamındaki tedarikçi erişimi
-  özellikleri; ADR 0002 hâlâ "onay bekliyor". Hedef çizgisi her oturumda ileri
-  kayıyor.
-- **Şu an:** `main` üzerinde Security Scanning ve Documentation iş akışları her
-  push'ta kırmızı; v1.39.0'dan bu yana 58 değişiklik yayımlanmadı; 6 PR
-  inceleme bekliyor; 543 uzak dal var.
+  bütçesi, mağaza hesapları, GitHub ayarları). Bu arada 4-5 Ekim'de 36 saatte
+  57 PR birleşti, 45'i M3 kapsamındaki tedarikçi erişimi özellikleri; ADR 0002
+  hâlâ "onay bekliyor". Hedef çizgisi her oturumda ileri kayıyor.
+- **Şu an (12:30 UTC):** Açık PR kalmadı; 6 PR, bağımlılık düzeltmesi (#1089)
+  ve Tailwind 4 geçişi (#1090) aynı gün birleşti ve Security Scanning yeşile
+  döndü. Documentation iş akışı hâlâ her push'ta kırmızı (GitHub Pages
+  açılmadı). v1.39.0'dan bu yana 65 değişiklik yayımlanmadı; 547 uzak dal var.
 - **Plan:** A) bu hafta kanamayı durdur (CI yeşil, v1.40.0 kes, 2 bug);
   B) tek oturumda sahibin kararları ve 5 depo ayarı; C) 8 haftada 11 açık M1
   maddesini sırayla kapat; D) v2.0 LTS. Özellik dondurma kuralı §5'te.
@@ -48,8 +51,9 @@ an opinion about effort.
    these walls and does something else instead.
 
 3. **New features kept landing during a milestone whose rule is "no new
-   features".** `git log --first-parent` shows 45 merges on 2026-10-05 alone,
-   nearly all from `claude/phase2-*` branches: vendor (third-party) access,
+   features".** `git log --first-parent` shows 57 merges between 2026-10-04
+   12:41 UTC and 2026-10-05 12:22 UTC, 45 of them from `claude/phase2-*`
+   branches: vendor (third-party) access,
    which is M3 ([#975](https://github.com/mhmtgngr/openidx/issues/975)) and
    which ROADMAP.md says starts after M1's security items. The `[Unreleased]`
    changelog has 14 `Added` entries, all vendor access.
@@ -61,12 +65,13 @@ an opinion about effort.
    evidence row, pentest scope), so the finish line moves with each one.
 
 4. **Release hygiene is not kept, so a release is not possible today.**
-   `docs/RELEASING.md` requires a green `main` first. On `main` today the
-   `Security Scanning` workflow is red on every push (dependency CVEs in the
-   console's lockfile, §3.2) and `Documentation` is red on every push (Pages).
-   58 changelog entries sit under `[Unreleased]` since v1.39.0 on 2026-09-28,
-   the exact failure mode RELEASING.md warns about. There are 543 remote
-   branches (464 when #967 was written). Two bugs are open and unowned
+   `docs/RELEASING.md` requires a green `main` first. This morning the
+   `Security Scanning` workflow was red on every push to `main` (dependency
+   CVEs in the console's lockfile); #1089 and #1090 fixed that by 07:09 UTC.
+   `Documentation` is still red on every push (Pages, §3.2). 65 changelog
+   entries sit under `[Unreleased]` since v1.39.0 on 2026-09-28, the exact
+   failure mode RELEASING.md warns about. There are 547 remote branches (464
+   when #967 was written). Two bugs are open and unowned
    ([#1013](https://github.com/mhmtgngr/openidx/issues/1013),
    [#1004](https://github.com/mhmtgngr/openidx/issues/1004)).
 
@@ -101,7 +106,7 @@ the M3 or "Later" backlog.
 ### 3.1 Local checks on `main` at `df43b39`
 
 These are the checks the AI working agreement §3 names. All ran in a fresh
-cloud container.
+cloud container. The same checks were re-run on `5380aa8`; §9 has that row.
 
 | Check | Result |
 |---|---|
@@ -124,8 +129,8 @@ where `df43b39` was still running).
 | Go CI, Frontend CI, Docker Build, CodeQL, SAML interop, Scorecard | green | |
 | OIDC conformance (nightly) | green on 2026-10-02, 10-03, 10-04 | |
 | Display = enforcement | green on v1.37.0, v1.38.0, v1.39.0 | runs on release only, as designed |
-| **Security Scanning** | **red on every push** | `Go Dependency Scan` and `NPM Dependency Scan` both fail at the Trivy gate (CRITICAL/HIGH, fixed-only) on `web/admin-console/package-lock.json`: `axios` 1.19.0 (fixed in 1.20.0) and `brace-expansion` 5.0.9 (fixed in 5.0.11). `npm audit --audit-level=high` also names `dompurify` (fix available) and a dev-only `braces`/`micromatch`/`chokidar` chain under Tailwind 3 with no upstream fix. `npm audit fix --dry-run` crashes on this lockfile, so the fix is explicit version bumps. |
-| **Documentation** | **red on every push** | The `deploy` job fails at `Deploy to GitHub Pages`: Pages is not enabled (#978, admin only). |
+| Security Scanning | green since #1089 merged at 07:09 UTC; green on `5380aa8` | It was red on every push until then: `Go Dependency Scan` and `NPM Dependency Scan` failed at the Trivy gate on `web/admin-console/package-lock.json` (`axios` 1.19.0, `brace-expansion` 5.0.9). #1089 bumped `axios` to 1.20.0, `brace-expansion` to 5.0.12 and `dompurify` to 3.4.16 and replaced the bare `npm audit` gate with `scripts/check-npm-audit.sh`, which allows an advisory only with a reason and an expiry in `web/admin-console/.npm-audit-ignore`. #1090 moved the console to Tailwind 4, which removed the dev-only `braces` chain, so that file has no entries. |
+| **Documentation** | **red on every push, still red on `5380aa8`** | The `deploy` job fails at `Deploy to GitHub Pages`: Pages is not enabled (#978, admin only). |
 
 Five consecutive merges on 2026-10-04 21:45 cancelled each other's Go CI,
 Docker and CodeQL runs; only the last merge in a burst gets a verdict.
@@ -135,11 +140,11 @@ Docker and CodeQL runs; only the last merge in a burst gets a verdict.
 | What | Count | Detail |
 |---|---|---|
 | Open M1 sub-issues | 11 | §3.4 |
-| Open pull requests | 6 | #1082 to #1087, opened 2026-10-03, rebased today. Each changes an authorization path, so by the working agreement §2 each waits for the maintainer's review. |
-| Unreleased changelog entries | 58 | 14 Added (vendor access), 44 Fixed. Last release v1.39.0 on 2026-09-28. |
+| Open pull requests | 0 | #1081 to #1087, the seven authorization-path PRs, were merged by the maintainer between 05:25 and 08:12 UTC, with #1089 (dependency bumps), #1090 (Tailwind 4), #1091 (changelog) and #1092 (doc redaction). |
+| Unreleased changelog entries | 65 | 14 Added (vendor access), the rest Fixed and Security. Last release v1.39.0 on 2026-09-28. |
 | Open bugs outside the roadmap | 2 | #1013 (three OIDC conformance warnings waived, not fixed), #1004 (the full Compose stack's Alertmanager never starts). |
 | Maintainer decisions pending | 7 in ROADMAP.md, 8 in #978 | Since 2026-09-23. |
-| Remote branches | 543 | #967 asks for the merged ones to be deleted. |
+| Remote branches | 547 | #967 asks for the merged ones to be deleted. |
 | ADR 0002 | Proposed, approval pending | Its Phase 1 and Phase 2 are merged. |
 
 ### 3.4 The 11 open M1 criteria: done, remaining, owner
@@ -159,7 +164,7 @@ the issue's own list, not re-checked here.
 | [#967](https://github.com/mhmtgngr/openidx/issues/967) Supply chain and CI hygiene | | CI runs Node 20 in six places and `package.json` has no `engines`; the gitleaks allowlist still matches real API keys; `docker.yml` has no path filter; Renovate is not installed; 543 branches. | AI; **owner** for Renovate and branch deletion |
 | [#968](https://github.com/mhmtgngr/openidx/issues/968) Release policy | Nothing: `SECURITY.md` still supports "Latest 1.x". | Cadence, LTS window, semver scope, changelog fragments, upgrade guide. | **Owner decides**; AI writes |
 | [#977](https://github.com/mhmtgngr/openidx/issues/977) Site config out of the tree | Per issue: the product defaults no longer name the site. | Per issue: the production compose overlay, nginx site config, BrowZer cert paths, site-only scripts, live-site e2e specs, the Helm console port bug. Needs the live environment changed in the same step. | AI prepares; **owner** applies on the live site |
-| [#980](https://github.com/mhmtgngr/openidx/issues/980) OPA deployable | The policy's braces balance (27/27); `opa check` runs in `ci.yml`; `OPA_URL` is set on four Compose services. | Helm `policyConfigMap` is still `""` so Helm OPA has no policy; `internal/common/middleware/opa.go` has no observe mode; rules for API keys, internal tokens and delegations; the loaded-policy startup probe; e2e with OPA on. #1082 and #1084 (open) add end-user and governance rules. | AI |
+| [#980](https://github.com/mhmtgngr/openidx/issues/980) OPA deployable | The policy's braces balance (27/27); `opa check` runs in `ci.yml`; `OPA_URL` is set on four Compose services. | Helm `policyConfigMap` is still `""` so Helm OPA has no policy; `internal/common/middleware/opa.go` has no observe mode; rules for API keys, internal tokens and delegations; the loaded-policy startup probe; e2e with OPA on. #1082 and #1084, merged 2026-10-05, added the access-review and governance rules. | AI |
 
 ## 4. The plan
 
@@ -171,11 +176,11 @@ verified (working agreement §3.5).
 
 | # | Work | Who | Closes or unblocks |
 |---|---|---|---|
-| A1 | Bump `axios` to 1.20.0 or later, `brace-expansion` to 5.0.11 or later and `dompurify` to the version `npm audit` names, in `web/admin-console`; for the dev-only `braces` chain under Tailwind 3, either move to Tailwind 4 or record a dated, reasoned exception in `.trivyignore` and the audit config. Prove it with `npm audit --audit-level=high` exit 0 and a green `Security Scanning` run. | AI | `main` green |
+| A1 | **Done 2026-10-05** by #1089 (the three bumps and the reasoned-exception audit gate) and #1090 (Tailwind 4, which removed the unfixable dev-only chain). `Security Scanning` has been green on every push since. | AI | `main` green |
 | A2 | Enable GitHub Pages (Settings → Pages → Source: GitHub Actions). Also, in the same sitting: private vulnerability reporting, Discussions, protect `main` (require `Required Checks` and a code-owner review), install Renovate. | **Owner**, about 20 minutes | `Documentation` green; #978; starts #967 |
 | A3 | Fix #1013 (the three conformance warnings) and #1004 (Alertmanager placeholders). Two PRs. | AI | #958 progress; the full stack starts |
-| A4 | Review the six open PRs #1082 to #1087. Merge, request changes, or close with a reason. | **Owner** | Clears the queue; two of them advance #980 |
-| A5 | Cut **v1.40.0** per `docs/RELEASING.md`: rename `[Unreleased]`, sync `VERSION` and the ten held versions (`scripts/check-version-sync.sh --enforce`), pin the lite install, then dispatch `release.yml`. After A1 and A2, so the tagged commit is green. | AI prepares the PR; **owner** dispatches | 58 entries shipped; one more display = enforcement report on record |
+| A4 | **Done 2026-10-05.** All six (#1082 to #1087) merged by 08:12 UTC; no pull request is open. | **Owner** | Queue cleared; #1082 and #1084 advance #980 |
+| A5 | Cut **v1.40.0** per `docs/RELEASING.md`: rename `[Unreleased]`, sync `VERSION` and the ten held versions (`scripts/check-version-sync.sh --enforce`), pin the lite install, then dispatch `release.yml`. A1 is done; only A2 (Pages) still keeps the tagged commit from being all green. | AI prepares the PR; **owner** dispatches | 65 entries shipped; one more display = enforcement report on record |
 
 ### Phase B: decide, in one sitting (by 2026-10-10)
 
@@ -289,3 +294,12 @@ ROADMAP.md is the maintainer's; these are the edits this analysis suggests.
 - Anything in the "Later" and "On hold" lists.
 - Re-running the live-site controls in `docs/evidence/operational.md`. They
   need the maintainer's deployment and are owner work in C7.
+
+## 9. Re-check log
+
+One row per re-check. A re-check re-reads GitHub and re-runs the §3.1 checks;
+it changes the figures above in place and records here what moved.
+
+| When (UTC) | `main` | What moved | Local checks |
+|---|---|---|---|
+| 2026-10-05 12:30 | `5380aa8` | 12 merges since `df43b39`: #1081 to #1087 (authorization paths), #1089 (dependency bumps and the npm audit gate), #1090 (Tailwind 4), #1091 (changelog), #1092 (doc redaction). Open PRs 6 → 0. Security Scanning red → green. Documentation still red. Unreleased entries 58 → 65. Remote branches 543 → 547. M1 sub-issues still 5 of 16 closed. Phase A: A1 and A4 done; A2, A3, A5 open. | On the merged tree: `go build` exit 0, `go vet` exit 0, console `type-check` exit 0. `go test -short`, console lint, tests, build and `npm audit` were still running when this row was committed; the next commit completes the row. |
