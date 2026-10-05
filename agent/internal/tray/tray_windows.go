@@ -39,6 +39,7 @@ type app struct {
 	mSignIn    *systray.MenuItem
 	mSignOut   *systray.MenuItem
 	mConnRoot  *systray.MenuItem
+	mHello     *systray.MenuItem
 	mAutostart *systray.MenuItem
 
 	mu       sync.Mutex
@@ -99,6 +100,8 @@ func (a *app) onReady() {
 	a.mSignIn = systray.AddMenuItem("Sign in", "Sign in to OpenIDX")
 	a.mSignOut = systray.AddMenuItem("Sign out", "Sign out")
 	a.mSignOut.Hide()
+	a.mHello = systray.AddMenuItem("Set up Windows Hello sign-in",
+		"Register Windows Hello or a security key as your passkey; no phone needed")
 	systray.AddSeparator()
 	a.mConnRoot = systray.AddMenuItem("My Connections", "Launch a privileged session")
 	for i := 0; i < maxConnSlots; i++ {
@@ -383,6 +386,8 @@ func (a *app) loop(mQuit *systray.MenuItem) {
 			go a.signIn()
 		case <-a.mSignOut.ClickedCh:
 			a.signOut()
+		case <-a.mHello.ClickedCh:
+			go a.setUpHello()
 		case <-mQuit.ClickedCh:
 			systray.Quit()
 			return
@@ -444,13 +449,28 @@ func (a *app) signedIn() bool {
 	return a.tokens != nil
 }
 
+// setUpHello opens the console's Security Keys page, where the person
+// registers Windows Hello or a security key as a passkey. The ceremony is
+// the browser's and Windows': the private key never leaves the device, and
+// the tray holds nothing from it. The browser signs the person in first if
+// it has no session of its own.
+func (a *app) setUpHello() {
+	url := securityKeysURL(a.server())
+	if url == "" {
+		a.tell(notEnrolledMessage)
+		return
+	}
+	if err := sso.OpenURL(url); err != nil {
+		a.logger.Warn("tray: could not open the Security Keys page", zap.Error(err))
+		a.tell("The browser could not be opened.\n\nOpen this page yourself:\n" + url)
+	}
+}
+
 func (a *app) signIn() { a.signInWith(sso.LoginOptions{}) }
 
 func (a *app) signInWith(opts sso.LoginOptions) {
 	if a.server() == "" {
-		a.tell("This device is not enrolled yet, so there is nothing to sign in to.\n\n" +
-			"Open the enrollment link from the OpenIDX console on this computer, or run\n" +
-			"openidx-agent enroll --code <code> --server <url> from an administrator prompt.")
+		a.tell(notEnrolledMessage)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)

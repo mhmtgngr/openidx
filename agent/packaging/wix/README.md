@@ -63,6 +63,13 @@ The service waits for the enrolment and starts its posture loop as soon as it
 lands. Users then sign in for SSO/PAM from the tray (launched at login);
 signing in does not enrol the device.
 
+The tray menu is the user's whole surface: the status line (sign-in and
+device state), **Sign in / Sign out**, **Set up Windows Hello sign-in** (opens
+the console's Security Keys page, see `docs/windows/mfa-without-a-phone.md`),
+**My Connections** (privileged sessions; a refusal offers a fresh sign-in or
+an access request), **Settings** (start at sign-in, check for updates, about)
+and **Quit**.
+
 ## Signing
 Set `WINDOWS_CERT_PFX_BASE64` (base64 of a code-signing `.pfx`) +
 `WINDOWS_CERT_PASSWORD` repo secrets; the CI job then Authenticode-signs **both**
