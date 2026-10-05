@@ -17,6 +17,7 @@ import (
 
 	"github.com/openidx/openidx/agent/internal/agent"
 	"github.com/openidx/openidx/agent/internal/authstore"
+	"github.com/openidx/openidx/agent/internal/checks"
 	"github.com/openidx/openidx/agent/internal/control"
 	"github.com/openidx/openidx/agent/internal/enrollment"
 	"github.com/openidx/openidx/agent/internal/remotesupport"
@@ -64,6 +65,7 @@ var (
 )
 
 func main() {
+	wireBuildVersion()
 	// Deep-link entry: the OS invokes `openidx-agent openidx://enroll?code=..&server=..`
 	// (from a scanned QR / clicked link). Rewrite it into the enroll command.
 	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "openidx://") {
@@ -74,6 +76,25 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+// wireBuildVersion hands the build's version to the agent_version posture
+// check. Every build stamps main.Version (the Makefile and the Windows
+// workflow pass -X main.Version=...), and none ever stamped
+// checks.AgentVersion, so the check reported "dev" from every release and
+// failed any min_version the server asked for. The check keeps its own
+// variable so a test can set it directly; this copies the one value into
+// the other, once, before any command runs.
+//
+// A leading "v" is dropped: the workflow derives the version from the git
+// tag ("v1.40.0"), while the check compares dotted numbers.
+func wireBuildVersion() {
+	if checks.AgentVersion != "dev" {
+		return // stamped directly by -X; the explicit value wins
+	}
+	if v := strings.TrimPrefix(strings.TrimSpace(Version), "v"); v != "" && v != "dev" {
+		checks.AgentVersion = v
 	}
 }
 
