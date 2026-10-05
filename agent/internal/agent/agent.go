@@ -51,9 +51,17 @@ type Agent struct {
 	// The Windows SERVICE runs in session 0, which has no interactive desktop,
 	// so a capture there is black and input goes nowhere. The service sets this
 	// true and the TRAY (running in the user session) runs remote-support
-	// instead. Posture reporting still runs in both; only the screen-share is
-	// gated. Default false = enabled (single-process / foreground `run`).
+	// instead. Default false = enabled (single-process / foreground `run`).
 	DisableRemoteSupport bool
+
+	// RemoteSupportOnly makes RunOnce poll the server's config, so a pending
+	// remote-support session is noticed and answered, and do nothing else: no
+	// posture check runs and no report is posted. The Windows TRAY sets it.
+	// The SYSTEM service is the one posture reporter; a second report from
+	// the user session, made without administrator rights, read BitLocker and
+	// the firewall differently and contradicted the service's results on the
+	// server. Default false = the full cycle.
+	RemoteSupportOnly bool
 }
 
 // NewAgent loads the persisted agent config from configDir, creates a transport
@@ -243,6 +251,11 @@ func (a *Agent) RunOnce(ctx context.Context) error {
 	// Best-effort config sync; proceed even on failure.
 	if err := a.SyncConfig(ctx); err != nil {
 		a.logger.Warn("config sync failed, proceeding with cached config", zap.Error(err))
+	}
+	if a.RemoteSupportOnly {
+		// The sync above is the whole job: it hands any remote-support
+		// session to processRemoteSupportConsent. Posture is the service's.
+		return nil
 	}
 
 	engineResults := a.engine.RunChecks(ctx, a.serverCfg.Checks)
