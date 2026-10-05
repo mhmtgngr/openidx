@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -138,7 +139,12 @@ func TestAgent_RunOnce(t *testing.T) {
 
 	first := results[0].(map[string]interface{})
 	assert.Equal(t, "mock_pass", first["check_type"])
-	assert.Equal(t, string(checks.StatusPass), first["status"])
+	// The outcome is nested under "result", where the server reads it; a flat
+	// status is what made every Windows report count as unknown.
+	result, ok := first["result"].(map[string]interface{})
+	require.True(t, ok, "expected the outcome nested under result")
+	assert.Equal(t, string(checks.StatusPass), result["status"])
+	assert.NotContains(t, first, "status", "the outcome must not also be sent flat")
 }
 
 func TestAgent_SyncConfig_FallbackOnError(t *testing.T) {
@@ -166,4 +172,61 @@ func TestAgent_SyncConfig_FallbackOnError(t *testing.T) {
 	def := DefaultServerConfig()
 	assert.Equal(t, def.ReportInterval, a.serverCfg.ReportInterval)
 	assert.Len(t, a.serverCfg.Checks, len(def.Checks))
+}
+
+// TestAgent_RunOnce_ServerWireShape drives one cycle against the config the
+// access service actually sends (agentCheck: name, enabled, check_type,
+// severity). Before the agent read check_type, the check below ran as
+// "unknown check type" and the report said so.
+func TestAgent_RunOnce_ServerWireShape(t *testing.T) {
+	var reportBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/access/agent/config":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"checks":[
+				{"name":"mock_pass","enabled":true,"check_type":"mock_pass","severity":"high"},
+				{"name":"mock_off","enabled":false,"check_type":"mock_off","severity":"low"}],
+				"report_interval":"1h","enforcement_policy":"enforce"}`))
+		case "/api/v1/access/agent/report":
+			reportBody, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	saveTestConfig(t, dir, &AgentConfig{
+		ServerURL: srv.URL,
+		AgentID:   "agent-wire-001",
+		DeviceID:  "device-wire-001",
+		AuthToken: "tok-wire",
+	})
+	a, err := NewAgent(zap.NewNop(), dir)
+	require.NoError(t, err)
+	a.registry.Register("mock_pass", &mockPassCheck{name: "mock_pass"})
+	a.registry.Register("mock_off", &mockPassCheck{name: "mock_off"})
+
+	require.NoError(t, a.RunOnce(context.Background()))
+
+	var payload struct {
+		Results []struct {
+			CheckType string `json:"check_type"`
+			Severity  string `json:"severity"`
+			Result    struct {
+				Status  string  `json:"status"`
+				Score   float64 `json:"score"`
+				Message string  `json:"message"`
+			} `json:"result"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(reportBody, &payload))
+	require.Len(t, payload.Results, 1, "the disabled check is not run or reported")
+	got := payload.Results[0]
+	assert.Equal(t, "mock_pass", got.CheckType)
+	assert.Equal(t, "high", got.Severity)
+	assert.Equal(t, string(checks.StatusPass), got.Result.Status)
+	assert.NotContains(t, got.Result.Message, "unknown check type")
 }

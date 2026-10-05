@@ -270,15 +270,25 @@ type reportPayload struct {
 	ReportedAt time.Time      `json:"reported_at"`
 }
 
+// engineResult is one result in the report, in the shape the access service
+// reads (internal/access/agent_api.go checkResult): the outcome nested under
+// "result". It used to send the outcome flat at the top level, which the
+// server does not read, so every Windows report was stored with an empty
+// status and a zero score and the device's compliance stayed "unknown".
 type engineResult struct {
-	CheckType   string                 `json:"check_type"`
-	Severity    string                 `json:"severity"`
+	CheckType string       `json:"check_type"`
+	Severity  string       `json:"severity"`
+	Result    resultDetail `json:"result"`
+	RanAt     time.Time    `json:"ran_at"`
+}
+
+// resultDetail is the outcome of one check.
+type resultDetail struct {
 	Status      checks.Status          `json:"status"`
 	Score       float64                `json:"score"`
 	Message     string                 `json:"message,omitempty"`
 	Remediation string                 `json:"remediation,omitempty"`
 	Details     map[string]interface{} `json:"details,omitempty"`
-	RanAt       time.Time              `json:"ran_at"`
 }
 
 // RunOnce performs a single sync-check-report cycle:
@@ -309,14 +319,16 @@ func (a *Agent) RunOnce(ctx context.Context) error {
 	results := make([]engineResult, 0, len(engineResults))
 	for _, er := range engineResults {
 		results = append(results, engineResult{
-			CheckType:   er.CheckType,
-			Severity:    er.Severity,
-			Status:      er.Result.Status,
-			Score:       er.Result.Score,
-			Message:     er.Result.Message,
-			Remediation: er.Result.Remediation,
-			Details:     er.Result.Details,
-			RanAt:       er.RanAt,
+			CheckType: er.CheckType,
+			Severity:  er.Severity,
+			Result: resultDetail{
+				Status:      er.Result.Status,
+				Score:       er.Result.Score,
+				Message:     er.Result.Message,
+				Remediation: er.Result.Remediation,
+				Details:     er.Result.Details,
+			},
+			RanAt: er.RanAt,
 		})
 	}
 
