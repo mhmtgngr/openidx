@@ -7,6 +7,20 @@ package ipc
 // PipeName is the Windows named pipe the service listens on.
 const PipeName = `\\.\pipe\openidx-agent`
 
+// pipeSDDL is the DACL the service puts on the pipe. Authenticated Users (AU)
+// get GENERIC_READ and nothing else; the service (SYSTEM) and Administrators
+// keep full control.
+//
+// It used to grant AU GENERIC_ALL. On a named pipe that mask carries
+// FILE_CREATE_PIPE_INSTANCE (0x4, the same bit as FILE_APPEND_DATA), so any
+// signed-in user could create a further instance of \\.\pipe\openidx-agent
+// and answer the tray's next query with a status of their choosing: "not
+// revoked", "no admin is watching". GENERIC_READ maps to FILE_GENERIC_READ,
+// which has no instance-creation, WRITE_DAC or WRITE_OWNER bit, and it is all
+// the tray needs: the service writes the JSON, the tray only reads it (Query
+// opens the pipe for GENERIC_READ alone, so the client side matches).
+const pipeSDDL = "D:P(A;;GR;;;AU)(A;;GA;;;SY)(A;;GA;;;BA)"
+
 // Status is the read-only snapshot the service exposes to the tray.
 type Status struct {
 	Enrolled         bool   `json:"enrolled"`
