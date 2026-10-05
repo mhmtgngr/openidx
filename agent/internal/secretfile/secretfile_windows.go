@@ -101,15 +101,71 @@ func harden(path string) error {
 	)
 }
 
-// hardenShared deliberately does nothing on Windows.
+// hardenShared replaces a shared file's inherited permissions with an explicit
+// list that lets every signed-in user read it and only the service and an
+// administrator write it.
 //
-// harden's ACL names the account that WROTE the file, which is exactly wrong
-// for one more than one identity has to read: agent.json is written by whichever
-// of the SYSTEM service and the user's tray enrolled first, and a PROTECTED_DACL
-// naming that writer locks the other one out. Leaving the inherited ACL is what
-// this file has always had, and the directory-ACL decision it still needs is
-// recorded in docs/CLIENT-ACCESS-DESIGN.md §4 rather than half-made here.
-func hardenShared(path string) error { return nil }
+// It used to do nothing, so agent.json kept the %ProgramData% ACL it inherited,
+// under which BUILTIN\Users can create and, for a file they created, write.
+// That file names the plugin directory, the update manifest and the update
+// publisher, all of which the SYSTEM service obeys. harden's ACL cannot serve
+// here because it names the account that wrote the file, and the file is read
+// by the service and by the user's tray alike. The three entries below are the
+// whole story (PROTECTED_DACL stops the inheritance):
+//
+//	NT AUTHORITY\SYSTEM        the service: reads and writes
+//	BUILTIN\Administrators     an admin can take ownership anyway; and `enroll`
+//	                           run from an elevated prompt writes this file
+//	Authenticated Users        read only: the tray needs server_url and
+//	                           agent_id, and nothing in the user session may
+//	                           change what the service trusts
+//
+// A file first created by an unprivileged account is still owned by it, and an
+// owner can rewrite the DACL whatever it says. That is why the service checks
+// the file's owner and ACL before obeying it (plugin.CheckTrustedPath), the
+// same check it applies to a plugin before executing it.
+func hardenShared(path string) error {
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	if err != nil {
+		return fmt.Errorf("SYSTEM sid: %w", err)
+	}
+	admins, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	if err != nil {
+		return fmt.Errorf("Administrators sid: %w", err)
+	}
+	users, err := windows.CreateWellKnownSid(windows.WinAuthenticatedUserSid)
+	if err != nil {
+		return fmt.Errorf("Authenticated Users sid: %w", err)
+	}
+
+	entry := func(sid *windows.SID, rights uint32) windows.EXPLICIT_ACCESS {
+		return windows.EXPLICIT_ACCESS{
+			AccessPermissions: windows.ACCESS_MASK(rights),
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       windows.NO_INHERITANCE,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_UNKNOWN,
+				TrusteeValue: windows.TrusteeValueFromSID(sid),
+			},
+		}
+	}
+	entries := []windows.EXPLICIT_ACCESS{
+		entry(system, windows.GENERIC_ALL),
+		entry(admins, windows.GENERIC_ALL),
+		entry(users, windows.GENERIC_READ),
+	}
+	dacl, err := windows.ACLFromEntries(entries, nil)
+	if err != nil {
+		return fmt.Errorf("building DACL: %w", err)
+	}
+	return windows.SetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	)
+}
 
 // currentUserSID returns the SID of the account this process runs as.
 func currentUserSID() (*windows.SID, error) {

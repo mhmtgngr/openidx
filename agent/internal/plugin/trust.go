@@ -39,3 +39,10 @@ package plugin
 // is safe. Implemented per platform: the mode bits are the control on Unix and
 // mean nothing on Windows.
 func requireTrustedPath(path string) error { return checkTrustedPath(path) }
+
+// CheckTrustedPath is requireTrustedPath for a file this process does not
+// execute but obeys: agent.json names the plugin directory, the update
+// manifest and the update publisher, so an account that can write it chooses
+// what the SYSTEM service runs next. The question is the same one, "who could
+// have replaced this", and so is the answer.
+func CheckTrustedPath(path string) error { return checkTrustedPath(path) }

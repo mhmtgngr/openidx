@@ -110,6 +110,15 @@ func (a *Agent) LoadPlugins() {
 	if pluginDir == "" {
 		return
 	}
+	// plugin_dir is obeyed only from a config file nobody but the service and
+	// an administrator could have written. The loader checks the plugin
+	// directory and each executable the same way; this closes the hop before
+	// them, where the directory itself is chosen.
+	if err := ConfigTrusted(a.configDir); err != nil {
+		a.logger.Error("not loading plugins: agent.json could have been written by an account "+
+			"this service does not trust", zap.Error(err))
+		return
+	}
 
 	loader := plugin.NewLoader(pluginDir, a.logger)
 	plugins, err := loader.Discover()
