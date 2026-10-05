@@ -391,14 +391,19 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 // for this approver" and the request sits. Missing PART of it is worse and
 // quieter: the approvers who did get a row approve, the pending count reaches
 // zero, and the request is fulfilled having skipped a step the policy required.
-func (s *Service) insertApproval(ctx context.Context, requestID, approverID string, order, minApprovals int, orgID string) error {
+//
+// basis is why the approver is on the row (migration v226), re-read when they
+// decide (approverStillEligible).
+func (s *Service) insertApproval(ctx context.Context, requestID, approverID string, order, minApprovals int, orgID string, basis approverBasis) error {
 	if minApprovals < 1 {
 		minApprovals = 1
 	}
 	_, err := s.db.Pool.Exec(ctx,
-		`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, step_min_approvals, decision, created_at, org_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, step_min_approvals, decision, created_at, org_id,
+		                                       approver_basis, approver_basis_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, '')::uuid)`,
 		uuid.New().String(), requestID, approverID, order, minApprovals, "pending", time.Now(), orgID,
+		basis.kind, basis.id,
 	)
 	if err != nil {
 		return fmt.Errorf("record the approver for step %d: %w", order, err)
@@ -441,7 +446,7 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 	}
 	offset := 0
 	if external {
-		if err := s.insertApproval(ctx, requestID, sponsorID, 1, 1, org.ID); err != nil {
+		if err := s.insertApproval(ctx, requestID, sponsorID, 1, 1, org.ID, approverBasis{kind: basisSponsor}); err != nil {
 			return err
 		}
 		offset = 1
@@ -466,7 +471,7 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 			return &chainError{"no approval policy covers " + resourceType + " requests, so the only approver " +
 				"after the external user's sponsor would be the sponsor again: add an approval policy for it"}
 		}
-		return s.insertApproval(ctx, requestID, adminID, 1+offset, 1, org.ID)
+		return s.insertApproval(ctx, requestID, adminID, 1+offset, 1, org.ID, approverBasis{kind: basisDefault})
 	}
 
 	// V-007: evaluate the policy's typed auto_approve_conditions before
@@ -524,7 +529,7 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 				order, need, len(approvers))}
 		}
 		for _, approverID := range approvers {
-			if err := s.insertApproval(ctx, requestID, approverID, order, need, org.ID); err != nil {
+			if err := s.insertApproval(ctx, requestID, approverID, order, need, org.ID, step.basis()); err != nil {
 				return err
 			}
 		}
@@ -861,6 +866,23 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 		return
 	}
 
+	// The approver is held to what put them on the chain: a role or a group
+	// step's approver who no longer holds it, a manager the requester no longer
+	// reports to, a sponsor who handed the account over, no longer decides it,
+	// either way (approverStillEligible, migration v226).
+	if eligible, err := s.approverStillEligible(c.Request.Context(), id, approverID, callerStep, org.ID); err != nil {
+		s.logger.Error("Failed to re-check the approver", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve request"})
+		return
+	} else if !eligible {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "you no longer hold what made you an approver of this request (the role, the group, or being " +
+				"the requester's manager or sponsor), so you cannot approve it",
+			"code": "approver_no_longer_eligible",
+		})
+		return
+	}
+
 	// Four eyes across steps (section 6.7 of the third-party access
 	// framework): one person approves at most one step of a request. Someone
 	// who is a candidate in two steps (a manager who also holds the approver
@@ -1027,6 +1049,23 @@ func (s *Service) handleDenyRequest(c *gin.Context) {
 		return
 	}
 
+	// The approver is held to what put them on the chain: a role or a group
+	// step's approver who no longer holds it, a manager the requester no longer
+	// reports to, a sponsor who handed the account over, no longer decides it,
+	// either way (approverStillEligible, migration v226).
+	if eligible, err := s.approverStillEligible(c.Request.Context(), id, approverID, callerStep, org.ID); err != nil {
+		s.logger.Error("Failed to re-check the approver", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to deny request"})
+		return
+	} else if !eligible {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "you no longer hold what made you an approver of this request (the role, the group, or being " +
+				"the requester's manager or sponsor), so you cannot deny it",
+			"code": "approver_no_longer_eligible",
+		})
+		return
+	}
+
 	now := time.Now()
 
 	result, err := s.db.Pool.Exec(c.Request.Context(),
@@ -1149,6 +1188,7 @@ func (s *Service) handleListPendingApprovals(c *gin.Context) {
 		      GROUP BY request_id, org_id
 		 ) active ON active.request_id = a.request_id AND active.org_id = a.org_id AND active.step_order = a.step_order
 		 WHERE a.approver_id = $1 AND a.decision = 'pending' AND a.org_id = $2 AND ar.status = 'pending'
+		   AND `+approverEligibleSQL+`
 		 ORDER BY ar.created_at DESC`, userID, org.ID,
 	)
 	if err != nil {

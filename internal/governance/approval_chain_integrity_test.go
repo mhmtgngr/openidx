@@ -97,7 +97,9 @@ func TestAHalfBuiltApprovalChainIsReported(t *testing.T) {
 			comments TEXT,
 			decided_at TIMESTAMPTZ,
 			created_at TIMESTAMPTZ DEFAULT now(),
-			org_id UUID NOT NULL);
+			org_id UUID NOT NULL,
+			approver_basis VARCHAR(16),
+			approver_basis_id UUID);
 	`); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
@@ -211,7 +213,9 @@ func TestARequestWhoseChainFailsIsWithdrawn(t *testing.T) {
 			comments TEXT,
 			decided_at TIMESTAMPTZ,
 			created_at TIMESTAMPTZ DEFAULT now(),
-			org_id UUID NOT NULL);
+			org_id UUID NOT NULL,
+			approver_basis VARCHAR(16),
+			approver_basis_id UUID);
 	`); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
