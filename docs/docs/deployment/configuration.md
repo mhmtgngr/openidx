@@ -256,19 +256,6 @@ your own. CI checks that the policy parses and runs its tests
 (`deployments/docker/opa/tests`), and the kind job asks the running OPA for a
 decision.
 
-To put OPA in the request path, set `ENABLE_OPA_AUTHZ=true` for admin-api,
-governance-service and provisioning-service, and make sure `OPA_URL` reaches
-the OPA server. From then on, OPA refuses any request the policy does not
-grant. Read the policy's role table first: a caller whose roles are not in it
-is refused.
-
-Access requests are the exception. Any signed-in user can file a request, read
-and cancel their own, and approve or deny one they are an approver of, such as
-a manager or the sponsor of an external user. The policy allows these routes
-(`access_request_routes`, matched on `input.resource.route`, the route the
-service matched). governance-service then checks each caller against the
-request itself.
-
 Without OPA, governance-service still keeps the writes that run the
 governance program to an administrator (`admin` or `super_admin`): approval,
 ABAC and governance policies, campaigns, creating, editing and moving access
@@ -281,6 +268,19 @@ privileged accounts and entitlements, needs an administrator, an operator or
 an auditor (`reader_required` for anyone else); a user's requests and
 approvals, and the reviews they are the reviewer of, stay theirs to read. With
 OPA on, the policy's role table decides these writes and reads as before.
+
+To put OPA in the request path, set `ENABLE_OPA_AUTHZ=true` for admin-api,
+governance-service and provisioning-service, and make sure `OPA_URL` reaches
+the OPA server. From then on, OPA refuses any request the policy does not
+grant. Read the policy's role table first: a caller whose roles are not in it
+is refused.
+
+Access requests are the exception. Any signed-in user can file a request, read
+and cancel their own, and approve or deny one they are an approver of, such as
+a manager or the sponsor of an external user. The policy allows these routes
+(`access_request_routes`, matched on `input.resource.route`, the route the
+service matched). governance-service then checks each caller against the
+request itself.
 
 ### Multi-factor authentication
 
