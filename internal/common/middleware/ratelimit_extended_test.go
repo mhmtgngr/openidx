@@ -24,7 +24,14 @@ func init() {
 }
 
 // setupTestRedis creates a miniredis instance and Redis client for testing
+//
+// The limiter's bucket is the wall-clock window (time.Now().Unix() / window),
+// so a test whose requests cross a minute boundary starts a fresh bucket part
+// way through and sees a request it expects refused let through. A 60s window
+// makes that rare, not impossible. Every test here sets up through this
+// helper, so it starts the test with at least 5s of the window left.
 func setupExtendedTestRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
+	startInsideWindow(t, time.Minute, 5*time.Second)
 	s, err := miniredis.Run()
 	require.NoError(t, err)
 
