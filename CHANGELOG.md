@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Without OPA, only an administrator runs the governance program.** With `ENABLE_OPA_AUTHZ=false`, the default, governance-service checked who was signed in and nothing else. Any user, an external (vendor) user included, could write an approval policy, an ABAC policy, a governance policy, a campaign or an access review, and run the SoD, privileged-account and entitlement jobs. Approval policies decide who is granted what, so a user who could write one could grant themselves access. These writes now need `admin` or `super_admin` when OPA is off, and answer `403` with `admin_required` to anyone else. Reading the program's policies, campaigns, SoD violations, privileged accounts and entitlements, which answered anyone signed in, now needs an administrator, an operator or an auditor (`reader_required`). Filing, cancelling and deciding access requests, deciding a review one is the reviewer of, and the evaluate routes are unchanged. With OPA on, its role table decides these writes as before.
+- **The SCIM server answers an identity provider's machine credential or an administrator, not every signed-in user.** `/scim/v2/Users` and `/scim/v2/Groups` accepted any OpenIDX bearer token, and a signed-in person's own token is one, so any user could change the directory through them. They now answer a `client_credentials` token, which names no user and is minted only for an application an administrator gave API access, and `admin` or `super_admin`. Anyone else gets a SCIM `403`. Upstream identity providers, which call with a machine credential, are unaffected. The discovery routes are unchanged.
+- **Only the audit roles read the audit trail.** audit-service's read,
+  search, statistics, chain-verify, report, export, scheduled-report and
+  live-stream routes asked only for a signed-in user. Any account in the
+  organization, an external one included, could read and export the whole
+  trail and schedule reports over it. They now need a role holding
+  `audit:read`: `super_admin`, `admin`, `operator`, `auditor` or
+  `compliance_reader`, the same roles the console shows these pages to.
+  Anyone else gets 403 `audit_reader_required`.
+  - **Upgrade note:** an integration that reads the trail with a token
+    carrying none of these roles needs one.
+- **The org-wide overviews answer staff only.**
+  - **Dashboard:** `GET /api/v1/dashboard` returns the organization's latest
+    audit events, its failed-login and suspicious-IP counts and its user and
+    session counts. It asked only for a signed-in user. It now needs
+    `operator`, `admin` or `super_admin`, the roles the console's dashboard
+    calls it for (a plain user's dashboard never did).
+  - **Windows Apps catalog:** `GET /api/v1/access/pam/apps` and
+    `/pam/app-pools` name every RemoteApp's executable, arguments and host,
+    and the hosts' state and agents. They now hold the operator tier, like
+    the console page behind them. An end user's launchable apps stay at
+    `/pam/my-apps`.
+  - **Moderation status:** `GET /api/v1/access/pam/moderation/:id` named
+    the moderator and the live connection to anyone in the organization who
+    knew the id. It now answers the same parties as ending it does: the
+    requester, the moderator and an administrator.
+
 ### Added
 - **External (vendor) users, part one: the identity model.** A supplier's people can be users of the organization, tied to a vendor organization, with a sponsor and an account expiry (migration v214). Vendor organizations are managed at `/api/v1/identity/vendor-orgs`. Closing one disables its external users and cannot be undone. The database itself refuses three things for an external user: a role other than `user`, a group not marked open to external users, and a delegation or an approval. Deleting or disabling a sponsor suspends the external users they sponsor. Invitations, the first-login MFA gate, the expiry sweep and the console pages follow in the next parts.
 - **External users, part two: invitations and the second factor.** `POST /api/v1/identity/invitations` with `user_type: external` names the vendor organization and, optionally, a sponsor and a lifetime. The invitation is checked against the vendor's status, allowed domains and contract, the sponsor, and the role and group limits. The accepted account cannot sign in until its owner confirms an authenticator-app code at `POST /api/v1/identity/invitations/:token/mfa`. An external user signs in only with an authenticator app, a passkey or a push device. SMS, email and phone-call factors are refused to them, and a remembered browser never stands in for the factor. An external user with no such factor, or an account that is not active, gets no approved access fulfilled and launches no PAM session.
@@ -40,7 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A role whose window has ended can be assigned again at once.** Until the expiry sweep deleted the ended assignment, assigning the role again passed the "already has this role" check and then failed on the database's duplicate key. The assignment now takes the ended one over, with the new window and a fresh expiry notice.
 - **A user whose group membership has ended can be added back at once.** A membership whose window has ended stays until the expiry sweep deletes it. Adding the user to the group in that minute answered "already a member", and the ended membership counted against the group's member cap. The add now takes it over as a standing membership, and the cap counts live members only.
 - **The access views show only roles and memberships whose window is open.** The administrator's user access map, the privilege graph in both directions and the portal's access overview read every role and group membership row, so until the expiry sweep deleted an ended one they showed access the user no longer had, including vault grants reached through an ended role.
-- **Without OPA, only an administrator runs the governance program.** With `ENABLE_OPA_AUTHZ=false`, the default, governance-service checked who was signed in and nothing else. Any user, an external (vendor) user included, could write an approval policy, an ABAC policy, a governance policy, a campaign or an access review, and run the SoD, privileged-account and entitlement jobs. Approval policies decide who is granted what, so a user who could write one could grant themselves access. These writes now need `admin` or `super_admin` when OPA is off, and answer `403` with `admin_required` to anyone else. Reading the program's policies, campaigns, SoD violations, privileged accounts and entitlements, which answered anyone signed in, now needs an administrator, an operator or an auditor (`reader_required`). Filing, cancelling and deciding access requests, deciding a review one is the reviewer of, and the evaluate routes are unchanged. With OPA on, its role table decides these writes as before.
 - **A SAML assertion carries only the roles whose window is open.** The assertion read every role the user held, so a role whose window had ended was still asserted until the expiry sweep deleted it; the OAuth token, and the assertion's groups, already left it out.
 - **An ended external account's broker connections are deleted.** An external user's launch runs on a broker connection of its own per entry, holding the credential injected for it. The broker sweep deleted the user's broker account once the account ended, and left every such connection, credential included, on the broker. It now deletes them first, and keeps the account's mapping to retry when the broker cannot list its connections.
 - **An ended role or group neither approves, auto-approves nor reaches the upstream.** Until the expiry sweep deleted it, a role or group membership whose window had ended still made its holder an approver on a role or group approval step, still satisfied auto-approve's `allowed_roles` and `allowed_groups`, and was still among the roles the Ziti HTTP forwarder passes to the upstream. Each now counts only a live role or membership.
@@ -76,7 +104,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - a portal group join.
 
   #1052 did the same for the identity service's paths. A path that changes nothing sends nothing.
-- **The SCIM server answers an identity provider's machine credential or an administrator, not every signed-in user.** `/scim/v2/Users` and `/scim/v2/Groups` accepted any OpenIDX bearer token, and a signed-in person's own token is one, so any user could change the directory through them. They now answer a `client_credentials` token, which names no user and is minted only for an application an administrator gave API access, and `admin` or `super_admin`. Anyone else gets a SCIM `403`. Upstream identity providers, which call with a machine credential, are unaffected. The discovery routes are unchanged.
 - **An external user's group membership ends no later than the account.** The user's roles, application assignments and PAM and vault grants already did, through migrations v215 and v222. A membership had no window until v224, so nothing held it to the account's end. Migration v225 caps a membership written for an external user at the account's end, and cuts the memberships again when that end moves earlier. The identity expiry sweep then removes the membership and cuts the tokens that name the group. The migration caps the memberships external users already hold.
 - **A group from an access request ends when its window does, and takes nothing else with it.** Fulfilment writes the request's window on the membership (`group_memberships.expires_at`, migration v224), as it does for a role (v223). The effects:
   - a token issued after the window's end no longer carries the group, and a token that carries it ends no later than the window;
@@ -94,35 +121,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A token that carries a time-bound role ends no later than the role.** The authorization code, refresh and device grants cut the access token, its `expires_in` and the ID token to the earliest window among the time-bound roles they carry. Before, a token issued a minute before a role's window closed carried the role for the client's full lifetime, an hour by default. The role-expiry sweep's revocation marker cut it within a minute, but only for a resource server that reads the marker. Section 6.5 of the third-party access framework.
 - **An administrator's disable and a SCIM deactivation tell the SSF receivers.** Offboarding, deletion, a lifecycle policy, the kill switch and a SCIM delete already enqueued `account-disabled`. The two commonest ways an account is turned off did not: an administrator's edit that disables a user (`PUT /api/v1/identity/users/:id`, the console's user form), and an inbound SCIM push with `active:false`. Each now reads the account's previous state under its lock, and tells the receivers once, on the write that turns the account off. An edit or a push of an account already disabled tells no one again.
 - **A role from an access request ends when its window does, and takes nothing else with it.** Fulfilment writes the request's window on the role assignment (migration v223), so a token issued after the window's end no longer carries the role, and the role-expiry sweep removes it within a minute and cuts the tokens that still do. Before, the role stayed until the next five-minute governance sweep. The request's end now removes only the assignment its window made: it used to remove the user's role whatever had made it, so it took an administrator's standing assignment of the same role with it, and the first of two requests cut the second short. The migration gives the roles live requests already made their window. Replacing a user's role set (`PUT /api/v1/identity/users/:id/roles`, the console's role editor) now keeps the window of each role the set keeps: it wrote every role back standing, so editing a user's roles made a time-bound role permanent.
-- **Only the audit roles read the audit trail.** audit-service's read,
-  search, statistics, chain-verify, report, export, scheduled-report and
-  live-stream routes asked only for a signed-in user. Any account in the
-  organization, an external one included, could read and export the whole
-  trail and schedule reports over it. They now need a role holding
-  `audit:read`: `super_admin`, `admin`, `operator`, `auditor` or
-  `compliance_reader`, the same roles the console shows these pages to.
-  Anyone else gets 403 `audit_reader_required`.
-  - **Upgrade note:** an integration that reads the trail with a token
-    carrying none of these roles needs one.
 - **An approved network service request opens its dial.** Fulfilling a `network_service` request gave the requester's overlay identity the attribute `jit-<request-id>`, but no Dial policy named it, and the user sync took it off again within five minutes: the request read fulfilled and nothing could be reached through it. The network grant worker now writes the request's own Dial policy, which opens the requested service to that attribute alone, and the expiry deletes it with the attribute. The user sync keeps a live request's attribute and drops it on the poll after the window ends. A request must now name one of the organization's Ziti services and a duration (`network_service_not_found`, `network_service_duration_required`), and a vendor can be opened only such a service. An organization's administrator can neither set, remove nor name a `jit-` attribute.
 - **An application's access ends when its window does.** An approved access request for an application now writes its window on the assignment (`expires_at`, migration v222), and `/oauth/authorize`, the proxy and the overlay refuse from the window's end. Until now the assignment counted until the governance expiry sweep removed it, up to five minutes later. The sweep now removes only the assignment the request gave: a standing assignment stays, and so does one a later request carried past the first request's end. An administrator assigning the user makes the assignment standing. The user sync re-syncs an identity whose assignment started or whose window ended on its next poll, every thirty seconds, rather than when its attributes go stale. An external user's assignment ends no later than the account, as the other grants do (I8). An application's assignment list shows when a requested assignment ends, and leaves out one whose window is over.
 - **Connect says why a launch was refused.** PAM Connections and the quick links read the refusal from the error itself, where the API client never puts it. So a launch that needed an approval showed a bare "Request failed with status code 403". They read it from the response body now.
 - **A Windows app launch's `replace` ends only the caller's own session.** `POST /api/v1/access/pam/apps/:id/launch?replace=<session_id>` ended whichever session it named in the organization, though it is offered only for the caller's own: any user who could load an app could end another user's session record, and a browser terminal closes once its record ends. It now ends the caller's own session only.
-- **The org-wide overviews answer staff only.**
-  - **Dashboard:** `GET /api/v1/dashboard` returns the organization's latest
-    audit events, its failed-login and suspicious-IP counts and its user and
-    session counts. It asked only for a signed-in user. It now needs
-    `operator`, `admin` or `super_admin`, the roles the console's dashboard
-    calls it for (a plain user's dashboard never did).
-  - **Windows Apps catalog:** `GET /api/v1/access/pam/apps` and
-    `/pam/app-pools` name every RemoteApp's executable, arguments and host,
-    and the hosts' state and agents. They now hold the operator tier, like
-    the console page behind them. An end user's launchable apps stay at
-    `/pam/my-apps`.
-  - **Moderation status:** `GET /api/v1/access/pam/moderation/:id` named
-    the moderator and the live connection to anyone in the organization who
-    knew the id. It now answers the same parties as ending it does: the
-    requester, the moderator and an administrator.
 - **One person could approve every step of a request.** An approver who was a candidate in two steps of a policy, such as a manager who also holds the approver role, could carry the request through both alone. One person now approves at most one step of a request (`four_eyes`); they can still deny.
 - **An approved vault credential request is granted when its approver approves it.** The approval route read the request back without its end, and a vault credential checkout refuses to be unbounded, so an approval there was recorded and the credential was never checked out; only an auto-approved request was granted. The same read gives a PAM connection request its window.
 - **`PAM_REQUIRE_ZTNA=enforce` now holds at the Windows app launch and the browser SSH terminal.** Neither asked the overlay gate, so an app on a direct-reach host, or a direct-reach SSH entry opened in the browser terminal, launched while Connect on the same entry was refused. The gate is also asked before the launch approval is spent, so a launch it refuses no longer uses up the approval. `pam.ztna.denied` is recorded as a failure.
