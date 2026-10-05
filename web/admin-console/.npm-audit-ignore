@@ -1,0 +1,20 @@
+# npm audit ignore list, read by scripts/check-npm-audit.sh.
+#
+# The console's npm audit blocks on HIGH/CRITICAL (decision D2 in
+# docs/archive/PROJECT-READINESS-GUIDE.md). An entry here is a claim that one
+# advisory does not apply to this repository, which needs a reason a reviewer
+# can check, and an exp: date after which it is looked at again.
+#
+# Do not add an entry to make a build green. Bump the dependency.
+
+# GHSA-vfj7-8cjw-p6xm — braces <= 3.0.3, stack exhaustion on deeply nested
+# brace patterns. No patched release exists (3.0.3 is the latest braces).
+#
+# braces is in the tree only through tailwindcss 3 (chokidar and micromatch,
+# `npm ls braces`), a devDependency that runs at build time and is not in the
+# shipped bundle. The patterns it expands are the `content` globs in
+# tailwind.config.js, written in this repository; no request, user or tenant
+# input reaches it. The way out is Tailwind 4, which drops chokidar and
+# micromatch -- a migration of the console's styling config, tracked as its
+# own piece of work rather than smuggled into a CI fix -- or a braces release.
+GHSA-vfj7-8cjw-p6xm exp:2027-01-05
