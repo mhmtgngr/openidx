@@ -126,6 +126,21 @@ func (p *PendingLogin) BindDevice(agentID string) { p.agentID = agentID }
 // builds the authorize URL — but does NOT open a browser or block. The caller
 // opens AuthURL() (or hands it to a mobile browser) and then calls Wait.
 func StartLogin(serverURL string) (*PendingLogin, error) {
+	return StartLoginWith(serverURL, LoginOptions{})
+}
+
+// LoginOptions adjusts an interactive sign-in.
+type LoginOptions struct {
+	// Fresh asks the server to authenticate the person again now, second
+	// factor included, even when the browser already holds a session
+	// (prompt=login and max_age=0, OIDC Core §3.1.2.1). A privileged launch
+	// refused with step_up_required is cleared by a session whose factor was
+	// just verified, and that is a new sign-in, not a reuse of the browser's.
+	Fresh bool
+}
+
+// StartLoginWith is StartLogin with options.
+func StartLoginWith(serverURL string, opts LoginOptions) (*PendingLogin, error) {
 	serverURL = strings.TrimRight(serverURL, "/")
 
 	pk, err := newPKCE()
@@ -177,15 +192,7 @@ func StartLogin(serverURL string) (*PendingLogin, error) {
 	// which answers with a redirect_url carrying the code to our loopback.
 	// v1 is kept because it is the endpoint this client has always used and
 	// the one whose parameter handling matches what is sent below.
-	authURL := serverURL + "/oauth/authorize?" + url.Values{
-		"response_type":         {"code"},
-		"client_id":             {DesktopClientID},
-		"redirect_uri":          {RedirectURI},
-		"scope":                 {strings.Join(DefaultScopes, " ")},
-		"state":                 {state},
-		"code_challenge":        {pk.challenge},
-		"code_challenge_method": {"S256"},
-	}.Encode()
+	authURL := desktopAuthorizeURL(serverURL, state, pk.challenge, opts)
 
 	return &PendingLogin{
 		authURL:   authURL,
@@ -225,6 +232,24 @@ func (p *PendingLogin) Wait(ctx context.Context) (*Tokens, error) {
 	}
 }
 
+// desktopAuthorizeURL builds the authorize request for the loopback flow.
+func desktopAuthorizeURL(serverURL, state, challenge string, opts LoginOptions) string {
+	q := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {DesktopClientID},
+		"redirect_uri":          {RedirectURI},
+		"scope":                 {strings.Join(DefaultScopes, " ")},
+		"state":                 {state},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+	}
+	if opts.Fresh {
+		q.Set("prompt", "login")
+		q.Set("max_age", "0")
+	}
+	return strings.TrimRight(serverURL, "/") + "/oauth/authorize?" + q.Encode()
+}
+
 // withDevice adds the enrolled device id to a token request when there is one.
 // The server checks the claim against its own record of who enrolled the agent
 // before binding anything to it (internal/oauth/device_binding.go); sending it
@@ -251,7 +276,12 @@ func Login(ctx context.Context, serverURL string) (*Tokens, error) {
 // agent this session belongs to, which the server binds the refresh-token
 // family to so revoking the device revokes the session (v185).
 func LoginWithDevice(ctx context.Context, serverURL, agentID string) (*Tokens, error) {
-	p, err := StartLogin(serverURL)
+	return LoginWithDeviceOptions(ctx, serverURL, agentID, LoginOptions{})
+}
+
+// LoginWithDeviceOptions is LoginWithDevice with options.
+func LoginWithDeviceOptions(ctx context.Context, serverURL, agentID string, opts LoginOptions) (*Tokens, error) {
+	p, err := StartLoginWith(serverURL, opts)
 	if err != nil {
 		return nil, err
 	}

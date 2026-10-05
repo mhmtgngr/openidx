@@ -22,3 +22,23 @@ func (a *app) tell(msg string) {
 	_, _ = windows.MessageBox(0, text, caption,
 		windows.MB_OK|windows.MB_ICONWARNING|windows.MB_SETFOREGROUND|windows.MB_TOPMOST)
 }
+
+// ask puts a yes/no question to the person at the device and blocks until
+// they answer. No is the default button, so an accidental Enter changes
+// nothing.
+func (a *app) ask(msg string) bool {
+	text, err := windows.UTF16PtrFromString(msg)
+	if err != nil {
+		return false
+	}
+	caption, err := windows.UTF16PtrFromString("OpenIDX")
+	if err != nil {
+		return false
+	}
+	ret, err := windows.MessageBox(0, text, caption,
+		windows.MB_YESNO|windows.MB_ICONQUESTION|windows.MB_DEFBUTTON2|windows.MB_SETFOREGROUND|windows.MB_TOPMOST)
+	return err == nil && ret == idYesButton
+}
+
+// idYesButton is MessageBox's return value for Yes.
+const idYesButton = 6

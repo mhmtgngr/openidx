@@ -8,6 +8,7 @@ package tray
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -319,7 +320,63 @@ func (a *app) loop(mQuit *systray.MenuItem) {
 	}
 }
 
-func (a *app) signIn() {
+// offerWayThrough answers a refused connect with the step the person can
+// take: a fresh sign-in for a stale second factor, an access request for an
+// unapproved entry, or the server's reason when there is nothing to offer.
+func (a *app) offerWayThrough(entryID string, err error) {
+	switch refusalActionFor(err) {
+	case actionSignInFresh:
+		if !a.ask("This connection needs a recently verified second factor.\n\n" +
+			"Sign in again now? Your browser will ask for your second factor; " +
+			"the connection is then one click away.") {
+			return
+		}
+		a.signOut()
+		a.signInWith(sso.LoginOptions{Fresh: true})
+		if a.signedIn() {
+			a.tell("Signed in. Click the connection again to open it.")
+		}
+	case actionRequestAccess:
+		if !a.ask("This connection needs an approved access request.\n\n" +
+			"Send a request now? An approver is notified; you can connect once they approve.") {
+			return
+		}
+		a.requestAccess(entryID)
+	default:
+		a.tell(desktoppam.UserMessage(err))
+	}
+}
+
+// requestAccess files an access request for entryID from this device.
+func (a *app) requestAccess(entryID string) {
+	a.mu.Lock()
+	t := a.tokens
+	a.mu.Unlock()
+	if t == nil {
+		return
+	}
+	host, _ := os.Hostname()
+	reason := "Requested from the OpenIDX tray on " + host
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := desktoppam.RequestAccess(ctx, a.server(), t.AccessToken, entryID, reason); err != nil {
+		a.logger.Warn("tray: access request failed", zap.String("entry", entryID), zap.Error(err))
+		a.tell("The request could not be sent.\n\n" + desktoppam.UserMessage(err))
+		return
+	}
+	a.tell("Your request was sent. You can connect once it is approved.")
+}
+
+// signedIn reports whether the tray holds a session.
+func (a *app) signedIn() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.tokens != nil
+}
+
+func (a *app) signIn() { a.signInWith(sso.LoginOptions{}) }
+
+func (a *app) signInWith(opts sso.LoginOptions) {
 	if a.server() == "" {
 		a.tell("This device is not enrolled yet, so there is nothing to sign in to.\n\n" +
 			"Open the enrollment link from the OpenIDX console on this computer, or run\n" +
@@ -328,7 +385,7 @@ func (a *app) signIn() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
-	t, err := sso.LoginWithDevice(ctx, a.server(), a.enrolledAgentID())
+	t, err := sso.LoginWithDeviceOptions(ctx, a.server(), a.enrolledAgentID(), opts)
 	if err != nil {
 		a.logger.Warn("tray: sign-in failed", zap.Error(err))
 		a.mStatus.SetTitle("Sign-in failed")
@@ -430,8 +487,9 @@ func (a *app) watchSlot(i int, mi *systray.MenuItem) {
 			if _, err := desktoppam.Connect(ctx, a.server(), t.AccessToken, id); err != nil {
 				a.logger.Warn("tray: connect failed", zap.String("entry", id), zap.Error(err))
 				// The log is for the operator; the person who clicked needs
-				// to know why nothing opened and what to do about it.
-				a.tell(desktoppam.UserMessage(err))
+				// to know why nothing opened and, where there is one, the
+				// way through.
+				a.offerWayThrough(id, err)
 			}
 		}()
 	}
