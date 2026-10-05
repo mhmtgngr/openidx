@@ -42,6 +42,15 @@ type ResilientTransport struct {
 // avoid hammering a dead controller on every poll.
 const cooldownWindow = 60 * time.Second
 
+// SetSigner installs the device-key signer on both paths, so a report signs
+// the same way whichever path carries it.
+func (r *ResilientTransport) SetSigner(s RequestSigner) {
+	if r.ziti != nil {
+		SetSigner(r.ziti, s)
+	}
+	SetSigner(r.https, s)
+}
+
 // NewResilientTransport wraps a Ziti transport with an HTTPS fallback. If ziti
 // is nil it behaves exactly like the HTTPS transport.
 func NewResilientTransport(ziti, https Transport, logger *zap.Logger) *ResilientTransport {

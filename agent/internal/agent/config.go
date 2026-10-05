@@ -47,6 +47,10 @@ type AgentConfig struct {
 	// use, ~5-min TTL). Empty once redeemed or when the server did not issue one.
 	PushEnrollToken string `json:"push_enroll_token,omitempty"`
 	PushEnrollPath  string `json:"push_enroll_path,omitempty"`
+	// DeviceKeyBound is true once the server holds this device's key
+	// (agent/internal/devicekey), from enrolment or from the agent's own
+	// registration. Until then the agent keeps offering it.
+	DeviceKeyBound bool `json:"device_key_bound,omitempty"`
 }
 
 // CheckConfig is an alias for checks.CheckConfig so callers that import the

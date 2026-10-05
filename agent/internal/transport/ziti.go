@@ -19,6 +19,7 @@ type ZitiClient struct {
 	httpClient  *http.Client
 	zitiCtx     ziti.Context
 	serviceName string
+	signer      RequestSigner
 }
 
 // NewZitiClient creates a transport client that routes through Ziti.
@@ -82,9 +83,13 @@ func (c *ZitiClient) Enroll(token string) (*EnrollResponse, error) {
 
 // ReportResults delegates to a Client using the Ziti-backed HTTP client.
 func (c *ZitiClient) ReportResults(data []byte) error {
-	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, agentID: c.agentID, httpClient: c.httpClient}
+	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, agentID: c.agentID, httpClient: c.httpClient,
+		signer: c.signer}
 	return inner.ReportResults(data)
 }
+
+// SetSigner installs the device-key signer for posture reports.
+func (c *ZitiClient) SetSigner(s RequestSigner) { c.signer = s }
 
 // GetConfig delegates to a Client using the Ziti-backed HTTP client.
 func (c *ZitiClient) GetConfig() ([]byte, error) {
