@@ -1655,6 +1655,8 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	// 4. Build response based on status.
 	switch status {
 	case "revoked":
+		// requireEnrolledAgent already refuses a revoked agent, so this branch
+		// is reached only when the revoke lands between that read and this one.
 		h.logAuditEvent("agent.config_denied", agentID, "denied", "agent revoked")
 		h.logAuditEventToDB(ctx, "agent.config_denied", agentID, "denied", "agent revoked")
 		c.JSON(http.StatusForbidden, gin.H{"error": "agent has been revoked"})

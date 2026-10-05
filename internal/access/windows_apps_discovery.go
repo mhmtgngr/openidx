@@ -34,10 +34,11 @@ import (
 // This was one of three copies of the same lookup. It is now the shared one in
 // agent_auth.go, which is where the comment explaining the RLS bypass lives —
 // and, more to the point, where /agent/report and /agent/config finally get the
-// check that this file's own header said they already had.
-func (s *Service) verifyAgentToken(ctx context.Context, agentID, token string) bool {
-	_, ok := verifyEnrolledAgent(ctx, s.db, agentID, token)
-	return ok
+// check that this file's own header said they already had. It returns the
+// agent's tenant and status as well, so that a revoked agent can be answered
+// 403 rather than 401.
+func (s *Service) verifyAgentToken(ctx context.Context, agentID, token string) (orgID, status string, ok bool) {
+	return verifyEnrolledAgent(ctx, s.db, agentID, token)
 }
 
 // handleAgentWindowsAppReport — POST /agent/windows-apps/report (public agent
@@ -55,7 +56,11 @@ func (s *Service) handleAgentWindowsAppReport(c *gin.Context) {
 	token := c.GetHeader("X-Auth-Token")
 	ctx := c.Request.Context()
 
-	if !s.verifyAgentToken(ctx, agentID, token) {
+	if agentOrg, agentStatus, ok := s.verifyAgentToken(ctx, agentID, token); !ok {
+		if agentStatus == agentStatusRevoked {
+			refuseRevokedAgent(c, s.agentHandler, agentOrg, agentID)
+			return
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid agent credentials"})
 		return
 	}

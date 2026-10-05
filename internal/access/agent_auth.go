@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -32,9 +33,26 @@ import (
 // So the lookup lives here once, and Service.verifyAgentToken and
 // RemoteSupportHandler.verifyAgentAuth delegate to it.
 
+// agentStatusRevoked is the enrolled_agents.status an administrator's revoke
+// writes, from the fleet console and from a user's own device list alike.
+const agentStatusRevoked = "revoked"
+
 // verifyEnrolledAgent reports whether token is the credential enrollment issued
 // for agentID, by comparing its SHA-256 against enrolled_agents.auth_token_hash,
-// and returns the tenant the agent belongs to.
+// and returns the tenant the agent belongs to and its status.
+//
+// ok is true only for an agent that may still act as one. A revoked agent
+// presenting its own, correct token comes back with ok=false, its tenant and
+// status "revoked": revoking a device sets the status and leaves the token hash
+// in place, so before this check the token went on working on every agent route
+// after the revoke. Returning ok=false rather than leaving the status for each
+// caller to test means a caller that forgets the status refuses the device
+// with a 401 instead of letting it in. A caller that does test it answers 403,
+// which is how the Go agent learns it was revoked. The status is returned only
+// when the token matched, so a caller without the credential cannot learn
+// whether an agent was revoked. Every other status passes: a suspended agent
+// still needs its config, which tells it to block, and its reports are how it
+// becomes compliant again.
 //
 // Since v197 the fleet is per-tenant and enrolled_agents is belted. An agent
 // callback still arrives with no tenant context -- its credential is the agent
@@ -46,24 +64,52 @@ import (
 // With no database — unit tests and dev builds that construct a handler without
 // one — any non-empty token is accepted with an empty tenant, matching what the
 // two existing verifiers have always done. Nothing is persisted on that path.
-func verifyEnrolledAgent(ctx context.Context, db *database.PostgresDB, agentID, token string) (orgID string, ok bool) {
+func verifyEnrolledAgent(ctx context.Context, db *database.PostgresDB, agentID, token string) (orgID, status string, ok bool) {
 	if agentID == "" || token == "" {
-		return "", false
+		return "", "", false
 	}
 	if db == nil || db.Pool == nil {
-		return "", true // dev mode: any non-empty token, as the other agent surfaces do
+		return "", "", true // dev mode: any non-empty token, as the other agent surfaces do
 	}
 	var stored string
 	//orgscope:ignore agent credential check: keyed by the globally-unique agent_id before any tenant is resolvable; the row's own org_id is what scopes everything after
 	if err := db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
-		`SELECT auth_token_hash, org_id::text FROM enrolled_agents WHERE agent_id = $1`,
-		agentID).Scan(&stored, &orgID); err != nil {
-		return "", false
+		`SELECT auth_token_hash, org_id::text, status FROM enrolled_agents WHERE agent_id = $1`,
+		agentID).Scan(&stored, &orgID, &status); err != nil {
+		return "", "", false
 	}
-	if stored == "" || sha256Hex(token) != stored {
-		return "", false
+	// The comparison runs in constant time so that how long a refusal takes
+	// says nothing about how much of the presented hash matched the stored one.
+	if stored == "" || subtle.ConstantTimeCompare([]byte(sha256Hex(token)), []byte(stored)) != 1 {
+		return "", "", false
 	}
-	return orgID, true
+	if status == agentStatusRevoked {
+		return orgID, status, false
+	}
+	return orgID, status, true
+}
+
+// refuseRevokedAgent answers an agent whose credential is correct but whose
+// enrolment has been revoked, and audits the refusal in the agent's tenant.
+//
+// Every agent route answers it the same way, 403 with code agent_revoked. The
+// Go agent maps a 403 from /agent/config to ErrAgentRevoked
+// (agent/internal/transport/client.go GetConfig) and shows its user that the
+// device was revoked (agent/internal/control/device_state.go). A 401 would be
+// shown as a server it could not reach, which retrying will never fix.
+//
+// audit is the handler that owns the agent-lifecycle audit stream. It may be
+// nil where a surface is built without one, and the refusal is still answered.
+func refuseRevokedAgent(c *gin.Context, audit *AgentAPIHandler, orgID, agentID string) {
+	if audit != nil {
+		ctx := c.Request.Context()
+		if orgID != "" {
+			ctx = orgctx.With(ctx, orgctx.Org{ID: orgID})
+		}
+		audit.logAuditEvent("agent.auth_failed", agentID, "denied", "agent revoked")
+		audit.logAuditEventToDB(ctx, "agent.auth_failed", agentID, "denied", "agent revoked")
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "agent revoked", "code": "agent_revoked"})
 }
 
 // agentCredentials reads the agent id and token a request presents.
@@ -94,7 +140,8 @@ func agentCredentials(c *gin.Context) (agentID, token string) {
 // requireEnrolledAgent authenticates the calling agent, puts the agent's tenant
 // on the request context, and returns the agent id.
 //
-// On failure it answers 401 and returns ok=false; the caller must return. The
+// On failure it answers and returns ok=false; the caller must return. A revoked
+// agent is answered 403 (see refuseRevokedAgent), anything else 401. The
 // refusal is audited with the id that was claimed, because a report arriving
 // for an agent id with the wrong credential is the shape of someone probing the
 // fleet, and the endpoint is public.
@@ -104,7 +151,11 @@ func agentCredentials(c *gin.Context) (agentID, token string) {
 // holds the credential for a row, and that row names its tenant.
 func (h *AgentAPIHandler) requireEnrolledAgent(c *gin.Context) (string, bool) {
 	agentID, token := agentCredentials(c)
-	orgID, ok := verifyEnrolledAgent(c.Request.Context(), h.db, agentID, token)
+	orgID, status, ok := verifyEnrolledAgent(c.Request.Context(), h.db, agentID, token)
+	if status == agentStatusRevoked {
+		refuseRevokedAgent(c, h, orgID, agentID)
+		return "", false
+	}
 	if !ok {
 		h.logAuditEvent("agent.auth_failed", agentID, "denied", "invalid agent credentials")
 		h.logAuditEventToDB(c.Request.Context(), "agent.auth_failed", agentID, "denied",
