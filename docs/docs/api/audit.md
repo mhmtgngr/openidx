@@ -4,6 +4,21 @@ Base URL: `http://localhost:8004`
 
 The Audit Service provides event logging, compliance reporting, and data export.
 
+## Who may read the trail
+
+Every read, report, export, scheduled-report and stream route needs a role
+that holds `audit:read` in `internal/auth/roles.go`: `super_admin`, `admin`,
+`operator`, `auditor` or `compliance_reader`. Any other caller, including a
+machine credential that holds none of them, gets 403 with
+`"code": "audit_reader_required"`. The live stream (`GET /api/v1/audit/stream`)
+applies the same rule to the token it is opened with. The webhook routes
+need `admin` or `super_admin`; the ingest route below takes the internal
+service token.
+
+Outside production with no `OAUTH_JWKS_URL`, the service mounts no
+authentication on these routes (it logs a warning at start-up) and the role
+check is off with it. In production it refuses to start without one.
+
 ## Audit Events
 
 | Method | Path | Description |
