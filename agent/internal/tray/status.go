@@ -23,6 +23,9 @@ func composeStatus(signedIn, serverKnown bool, st *ipc.Status) string {
 		if st.ZitiEnrolled {
 			dev += " · ziti"
 		}
+		if note := postureNote(st); note != "" {
+			dev += " · " + note
+		}
 		return signPart + " · " + dev
 	case st != nil && !st.Enrolled, !serverKnown:
 		return "Not enrolled · open your enrollment link"

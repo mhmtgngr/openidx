@@ -21,7 +21,7 @@ import (
 )
 
 // statusProvider builds a read-only status snapshot for the tray from the
-// persisted agent config (best-effort; live posture is a follow-up).
+// persisted agent config and the running agent's latest posture cycle.
 func (h *handler) statusProvider() ipc.Status {
 	cfg, err := agent.LoadConfig(h.configDir)
 	if err != nil || cfg == nil {
@@ -34,13 +34,15 @@ func (h *handler) statusProvider() ipc.Status {
 		}
 	}
 	var rsActive, rsControlled, revoked bool
+	var posture *agent.PostureSummary
 	h.mu.Lock()
 	if h.agent != nil {
 		rsActive, rsControlled = h.agent.RemoteSupportState()
 		revoked = h.agent.Revoked()
+		posture = h.agent.LastPosture()
 	}
 	h.mu.Unlock()
-	return ipc.Status{
+	st := ipc.Status{
 		Enrolled:                cfg.AgentID != "",
 		AgentID:                 cfg.AgentID,
 		DeviceID:                cfg.DeviceID,
@@ -50,6 +52,8 @@ func (h *handler) statusProvider() ipc.Status {
 		RemoteSupportActive:     rsActive,
 		RemoteSupportControlled: rsControlled,
 	}
+	fillPosture(&st, posture)
+	return st
 }
 
 // ServiceName is the Windows Service key/name.

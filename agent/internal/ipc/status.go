@@ -30,13 +30,30 @@ type Status struct {
 	ZitiEnrolled bool   `json:"ziti_enrolled"`
 	// Revoked is true once the server has refused this device as revoked by
 	// an administrator. The tray shows it and offers no connections.
-	Revoked          bool   `json:"revoked,omitempty"`
+	Revoked bool `json:"revoked,omitempty"`
+	// ComplianceStatus is the device's own reading of its latest posture
+	// cycle: non_compliant (a critical check failed), at_risk (a high one
+	// did), compliant, or unknown. Empty before the first cycle.
 	ComplianceStatus string `json:"compliance_status,omitempty"`
-	LastReportAt     string `json:"last_report_at,omitempty"`
+	// LastReportAt is when that cycle ran (RFC 3339).
+	LastReportAt string `json:"last_report_at,omitempty"`
+	// Issues are the checks that did not pass, with what to do about each.
+	Issues []PostureIssue `json:"issues,omitempty"`
+	// EnforcementPolicy is the server's: "block" for a suspended device.
+	EnforcementPolicy string `json:"enforcement_policy,omitempty"`
 	// RemoteSupportActive is true while an admin remote-support session is live
 	// for this device. The tray raises the "An OpenIDX admin can see and control
 	// this device" banner when set. RemoteSupportControlled adds that the admin
 	// currently holds control (view vs control).
 	RemoteSupportActive     bool `json:"remote_support_active,omitempty"`
 	RemoteSupportControlled bool `json:"remote_support_controlled,omitempty"`
+}
+
+// PostureIssue is one check that did not pass, as the tray shows it.
+type PostureIssue struct {
+	Check       string `json:"check"`
+	Severity    string `json:"severity"`
+	Status      string `json:"status"`
+	Message     string `json:"message,omitempty"`
+	Remediation string `json:"remediation,omitempty"`
 }

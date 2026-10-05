@@ -58,6 +58,10 @@ type ServerConfig struct {
 	Checks         []CheckConfig       `json:"checks"`
 	ReportInterval string              `json:"report_interval"`
 	RemoteSupport  *RemoteSupportBlock `json:"remote_support,omitempty"`
+	// EnforcementPolicy is "block" for a device the server has suspended
+	// (internal/access/agent_api.go HandleConfig), "enforce" otherwise. The
+	// tray refuses privileged launches while it is "block".
+	EnforcementPolicy string `json:"enforcement_policy,omitempty"`
 }
 
 // RemoteSupportBlock is the in-flight remote-support session pointer the server
