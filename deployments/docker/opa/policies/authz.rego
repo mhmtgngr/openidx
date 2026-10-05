@@ -199,6 +199,32 @@ access_request_routes := {
     }
 }
 
+# Access reviews are decided by the reviewer each one names, who need not be
+# an auditor: a manager reviewing their reports, an application owner. Any
+# signed-in user reaches the reviewer's routes (the list, a review, its items,
+# a decision on one item or many), and governance-service decides who may do
+# each: the reads pin a caller who is neither an administrator nor an auditor
+# to the reviews they are the reviewer of, and a decision needs the assigned
+# reviewer or an administrator. Without this rule, turning OPA on stopped every
+# reviewer who was not an auditor at the door. Creating, editing and moving a
+# review stay with the role table above. Keyed on the route gin matched.
+allow if {
+    input.user.authenticated
+    input.resource.route in review_reviewer_routes[input.method]
+}
+
+review_reviewer_routes := {
+    "GET": {
+        "/api/v1/governance/reviews",
+        "/api/v1/governance/reviews/:id",
+        "/api/v1/governance/reviews/:id/items"
+    },
+    "POST": {
+        "/api/v1/governance/reviews/:id/items/:itemId/decision",
+        "/api/v1/governance/reviews/:id/items/batch-decision"
+    }
+}
+
 # ─── Groups-based access ────────────────────────────────────────
 # Members of admin-group get full access
 allow if {

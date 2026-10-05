@@ -269,6 +269,14 @@ a manager or the sponsor of an external user. The policy allows these routes
 service matched). governance-service then checks each caller against the
 request itself.
 
+So are the reviewer's routes of an access review, since a review's reviewer
+need not be an auditor. Any signed-in user can list reviews, read a review and
+its items, and decide items (`review_reviewer_routes`). governance-service
+shows a caller who is neither an administrator nor an auditor only the reviews
+they are the reviewer of, and lets only the reviewer or an administrator decide
+one. Creating, editing and moving a review stay with the role table. This
+read scope holds with OPA off too.
+
 ### Multi-factor authentication
 
 | Variable | Type | Default | Description |
