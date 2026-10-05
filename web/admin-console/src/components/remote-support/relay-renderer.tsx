@@ -302,7 +302,7 @@ export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: 
         onKeyDown={onKeyDown}
         onClick={(e) => e.stopPropagation()}
         style={{ touchAction: 'none' }}
-        className="relative bg-black rounded-md aspect-video overflow-hidden flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-primary cursor-crosshair fullscreen:aspect-auto fullscreen:h-screen fullscreen:w-screen fullscreen:rounded-none"
+        className="relative bg-black rounded-md aspect-video overflow-hidden flex items-center justify-center focus:outline-hidden focus:ring-2 focus:ring-primary cursor-crosshair fullscreen:aspect-auto fullscreen:h-screen fullscreen:w-screen fullscreen:rounded-none"
       >
         <canvas ref={canvasRef} className="max-h-full max-w-full object-contain pointer-events-none" />
         {state !== 'streaming' && (

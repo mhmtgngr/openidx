@@ -1040,13 +1040,13 @@ export function UserProfilePage() {
             <CardContent className="space-y-4">
               {passwordInfo?.is_azure_ad && (
                 <div className="flex items-center gap-2 p-3 bg-purple-50 dark:bg-purple-950 rounded-md text-sm text-purple-700 dark:text-purple-300">
-                  <Shield className="h-4 w-4 flex-shrink-0" />
+                  <Shield className="h-4 w-4 shrink-0" />
                   <span>{t('pages.profile.password.azureNote')}</span>
                 </div>
               )}
               {passwordInfo?.is_ldap && (
                 <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-950 rounded-md text-sm text-blue-700 dark:text-blue-300">
-                  <Shield className="h-4 w-4 flex-shrink-0" />
+                  <Shield className="h-4 w-4 shrink-0" />
                   <span>{t('pages.profile.password.ldapNote')}</span>
                 </div>
               )}

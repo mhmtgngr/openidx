@@ -70,14 +70,23 @@ run_case "a registry error is not a clean audit" 1 \
     '{"error":{"code":"ENOAUDIT","summary":"audit endpoint returned an error"}}' ""
 run_case "an empty report is not a clean audit" 1 "" ""
 
-# The repository's own ignore file parses and excuses what it says it does.
-printf '%s\n' "$BRACES" > "$TMP/audit.json"
+# The repository's own ignore file parses, and excuses nothing it does not
+# list: with no entries, a clean audit passes and a HIGH advisory fails.
+printf '%s\n' "$(report "")" > "$TMP/audit.json"
 if NPM_AUDIT_TODAY=2026-10-05 bash "$GUARD" "$TMP/audit.json" >/dev/null 2>&1; then
-    echo "  ok   the repository's .npm-audit-ignore excuses the braces advisory"
+    echo "  ok   the repository's .npm-audit-ignore parses"
     PASS=$((PASS + 1))
 else
-    echo "  FAIL the repository's .npm-audit-ignore does not excuse the braces advisory"
+    echo "  FAIL the repository's .npm-audit-ignore does not parse"
     FAIL=$((FAIL + 1))
+fi
+printf '%s\n' "$BRACES" > "$TMP/audit.json"
+if NPM_AUDIT_TODAY=2026-10-05 bash "$GUARD" "$TMP/audit.json" >/dev/null 2>&1; then
+    echo "  FAIL the repository's .npm-audit-ignore still excuses the braces advisory"
+    FAIL=$((FAIL + 1))
+else
+    echo "  ok   the repository's .npm-audit-ignore no longer excuses braces"
+    PASS=$((PASS + 1))
 fi
 
 echo "check-npm-audit.test: $PASS passed, $FAIL failed"

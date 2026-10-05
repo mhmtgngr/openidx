@@ -108,7 +108,7 @@ function StepHeader({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <div className="flex-shrink-0 mt-0.5">
+      <div className="shrink-0 mt-0.5">
         {completed ? (
           <CheckCircle2 className="h-6 w-6 text-green-600" />
         ) : active ? (

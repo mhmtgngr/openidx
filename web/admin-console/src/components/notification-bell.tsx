@@ -104,9 +104,9 @@ export function NotificationBell() {
           notifications.map(n => (
             <DropdownMenuItem key={n.id} className="flex flex-col items-start p-3 cursor-pointer" onClick={() => handleClick(n)}>
               <div className="flex items-center gap-2 w-full">
-                {!n.read && <span className="h-2 w-2 rounded-full bg-blue-500 flex-shrink-0" />}
+                {!n.read && <span className="h-2 w-2 rounded-full bg-blue-500 shrink-0" />}
                 <span className={`text-sm font-medium flex-1 ${n.read ? 'text-muted-foreground' : ''}`}>{n.title}</span>
-                <span className="text-xs text-muted-foreground flex-shrink-0">{timeAgo(n.created_at)}</span>
+                <span className="text-xs text-muted-foreground shrink-0">{timeAgo(n.created_at)}</span>
               </div>
               <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{n.body}</p>
             </DropdownMenuItem>

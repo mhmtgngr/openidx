@@ -274,9 +274,9 @@ export function LoginPage() {
     : undefined
   const renderBrandLogo = () =>
     branding.logo_url ? (
-      <img src={branding.logo_url} alt="" className="h-16 w-auto max-w-[12rem] object-contain mx-auto" />
+      <img src={branding.logo_url} alt="" className="h-16 w-auto max-w-48 object-contain mx-auto" />
     ) : (
-      <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
+      <div className="h-16 w-16 rounded-full bg-linear-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
         <Shield className="h-9 w-9 text-white" />
       </div>
     )
@@ -939,7 +939,7 @@ export function LoginPage() {
 
   const enrollmentBanner = enrollmentDue && (
     <div role="status" className="flex items-start gap-2 p-3 mb-4 bg-amber-50 border border-amber-200 rounded-md">
-      <AlertCircle className="h-4 w-4 text-amber-700 flex-shrink-0 mt-0.5" />
+      <AlertCircle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
       <p className="text-sm text-amber-800">{enrollmentNotice(enrollmentDue)}</p>
     </div>
   )
@@ -1083,14 +1083,14 @@ export function LoginPage() {
   // The policy notice, before the redirect that completes the sign-in.
   if (pendingRedirect) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+      <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50">
         <div className="absolute top-4 right-4">
           <LanguageSwitcher />
         </div>
         <Card className="w-full max-w-md shadow-xl">
           <CardHeader className="text-center space-y-4">
             <div className="flex justify-center">
-              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-lg">
+              <div className="h-16 w-16 rounded-full bg-linear-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-lg">
                 <Shield className="h-9 w-9 text-white" />
               </div>
             </div>
@@ -1114,14 +1114,14 @@ export function LoginPage() {
   // Consent screen: rendered from the challenge, whichever path produced it.
   if (consentChallenge) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+      <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50">
         <div className="absolute top-4 right-4">
           <LanguageSwitcher />
         </div>
         <Card className="w-full max-w-md shadow-xl">
           <CardHeader className="text-center space-y-4">
             <div className="flex justify-center">
-              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
+              <div className="h-16 w-16 rounded-full bg-linear-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
                 <Shield className="h-9 w-9 text-white" />
               </div>
             </div>
@@ -1136,7 +1136,7 @@ export function LoginPage() {
           <CardContent className="space-y-4">
             {error && (
               <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-                <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
                 <p className="text-sm text-red-600">{error}</p>
               </div>
             )}
@@ -1146,7 +1146,7 @@ export function LoginPage() {
               <ul aria-label={t('login.consent.scopesLabel')} className="space-y-2">
                 {consentChallenge.scopes.map((scope) => (
                   <li key={scope} className="flex items-center gap-2 rounded-md border p-2 text-sm">
-                    <Check className="h-4 w-4 text-green-600 flex-shrink-0" />
+                    <Check className="h-4 w-4 text-green-600 shrink-0" />
                     <span className="font-mono">{scope}</span>
                   </li>
                 ))}
@@ -1184,14 +1184,14 @@ export function LoginPage() {
   // identity provider hands over its MFA session with no pending login_session.
   if (mfaRequired && mfaMethodSelectionStep) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+      <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50">
         <div className="absolute top-4 right-4">
           <LanguageSwitcher />
         </div>
         <Card className="w-full max-w-md shadow-xl">
           <CardHeader className="text-center space-y-4">
             <div className="flex justify-center">
-              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
+              <div className="h-16 w-16 rounded-full bg-linear-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
                 <Shield className="h-9 w-9 text-white" />
               </div>
             </div>
@@ -1208,7 +1208,7 @@ export function LoginPage() {
           <CardContent className="space-y-3">
             {error && (
               <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-                <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
                 <p className="text-sm text-red-600">{error}</p>
               </div>
             )}
@@ -1277,14 +1277,14 @@ export function LoginPage() {
     const isRecoveryCode = selectedMfaMethod === 'backup' || selectedMfaMethod === 'bypass'
 
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+      <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50">
         <div className="absolute top-4 right-4">
           <LanguageSwitcher />
         </div>
         <Card className="w-full max-w-md shadow-xl">
           <CardHeader className="text-center space-y-4">
             <div className="flex justify-center">
-              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
+              <div className="h-16 w-16 rounded-full bg-linear-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
                 {methodInfo.icon ? (
                   <div className="text-white [&>svg]:h-9 [&>svg]:w-9">{methodInfo.icon}</div>
                 ) : (
@@ -1312,7 +1312,7 @@ export function LoginPage() {
           <CardContent>
             {error && (
               <div className="flex items-center gap-2 p-3 mb-4 bg-red-50 border border-red-200 rounded-md">
-                <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
                 <p className="text-sm text-red-600">{error}</p>
               </div>
             )}
@@ -1353,7 +1353,7 @@ export function LoginPage() {
                   <div className="text-center py-6">
                     <KeyRound className="h-10 w-10 mx-auto text-muted-foreground mb-4" />
                     <Button
-                      className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                      className="bg-linear-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                       size="lg"
                       onClick={() => beginWebAuthnChallenge(mfaSession)}
                     >
@@ -1402,7 +1402,7 @@ export function LoginPage() {
                   <div className="text-center py-6">
                     <Bell className="h-10 w-10 mx-auto text-muted-foreground mb-4" />
                     <Button
-                      className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                      className="bg-linear-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                       size="lg"
                       onClick={() => beginPushChallenge(mfaSession)}
                     >
@@ -1455,7 +1455,7 @@ export function LoginPage() {
 
                 <Button
                   type="submit"
-                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                  className="w-full bg-linear-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                   size="lg"
                   disabled={isSubmitting || (isRecoveryCode ? mfaCode.length < 8 : mfaCode.length !== 6)}
                 >
@@ -1523,7 +1523,7 @@ export function LoginPage() {
   // Show login form when login_session is present
   if (loginSession) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+      <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50">
         <div className="absolute top-4 right-4">
           <LanguageSwitcher />
         </div>
@@ -1533,7 +1533,7 @@ export function LoginPage() {
               {renderBrandLogo()}
             </div>
             <div>
-              <CardTitle className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent" style={brandTitleStyle}>
+              <CardTitle className="text-3xl font-bold bg-linear-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent" style={brandTitleStyle}>
                 {branding.portal_title || 'OpenIDX'}
               </CardTitle>
               <CardDescription className="text-base mt-2">
@@ -1576,7 +1576,7 @@ export function LoginPage() {
             <form onSubmit={handleCredentialsSubmit} className="space-y-4">
               {error && (
                 <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-                  <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                  <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
                   <p className="text-sm text-red-600">{error}</p>
                 </div>
               )}
@@ -1629,7 +1629,7 @@ export function LoginPage() {
 
               <Button
                 type="submit"
-                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                className="w-full bg-linear-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                 size="lg"
                 disabled={isSubmitting}
               >
@@ -1693,7 +1693,7 @@ export function LoginPage() {
               )}
               {magicLinkSent && (
                 <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-md">
-                  <Check className="h-4 w-4 text-green-600 flex-shrink-0" />
+                  <Check className="h-4 w-4 text-green-600 shrink-0" />
                   <p className="text-sm text-green-700">{t('login.magicLink.sent')}</p>
                 </div>
               )}
@@ -1740,7 +1740,7 @@ export function LoginPage() {
 
   // Show login options (SSO + OpenIDX button)
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+    <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50">
       <div className="absolute top-4 right-4">
         <LanguageSwitcher />
       </div>
@@ -1750,7 +1750,7 @@ export function LoginPage() {
             {renderBrandLogo()}
           </div>
           <div>
-            <CardTitle className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent" style={brandTitleStyle}>
+            <CardTitle className="text-3xl font-bold bg-linear-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent" style={brandTitleStyle}>
               {branding.portal_title || 'OpenIDX'}
             </CardTitle>
             <CardDescription className="text-base mt-2">
@@ -1768,7 +1768,7 @@ export function LoginPage() {
           )}
           {error && (
             <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-              <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+              <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
               <p className="text-sm text-red-600">{error}</p>
             </div>
           )}
@@ -1811,7 +1811,7 @@ export function LoginPage() {
 
                 <Button
                   onClick={handleLogin}
-                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                  className="w-full bg-linear-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                   size="lg"
                   disabled={isLoading}
                 >

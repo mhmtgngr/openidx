@@ -556,7 +556,7 @@ export function RemoteSupportViewer({
         // drags as scroll/gestures.
         onClick={(e) => e.stopPropagation()}
         style={{ touchAction: 'none' }}
-        className="relative bg-black rounded-md aspect-video overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary cursor-crosshair fullscreen:aspect-auto fullscreen:h-screen fullscreen:w-screen fullscreen:rounded-none"
+        className="relative bg-black rounded-md aspect-video overflow-hidden focus:outline-hidden focus:ring-2 focus:ring-primary cursor-crosshair fullscreen:aspect-auto fullscreen:h-screen fullscreen:w-screen fullscreen:rounded-none"
       >
         <video
           ref={videoRef}

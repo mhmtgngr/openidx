@@ -147,7 +147,7 @@ export function AuditStream({
   const statusConfig = CONNECTION_STATUS_CONFIG[connectionState]
 
   return (
-    <Card className="border-l-4 border-l-[var(--color)]" style={{ '--color': getStatusColor(connectionState) } as React.CSSProperties}>
+    <Card className="border-l-4 border-l-(--color)" style={{ '--color': getStatusColor(connectionState) } as React.CSSProperties}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-medium flex items-center gap-2">

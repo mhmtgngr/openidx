@@ -284,7 +284,7 @@ export function ApiExplorerPage() {
 
       <div className="flex gap-4" style={{ minHeight: 'calc(100vh - 220px)' }}>
         {/* Left sidebar - endpoint tree */}
-        <div className="w-80 flex-shrink-0 space-y-2">
+        <div className="w-80 shrink-0 space-y-2">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input

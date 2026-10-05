@@ -155,7 +155,7 @@ function StatTile({
   description?: React.ReactNode
 }) {
   return (
-    <Link to={to} className="block focus:outline-none">
+    <Link to={to} className="block focus:outline-hidden">
       <Card className="h-full transition-all hover:border-primary hover:shadow-md">
         <CardHeader className="flex flex-row items-center justify-between pb-2">
           <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>

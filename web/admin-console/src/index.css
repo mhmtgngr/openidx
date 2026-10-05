@@ -1,6 +1,181 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss' source(none);
+
+/* The files Tailwind 3's content config named, and no others. Left to
+   itself, Tailwind 4 scans every file under the project that git does not
+   ignore -- e2e specs, scripts, the README -- and ships CSS for class names
+   it finds in their prose. */
+@source '../index.html';
+@source './**/*.{js,ts,jsx,tsx}';
+
+@plugin 'tailwindcss-animate';
+
+@custom-variant dark (&:is(.dark *));
+
+@utility container {
+  margin-inline: auto;
+  padding-inline: 2rem;
+  @media (width >= --theme(--breakpoint-sm)) {
+    max-width: none;
+  }
+  @media (width >= 1400px) {
+    max-width: 1400px;
+  }
+}
+
+/* Tailwind 3's space-x-* / space-y-*, in place of Tailwind 4's.
+
+   Tailwind 4 moved the gap from a margin-top on every child but the first to
+   a margin-bottom on every child but the last. That is the same layout only
+   when every child is a block box. It is not when the first child is inline:
+   `space-y-2` over a <label> and its <input> -- the shape of every form field
+   in the console, 379 uses -- put its 8px on the label, where a vertical
+   margin does nothing, and the label sat on the input. In a flex row
+   (CardHeader with flex-row) the margin moved to the other child and changed
+   the row's height.
+
+   These rules restore Tailwind 3's selectors, specificity included: the gap
+   goes on each visible child after the first, and wins over the child's own
+   margin utilities as it did before. The :where(...):is(html *) rule cancels
+   Tailwind 4's margin on the first child only, at the lowest specificity
+   that beats it, so a child's own mb-* still applies, as it did in 3. */
+@utility space-y-* {
+  & > :not([hidden]) ~ :not([hidden]) {
+    margin-top: --spacing(--value(number));
+    margin-top: --value([length]);
+    margin-bottom: 0;
+  }
+  :where(& > :not(:last-child)):is(html *) {
+    margin-bottom: 0;
+  }
+}
+@utility space-x-* {
+  & > :not([hidden]) ~ :not([hidden]) {
+    margin-left: --spacing(--value(number));
+    margin-left: --value([length]);
+    margin-right: 0;
+  }
+  :where(& > :not(:last-child)):is(html *) {
+    margin-right: 0;
+  }
+}
+
+@theme {
+  /* Tailwind 3's sans stack. Tailwind 4.3 leads with -apple-system,
+     BlinkMacSystemFont, "Segoe UI", Roboto, which picks a different, narrower
+     face wherever system-ui is not one of those (most Linux desktops): text
+     across the console measured about 10% narrower in Chromium. The upgrade
+     changes the CSS engine, not the typeface. */
+  --font-sans:
+    ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
+    'Noto Color Emoji';
+
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+  --animate-slide-in-right: slide-in-right 0.3s ease-out;
+  --animate-slide-out-right: slide-out-right 0.3s ease-out;
+
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-accordion-content-height);
+    }
+  }
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+    to {
+      height: 0;
+    }
+  }
+  @keyframes slide-in-right {
+    0% {
+      transform: translateX(100%);
+    }
+    100% {
+      transform: translateX(0);
+    }
+  }
+  @keyframes slide-out-right {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+/* Tailwind 4's preflight gives buttons the browser's default cursor; 3 gave
+   them a pointer. Every button in the console was written against the
+   pointer, and only a handful say cursor-pointer, so this keeps the rest. */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/* Tailwind 4's preflight also zeroes the file input's "Choose File" button
+   padding and margin, which 3 left to the browser; the button text moved
+   about 6px left in every certificate and key upload field. */
+@layer base {
+  ::file-selector-button {
+    margin: revert;
+    padding: revert;
+  }
+}
 
 @layer base {
   :root {

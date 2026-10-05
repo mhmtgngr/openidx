@@ -100,20 +100,20 @@ export function LandingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
+    <div className="min-h-screen bg-linear-to-b from-slate-50 to-white">
       {/* Navigation */}
       <nav
         className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-          scrolled ? 'bg-background/95 backdrop-blur-sm shadow-md' : 'bg-transparent'
+          scrolled ? 'bg-background/95 backdrop-blur-xs shadow-md' : 'bg-transparent'
         }`}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center">
+              <div className="h-8 w-8 rounded-lg bg-linear-to-br from-blue-600 to-indigo-700 flex items-center justify-center">
                 <Shield className="h-5 w-5 text-white" />
               </div>
-              <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+              <span className="text-xl font-bold bg-linear-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
                 OpenIDX
               </span>
             </div>
@@ -143,7 +143,7 @@ export function LandingPage() {
               </Button>
               <Button
                 size="sm"
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                className="bg-linear-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                 onClick={handleLogin}
               >
                 {t('landing.nav.getStarted')}
@@ -187,7 +187,7 @@ export function LandingPage() {
                 </Button>
                 <Button
                   size="sm"
-                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600"
+                  className="w-full bg-linear-to-r from-blue-600 to-indigo-600"
                   onClick={handleLogin}
                 >
                   {t('landing.nav.getStarted')}
@@ -207,9 +207,9 @@ export function LandingPage() {
               <span>{t('landing.hero.badge')}</span>
             </div>
 
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-foreground leading-tight mb-6">
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-foreground leading-tight sm:leading-none mb-6">
               {t('landing.hero.titleLead')}{' '}
-              <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+              <span className="bg-linear-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
                 {t('landing.hero.titleHighlight')}
               </span>
             </h1>
@@ -221,7 +221,7 @@ export function LandingPage() {
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
               <Button
                 size="lg"
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-base px-8"
+                className="bg-linear-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-base px-8"
                 onClick={() => navigate('/login')}
               >
                 {t('landing.nav.signIn')}
@@ -280,7 +280,7 @@ export function LandingPage() {
 
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
             {featureDefs.map((feature) => (
-              <Card key={feature.key} className="border-none shadow-sm hover:shadow-md transition-shadow">
+              <Card key={feature.key} className="border-none shadow-xs hover:shadow-md transition-shadow">
                 <CardContent className="p-6">
                   <div className="h-12 w-12 rounded-lg bg-blue-100 text-primary flex items-center justify-center mb-4">
                     {feature.icon}
@@ -314,7 +314,7 @@ export function LandingPage() {
             {integrations.map((integration, index) => (
               <div
                 key={index}
-                className="px-6 py-3 bg-background rounded-full shadow-sm text-sm font-medium text-foreground"
+                className="px-6 py-3 bg-background rounded-full shadow-xs text-sm font-medium text-foreground"
               >
                 {integration}
               </div>
@@ -326,7 +326,7 @@ export function LandingPage() {
       {/* CTA Section */}
       <section className="py-20 px-4 sm:px-6 lg:px-8">
         <div className="max-w-4xl mx-auto">
-          <Card className="bg-gradient-to-r from-blue-600 to-indigo-700 border-0 text-white">
+          <Card className="bg-linear-to-r from-blue-600 to-indigo-700 border-0 text-white">
             <CardContent className="p-12 text-center">
               <h2 className="text-3xl font-bold mb-4">{t('landing.cta.title')}</h2>
               <p className="text-blue-100 mb-8 text-lg">
@@ -368,7 +368,7 @@ export function LandingPage() {
           <div className="grid md:grid-cols-4 gap-8 mb-8">
             <div>
               <div className="flex items-center gap-2 mb-4">
-                <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center">
+                <div className="h-8 w-8 rounded-lg bg-linear-to-br from-blue-600 to-indigo-700 flex items-center justify-center">
                   <Shield className="h-5 w-5 text-white" />
                 </div>
                 <span className="text-xl font-bold text-white">OpenIDX</span>

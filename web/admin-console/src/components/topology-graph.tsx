@@ -51,7 +51,7 @@ function TopoNodeCard({ data }: NodeProps<RFNode<TopoRFData>>) {
   return (
     <div
       className={cn(
-        'rounded-md border-2 bg-card px-3 py-2 shadow-sm min-w-[140px]',
+        'rounded-md border-2 bg-card px-3 py-2 shadow-xs min-w-[140px]',
         KIND_BORDER[topo.kind],
         down && 'opacity-60 ring-2 ring-red-500',
         degraded && 'ring-2 ring-amber-400',

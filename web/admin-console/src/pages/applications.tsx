@@ -648,7 +648,7 @@ export function ApplicationsPage() {
                 value={formData.redirect_uris}
                 onChange={handleInputChange}
                 rows={3}
-                className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-border rounded-md focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                 placeholder="https://myapp.com/callback&#10;https://myapp.com/auth/callback"
                 required
               />
@@ -677,7 +677,7 @@ export function ApplicationsPage() {
                 value={formData.post_logout_redirect_uris}
                 onChange={handleInputChange}
                 rows={3}
-                className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-border rounded-md focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                 placeholder="https://example.com/signed-out"
               />
               <p className="text-xs text-muted-foreground">
@@ -792,7 +792,7 @@ export function ApplicationsPage() {
                 value={formData.redirect_uris}
                 onChange={handleInputChange}
                 rows={3}
-                className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-border rounded-md focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                 placeholder="https://example.com/callback&#10;https://example.com/redirect"
               />
             </div>
@@ -817,7 +817,7 @@ export function ApplicationsPage() {
                 value={formData.post_logout_redirect_uris}
                 onChange={handleInputChange}
                 rows={3}
-                className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-border rounded-md focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                 placeholder="https://example.com/signed-out"
               />
               <p className="text-xs text-muted-foreground">

@@ -43,16 +43,16 @@ export function ForgotPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+    <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50">
       <Card className="w-full max-w-md shadow-xl">
         <CardHeader className="text-center space-y-4">
           <div className="flex justify-center">
-            <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
+            <div className="h-16 w-16 rounded-full bg-linear-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
               <Shield className="h-9 w-9 text-white" />
             </div>
           </div>
           <div>
-            <CardTitle className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+            <CardTitle className="text-3xl font-bold bg-linear-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
               OpenIDX
             </CardTitle>
             <CardDescription className="text-base mt-2">
@@ -65,7 +65,7 @@ export function ForgotPasswordPage() {
           {submitted ? (
             <div className="space-y-4">
               <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-md">
-                <CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
+                <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />
                 {/* Deliberately identical whether or not the address exists,
                     so this page cannot be used to enumerate accounts. */}
                 <p className="text-sm text-green-700">
@@ -83,7 +83,7 @@ export function ForgotPasswordPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
                 <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-                  <AlertCircle className="h-4 w-4 text-red-700 flex-shrink-0" />
+                  <AlertCircle className="h-4 w-4 text-red-700 shrink-0" />
                   {/* Either this page's own message or the API's. */}
                   <p className="text-sm text-red-700">{error}</p>
                 </div>
@@ -104,7 +104,7 @@ export function ForgotPasswordPage() {
 
               <Button
                 type="submit"
-                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                className="w-full bg-linear-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                 size="lg"
                 disabled={isSubmitting}
               >

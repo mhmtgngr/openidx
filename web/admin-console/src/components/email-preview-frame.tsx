@@ -19,7 +19,7 @@ export function EmailPreviewFrame({ html }: { html: string }) {
       title={t('pages.emailTemplates.editor.previewFrame')}
       sandbox=""
       srcDoc={html}
-      className="mt-1 h-[32rem] w-full rounded border bg-white"
+      className="mt-1 h-128 w-full rounded border bg-white"
     />
   )
 }
