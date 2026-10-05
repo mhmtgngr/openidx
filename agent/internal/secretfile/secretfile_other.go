@@ -29,6 +29,14 @@ func harden(path string) error {
 	return os.Chmod(path, 0o600)
 }
 
+// createPrivate creates a new file that only its owner can read. O_EXCL makes
+// the create fail on any existing path, a symlink included, and the mode is
+// applied at creation, so the file is never more open than 0600 (the umask can
+// only narrow it).
+func createPrivate(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+}
+
 // hardenShared is the same off Windows: the mode is per-file, not per-user, so
 // a second local identity reading the file was never the question here. The two
 // diverge only on Windows, where harden writes an ACL naming the writer.

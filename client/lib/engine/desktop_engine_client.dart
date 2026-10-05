@@ -13,7 +13,7 @@ import 'models.dart';
 ///    are the trust boundary.
 ///  * [EngineEndpoint.tcp] — Windows: a loopback TCP server whose address and
 ///    bearer token are published in
-///    `%ProgramData%\OpenIDX\agent\control-endpoint.json`.
+///    `%LOCALAPPDATA%\OpenIDX\agent\control-endpoint.json`.
 class EngineEndpoint {
   const EngineEndpoint._({
     required this.isUnixSocket,
@@ -46,11 +46,26 @@ class EngineEndpoint {
 }
 
 /// Resolves the control endpoint for the current platform.
+///
+/// [environment] and [isWindows] default to the running process's. Tests pass
+/// them to read a Windows endpoint file from a temporary directory on any host.
 class EngineEndpointResolver {
-  const EngineEndpointResolver();
+  const EngineEndpointResolver({
+    Map<String, String>? environment,
+    bool? isWindows,
+  })  : _environment = environment,
+        _isWindows = isWindows;
+
+  final Map<String, String>? _environment;
+  final bool? _isWindows;
 
   /// The fixed socket file name used on POSIX platforms.
   static const String socketName = 'openidx-agent.sock';
+
+  /// The first bytes of a file the engine sealed with Windows DPAPI
+  /// (agent/internal/secretfile). Engines before the endpoint file became
+  /// plain JSON wrote it that way, and Dart has no DPAPI binding to open it.
+  static const String _sealedMagic = 'OPENIDX-SECRETFILE-DPAPI-v1\n';
 
   /// Non-Windows socket path: `${XDG_RUNTIME_DIR:-<tmpdir>}/openidx-agent.sock`.
   String unixSocketPath() {
@@ -61,27 +76,68 @@ class EngineEndpointResolver {
     return '$base${Platform.pathSeparator}$socketName';
   }
 
-  /// Windows endpoint file:
-  /// `%ProgramData%\OpenIDX\agent\control-endpoint.json`.
-  File windowsEndpointFile() {
-    final programData =
-        Platform.environment['ProgramData'] ?? r'C:\ProgramData';
-    return File('$programData\\OpenIDX\\agent\\control-endpoint.json');
+  /// The Windows endpoint files, in the order [resolve] tries them:
+  ///  1. `%LOCALAPPDATA%\OpenIDX\agent\control-endpoint.json`, where the
+  ///     engine writes it for the signed-in user;
+  ///  2. `%ProgramData%\OpenIDX\agent\control-endpoint.json`, where an older
+  ///     engine wrote it, and where a current one writes it when it runs
+  ///     without a LOCALAPPDATA (as SYSTEM, for example).
+  List<File> windowsEndpointFiles() {
+    final env = _environment ?? Platform.environment;
+    final localAppData = env['LOCALAPPDATA'];
+    final programData = env['ProgramData'];
+    return [
+      if (localAppData != null && localAppData.isNotEmpty)
+        File(_endpointFileUnder(localAppData)),
+      File(_endpointFileUnder(
+        (programData != null && programData.isNotEmpty)
+            ? programData
+            : r'C:\ProgramData',
+      )),
+    ];
+  }
+
+  static String _endpointFileUnder(String base) {
+    final sep = Platform.pathSeparator;
+    return '$base${sep}OpenIDX${sep}agent${sep}control-endpoint.json';
   }
 
   /// Discover the current endpoint. On Windows this reads (and validates) the
-  /// endpoint file; otherwise it returns the well-known UDS path.
+  /// first endpoint file that exists; otherwise it returns the well-known UDS
+  /// path.
   Future<EngineEndpoint> resolve() async {
-    if (Platform.isWindows) {
-      final file = windowsEndpointFile();
-      if (!await file.exists()) {
+    if (_isWindows ?? Platform.isWindows) {
+      final files = windowsEndpointFiles();
+      File? file;
+      for (final candidate in files) {
+        if (await candidate.exists()) {
+          file = candidate;
+          break;
+        }
+      }
+      if (file == null) {
         throw EngineException(
           0,
-          'control endpoint file not found: ${file.path} '
+          'control endpoint file not found: '
+          '${files.map((f) => f.path).join(' or ')} '
           '(is openidx-agent running?)',
         );
       }
-      final decoded = jsonDecode(await file.readAsString());
+      final bytes = await file.readAsBytes();
+      if (_startsWith(bytes, _sealedMagic)) {
+        throw EngineException(
+          0,
+          'the openidx-agent that wrote ${file.path} is an older build that '
+          'encrypts this file for its own Windows account, so this app cannot '
+          'read it; update openidx-agent',
+        );
+      }
+      final Object? decoded;
+      try {
+        decoded = jsonDecode(utf8.decode(bytes));
+      } on FormatException {
+        throw const EngineException(0, 'malformed control-endpoint.json');
+      }
       if (decoded is! Map<String, dynamic>) {
         throw const EngineException(0, 'malformed control-endpoint.json');
       }
@@ -100,6 +156,14 @@ class EngineEndpointResolver {
     }
     return EngineEndpoint.unixSocket(unixSocketPath());
   }
+
+  static bool _startsWith(List<int> bytes, String ascii) {
+    if (bytes.length < ascii.length) return false;
+    for (var i = 0; i < ascii.length; i++) {
+      if (bytes[i] != ascii.codeUnitAt(i)) return false;
+    }
+    return true;
+  }
 }
 
 /// Concrete [EngineClient] speaking HTTP/1.1 to the local control server.
@@ -113,7 +177,8 @@ class DesktopEngineClient implements EngineClient {
     EngineEndpointResolver? resolver,
     Duration timeout = const Duration(seconds: 15),
   })  : _resolver = resolver ?? const EngineEndpointResolver(),
-        _timeout = timeout;
+        _timeout = timeout,
+        _fixedEndpoint = null;
 
   /// Test/override seam: construct directly against a known endpoint,
   /// bypassing platform discovery (used by loopback-HTTP tests).
@@ -122,16 +187,17 @@ class DesktopEngineClient implements EngineClient {
     Duration timeout = const Duration(seconds: 15),
   })  : _resolver = const EngineEndpointResolver(),
         _timeout = timeout,
-        _endpoint = endpoint;
+        _fixedEndpoint = endpoint;
 
   final EngineEndpointResolver _resolver;
   final Duration _timeout;
+  final EngineEndpoint? _fixedEndpoint;
 
   EngineEndpoint? _endpoint;
   HttpClient? _http;
 
   Future<EngineEndpoint> _endpointOrResolve() async =>
-      _endpoint ??= await _resolver.resolve();
+      _fixedEndpoint ?? (_endpoint ??= await _resolver.resolve());
 
   Future<HttpClient> _clientFor(EngineEndpoint endpoint) async {
     if (_http != null) return _http!;
@@ -166,12 +232,21 @@ class DesktopEngineClient implements EngineClient {
     final client = await _clientFor(endpoint);
     final uri = _uriFor(endpoint, path);
 
+    // A failed connect forgets the resolved endpoint so that the next call
+    // reads the endpoint file again. On Windows the engine takes a new port and
+    // token each time it starts, and the file of an engine that was killed
+    // stays behind: the supervisor's own kill is a TerminateProcess, which
+    // skips the engine's cleanup. Kept, the stale endpoint would be dialled
+    // for ever, even after the supervisor started a fresh engine, and
+    // waitReady would time out.
     HttpClientRequest request;
     try {
       request = await client.openUrl(method, uri).timeout(_timeout);
     } on TimeoutException {
+      _endpoint = null;
       throw EngineException(0, 'timed out connecting to engine at $path');
     } on SocketException catch (e) {
+      _endpoint = null;
       throw EngineException(0, 'cannot reach engine ($path): ${e.message}');
     }
 
