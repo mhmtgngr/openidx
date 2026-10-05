@@ -50,12 +50,15 @@ func TestProcessConsent_NoBlockIsNoop(t *testing.T) {
 	}
 }
 
-func TestProcessConsent_DefaultGrants(t *testing.T) {
+func TestProcessConsent_DefaultDenies(t *testing.T) {
+	// A process with no way to ask the person at the device cannot say they
+	// allowed an attended session. The default used to grant; see
+	// consent_default_test.go for the two sides of the new behaviour.
 	m := &consentMock{}
 	a := newTestAgent(m)
 	a.processRemoteSupportConsent(&RemoteSupportBlock{SessionID: "s1", ConsentRequired: true, ConsentStatus: "pending"})
-	if len(m.sent) != 1 || m.sent[0] != "s1:grant" {
-		t.Fatalf("default policy must grant, got %v", m.sent)
+	if len(m.sent) != 1 || m.sent[0] != "s1:deny" {
+		t.Fatalf("default policy must deny, got %v", m.sent)
 	}
 }
 
