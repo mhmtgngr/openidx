@@ -3332,6 +3332,60 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/access/agent/device-key:
+    post:
+      tags: [Agent Enrollment]
+      summary: Register the device key
+      description: >-
+        An enrolled agent with no device key on record offers the public half
+        of its key (base64 PKIX DER of an ECDSA P-256 key; kind tpm, software
+        or file), authenticated with its agent credential and signed with that
+        same key in X-Agent-Key-Timestamp and X-Agent-Key-Signature. The same
+        key again answers 200; a different key answers 409, because replacing a
+        device's key is what enrolment is for. Once a key is bound, the
+        device's posture reports must carry its signature.
+      operationId: handleRegisterDeviceKey
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleRegisterDeviceKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [public_key, kind]
+              properties:
+                public_key:
+                  type: string
+                  description: Base64 of the PKIX DER encoding of an ECDSA P-256 public key
+                kind:
+                  type: string
+                  enum: [tpm, software, file]
+      responses:
+        '200':
+          description: The same key is already bound
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '201':
+          description: The key is now bound to the device
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: The device already holds a different key; enrol it again to replace it
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /api/v1/access/agent/enroll:
     post:
       tags: [Agent Enrollment]
@@ -3567,6 +3621,13 @@ paths:
     post:
       tags: [Agent Enrollment]
       summary: Handle report
+      description: >-
+        A posture report, authenticated with the agent credential. When the
+        device holds a device key (bound at enrolment or through
+        /agent/device-key), the report must also carry X-Agent-Key-Timestamp
+        and X-Agent-Key-Signature over the exact body; without them it is
+        refused 401 with code device_signature_required, and with a wrong or
+        stale signature 401 with code device_signature_invalid.
       operationId: handleReport
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleReport
       requestBody:
