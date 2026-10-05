@@ -98,6 +98,12 @@ func createPrivate(path string) (*os.File, error) {
 		return nil, fmt.Errorf("security descriptor control: %w", err)
 	}
 	sa := windows.SecurityAttributes{SecurityDescriptor: sd}
+	// CreateFile reads nLength to learn which SECURITY_ATTRIBUTES layout it
+	// was given, and x/sys/windows has no helper for it. unsafe.Sizeof is
+	// evaluated at compile time to a constant: it reads no memory and makes no
+	// pointer, so none of the hazards this rule is about can arise from it.
+	//
+	// nosemgrep: go.lang.security.audit.unsafe.use-of-unsafe-block
 	sa.Length = uint32(unsafe.Sizeof(sa))
 
 	name, err := windows.UTF16PtrFromString(path)
