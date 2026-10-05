@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.40.0] - 2026-10-05
+
 ### Security
 - **Without OPA, only an administrator runs the governance program.** With `ENABLE_OPA_AUTHZ=false`, the default, governance-service checked who was signed in and nothing else. Any user, an external (vendor) user included, could write an approval policy, an ABAC policy, a governance policy, a campaign or an access review, and run the SoD, privileged-account and entitlement jobs. Approval policies decide who is granted what, so a user who could write one could grant themselves access. These writes now need `admin` or `super_admin` when OPA is off, and answer `403` with `admin_required` to anyone else. Reading the program's policies, campaigns, SoD violations, privileged accounts and entitlements, which answered anyone signed in, now needs an administrator, an operator or an auditor (`reader_required`). Filing, cancelling and deciding access requests, deciding a review one is the reviewer of, and the evaluate routes are unchanged. With OPA on, its role table decides these writes as before.
 - **The SCIM server answers an identity provider's machine credential or an administrator, not every signed-in user.** `/scim/v2/Users` and `/scim/v2/Groups` accepted any OpenIDX bearer token, and a signed-in person's own token is one, so any user could change the directory through them. They now answer a `client_credentials` token, which names no user and is minted only for an application an administrator gave API access, and `admin` or `super_admin`. Anyone else gets a SCIM `403`. Upstream identity providers, which call with a machine credential, are unaffected. The discovery routes are unchanged.
@@ -11942,7 +11944,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.39.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.40.0...HEAD
+[1.40.0]: https://github.com/mhmtgngr/openidx/compare/v1.39.0...v1.40.0
 [1.39.0]: https://github.com/mhmtgngr/openidx/compare/v1.38.0...v1.39.0
 [1.38.0]: https://github.com/mhmtgngr/openidx/compare/v1.37.0...v1.38.0
 [1.37.0]: https://github.com/mhmtgngr/openidx/compare/v1.36.0...v1.37.0

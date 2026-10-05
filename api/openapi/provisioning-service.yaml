@@ -16,7 +16,7 @@ info:
     admin or super_admin role, held in the token's organization; any other
     caller gets 403. The /scim/v2 routes take an OpenIDX bearer token, as the
     upstream identity provider's SCIM client presents it.
-  version: 1.39.0
+  version: 1.40.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
