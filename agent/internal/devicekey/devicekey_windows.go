@@ -43,6 +43,14 @@ type ncryptError uint32
 
 func (e ncryptError) Error() string { return fmt.Sprintf("NCrypt status 0x%08X", uint32(e)) }
 
+// The NCrypt calls in this file hand Go memory to ncrypt.dll as
+// uintptr(unsafe.Pointer(p)), written inside the argument list of
+// LazyProc.Call. That is the form unsafe.Pointer's rule (4) allows for system
+// calls: Call is marked go:uintptrescapes, so the compiler keeps every such
+// referent alive and in place until the call returns, and NCrypt keeps none of
+// these pointers past it. The Semgrep rule flags every use of the unsafe
+// package whatever its form, so each call carries its own nosemgrep line.
+
 func status(r uintptr) error {
 	if s := uint32(r); s != 0 {
 		return ncryptError(s)
@@ -83,8 +91,8 @@ func (k *ncryptKey) Sign(digest []byte) ([]byte, error) {
 		return nil, errors.New("empty digest")
 	}
 	var size uint32
-	r, _, _ := procSignHash.Call(k.key, 0, uintptr(unsafe.Pointer(&digest[0])), uintptr(len(digest)),
-		0, 0, uintptr(unsafe.Pointer(&size)), silentFlag)
+	// nosemgrep: go.lang.security.audit.unsafe.use-of-unsafe-block
+	r, _, _ := procSignHash.Call(k.key, 0, uintptr(unsafe.Pointer(&digest[0])), uintptr(len(digest)), 0, 0, uintptr(unsafe.Pointer(&size)), silentFlag)
 	if err := status(r); err != nil {
 		return nil, fmt.Errorf("size the signature: %w", err)
 	}
@@ -92,8 +100,8 @@ func (k *ncryptKey) Sign(digest []byte) ([]byte, error) {
 		return nil, errors.New("the provider reported an empty signature")
 	}
 	sig := make([]byte, size)
-	r, _, _ = procSignHash.Call(k.key, 0, uintptr(unsafe.Pointer(&digest[0])), uintptr(len(digest)),
-		uintptr(unsafe.Pointer(&sig[0])), uintptr(size), uintptr(unsafe.Pointer(&size)), silentFlag)
+	// nosemgrep: go.lang.security.audit.unsafe.use-of-unsafe-block
+	r, _, _ = procSignHash.Call(k.key, 0, uintptr(unsafe.Pointer(&digest[0])), uintptr(len(digest)), uintptr(unsafe.Pointer(&sig[0])), uintptr(size), uintptr(unsafe.Pointer(&size)), silentFlag)
 	if err := status(r); err != nil {
 		return nil, fmt.Errorf("sign: %w", err)
 	}
@@ -103,6 +111,7 @@ func (k *ncryptKey) Sign(digest []byte) ([]byte, error) {
 // openProvider opens a key storage provider.
 func openProvider(name string) (uintptr, error) {
 	var h uintptr
+	// nosemgrep: go.lang.security.audit.unsafe.use-of-unsafe-block
 	r, _, _ := procOpenStorageProvider.Call(uintptr(unsafe.Pointer(&h)), uintptr(unsafe.Pointer(utf16(name))), 0)
 	if err := status(r); err != nil {
 		return 0, err
@@ -114,6 +123,7 @@ func openProvider(name string) (uintptr, error) {
 func exportPublic(key uintptr) (*ecdsa.PublicKey, error) {
 	blob := utf16(blobECCPublic)
 	var size uint32
+	// nosemgrep: go.lang.security.audit.unsafe.use-of-unsafe-block
 	r, _, _ := procExportKey.Call(key, 0, uintptr(unsafe.Pointer(blob)), 0, 0, 0, uintptr(unsafe.Pointer(&size)), 0)
 	if err := status(r); err != nil {
 		return nil, fmt.Errorf("size the public key: %w", err)
@@ -122,8 +132,8 @@ func exportPublic(key uintptr) (*ecdsa.PublicKey, error) {
 		return nil, errors.New("the provider reported an empty public key")
 	}
 	buf := make([]byte, size)
-	r, _, _ = procExportKey.Call(key, 0, uintptr(unsafe.Pointer(blob)), 0,
-		uintptr(unsafe.Pointer(&buf[0])), uintptr(size), uintptr(unsafe.Pointer(&size)), 0)
+	// nosemgrep: go.lang.security.audit.unsafe.use-of-unsafe-block
+	r, _, _ = procExportKey.Call(key, 0, uintptr(unsafe.Pointer(blob)), 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(size), uintptr(unsafe.Pointer(&size)), 0)
 	if err := status(r); err != nil {
 		return nil, fmt.Errorf("export the public key: %w", err)
 	}
@@ -142,6 +152,7 @@ func openIn(provider, kind, name string, flags uintptr) (k *ncryptKey, ok bool, 
 		return nil, false, fmt.Errorf("%w: %s: %v", errProviderUnavailable, provider, err)
 	}
 	var key uintptr
+	// nosemgrep: go.lang.security.audit.unsafe.use-of-unsafe-block
 	r, _, _ := procOpenKey.Call(prov, uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(utf16(name))), 0, flags|silentFlag)
 	if s := uint32(r); s == nteBadKeyset {
 		freeObject(prov)
@@ -168,8 +179,8 @@ func createIn(provider, kind, name string, flags uintptr) (*ncryptKey, error) {
 		return nil, err
 	}
 	var key uintptr
-	r, _, _ := procCreatePersistedKey.Call(prov, uintptr(unsafe.Pointer(&key)),
-		uintptr(unsafe.Pointer(utf16(algECDSAP256))), uintptr(unsafe.Pointer(utf16(name))), 0, flags)
+	// nosemgrep: go.lang.security.audit.unsafe.use-of-unsafe-block
+	r, _, _ := procCreatePersistedKey.Call(prov, uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(utf16(algECDSAP256))), uintptr(unsafe.Pointer(utf16(name))), 0, flags)
 	if err := status(r); err != nil {
 		freeObject(prov)
 		return nil, fmt.Errorf("create the key: %w", err)
