@@ -146,7 +146,8 @@ func driveModeration(t *testing.T, s *Service, org, userID, method, path, body s
 }
 
 // TestEndModerationRequiresAParty covers the check this handler's own doc
-// comment claims and the code did not make.
+// comment claims and the code did not make, and the same check on the status
+// read.
 //
 // handleEndModeration is documented "(requester or moderator)". Its route
 // carries no role guard, and the UPDATE checked neither: any authenticated
@@ -221,6 +222,41 @@ func TestEndModerationRequiresAParty(t *testing.T) {
 		db.Pool.QueryRow(ctx, `SELECT status FROM guacamole_moderation_sessions WHERE id=$1`, modID).Scan(&st)
 		return st == "active"
 	}
+
+	// Its status names the moderator and the live connection, and answers the
+	// same parties: the requester, the moderator and an administrator. Anyone
+	// else gets the not-found an unknown id gets.
+	t.Run("its status answers its parties only", func(t *testing.T) {
+		status := func(actor string, roles []string) int {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			req := httptest.NewRequest(http.MethodGet, "/pam/moderation/"+modID, nil)
+			c.Request = req.WithContext(orgctx.With(req.Context(), orgctx.Org{ID: org}))
+			c.Params = gin.Params{{Key: "id", Value: modID}}
+			c.Set("user_id", actor)
+			if roles != nil {
+				c.Set("roles", roles)
+			}
+			s.handleGetModerationStatus(c)
+			return w.Code
+		}
+		for _, tc := range []struct {
+			who   string
+			actor string
+			roles []string
+			want  int
+		}{
+			{"a stranger", stranger, []string{"user"}, http.StatusNotFound},
+			{"an operator who is neither", stranger, []string{"operator"}, http.StatusNotFound},
+			{"the requester", requester, []string{"user"}, http.StatusOK},
+			{"the moderator", moderator, []string{"user"}, http.StatusOK},
+			{"an administrator", stranger, []string{"admin"}, http.StatusOK},
+		} {
+			if code := status(tc.actor, tc.roles); code != tc.want {
+				t.Errorf("%s reading the status: %d, want %d", tc.who, code, tc.want)
+			}
+		}
+	})
 
 	t.Run("a stranger cannot end it", func(t *testing.T) {
 		if code := end(stranger, []string{"user"}); code != http.StatusConflict {

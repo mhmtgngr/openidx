@@ -2512,7 +2512,10 @@ paths:
     get:
       tags: [PAM Moderation]
       summary: Get moderation status
-      description: Requester or moderator polls until `active` (or a terminal state).
+      description: >-
+        Requester or moderator polls until `active` (or a terminal state).
+        Answers the requester, the moderator and an administrator; anyone
+        else gets 404, as for an unknown id.
       operationId: pamGetModerationStatus
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -2903,9 +2906,13 @@ paths:
     get:
       tags: [Windows Apps]
       summary: List Windows apps (operator view)
-      description: Apps, pools, host state, and host-agent links in one payload.
+      description: >-
+        Apps, pools, host state, and host-agent links in one payload. Operators
+        and above only; an end user's launchable apps are
+        /api/v1/access/pam/my-apps.
       operationId: pamListWindowsApps
       responses:
+        '403': { description: Not an operator, admin or super_admin }
         '200':
           description: App catalog
           content:
@@ -3100,8 +3107,10 @@ paths:
     get:
       tags: [Windows Apps]
       summary: List app host pools
+      description: Operators and above only.
       operationId: pamListAppPools
       responses:
+        '403': { description: Not an operator, admin or super_admin }
         '200':
           description: Pools with members
           content:

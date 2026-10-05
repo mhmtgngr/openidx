@@ -923,9 +923,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/entries/:id/ziti/disable", svc.requireAdminRole(), svc.handlePamDisableZiti)
 
 		// Windows application delivery — app catalog + host pools on top of the
-		// RemoteApp launch path. List/launch are operator-level (launch runs the
-		// same ACL + approval gates as pam connect); mutations are admin-only.
-		api.GET("/pam/apps", svc.handleWindowsAppList)
+		// RemoteApp launch path. The catalog and pool lists are the console's
+		// operator page (Windows Apps): they name every app's executable,
+		// arguments and host, the hosts' state and agents, so they hold the
+		// operator tier, where they had asked only for a signed-in user. An end
+		// user's launchable apps are /pam/my-apps; launch runs the same ACL +
+		// approval gates as pam connect; mutations are admin-only.
+		api.GET("/pam/apps", operatorTier, svc.handleWindowsAppList)
 		// End-user launchable-apps view (portal tiles). Distinct /pam/my-apps
 		// prefix so the static segment can't collide with /pam/apps/:id.
 		api.GET("/pam/my-apps", svc.handleMyWindowsApps)
@@ -937,7 +941,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Distinct prefix (not /pam/apps/import) so the static segment doesn't
 		// collide with the /pam/apps/:id wildcard in gin's route tree.
 		api.POST("/pam/app-import", svc.requireAdminRole(), svc.handleWindowsAppImport)
-		api.GET("/pam/app-pools", svc.handleWindowsAppPoolList)
+		api.GET("/pam/app-pools", operatorTier, svc.handleWindowsAppPoolList)
 		api.POST("/pam/app-pools", svc.requireAdminRole(), svc.handleWindowsAppPoolCreate)
 		api.PUT("/pam/app-pools/:id", svc.requireAdminRole(), svc.handleWindowsAppPoolUpdate)
 		api.DELETE("/pam/app-pools/:id", svc.requireAdminRole(), svc.handleWindowsAppPoolDelete)
