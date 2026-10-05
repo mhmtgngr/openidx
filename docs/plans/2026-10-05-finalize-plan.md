@@ -22,8 +22,9 @@ session reads first.
   hâlâ "onay bekliyor". Hedef çizgisi her oturumda ileri kayıyor.
 - **Şu an (12:30 UTC):** Açık PR kalmadı; 6 PR, bağımlılık düzeltmesi (#1089)
   ve Tailwind 4 geçişi (#1090) aynı gün birleşti ve Security Scanning yeşile
-  döndü. Documentation iş akışı hâlâ her push'ta kırmızı (GitHub Pages
-  açılmadı). v1.39.0'dan bu yana 65 değişiklik yayımlanmadı; 547 uzak dal var.
+  döndü. 13:15 UTC'de GitHub Pages açıldı ve Documentation da yeşile döndü;
+  `main` üzerinde kırmızı iş akışı kalmadı. v1.39.0'dan bu yana 65 değişiklik
+  yayımlanmadı; 547 uzak dal var.
 - **Plan:** A) bu hafta kanamayı durdur (CI yeşil, v1.40.0 kes, 2 bug);
   B) tek oturumda sahibin kararları ve 5 depo ayarı; C) 8 haftada 11 açık M1
   maddesini sırayla kapat; D) v2.0 LTS. Özellik dondurma kuralı §5'te.
@@ -68,7 +69,8 @@ an opinion about effort.
    `docs/RELEASING.md` requires a green `main` first. This morning the
    `Security Scanning` workflow was red on every push to `main` (dependency
    CVEs in the console's lockfile); #1089 and #1090 fixed that by 07:09 UTC.
-   `Documentation` is still red on every push (Pages, §3.2). 65 changelog
+   `Documentation` was red on every push since 2026-09-23 until the
+   maintainer enabled Pages at 13:15 UTC (§3.2). 65 changelog
    entries sit under `[Unreleased]` since v1.39.0 on 2026-09-28, the exact
    failure mode RELEASING.md warns about. There are 547 remote branches (464
    when #967 was written). Two bugs are open and unowned
@@ -130,7 +132,7 @@ where `df43b39` was still running).
 | OIDC conformance (nightly) | green on 2026-10-02, 10-03, 10-04 | |
 | Display = enforcement | green on v1.37.0, v1.38.0, v1.39.0 | runs on release only, as designed |
 | Security Scanning | green since #1089 merged at 07:09 UTC; green on `5380aa8` | It was red on every push until then: `Go Dependency Scan` and `NPM Dependency Scan` failed at the Trivy gate on `web/admin-console/package-lock.json` (`axios` 1.19.0, `brace-expansion` 5.0.9). #1089 bumped `axios` to 1.20.0, `brace-expansion` to 5.0.12 and `dompurify` to 3.4.16 and replaced the bare `npm audit` gate with `scripts/check-npm-audit.sh`, which allows an advisory only with a reason and an expiry in `web/admin-console/.npm-audit-ignore`. #1090 moved the console to Tailwind 4, which removed the dev-only `braces` chain, so that file has no entries. |
-| **Documentation** | **red on every push, still red on `5380aa8`** | The `deploy` job fails at `Deploy to GitHub Pages`: Pages is not enabled (#978, admin only). |
+| Documentation | green since 13:21 UTC | It was red on every push to `main` since 2026-09-23 because Pages was not enabled. The maintainer enabled Pages (Source: GitHub Actions) at about 13:15 UTC; the failed `deploy` job of the `5380aa8` run was re-run and passed. The site at `https://mhmtgngr.github.io/openidx` answers 200. |
 
 Five consecutive merges on 2026-10-04 21:45 cancelled each other's Go CI,
 Docker and CodeQL runs; only the last merge in a burst gets a verdict.
@@ -177,10 +179,10 @@ verified (working agreement §3.5).
 | # | Work | Who | Closes or unblocks |
 |---|---|---|---|
 | A1 | **Done 2026-10-05** by #1089 (the three bumps and the reasoned-exception audit gate) and #1090 (Tailwind 4, which removed the unfixable dev-only chain). `Security Scanning` has been green on every push since. | AI | `main` green |
-| A2 | Enable GitHub Pages (Settings → Pages → Source: GitHub Actions). Also, in the same sitting: private vulnerability reporting, Discussions, protect `main` (require `Required Checks` and a code-owner review), install Renovate. | **Owner**, about 20 minutes | `Documentation` green; #978; starts #967 |
+| A2 | **Pages done 2026-10-05 13:15 UTC**; `Documentation` is green. Still open from the same #978 list: private vulnerability reporting, Discussions, protect `main` (require `Required Checks` and a code-owner review), install Renovate. | **Owner**, about 15 minutes | #978; starts #967 |
 | A3 | Fix #1013 (the three conformance warnings) and #1004 (Alertmanager placeholders). Two PRs. | AI | #958 progress; the full stack starts |
 | A4 | **Done 2026-10-05.** All six (#1082 to #1087) merged by 08:12 UTC; no pull request is open. | **Owner** | Queue cleared; #1082 and #1084 advance #980 |
-| A5 | Cut **v1.40.0** per `docs/RELEASING.md`: rename `[Unreleased]`, sync `VERSION` and the ten held versions (`scripts/check-version-sync.sh --enforce`), pin the lite install, then dispatch `release.yml`. A1 is done; only A2 (Pages) still keeps the tagged commit from being all green. | AI prepares the PR; **owner** dispatches | 65 entries shipped; one more display = enforcement report on record |
+| A5 | Cut **v1.40.0** per `docs/RELEASING.md`: rename `[Unreleased]`, sync `VERSION` and the ten held versions (`scripts/check-version-sync.sh --enforce`), pin the lite install, then dispatch `release.yml`. With A1 done and Pages on, every workflow is green on `main`, so nothing blocks this now. | AI prepares the PR; **owner** dispatches | 65 entries shipped; one more display = enforcement report on record |
 
 ### Phase B: decide, in one sitting (by 2026-10-10)
 
@@ -303,3 +305,4 @@ it changes the figures above in place and records here what moved.
 | When (UTC) | `main` | What moved | Local checks |
 |---|---|---|---|
 | 2026-10-05 12:30 | `5380aa8` | 12 merges since `df43b39`: #1081 to #1087 (authorization paths), #1089 (dependency bumps and the npm audit gate), #1090 (Tailwind 4), #1091 (changelog), #1092 (doc redaction). Open PRs 6 → 0. Security Scanning red → green. Documentation still red. Unreleased entries 58 → 65. Remote branches 543 → 547. M1 sub-issues still 5 of 16 closed. Phase A: A1 and A4 done; A2, A3, A5 open. | On the merged tree, all green: `go build` and `go vet` exit 0; `go test -short` 112 packages ok, 0 failed; console `type-check` exit 0, `lint` 0 errors (188 warnings, the standing baseline), `vitest` 1395 of 1395 (the `organizations.test.tsx` flake from the morning did not recur), `build` exit 0, `npm audit --audit-level=high` exit 0 with only lower-severity dev-tooling advisories left. |
+| 2026-10-05 13:25 | `5380aa8` | The maintainer enabled GitHub Pages. The `5380aa8` Documentation run's failed `deploy` job was re-run and passed at 13:21 UTC, so every workflow on `main` is green for the first time since 2026-09-23. Phase A: A2's Pages part done; the other four repository settings stay open. | Not re-run; the tree did not change. |
