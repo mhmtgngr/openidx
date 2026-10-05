@@ -52,11 +52,16 @@ msiexec /i OpenIDX.msi /qn SERVER_URL=https://openidx.example.com ENROLL_TOKEN=<
 ```
 The MSI installs + starts the service and, when SERVER_URL+ENROLL_TOKEN are
 given, enrolls the device during install. Without them it installs silently and
-you enroll later (single-use token or the tray's OAuth sign-in):
+you enroll later, either from the console's Add-a-device wizard (its
+`openidx://enroll?...` link or QR starts the agent, which asks for
+administrator approval and enrols; see `packaging/DEEPLINK.md`) or with a
+single-use token from an elevated prompt:
 ```
 "%ProgramFiles%\OpenIDX\openidx-agent.exe" enroll --server https://openidx.example.com --token <ENROLL_TOKEN>
 ```
-Users then sign in for SSO/PAM from the tray (launched at login).
+The service waits for the enrolment and starts its posture loop as soon as it
+lands. Users then sign in for SSO/PAM from the tray (launched at login);
+signing in does not enrol the device.
 
 ## Signing
 Set `WINDOWS_CERT_PFX_BASE64` (base64 of a code-signing `.pfx`) +
