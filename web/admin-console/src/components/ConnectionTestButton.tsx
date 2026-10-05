@@ -140,7 +140,7 @@ export function ConnectionTestButton({ routeId, variant = 'outline', size = 'def
                     )}
                     {result.error_message && (
                       <div className="mt-2 p-2 bg-red-50 dark:bg-red-950 rounded text-sm text-red-600 dark:text-red-400 flex items-start gap-2">
-                        <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
                         <span>{result.error_message}</span>
                       </div>
                     )}

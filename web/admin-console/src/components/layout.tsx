@@ -115,7 +115,7 @@ function ViewModeSwitcher({ level }: { level: number }) {
               ? // bg-background flips with the theme but blue-700 did not:
                 // 2.99:1 on the dark background, on every page that shows
                 // this switcher. blue-300 is the repo's dark step for it.
-                'bg-background text-blue-700 dark:text-blue-300 shadow-sm'
+                'bg-background text-blue-700 dark:text-blue-300 shadow-xs'
               : 'text-muted-foreground hover:text-foreground'
           }`}
           aria-pressed={viewMode === option.mode}
@@ -309,7 +309,7 @@ export function Layout() {
                             }`
                           }
                         >
-                          <item.icon className="h-5 w-5 flex-shrink-0" />
+                          <item.icon className="h-5 w-5 shrink-0" />
                           {sidebarOpen && <span className="text-sm">{t(item.nameKey)}</span>}
                         </NavLink>
                       ))}

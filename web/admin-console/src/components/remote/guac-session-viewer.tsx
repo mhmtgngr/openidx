@@ -174,7 +174,7 @@ export function GuacSessionViewer({ url, title, open, onClose }: Props) {
 
           {showOverlay && (
             <div className="absolute inset-0 flex items-center justify-center bg-background p-6">
-              <div className="max-w-md w-full rounded-lg border bg-card p-6 text-center shadow-sm">
+              <div className="max-w-md w-full rounded-lg border bg-card p-6 text-center shadow-xs">
                 <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-red-100">
                   <AlertTriangle className="h-5 w-5 text-red-600" />
                 </div>

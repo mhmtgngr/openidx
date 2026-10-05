@@ -134,7 +134,7 @@ export function CommandPalette() {
             }}
             onKeyDown={onInputKey}
             placeholder={t('palette.placeholder')}
-            className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-gray-400"
+            className="h-12 w-full bg-transparent text-sm outline-hidden placeholder:text-gray-400"
             aria-label={t('palette.searchPages')}
           />
           <kbd className="hidden rounded border px-1.5 py-0.5 text-[10px] text-gray-400 sm:inline">

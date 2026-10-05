@@ -300,9 +300,9 @@ function RelationsDoctor() {
                     </span>
                     <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{f.check_id}</code>
                   </div>
-                  <p className="text-sm mt-1.5 break-words">{f.detail || f.subject}</p>
+                  <p className="text-sm mt-1.5 wrap-break-word">{f.detail || f.subject}</p>
                   {f.detail && f.subject && (
-                    <p className="text-xs text-muted-foreground mt-0.5 break-words">
+                    <p className="text-xs text-muted-foreground mt-0.5 wrap-break-word">
                       {t('pages.systemHealth.relations.subjectLabel', { subject: f.subject })}
                     </p>
                   )}

@@ -168,13 +168,13 @@ interface TopoNode {
 function TopoColumn({ title, icon: Icon, nodes }: { title: string; icon: typeof Globe; nodes: TopoNode[] }) {
   const { t } = useTranslation()
   return (
-    <div className="flex min-w-[9.5rem] flex-1 flex-col gap-2">
+    <div className="flex min-w-38 flex-1 flex-col gap-2">
       <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
         <Icon className="h-3.5 w-3.5" />
         {title}
       </div>
       {nodes.map((n, i) => (
-        <div key={i} className="rounded-lg border bg-card px-3 py-2 text-sm shadow-sm">
+        <div key={i} className="rounded-lg border bg-card px-3 py-2 text-sm shadow-xs">
           <div className="flex items-center gap-2">
             <span
               className={`h-2 w-2 shrink-0 rounded-full ${
@@ -265,7 +265,7 @@ function TopologyStrip({ data }: { data: SetupStatus }) {
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
-          <div className="flex min-w-[44rem] items-start gap-1">
+          <div className="flex min-w-176 items-start gap-1">
             <TopoColumn title={t('pages.zitiSetup.topology.clients')} icon={Laptop} nodes={clients} />
             <TopoArrow />
             <TopoColumn title={t('pages.zitiSetup.topology.edgeRouters')} icon={RouterIcon} nodes={routerNodes} />
