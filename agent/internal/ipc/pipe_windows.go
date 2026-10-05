@@ -8,12 +8,8 @@ import (
 	"time"
 
 	"github.com/Microsoft/go-winio"
+	"golang.org/x/sys/windows"
 )
-
-// pipeSDDL grants access to authenticated users so the user-session tray can
-// read status from the SYSTEM service. (D:) allow generic-all to Authenticated
-// Users (AU); the service process (SYSTEM) owns the pipe.
-const pipeSDDL = "D:P(A;;GA;;;AU)(A;;GA;;;SY)(A;;GA;;;BA)"
 
 // Serve listens on the named pipe and returns the current status (from
 // provider) as JSON to each client, until ctx is cancelled. Best-effort:
@@ -48,9 +44,14 @@ func Serve(ctx context.Context, provider func() Status) error {
 
 // Query dials the service pipe and reads the current status. Returns an error
 // if the service isn't running / the pipe isn't available.
+//
+// The pipe is opened for GENERIC_READ only. The default DialPipe asks for
+// read and write, which the pipe's DACL no longer grants to a plain user (see
+// pipeSDDL); the tray never writes to the service anyway.
 func Query() (*Status, error) {
-	timeout := 2 * time.Second
-	conn, err := winio.DialPipe(PipeName, &timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := winio.DialPipeAccess(ctx, PipeName, windows.GENERIC_READ)
 	if err != nil {
 		return nil, err
 	}
