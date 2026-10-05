@@ -876,7 +876,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// credentials + optional federated console URL, recorded in
 		// brokered_sessions (auto-expiring; no standing privilege).
 		api.POST("/pam/connect/cloud", svc.requireFreshMFA("pam.connect_cloud"), svc.handleCloudConnect)
-		api.POST("/pam/brokered-sessions", svc.requireFreshMFA("pam.broker_session"), svc.handleBrokerSession)
+		// A db or k8s brokered session is a ledger row the caller asserts: its
+		// target is free text that names no entry and no grant, and nothing is
+		// issued. Only an administrator may assert one, as only an
+		// administrator may list them.
+		api.POST("/pam/brokered-sessions", svc.requireFreshMFA("pam.broker_session"), svc.requireAdminRole(), svc.handleBrokerSession)
 		api.GET("/pam/brokered-sessions", svc.requireAdminRole(), svc.handleListBrokeredSessions)
 		api.POST("/pam/brokered-sessions/:id/end", svc.handleEndBrokeredSession)
 
