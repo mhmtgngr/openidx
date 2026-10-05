@@ -93,6 +93,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An application's access ends when its window does.** An approved access request for an application now writes its window on the assignment (`expires_at`, migration v222), and `/oauth/authorize`, the proxy and the overlay refuse from the window's end. Until now the assignment counted until the governance expiry sweep removed it, up to five minutes later. The sweep now removes only the assignment the request gave: a standing assignment stays, and so does one a later request carried past the first request's end. An administrator assigning the user makes the assignment standing. The user sync re-syncs an identity whose assignment started or whose window ended on its next poll, every thirty seconds, rather than when its attributes go stale. An external user's assignment ends no later than the account, as the other grants do (I8). An application's assignment list shows when a requested assignment ends, and leaves out one whose window is over.
 - **Connect says why a launch was refused.** PAM Connections and the quick links read the refusal from the error itself, where the API client never puts it. So a launch that needed an approval showed a bare "Request failed with status code 403". They read it from the response body now.
 - **A Windows app launch's `replace` ends only the caller's own session.** `POST /api/v1/access/pam/apps/:id/launch?replace=<session_id>` ended whichever session it named in the organization, though it is offered only for the caller's own: any user who could load an app could end another user's session record, and a browser terminal closes once its record ends. It now ends the caller's own session only.
+- **The org-wide overviews answer staff only.**
+  - **Dashboard:** `GET /api/v1/dashboard` returns the organization's latest
+    audit events, its failed-login and suspicious-IP counts and its user and
+    session counts. It asked only for a signed-in user. It now needs
+    `operator`, `admin` or `super_admin`, the roles the console's dashboard
+    calls it for (a plain user's dashboard never did).
+  - **Windows Apps catalog:** `GET /api/v1/access/pam/apps` and
+    `/pam/app-pools` name every RemoteApp's executable, arguments and host,
+    and the hosts' state and agents. They now hold the operator tier, like
+    the console page behind them. An end user's launchable apps stay at
+    `/pam/my-apps`.
+  - **Moderation status:** `GET /api/v1/access/pam/moderation/:id` named
+    the moderator and the live connection to anyone in the organization who
+    knew the id. It now answers the same parties as ending it does: the
+    requester, the moderator and an administrator.
 - **One person could approve every step of a request.** An approver who was a candidate in two steps of a policy, such as a manager who also holds the approver role, could carry the request through both alone. One person now approves at most one step of a request (`four_eyes`); they can still deny.
 - **An approved vault credential request is granted when its approver approves it.** The approval route read the request back without its end, and a vault credential checkout refuses to be unbounded, so an approval there was recorded and the credential was never checked out; only an auto-approved request was granted. The same read gives a PAM connection request its window.
 - **`PAM_REQUIRE_ZTNA=enforce` now holds at the Windows app launch and the browser SSH terminal.** Neither asked the overlay gate, so an app on a direct-reach host, or a direct-reach SSH entry opened in the browser terminal, launched while Connect on the same entry was refused. The gate is also asked before the launch approval is spent, so a launch it refuses no longer uses up the approval. `pam.ztna.denied` is recorded as a failure.
@@ -142,22 +157,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An SSH certificate needs a grant.** `openidx-connect ssh` and `POST /pam/connect/ssh` sign only for a host and login registered as an SSH entry that the caller may connect to. If the entry requires approval, each certificate uses up one approved request. Before, any signed-in user could get a certificate for any login, `root` included. Administrators skip the grant but still need a registered entry. Refusals are audited as `pam.ssh_cert_denied`.
 - **Cloud just-in-time access needs a grant and lasts at most an hour.** `POST /pam/connect/cloud` uses a broker credential only for a caller who holds a `use` grant on it. Before, any signed-in user could name any of the organization's secrets as the broker and assume any role it could. AWS cannot revoke STS credentials, so the session ceiling drops from 12 hours to 60 minutes. Administrators skip the grant but not the cap. Refusals are audited as `pam.cloud_jit_denied`.
 - **The audit trail shows when an administrator got into a PAM entry only by being one.** `pam.entry_connected` now carries `admin_bypass`, plus `admin_bypassed`, which lists the gates skipped: `grant`, `approval`, or both. It covers Connect, the in-browser SSH terminal and Windows app launches. Before, an administrator reaching an entry nobody granted them looked the same as an operator using a grant.
-### Security
-- **The org-wide overviews answer staff only.**
-  - **Dashboard:** `GET /api/v1/dashboard` returns the organization's latest
-    audit events, its failed-login and suspicious-IP counts and its user and
-    session counts. It asked only for a signed-in user. It now needs
-    `operator`, `admin` or `super_admin`, the roles the console's dashboard
-    calls it for (a plain user's dashboard never did).
-  - **Windows Apps catalog:** `GET /api/v1/access/pam/apps` and
-    `/pam/app-pools` name every RemoteApp's executable, arguments and host,
-    and the hosts' state and agents. They now hold the operator tier, like
-    the console page behind them. An end user's launchable apps stay at
-    `/pam/my-apps`.
-  - **Moderation status:** `GET /api/v1/access/pam/moderation/:id` named
-    the moderator and the live connection to anyone in the organization who
-    knew the id. It now answers the same parties as ending it does: the
-    requester, the moderator and an administrator.
 
 ## [1.39.0] - 2026-09-28
 
