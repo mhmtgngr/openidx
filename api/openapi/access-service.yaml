@@ -2512,7 +2512,10 @@ paths:
     get:
       tags: [PAM Moderation]
       summary: Get moderation status
-      description: Requester or moderator polls until `active` (or a terminal state).
+      description: >-
+        Requester or moderator polls until `active` (or a terminal state).
+        Answers the requester, the moderator and an administrator; anyone
+        else gets 404, as for an unknown id.
       operationId: pamGetModerationStatus
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -2675,7 +2678,11 @@ paths:
     post:
       tags: [PAM SSH & Brokering]
       summary: Record brokered DB/K8s session
-      description: Registers a brokered `db` or `k8s` session (SSH goes through `/pam/connect/ssh`).
+      description: >-
+        Admin only. Registers a brokered `db` or `k8s` session (SSH goes through
+        `/pam/connect/ssh`). The target is free text that names no PAM entry
+        and no grant, and nothing is issued, so only an administrator may
+        record one.
       operationId: pamBrokerSession
       requestBody:
         required: true
@@ -2695,6 +2702,8 @@ paths:
                   expires_at: {type: string, format: date-time}
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          description: The caller is not an administrator, or the step-up gate wants a fresh second factor
     get:
       tags: [PAM SSH & Brokering]
       summary: List brokered sessions
@@ -2870,7 +2879,12 @@ paths:
     post:
       tags: [PAM Ziti Reach]
       summary: Disable Ziti reach for entry
-      description: Admin only. Tears down the overlay service and reverts to direct reach.
+      description: >-
+        Admin only. Tears down the overlay service and reverts to direct reach.
+        Under `PAM_REQUIRE_ZTNA=enforce` an entry on the overlay is not
+        reverted (`409`, `ztna_required_direct_reach`): it could no longer be
+        launched. Under `observe` the revert is audited as one enforce would
+        refuse.
       operationId: pamDisableZiti
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -2884,15 +2898,21 @@ paths:
                 properties:
                   id: {type: string, format: uuid}
                   reach_mode: {type: string, enum: [direct]}
+        '409':
+          description: "`ztna_required_direct_reach`: under `PAM_REQUIRE_ZTNA=enforce` the entry stays on the overlay"
 
   # --- PAM: Windows application delivery (RemoteApp) ---
   /api/v1/access/pam/apps:
     get:
       tags: [Windows Apps]
       summary: List Windows apps (operator view)
-      description: Apps, pools, host state, and host-agent links in one payload.
+      description: >-
+        Apps, pools, host state, and host-agent links in one payload. Operators
+        and above only; an end user's launchable apps are
+        /api/v1/access/pam/my-apps.
       operationId: pamListWindowsApps
       responses:
+        '403': { description: Not an operator, admin or super_admin }
         '200':
           description: App catalog
           content:
@@ -3087,8 +3107,10 @@ paths:
     get:
       tags: [Windows Apps]
       summary: List app host pools
+      description: Operators and above only.
       operationId: pamListAppPools
       responses:
+        '403': { description: Not an operator, admin or super_admin }
         '200':
           description: Pools with members
           content:

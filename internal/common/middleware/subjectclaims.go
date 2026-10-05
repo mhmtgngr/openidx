@@ -52,6 +52,13 @@ func BindSubjectClaims(c *gin.Context, claims map[string]interface{}) {
 	}
 }
 
+// RolesFromClaims is the roles claim as BindSubjectClaims binds it, for a
+// handler that verifies a token itself (the audit WebSocket stream, whose
+// token arrives as a subprotocol) rather than behind Auth.
+func RolesFromClaims(claims map[string]interface{}) []string {
+	return stringsFromClaim(claims["roles"])
+}
+
 // stringsFromClaim converts a JSON array claim to []string. It returns nil for
 // a claim that is absent or not an array, so the caller leaves the key unset
 // rather than binding an empty list: "the token said no groups" and "the token

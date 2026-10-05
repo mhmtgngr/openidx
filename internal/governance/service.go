@@ -521,7 +521,7 @@ func (s *Service) GetAccessReview(ctx context.Context, reviewID string) (*Access
 
 	var review AccessReview
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, name, description, type, status, reviewer_id,
+		SELECT id, name, COALESCE(description, ''), type, COALESCE(status, ''), COALESCE(reviewer_id::text, ''),
 		       start_date, end_date, created_at, completed_at
 		FROM access_reviews WHERE id = $1 AND org_id = $2
 	`, reviewID, org.ID).Scan(
@@ -533,6 +533,12 @@ func (s *Service) GetAccessReview(ctx context.Context, reviewID string) (*Access
 
 // ListAccessReviews retrieves all access reviews, optionally filtered by status
 func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int, status string) ([]AccessReview, int, error) {
+	return s.ListAccessReviewsFor(ctx, offset, limit, status, "")
+}
+
+// ListAccessReviewsFor lists the org's access reviews, only those whose
+// reviewer is reviewerID when it is not empty.
+func (s *Service) ListAccessReviewsFor(ctx context.Context, offset, limit int, status, reviewerID string) ([]AccessReview, int, error) {
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -543,8 +549,12 @@ func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int, stat
 	countQuery := "SELECT COUNT(*) FROM access_reviews WHERE org_id = $1"
 
 	if status != "" {
-		countQuery += " AND status = $2"
 		countArgs = append(countArgs, status)
+		countQuery += " AND status = $" + strconv.Itoa(len(countArgs))
+	}
+	if reviewerID != "" {
+		countArgs = append(countArgs, reviewerID)
+		countQuery += " AND reviewer_id::text = $" + strconv.Itoa(len(countArgs))
 	}
 
 	err = s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
@@ -553,7 +563,7 @@ func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int, stat
 	}
 
 	baseQuery := `
-		SELECT ar.id, ar.name, ar.description, ar.type, ar.status, ar.reviewer_id,
+		SELECT ar.id, ar.name, COALESCE(ar.description, ''), ar.type, COALESCE(ar.status, ''), COALESCE(ar.reviewer_id::text, ''),
 		       ar.start_date, ar.end_date, ar.created_at, ar.completed_at,
 		       COUNT(ri.id) as total_items,
 		       COUNT(CASE WHEN ri.decision != 'pending' THEN 1 END) as reviewed_items
@@ -568,6 +578,11 @@ func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int, stat
 	if status != "" {
 		baseQuery += " AND ar.status = $" + strconv.Itoa(paramIdx)
 		args = append(args, status)
+		paramIdx++
+	}
+	if reviewerID != "" {
+		baseQuery += " AND ar.reviewer_id::text = $" + strconv.Itoa(paramIdx)
+		args = append(args, reviewerID)
 		paramIdx++
 	}
 
@@ -1764,6 +1779,63 @@ func (e *ServiceError) Error() string {
 	return e.Message
 }
 
+// requireAdminWithoutOPA gates a write that runs the governance program
+// itself. With OPA in the request path (ENABLE_OPA_AUTHZ=true) its role table
+// decides, as it always has, and this passes the request on. Without OPA,
+// which is the default, nothing else decided: any signed-in user, an external
+// (vendor) user included, could write an approval policy, an ABAC policy, a
+// campaign or a review. An approval policy whose auto-approve condition the
+// writer meets, on a role they then request, handed them that role, however
+// privileged. Without OPA these writes need an administrator. The routes an
+// ordinary user is meant to reach -- filing, cancelling and deciding access
+// requests, deciding a review they are the reviewer of, the evaluate routes --
+// are not gated here; their handlers decide who may do each.
+func (s *Service) requireAdminWithoutOPA() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s.config != nil && s.config.EnableOPAAuthz {
+			c.Next()
+			return
+		}
+		for _, role := range []auth.Role{auth.RoleAdmin, auth.RoleSuperAdmin} {
+			if ok, _ := auth.HasRoleInContext(c, role); ok {
+				c.Next()
+				return
+			}
+		}
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"error": "an administrator manages governance policies, campaigns and reviews",
+			"code":  "admin_required",
+		})
+	}
+}
+
+// requireProgramReaderWithoutOPA gates a read of the governance program's own
+// data: its policies, campaigns, SoD violations, privileged accounts and the
+// entitlement warehouse, which together say who holds what across the
+// organization and what would stop them. With OPA on, its role table decides.
+// Without OPA these answered anyone signed in; they now need an administrator
+// (admin or super_admin), an operator or an auditor, and anyone else gets 403
+// with reader_required. A user's own access requests and approvals, and the
+// access reviews (read by their reviewer), are not gated here.
+func (s *Service) requireProgramReaderWithoutOPA() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s.config != nil && s.config.EnableOPAAuthz {
+			c.Next()
+			return
+		}
+		for _, role := range []auth.Role{auth.RoleAdmin, auth.RoleSuperAdmin, auth.RoleOperator, auth.RoleAuditor} {
+			if ok, _ := auth.HasRoleInContext(c, role); ok {
+				c.Next()
+				return
+			}
+		}
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"error": "governance policies, campaigns and findings are read by an administrator, an operator or an auditor",
+			"code":  "reader_required",
+		})
+	}
+}
+
 // RegisterRoutes registers governance service routes
 func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.HandlerFunc) {
 	gov := router.Group("/api/v1/governance")
@@ -1771,50 +1843,57 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 	for _, mw := range extraMiddleware {
 		gov.Use(mw)
 	}
+	// The writes that run the governance program itself: approval, ABAC and
+	// governance policies, campaigns, reviews, the SoD, discovery and
+	// entitlement jobs. See requireAdminWithoutOPA.
+	adminWrite := svc.requireAdminWithoutOPA()
+	// What those writes are about: the policies, campaigns, SoD violations,
+	// privileged accounts and entitlements. See requireProgramReaderWithoutOPA.
+	programRead := svc.requireProgramReaderWithoutOPA()
 	{
 		// Access reviews
 		gov.GET("/reviews", svc.handleListReviews)
-		gov.POST("/reviews", svc.handleCreateReview)
+		gov.POST("/reviews", adminWrite, svc.handleCreateReview)
 		gov.GET("/reviews/:id", svc.handleGetReview)
-		gov.PUT("/reviews/:id", svc.handleUpdateReview)
-		gov.PATCH("/reviews/:id/status", svc.handleUpdateReviewStatus)
+		gov.PUT("/reviews/:id", adminWrite, svc.handleUpdateReview)
+		gov.PATCH("/reviews/:id/status", adminWrite, svc.handleUpdateReviewStatus)
 		gov.GET("/reviews/:id/items", svc.handleListReviewItems)
 		gov.POST("/reviews/:id/items/:itemId/decision", svc.handleSubmitDecision)
 		gov.POST("/reviews/:id/items/batch-decision", svc.handleBatchDecision)
 
 		// Policies
-		gov.GET("/policies", svc.handleListPolicies)
-		gov.POST("/policies", svc.handleCreatePolicy)
-		gov.GET("/policies/:id", svc.handleGetPolicy)
-		gov.PUT("/policies/:id", svc.handleUpdatePolicy)
-		gov.DELETE("/policies/:id", svc.handleDeletePolicy)
+		gov.GET("/policies", programRead, svc.handleListPolicies)
+		gov.POST("/policies", adminWrite, svc.handleCreatePolicy)
+		gov.GET("/policies/:id", programRead, svc.handleGetPolicy)
+		gov.PUT("/policies/:id", adminWrite, svc.handleUpdatePolicy)
+		gov.DELETE("/policies/:id", adminWrite, svc.handleDeletePolicy)
 		gov.POST("/policies/:id/evaluate", svc.handleEvaluatePolicy)
 
 		// Detective segregation-of-duties: sweep existing assignments for toxic
 		// combinations and manage the violation register (dashboard). The
 		// preventive control (evaluateSoDPolicy) blocks new grants; this finds
 		// what already exists.
-		gov.POST("/sod/sweep", svc.handleRunSoDSweep)
-		gov.GET("/sod/violations", svc.handleListSoDViolations)
-		gov.POST("/sod/violations/:id/status", svc.handleUpdateSoDViolationStatus)
-		gov.GET("/sod/statistics", svc.handleSoDStatistics)
+		gov.POST("/sod/sweep", adminWrite, svc.handleRunSoDSweep)
+		gov.GET("/sod/violations", programRead, svc.handleListSoDViolations)
+		gov.POST("/sod/violations/:id/status", adminWrite, svc.handleUpdateSoDViolationStatus)
+		gov.GET("/sod/statistics", programRead, svc.handleSoDStatistics)
 
 		// Privileged-account discovery: sweep the identity store for the
 		// privileged population (standing admin grants, privileged groups,
 		// service accounts, dormant privileged accounts) and track each to
 		// onboarding. The discovery substrate for PAM/JIT.
-		gov.POST("/privileged-accounts/scan", svc.handleRunPrivilegedDiscovery)
-		gov.GET("/privileged-accounts", svc.handleListPrivilegedAccounts)
-		gov.GET("/privileged-accounts/statistics", svc.handlePrivilegedStatistics)
-		gov.POST("/privileged-accounts/:id/status", svc.handleUpdatePrivilegedAccountStatus)
+		gov.POST("/privileged-accounts/scan", adminWrite, svc.handleRunPrivilegedDiscovery)
+		gov.GET("/privileged-accounts", programRead, svc.handleListPrivilegedAccounts)
+		gov.GET("/privileged-accounts/statistics", programRead, svc.handlePrivilegedStatistics)
+		gov.POST("/privileged-accounts/:id/status", adminWrite, svc.handleUpdatePrivilegedAccountStatus)
 
 		// Entitlement warehouse: one "who has access to what" surface unioning
 		// every entitlement source, with orphaned-entitlement detection (owner
 		// disabled/missing). The access-certification substrate.
-		gov.POST("/entitlements/rebuild", svc.handleRebuildEntitlements)
-		gov.GET("/entitlements", svc.handleListEntitlements)
-		gov.GET("/entitlements/orphans", svc.handleListOrphanedEntitlements)
-		gov.GET("/entitlements/statistics", svc.handleEntitlementStatistics)
+		gov.POST("/entitlements/rebuild", adminWrite, svc.handleRebuildEntitlements)
+		gov.GET("/entitlements", programRead, svc.handleListEntitlements)
+		gov.GET("/entitlements/orphans", programRead, svc.handleListOrphanedEntitlements)
+		gov.GET("/entitlements/statistics", programRead, svc.handleEntitlementStatistics)
 
 		// Access request workflows
 		gov.GET("/requests", svc.handleListAccessRequests)
@@ -1828,26 +1907,26 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		gov.GET("/my-approvals", svc.handleListPendingApprovals)
 
 		// Approval policies
-		gov.GET("/approval-policies", svc.handleListApprovalPolicies)
-		gov.POST("/approval-policies", svc.handleCreateApprovalPolicy)
-		gov.PUT("/approval-policies/:id", svc.handleUpdateApprovalPolicy)
-		gov.DELETE("/approval-policies/:id", svc.handleDeleteApprovalPolicy)
+		gov.GET("/approval-policies", programRead, svc.handleListApprovalPolicies)
+		gov.POST("/approval-policies", adminWrite, svc.handleCreateApprovalPolicy)
+		gov.PUT("/approval-policies/:id", adminWrite, svc.handleUpdateApprovalPolicy)
+		gov.DELETE("/approval-policies/:id", adminWrite, svc.handleDeleteApprovalPolicy)
 
 		// Certification campaigns
-		gov.GET("/campaigns", svc.handleListCampaigns)
-		gov.POST("/campaigns", svc.handleCreateCampaign)
-		gov.GET("/campaigns/:id", svc.handleGetCampaign)
-		gov.PUT("/campaigns/:id", svc.handleUpdateCampaign)
-		gov.DELETE("/campaigns/:id", svc.handleDeleteCampaign)
-		gov.POST("/campaigns/:id/run", svc.handleRunCampaign)
-		gov.GET("/campaigns/:id/runs", svc.handleGetCampaignRuns)
+		gov.GET("/campaigns", programRead, svc.handleListCampaigns)
+		gov.POST("/campaigns", adminWrite, svc.handleCreateCampaign)
+		gov.GET("/campaigns/:id", programRead, svc.handleGetCampaign)
+		gov.PUT("/campaigns/:id", adminWrite, svc.handleUpdateCampaign)
+		gov.DELETE("/campaigns/:id", adminWrite, svc.handleDeleteCampaign)
+		gov.POST("/campaigns/:id/run", adminWrite, svc.handleRunCampaign)
+		gov.GET("/campaigns/:id/runs", programRead, svc.handleGetCampaignRuns)
 
 		// ABAC Policies
-		gov.GET("/abac-policies", svc.handleListABACPolicies)
-		gov.POST("/abac-policies", svc.handleCreateABACPolicy)
-		gov.GET("/abac-policies/:id", svc.handleGetABACPolicy)
-		gov.PUT("/abac-policies/:id", svc.handleUpdateABACPolicy)
-		gov.DELETE("/abac-policies/:id", svc.handleDeleteABACPolicy)
+		gov.GET("/abac-policies", programRead, svc.handleListABACPolicies)
+		gov.POST("/abac-policies", adminWrite, svc.handleCreateABACPolicy)
+		gov.GET("/abac-policies/:id", programRead, svc.handleGetABACPolicy)
+		gov.PUT("/abac-policies/:id", adminWrite, svc.handleUpdateABACPolicy)
+		gov.DELETE("/abac-policies/:id", adminWrite, svc.handleDeleteABACPolicy)
 		gov.POST("/abac-policies/evaluate", svc.handleEvaluateABACPolicies)
 	}
 }
@@ -1871,7 +1950,11 @@ func (s *Service) handleListReviews(c *gin.Context) {
 		}
 	}
 
-	reviews, total, err := s.ListAccessReviews(c.Request.Context(), offset, limit, status)
+	reviewer, ok := reviewReaderScope(c)
+	if !ok {
+		return
+	}
+	reviews, total, err := s.ListAccessReviewsFor(c.Request.Context(), offset, limit, status, reviewer)
 	if err != nil {
 		s.logger.Error("failed to list access reviews", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -1896,12 +1979,39 @@ func (s *Service) handleCreateReview(c *gin.Context) {
 }
 
 func (s *Service) handleGetReview(c *gin.Context) {
+	reviewer, ok := reviewReaderScope(c)
+	if !ok {
+		return
+	}
 	review, err := s.GetAccessReview(c.Request.Context(), c.Param("id"))
-	if err != nil {
+	if err != nil || (reviewer != "" && review.ReviewerID != reviewer) {
 		c.JSON(404, gin.H{"error": "review not found"})
 		return
 	}
 	c.JSON(200, review)
+}
+
+// reviewReaderScope says which access reviews the caller reads. An
+// administrator (admin or super_admin) or an auditor reads every review of the
+// organization, and gets "". Anyone else reads the reviews they are the
+// reviewer of and no other, and gets their own id. A review's items name who holds what across
+// the organization, so a review is not read by everyone signed in: that was
+// the case without OPA, and with OPA on these routes are open to every
+// signed-in caller so that a reviewer who is not an auditor reaches their own
+// review. Writes 401 and answers false for a caller with no id.
+func reviewReaderScope(c *gin.Context) (string, bool) {
+	for _, role := range []auth.Role{auth.RoleSuperAdmin, auth.RoleAdmin, auth.RoleAuditor} {
+		if ok, _ := auth.HasRoleInContext(c, role); ok {
+			return "", true
+		}
+	}
+	userID, _ := c.Get("user_id")
+	callerID, _ := userID.(string)
+	if callerID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return "", false
+	}
+	return callerID, true
 }
 
 func (s *Service) handleUpdateReview(c *gin.Context) {
@@ -1963,6 +2073,18 @@ func (s *Service) handleListReviewItems(c *gin.Context) {
 	}
 
 	decisionFilter := c.Query("decision")
+
+	reviewer, ok := reviewReaderScope(c)
+	if !ok {
+		return
+	}
+	if reviewer != "" {
+		review, err := s.GetAccessReview(c.Request.Context(), c.Param("id"))
+		if err != nil || review.ReviewerID != reviewer {
+			c.JSON(404, gin.H{"error": "review not found"})
+			return
+		}
+	}
 
 	items, total, err := s.ListReviewItems(c.Request.Context(), c.Param("id"), offset, limit, decisionFilter)
 	if err != nil {

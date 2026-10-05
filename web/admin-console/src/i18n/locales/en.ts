@@ -4386,6 +4386,7 @@ const en = {
         revealSecret: 'Reveal secret',
         zitiEnable: 'Enable Ziti reach (zero-trust overlay to target)',
         zitiDisable: 'Disable Ziti reach (revert to direct)',
+        zitiDisableEnforced: 'Ziti reach stays on: PAM_REQUIRE_ZTNA=enforce refuses direct reach. Delete the entry to retire it.',
         launchPath: 'Launch path',
         edit: 'Edit',
         delete: 'Delete',

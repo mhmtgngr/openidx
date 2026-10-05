@@ -2,15 +2,36 @@
 package handlers
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/auth"
 )
+
+// requireStaff admits a caller holding a role at operator level or above
+// (super_admin, admin, operator), the roles the console's dashboard asks
+// GET /dashboard for (dashboard.tsx: isStaff, roleLevel >= operator). A plain
+// user gets a personal dashboard that never calls it. The route asked only for
+// a signed-in user, and it answers with the organization's latest audit
+// events, its failed-login and suspicious-IP counts and its user and session
+// counts, so any account in the organization could read them.
+func requireStaff(c *gin.Context) {
+	for _, r := range c.GetStringSlice("roles") {
+		if auth.Role(r).Level() >= auth.RoleOperator.Level() {
+			c.Next()
+			return
+		}
+	}
+	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "operator access required"})
+}
 
 // DashboardRoutes registers dashboard-related routes
 func DashboardRoutes(router *gin.RouterGroup, handler *DashboardHandler) {
 	dashboard := router.Group("/dashboard")
 	{
-		dashboard.GET("", handler.GetDashboardStats)
+		dashboard.GET("", requireStaff, handler.GetDashboardStats)
 		// GET /metrics and POST /refresh are gone. The first returned a zero
 		// SystemMetrics while its swagger said "real-time CPU, memory and disk
 		// usage"; the second answered "Dashboard cache refreshed successfully"

@@ -273,7 +273,7 @@ export function NotificationCenterPage() {
                     }`}
                   >
                     {/* Unread indicator */}
-                    <div className="flex-shrink-0 mt-1">
+                    <div className="shrink-0 mt-1">
                       {!notification.read && (
                         <div className="h-2.5 w-2.5 rounded-full bg-primary" />
                       )}
@@ -281,7 +281,7 @@ export function NotificationCenterPage() {
                     </div>
 
                     {/* Icon */}
-                    <div className="flex-shrink-0 mt-0.5">
+                    <div className="shrink-0 mt-0.5">
                       <Icon className="h-5 w-5 text-muted-foreground" />
                     </div>
 
@@ -292,7 +292,7 @@ export function NotificationCenterPage() {
                           <p className="font-semibold text-sm">{notification.title}</p>
                           <p className="text-sm text-muted-foreground mt-1">{notification.body}</p>
                         </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
+                        <div className="flex items-center gap-2 shrink-0">
                           <Badge variant="outline" className="text-xs">
                             {notification.type}
                           </Badge>
@@ -317,7 +317,7 @@ export function NotificationCenterPage() {
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-1 flex-shrink-0">
+                    <div className="flex items-center gap-1 shrink-0">
                       {!notification.read && (
                         <Button
                           variant="ghost"

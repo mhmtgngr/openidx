@@ -1120,7 +1120,7 @@ function VendorTargetsDialog({ vendor, onClose }: { vendor: VendorOrg; onClose: 
                 ))}
               </select>
             </div>
-            <div className="space-y-1 flex-1 min-w-[12rem]">
+            <div className="space-y-1 flex-1 min-w-48">
               <Label htmlFor="xt-target">{t('pages.externalUsers.targetsDialog.target')}</Label>
               {type === 'network_service' ? (
                 <Input id="xt-target" placeholder={t('pages.externalUsers.targetsDialog.serviceId')} value={target}

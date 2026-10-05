@@ -166,12 +166,19 @@ func (s *Service) handleGetModerationStatus(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
+	// The same parties as handleEndModeration: the requester polls it, the
+	// moderator watches it, an administrator may read any. It answered anyone
+	// in the organization who named the id, with who moderates and the live
+	// connection; anyone else now gets the not-found an unknown id gets.
+	party := isModerationAdmin(pamCallerRoles(c))
+	actor := c.GetString("user_id")
 	var status string
 	var moderatorID, activeConnID *string
 	var joinedAt, expiresAt *time.Time
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT status, moderator_id::text, active_conn_id, joined_at, expires_at
-		   FROM guacamole_moderation_sessions WHERE id = $1 AND org_id = $2`, id, org.ID).
+		   FROM guacamole_moderation_sessions WHERE id = $1 AND org_id = $2
+		    AND ($3 OR requester_id::text = $4 OR moderator_id::text = $4)`, id, org.ID, party, actor).
 		Scan(&status, &moderatorID, &activeConnID, &joinedAt, &expiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "moderation session not found"})

@@ -87,6 +87,16 @@ func outboundGuard(logger *zap.Logger) *netutil.OutboundGuard {
 // an auditor, a machine credential holding neither role -- gets 403.
 var requireWebhookAdmin = middleware.RequireRoles("admin", "super_admin")
 
+// requireAuditStreamReader admits to POST /stream/subscribe the roles that
+// read the trail; it is mounted only behind the JWT middleware.
+func requireAuditStreamReader(c *gin.Context) {
+	if holdsAuditRead(c.GetStringSlice("roles")) {
+		c.Next()
+		return
+	}
+	refuseAuditReader(c)
+}
+
 // SetJWKSURL enables JWT auth on the audit stream (REST routes via middleware,
 // WebSocket via the access_token_<jwt> subprotocol validated at upgrade).
 func (es *EventStreamer) SetJWKSURL(url string) {
@@ -217,7 +227,7 @@ func (es *EventStreamer) RegisterRoutes(r *gin.RouterGroup) {
 		// /subscribe and the webhook management routes are normal HTTP and take
 		// the JWT auth middleware directly.
 		if es.jwksURL != "" {
-			stream.POST("/subscribe", middleware.Auth(es.jwksURL), es.handleSubscribe)
+			stream.POST("/subscribe", middleware.Auth(es.jwksURL), requireAuditStreamReader, es.handleSubscribe)
 		} else {
 			stream.POST("/subscribe", es.handleSubscribe)
 		}
@@ -268,6 +278,12 @@ func (es *EventStreamer) handleWebSocketStream(c *gin.Context) {
 		// accepted only in the organization it was minted in.
 		if _, err := middleware.CheckTokenOrg(c, claims); err != nil {
 			c.JSON(403, gin.H{"error": err.Error()})
+			return
+		}
+		// The stream is the trail as it is written: the same roles read it
+		// as read the trail (reader_gate.go).
+		if !holdsAuditRead(middleware.RolesFromClaims(claims)) {
+			refuseAuditReader(c)
 			return
 		}
 	}

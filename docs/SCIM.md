@@ -474,6 +474,11 @@ identity provider.
 ## Security
 
 - SCIM endpoints require an OAuth 2.0 bearer token issued by OpenIDX.
+- The user and group endpoints answer a machine credential, the
+  `client_credentials` token of an application an administrator gave API
+  access, which is what an upstream identity provider uses, and an
+  administrator (`admin` or `super_admin`). A signed-in person's own token is
+  refused with `403`. The discovery endpoints are not restricted this way.
 - Requests are scoped to the caller's tenant.
 - Serve SCIM over TLS only.
 

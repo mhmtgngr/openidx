@@ -285,16 +285,23 @@ jobs:
         working-directory: ./web/admin-console
         run: npm ci
 
+      - name: Verify the npm audit gate can go red
+        run: bash scripts/check-npm-audit.test.sh
+
       # `npm audit --audit-level=high || true` inside a step that also carried
       # continue-on-error: two swallows on one command, so a HIGH advisory in a
-      # console dependency could never fail anything. The report is still
-      # written first (and uploaded below) so the failing run has the detail
-      # attached; then the same audit decides the step.
+      # console dependency could never fail anything. The report is written
+      # first (and uploaded below) so the failing run has the detail attached;
+      # then check-npm-audit.sh decides the step from that same report. It
+      # fails on every HIGH or CRITICAL advisory, as --audit-level=high did,
+      # except one listed with a reason and an expiry in
+      # web/admin-console/.npm-audit-ignore -- the npm counterpart of
+      # .trivyignore, for an advisory with no patched release to bump to.
       - name: Run npm audit
         working-directory: ./web/admin-console
         run: |
           npm audit --json > npm-audit-report.json || true
-          npm audit --audit-level=high
+          bash ../../scripts/check-npm-audit.sh npm-audit-report.json
 
       - name: Upload npm audit results
         if: always()

@@ -94,7 +94,7 @@ describe('LoginPage', () => {
   it('renders the shield icon container in the card header', () => {
     renderWithRouter(<LoginPage />)
     // The shield icon should be present (class from lucide)
-    const cardHeader = document.querySelector('.bg-gradient-to-br')
+    const cardHeader = document.querySelector('.bg-linear-to-br')
     expect(cardHeader).toBeInTheDocument()
   })
 

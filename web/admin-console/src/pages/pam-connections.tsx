@@ -554,9 +554,15 @@ export function PamConnectionsPage() {
                             size="sm"
                             variant={entry.ziti_enabled ? 'default' : 'outline'}
                             onClick={() => toggleZiti.mutate(entry)}
-                            disabled={toggleZiti.isPending}
+                            // Under enforcement the service refuses to move an
+                            // overlay entry back to direct reach (409
+                            // ztna_required_direct_reach); the button says so
+                            // rather than firing a request that is refused.
+                            disabled={toggleZiti.isPending || (entry.ziti_enabled && requireZTNA === 'enforce')}
                             title={entry.ziti_enabled
-                              ? t('pages.pamConnections.actions.zitiDisable')
+                              ? requireZTNA === 'enforce'
+                                ? t('pages.pamConnections.actions.zitiDisableEnforced')
+                                : t('pages.pamConnections.actions.zitiDisable')
                               : t('pages.pamConnections.actions.zitiEnable')}
                           >
                             <Shield className="h-4 w-4" />

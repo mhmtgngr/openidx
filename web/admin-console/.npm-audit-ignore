@@ -1,0 +1,11 @@
+# npm audit ignore list, read by scripts/check-npm-audit.sh.
+#
+# The console's npm audit blocks on HIGH/CRITICAL (decision D2 in
+# docs/archive/PROJECT-READINESS-GUIDE.md). An entry here is a claim that one
+# advisory does not apply to this repository, which needs a reason a reviewer
+# can check, and an exp: date after which it is looked at again.
+#
+# Do not add an entry to make a build green. Bump the dependency.
+
+# No entries. GHSA-vfj7-8cjw-p6xm (braces) was the first; the Tailwind 4
+# migration removed braces from the tree and the entry with it.
