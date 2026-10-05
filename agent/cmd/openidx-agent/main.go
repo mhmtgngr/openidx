@@ -353,6 +353,16 @@ var trayCmd = &cobra.Command{
 	Use:   "tray",
 	Short: "Run the OpenIDX system-tray app (Windows)",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// The Run key starts the tray with --autostart at every sign-in; a
+		// person who turned "Start when I sign in" off in Settings gets a
+		// tray that exits here, quietly. A tray started by hand always runs.
+		autostart, _ := cmd.Flags().GetBool("autostart")
+		if !tray.ShouldRun(autostart) {
+			logger.Info("tray: autostart is off for this user; not starting")
+			return nil
+		}
+		// The same "v"-less form the agent_version check reports.
+		tray.Version = strings.TrimPrefix(strings.TrimSpace(Version), "v")
 		// An unenrolled device has no server yet. The tray still runs: it says
 		// the device is not enrolled, and picks the server up from agent.json
 		// once an enrolment link or code has been used. The Run key passes no
@@ -494,6 +504,7 @@ func init() {
 
 	loginCmd.Flags().String("server", "", "OpenIDX server URL (defaults to the enrolled server)")
 	trayCmd.Flags().String("server", "", "OpenIDX server URL (defaults to the enrolled server)")
+	trayCmd.Flags().Bool("autostart", false, "started at sign-in by the Run key; honours the user's Start-when-I-sign-in preference")
 	updateCmd.Flags().String("manifest-url", "", "version manifest URL (defaults to config update_manifest_url)")
 	updateCmd.Flags().Bool("apply", false, "download and install the update if one is available")
 
