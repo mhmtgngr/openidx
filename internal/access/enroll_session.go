@@ -49,14 +49,25 @@ type enrollmentSession struct {
 
 // amrIndicatesMFA reports whether an OIDC amr claim shows a real second factor
 // was used (not just a password). Absent/unknown → false (no auto-trust).
+//
+// A key held in hardware or software ("hwk", "swk") is one factor. It shows a
+// second factor beside a password or a PIN, but alone it is a single one: a
+// passkey sign-in whose authenticator did not verify the person records
+// ["hwk"] and nothing else (oauth passkeyAuthMethods), and that must not read
+// as multi-factor here. A verified passkey sign-in carries "mfa" as well.
 func amrIndicatesMFA(amr []string) bool {
+	key, knowledge := false, false
 	for _, m := range amr {
 		switch strings.ToLower(strings.TrimSpace(m)) {
-		case "mfa", "otp", "totp", "webauthn", "hwk", "swk", "sms", "u2f", "pop", "fpt", "face":
+		case "mfa", "otp", "totp", "webauthn", "sms", "u2f", "pop", "fpt", "face":
 			return true
+		case "hwk", "swk":
+			key = true
+		case "pwd", "pin":
+			knowledge = true
 		}
 	}
-	return false
+	return key && knowledge
 }
 
 // enrollServerURL is the base URL the agent should target for /agent/enroll,

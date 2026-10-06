@@ -79,6 +79,11 @@ func TestRecordingASecondFactorStampsTheSession(t *testing.T) {
 		// Order and company must not matter: the derivation is "does this
 		// contain mfa", not "is this exactly [pwd mfa]".
 		{"mfa in any position", "bbbbbbbb-0000-0000-0000-000000000003", []string{"mfa", "pwd", "hwk"}, true},
+		// A passkey sign-in (#1109): the authenticator's UV flag is the
+		// second factor, so with it the session is stamped and without it,
+		// presence only, it is not.
+		{"a passkey with user verification stamps it", "bbbbbbbb-0000-0000-0000-000000000004", passkeyAuthMethods(true), true},
+		{"a passkey with presence only leaves it unstamped", "bbbbbbbb-0000-0000-0000-000000000005", passkeyAuthMethods(false), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			seedStampSession(t, svc, ctx, tc.id)
@@ -90,7 +95,7 @@ func TestRecordingASecondFactorStampsTheSession(t *testing.T) {
 					"the gate would treat it as never verified")
 			}
 			if !tc.want && at != nil {
-				t.Fatalf("a password-only login stamped mfa_verified_at (%v); the column would then "+
+				t.Fatalf("a single-factor login stamped mfa_verified_at (%v); the column would then "+
 					"assert a factor that was never proved", *at)
 			}
 		})

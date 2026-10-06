@@ -348,7 +348,8 @@ func (s *Service) handlePasskeyFinish(c *gin.Context) {
 	}
 
 	// Finish discoverable authentication — returns the authenticated user ID
-	userID, err := s.identityService.FinishWebAuthnDiscoverableAuthentication(ctx, &sessionData, parsedResponse)
+	// and whether the authenticator verified the person as well.
+	userID, userVerified, err := s.identityService.FinishWebAuthnDiscoverableAuthentication(ctx, &sessionData, parsedResponse)
 	if err != nil {
 		s.logger.Error("Passkey authentication failed", zap.Error(err))
 		c.JSON(401, gin.H{"error": "authentication_failed", "error_description": "passkey verification failed"})
@@ -365,6 +366,11 @@ func (s *Service) handlePasskeyFinish(c *gin.Context) {
 	}
 	if session != nil {
 		oauthParams["session_id"] = session.ID
+		// Until this was recorded a passkey sign-in left the session with no
+		// amr and no mfa_verified_at, so the step-up freshness gate treated
+		// it as never verified even when the authenticator had verified the
+		// person (#1109).
+		s.recordSessionAuthMethods(ctx, session.ID, passkeyAuthMethods(userVerified))
 	}
 
 	// Clean up Redis keys
@@ -377,10 +383,32 @@ func (s *Service) handlePasskeyFinish(c *gin.Context) {
 		defer cancel()
 		s.logAuditEvent(ctx, "authentication", "security", "passkey_login", "success",
 			userID, clientIP, userID, "user",
-			map[string]interface{}{"method": "passkey"})
+			map[string]interface{}{"method": "passkey", "user_verified": userVerified})
 	}()
 
 	s.issueAuthorizationCode(c, oauthParams, userID)
+}
+
+// passkeyAuthMethods is the amr (RFC 8176) a passkey-first sign-in records on
+// its session.
+//
+// The assertion proves possession of a key the authenticator holds, "hwk".
+// When the authenticator also set the UV flag it verified the person before
+// signing, by PIN or biometric: a second factor, knowledge or inherence beside
+// possession. WebAuthn does not say which, so neither "pin" nor "fpt" or
+// "face" is claimed. "user" records that the person interacted with the
+// authenticator, and "mfa" is how this service marks a multi-factor session:
+// recordSessionAuthMethods stamps mfa_verified_at from it, which is what the
+// step-up freshness gate reads, exactly as for a password and a second factor.
+//
+// Without UV the authenticator tested presence only, a touch, so the sign-in
+// is one factor: "hwk" alone, which leaves the session unstamped and does not
+// satisfy a step-up.
+func passkeyAuthMethods(userVerified bool) []string {
+	if userVerified {
+		return []string{"hwk", "user", "mfa"}
+	}
+	return []string{"hwk"}
 }
 
 // handleOAuthMagicLink requests a magic link for passwordless login.

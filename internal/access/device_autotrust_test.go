@@ -57,6 +57,15 @@ func TestAMRIndicatesMFA(t *testing.T) {
 		{[]string{"webauthn"}, true},
 		{[]string{"PWD", "TOTP"}, true},
 		{[]string{"unknown"}, false},
+		// A passkey sign-in records ["hwk"] alone when the authenticator did
+		// not verify the person, and ["hwk","user","mfa"] when it did. A key
+		// on its own is one factor; beside a password or PIN it is a second.
+		{[]string{"hwk"}, false},
+		{[]string{"swk"}, false},
+		{[]string{"hwk", "user"}, false},
+		{[]string{"hwk", "user", "mfa"}, true},
+		{[]string{"pwd", "hwk"}, true},
+		{[]string{"PIN", "SWK"}, true},
 	}
 	for _, c := range cases {
 		if got := amrIndicatesMFA(c.amr); got != c.want {
