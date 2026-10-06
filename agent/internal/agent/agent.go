@@ -48,6 +48,8 @@ type Agent struct {
 	// session streams; controlled follows the admin's control_state toggle.
 	remoteSupportActive     atomic.Bool
 	remoteSupportControlled atomic.Bool
+	// lastPosture is the outcome of the latest posture cycle, for the tray.
+	lastPosture atomic.Pointer[PostureSummary]
 
 	// DisableRemoteSupport gates the remote-support screen-share + input path.
 	// The Windows SERVICE runs in session 0, which has no interactive desktop,
@@ -315,6 +317,8 @@ func (a *Agent) RunOnce(ctx context.Context) error {
 	}
 
 	engineResults := a.engine.RunChecks(ctx, a.serverCfg.Checks)
+	summary := summarizePosture(engineResults, a.serverCfg.EnforcementPolicy, time.Now().UTC())
+	a.lastPosture.Store(&summary)
 
 	results := make([]engineResult, 0, len(engineResults))
 	for _, er := range engineResults {
@@ -402,3 +406,7 @@ func parseInterval(s string, fallback time.Duration) time.Duration {
 	}
 	return d
 }
+
+// LastPosture returns the outcome of the latest posture cycle, or nil before
+// the first one has run.
+func (a *Agent) LastPosture() *PostureSummary { return a.lastPosture.Load() }

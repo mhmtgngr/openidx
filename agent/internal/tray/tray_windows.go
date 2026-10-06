@@ -41,12 +41,17 @@ type app struct {
 	mConnRoot  *systray.MenuItem
 	mHello     *systray.MenuItem
 	mAutostart *systray.MenuItem
+	mHealth    *systray.MenuItem
 
 	mu       sync.Mutex
 	tokens   *sso.Tokens
 	connSlot []*systray.MenuItem
 	slotID   []string     // slot index -> entry id
 	rsAgent  *agent.Agent // remote-support agent running in this user session
+
+	healthSlot  []*systray.MenuItem
+	healthIssue []ipc.PostureIssue // slot index -> issue shown there
+	lastStatus  *ipc.Status        // the service's latest answer, for the launch gate
 }
 
 // Run starts the tray UI and blocks until the user quits.
@@ -112,6 +117,15 @@ func (a *app) onReady() {
 		go a.watchSlot(i, mi)
 	}
 	systray.AddSeparator()
+	a.mHealth = systray.AddMenuItem("Device health", "Security checks on this device")
+	for i := 0; i < maxHealthSlots; i++ {
+		mi := a.mHealth.AddSubMenuItem("", "")
+		mi.Hide()
+		a.healthSlot = append(a.healthSlot, mi)
+		a.healthIssue = append(a.healthIssue, ipc.PostureIssue{})
+		go a.watchHealthSlot(i, mi)
+	}
+	a.mHealth.Hide()
 	mSettings := systray.AddMenuItem("Settings", "")
 	a.mAutostart = mSettings.AddSubMenuItemCheckbox("Start when I sign in", "Start the OpenIDX tray at Windows sign-in", !AutostartDisabled())
 	mUpdates := mSettings.AddSubMenuItem("Check for updates", "Ask the update server whether a newer OpenIDX is published")
@@ -202,7 +216,57 @@ func (a *app) updateStatus() {
 		}
 		a.updateBanner(a.remoteSupportState(st))
 	}
+	a.updateHealth(st)
 	a.mStatus.SetTitle(composeStatus(signedIn, a.server() != "", st))
+}
+
+// updateHealth shows the failing checks under Device health and tells the
+// person once when the device enters a state that refuses launches.
+func (a *app) updateHealth(st *ipc.Status) {
+	a.mu.Lock()
+	prev := a.lastStatus
+	a.lastStatus = st
+	a.mu.Unlock()
+	if st == nil {
+		return
+	}
+	if st.ComplianceStatus == "" && len(st.Issues) == 0 {
+		a.mHealth.Hide()
+	} else {
+		a.mHealth.Show()
+		title := "Device health: all checks pass"
+		if n := postureNote(st); n != "" {
+			title = "Device health: " + n
+		}
+		a.mHealth.SetTitle(title)
+	}
+	a.mu.Lock()
+	for i, mi := range a.healthSlot {
+		if i < len(st.Issues) {
+			a.healthIssue[i] = st.Issues[i]
+			mi.SetTitle(issueTitle(st.Issues[i]))
+			mi.Show()
+		} else {
+			a.healthIssue[i] = ipc.PostureIssue{}
+			mi.Hide()
+		}
+	}
+	a.mu.Unlock()
+	if becameBlocked(prev, st) {
+		go a.tell(launchRefusal(st))
+	}
+}
+
+// watchHealthSlot explains an issue when it is clicked.
+func (a *app) watchHealthSlot(i int, mi *systray.MenuItem) {
+	for range mi.ClickedCh {
+		a.mu.Lock()
+		issue := a.healthIssue[i]
+		a.mu.Unlock()
+		if issue.Check != "" {
+			go a.tell(issueDetail(issue))
+		}
+	}
 }
 
 // remoteSupportState is whether an admin can see or control this device now.
@@ -569,6 +633,13 @@ func (a *app) watchSlot(i int, mi *systray.MenuItem) {
 		t := a.tokens
 		a.mu.Unlock()
 		if id == "" || t == nil {
+			continue
+		}
+		a.mu.Lock()
+		st := a.lastStatus
+		a.mu.Unlock()
+		if reason := launchRefusal(st); reason != "" {
+			go a.tell(reason)
 			continue
 		}
 		go func() {
