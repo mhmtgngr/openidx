@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/openidx/openidx/agent/internal/checks"
+	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/secretfile"
 )
 
@@ -30,10 +31,12 @@ type AgentConfig struct {
 	// This is a trust anchor, not a preference: whoever it names can install
 	// software on this machine. It belongs in this file because this file
 	// already chooses the manifest URL — anyone who can write one can write the
-	// other — and the file's permissions are what protect both (0600 in a 0700
-	// directory on Unix, an owner-only ACL on Windows). Empty means the pinned
-	// publisher, which is the right answer for anyone consuming OpenIDX
-	// releases.
+	// other — and the file's permissions are what protect both: 0600 in a 0700
+	// directory on Unix; on Windows an ACL that lets SYSTEM and Administrators
+	// write and every signed-in user only read (secretfile.hardenShared), plus
+	// ConfigTrusted, which the service runs before obeying either field. Empty
+	// means the pinned publisher, which is the right answer for anyone
+	// consuming OpenIDX releases.
 	UpdateTrustedCertPEM string `json:"update_trusted_cert,omitempty"`
 	// InsecureSkipVerify skips TLS verification for the signaling WebSocket
 	// (dev/self-signed only). Defaults false. Mirrors the HTTP client posture.
@@ -134,6 +137,21 @@ func (c *AgentConfig) Save(dir string) error {
 	}
 
 	return nil
+}
+
+// ConfigTrusted reports why agent.json in dir must not be obeyed for the
+// settings that choose what the agent runs (plugin_dir, update_manifest_url,
+// update_trusted_cert), or nil when it is safe to. The file is read by the
+// SYSTEM service, so an account that can write it chooses what SYSTEM runs
+// next. The check is the one a plugin passes before it is executed: on
+// Windows the owner and every ACE, on Unix the mode bits.
+//
+// The agent's own credential (auth_token, server_url) is still read from an
+// untrusted file: a tampered server_url points the agent at an impostor, which
+// gets the posture reports and the device token, but cannot run code here.
+// Refusing to start at all would turn a tampered ACL into a silent outage.
+func ConfigTrusted(dir string) error {
+	return plugin.CheckTrustedPath(ConfigPath(dir))
 }
 
 // LoadConfig reads agent.json from dir and returns the parsed AgentConfig.

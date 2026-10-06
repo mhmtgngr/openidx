@@ -149,6 +149,14 @@ func (h *handler) updateLoop(ctx context.Context) {
 			if err != nil || cfg == nil || cfg.UpdateManifestURL == "" {
 				continue
 			}
+			// The manifest URL and the publisher certificate decide what this
+			// service installs as SYSTEM. They are obeyed only from a file that
+			// nobody but SYSTEM and an administrator could have written.
+			if err := agent.ConfigTrusted(h.configDir); err != nil {
+				h.logger.Error("service: not updating: agent.json could have been written by an "+
+					"account this service does not trust", zap.Error(err))
+				continue
+			}
 			// Resolved per poll rather than once at startup so an operator who
 			// corrects update_trusted_cert does not have to restart the service
 			// — and so a malformed one is reported every six hours instead of
