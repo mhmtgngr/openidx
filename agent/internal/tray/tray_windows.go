@@ -302,6 +302,9 @@ func (a *app) watchSlot(i int, mi *systray.MenuItem) {
 			defer cancel()
 			if _, err := desktoppam.Connect(ctx, a.serverURL, t.AccessToken, id); err != nil {
 				a.logger.Warn("tray: connect failed", zap.String("entry", id), zap.Error(err))
+				// The log is for the operator; the person who clicked needs
+				// to know why nothing opened and what to do about it.
+				a.tell(desktoppam.UserMessage(err))
 			}
 		}()
 	}
