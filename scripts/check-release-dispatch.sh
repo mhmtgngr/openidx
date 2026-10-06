@@ -22,7 +22,9 @@
 #   1. release.yml is dispatchable and takes a version,
 #   2. it resolves the version from EITHER trigger, not just the ref,
 #   3. it validates a dispatched version rather than trusting the input,
-#   4. on dispatch it hands off to docker.yml, and
+#   4. on dispatch it hands off to docker.yml, on the tag it created (on the
+#      branch, the images are built from wherever the branch has moved to:
+#      v1.40.0's were built from the merge after the tagged commit), and
 #   5. docker.yml's stamping job is actually reachable from that hand-off,
 #   6. …and it stamps the same names the tagged path publishes,
 #   7. and it hands off to client-mobile-release.yml on the tag it created,
@@ -85,6 +87,12 @@ grep -q 'actions: write' <<<"$rbody" ||
   finding "release.yml lacks the actions: write permission its docker.yml hand-off needs"
 grep -q -- '-f version=' <<<"$rbody" ||
   finding "release.yml's docker.yml hand-off passes no version, so there is nothing to stamp"
+# …and it has to start docker.yml ON THE TAG. docker.yml builds the commit its
+# ref names, so a hand-off on the branch the release was dispatched from builds
+# whatever that branch points at by then: v1.40.0's images were built from the
+# merge after the tagged commit, and carried a sha as their VERSION.
+grep -q 'gh workflow run docker.yml --ref "\$RELEASE_VERSION"' <<<"$rbody" ||
+  finding "release.yml's docker.yml hand-off is not on the release tag, so the images are built from wherever the branch has moved to, not from the released commit"
 
 # 5. …and docker.yml has to accept it. A hand-off into a job gated on
 #    event_name == 'push' is a hand-off into a skipped job.
