@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -53,6 +54,12 @@ type Agent struct {
 	// true and the TRAY (running in the user session) runs remote-support
 	// instead. Default false = enabled (single-process / foreground `run`).
 	DisableRemoteSupport bool
+
+	// revoked is set when the server answers /agent/config with 403: an
+	// administrator revoked this device. Nothing the agent sends after that
+	// is accepted, so the cycle stops at the sync until a sync succeeds again
+	// (a re-enrolled device, after the service restarts with its new token).
+	revoked atomic.Bool
 
 	// RemoteSupportOnly makes RunOnce poll the server's config, so a pending
 	// remote-support session is noticed and answered, and do nothing else: no
@@ -144,8 +151,21 @@ func (a *Agent) SyncConfig(ctx context.Context) error {
 	if err != nil {
 		def := DefaultServerConfig()
 		a.serverCfg = &def
+		if errors.Is(err, transport.ErrAgentRevoked) {
+			// The one failure that is a state. Log it once, loudly: a device
+			// that keeps warning "failed to fetch server config" every hour
+			// looks like a network problem to whoever reads the log.
+			if !a.revoked.Swap(true) {
+				a.logger.Error("this device has been revoked by an administrator; " +
+					"posture reporting stops until it is enrolled again")
+			}
+			return fmt.Errorf("fetching server config: %w", err)
+		}
 		a.logger.Warn("failed to fetch server config, using defaults", zap.Error(err))
 		return fmt.Errorf("fetching server config: %w", err)
+	}
+	if a.revoked.Swap(false) {
+		a.logger.Info("the server accepts this device again; posture reporting resumes")
 	}
 
 	var cfg ServerConfig
@@ -257,6 +277,11 @@ func (a *Agent) RunOnce(ctx context.Context) error {
 		// session to processRemoteSupportConsent. Posture is the service's.
 		return nil
 	}
+	if a.revoked.Load() {
+		// A report from a revoked device is refused with the same 403; running
+		// the checks for it is wasted work and a second error line per cycle.
+		return nil
+	}
 
 	engineResults := a.engine.RunChecks(ctx, a.serverCfg.Checks)
 
@@ -293,6 +318,12 @@ func (a *Agent) RunOnce(ctx context.Context) error {
 	a.logger.Info("results reported", zap.Int("checks", len(results)))
 	return nil
 }
+
+// Revoked reports whether the server has refused this device as revoked on
+// its last config sync. The service passes it to the tray over the status
+// pipe, so the person at the device is told rather than left with a menu that
+// looks signed in and connections that never open.
+func (a *Agent) Revoked() bool { return a.revoked.Load() }
 
 // Run executes an initial RunOnce cycle and then repeats on the interval
 // specified by serverCfg.ReportInterval. It blocks until ctx is cancelled.

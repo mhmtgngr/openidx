@@ -23,11 +23,14 @@ const pipeSDDL = "D:P(A;;GR;;;AU)(A;;GA;;;SY)(A;;GA;;;BA)"
 
 // Status is the read-only snapshot the service exposes to the tray.
 type Status struct {
-	Enrolled         bool   `json:"enrolled"`
-	AgentID          string `json:"agent_id,omitempty"`
-	DeviceID         string `json:"device_id,omitempty"`
-	ServerURL        string `json:"server_url,omitempty"`
-	ZitiEnrolled     bool   `json:"ziti_enrolled"`
+	Enrolled     bool   `json:"enrolled"`
+	AgentID      string `json:"agent_id,omitempty"`
+	DeviceID     string `json:"device_id,omitempty"`
+	ServerURL    string `json:"server_url,omitempty"`
+	ZitiEnrolled bool   `json:"ziti_enrolled"`
+	// Revoked is true once the server has refused this device as revoked by
+	// an administrator. The tray shows it and offers no connections.
+	Revoked          bool   `json:"revoked,omitempty"`
 	ComplianceStatus string `json:"compliance_status,omitempty"`
 	LastReportAt     string `json:"last_report_at,omitempty"`
 	// RemoteSupportActive is true while an admin remote-support session is live
