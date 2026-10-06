@@ -64,12 +64,28 @@ var (
 	logger    *zap.Logger
 )
 
+// fromDeepLink is set when this process was started by the OS for an
+// openidx:// link. There is no console to read then, so the outcome is shown
+// in a message box instead of printed.
+var fromDeepLink bool
+
 func main() {
 	wireBuildVersion()
 	// Deep-link entry: the OS invokes `openidx-agent openidx://enroll?code=..&server=..`
 	// (from a scanned QR / clicked link). Rewrite it into the enroll command.
+	// On Windows the link arrives in the browser's unelevated process, and
+	// enrolment writes a file only SYSTEM and administrators may write, so the
+	// link is first handed to an elevated copy of this program.
 	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "openidx://") {
 		if args, ok := deepLinkToArgs(os.Args[1]); ok {
+			fromDeepLink = true
+			if handedOff, err := elevateForDeepLink(os.Args[1]); handedOff {
+				if err != nil {
+					notifyDeepLink("OpenIDX could not get administrator approval, so this device was not enrolled.\n\n" + err.Error())
+					os.Exit(1)
+				}
+				return // the elevated copy enrols the device
+			}
 			os.Args = append([]string{os.Args[0]}, args...)
 		}
 	}
@@ -166,6 +182,9 @@ resulting credentials in the config directory for subsequent runs.`,
 
 		result, err := enrollment.EnrollWithManifest(logger, server, token, configDir, manifestURL)
 		if err != nil {
+			if fromDeepLink {
+				notifyDeepLink("Enrollment failed.\n\n" + err.Error())
+			}
 			return fmt.Errorf("enrollment failed: %w", err)
 		}
 
@@ -178,6 +197,18 @@ resulting credentials in the config directory for subsequent runs.`,
 		fmt.Printf("  Config:    %s\n", configDir)
 		if result.ZitiIdentity != "" {
 			fmt.Printf("  Ziti:      %s\n", result.ZitiIdentity)
+		}
+
+		// The service notices the enrolment on its own within half a minute;
+		// starting it now spares the wait. Not installed is not a failure.
+		if started, serr := winservice.StartIfInstalled(); serr != nil {
+			logger.Warn("the agent service could not be started; it will pick the enrolment up when it next runs", zap.Error(serr))
+		} else if started {
+			fmt.Printf("  Service:   started\n")
+		}
+		if fromDeepLink {
+			notifyDeepLink("This device is now enrolled with " + cfg.ServerURL + ".\n\n" +
+				"Sign in from the OpenIDX icon in the taskbar to see your connections.")
 		}
 
 		return nil
@@ -322,11 +353,12 @@ var trayCmd = &cobra.Command{
 	Use:   "tray",
 	Short: "Run the OpenIDX system-tray app (Windows)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		server := resolveServer(cmd)
-		if server == "" {
-			return fmt.Errorf("no server: pass --server or enroll first")
-		}
-		return tray.Run(logger, configDir, server)
+		// An unenrolled device has no server yet. The tray still runs: it says
+		// the device is not enrolled, and picks the server up from agent.json
+		// once an enrolment link or code has been used. The Run key passes no
+		// --server, so without this the tray never appeared on a fresh
+		// install until a reboot after enrolment.
+		return tray.Run(logger, configDir, resolveServer(cmd))
 	},
 }
 

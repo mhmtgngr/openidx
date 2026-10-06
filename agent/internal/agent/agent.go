@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"sync/atomic"
 	"time"
 
@@ -76,7 +77,13 @@ type Agent struct {
 func NewAgent(logger *zap.Logger, configDir string) (*Agent, error) {
 	cfg, err := LoadConfig(configDir)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %v", ErrNotEnrolled, err)
+		}
 		return nil, fmt.Errorf("loading agent config: %w", err)
+	}
+	if cfg.AgentID == "" {
+		return nil, fmt.Errorf("%w: agent.json names no agent", ErrNotEnrolled)
 	}
 
 	client := transport.NewTransport(cfg.ServerURL, cfg.AuthToken, cfg.AgentID, cfg.ZitiIdentityFile, cfg.ZitiServiceName, logger)

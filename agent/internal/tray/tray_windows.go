@@ -8,6 +8,7 @@ package tray
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,7 +28,8 @@ const maxConnSlots = 25
 type app struct {
 	logger    *zap.Logger
 	configDir string
-	serverURL string
+	serverURL string // guarded by srvMu: empty until the device is enrolled
+	srvMu     sync.RWMutex
 	consent   *consentGate
 
 	mBanner   *systray.MenuItem
@@ -48,6 +50,31 @@ func Run(logger *zap.Logger, configDir, serverURL string) error {
 	a := &app{logger: logger, configDir: configDir, serverURL: serverURL, consent: newConsentGate(askConsent)}
 	systray.Run(a.onReady, func() {})
 	return nil
+}
+
+// server is the OpenIDX server this tray talks to, or "" while the device is
+// not enrolled and no --server was given.
+func (a *app) server() string {
+	a.srvMu.RLock()
+	defer a.srvMu.RUnlock()
+	return a.serverURL
+}
+
+// resolveServer fills the server in from agent.json once the device is
+// enrolled, for a tray that started before that (the Run key starts it at
+// sign-in with no --server, and a fresh install is not enrolled yet).
+func (a *app) resolveServer() {
+	if a.server() != "" {
+		return
+	}
+	cfg, err := agent.LoadConfig(a.configDir)
+	if err != nil || cfg == nil || cfg.ServerURL == "" {
+		return
+	}
+	a.srvMu.Lock()
+	a.serverURL = strings.TrimRight(cfg.ServerURL, "/")
+	a.srvMu.Unlock()
+	a.logger.Info("tray: device enrolled; server known", zap.String("server", a.server()))
 }
 
 func (a *app) onReady() {
@@ -109,6 +136,7 @@ func (a *app) runRemoteSupportAgent() {
 	// stream until I restart the client" symptom. Recover from panics and
 	// restart the agent loop with a short backoff if Run ever returns.
 	for {
+		delay := 3 * time.Second
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -117,6 +145,11 @@ func (a *app) runRemoteSupportAgent() {
 			}()
 			ag, err := agent.NewAgent(a.logger, a.configDir)
 			if err != nil {
+				if agent.IsNotEnrolled(err) {
+					// Expected on a fresh install; look again in a while.
+					delay = 30 * time.Second
+					return
+				}
 				a.logger.Warn("tray: could not start remote-support agent", zap.Error(err))
 				return
 			}
@@ -131,42 +164,33 @@ func (a *app) runRemoteSupportAgent() {
 				a.logger.Warn("tray remote-support agent stopped; will restart", zap.Error(err))
 			}
 		}()
-		time.Sleep(3 * time.Second)
+		time.Sleep(delay)
 	}
 }
 
 // updateStatus composes the status line from the sign-in state and the
 // device-service status (best-effort, over the named pipe).
 func (a *app) updateStatus() {
+	a.resolveServer()
 	a.mu.Lock()
 	signedIn := a.tokens != nil
 	a.mu.Unlock()
 
-	signPart := "Not signed in"
-	if signedIn {
-		signPart = "Signed in"
+	st, err := ipc.Query()
+	if err != nil {
+		st = nil
 	}
-	devPart := "device: unknown"
-	if st, err := ipc.Query(); err == nil && st != nil {
-		switch {
-		case st.Revoked:
+	if st != nil {
+		if st.Revoked {
 			// The server refuses this device: nothing it asks for will be
-			// granted, so say so and offer no connections. The user's session
-			// is bound to the device and ends with it; the session refresh
-			// finds that out on its own.
-			devPart = "device: REVOKED by an administrator"
+			// granted, so offer no connections. The user's session is bound
+			// to the device and ends with it; the session refresh finds that
+			// out on its own.
 			a.hideConnections()
-		case st.Enrolled:
-			devPart = "device: enrolled"
-			if st.ZitiEnrolled {
-				devPart += " · ziti"
-			}
-		default:
-			devPart = "device: not enrolled"
 		}
 		a.updateBanner(a.remoteSupportState(st))
 	}
-	a.mStatus.SetTitle(signPart + " · " + devPart)
+	a.mStatus.SetTitle(composeStatus(signedIn, a.server() != "", st))
 }
 
 // remoteSupportState is whether an admin can see or control this device now.
@@ -242,7 +266,7 @@ func (a *app) keepFresh() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	fresh, outcome, err := refreshIfDue(ctx, a.serverURL, t, time.Now(), sso.RefreshWithClient)
+	fresh, outcome, err := refreshIfDue(ctx, a.server(), t, time.Now(), sso.RefreshWithClient)
 	switch outcome {
 	case sessionRefreshed:
 		if serr := authstore.Save(a.configDir, fresh); serr != nil {
@@ -296,9 +320,15 @@ func (a *app) loop(mQuit *systray.MenuItem) {
 }
 
 func (a *app) signIn() {
+	if a.server() == "" {
+		a.tell("This device is not enrolled yet, so there is nothing to sign in to.\n\n" +
+			"Open the enrollment link from the OpenIDX console on this computer, or run\n" +
+			"openidx-agent enroll --code <code> --server <url> from an administrator prompt.")
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
-	t, err := sso.LoginWithDevice(ctx, a.serverURL, a.enrolledAgentID())
+	t, err := sso.LoginWithDevice(ctx, a.server(), a.enrolledAgentID())
 	if err != nil {
 		a.logger.Warn("tray: sign-in failed", zap.Error(err))
 		a.mStatus.SetTitle("Sign-in failed")
@@ -325,9 +355,9 @@ func (a *app) signOut() {
 	a.mu.Lock()
 	tok := a.tokens
 	a.mu.Unlock()
-	if tok != nil && tok.RefreshToken != "" && a.serverURL != "" {
+	if tok != nil && tok.RefreshToken != "" && a.server() != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		if err := sso.Revoke(ctx, a.serverURL, sso.DesktopClientID, tok.RefreshToken); err != nil {
+		if err := sso.Revoke(ctx, a.server(), sso.DesktopClientID, tok.RefreshToken); err != nil {
 			a.logger.Warn("tray: sign-out revocation failed; the refresh token stays valid until it expires",
 				zap.Error(err))
 		}
@@ -366,7 +396,7 @@ func (a *app) refreshConnections() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	entries, err := desktoppam.ListEntries(ctx, a.serverURL, t.AccessToken)
+	entries, err := desktoppam.ListEntries(ctx, a.server(), t.AccessToken)
 	if err != nil {
 		a.logger.Warn("tray: list connections failed", zap.Error(err))
 		return
@@ -397,7 +427,7 @@ func (a *app) watchSlot(i int, mi *systray.MenuItem) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			if _, err := desktoppam.Connect(ctx, a.serverURL, t.AccessToken, id); err != nil {
+			if _, err := desktoppam.Connect(ctx, a.server(), t.AccessToken, id); err != nil {
 				a.logger.Warn("tray: connect failed", zap.String("entry", id), zap.Error(err))
 				// The log is for the operator; the person who clicked needs
 				// to know why nothing opened and what to do about it.
