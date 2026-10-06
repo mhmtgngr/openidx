@@ -21,6 +21,15 @@ type AgentConfig struct {
 	ZitiIdentityFile string `json:"ziti_identity_file,omitempty"`
 	ZitiServiceName  string `json:"ziti_service_name,omitempty"`
 	PluginDir        string `json:"plugin_dir,omitempty"`
+	// AllowUnsignedPlugins loads plugins from plugin_dir that carry no valid
+	// plugin.sig. It is for a lab, where plugins are being written, not for a
+	// fleet: a plugin runs with the service's privileges (SYSTEM on Windows) on
+	// every check interval, and without the signature nothing says who wrote
+	// it. It waives only the signature; the permission checks, the refusal of
+	// built-in check names and the check before every run that the executable
+	// has not changed since it was loaded still apply. Like plugin_dir it is
+	// obeyed only when ConfigTrusted accepts this file. Default false.
+	AllowUnsignedPlugins bool `json:"allow_unsigned_plugins,omitempty"`
 	// UpdateManifestURL, when set, enables self-update: the service polls this
 	// JSON manifest and applies a newer published MSI. Empty disables it.
 	UpdateManifestURL string `json:"update_manifest_url,omitempty"`

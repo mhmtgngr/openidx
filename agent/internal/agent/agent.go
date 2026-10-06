@@ -15,6 +15,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/remotesupport"
 	"github.com/openidx/openidx/agent/internal/transport"
+	"github.com/openidx/openidx/agent/internal/updater"
 )
 
 // Agent orchestrates configuration syncing, check execution, and result reporting.
@@ -106,19 +107,31 @@ func NewAgent(logger *zap.Logger, configDir string) (*Agent, error) {
 	return a, nil
 }
 
+// builtinChecks is the one list of the agent's own checks, by registry name.
+// RegisterBuiltinChecks registers it and LoadPlugins refuses a plugin that
+// declares any name in it, so a check added here is protected from being
+// replaced by a plugin without anyone having to remember a second list.
+func builtinChecks() map[string]checks.Check {
+	return map[string]checks.Check{
+		"os_version":      &checks.OSVersionCheck{},
+		"disk_encryption": &checks.DiskEncryptionCheck{},
+		"process_running": &checks.ProcessCheck{},
+		"firewall":        &checks.FirewallCheck{},
+		"screen_lock":     &checks.ScreenLockCheck{},
+		"antivirus":       &checks.AntivirusCheck{},
+		"domain_joined":   &checks.DomainCheck{},
+		"patch_level":     &checks.PatchLevelCheck{},
+		"integrity":       &checks.IntegrityCheck{},
+		"agent_version":   &checks.AgentVersionCheck{},
+	}
+}
+
 // RegisterBuiltinChecks registers the built-in check implementations with the
 // agent's registry.
 func (a *Agent) RegisterBuiltinChecks() {
-	a.registry.Register("os_version", &checks.OSVersionCheck{})
-	a.registry.Register("disk_encryption", &checks.DiskEncryptionCheck{})
-	a.registry.Register("process_running", &checks.ProcessCheck{})
-	a.registry.Register("firewall", &checks.FirewallCheck{})
-	a.registry.Register("screen_lock", &checks.ScreenLockCheck{})
-	a.registry.Register("antivirus", &checks.AntivirusCheck{})
-	a.registry.Register("domain_joined", &checks.DomainCheck{})
-	a.registry.Register("patch_level", &checks.PatchLevelCheck{})
-	a.registry.Register("integrity", &checks.IntegrityCheck{})
-	a.registry.Register("agent_version", &checks.AgentVersionCheck{})
+	for name, c := range builtinChecks() {
+		a.registry.Register(name, c)
+	}
 }
 
 // Registry returns the agent's check registry. Exposed primarily for testing.
@@ -144,7 +157,27 @@ func (a *Agent) LoadPlugins() {
 		return
 	}
 
-	loader := plugin.NewLoader(pluginDir, a.logger)
+	// A plugin runs with the same privileges an update installs with, so it
+	// must be signed by the same publisher: the pinned OpenIDX release key, or
+	// the operator's own named by update_trusted_cert. Neither the service nor
+	// the CLI chooses this for itself; TrustForConfig is the one answer.
+	policy := plugin.Policy{AllowUnsigned: a.config.AllowUnsignedPlugins}
+	for name := range builtinChecks() {
+		policy.ReservedCheckTypes = append(policy.ReservedCheckTypes, name)
+	}
+	if trust, err := updater.TrustForConfig(a.config.UpdateTrustedCertPEM); err == nil {
+		policy.Verifier = trust
+	} else if !policy.AllowUnsigned {
+		a.logger.Error("not loading plugins: update_trusted_cert, which names the publisher plugins "+
+			"must be signed by, cannot be used", zap.Error(err))
+		return
+	}
+	if policy.AllowUnsigned {
+		a.logger.Warn("allow_unsigned_plugins is set: plugins are loaded without checking who " +
+			"published them. This is meant for a lab, not for a managed fleet")
+	}
+
+	loader := plugin.NewLoader(pluginDir, policy, a.logger)
 	plugins, err := loader.Discover()
 	if err != nil {
 		a.logger.Error("plugin discovery failed", zap.String("dir", pluginDir), zap.Error(err))

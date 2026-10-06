@@ -5,6 +5,10 @@
 // These cases assert what discovery DOES on a platform where the check can be
 // made; loader_windows_test.go asserts the refusal on the platform where it
 // cannot.
+//
+// These cases are about manifests and layout, not about who published a
+// plugin, so each passes Policy{AllowUnsigned: true}. The signature cases are
+// in signature_test.go.
 
 package plugin
 
@@ -37,7 +41,7 @@ func TestLoader_Discover_ValidPlugin(t *testing.T) {
 	execPath := filepath.Join(subDir, "my-plugin.sh")
 	require.NoError(t, os.WriteFile(execPath, []byte(script), 0755))
 
-	loader := NewLoader(pluginDir, testLogger(t))
+	loader := NewLoader(pluginDir, Policy{AllowUnsigned: true}, testLogger(t))
 	plugins, err := loader.Discover()
 	require.NoError(t, err)
 	// Two check types → two PluginChecks
@@ -53,14 +57,14 @@ func TestLoader_Discover_ValidPlugin(t *testing.T) {
 
 func TestLoader_Discover_EmptyDir(t *testing.T) {
 	pluginDir := t.TempDir()
-	loader := NewLoader(pluginDir, testLogger(t))
+	loader := NewLoader(pluginDir, Policy{AllowUnsigned: true}, testLogger(t))
 	plugins, err := loader.Discover()
 	require.NoError(t, err)
 	assert.Nil(t, plugins)
 }
 
 func TestLoader_Discover_MissingDir(t *testing.T) {
-	loader := NewLoader("/nonexistent/path/that/does/not/exist", testLogger(t))
+	loader := NewLoader("/nonexistent/path/that/does/not/exist", Policy{AllowUnsigned: true}, testLogger(t))
 	plugins, err := loader.Discover()
 	require.NoError(t, err)
 	assert.Nil(t, plugins)
@@ -74,7 +78,7 @@ func TestLoader_Discover_SkipsInvalidManifest(t *testing.T) {
 	// Write an invalid manifest
 	require.NoError(t, os.WriteFile(filepath.Join(subDir, "manifest.json"), []byte("{invalid json"), 0644))
 
-	loader := NewLoader(pluginDir, testLogger(t))
+	loader := NewLoader(pluginDir, Policy{AllowUnsigned: true}, testLogger(t))
 	plugins, err := loader.Discover()
 	require.NoError(t, err)
 	assert.Nil(t, plugins)
@@ -89,7 +93,7 @@ func TestLoader_Discover_SkipsNoExecutable(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(subDir, "manifest.json"), []byte(manifest), 0644))
 	// No executable file written
 
-	loader := NewLoader(pluginDir, testLogger(t))
+	loader := NewLoader(pluginDir, Policy{AllowUnsigned: true}, testLogger(t))
 	plugins, err := loader.Discover()
 	require.NoError(t, err)
 	assert.Nil(t, plugins)
@@ -100,7 +104,7 @@ func TestLoader_Discover_SkipsNonDirEntries(t *testing.T) {
 	// Write a plain file (not a directory) at the top level
 	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "not-a-dir"), []byte("hello"), 0644))
 
-	loader := NewLoader(pluginDir, testLogger(t))
+	loader := NewLoader(pluginDir, Policy{AllowUnsigned: true}, testLogger(t))
 	plugins, err := loader.Discover()
 	require.NoError(t, err)
 	assert.Nil(t, plugins)

@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -217,11 +218,52 @@ func Verify(m *Manifest, trust Trust) error {
 	if err != nil {
 		return err
 	}
-	sum := sha256.Sum256(input)
+	if err := trust.verifyAny(input, raw); err != nil {
+		return fmt.Errorf("the manifest is not signed by %s: %w", trust.Describe(), err)
+	}
+	return nil
+}
 
+// VerifySignature checks sigB64, a base64 RSASSA-PKCS1-v1_5 signature over the
+// SHA-256 of input, against this Trust. The rules are the ones Verify applies
+// to an update manifest: one algorithm, the publisher's validity window
+// enforced, and an empty Trust refusing everything.
+//
+// It exists so that the other code this agent runs as SYSTEM, its plugins,
+// answers "who published this" with the same publisher as its updates, rather
+// than with a second trust anchor that has rules of its own.
+//
+// The caller owns the meaning of input. It must begin with a domain line of
+// its own, different from signingDomain, so that a signature made for one
+// purpose can never be accepted as a signature for another.
+func (t Trust) VerifySignature(input []byte, sigB64 string) error {
+	if t.Empty() {
+		return fmt.Errorf("no trusted publisher is configured, so no signature can be accepted")
+	}
+	sig := strings.TrimSpace(sigB64)
+	if sig == "" {
+		return fmt.Errorf("there is no signature; expected one from %s", t.Describe())
+	}
+	raw, err := base64.StdEncoding.DecodeString(sig)
+	if err != nil {
+		return fmt.Errorf("the signature is not base64: %w", err)
+	}
+	if err := t.verifyAny(input, raw); err != nil {
+		return fmt.Errorf("not signed by %s: %w", t.Describe(), err)
+	}
+	return nil
+}
+
+// verifyAny returns nil when one of t's certificates, inside its validity
+// window, verifies sig over input. Otherwise it returns each certificate's
+// reason for refusing, so that the caller's message says which key refused and
+// why. Verify and VerifySignature share it so that the two cannot come to
+// disagree about what a valid signature is.
+func (t Trust) verifyAny(input, sig []byte) error {
+	sum := sha256.Sum256(input)
 	now := time.Now()
 	var reasons []string
-	for _, c := range trust.certs {
+	for _, c := range t.certs {
 		if now.Before(c.NotBefore) || now.After(c.NotAfter) {
 			reasons = append(reasons, fmt.Sprintf("%s is outside its validity window (%s to %s): "+
 				"a pinned publisher has no revocation path, so its expiry is what bounds a late-discovered "+
@@ -229,13 +271,16 @@ func Verify(m *Manifest, trust Trust) error {
 				c.Subject.CommonName, c.NotBefore.Format(time.RFC3339), c.NotAfter.Format(time.RFC3339)))
 			continue
 		}
-		if err := verifyWith(c, sum[:], raw); err != nil {
+		if err := verifyWith(c, sum[:], sig); err != nil {
 			reasons = append(reasons, fmt.Sprintf("%s: %v", c.Subject.CommonName, err))
 			continue
 		}
 		return nil
 	}
-	return fmt.Errorf("the manifest is not signed by %s: %s", trust.Describe(), strings.Join(reasons, "; "))
+	if len(reasons) == 0 {
+		return errors.New("no trusted publisher is configured")
+	}
+	return errors.New(strings.Join(reasons, "; "))
 }
 
 // verifyWith checks one RSASSA-PKCS1-v1_5 / SHA-256 signature.
