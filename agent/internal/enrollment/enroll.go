@@ -14,6 +14,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/agent"
 	"github.com/openidx/openidx/agent/internal/devicekey"
 	"github.com/openidx/openidx/agent/internal/transport"
+	"github.com/openidx/openidx/agent/internal/updater"
 )
 
 // EnrollResult contains the enrollment outcome.
@@ -24,7 +25,25 @@ type EnrollResult struct {
 
 // Enroll performs the full enrollment flow: HTTP enrollment + optional Ziti enrollment.
 func Enroll(logger *zap.Logger, serverURL, token, configDir string) (*EnrollResult, error) {
-	return EnrollWithManifest(logger, serverURL, token, configDir, "")
+	return EnrollWithManifest(logger, serverURL, token, configDir, ResolveManifestURL(configDir, false, ""))
+}
+
+// ResolveManifestURL decides which update manifest an enrolment records.
+//
+// An explicit value wins, even an empty one: that is how an installer turns
+// self-update off (msiexec … UPDATE_MANIFEST_URL=""). Without one, a device
+// enrolling again keeps the channel it already had, since enrolment rewrites
+// agent.json whole and used to drop it. A first enrolment takes the official
+// channel this build was stamped with. Before that, a device enrolled from the
+// console's link, which passes no URL, never updated itself at all.
+func ResolveManifestURL(configDir string, explicit bool, value string) string {
+	if explicit {
+		return value
+	}
+	if prev, err := agent.LoadConfig(configDir); err == nil && prev.UpdateManifestURL != "" {
+		return prev.UpdateManifestURL
+	}
+	return updater.DefaultManifestURL
 }
 
 // EnrollWithManifest is Enroll plus an optional update_manifest_url persisted to

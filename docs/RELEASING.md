@@ -55,10 +55,18 @@ chart over images that only ever carried a `:sha` tag — a release whose versio
 tags do not exist. `scripts/check-release-dispatch.sh` holds the two paths
 together in CI, and its `.test.sh` proves it goes red on that exact regression.
 
+The hand-off starts `docker.yml` **on the tag**, not on the branch the release
+was dispatched from. `docker.yml` builds the commit its ref names when it starts,
+and a branch moves. v1.40.0 was dispatched on `main` at the commit it tags, and
+before the release run reached the hand-off, another merge had landed on `main`.
+Because the hand-off then ran on the branch, the v1.40.0 images were built from
+that later merge, and their `VERSION` build argument was a commit sha. On the tag,
+the images are built from exactly the released commit, as on a pushed tag.
+
 The parity is *by name*, not just by job. On a pushed tag `docker/metadata-action`
 already publishes the un-prefixed `X.Y.Z` / `X.Y` / `X` through `type=semver`;
-that matches a tag ref and nothing else, so on the dispatch path nobody would
-create them and `docker pull …:1.34.0` would 404 after an apparently complete
+that matches a tag ref and nothing else, so a build on any other ref creates
+none of them and `docker pull …:1.34.0` would 404 after an apparently complete
 release. The retag job therefore stamps both spellings on both paths — on the
 tagged path the un-prefixed three are re-pointed at the digest they already
 name, which `imagetools create` does idempotently.
@@ -191,6 +199,25 @@ helm install openidx oci://ghcr.io/mhmtgngr/openidx/charts/openidx \
 `my-values.yaml` holds the install's own settings; the chart refuses to render
 without `config.oauthIssuer` (the install's public OAuth URL) and the bundled
 datastores' `secrets.*`. See `docs/docs/deployment/kubernetes.md`.
+
+## The Windows agent has its own release
+
+The endpoint agent (MSI, `.deb`, `.rpm`) is versioned on its own line,
+`agent-vX.Y.Z`, by `windows-client-build.yml`. A server release does not
+release it. Cut it the same two ways:
+
+```bash
+git tag agent-vX.Y.Z && git push origin agent-vX.Y.Z
+# or, where tags cannot be pushed:
+gh workflow run windows-client-build.yml --ref main -f version=X.Y.Z -f release=true
+```
+
+Each agent release also replaces the assets of `agent-latest`, the release
+channel that installed agents poll for `latest.json` and the install script
+downloads `OpenIDX.msi` from. Agent releases never take GitHub's "latest",
+which stays with the server line. `agent/packaging/wix/README.md` has the
+details, and `scripts/check-agent-release.sh` holds both the dispatch path and
+the channel.
 
 ## Versioning policy
 

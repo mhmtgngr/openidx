@@ -64,6 +64,12 @@ stage
 sed -i 's/actions: write/actions: read/' "$WD/release.yml"
 expect red "hand-off lacks actions: write"
 
+# 4d. The hand-off starts docker.yml on the branch rather than the tag: the
+#     shape v1.40.0 was released in, its images built from the next merge.
+stage
+sed -i 's/gh workflow run docker.yml --ref "$RELEASE_VERSION"/gh workflow run docker.yml --ref "$TARGET_REF"/' "$WD/release.yml"
+expect red "docker.yml hand-off on the branch, not the tag"
+
 # 5. docker.yml regresses to stamping on pushed tags only. This is the shape
 #    the repository actually had before the dispatch path was completed.
 stage

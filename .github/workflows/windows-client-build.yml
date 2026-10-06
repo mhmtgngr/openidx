@@ -6,7 +6,8 @@ name: Agent Build & Release
 #     Linux runners cannot build an MSI).
 #   - Linux .deb + .rpm for amd64 and arm64, via nfpm.
 # A fast Linux job cross-builds the .exe as a smoke check on every relevant
-# push/PR. On an `agent-v*` tag all of it lands in one GitHub Release.
+# push/PR. On an `agent-v*` tag, or a dispatch with release=true, all of it
+# lands in one GitHub Release.
 #
 # The job names are the check names branch protection references, so they are
 # stable even though the workflow's own name has changed.
@@ -44,10 +45,24 @@ on:
           screen. Never honored on a release (tag) build.
         type: boolean
         default: false
+      # The dispatchable release, for a session whose git credential cannot
+      # push tags (it answers 403 on refs/tags/*). Without it the agent could be
+      # released only by someone with a full clone, and it was not released for
+      # eleven weeks while every fix to it merged: agent-v0.2.9 (2026-07-20)
+      # was the last MSI anyone could install.
+      release:
+        description: >-
+          Publish agent-v<version> as a GitHub Release. Runs on main only; the
+          tag is created at this commit.
+        type: boolean
+        default: false
 
+# A release run is never cancelled by a push that lands while it builds: that
+# would leave a tag with half its artifacts. Every other run is superseded by
+# the next one on its ref, as before.
 concurrency:
-  group: windows-client-${{ github.ref }}
-  cancel-in-progress: true
+  group: windows-client-${{ github.ref }}${{ inputs.release && format('-release-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ !inputs.release }}
 
 jobs:
   # Fast signal on every PR: does the agent cross-compile to Windows?
@@ -173,6 +188,16 @@ jobs:
     env:
       WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
       WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      # The agent's release channel: a release that never moves, whose assets
+      # each agent release replaces. Not releases/latest/download/…, which is
+      # where every default used to point: GitHub's "latest" is the newest
+      # release of any kind, and the server is released far more often than
+      # the agent, so there it named a server release with no latest.json and
+      # no MSI, and every agent's update check and the install script's
+      # download answered 404.
+      AGENT_CHANNEL: agent-latest
+      AGENT_CHANNEL_MANIFEST: https://github.com/${{ github.repository }}/releases/download/agent-latest/latest.json
+      AGENT_CHANNEL_MSI: https://github.com/${{ github.repository }}/releases/download/agent-latest/OpenIDX.msi
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
@@ -291,15 +316,45 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version || '0.1.0' }}
+          INPUT_RELEASE: ${{ inputs.release }}
         run: |
-          # On a tag `agent-v1.2.0`, version = 1.2.0; else the dispatch input.
+          set -euo pipefail
+          # On a tag `agent-v1.2.0`, version = 1.2.0 and the tag is the pushed
+          # one. A dispatch with release=true names the version and this job
+          # creates the tag when it publishes. Anything else is a build only.
           if [[ "$GITHUB_REF" == refs/tags/agent-v* ]]; then
-            echo "version=${GITHUB_REF#refs/tags/agent-v}" >> "$GITHUB_OUTPUT"
-            echo "release=true" >> "$GITHUB_OUTPUT"
+            version="${GITHUB_REF#refs/tags/agent-v}"
+            tag="${GITHUB_REF#refs/tags/}"
+            release=true
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$INPUT_RELEASE" == true ]]; then
+            if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+              echo "::error::a dispatched agent release runs on main, not $GITHUB_REF"
+              exit 1
+            fi
+            if [[ ! "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::version must look like 1.2.3, got '$INPUT_VERSION'"
+              exit 1
+            fi
+            version="$INPUT_VERSION"
+            tag="agent-v$INPUT_VERSION"
+            release=true
+            # A published version is never rebuilt: the release action would
+            # otherwise upload new artifacts over a release agents have already
+            # verified and installed.
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "::error::$tag already exists; pick the next version"
+              exit 1
+            fi
           else
-            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
-            echo "release=false" >> "$GITHUB_OUTPUT"
+            version="$INPUT_VERSION"
+            tag=""
+            release=false
           fi
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "release=$release"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build openidx-agent.exe
         working-directory: agent
@@ -312,6 +367,13 @@ jobs:
         run: |
           mkdir -p dist
           LDFLAGS="-s -w -X main.Version=$AGENT_VERSION -X main.Commit=$AGENT_COMMIT"
+          # A release build knows its release channel, so a device enrolled
+          # from the console's link, which names no manifest URL, still updates
+          # itself. A development build is left without one and never replaces
+          # itself with a published release.
+          if [ "$IS_RELEASE" = true ]; then
+            LDFLAGS="$LDFLAGS -X github.com/openidx/openidx/agent/internal/updater.DefaultManifestURL=$AGENT_CHANNEL_MANIFEST"
+          fi
 
           # Build the real screen-share agent (-tags screenshare, CGO + libvpx).
           # The native toolchain was already installed AND verified above, so a
@@ -449,6 +511,7 @@ jobs:
         shell: bash
         env:
           AGENT_VERSION: ${{ steps.ver.outputs.version }}
+          IS_RELEASE: ${{ steps.ver.outputs.release }}
         run: |
           mkdir -p dist
           # Include the libvpx runtime DLL in the MSI only when the screenshare
@@ -467,10 +530,18 @@ jobs:
             PTHREAD_ARG="-d PthreadDll=$PTHREAD_DLL"
             echo "Bundling MinGW pthread runtime: $PTHREAD_DLL"
           fi
+          # A release MSI defaults UPDATE_MANIFEST_URL to the release channel,
+          # so a silent install that enrols updates itself unless the installer
+          # passes UPDATE_MANIFEST_URL="" to turn it off.
+          CHANNEL_ARG=()
+          if [ "$IS_RELEASE" = true ]; then
+            CHANNEL_ARG=(-d "DefaultManifestURL=$AGENT_CHANNEL_MANIFEST")
+          fi
           wix build agent/packaging/wix/OpenIDX.wxs \
             -ext WixToolset.Util.wixext \
             -d "Version=$AGENT_VERSION" \
             -d ExePath=agent/dist/openidx-agent.exe \
+            "${CHANNEL_ARG[@]}" \
             $VPX_ARG \
             $PTHREAD_ARG \
             -arch x64 \
@@ -497,11 +568,11 @@ jobs:
             dist/OpenIDX-*.msi
           if-no-files-found: error
 
-      # ---- Release wiring (tags only) ----------------------------------------
-      # On an `agent-v*` tag, publish a GitHub Release with the MSI + a
-      # latest.json manifest the self-updater polls. Clients set
-      #   update_manifest_url = https://github.com/<owner>/<repo>/releases/latest/download/latest.json
-      # which always redirects to the newest release's manifest.
+      # ---- Release wiring (agent-v* tag, or a dispatched release) -------------
+      # Publish a GitHub Release with the MSI + a latest.json manifest the
+      # self-updater polls, then copy both onto the agent-latest release that
+      # AGENT_CHANNEL_MANIFEST names (see the job's env for why not
+      # releases/latest).
       # The manifest is SIGNED, and the release fails rather than publish one
       # that is not. agent/internal/updater/trust.go pins this same certificate
       # and refuses a manifest it did not sign — so an unsigned latest.json is
@@ -519,7 +590,7 @@ jobs:
         env:
           AGENT_VERSION: ${{ steps.ver.outputs.version }}
           GH_REPOSITORY: ${{ github.repository }}
-          GH_REF_NAME: ${{ github.ref_name }}
+          GH_REF_NAME: ${{ steps.ver.outputs.tag }}
         run: |
           $ErrorActionPreference = 'Stop'
           if (-not $env:WINDOWS_CERT_PFX_BASE64) {
@@ -598,7 +669,7 @@ jobs:
         env:
           AGENT_VERSION: ${{ steps.ver.outputs.version }}
           GH_REPOSITORY: ${{ github.repository }}
-          GH_REF_NAME: ${{ github.ref_name }}
+          GH_REF_NAME: ${{ steps.ver.outputs.tag }}
           # Deployment defaults come from repo variables so the published script
           # is a true one-liner. Blank values stay as safe placeholders that the
           # operator overrides with -Server/-Token/-ServerIP.
@@ -610,7 +681,7 @@ jobs:
           $repo    = $env:GH_REPOSITORY
           $tag     = $env:GH_REF_NAME
           $msiUrl  = "https://github.com/$repo/releases/download/$tag/OpenIDX-$ver.msi"
-          $manUrl  = "https://github.com/$repo/releases/latest/download/latest.json"
+          $manUrl  = $env:AGENT_CHANNEL_MANIFEST
           $server  = $env:DEFAULT_SERVER_URL
           $token   = $env:DEFAULT_ENROLL_TOKEN
           $serverIp= $env:DEFAULT_SERVER_IP
@@ -630,11 +701,16 @@ jobs:
           name: openidx-agent-linux-packages
           path: dist/pkg
 
+      # make_latest: false, because GitHub's "latest" belongs to the server
+      # line: the server's own install docs pull from releases/latest. On a
+      # dispatch the action creates the tag at this commit.
       - name: Publish release
         if: steps.ver.outputs.release == 'true'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          make_latest: false
           name: OpenIDX Agent ${{ steps.ver.outputs.version }}
           files: |
             dist/OpenIDX-${{ steps.ver.outputs.version }}.msi
@@ -643,3 +719,39 @@ jobs:
             dist/pkg/*.deb
             dist/pkg/*.rpm
           fail_on_unmatched_files: true
+
+      # The release channel. agent-latest is one release that never moves; its
+      # assets are replaced here, after the versioned release exists, so the
+      # MSI URL inside latest.json resolves before any agent reads it. OpenIDX.msi
+      # is the same file under the stable name the install script downloads.
+      # The tag is created once, by the first release that finds it missing.
+      - name: Update the agent-latest release channel
+        if: steps.ver.outputs.release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          AGENT_VERSION: ${{ steps.ver.outputs.version }}
+          AGENT_TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cp "dist/OpenIDX-$AGENT_VERSION.msi" dist/OpenIDX.msi
+          if ! gh release view "$AGENT_CHANNEL" >/dev/null 2>&1; then
+            gh release create "$AGENT_CHANNEL" --target "$GITHUB_SHA" --latest=false \
+              --title "OpenIDX Agent (latest)" \
+              --notes "The agent release channel. Its assets are those of the newest agent-v* release, replaced by each one: agents poll latest.json here, and the install script downloads OpenIDX.msi from here. Do not delete it."
+          fi
+          gh release upload "$AGENT_CHANNEL" --clobber \
+            dist/latest.json dist/OpenIDX.msi dist/install-openidx-agent.ps1
+          gh release edit "$AGENT_CHANNEL" \
+            --notes "The agent release channel, now serving $AGENT_TAG. Its assets are those of the newest agent-v* release, replaced by each one: agents poll latest.json here, and the install script downloads OpenIDX.msi from here. Do not delete it."
+          # Read back what agents will read, so a channel that does not serve
+          # this release fails here rather than on endpoints.
+          for i in 1 2 3 4 5; do
+            served=$(curl -fsSL "$AGENT_CHANNEL_MANIFEST" | tr -d '\r\n' \
+                     | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' || true)
+            [ "$served" = "$AGENT_VERSION" ] && { echo "agent-latest serves $served"; exit 0; }
+            sleep $((i * 5))
+          done
+          echo "::error::$AGENT_CHANNEL_MANIFEST serves '${served:-nothing}', not $AGENT_VERSION"
+          exit 1

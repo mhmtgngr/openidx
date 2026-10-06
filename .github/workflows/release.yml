@@ -287,19 +287,25 @@ jobs:
       contents: read
       actions: write
     steps:
+      # Dispatched ON THE TAG, not on the branch this release was dispatched
+      # from. docker.yml builds the commit its ref names when it starts, and a
+      # branch moves: v1.40.0 was released at 2923985, but its images were
+      # built from dec0859, the merge that landed on main while the release
+      # run waited for a runner and ran its tests. On a branch ref the build's
+      # VERSION argument is also the commit sha, not the version. The release
+      # job has created the tag by now, so the tag ref builds exactly the
+      # released commit with VERSION set to the release, as a pushed tag does.
+      #
+      # RELEASE_VERSION reaches the script through the workflow-level env:,
+      # not a ${{ }} in it, because an expansion is substituted before the
+      # shell parses the line, and a dispatched version is free-text input.
       - name: Ask docker.yml to build and stamp this version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          # Via env:, not a ${{ }} inside the script. A ${{ }} expansion is
-          # substituted textually before the shell parses the line, so a ref
-          # name carrying shell metacharacters would run here rather than be
-          # passed as an argument -- and a ref name is attacker-influenceable.
-          # RELEASE_VERSION is already a workflow-level env for the same reason.
-          TARGET_REF: ${{ github.ref_name }}
         run: |
-          gh workflow run docker.yml --ref "$TARGET_REF" -f version="$RELEASE_VERSION"
-          echo "Dispatched docker.yml for $RELEASE_VERSION on $TARGET_REF."
+          gh workflow run docker.yml --ref "$RELEASE_VERSION" -f version="$RELEASE_VERSION"
+          echo "Dispatched docker.yml for $RELEASE_VERSION on the $RELEASE_VERSION tag."
           echo "Images are stamped by that run, not this one -- check it before" \
                "announcing the release."
 

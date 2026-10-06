@@ -95,18 +95,43 @@ Rotate by regenerating the `.pfx`, updating the two secrets, and re-distributing
 the new `.cer`.
 
 ## Releases & auto-update
-Push an **`agent-v<version>`** tag (e.g. `agent-v1.2.0`). The Windows Client
-Build workflow then builds + signs the MSI and publishes a GitHub Release with:
+Two ways to release, and they publish the same thing:
+- push an **`agent-v<version>`** tag (e.g. `agent-v1.2.0`), or
+- from a session that cannot push tags, run **Actions → Agent Build & Release →
+  Run workflow** on `main` with `version=1.2.0` and `release` ticked, or
+  `gh workflow run windows-client-build.yml --ref main -f version=1.2.0 -f release=true`.
+  The run refuses a version whose tag already exists, and creates the tag at the
+  commit it built.
+
+The workflow builds and signs the MSI and publishes a GitHub Release
+`agent-v<version>` with:
 - `OpenIDX-<version>.msi`
 - `latest.json` — `{ "version", "url", "sha256", "signature" }` the self-updater
   polls.
 
-Point clients at the stable "latest" URL (redirects to the newest release):
+It then copies `latest.json`, the MSI (as `OpenIDX.msi`) and the stamped
+install script onto **`agent-latest`**, a release that never moves and whose
+assets each agent release replaces. That is the release channel:
 ```
-update_manifest_url = https://github.com/mhmtgngr/openidx/releases/latest/download/latest.json
+update_manifest_url = https://github.com/mhmtgngr/openidx/releases/download/agent-latest/latest.json
 ```
-Set it in the agent config (or via a deployment script); the service checks
-every 6h and applies newer signed MSIs. Manual: `openidx-agent update --apply`.
+Not `releases/latest/download/…`: GitHub's "latest" is the newest release of any
+kind, and the server is released far more often than the agent, so that URL
+names a server release with no `latest.json` and no MSI. Agent releases are
+published with `make_latest: false` so they never take "latest" from the server.
+
+A release build carries the channel as its default: the MSI's
+`UPDATE_MANIFEST_URL` defaults to it, and `openidx-agent enroll` records it when
+no `--manifest-url` is given, which covers a device enrolled from the console's
+link. Enrolling again keeps the channel the device already had. To turn
+self-update off, install with `UPDATE_MANIFEST_URL=""` (or enrol with
+`--manifest-url ""`). To point at a mirror, pass its URL. The service checks every 6h
+and applies newer signed MSIs. Manual: `openidx-agent update --apply`.
+
+A device enrolled before this keeps the empty `update_manifest_url` it was
+enrolled with. To turn self-update on for it, set
+`update_manifest_url` in `%ProgramData%\OpenIDX\agent\agent.json` (as an
+administrator) or enrol it again.
 
 ### The manifest is signed, and the release fails if it cannot be
 `latest.json` is what tells an installed agent which MSI to fetch and run as
