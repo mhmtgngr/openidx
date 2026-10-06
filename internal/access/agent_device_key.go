@@ -158,8 +158,10 @@ func (h *AgentAPIHandler) setAgentDeviceKey(ctx context.Context, agentID string,
 		if _, k, err := parseDeviceKey(*req); err == nil {
 			b64, kind = strings.TrimSpace(req.PublicKey), k
 		} else {
+			// The error quotes the kind the enrolment sent, so it is request
+			// text and goes through logsafe like any other.
 			h.logger.Warn("enrolment named a device key that is not usable; enrolling without one",
-				logsafe.String("agent_id", agentID), zap.Error(err))
+				logsafe.String("agent_id", agentID), logsafe.String("error", err.Error()))
 		}
 	}
 	if _, err := h.db.Pool.Exec(ctx, `
