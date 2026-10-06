@@ -20,6 +20,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/access/posturevocab"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -1812,6 +1813,13 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			var parametersJSON []byte
 			if scanErr := rows.Scan(&checkType, &parametersJSON, &severity); scanErr != nil {
 				h.logger.Warn("HandleConfig: failed to scan posture_check row", zap.Error(scanErr))
+				continue
+			}
+			// The table also holds the Ziti posture checks the controller
+			// enforces (OS, Domain, MFA, ...). No agent can run one: the Go
+			// agent answered each with "unknown check type" and the Android
+			// agent dropped it. Only the agents' own vocabulary is served.
+			if posturevocab.KindOf(checkType) != posturevocab.KindAgent {
 				continue
 			}
 			checks = append(checks, agentCheck{

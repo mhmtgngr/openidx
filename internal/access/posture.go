@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/access/posturevocab"
+	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -26,7 +28,11 @@ type PostureCheck struct {
 	// Platforms scopes the check to specific device platforms (e.g. ["android"],
 	// ["ios"], ["android","ios"]). Empty/nil means all platforms — the agent
 	// config endpoint treats a NULL platforms column as "runs everywhere".
-	Platforms []string  `json:"platforms,omitempty"`
+	Platforms []string `json:"platforms,omitempty"`
+	// Kind is "agent" for a check the OpenIDX agents run and "ziti" for one
+	// the controller enforces. It is derived from CheckType on the way out
+	// (posturevocab); a value sent in a request is ignored.
+	Kind      string    `json:"kind,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -56,22 +62,13 @@ type PolicySyncState struct {
 	UpdatedAt          time.Time              `json:"updated_at"`
 }
 
-// mapCheckTypeToZiti converts an internal check type to the Ziti posture check type identifier
+// mapCheckTypeToZiti converts a stored check type to the Ziti posture check
+// typeId, and returns any other type unchanged.
 func mapCheckTypeToZiti(checkType string) string {
-	switch checkType {
-	case "OS":
-		return "OS"
-	case "Domain":
-		return "DOMAIN"
-	case "MFA":
-		return "MFA"
-	case "Process":
-		return "PROCESS"
-	case "MAC":
-		return "MAC"
-	default:
-		return checkType
+	if id, ok := posturevocab.ZitiTypeID(checkType); ok {
+		return id
 	}
+	return checkType
 }
 
 // buildZitiPostureCheckBody builds the Ziti management API request body for a posture check
@@ -82,12 +79,14 @@ func buildZitiPostureCheckBody(check *PostureCheck) map[string]interface{} {
 		"tags":   map[string]interface{}{"openidx_id": check.ID},
 	}
 
-	switch check.CheckType {
+	// Switch on the typeId, so a check stored under the controller's own
+	// spelling (DOMAIN, PROCESS) carries its params as the console's does.
+	switch mapCheckTypeToZiti(check.CheckType) {
 	case "OS":
 		if operatingSystems, ok := check.Parameters["operating_systems"]; ok {
 			body["operatingSystems"] = operatingSystems
 		}
-	case "Domain":
+	case "DOMAIN":
 		if domains, ok := check.Parameters["domains"]; ok {
 			body["domains"] = domains
 		}
@@ -104,7 +103,7 @@ func buildZitiPostureCheckBody(check *PostureCheck) map[string]interface{} {
 		if ignoreLegacyEndpoints, ok := check.Parameters["ignore_legacy_endpoints"]; ok {
 			body["ignoreLegacyEndpoints"] = ignoreLegacyEndpoints
 		}
-	case "Process":
+	case "PROCESS":
 		if process, ok := check.Parameters["process"]; ok {
 			body["process"] = process
 		}
@@ -117,8 +116,15 @@ func buildZitiPostureCheckBody(check *PostureCheck) map[string]interface{} {
 	return body
 }
 
-// CreatePostureCheck inserts a posture check into the database and creates it in the Ziti controller
+// CreatePostureCheck inserts a posture check into the database and creates it in the Ziti controller.
+// Only a Ziti posture check type reaches the controller. A device agent check,
+// or any other type the controller has no typeId for, is refused here,
+// whoever the caller, so the guarantee does not rest on every handler
+// remembering to branch first.
 func (zm *ZitiManager) CreatePostureCheck(ctx context.Context, check *PostureCheck) error {
+	if _, ok := posturevocab.ZitiTypeID(check.CheckType); !ok {
+		return fmt.Errorf("%w: %q", errNotAZitiCheck, check.CheckType)
+	}
 	if check.ID == "" {
 		check.ID = uuid.New().String()
 	}
@@ -176,57 +182,19 @@ func (zm *ZitiManager) CreatePostureCheck(ctx context.Context, check *PostureChe
 		return fmt.Errorf("failed to insert posture check into database: %w", err)
 	}
 
+	check.Kind = string(posturevocab.KindZiti)
 	zm.logger.Info("Created posture check",
-		zap.String("id", check.ID),
+		logsafe.String("id", check.ID),
 		zap.String("ziti_id", check.ZitiID),
-		zap.String("type", check.CheckType))
+		logsafe.String("type", check.CheckType))
 	return nil
 }
 
-// ListPostureChecks returns all posture checks from the database
+// ListPostureChecks returns all posture checks from the database, of both
+// kinds: the device health evaluator and the identity posture evaluation read
+// every enabled check.
 func (zm *ZitiManager) ListPostureChecks(ctx context.Context) ([]PostureCheck, error) {
-	orgID := "00000000-0000-0000-0000-000000000010"
-	if org, oerr := orgctx.From(ctx); oerr == nil {
-		orgID = org.ID
-	}
-	rows, err := zm.db.Pool.Query(ctx,
-		`SELECT id, ziti_id, name, check_type, parameters, enabled, severity, remediation_hint, platforms, created_at, updated_at
-		 FROM posture_checks WHERE org_id = $1 ORDER BY created_at DESC`, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query posture checks: %w", err)
-	}
-	defer rows.Close()
-
-	var checks []PostureCheck
-	for rows.Next() {
-		var c PostureCheck
-		var paramsJSON []byte
-		var platformsJSON []byte
-		err := rows.Scan(&c.ID, &c.ZitiID, &c.Name, &c.CheckType, &paramsJSON,
-			&c.Enabled, &c.Severity, &c.RemediationHint, &platformsJSON, &c.CreatedAt, &c.UpdatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan posture check row: %w", err)
-		}
-		if paramsJSON != nil {
-			if err := json.Unmarshal(paramsJSON, &c.Parameters); err != nil {
-				zm.logger.Warn("Failed to unmarshal posture check parameters", zap.String("check_id", c.ID), zap.Error(err))
-			}
-		}
-		if c.Parameters == nil {
-			c.Parameters = make(map[string]interface{})
-		}
-		if platformsJSON != nil {
-			if err := json.Unmarshal(platformsJSON, &c.Platforms); err != nil {
-				zm.logger.Warn("Failed to unmarshal posture check platforms", zap.String("check_id", c.ID), zap.Error(err))
-			}
-		}
-		checks = append(checks, c)
-	}
-
-	if checks == nil {
-		checks = []PostureCheck{}
-	}
-	return checks, nil
+	return listPostureChecks(ctx, zm.db, zm.logger, "")
 }
 
 // DeletePostureCheck removes a posture check from the database and the Ziti controller
@@ -235,10 +203,11 @@ func (zm *ZitiManager) DeletePostureCheck(ctx context.Context, id string) error 
 	if org, oerr := orgctx.From(ctx); oerr == nil {
 		orgID = org.ID
 	}
-	// Look up the Ziti ID before deleting
+	// Look up the Ziti ID before deleting. A device agent check has none, and
+	// there is no controller object to remove for it.
 	var zitiID string
 	err := zm.db.Pool.QueryRow(ctx,
-		"SELECT ziti_id FROM posture_checks WHERE id=$1 AND org_id=$2", id, orgID).Scan(&zitiID)
+		"SELECT COALESCE(ziti_id, '') FROM posture_checks WHERE id=$1 AND org_id=$2", id, orgID).Scan(&zitiID)
 	if err != nil {
 		return fmt.Errorf("failed to find posture check %s: %w", id, err)
 	}
@@ -262,12 +231,18 @@ func (zm *ZitiManager) DeletePostureCheck(ctx context.Context, id string) error 
 		return fmt.Errorf("failed to delete posture check from database: %w", err)
 	}
 
-	zm.logger.Info("Deleted posture check", zap.String("id", id), zap.String("ziti_id", zitiID))
+	zm.logger.Info("Deleted posture check", logsafe.String("id", id), zap.String("ziti_id", zitiID))
 	return nil
 }
 
-// UpdatePostureCheck updates a posture check in both the database and the Ziti controller
+// UpdatePostureCheck updates a posture check in both the database and the Ziti controller.
+// As with CreatePostureCheck, only a Ziti posture check type reaches the
+// controller, and a device agent check is never turned into one here: its row
+// has no controller object to update.
 func (zm *ZitiManager) UpdatePostureCheck(ctx context.Context, id string, check *PostureCheck) error {
+	if _, ok := posturevocab.ZitiTypeID(check.CheckType); !ok {
+		return fmt.Errorf("%w: %q", errNotAZitiCheck, check.CheckType)
+	}
 	check.UpdatedAt = time.Now().UTC()
 
 	paramsJSON, err := json.Marshal(check.Parameters)
@@ -280,11 +255,15 @@ func (zm *ZitiManager) UpdatePostureCheck(ctx context.Context, id string, check 
 	if org, oerr := orgctx.From(ctx); oerr == nil {
 		orgID = org.ID
 	}
-	var zitiID string
+	var zitiID, storedType string
 	err = zm.db.Pool.QueryRow(ctx,
-		"SELECT ziti_id FROM posture_checks WHERE id=$1 AND org_id=$2", id, orgID).Scan(&zitiID)
+		"SELECT COALESCE(ziti_id, ''), check_type FROM posture_checks WHERE id=$1 AND org_id=$2", id, orgID).
+		Scan(&zitiID, &storedType)
 	if err != nil {
 		return fmt.Errorf("failed to find posture check %s: %w", id, err)
+	}
+	if postureRowKind(storedType) != posturevocab.KindZiti {
+		return fmt.Errorf("%w: posture check %s is a device agent check", errNotAZitiCheck, id)
 	}
 
 	// Update in Ziti controller
@@ -321,7 +300,8 @@ func (zm *ZitiManager) UpdatePostureCheck(ctx context.Context, id string, check 
 		return fmt.Errorf("failed to update posture check in database: %w", err)
 	}
 
-	zm.logger.Info("Updated posture check", zap.String("id", id), zap.String("ziti_id", zitiID))
+	check.Kind = string(posturevocab.KindZiti)
+	zm.logger.Info("Updated posture check", logsafe.String("id", id), zap.String("ziti_id", zitiID))
 	return nil
 }
 

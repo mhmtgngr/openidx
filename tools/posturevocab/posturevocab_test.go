@@ -4,9 +4,13 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/openidx/openidx/internal/access/posturevocab"
 )
 
 // The derivation is the whole tool, so it is the thing to test. The first
@@ -180,5 +184,126 @@ func TestEveryRegisteredCheckHasCoverageSomewhere(t *testing.T) {
 			t.Errorf("%s (%s) is registered by the agent and can examine no platform at all",
 				name, cov.source)
 		}
+	}
+}
+
+// THE SERVER'S COPY. serverReport is held against fixtures here, so each of
+// its four findings is shown to fire, and against the real tree below, so the
+// copy in internal/access/posturevocab is shown to match the agents.
+
+func cov(source string, params []string, platforms ...string) coverage {
+	c := coverage{platforms: map[string]bool{}, source: source}
+	for _, p := range platforms {
+		c.platforms[p] = true
+	}
+	if params != nil {
+		c.params = map[string]bool{}
+		for _, p := range params {
+			c.params[p] = true
+		}
+	}
+	return c
+}
+
+func TestServerReportFindsEachKindOfDrift(t *testing.T) {
+	goChecks := map[string]coverage{
+		"a": cov("a.go", []string{"x", "z"}, "linux", "darwin"),
+		"d": cov("d.go", []string{}, "windows"),
+	}
+	kotlinChecks := map[string]coverage{
+		"b": cov("B.kt", nil, "android"),
+		"d": cov("D.kt", nil, "android"),
+	}
+	served := []posturevocab.AgentCheck{
+		// a: windows is allowed and examined nowhere; z is read and refused;
+		// y is accepted and never read. macos is the server's darwin.
+		{Type: "a", Platforms: []string{"linux", "macos", "windows"}, Params: []posturevocab.Param{
+			{Name: "x", Kind: posturevocab.ParamVersion}, {Name: "y", Kind: posturevocab.ParamBoolean}}},
+		// c: implemented by nobody.
+		{Type: "c", Platforms: []string{"linux"}},
+		// d: Go on windows and Kotlin on android, and the server forgot android.
+		{Type: "d", Platforms: []string{"windows"}},
+		// b is missing: an agent runs it and the server does not serve it.
+	}
+	var got []string
+	for _, f := range serverReport(goChecks, kotlinChecks, served) {
+		got = append(got, f.key())
+		if f.describe() == "" {
+			t.Errorf("%s describes itself as nothing", f.key())
+		}
+	}
+	want := []string{
+		"not_served:b:",
+		"param_drift:a:y",
+		"param_drift:a:z",
+		"platform_drift:a:windows",
+		"platform_drift:d:android",
+		"served_nowhere:c:",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("findings\n  got  %v\n  want %v", got, want)
+	}
+}
+
+// TestTheServerVocabularyMatchesTheAgents: the copy the access service serves
+// from is what the agents implement, platform for platform and param for
+// param.
+func TestTheServerVocabularyMatchesTheAgents(t *testing.T) {
+	goChecks, err := scanGoChecks("../..")
+	if err != nil {
+		t.Fatalf("scan Go checks: %v", err)
+	}
+	kotlinChecks, err := scanKotlinChecks("../..")
+	if err != nil {
+		t.Fatalf("scan Kotlin checks: %v", err)
+	}
+	for _, f := range serverReport(goChecks, kotlinChecks, posturevocab.AgentChecks()) {
+		if _, ok := knownFindings[f.key()]; !ok {
+			t.Errorf("%s", f.describe())
+		}
+	}
+}
+
+// TestTheParamsScanReadsTheChecks: the param comparison is only as good as the
+// scan, and a scan that found nothing would agree with a server that accepts
+// nothing. Pin what it reads from the real checks.
+func TestTheParamsScanReadsTheChecks(t *testing.T) {
+	goChecks, err := scanGoChecks("../..")
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	for name, want := range map[string]string{
+		"os_version":      "min_version",
+		"agent_version":   "min_version",
+		"patch_level":     "max_days",
+		"process_running": "processes", // read by the parseProcessList helper
+		"firewall":        "",
+	} {
+		c, ok := goChecks[name]
+		if !ok {
+			t.Errorf("%s is not registered", name)
+			continue
+		}
+		if got := strings.Join(sortedKeys(c.params), ","); got != want {
+			t.Errorf("%s reads params %q, want %q", name, got, want)
+		}
+	}
+}
+
+// A file that reads params and holds two checks cannot be attributed, and the
+// scan says so instead of crediting both.
+func TestTheParamsScanRefusesAFileItCannotAttribute(t *testing.T) {
+	dir := t.TempDir()
+	src := `package checks
+type A struct{}
+type B struct{}
+func (a *A) Run(params map[string]interface{}) { _ = params["k"] }
+func (b *B) Run(params map[string]interface{}) {}
+`
+	if err := os.WriteFile(filepath.Join(dir, "two.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scanGoParams(dir); err == nil {
+		t.Fatal("a file with two checks and a params read was attributed without complaint")
 	}
 }

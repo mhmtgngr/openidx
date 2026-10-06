@@ -2459,7 +2459,7 @@ jobs:
             echo "## posturevocab — which client checks what, where"
             echo
             if [ "$rc" -ne 0 ]; then
-              echo "❌ **Gate failed.** A NEW finding is one check_type implemented by BOTH clients for the same platform: two implementations of one word, in two languages, reporting to one column. A STALE entry is a collision that has been resolved, and its line in \`tools/posturevocab/known.go\` must go."
+              echo "❌ **Gate failed.** A NEW finding is either one check_type implemented by BOTH clients for the same platform (two implementations of one word, in two languages, reporting to one column), or the server's agent vocabulary in \`internal/access/posturevocab\` disagreeing with the agents about which check types exist, where each runs, or which params a Go check reads. A STALE entry is a finding that has been resolved, and its line in \`tools/posturevocab/known.go\` must go."
             else
               echo "✅ $(tail -n1 pv.err 2>/dev/null || echo 'one implementation per check per platform')"
             fi

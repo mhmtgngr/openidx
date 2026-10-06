@@ -630,6 +630,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// summary of the organization's results and one identity's posture and
 		// its evaluation carry the operator tier. The device self-report is
 		// data-plane and stays open.
+		//
+		// The checks are of two kinds, told apart by check_type: Ziti posture
+		// checks, mirrored to the controller, and device agent checks, which
+		// GET /agent/config serves to the agents and which need no controller.
+		// check-types is the vocabulary of both, for the console's forms.
+		api.GET("/ziti/posture/check-types", operatorTier, svc.handlePostureCheckTypes)
 		api.GET("/ziti/posture/checks", operatorTier, svc.handleListPostureChecks)
 		api.POST("/ziti/posture/checks", adminOnly, svc.handleCreatePostureCheck)
 		api.PUT("/ziti/posture/checks/:id", adminOnly, svc.handleUpdatePostureCheck)

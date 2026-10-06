@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/access/posturevocab"
 )
 
 // DeviceHealthCheck represents an enhanced device health check
@@ -99,6 +101,13 @@ func (zm *ZitiManager) EvaluateDeviceHealth(ctx context.Context, identityID stri
 		if !check.Enabled {
 			continue
 		}
+		// A device agent check is run by the agent, and its result reaches
+		// device_posture_results through the agent report. This evaluator has
+		// no rule for one and would record it as passed ("Unknown check type,
+		// skipping"), standing in for a result the agent has not sent.
+		if posturevocab.KindOf(check.CheckType) == posturevocab.KindAgent {
+			continue
+		}
 
 		result := zm.evaluateCheck(&check, posture)
 		report.Checks = append(report.Checks, result)
@@ -154,7 +163,11 @@ func (zm *ZitiManager) evaluateCheck(check *PostureCheck, posture *DevicePosture
 		Details:   make(map[string]interface{}),
 	}
 
-	switch check.CheckType {
+	// The console stores the Ziti types as Domain and Process, and the cases
+	// below are the controller's DOMAIN and PROCESS, so a configured Domain
+	// check fell through to "Unknown check type" and passed every device.
+	// Matching on the typeId evaluates both spellings.
+	switch mapCheckTypeToZiti(check.CheckType) {
 	case CheckTypeOSVersion:
 		result = zm.evaluateOSVersion(check, posture)
 	case CheckTypePatchLevel:
