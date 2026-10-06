@@ -36,7 +36,12 @@ var postureWireSchema = []string{
 		compliance_status VARCHAR(20) NOT NULL DEFAULT 'unknown',
 		compliance_score  DOUBLE PRECISION DEFAULT 0.0,
 		last_seen_at      TIMESTAMPTZ,
-		last_report_at    TIMESTAMPTZ)`,
+		last_report_at    TIMESTAMPTZ,
+		-- the device key columns migration v227 adds: the report path reads
+		-- them to decide whether a signature is due, and against a table
+		-- without them every report is answered with a 500
+		device_public_key TEXT,
+		device_key_kind   VARCHAR(16))`,
 	`CREATE TABLE posture_checks (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		check_type VARCHAR(100) NOT NULL,
