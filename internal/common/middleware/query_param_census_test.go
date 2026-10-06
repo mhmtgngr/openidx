@@ -54,7 +54,7 @@ var publicQueryParams = map[string]string{
 	// Filters. Server-side selectors over data the caller is already authorised
 	// to read; the authorisation is the handler's job, not the log's.
 	"q": "search term", "search": "search term", "filter": "filter expression",
-	"status": "filter", "type": "filter", "category": "filter", "categories": "filter",
+	"status": "filter", "type": "filter", "kind": "filter", "category": "filter", "categories": "filter",
 	"severity": "filter", "risk_level": "filter", "min_score": "filter",
 	"active_only": "filter", "enabled": "filter", "enabled_only": "filter",
 	"unread": "filter", "favorites": "filter", "orphaned": "filter",
