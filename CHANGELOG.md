@@ -66,6 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Enrolment:** the engine also refused the app's enrolment request because of its `server` field.
 - **Approving a push on the phone is recorded as an approval.** The mobile app sent fields the server does not read, so every decision, Approve included, was recorded as a deny. The approval screen now asks for the two-digit number the sign-in screen shows.
 - **The Windows runner exercises the Windows posture checks.** The `manage-bde`, `netsh` and PowerShell paths now run in CI on a Windows host.
+- **A dispatched release builds its images from the commit it tags.**
+  - **Before:** `release.yml` started `docker.yml` on the branch the release was dispatched from, so the images were built from wherever that branch had moved by then. Their `VERSION` build argument was also a commit sha. v1.40.0 was tagged at `2923985`, but its images were built from `dec0859`, the next merge. The only difference is a build-time `package-lock.json` entry.
+  - **Now:** the hand-off starts `docker.yml` on the release tag, as a pushed tag does. `scripts/check-release-dispatch.sh` goes red if it moves back to the branch.
 
 ### Upgrade notes
 - **Posture enforcement now acts on Windows agents.** Until now every Windows result was stored empty, so no Windows device was ever moved for its posture. After this release:
