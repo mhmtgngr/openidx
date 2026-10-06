@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -41,6 +42,45 @@ type Tokens struct {
 	RefreshToken string `json:"refresh_token,omitempty"`
 	IDToken      string `json:"id_token,omitempty"`
 	ExpiresAt    int64  `json:"expires_at"` // unix seconds
+	// ClientID is the public client the session was issued to
+	// (DesktopClientID or MobileClientID). A refresh or a revocation must
+	// present the same client_id: the server refuses a refresh under another
+	// client, and revokes nothing under another client while still answering
+	// 200. Empty on a session stored by a build before this field existed;
+	// see ClientOr.
+	ClientID string `json:"client_id,omitempty"`
+}
+
+// ClientOr is the client_id to present for this session: the one it was
+// issued to, or fallback for a session stored before that was recorded. The
+// tray's sessions are desktop ones and the mobile app's are mobile ones, so
+// each caller knows its own fallback.
+func (t *Tokens) ClientOr(fallback string) string {
+	if t != nil && t.ClientID != "" {
+		return t.ClientID
+	}
+	return fallback
+}
+
+// TokenError is a non-200 answer from /oauth/token.
+type TokenError struct {
+	Status int
+	Body   string
+}
+
+func (e *TokenError) Error() string {
+	if e.Body != "" {
+		return fmt.Sprintf("token endpoint returned %d: %s", e.Status, e.Body)
+	}
+	return fmt.Sprintf("token endpoint returned %d", e.Status)
+}
+
+// Rejected reports whether the server refused the grant itself (invalid_grant
+// and its relatives come back as 400 or 401), as opposed to failing to answer.
+// A rejected refresh token is dead and the session with it; a 5xx or a network
+// error says nothing about the token and is worth retrying.
+func (e *TokenError) Rejected() bool {
+	return e.Status == http.StatusBadRequest || e.Status == http.StatusUnauthorized
 }
 
 type tokenResponse struct {
@@ -416,7 +456,8 @@ func exchange(ctx context.Context, serverURL string, form url.Values) (*Tokens, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token endpoint returned %d", resp.StatusCode)
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, &TokenError{Status: resp.StatusCode, Body: strings.TrimSpace(string(snippet))}
 	}
 	var tr tokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
@@ -431,5 +472,6 @@ func exchange(ctx context.Context, serverURL string, form url.Values) (*Tokens, 
 		RefreshToken: tr.RefreshToken,
 		IDToken:      tr.IDToken,
 		ExpiresAt:    exp,
+		ClientID:     form.Get("client_id"),
 	}, nil
 }

@@ -296,11 +296,12 @@ func (e *Engine) Logout() error {
 	if tok, err := authstore.Load(e.configDir); err == nil && tok != nil && tok.RefreshToken != "" && e.serverURL != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		// The client id is what the token endpoint authenticates the CALLER as;
-		// handleRevoke identifies the token by its own value, so this names the
-		// public client this engine uses (as AccessToken's refresh does) rather
-		// than deciding which client minted the session.
-		if rerr := sso.Revoke(ctx, e.serverURL, sso.MobileClientID, tok.RefreshToken); rerr != nil {
+		// The revocation must name the client the session was issued to: the
+		// server revokes only a token whose client_id matches, and answers 200
+		// either way. A desktop login (openidx-desktop) revoked as the mobile
+		// client used to be a silent no-op. A session stored before the client
+		// was recorded is a mobile one, the only kind this engine issued then.
+		if rerr := sso.Revoke(ctx, e.serverURL, tok.ClientOr(sso.MobileClientID), tok.RefreshToken); rerr != nil {
 			e.logger.Warn("sign-out: server-side revocation failed; the refresh token stays valid until it expires",
 				zap.Error(rerr))
 		}
@@ -694,9 +695,10 @@ func (e *Engine) AccessToken() (string, error) {
 	if expired && tok.RefreshToken != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		// Mobile sessions were issued to the mobile PKCE client, so refresh must
-		// present the same client_id.
-		fresh, rerr := sso.RefreshWithClient(ctx, e.serverURL, tok.RefreshToken, sso.MobileClientID)
+		// The refresh must present the client_id the session was issued to;
+		// the server refuses a refresh under another client. A session stored
+		// before the client was recorded is a mobile one.
+		fresh, rerr := sso.RefreshWithClient(ctx, e.serverURL, tok.RefreshToken, tok.ClientOr(sso.MobileClientID))
 		if rerr == nil && fresh != nil && fresh.AccessToken != "" {
 			if fresh.RefreshToken == "" {
 				fresh.RefreshToken = tok.RefreshToken // server may omit an unchanged RT

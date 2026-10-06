@@ -80,9 +80,11 @@ func (a *app) onReady() {
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Quit OpenIDX")
 
-	// Restore a saved session, if any.
+	// Restore a saved session, if any, and renew it at once if it is about to
+	// expire: the tray may have been closed for days.
 	if t, _ := authstore.Load(a.configDir); t != nil {
 		a.setSignedIn(t)
+		go a.keepFresh()
 	}
 	a.updateStatus()
 
@@ -181,7 +183,60 @@ func (a *app) statusTicker() {
 	defer t.Stop()
 	for range t.C {
 		a.updateStatus()
+		a.keepFresh()
 	}
+}
+
+// keepFresh renews the session's access token before it expires, and signs
+// the user out when the server says the session is over. It runs on every
+// status tick and once at start-up, so a click on a connection always has a
+// live token behind it.
+func (a *app) keepFresh() {
+	a.mu.Lock()
+	t := a.tokens
+	a.mu.Unlock()
+	if t == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	fresh, outcome, err := refreshIfDue(ctx, a.serverURL, t, time.Now(), sso.RefreshWithClient)
+	switch outcome {
+	case sessionRefreshed:
+		if serr := authstore.Save(a.configDir, fresh); serr != nil {
+			a.logger.Warn("tray: could not store the refreshed session", zap.Error(serr))
+		}
+		a.mu.Lock()
+		a.tokens = fresh
+		a.mu.Unlock()
+		a.logger.Info("tray: session refreshed")
+	case sessionExpired:
+		a.logger.Warn("tray: the session is over; signing out", zap.Error(err))
+		a.sessionExpired()
+	default:
+		if err != nil {
+			a.logger.Warn("tray: token refresh failed; will retry", zap.Error(err))
+		}
+	}
+}
+
+// sessionExpired drops a session the server will no longer honour. There is
+// nothing to revoke: the refresh token was already refused, or there was
+// none. The menu says so, instead of "Signed in" over a dead token.
+func (a *app) sessionExpired() {
+	_ = authstore.Clear(a.configDir)
+	a.mu.Lock()
+	a.tokens = nil
+	for i := range a.slotID {
+		a.slotID[i] = ""
+	}
+	a.mu.Unlock()
+	for _, mi := range a.connSlot {
+		mi.Hide()
+	}
+	a.mSignIn.Show()
+	a.mSignOut.Hide()
+	a.mStatus.SetTitle("Session expired · sign in again")
 }
 
 func (a *app) loop(mQuit *systray.MenuItem) {
