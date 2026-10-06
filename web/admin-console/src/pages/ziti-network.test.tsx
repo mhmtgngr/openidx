@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -126,6 +127,25 @@ describe('ZitiNetworkPage', () => {
     expect(
       screen.getByText(/3 online, 0 offline/i),
     ).toBeInTheDocument()
+  })
+
+  it('lists only the Ziti posture checks and points to Agent Fleet for the agent ones', async () => {
+    const user = userEvent.setup()
+    // The Security tab's sections read lists; answer every one of them empty.
+    vi.mocked(api.get).mockImplementation(((url: string) => {
+      if (url.includes('/ziti/status') || url.includes('/ziti/fabric/')) return routeGet(url)
+      return Promise.resolve([])
+    }) as typeof api.get)
+    render(<ZitiNetworkPage />, { wrapper: createWrapper() })
+    await screen.findByText('Ziti Network')
+
+    await user.click(screen.getByRole('tab', { name: /security/i }))
+    expect(await screen.findByText('Posture Checks')).toBeInTheDocument()
+    // The table also holds device agent checks; this section asks for the
+    // controller's kind only, so it can never show or edit one of them.
+    expect(api.get).toHaveBeenCalledWith('/api/v1/access/ziti/posture/checks?kind=ziti')
+    expect(api.get).not.toHaveBeenCalledWith('/api/v1/access/ziti/posture/checks')
+    expect(screen.getByRole('link', { name: 'Agent Fleet' })).toHaveAttribute('href', '/agent-fleet')
   })
 
   it('shows the Disconnected pill when the controller is unreachable', async () => {

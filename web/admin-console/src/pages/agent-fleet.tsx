@@ -27,6 +27,7 @@ import {
 } from '../components/ui/alert-dialog'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
+import { AgentChecksSection } from '../components/agent-checks-section'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -311,6 +312,9 @@ export function AgentFleetPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* What the enrolled agents are told to check. */}
+      <AgentChecksSection />
 
       {/* QR generator dialog */}
       <Dialog open={qrOpen} onOpenChange={setQrOpen}>

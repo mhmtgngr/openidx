@@ -44,6 +44,60 @@ Verification matters more than intention: the repo ships `tools/darkprobe`,
 which proves a dark service is reachable by an authorized identity **and
 not** by an unauthorized one — run it after publishing anything sensitive.
 
+## Device posture checks
+
+A posture check is one of two kinds, and the platform tells them apart by
+its type:
+
+- **Ziti posture checks** (`OS`, `Domain`, `MFA`, `Process`, `MAC`) are
+  objects on the OpenZiti controller, which evaluates them when an identity
+  dials a service. Console → **Ziti Network → Security → Posture Checks**.
+- **Device agent checks** are run by the OpenIDX agents on the device. Their
+  results set the device's compliance: a failing **critical** check makes it
+  non-compliant, a failing **high** one starts its grace period, **medium**
+  raises an alert and **low** only lowers the score. With
+  `POSTURE_DEVICE_TRUST_GATE=enforce`, a compliant device earns the
+  `device-trusted` overlay attribute. Console → **Agent Fleet → Device agent
+  checks**.
+
+An agent is sent only the agent checks, and only those scoped to its
+platform (or to none). Nothing an agent runs is written to the controller.
+When no agent check is configured, agents run three built-in defaults
+(`os_version`, `disk_encryption`, `process_running`) that carry no severity,
+so they can never start a grace period or make a device non-compliant.
+
+| Check | Runs on | Params |
+|---|---|---|
+| `os_version` | windows, macos, linux, android | `min_version`: numbers and dots, such as `10.0.19045` |
+| `agent_version` | windows, macos, linux, android, ios | `min_version`: numbers and dots |
+| `patch_level` | windows, macos, linux, android | `max_days`: whole number, 1 to 3650 (agent default 30) |
+| `process_running` | linux | `processes`: list of process names, 1 to 64, required |
+| `disk_encryption` | windows, macos, linux, android | none |
+| `screen_lock` | windows, macos, linux, android | none |
+| `firewall` | windows, macos, linux | none |
+| `antivirus` | windows, macos, linux | none |
+| `domain_joined` | windows, macos, linux | none |
+| `integrity` | linux | none |
+| `play_integrity` | android | `require_meets_basic_integrity`, `require_meets_device_integrity`, `require_meets_strong_integrity`, `require_play_recognized`: true or false, judged by the server against Google's verdict |
+| `enterprise_managed` | android | none |
+| `developer_options` | android | none |
+| `unknown_sources` | android | none |
+| `accessibility_audit` | android | none |
+
+The desktop agent reads the params. The Android agent runs `os_version`,
+`patch_level` and the others with its own built-in thresholds.
+
+The server refuses an agent check that does not fit this table, with a
+`code` saying why: `unknown_check_type`, `invalid_name`, `invalid_severity`
+(it must be `low`, `medium`, `high` or `critical`), `invalid_platform`,
+`platform_not_supported` (a platform the check cannot run on, such as
+`process_running` on windows), `unknown_param`, `missing_param` or
+`invalid_param`. A check cannot change between the two kinds; delete it and
+create the other. The table lives in
+`internal/access/posturevocab/posturevocab.go`, and CI
+(`tools/posturevocab`) fails when it stops matching what the agents
+implement.
+
 ## Going fully dark
 
 The platform can take its own API off the public internet: services bind

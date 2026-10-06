@@ -13,7 +13,9 @@ package main
 // Both now decline to answer where they cannot, which is what leaves one
 // implementation per check per platform.
 //
-// The key is "<kind>:<check_type>:<platform>".
+// The key is "<kind>:<check_type>:<platform>", with the param name in place of
+// the platform for param_drift and nothing there for not_served and
+// served_nowhere.
 var knownFindings = map[string]string{
 	"claimed_twice:agent_version:android": "agent_version reports the client's own version string. " +
 		"The Go engine's implementation is platform-independent and answers for the companion app; " +

@@ -71,6 +71,10 @@ func TestOperatorPagesNeedTheOperatorTier(t *testing.T) {
 		{http.MethodDelete, "/api/v1/access/agent/tokens/" + token, ""},
 		{http.MethodGet, "/api/v1/access/agents", ""},
 		{http.MethodGet, "/api/v1/access/agents/" + active + "/posture", ""},
+		// The device agent checks the fleet is configured with, and their
+		// vocabulary. Listing them needs no controller.
+		{http.MethodGet, "/api/v1/access/ziti/posture/checks?kind=agent", ""},
+		{http.MethodGet, "/api/v1/access/ziti/posture/check-types", ""},
 		{http.MethodDelete, "/api/v1/access/agents/" + toRevoke, ""},
 		{http.MethodPost, "/api/v1/access/agents/" + pending + "/approve", ""},
 		{http.MethodPost, "/api/v1/access/agent/qr", `{"description":"qr-` + f.suffix + `"}`},

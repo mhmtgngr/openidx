@@ -1027,13 +1027,48 @@ paths:
           $ref: '#/components/responses/Forbidden'
 
   # --- Posture Checks ---
+  /api/v1/access/ziti/posture/check-types:
+    get:
+      tags: [Posture Checks]
+      summary: List posture check types
+      description: >-
+        Operator tier or above. The two vocabularies a posture check can be
+        written in. `ziti` are the Ziti posture check types, which the access
+        service mirrors to the OpenZiti controller. `agent` are the device
+        agent check types the OpenIDX agents run, each with the platforms an
+        agent can examine it on and the params it takes. A create or update
+        that does not fit this is refused. Needs no controller.
+      operationId: listPostureCheckTypes
+      responses:
+        '200':
+          description: The posture check vocabulary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostureCheckVocabulary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /api/v1/access/ziti/posture/checks:
     get:
       tags: [Posture Checks]
       summary: List posture checks
       description: >-
-        Operator tier or above. The organization's posture checks.
+        Operator tier or above. The organization's posture checks, each with
+        its `kind`: `ziti` for a check the controller enforces, `agent` for a
+        check GET /agent/config serves to the OpenIDX agents. With
+        `kind=agent` the listing needs no controller; any other listing
+        answers 503 while none is connected.
       operationId: listPostureChecks
+      parameters:
+        - name: kind
+          in: query
+          description: Only checks of this kind.
+          schema:
+            type: string
+            enum: [agent, ziti]
       responses:
         '200':
           description: List of posture checks
@@ -1043,13 +1078,29 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/PostureCheck'
+        '400':
+          description: '`kind` is neither agent nor ziti (code invalid_kind).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostureCheckRefusal'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '503':
+          description: No controller is connected (every listing but kind=agent).
     post:
       tags: [Posture Checks]
       summary: Create posture check
+      description: >-
+        Admin. The kind follows from `check_type`. A Ziti posture check is
+        created on the controller and needs one connected (503 otherwise). A
+        device agent check is validated against the agent vocabulary
+        (GET /ziti/posture/check-types) and stored without the controller: its
+        `severity` must be low, medium, high or critical, each of its
+        `platforms` one the check can run on, and its `parameters` exactly
+        the keys and types the check takes.
       operationId: createPostureCheck
       requestBody:
         required: true
@@ -1065,12 +1116,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/PostureCheck'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >-
+            The check was refused. `code` is one of unknown_check_type,
+            invalid_name, invalid_severity, invalid_platform,
+            platform_not_supported, unknown_param, missing_param or
+            invalid_param, and `field` names what was wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostureCheckRefusal'
+        '503':
+          description: A Ziti posture check was sent and no controller is connected.
 
   /api/v1/access/ziti/posture/checks/{id}:
     put:
       tags: [Posture Checks]
       summary: Update posture check
+      description: >-
+        Admin. Validated as on create. A check cannot change kind (code
+        check_kind_change): a Ziti posture check has an object on the
+        controller and a device agent check has none.
       operationId: updatePostureCheck
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -1087,11 +1152,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PostureCheck'
+        '400':
+          description: The check was refused; see create, plus check_kind_change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostureCheckRefusal'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          description: The check is a Ziti posture check and no controller is connected.
     delete:
       tags: [Posture Checks]
       summary: Delete posture check
+      description: >-
+        Admin. A Ziti posture check is deleted from the controller too and
+        needs one connected; a device agent check does not.
       operationId: deletePostureCheck
       parameters:
         - $ref: '#/components/parameters/IdPath'
@@ -1100,6 +1176,8 @@ paths:
           description: Posture check deleted
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          description: The check is a Ziti posture check and no controller is connected.
 
   /api/v1/access/ziti/posture/identities/{id}:
     get:
@@ -9669,14 +9747,34 @@ components:
         id:
           type: string
           format: uuid
+        ziti_id:
+          type: string
+          description: The controller's id. Absent on a device agent check.
         name:
           type: string
-        type:
+        check_type:
           type: string
+          description: >-
+            A Ziti posture check type (OS, Domain, MFA, Process, MAC) or a
+            device agent check type (see GET /ziti/posture/check-types).
+        kind:
+          type: string
+          enum: [agent, ziti]
+          readOnly: true
+          description: Derived from check_type.
         parameters:
           type: object
         enabled:
           type: boolean
+        severity:
+          type: string
+        remediation_hint:
+          type: string
+        platforms:
+          type: array
+          description: Empty means every platform.
+          items:
+            type: string
         created_at:
           type: string
           format: date-time
@@ -9686,17 +9784,89 @@ components:
 
     PostureCheckCreate:
       type: object
-      required: [name, type]
+      required: [name, check_type]
       properties:
         name:
           type: string
-        type:
+          maxLength: 255
+        check_type:
           type: string
         parameters:
           type: object
+          description: >-
+            For a device agent check, exactly the params its type takes (for
+            example `min_version` for os_version, `max_days` for patch_level,
+            `processes` for process_running).
         enabled:
           type: boolean
-          default: true
+        severity:
+          type: string
+          description: Required for a device agent check.
+          enum: [low, medium, high, critical]
+        remediation_hint:
+          type: string
+        platforms:
+          type: array
+          items:
+            type: string
+            enum: [windows, macos, linux, android, ios, any]
+
+    PostureCheckRefusal:
+      type: object
+      properties:
+        error:
+          type: string
+          description: What was wrong, in a sentence.
+        code:
+          type: string
+          description: Stable reason for a client to branch on.
+        field:
+          type: string
+          description: The request field it concerns, such as parameters.max_days.
+
+    PostureCheckVocabulary:
+      type: object
+      properties:
+        ziti:
+          type: array
+          items:
+            type: string
+        agent:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              platforms:
+                type: array
+                items:
+                  type: string
+              params:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    kind:
+                      type: string
+                      enum: [version, integer, boolean, string_list]
+                    required:
+                      type: boolean
+                    min:
+                      type: integer
+                    max:
+                      type: integer
+                      description: The upper bound of an integer, or the most entries a list may hold.
+        severities:
+          type: array
+          items:
+            type: string
+        platforms:
+          type: array
+          items:
+            type: string
 
     IdentityPosture:
       type: object

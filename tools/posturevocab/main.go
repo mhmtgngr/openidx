@@ -47,6 +47,30 @@
 //	covered nowhere a check_type some client knows about that no client can
 //	                perform on a platform the product ships to.
 //
+// THE SERVER'S HALF. The access service keeps its own copy of the agent
+// vocabulary, internal/access/posturevocab: GET /agent/config serves only the
+// check types listed there, and the console's editor refuses a row that does
+// not fit it. A copy is the thing that drifts, so it is held against the tree
+// as well, and four more findings follow:
+//
+//	not_served        a check type an agent implements that the server does
+//	                  not list. The agent can run it and no administrator can
+//	                  configure it: the config endpoint would never send it.
+//	served_nowhere    a check type the server lists that no agent implements.
+//	                  An administrator can save it and every device answers
+//	                  "unknown check type".
+//	platform_drift    the platforms the server lets a check be scoped to are
+//	                  not the platforms the agents can examine it on.
+//	param_drift       a Go check reads a params key the server refuses, or the
+//	                  server accepts a key the Go check never reads. The first
+//	                  is a setting nobody can make; the second is a setting
+//	                  that does nothing.
+//
+// Params are checked by NAME for the Go agent's checks, read from the
+// params["key"] index expressions in the check's own file. The Android agent
+// reads no params, and play_integrity's are read by the server itself, so
+// neither has a source to compare against.
+//
 // Findings are registered in known.go with a verdict apiece. A finding absent
 // from the register fails the run; a register entry that no longer reproduces
 // fails it too, so the register can only shrink — the shape tools/tablewriters
@@ -65,6 +89,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/openidx/openidx/internal/access/posturevocab"
 )
 
 // shippedPlatforms are the operating systems a client of this product runs on.
@@ -77,6 +103,18 @@ type coverage struct {
 	platforms map[string]bool
 	// where it came from, for the report.
 	source string
+	// params are the params keys a Go check reads. nil for a Kotlin check,
+	// which reads none.
+	params map[string]bool
+}
+
+// serverPlatform names a shipped platform as the server does
+// (enrolled_agents.platform), which spells darwin as macos.
+func serverPlatform(goos string) string {
+	if goos == "darwin" {
+		return posturevocab.PlatformMacOS
+	}
+	return goos
 }
 
 func main() {
@@ -105,7 +143,8 @@ func main() {
 		return
 	}
 
-	findings := report(goChecks, kotlinChecks)
+	findings := append(report(goChecks, kotlinChecks),
+		serverReport(goChecks, kotlinChecks, posturevocab.AgentChecks())...)
 
 	found := map[string]bool{}
 	for _, f := range findings {
@@ -143,16 +182,24 @@ func main() {
 }
 
 type finding struct {
-	Kind      string // "claimed_twice" | "covered_nowhere"
+	Kind      string // "claimed_twice" | "covered_nowhere" | a server finding
 	CheckType string
 	Platform  string
+	Param     string // param_drift only
 	Detail    string
 }
 
-func (f finding) key() string { return f.Kind + ":" + f.CheckType + ":" + f.Platform }
+// key is "<kind>:<check_type>:<platform or param>".
+func (f finding) key() string { return f.Kind + ":" + f.CheckType + ":" + f.Platform + f.Param }
 
 func (f finding) describe() string {
 	switch f.Kind {
+	case "not_served", "served_nowhere":
+		return fmt.Sprintf("%s: %s\n    %s", f.CheckType, f.Kind, f.Detail)
+	case "platform_drift":
+		return fmt.Sprintf("%s on %s: the server and the agents disagree\n    %s", f.CheckType, f.Platform, f.Detail)
+	case "param_drift":
+		return fmt.Sprintf("%s params.%s: the server and the Go agent disagree\n    %s", f.CheckType, f.Param, f.Detail)
 	case "claimed_twice":
 		return fmt.Sprintf("%s on %s: implemented by BOTH clients\n"+
 			"    %s\n"+
@@ -198,6 +245,80 @@ func report(goChecks, kotlinChecks map[string]coverage) []finding {
 	return out
 }
 
+// serverReport holds the server's agent vocabulary against the check types the
+// agents implement. served is posturevocab.AgentChecks() in the real run and a
+// fixture in the tests.
+func serverReport(goChecks, kotlinChecks map[string]coverage, served []posturevocab.AgentCheck) []finding {
+	var out []finding
+	servedBy := map[string]posturevocab.AgentCheck{}
+	for _, c := range served {
+		servedBy[c.Type] = c
+	}
+	implemented := map[string]bool{}
+	for name := range goChecks {
+		implemented[name] = true
+	}
+	for name := range kotlinChecks {
+		implemented[name] = true
+	}
+
+	for name := range implemented {
+		if _, ok := servedBy[name]; !ok {
+			out = append(out, finding{Kind: "not_served", CheckType: name,
+				Detail: "an agent implements it, and internal/access/posturevocab does not list it, so " +
+					"GET /agent/config never sends it and the console cannot configure it"})
+		}
+	}
+
+	for name, spec := range servedBy {
+		if !implemented[name] {
+			out = append(out, finding{Kind: "served_nowhere", CheckType: name,
+				Detail: "internal/access/posturevocab lists it and no agent registers it; every device " +
+					"configured with it would answer \"unknown check type\""})
+			continue
+		}
+		allowed := map[string]bool{}
+		for _, p := range spec.Platforms {
+			allowed[p] = true
+		}
+		g, hasGo := goChecks[name]
+		k, hasKotlin := kotlinChecks[name]
+		for _, goos := range shippedPlatforms {
+			covered := (hasGo && g.platforms[goos]) || (hasKotlin && k.platforms[goos])
+			plat := serverPlatform(goos)
+			switch {
+			case covered && !allowed[plat]:
+				out = append(out, finding{Kind: "platform_drift", CheckType: name, Platform: plat,
+					Detail: "an agent examines it here, and the server refuses a row scoped to " + plat})
+			case !covered && allowed[plat]:
+				out = append(out, finding{Kind: "platform_drift", CheckType: name, Platform: plat,
+					Detail: "the server accepts a row scoped to " + plat + ", and no agent examines it there"})
+			}
+		}
+		if !hasGo {
+			continue
+		}
+		accepted := map[string]bool{}
+		for _, p := range spec.Params {
+			accepted[p.Name] = true
+		}
+		for p := range g.params {
+			if !accepted[p] {
+				out = append(out, finding{Kind: "param_drift", CheckType: name, Param: p,
+					Detail: g.source + " reads params[\"" + p + "\"], and the server refuses a row that sets it"})
+			}
+		}
+		for p := range accepted {
+			if !g.params[p] {
+				out = append(out, finding{Kind: "param_drift", CheckType: name, Param: p,
+					Detail: "the server accepts params." + p + ", and " + g.source + " never reads it"})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].key() < out[j].key() })
+	return out
+}
+
 func printCensus(goChecks, kotlinChecks map[string]coverage) {
 	all := map[string]bool{}
 	for n := range goChecks {
@@ -212,7 +333,11 @@ func printCensus(goChecks, kotlinChecks map[string]coverage) {
 	}
 	sort.Strings(names)
 
-	fmt.Printf("%-22s %-9s %-8s %-7s %-9s %-5s  source\n", "check_type", "windows", "darwin", "linux", "android", "ios")
+	served := map[string]bool{}
+	for _, c := range posturevocab.AgentChecks() {
+		served[c.Type] = true
+	}
+	fmt.Printf("%-22s %-9s %-8s %-7s %-9s %-5s %-7s source\n", "check_type", "windows", "darwin", "linux", "android", "ios", "served")
 	for _, name := range names {
 		g, hasGo := goChecks[name]
 		k, hasKotlin := kotlinChecks[name]
@@ -239,8 +364,12 @@ func printCensus(goChecks, kotlinChecks map[string]coverage) {
 			}
 			src += k.source
 		}
-		fmt.Printf("%-22s %-9s %-8s %-7s %-9s %-5s  %s\n",
-			name, cell("windows"), cell("darwin"), cell("linux"), cell("android"), cell("ios"), src)
+		srv := "-"
+		if served[name] {
+			srv = "yes"
+		}
+		fmt.Printf("%-22s %-9s %-8s %-7s %-9s %-5s %-7s %s\n",
+			name, cell("windows"), cell("darwin"), cell("linux"), cell("android"), cell("ios"), srv, src)
 	}
 }
 
@@ -275,6 +404,11 @@ func scanGoChecks(root string) (map[string]coverage, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Which params keys each type reads.
+	paramsForType, err := scanGoParams(filepath.Join(agentDir, "internal", "checks"))
+	if err != nil {
+		return nil, err
+	}
 
 	out := map[string]coverage{}
 	for name, typ := range typeForName {
@@ -290,9 +424,99 @@ func scanGoChecks(root string) (map[string]coverage, error) {
 		if src == "" {
 			src = typ
 		}
-		out[name] = coverage{platforms: plats, source: src}
+		params := paramsForType[typ]
+		if params == nil {
+			params = map[string]bool{}
+		}
+		out[name] = coverage{platforms: plats, source: src, params: params}
 	}
 	return out, nil
+}
+
+// scanGoParams reads the checks package and returns, for every check type,
+// the params keys its code reads: each params["key"] in the file that
+// declares the type's methods, helpers included, which is how process.go's
+// parseProcessList is counted for ProcessCheck.
+//
+// Attribution is by file, so a file that reads params and declares methods on
+// more than one type, or on none, cannot be attributed and fails the run
+// rather than being guessed at. Each check lives in its own file today.
+func scanGoParams(dir string) (map[string]map[string]bool, error) {
+	out := map[string]map[string]bool{}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", dir, err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		f, perr := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if perr != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, perr)
+		}
+		keys := paramsKeys(f)
+		if len(keys) == 0 {
+			continue
+		}
+		receivers := map[string]bool{}
+		for _, d := range f.Decls {
+			if fn, ok := d.(*ast.FuncDecl); ok && fn.Recv != nil {
+				if r := receiverType(fn.Recv); r != "" {
+					receivers[r] = true
+				}
+			}
+		}
+		if len(receivers) != 1 {
+			return nil, fmt.Errorf("%s reads params %v and declares methods on %d types, so the keys "+
+				"cannot be attributed to one check. Keep each check in its own file, or teach this "+
+				"tool the new layout", e.Name(), sortedKeys(keys), len(receivers))
+		}
+		for r := range receivers {
+			if out[r] == nil {
+				out[r] = map[string]bool{}
+			}
+			for k := range keys {
+				out[r][k] = true
+			}
+		}
+	}
+	return out, nil
+}
+
+// paramsKeys returns every string-literal key of an index expression on an
+// identifier named params.
+func paramsKeys(f *ast.File) map[string]bool {
+	keys := map[string]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		ix, ok := n.(*ast.IndexExpr)
+		if !ok {
+			return true
+		}
+		id, ok := ix.X.(*ast.Ident)
+		if !ok || id.Name != "params" {
+			return true
+		}
+		lit, ok := ix.Index.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		if v, err := strconv.Unquote(lit.Value); err == nil {
+			keys[v] = true
+		}
+		return true
+	})
+	return keys
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // scanGoPlatforms reads the checks package and works out, for every check

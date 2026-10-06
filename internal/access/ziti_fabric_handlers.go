@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/access/posturevocab"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -418,11 +419,46 @@ func (s *Service) handleDeleteEdgeRouterPolicy(c *gin.Context) {
 // Posture Check handlers
 // ---------------------------------------------------------------------------
 
+// The posture check handlers serve both vocabularies the posture_checks table
+// holds (see internal/access/posturevocab). A Ziti posture check is mirrored
+// to the controller and needs one connected; a device agent check is only a
+// row that GET /agent/config serves to agents, so it is validated against
+// what the agents can run and written without the controller. The kind is
+// read from check_type, never from the request.
+
+// postureKindParam reads the optional ?kind= filter.
+func postureKindParam(c *gin.Context) (posturevocab.Kind, bool) {
+	switch k := posturevocab.Kind(c.Query("kind")); k {
+	case "", posturevocab.KindAgent, posturevocab.KindZiti:
+		return k, true
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "kind must be agent or ziti", "code": "invalid_kind", "field": "kind"})
+		return "", false
+	}
+}
+
 func (s *Service) handleListPostureChecks(c *gin.Context) {
+	kind, ok := postureKindParam(c)
+	if !ok {
+		return
+	}
+	// Agent checks are listed straight from the table, so the Agent Fleet
+	// page works with no controller connected. The other listings keep the
+	// 503 the Ziti page has always been given without one.
+	if kind == posturevocab.KindAgent {
+		checks, err := listPostureChecks(c.Request.Context(), s.db, s.logger, kind)
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to list posture checks", err), s.logger)
+			return
+		}
+		c.JSON(http.StatusOK, checks)
+		return
+	}
 	if s.zitiUnavailable(c) {
 		return
 	}
-	checks, err := s.ziti().ListPostureChecks(c.Request.Context())
+	checks, err := listPostureChecks(c.Request.Context(), s.ziti().db, s.logger, kind)
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to list posture checks", err), s.logger)
 		return
@@ -430,13 +466,43 @@ func (s *Service) handleListPostureChecks(c *gin.Context) {
 	c.JSON(http.StatusOK, checks)
 }
 
+// handlePostureCheckTypes is the vocabulary the console builds its posture
+// forms from: the Ziti posture check types, and every device agent check type
+// with the platforms it runs on and the params it takes. It is the server's
+// own table, so the form cannot offer what the server would refuse.
+func (s *Service) handlePostureCheckTypes(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"ziti":       posturevocab.ZitiTypes(),
+		"agent":      posturevocab.AgentChecks(),
+		"severities": posturevocab.Severities(),
+		"platforms":  posturevocab.Platforms(),
+	})
+}
+
 func (s *Service) handleCreatePostureCheck(c *gin.Context) {
-	if s.zitiUnavailable(c) {
-		return
-	}
 	var check PostureCheck
 	if err := c.ShouldBindJSON(&check); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	switch posturevocab.KindOf(check.CheckType) {
+	case posturevocab.KindAgent:
+		if verr := validateAgentPostureCheck(&check); verr != nil {
+			postureVocabError(c, verr)
+			return
+		}
+		if err := createAgentPostureCheck(c.Request.Context(), s.db, &check); err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to create posture check", err), s.logger)
+			return
+		}
+		c.JSON(http.StatusCreated, check)
+		return
+	case posturevocab.KindZiti:
+	default:
+		unknownPostureCheckType(c, check.CheckType)
+		return
+	}
+	if s.zitiUnavailable(c) {
 		return
 	}
 	if err := s.ziti().CreatePostureCheck(c.Request.Context(), &check); err != nil {
@@ -447,16 +513,59 @@ func (s *Service) handleCreatePostureCheck(c *gin.Context) {
 }
 
 func (s *Service) handleUpdatePostureCheck(c *gin.Context) {
-	if s.zitiUnavailable(c) {
-		return
-	}
 	id := c.Param("id")
 	var check PostureCheck
 	if err := c.ShouldBindJSON(&check); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := s.ziti().UpdatePostureCheck(c.Request.Context(), id, &check); err != nil {
+	kind := posturevocab.KindOf(check.CheckType)
+	if kind == "" {
+		unknownPostureCheckType(c, check.CheckType)
+		return
+	}
+	ctx := c.Request.Context()
+	storedType, err := postureCheckTypeByID(ctx, s.db, id)
+	if errors.Is(err, errPostureCheckNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "posture check not found"})
+		return
+	}
+	if err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to update posture check", err), s.logger)
+		return
+	}
+	// A Ziti check has an object on the controller and an agent check has
+	// none; changing one into the other would orphan the object or leave the
+	// row pointing at nothing. Delete and create instead.
+	if postureRowKind(storedType) != kind {
+		postureVocabError(c, &posturevocab.Error{
+			Code: "check_kind_change", Field: "check_type",
+			Message: "a posture check cannot change between a Ziti posture check and a device agent check; " +
+				"delete it and create the other kind",
+		})
+		return
+	}
+	if kind == posturevocab.KindAgent {
+		if verr := validateAgentPostureCheck(&check); verr != nil {
+			postureVocabError(c, verr)
+			return
+		}
+		err := updateAgentPostureCheck(ctx, s.db, id, &check)
+		if errors.Is(err, errPostureCheckNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "posture check not found"})
+			return
+		}
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to update posture check", err), s.logger)
+			return
+		}
+		c.JSON(http.StatusOK, check)
+		return
+	}
+	if s.zitiUnavailable(c) {
+		return
+	}
+	if err := s.ziti().UpdatePostureCheck(ctx, id, &check); err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to update posture check", err), s.logger)
 		return
 	}
@@ -464,11 +573,34 @@ func (s *Service) handleUpdatePostureCheck(c *gin.Context) {
 }
 
 func (s *Service) handleDeletePostureCheck(c *gin.Context) {
+	id := c.Param("id")
+	ctx := c.Request.Context()
+	storedType, err := postureCheckTypeByID(ctx, s.db, id)
+	if errors.Is(err, errPostureCheckNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "posture check not found"})
+		return
+	}
+	if err != nil {
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to delete posture check", err), s.logger)
+		return
+	}
+	if postureRowKind(storedType) == posturevocab.KindAgent {
+		err := deleteAgentPostureCheck(ctx, s.db, id)
+		if errors.Is(err, errPostureCheckNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "posture check not found"})
+			return
+		}
+		if err != nil {
+			apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to delete posture check", err), s.logger)
+			return
+		}
+		c.JSON(http.StatusNoContent, nil)
+		return
+	}
 	if s.zitiUnavailable(c) {
 		return
 	}
-	id := c.Param("id")
-	if err := s.ziti().DeletePostureCheck(c.Request.Context(), id); err != nil {
+	if err := s.ziti().DeletePostureCheck(ctx, id); err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to delete posture check", err), s.logger)
 		return
 	}
