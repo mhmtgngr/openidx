@@ -1382,12 +1382,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: detect-changes
     if: needs.detect-changes.outputs.go_changed == 'true'
-    # Above the 20-minute -timeout `go test` carries below, so a hung test
+    # Above the 30-minute -timeout `go test` carries below, so a hung test
     # ends in Go's goroutine dump rather than the runner's kill. The two were
     # equal, and internal/access and internal/identity, which take 15 to 19
     # minutes on a warm build cache, were cancelled at the bound when the
     # cache restore failed and the job built from cold.
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -1562,9 +1562,18 @@ jobs:
           # ten minutes per package is a bound for uninstrumented tests, and
           # under -race it stops distinguishing a hang from a slow runner.
           #
+          # 30 minutes, up from 20. internal/access grew with the Windows
+          # client work, which added a Postgres container per new DB-backed
+          # test, and it ran at 19m44s and 19m34s on 2026-10-06 (#1113, #1121).
+          # It then failed on a PR that touched none of its code (#1124):
+          # `panic: test timed out after 20m0s`, with the running test 8s in
+          # and everything else parked in t.Parallel. That is the slow-runner
+          # signature, not a hang. 30m gives the package half again its
+          # current runtime and is still far short of "wedged forever".
+          #
           # matrix.flags is empty for every entry but `tools`, which passes
           # -short; the reason is written out beside that entry above.
-          go test -v -race -timeout 20m ${{ matrix.flags }} -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ${{ matrix.paths }}
+          go test -v -race -timeout 30m ${{ matrix.flags }} -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ${{ matrix.paths }}
 
       # Upload whatever coverage was produced even when the tests failed, so a
       # red run still yields a coverage artifact to inspect.
