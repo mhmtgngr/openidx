@@ -111,10 +111,10 @@ func TestFleetBelt_TenantRowsAreInvisibleAcrossTenantsAndThePublicDoorsStillOpen
 		require.NoError(t, err, "the public enrolment door is shut: the redeemer could not see the token without a tenant")
 		assert.Equal(t, orgB, got.OrgID)
 		// Verifying an agent's credential: same shape.
-		org, ok := verifyEnrolledAgent(context.Background(), db, "agent-a", "secret-agent-a")
+		org, _, ok := verifyEnrolledAgent(context.Background(), db, "agent-a", "secret-agent-a")
 		require.True(t, ok, "the agent could not authenticate without a tenant on the context")
 		assert.Equal(t, orgA, org)
-		_, ok = verifyEnrolledAgent(context.Background(), db, "agent-a", "wrong")
+		_, _, ok = verifyEnrolledAgent(context.Background(), db, "agent-a", "wrong")
 		assert.False(t, ok, "a wrong credential authenticated")
 	})
 
