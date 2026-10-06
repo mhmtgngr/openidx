@@ -150,6 +150,8 @@ func (h *AgentAPIHandler) RegisterAgentPublicRoutes(r *gin.RouterGroup) {
 	r.POST("/agent/enroll", h.HandleEnroll)
 	r.POST("/agent/report", h.HandleReport)
 	r.GET("/agent/config", h.HandleConfig)
+	// An agent that enrolled before it had a device key offers it here.
+	r.POST("/agent/device-key", h.HandleRegisterDeviceKey)
 }
 
 // RegisterAgentAdminRoutes registers endpoints that REQUIRE a valid OpenIDX
@@ -198,6 +200,10 @@ type enrollRequest struct {
 	// reuses the existing agent_id/auth_token for that device instead of minting
 	// a new row on every install — so one physical machine maps to one agent.
 	DeviceFingerprint string `json:"device_fingerprint"`
+	// DeviceKey is the public half of the key the agent keeps where it cannot
+	// be exported (agent_device_key.go). Recorded at enrolment; an enrolment
+	// without one clears any key left from before.
+	DeviceKey *deviceKeyRequest `json:"device_key,omitempty"`
 }
 
 // enrollResponse is returned by HandleEnroll on success.
@@ -589,7 +595,10 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 			}
 		}
 
-		var enrollExtra gin.H
+		enrollExtra := gin.H{}
+		if h.setAgentDeviceKey(ctx, creds.AgentID, enrollReq.DeviceKey) {
+			enrollExtra["device_key_bound"] = true
+		}
 		if sess != nil {
 			// Enroll-time auto-trust. No posture report exists yet, so postureOK is
 			// false — when posture is required this defers trust to a later report
@@ -606,7 +615,9 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 			// in one step (no separate login). The ticket carries the enrollment's
 			// server-verified user/org and its auto-trust decision; the client
 			// completes at push_enroll_path with its FCM token.
-			enrollExtra = h.mintPushEnrollExtra(ctx, sess, creds, trusted)
+			for k, v := range h.mintPushEnrollExtra(ctx, sess, creds, trusted) {
+				enrollExtra[k] = v
+			}
 		}
 
 		writeEnrollResponse(c, creds, method, enrollExtra)
@@ -1031,10 +1042,21 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 		return
 	}
 
-	var report agentReport
-	if err := json.NewDecoder(c.Request.Body).Decode(&report); err != nil && err != io.EOF {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse body"})
+	// Read whole: a device that holds a key signs the exact bytes it sent.
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxAgentReportBytes))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read body"})
 		return
+	}
+	if !h.requireDeviceSignature(c, agentID, body) {
+		return
+	}
+	var report agentReport
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &report); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse body"})
+			return
+		}
 	}
 
 	// The authenticated id is the subject, always. It used to be read from the

@@ -1609,5 +1609,12 @@ func allMigrations() []*Migration {
 			UpSQL:       approvalRowBasisUp,
 			DownSQL:     approvalRowBasisDown,
 		},
+		{
+			Version:     227,
+			Name:        "agent_device_keys",
+			Description: "An enrolled agent can hold a device key, and once it does its posture reports must be signed with it. enrolled_agents gains device_public_key (base64 PKIX DER of an ECDSA P-256 key the desktop agent keeps where the operating system will not export it, in the TPM when there is one), device_key_kind ('tpm', 'software' or 'file') and device_key_bound_at. The access service stores the key at enrolment, or from the agent's own signed registration for a device that enrolled before it had one, and from then on refuses an unsigned or wrongly signed report. A row with no key is treated as before. Down drops the columns.",
+			UpSQL:       agentDeviceKeysUp,
+			DownSQL:     agentDeviceKeysDown,
+		},
 	}
 }

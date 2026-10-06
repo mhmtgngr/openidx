@@ -90,6 +90,8 @@ var publicAccessRoutes = map[string]publicRoute{
 		"posture report — verifyEnrolledAgent runs before the body is read, because the verdict grants or removes the device-trusted Ziti attribute"},
 	"GET /api/v1/access/agent/config": {refusesWithoutState,
 		"serves a device its check list and kiosk policy; the agent id comes from the verified credential, never from the request"},
+	"POST /api/v1/access/agent/device-key": {refusesWithoutState,
+		"binds a device key to an agent that has none; requireEnrolledAgent runs before the body is read, and the key must sign its own registration"},
 	"POST /api/v1/access/agent/windows-apps/report": {refusesWithoutState,
 		"windows-app discovery from an agent bound to a host; same X-Agent-ID + X-Auth-Token check as /agent/report"},
 	"POST /api/v1/access/enroll": {refusesWithoutState,
