@@ -51,12 +51,14 @@ if (-not $isAdmin) {
 
 if (-not $Server -or $Server -like "*__*__*") { throw "Server URL not set. Pass -Server https://..." }
 if (-not $Token  -or $Token  -like "*__*__*") { throw "Enroll token not set. Pass -Token <token>" }
+# Unstamped (run from a checkout rather than a release asset): use the agent
+# release channel. Not releases/latest/download/…, which is the newest release
+# of any kind, a server release with no MSI and no latest.json.
 if (-not $MsiUrl -or $MsiUrl -like "*__*__*") {
-  # Fall back to the 'latest' release asset if the MSI URL wasn't stamped.
-  $MsiUrl = "https://github.com/mhmtgngr/openidx/releases/latest/download/OpenIDX.msi"
+  $MsiUrl = "https://github.com/mhmtgngr/openidx/releases/download/agent-latest/OpenIDX.msi"
 }
 if (-not $ManifestUrl -or $ManifestUrl -like "*__*__*") {
-  $ManifestUrl = "https://github.com/mhmtgngr/openidx/releases/latest/download/latest.json"
+  $ManifestUrl = "https://github.com/mhmtgngr/openidx/releases/download/agent-latest/latest.json"
 }
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

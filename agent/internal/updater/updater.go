@@ -57,6 +57,14 @@ import (
 // magnitude over the ~50 MB the real installers weigh.
 const maxArtifactBytes = 1 << 30 // 1 GiB
 
+// DefaultManifestURL is the official release channel, stamped into release
+// builds with -ldflags "-X …/updater.DefaultManifestURL=…" (see
+// windows-client-build.yml). An enrolment that is given no manifest URL records
+// this one, so a device enrolled from the console's link updates itself like
+// one installed with UPDATE_MANIFEST_URL. Empty in a development build, which
+// therefore never replaces itself with a published release.
+var DefaultManifestURL string
+
 // Manifest describes the latest published release.
 //
 // Every field but Signature is covered by Signature (see signingInput); adding

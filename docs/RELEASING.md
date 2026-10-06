@@ -200,6 +200,25 @@ helm install openidx oci://ghcr.io/mhmtgngr/openidx/charts/openidx \
 without `config.oauthIssuer` (the install's public OAuth URL) and the bundled
 datastores' `secrets.*`. See `docs/docs/deployment/kubernetes.md`.
 
+## The Windows agent has its own release
+
+The endpoint agent (MSI, `.deb`, `.rpm`) is versioned on its own line,
+`agent-vX.Y.Z`, by `windows-client-build.yml`. A server release does not
+release it. Cut it the same two ways:
+
+```bash
+git tag agent-vX.Y.Z && git push origin agent-vX.Y.Z
+# or, where tags cannot be pushed:
+gh workflow run windows-client-build.yml --ref main -f version=X.Y.Z -f release=true
+```
+
+Each agent release also replaces the assets of `agent-latest`, the release
+channel that installed agents poll for `latest.json` and the install script
+downloads `OpenIDX.msi` from. Agent releases never take GitHub's "latest",
+which stays with the server line. `agent/packaging/wix/README.md` has the
+details, and `scripts/check-agent-release.sh` holds both the dispatch path and
+the channel.
+
 ## Versioning policy
 
 - **MAJOR** — incompatible API or config changes, or breaking DB migrations.

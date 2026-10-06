@@ -11,6 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/agent/internal/agent"
+	"github.com/openidx/openidx/agent/internal/updater"
 )
 
 func TestEnroll_Success(t *testing.T) {
@@ -114,4 +117,71 @@ func TestEnrollNamesTheDeviceKey(t *testing.T) {
 	if !res.AgentConfig.DeviceKeyBound {
 		t.Fatal("the server said it holds the key; agent.json must record it")
 	}
+}
+
+// The update channel an enrolment records. A device enrolled from the console's
+// link passes no URL, and before this it recorded none, so it never updated
+// itself; enrolling again also dropped a channel the installer had set.
+func TestResolveManifestURL(t *testing.T) {
+	const official = "https://example.test/releases/download/agent-latest/latest.json"
+	const mirror = "https://mirror.example.test/latest.json"
+	saved := updater.DefaultManifestURL
+	updater.DefaultManifestURL = official
+	t.Cleanup(func() { updater.DefaultManifestURL = saved })
+
+	t.Run("a first enrolment takes this build's release channel", func(t *testing.T) {
+		assert.Equal(t, official, ResolveManifestURL(t.TempDir(), false, ""))
+	})
+
+	t.Run("an explicit URL wins", func(t *testing.T) {
+		assert.Equal(t, mirror, ResolveManifestURL(t.TempDir(), true, mirror))
+	})
+
+	t.Run("an explicit empty value turns self-update off", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, (&agent.AgentConfig{AgentID: "a", UpdateManifestURL: mirror}).Save(dir))
+		assert.Equal(t, "", ResolveManifestURL(dir, true, ""))
+	})
+
+	t.Run("enrolling again keeps the channel the device had", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, (&agent.AgentConfig{AgentID: "a", UpdateManifestURL: mirror}).Save(dir))
+		assert.Equal(t, mirror, ResolveManifestURL(dir, false, ""))
+	})
+
+	t.Run("a development build records no channel", func(t *testing.T) {
+		updater.DefaultManifestURL = ""
+		t.Cleanup(func() { updater.DefaultManifestURL = official })
+		assert.Equal(t, "", ResolveManifestURL(t.TempDir(), false, ""))
+	})
+}
+
+// Enroll, the desktop engine's path, records the release channel too, and an
+// enrolment through it keeps the one the device already had.
+func TestEnrollRecordsTheReleaseChannel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{
+			"agent_id": "agent-1", "device_id": "device-1", "auth_token": "tok",
+		})
+	}))
+	defer server.Close()
+
+	saved := updater.DefaultManifestURL
+	updater.DefaultManifestURL = "https://example.test/latest.json"
+	t.Cleanup(func() { updater.DefaultManifestURL = saved })
+
+	logger, _ := zap.NewDevelopment()
+	dir := t.TempDir()
+	result, err := Enroll(logger, server.URL, "enrollment-token", dir)
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.test/latest.json", result.AgentConfig.UpdateManifestURL)
+
+	stored, err := agent.LoadConfig(dir)
+	require.NoError(t, err)
+	stored.UpdateManifestURL = "https://mirror.example.test/latest.json"
+	require.NoError(t, stored.Save(dir))
+
+	result, err = Enroll(logger, server.URL, "enrollment-token", dir)
+	require.NoError(t, err)
+	assert.Equal(t, "https://mirror.example.test/latest.json", result.AgentConfig.UpdateManifestURL)
 }
