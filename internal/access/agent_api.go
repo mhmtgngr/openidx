@@ -897,11 +897,49 @@ type agentReport struct {
 }
 
 // checkResult represents a single posture check sent by the agent.
+//
+// The two shipped agents put the outcome in different places. The Android
+// agent nests it under "result" (agent-android/core ServerApi.kt
+// PostureCheckResult). The Go agent sends status, score, message, remediation
+// and details flat, beside check_type (agent/internal/agent/agent.go
+// engineResult). Only the nested shape used to be decoded, so every Go-agent
+// result arrived with an empty status and a score of 0. The flat fields are
+// decoded as well, and normalizeCheckResult folds them into Result; nothing
+// else reads them.
 type checkResult struct {
 	CheckType string            `json:"check_type"`
 	Severity  string            `json:"severity"`
 	Result    checkResultDetail `json:"result"`
 	RanAt     string            `json:"ran_at"`
+
+	Status      string                 `json:"status,omitempty"`
+	Score       float64                `json:"score,omitempty"`
+	Message     string                 `json:"message,omitempty"`
+	Remediation string                 `json:"remediation,omitempty"`
+	Details     map[string]interface{} `json:"details,omitempty"`
+}
+
+// normalizeCheckResult returns r with its outcome in r.Result, whichever of
+// the two shapes the agent sent.
+//
+// A nested result that carries a status always wins, so an Android report is
+// read exactly as before even if it also carries stray top-level fields. The
+// flat fields are used only when the nested status is empty and the flat
+// status is not: the status is what every decision in HandleReport reads, and
+// a result with no status anywhere must stay an empty result rather than
+// become a pass on the strength of a bare score.
+func normalizeCheckResult(r checkResult) checkResult {
+	if r.Result.Status != "" || r.Status == "" {
+		return r
+	}
+	r.Result = checkResultDetail{
+		Status:      r.Status,
+		Score:       r.Score,
+		Details:     r.Details,
+		Message:     r.Message,
+		Remediation: r.Remediation,
+	}
+	return r
 }
 
 // checkResultDetail carries the outcome of a posture check.
@@ -1030,6 +1068,10 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 	)
 
 	for _, r := range report.Results {
+		// Read the Go agent's flat result and the Android agent's nested one
+		// the same way before anything below looks at r.Result.
+		r = normalizeCheckResult(r)
+
 		// Server-side Play Integrity verification — rewrite r when the
 		// posture-check result is a play_integrity token so the persisted
 		// row records the decoded verdict (and the strict pass/fail
@@ -1365,11 +1407,38 @@ func (h *AgentAPIHandler) loadIntegrityPolicy(ctx context.Context) IntegrityPoli
 }
 
 // agentCheck represents a single posture check in the agent configuration.
+//
+// The two shipped agents read different keys. The Android agent reads name
+// and check_type (agent-android/core ServerApi.kt AgentCheckConfig). The Go
+// agent reads type and params (agent/internal/checks/registry.go CheckConfig)
+// and nothing else, so while only check_type was sent every check reached it
+// with an empty type and ran as "unknown check type". Type is therefore set by
+// every builder, to the same value as CheckType wherever that is set.
 type agentCheck struct {
 	Name      string `json:"name"`
 	Enabled   bool   `json:"enabled"`
 	CheckType string `json:"check_type,omitempty"`
+	Type      string `json:"type,omitempty"`
 	Severity  string `json:"severity,omitempty"`
+	// Params is posture_checks.parameters, passed through unchanged for the
+	// Go agent's checks to read (for example os_version's min_version). See
+	// agentCheckParams for when it is left out.
+	Params json.RawMessage `json:"params,omitempty"`
+}
+
+// agentCheckParams returns a posture check's stored parameters as they should
+// be sent to the agent, or nil when there is nothing to send.
+//
+// Only a non-empty JSON object is sent. The Go agent decodes params into a
+// map, and a value that is not an object would fail the decode of its whole
+// config, not just this check, so a NULL column, "{}", an array, a scalar or
+// malformed JSON all mean "no params".
+func agentCheckParams(raw []byte) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil || len(obj) == 0 {
+		return nil
+	}
+	return json.RawMessage(raw)
 }
 
 // agentConfigResponse is returned by HandleConfig. KioskPolicy is filled in
@@ -1502,9 +1571,9 @@ const baselinePollInterval = "30s"
 func defaultAgentConfig() agentConfigResponse {
 	return agentConfigResponse{
 		Checks: []agentCheck{
-			{Name: "os_version", Enabled: true},
-			{Name: "disk_encryption", Enabled: true},
-			{Name: "process_running", Enabled: true},
+			{Name: "os_version", Enabled: true, Type: "os_version"},
+			{Name: "disk_encryption", Enabled: true, Type: "disk_encryption"},
+			{Name: "process_running", Enabled: true, Type: "process_running"},
 		},
 		ReportInterval:    baselinePollInterval,
 		EnforcementPolicy: "monitor",
@@ -1674,7 +1743,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	case "pending":
 		cfg := agentConfigResponse{
 			Checks: []agentCheck{
-				{Name: "os_version", Enabled: true, CheckType: "os_version", Severity: "low"},
+				{Name: "os_version", Enabled: true, CheckType: "os_version", Type: "os_version", Severity: "low"},
 			},
 			ReportInterval:    "1h",
 			EnforcementPolicy: "monitor",
@@ -1725,7 +1794,9 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 				Name:      checkType,
 				Enabled:   true,
 				CheckType: checkType,
+				Type:      checkType,
 				Severity:  severity,
+				Params:    agentCheckParams(parametersJSON),
 			})
 		}
 		if rows.Err() != nil {
