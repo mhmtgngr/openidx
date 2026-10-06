@@ -90,7 +90,7 @@
                        Key="Software\Microsoft\Windows\CurrentVersion\Run"
                        Name="OpenIDXTray"
                        Type="string"
-                       Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; tray"
+                       Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; tray --autostart"
                        KeyPath="yes" />
       </Component>
 

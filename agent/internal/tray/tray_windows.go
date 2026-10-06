@@ -22,6 +22,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/desktoppam"
 	"github.com/openidx/openidx/agent/internal/ipc"
 	"github.com/openidx/openidx/agent/internal/sso"
+	"github.com/openidx/openidx/agent/internal/updater"
 )
 
 const maxConnSlots = 25
@@ -33,11 +34,12 @@ type app struct {
 	srvMu     sync.RWMutex
 	consent   *consentGate
 
-	mBanner   *systray.MenuItem
-	mStatus   *systray.MenuItem
-	mSignIn   *systray.MenuItem
-	mSignOut  *systray.MenuItem
-	mConnRoot *systray.MenuItem
+	mBanner    *systray.MenuItem
+	mStatus    *systray.MenuItem
+	mSignIn    *systray.MenuItem
+	mSignOut   *systray.MenuItem
+	mConnRoot  *systray.MenuItem
+	mAutostart *systray.MenuItem
 
 	mu       sync.Mutex
 	tokens   *sso.Tokens
@@ -106,6 +108,12 @@ func (a *app) onReady() {
 		a.slotID = append(a.slotID, "")
 		go a.watchSlot(i, mi)
 	}
+	systray.AddSeparator()
+	mSettings := systray.AddMenuItem("Settings", "")
+	a.mAutostart = mSettings.AddSubMenuItemCheckbox("Start when I sign in", "Start the OpenIDX tray at Windows sign-in", !AutostartDisabled())
+	mUpdates := mSettings.AddSubMenuItem("Check for updates", "Ask the update server whether a newer OpenIDX is published")
+	mAbout := mSettings.AddSubMenuItem("About OpenIDX", "Version, server and device")
+	go a.watchSettings(mUpdates, mAbout)
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Quit OpenIDX")
 
@@ -243,6 +251,68 @@ func (a *app) updateBanner(active, controlled bool) {
 	a.mBanner.SetTitle(msg)
 	a.mBanner.Show()
 	systray.SetTooltip(msg)
+}
+
+// watchSettings serves the Settings submenu.
+func (a *app) watchSettings(mUpdates, mAbout *systray.MenuItem) {
+	for {
+		select {
+		case <-a.mAutostart.ClickedCh:
+			enable := !a.mAutostart.Checked()
+			if err := setAutostart(enable); err != nil {
+				a.logger.Warn("tray: could not store the autostart preference", zap.Error(err))
+				a.tell("The preference could not be saved.\n\n" + err.Error())
+				continue
+			}
+			if enable {
+				a.mAutostart.Check()
+			} else {
+				a.mAutostart.Uncheck()
+			}
+		case <-mUpdates.ClickedCh:
+			go a.checkForUpdates()
+		case <-mAbout.ClickedCh:
+			go a.about()
+		}
+	}
+}
+
+// checkForUpdates asks the update server once and reports the verdict. It
+// only reads; the service installs updates, as SYSTEM, on its own schedule.
+func (a *app) checkForUpdates() {
+	cfg, err := agent.LoadConfig(a.configDir)
+	if err != nil || cfg == nil || cfg.UpdateManifestURL == "" {
+		a.tell(updateMessage(Version, "", nil, nil))
+		return
+	}
+	trust, err := updater.TrustForConfig(cfg.UpdateTrustedCertPEM)
+	if err != nil {
+		a.tell(updateMessage(Version, cfg.UpdateManifestURL, nil, err))
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	m, err := updater.Fetch(ctx, cfg.UpdateManifestURL, trust)
+	a.tell(updateMessage(Version, cfg.UpdateManifestURL, m, err))
+}
+
+// about shows what this installation is.
+func (a *app) about() {
+	server := a.server()
+	if server == "" {
+		server = "(not enrolled)"
+	}
+	msg := "OpenIDX agent " + Version + "\n\nServer: " + server
+	if cfg, err := agent.LoadConfig(a.configDir); err == nil && cfg != nil {
+		if cfg.AgentID != "" {
+			msg += "\nAgent ID: " + cfg.AgentID
+		}
+		if cfg.DeviceID != "" {
+			msg += "\nDevice ID: " + cfg.DeviceID
+		}
+	}
+	msg += "\nConfiguration: " + a.configDir
+	a.tell(msg)
 }
 
 func (a *app) statusTicker() {
