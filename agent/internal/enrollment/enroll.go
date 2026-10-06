@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/agent/internal/agent"
+	"github.com/openidx/openidx/agent/internal/devicekey"
 	"github.com/openidx/openidx/agent/internal/transport"
 )
 
@@ -30,8 +31,19 @@ func Enroll(logger *zap.Logger, serverURL, token, configDir string) (*EnrollResu
 // config so the service's self-updater is wired at enroll time (e.g. the MSI's
 // UPDATE_MANIFEST_URL property). Empty manifestURL keeps auto-update disabled.
 func EnrollWithManifest(logger *zap.Logger, serverURL, token, configDir, manifestURL string) (*EnrollResult, error) {
-	// Step 1: HTTP enrollment with server
+	// Step 1: HTTP enrollment with server, naming the device key so the
+	// server binds the device to it from the start. Without a key (a process
+	// that may not make a machine key, a machine with no key store) the
+	// enrolment goes ahead and the service offers the key later.
 	client := transport.NewClient(serverURL, "", "")
+	if key, keyErr := openEnrollDeviceKey(configDir); keyErr == nil {
+		if pub, encErr := devicekey.PublicKeyBase64(key); encErr == nil {
+			client.SetEnrollmentDeviceKey(pub, key.Kind())
+		}
+		key.Close()
+	} else {
+		logger.Warn("enrolling without a device key; the service will offer one later", zap.Error(keyErr))
+	}
 	resp, err := client.Enroll(token)
 	if err != nil {
 		return nil, fmt.Errorf("server enrollment failed: %w", err)
@@ -54,6 +66,7 @@ func EnrollWithManifest(logger *zap.Logger, serverURL, token, configDir, manifes
 		// making this phone a push approver in one step. Cleared once redeemed.
 		PushEnrollToken: resp.PushEnrollToken,
 		PushEnrollPath:  resp.PushEnrollPath,
+		DeviceKeyBound:  resp.DeviceKeyBound,
 	}
 
 	// If the server advertises a Ziti overlay service and an identity file is
@@ -159,3 +172,7 @@ func enrollZitiIdentity(jwtStr, identityPath string) error {
 	}
 	return nil
 }
+
+// openEnrollDeviceKey finds or makes the device key at enrolment. A variable
+// so tests choose where keys come from.
+var openEnrollDeviceKey = devicekey.OpenOrCreate

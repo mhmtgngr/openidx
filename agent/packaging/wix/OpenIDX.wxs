@@ -90,8 +90,27 @@
                        Key="Software\Microsoft\Windows\CurrentVersion\Run"
                        Name="OpenIDXTray"
                        Type="string"
-                       Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; tray"
+                       Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; tray --autostart"
                        KeyPath="yes" />
+      </Component>
+
+      <!-- The openidx: URL scheme, so a scanned QR or a clicked enrolment link
+           (openidx://enroll?code=...&amp;server=...) starts the agent, which asks
+           for administrator approval and enrols the device. packaging/DEEPLINK.md
+           describes the flow; the agent's main.go rewrites the link into the
+           enroll command with its code and server flags. (No double hyphen may
+           appear inside an XML comment, hence the wording.) -->
+      <Component Id="UrlSchemeOpenidx">
+        <RegistryKey Root="HKCR" Key="openidx">
+          <RegistryValue Type="string" Value="URL:OpenIDX Protocol" KeyPath="yes" />
+          <RegistryValue Name="URL Protocol" Type="string" Value="" />
+          <RegistryKey Key="DefaultIcon">
+            <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot;,0" />
+          </RegistryKey>
+          <RegistryKey Key="shell\open\command">
+            <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; &quot;%1&quot;" />
+          </RegistryKey>
+        </RegistryKey>
       </Component>
 
       <!-- Start-Menu shortcut to (re)launch the tray, carrying the app icon. -->

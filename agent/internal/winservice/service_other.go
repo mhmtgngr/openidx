@@ -22,3 +22,6 @@ func IsWindowsService() (bool, error)      { return false, nil }
 func Run(_ *zap.Logger, _, _ string) error { return ErrWindowsOnly }
 func Install(_ string, _ string) error     { return ErrWindowsOnly }
 func Uninstall() error                     { return ErrWindowsOnly }
+
+// StartIfInstalled is a no-op off Windows: there is no service to start.
+func StartIfInstalled() (bool, error) { return false, nil }

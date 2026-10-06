@@ -9,36 +9,25 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 
 	"github.com/openidx/openidx/agent/internal/secretfile"
 )
-
-// endpointFileName holds the chosen loopback port + bearer token so a local GUI
-// (same user) can discover how to reach the control server. Written 0600.
-const endpointFileName = "control-endpoint.json"
 
 type endpointInfo struct {
 	Addr  string `json:"addr"`
 	Token string `json:"token"`
 }
 
-// endpointPath returns %ProgramData%\OpenIDX\agent\control-endpoint.json (or a
-// LocalAppData fallback), matching where the agent stores its config.
+// endpointPath returns %LOCALAPPDATA%\OpenIDX\agent\control-endpoint.json,
+// falling back to %ProgramData% when LOCALAPPDATA is unset; endpointPathFor
+// gives the reasons.
 func endpointPath() string {
-	base := os.Getenv("ProgramData")
-	if base == "" {
-		base = os.Getenv("LOCALAPPDATA")
-	}
-	if base == "" {
-		base = os.TempDir()
-	}
-	return filepath.Join(base, "OpenIDX", "agent", endpointFileName)
+	return endpointPathFor(os.Getenv("LOCALAPPDATA"), os.Getenv("ProgramData"), os.TempDir())
 }
 
 // newListener binds 127.0.0.1:0 and mints a random bearer token, writing the
-// chosen address + token to a 0600 endpoint file the GUI reads. Windows lacks
-// filesystem-permissioned UDS in this toolchain, so the token guards the
+// chosen address + token to an owner-only endpoint file the GUI reads. Windows
+// lacks filesystem-permissioned UDS in this toolchain, so the token guards the
 // loopback socket.
 func newListener() (ln net.Listener, addr, token string, err error) {
 	ln, err = net.Listen("tcp", "127.0.0.1:0")
@@ -57,11 +46,14 @@ func newListener() (ln net.Listener, addr, token string, err error) {
 	// This file hands whoever reads it a bearer that fully drives the engine —
 	// sign-in, enrolment, PAM launch, Ziti dial. It was written 0600, which
 	// Windows ignores, so it inherited %ProgramData%'s ACL and every local
-	// account could read it. secretfile applies DPAPI (per-user) plus an
-	// explicit file ACL; see agent/internal/secretfile.
+	// account could read it. It was then sealed with per-user DPAPI, which the
+	// Flutter desktop shell cannot open, so the GUI never found the engine. It
+	// is now plain JSON in a file only SYSTEM, Administrators and this user can
+	// open; secretfile.WritePrivatePlain explains why that is the right
+	// protection for a bearer that dies with this process.
 	path := endpointPath()
 	data, _ := json.Marshal(endpointInfo{Addr: addr, Token: token})
-	if err := secretfile.Write(path, data); err != nil {
+	if err := secretfile.WritePrivatePlain(path, data); err != nil {
 		_ = ln.Close()
 		return nil, "", "", fmt.Errorf("writing endpoint file: %w", err)
 	}

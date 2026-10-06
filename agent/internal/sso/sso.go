@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -41,6 +42,45 @@ type Tokens struct {
 	RefreshToken string `json:"refresh_token,omitempty"`
 	IDToken      string `json:"id_token,omitempty"`
 	ExpiresAt    int64  `json:"expires_at"` // unix seconds
+	// ClientID is the public client the session was issued to
+	// (DesktopClientID or MobileClientID). A refresh or a revocation must
+	// present the same client_id: the server refuses a refresh under another
+	// client, and revokes nothing under another client while still answering
+	// 200. Empty on a session stored by a build before this field existed;
+	// see ClientOr.
+	ClientID string `json:"client_id,omitempty"`
+}
+
+// ClientOr is the client_id to present for this session: the one it was
+// issued to, or fallback for a session stored before that was recorded. The
+// tray's sessions are desktop ones and the mobile app's are mobile ones, so
+// each caller knows its own fallback.
+func (t *Tokens) ClientOr(fallback string) string {
+	if t != nil && t.ClientID != "" {
+		return t.ClientID
+	}
+	return fallback
+}
+
+// TokenError is a non-200 answer from /oauth/token.
+type TokenError struct {
+	Status int
+	Body   string
+}
+
+func (e *TokenError) Error() string {
+	if e.Body != "" {
+		return fmt.Sprintf("token endpoint returned %d: %s", e.Status, e.Body)
+	}
+	return fmt.Sprintf("token endpoint returned %d", e.Status)
+}
+
+// Rejected reports whether the server refused the grant itself (invalid_grant
+// and its relatives come back as 400 or 401), as opposed to failing to answer.
+// A rejected refresh token is dead and the session with it; a 5xx or a network
+// error says nothing about the token and is worth retrying.
+func (e *TokenError) Rejected() bool {
+	return e.Status == http.StatusBadRequest || e.Status == http.StatusUnauthorized
 }
 
 type tokenResponse struct {
@@ -86,6 +126,21 @@ func (p *PendingLogin) BindDevice(agentID string) { p.agentID = agentID }
 // builds the authorize URL — but does NOT open a browser or block. The caller
 // opens AuthURL() (or hands it to a mobile browser) and then calls Wait.
 func StartLogin(serverURL string) (*PendingLogin, error) {
+	return StartLoginWith(serverURL, LoginOptions{})
+}
+
+// LoginOptions adjusts an interactive sign-in.
+type LoginOptions struct {
+	// Fresh asks the server to authenticate the person again now, second
+	// factor included, even when the browser already holds a session
+	// (prompt=login and max_age=0, OIDC Core §3.1.2.1). A privileged launch
+	// refused with step_up_required is cleared by a session whose factor was
+	// just verified, and that is a new sign-in, not a reuse of the browser's.
+	Fresh bool
+}
+
+// StartLoginWith is StartLogin with options.
+func StartLoginWith(serverURL string, opts LoginOptions) (*PendingLogin, error) {
 	serverURL = strings.TrimRight(serverURL, "/")
 
 	pk, err := newPKCE()
@@ -137,15 +192,7 @@ func StartLogin(serverURL string) (*PendingLogin, error) {
 	// which answers with a redirect_url carrying the code to our loopback.
 	// v1 is kept because it is the endpoint this client has always used and
 	// the one whose parameter handling matches what is sent below.
-	authURL := serverURL + "/oauth/authorize?" + url.Values{
-		"response_type":         {"code"},
-		"client_id":             {DesktopClientID},
-		"redirect_uri":          {RedirectURI},
-		"scope":                 {strings.Join(DefaultScopes, " ")},
-		"state":                 {state},
-		"code_challenge":        {pk.challenge},
-		"code_challenge_method": {"S256"},
-	}.Encode()
+	authURL := desktopAuthorizeURL(serverURL, state, pk.challenge, opts)
 
 	return &PendingLogin{
 		authURL:   authURL,
@@ -185,6 +232,24 @@ func (p *PendingLogin) Wait(ctx context.Context) (*Tokens, error) {
 	}
 }
 
+// desktopAuthorizeURL builds the authorize request for the loopback flow.
+func desktopAuthorizeURL(serverURL, state, challenge string, opts LoginOptions) string {
+	q := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {DesktopClientID},
+		"redirect_uri":          {RedirectURI},
+		"scope":                 {strings.Join(DefaultScopes, " ")},
+		"state":                 {state},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+	}
+	if opts.Fresh {
+		q.Set("prompt", "login")
+		q.Set("max_age", "0")
+	}
+	return strings.TrimRight(serverURL, "/") + "/oauth/authorize?" + q.Encode()
+}
+
 // withDevice adds the enrolled device id to a token request when there is one.
 // The server checks the claim against its own record of who enrolled the agent
 // before binding anything to it (internal/oauth/device_binding.go); sending it
@@ -211,7 +276,12 @@ func Login(ctx context.Context, serverURL string) (*Tokens, error) {
 // agent this session belongs to, which the server binds the refresh-token
 // family to so revoking the device revokes the session (v185).
 func LoginWithDevice(ctx context.Context, serverURL, agentID string) (*Tokens, error) {
-	p, err := StartLogin(serverURL)
+	return LoginWithDeviceOptions(ctx, serverURL, agentID, LoginOptions{})
+}
+
+// LoginWithDeviceOptions is LoginWithDevice with options.
+func LoginWithDeviceOptions(ctx context.Context, serverURL, agentID string, opts LoginOptions) (*Tokens, error) {
+	p, err := StartLoginWith(serverURL, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +486,8 @@ func exchange(ctx context.Context, serverURL string, form url.Values) (*Tokens, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token endpoint returned %d", resp.StatusCode)
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, &TokenError{Status: resp.StatusCode, Body: strings.TrimSpace(string(snippet))}
 	}
 	var tr tokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
@@ -431,5 +502,6 @@ func exchange(ctx context.Context, serverURL string, form url.Values) (*Tokens, 
 		RefreshToken: tr.RefreshToken,
 		IDToken:      tr.IDToken,
 		ExpiresAt:    exp,
+		ClientID:     form.Get("client_id"),
 	}, nil
 }

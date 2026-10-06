@@ -296,11 +296,12 @@ func (e *Engine) Logout() error {
 	if tok, err := authstore.Load(e.configDir); err == nil && tok != nil && tok.RefreshToken != "" && e.serverURL != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		// The client id is what the token endpoint authenticates the CALLER as;
-		// handleRevoke identifies the token by its own value, so this names the
-		// public client this engine uses (as AccessToken's refresh does) rather
-		// than deciding which client minted the session.
-		if rerr := sso.Revoke(ctx, e.serverURL, sso.MobileClientID, tok.RefreshToken); rerr != nil {
+		// The revocation must name the client the session was issued to: the
+		// server revokes only a token whose client_id matches, and answers 200
+		// either way. A desktop login (openidx-desktop) revoked as the mobile
+		// client used to be a silent no-op. A session stored before the client
+		// was recorded is a mobile one, the only kind this engine issued then.
+		if rerr := sso.Revoke(ctx, e.serverURL, tok.ClientOr(sso.MobileClientID), tok.RefreshToken); rerr != nil {
 			e.logger.Warn("sign-out: server-side revocation failed; the refresh token stays valid until it expires",
 				zap.Error(rerr))
 		}
@@ -347,17 +348,31 @@ func (e *Engine) SetServer(url string) error {
 // currently-loaded serverURL if present, otherwise require it be pre-set via
 // config (Phase 0 keeps enrollment server-selection in the config dir).
 func (e *Engine) Enroll(code string) (string, error) {
+	return e.enrollAt(code, "")
+}
+
+// enrollAt is Enroll against server when one is given, and against the
+// configured server otherwise. The desktop GUI names the server in its POST
+// /enroll, because a fresh install has no agent.json and so no server of its
+// own. The given server replaces the engine's only once enrollment succeeds, so
+// a mistyped URL cannot redirect a later sign-in.
+func (e *Engine) enrollAt(code, server string) (string, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return "", fmt.Errorf("enrollment code is required")
 	}
-	if e.serverURL == "" {
+	target := e.serverURL
+	if server = strings.TrimRight(strings.TrimSpace(server), "/"); server != "" {
+		target = server
+	}
+	if target == "" {
 		return "", fmt.Errorf("no server configured for enrollment — call SetServer first (or use the enroll deep-link)")
 	}
-	agentID, deviceID, zitiIdentity, err := e.be.Enroll(e.logger, e.serverURL, code, e.configDir)
+	agentID, deviceID, zitiIdentity, err := e.be.Enroll(e.logger, target, code, e.configDir)
 	if err != nil {
 		return "", fmt.Errorf("enrollment failed: %w", err)
 	}
+	e.serverURL = target
 	// Refresh the cached serverURL from the freshly-written config.
 	if cfg, err := agent.LoadConfig(e.configDir); err == nil {
 		e.serverURL = strings.TrimRight(cfg.ServerURL, "/")
@@ -694,9 +709,10 @@ func (e *Engine) AccessToken() (string, error) {
 	if expired && tok.RefreshToken != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		// Mobile sessions were issued to the mobile PKCE client, so refresh must
-		// present the same client_id.
-		fresh, rerr := sso.RefreshWithClient(ctx, e.serverURL, tok.RefreshToken, sso.MobileClientID)
+		// The refresh must present the client_id the session was issued to;
+		// the server refuses a refresh under another client. A session stored
+		// before the client was recorded is a mobile one.
+		fresh, rerr := sso.RefreshWithClient(ctx, e.serverURL, tok.RefreshToken, tok.ClientOr(sso.MobileClientID))
 		if rerr == nil && fresh != nil && fresh.AccessToken != "" {
 			if fresh.RefreshToken == "" {
 				fresh.RefreshToken = tok.RefreshToken // server may omit an unchanged RT

@@ -283,7 +283,7 @@ func TestDownloadVerifiedRefusesASubstitutedArtifact(t *testing.T) {
 	swapped := []byte("something else entirely")
 	srv := serveManifest(t, swapped, func(string) string { return "" })
 
-	path, err := downloadVerified(context.Background(), srv.URL+"/artifact.bin", digestOf(real))
+	path, err := downloadVerified(context.Background(), t.TempDir(), srv.URL+"/artifact.bin", digestOf(real))
 	if err == nil {
 		os.Remove(path)
 		t.Fatal("downloadVerified returned a file whose digest does not match the manifest")
@@ -301,7 +301,7 @@ func TestDownloadVerifiedRefusesWithoutADigest(t *testing.T) {
 	srv := serveManifest(t, artifact, func(string) string { return "" })
 
 	for _, sha := range []string{"", "   ", "TODO"} {
-		path, err := downloadVerified(context.Background(), srv.URL+"/artifact.bin", sha)
+		path, err := downloadVerified(context.Background(), t.TempDir(), srv.URL+"/artifact.bin", sha)
 		if err == nil {
 			os.Remove(path)
 			t.Fatalf("downloadVerified(sha=%q) returned a file it never checked", sha)
@@ -313,7 +313,7 @@ func TestDownloadVerifiedAcceptsTheRealArtifact(t *testing.T) {
 	artifact := []byte("the installer the operator published")
 	srv := serveManifest(t, artifact, func(string) string { return "" })
 
-	path, err := downloadVerified(context.Background(), srv.URL+"/artifact.bin", digestOf(artifact))
+	path, err := downloadVerified(context.Background(), t.TempDir(), srv.URL+"/artifact.bin", digestOf(artifact))
 	if err != nil {
 		t.Fatalf("downloadVerified: %v", err)
 	}

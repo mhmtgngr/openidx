@@ -17,8 +17,10 @@ import (
 
 	"github.com/openidx/openidx/agent/internal/agent"
 	"github.com/openidx/openidx/agent/internal/authstore"
+	"github.com/openidx/openidx/agent/internal/checks"
 	"github.com/openidx/openidx/agent/internal/control"
 	"github.com/openidx/openidx/agent/internal/enrollment"
+	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/remotesupport"
 	"github.com/openidx/openidx/agent/internal/sso"
 	"github.com/openidx/openidx/agent/internal/tray"
@@ -63,17 +65,53 @@ var (
 	logger    *zap.Logger
 )
 
+// fromDeepLink is set when this process was started by the OS for an
+// openidx:// link. There is no console to read then, so the outcome is shown
+// in a message box instead of printed.
+var fromDeepLink bool
+
 func main() {
+	wireBuildVersion()
 	// Deep-link entry: the OS invokes `openidx-agent openidx://enroll?code=..&server=..`
 	// (from a scanned QR / clicked link). Rewrite it into the enroll command.
+	// On Windows the link arrives in the browser's unelevated process, and
+	// enrolment writes a file only SYSTEM and administrators may write, so the
+	// link is first handed to an elevated copy of this program.
 	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "openidx://") {
 		if args, ok := deepLinkToArgs(os.Args[1]); ok {
+			fromDeepLink = true
+			if handedOff, err := elevateForDeepLink(os.Args[1]); handedOff {
+				if err != nil {
+					notifyDeepLink("OpenIDX could not get administrator approval, so this device was not enrolled.\n\n" + err.Error())
+					os.Exit(1)
+				}
+				return // the elevated copy enrols the device
+			}
 			os.Args = append([]string{os.Args[0]}, args...)
 		}
 	}
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+// wireBuildVersion hands the build's version to the agent_version posture
+// check. Every build stamps main.Version (the Makefile and the Windows
+// workflow pass -X main.Version=...), and none ever stamped
+// checks.AgentVersion, so the check reported "dev" from every release and
+// failed any min_version the server asked for. The check keeps its own
+// variable so a test can set it directly; this copies the one value into
+// the other, once, before any command runs.
+//
+// A leading "v" is dropped: the workflow derives the version from the git
+// tag ("v1.40.0"), while the check compares dotted numbers.
+func wireBuildVersion() {
+	if checks.AgentVersion != "dev" {
+		return // stamped directly by -X; the explicit value wins
+	}
+	if v := strings.TrimPrefix(strings.TrimSpace(Version), "v"); v != "" && v != "dev" {
+		checks.AgentVersion = v
 	}
 }
 
@@ -145,6 +183,9 @@ resulting credentials in the config directory for subsequent runs.`,
 
 		result, err := enrollment.EnrollWithManifest(logger, server, token, configDir, manifestURL)
 		if err != nil {
+			if fromDeepLink {
+				notifyDeepLink("Enrollment failed.\n\n" + err.Error())
+			}
 			return fmt.Errorf("enrollment failed: %w", err)
 		}
 
@@ -157,6 +198,18 @@ resulting credentials in the config directory for subsequent runs.`,
 		fmt.Printf("  Config:    %s\n", configDir)
 		if result.ZitiIdentity != "" {
 			fmt.Printf("  Ziti:      %s\n", result.ZitiIdentity)
+		}
+
+		// The service notices the enrolment on its own within half a minute;
+		// starting it now spares the wait. Not installed is not a failure.
+		if started, serr := winservice.StartIfInstalled(); serr != nil {
+			logger.Warn("the agent service could not be started; it will pick the enrolment up when it next runs", zap.Error(serr))
+		} else if started {
+			fmt.Printf("  Service:   started\n")
+		}
+		if fromDeepLink {
+			notifyDeepLink("This device is now enrolled with " + cfg.ServerURL + ".\n\n" +
+				"Sign in from the OpenIDX icon in the taskbar to see your connections.")
 		}
 
 		return nil
@@ -301,11 +354,22 @@ var trayCmd = &cobra.Command{
 	Use:   "tray",
 	Short: "Run the OpenIDX system-tray app (Windows)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		server := resolveServer(cmd)
-		if server == "" {
-			return fmt.Errorf("no server: pass --server or enroll first")
+		// The Run key starts the tray with --autostart at every sign-in; a
+		// person who turned "Start when I sign in" off in Settings gets a
+		// tray that exits here, quietly. A tray started by hand always runs.
+		autostart, _ := cmd.Flags().GetBool("autostart")
+		if !tray.ShouldRun(autostart) {
+			logger.Info("tray: autostart is off for this user; not starting")
+			return nil
 		}
-		return tray.Run(logger, configDir, server)
+		// The same "v"-less form the agent_version check reports.
+		tray.Version = strings.TrimPrefix(strings.TrimSpace(Version), "v")
+		// An unenrolled device has no server yet. The tray still runs: it says
+		// the device is not enrolled, and picks the server up from agent.json
+		// once an enrolment link or code has been used. The Run key passes no
+		// --server, so without this the tray never appeared on a fresh
+		// install until a reboot after enrolment.
+		return tray.Run(logger, configDir, resolveServer(cmd))
 	},
 }
 
@@ -393,6 +457,42 @@ var capabilitiesCmd = &cobra.Command{
 	},
 }
 
+var pluginCmd = &cobra.Command{
+	Use:   "plugin",
+	Short: "Tools for publishing posture-check plugins",
+}
+
+// pluginDigestCmd prints what a plugin publisher signs. The agent never holds
+// the publisher's private key, so it does not sign; it only states the exact
+// bytes, and the publisher signs them with their own tooling (openssl, a
+// hardware token, a signing service) to produce plugin.sig.
+var pluginDigestCmd = &cobra.Command{
+	Use:   "digest",
+	Short: "Print the exact bytes a publisher signs to produce a plugin's plugin.sig",
+	Long: `Print the signing input for the plugin folder given by --dir: the manifest's
+name and version, the SHA-256 of manifest.json, and the executable's file name
+and SHA-256. Sign these bytes, unchanged, with RSA PKCS#1 v1.5 over SHA-256 and
+write the base64 result to plugin.sig in the same folder, for example:
+
+  openidx-agent plugin digest --dir ./hello > input.txt
+  openssl dgst -sha256 -sign key.pem input.txt | base64 -w0 > ./hello/plugin.sig
+
+Run it on the platform the plugin is for: the executable's file name is part of
+what is signed, and the names the agent looks for differ by platform.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dir, _ := cmd.Flags().GetString("dir")
+		input, err := plugin.SigningInput(dir)
+		if err != nil {
+			return err
+		}
+		// Written as raw bytes, with nothing added: a trailing newline or a
+		// re-encoding here would make every signature over it fail to verify.
+		_, err = cmd.OutOrStdout().Write(input)
+		return err
+	},
+}
+
 var serviceInstallCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install and start the OpenIDX agent service (LocalSystem, auto-start)",
@@ -441,8 +541,12 @@ func init() {
 
 	loginCmd.Flags().String("server", "", "OpenIDX server URL (defaults to the enrolled server)")
 	trayCmd.Flags().String("server", "", "OpenIDX server URL (defaults to the enrolled server)")
+	trayCmd.Flags().Bool("autostart", false, "started at sign-in by the Run key; honours the user's Start-when-I-sign-in preference")
 	updateCmd.Flags().String("manifest-url", "", "version manifest URL (defaults to config update_manifest_url)")
 	updateCmd.Flags().Bool("apply", false, "download and install the update if one is available")
+	pluginDigestCmd.Flags().String("dir", "", "the plugin folder (holding manifest.json and the executable)")
+	_ = pluginDigestCmd.MarkFlagRequired("dir")
+	pluginCmd.AddCommand(pluginDigestCmd)
 
 	rootCmd.AddCommand(enrollCmd)
 	rootCmd.AddCommand(runCmd)
@@ -453,4 +557,5 @@ func init() {
 	rootCmd.AddCommand(trayCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(capabilitiesCmd)
+	rootCmd.AddCommand(pluginCmd)
 }

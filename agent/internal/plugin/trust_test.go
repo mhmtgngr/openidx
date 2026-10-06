@@ -51,9 +51,12 @@ func writePlugin(t *testing.T, root, name string) string {
 	return dir
 }
 
+// discover waives the signature: these cases are about permissions, and a
+// refusal for being unsigned would pass every one of them for the wrong reason.
+// The signature cases are in signature_test.go.
 func discover(t *testing.T, root string) ([]*PluginCheck, error) {
 	t.Helper()
-	return NewLoader(root, zap.NewNop()).Discover()
+	return NewLoader(root, Policy{AllowUnsigned: true}, zap.NewNop()).Discover()
 }
 
 func TestDiscoverAcceptsACorrectlyInstalledPlugin(t *testing.T) {
@@ -137,6 +140,29 @@ func TestDiscoverSkipsAWorldWritableExecutable(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("a world-writable executable was registered as a check: %d plugin(s)", len(got))
+	}
+}
+
+// TestDiscoverSkipsAWorldWritableManifest. The manifest chooses the check
+// types and the timeout, so it is checked like the executable. A signature
+// would catch a changed manifest only when signatures are required; this check
+// holds under allow_unsigned_plugins too.
+func TestDiscoverSkipsAWorldWritableManifest(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatalf("chmod root: %v", err)
+	}
+	dir := writePlugin(t, root, "hello")
+	if err := os.Chmod(filepath.Join(dir, "manifest.json"), 0o666); err != nil {
+		t.Fatalf("chmod manifest: %v", err)
+	}
+
+	got, err := discover(t, root)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("a plugin with a world-writable manifest was registered: %d check(s)", len(got))
 	}
 }
 

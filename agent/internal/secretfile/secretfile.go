@@ -24,6 +24,12 @@
 // applying. On Linux and macOS: exactly what happened before, a 0600 file,
 // because there the mode is the control.
 //
+// control-endpoint.json has since left that arrangement. It is written by
+// WritePrivatePlain, in the clear under the same DACL, in the user's own
+// %LOCALAPPDATA%. Its reader is the Flutter desktop shell, which has no DPAPI
+// binding, so the sealed file was one the GUI could never open.
+// WritePrivatePlain explains why the DACL alone is the right protection there.
+//
 // ON ANDROID AND iOS THE MODE IS NOT THE CONTROL EITHER, and it took a second
 // look to see it. This package builds for both — the engine is bound with
 // gomobile into the companion app — and 0600 inside an app sandbox is not
@@ -55,11 +61,11 @@
 // with it; register none and the platform default above is what applies, which
 // is the right behaviour on a desktop where no such keystore exists.
 //
-// The two files Write guards belong to the interactive user: the tray, the CLI
-// and `openidx-agent serve` all run in that session (the Windows SERVICE runs
-// posture, enrolment and self-update, and talks to the tray over a named pipe —
-// it never reads these two). That is what makes per-user DPAPI the right scope
-// rather than machine scope.
+// user-tokens.json and control-endpoint.json belong to the interactive user:
+// the tray, the CLI and `openidx-agent serve` all run in that session (the
+// Windows SERVICE runs posture, enrolment and self-update, and talks to the tray
+// over a named pipe — it never reads these two). That is what makes a per-user
+// scope right for both, rather than machine scope.
 //
 // agent.json is the one file more than one local identity must read: both the
 // SYSTEM service and the user's tray load it, so a per-user DPAPI blob would
@@ -105,6 +111,46 @@ func Write(path string, data []byte) error { return write(path, data, false) }
 // per-user Windows layer, which would lock out whichever of the two did not
 // write the file.
 func WriteShared(path string, data []byte) error { return write(path, data, true) }
+
+// WritePrivatePlain stores data at path unencrypted, in a file that only its
+// owner can open: on Windows a protected DACL naming SYSTEM, Administrators and
+// the writing user (the list harden applies), elsewhere mode 0600. It never
+// seals, not even with a registered keystore, because the reader is another
+// program that holds no key.
+//
+// It exists for control-endpoint.json, which the Flutter desktop shell must
+// parse. That file's bearer lives only as long as the engine process that minted
+// it. The threat to it is another account on the same machine, and the DACL
+// stops that account from opening the file. Per-user DPAPI would add nothing:
+// any process running as the same user can call CryptUnprotectData just as the
+// engine does, and that user can already drive the engine through its GUI. What
+// DPAPI did add was a file the Dart client cannot read, since Dart has no DPAPI
+// binding.
+//
+// The file is born private rather than written and then restricted. Writing and
+// then hardening would leave the plaintext under the directory's inherited ACL
+// for a moment, and on Windows a handle opened in that moment keeps its access
+// after the DACL changes. For the same reason an existing file is removed and
+// the new one created exclusively: a file that is already there keeps the
+// permissions of whoever created it, and an exclusive create fails rather than
+// write into such a file.
+func WritePrivatePlain(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("creating secret directory: %w", err)
+	}
+	if err := Remove(path); err != nil {
+		return err
+	}
+	f, err := createPrivate(path)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
 
 func write(path string, data []byte, shared bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

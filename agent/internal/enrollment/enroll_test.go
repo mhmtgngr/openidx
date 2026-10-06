@@ -91,3 +91,27 @@ func TestEnroll_ServerError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "server enrollment failed")
 }
+
+// TestEnrollNamesTheDeviceKey: the enrolment carries the device's public key,
+// and the server's answer that it holds it is recorded in agent.json.
+func TestEnrollNamesTheDeviceKey(t *testing.T) {
+	var sent map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&sent)
+		_, _ = w.Write([]byte(`{"agent_id":"agent-k","device_id":"device-k","auth_token":"tok","device_key_bound":true}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	res, err := Enroll(zap.NewNop(), server.URL, "enroll-token", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dk, ok := sent["device_key"].(map[string]interface{})
+	if !ok || dk["public_key"] == "" || dk["public_key"] == nil {
+		t.Fatalf("the enrolment did not name the device key: %#v", sent["device_key"])
+	}
+	if !res.AgentConfig.DeviceKeyBound {
+		t.Fatal("the server said it holds the key; agent.json must record it")
+	}
+}

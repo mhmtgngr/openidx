@@ -362,6 +362,59 @@ func TestVerifyRefusesAPublisherOutsideItsValidityWindow(t *testing.T) {
 	}
 }
 
+// TestVerifySignatureAppliesTheManifestRulesToOtherInputs. VerifySignature is
+// what the plugin loader uses, so that a plugin is held to the same publisher
+// and the same rules as an update. Each refusal below is one Verify already
+// makes for a manifest; this proves the shared path makes it too.
+func TestVerifySignatureAppliesTheManifestRulesToOtherInputs(t *testing.T) {
+	pub, other := publisher(t), impostor(t)
+	input := []byte("openidx-test-input/v1\nfield=value\n")
+	signRaw := func(p *testPublisher, msg []byte) string {
+		sum := sha256.Sum256(msg)
+		sig, err := rsa.SignPKCS1v15(rand.Reader, p.key, crypto.SHA256, sum[:])
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		return base64.StdEncoding.EncodeToString(sig)
+	}
+	good := signRaw(pub, input)
+
+	if err := pub.trust().VerifySignature(input, good); err != nil {
+		t.Fatalf("VerifySignature rejected the trusted publisher's own signature: %v", err)
+	}
+	// A trailing newline is what `base64` without -w0, or an editor, leaves in a
+	// signature file. Verify trims it from a manifest, so this does too.
+	if err := pub.trust().VerifySignature(input, good+"\n"); err != nil {
+		t.Errorf("VerifySignature rejected a signature followed by a newline: %v", err)
+	}
+
+	lapsed := newTestPublisher(t, "Lapsed Publisher", time.Now().Add(-48*time.Hour), time.Now().Add(-time.Hour))
+	for _, tc := range []struct {
+		name  string
+		trust Trust
+		input []byte
+		sig   string
+		want  string
+	}{
+		{"no signature", pub.trust(), input, "", "no signature"},
+		{"not base64", pub.trust(), input, "not base64 !!", "base64"},
+		{"the input changed after signing", pub.trust(), []byte("openidx-test-input/v1\nfield=other\n"), good, "not signed by"},
+		{"another publisher's valid signature", pub.trust(), input, signRaw(other, input), "not signed by"},
+		{"a publisher outside its validity window", lapsed.trust(), input, signRaw(lapsed, input), "validity window"},
+		{"an empty Trust", Trust{}, input, good, "no trusted publisher"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.trust.VerifySignature(tc.input, tc.sig)
+			if err == nil {
+				t.Fatalf("VerifySignature accepted %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not say %q: %v", tc.want, err)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Where the anchor comes from.
 // ---------------------------------------------------------------------------

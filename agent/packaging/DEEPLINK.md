@@ -17,20 +17,18 @@ Shipped automatically by the `.deb`/`.rpm` (see `nfpm.yaml`): the package instal
 `postinstall.sh` runs `xdg-mime default` + `update-desktop-database`.
 
 ## Windows (MSI / WiX)
-Add a URL-protocol registry key under `HKCR\openidx` in `packaging/wix/OpenIDX.wxs`:
+The MSI registers the scheme (component `UrlSchemeOpenidx` in
+`packaging/wix/OpenIDX.wxs`): `HKCR\openidx` with `URL Protocol`, and
+`shell\open\command` = `"<install dir>\openidx-agent.exe" "%1"`.
 
-```xml
-<Component Id="UrlSchemeOpenidx" Guid="*">
-  <RegistryKey Root="HKCR" Key="openidx">
-    <RegistryValue Type="string" Value="URL:OpenIDX Protocol" />
-    <RegistryValue Name="URL Protocol" Type="string" Value="" />
-    <RegistryKey Key="shell\open\command">
-      <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; &quot;%1&quot;" />
-    </RegistryKey>
-  </RegistryKey>
-</Component>
-```
-Reference the component from the product feature. (Built in CI on the Windows runner.)
+The browser opens the link in the signed-in user's own process. Enrolment
+writes `%ProgramData%\OpenIDX\agent\agent.json`, which only SYSTEM and
+administrators may write, so the agent re-launches itself elevated (one UAC
+prompt), enrols, starts the `OpenIDXAgent` service if it is installed and
+stopped, and shows the outcome in a message box. The tray may already be
+running unenrolled; it picks the server up from `agent.json` within its next
+status tick, and the service, which waits for an enrolment rather than
+stopping, starts the posture loop within half a minute on its own.
 
 ## macOS (.pkg app bundle)
 Add to the app bundle's `Info.plist`:

@@ -29,13 +29,22 @@ package plugin
 // already control this process is not a new way to control it.
 //
 // WHAT IS CHECKED, and it is deliberately not the whole ancestry: the plugin
-// root, the individual plugin's directory, and the executable. Those are the
-// three places a swap actually happens. Walking to the filesystem root would
-// catch a world-writable /opt but would also refuse a great many legitimate
-// layouts for a threat that is already game over, and a control that is
-// switched off because it is too noisy protects nothing.
+// root, the individual plugin's directory, its manifest.json and the
+// executable. Those are the places a swap actually happens; the manifest is
+// among them because it chooses the check types and the timeout the executable
+// runs under. Walking to the filesystem root would catch a world-writable /opt
+// but would also refuse a great many legitimate layouts for a threat that is
+// already game over, and a control that is switched off because it is too
+// noisy protects nothing.
 
 // requireTrustedPath reports why path must not be executed from, or nil when it
 // is safe. Implemented per platform: the mode bits are the control on Unix and
 // mean nothing on Windows.
 func requireTrustedPath(path string) error { return checkTrustedPath(path) }
+
+// CheckTrustedPath is requireTrustedPath for a file this process does not
+// execute but obeys: agent.json names the plugin directory, the update
+// manifest and the update publisher, so an account that can write it chooses
+// what the SYSTEM service runs next. The question is the same one, "who could
+// have replaced this", and so is the answer.
+func CheckTrustedPath(path string) error { return checkTrustedPath(path) }

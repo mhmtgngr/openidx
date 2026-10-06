@@ -8,6 +8,8 @@ package tray
 
 import (
 	"context"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/desktoppam"
 	"github.com/openidx/openidx/agent/internal/ipc"
 	"github.com/openidx/openidx/agent/internal/sso"
+	"github.com/openidx/openidx/agent/internal/updater"
 )
 
 const maxConnSlots = 25
@@ -27,26 +30,60 @@ const maxConnSlots = 25
 type app struct {
 	logger    *zap.Logger
 	configDir string
-	serverURL string
+	serverURL string // guarded by srvMu: empty until the device is enrolled
+	srvMu     sync.RWMutex
+	consent   *consentGate
 
-	mBanner   *systray.MenuItem
-	mStatus   *systray.MenuItem
-	mSignIn   *systray.MenuItem
-	mSignOut  *systray.MenuItem
-	mConnRoot *systray.MenuItem
+	mBanner    *systray.MenuItem
+	mStatus    *systray.MenuItem
+	mSignIn    *systray.MenuItem
+	mSignOut   *systray.MenuItem
+	mConnRoot  *systray.MenuItem
+	mHello     *systray.MenuItem
+	mAutostart *systray.MenuItem
+	mHealth    *systray.MenuItem
 
 	mu       sync.Mutex
 	tokens   *sso.Tokens
 	connSlot []*systray.MenuItem
 	slotID   []string     // slot index -> entry id
 	rsAgent  *agent.Agent // remote-support agent running in this user session
+
+	healthSlot  []*systray.MenuItem
+	healthIssue []ipc.PostureIssue // slot index -> issue shown there
+	lastStatus  *ipc.Status        // the service's latest answer, for the launch gate
 }
 
 // Run starts the tray UI and blocks until the user quits.
 func Run(logger *zap.Logger, configDir, serverURL string) error {
-	a := &app{logger: logger, configDir: configDir, serverURL: serverURL}
+	a := &app{logger: logger, configDir: configDir, serverURL: serverURL, consent: newConsentGate(askConsent)}
 	systray.Run(a.onReady, func() {})
 	return nil
+}
+
+// server is the OpenIDX server this tray talks to, or "" while the device is
+// not enrolled and no --server was given.
+func (a *app) server() string {
+	a.srvMu.RLock()
+	defer a.srvMu.RUnlock()
+	return a.serverURL
+}
+
+// resolveServer fills the server in from agent.json once the device is
+// enrolled, for a tray that started before that (the Run key starts it at
+// sign-in with no --server, and a fresh install is not enrolled yet).
+func (a *app) resolveServer() {
+	if a.server() != "" {
+		return
+	}
+	cfg, err := agent.LoadConfig(a.configDir)
+	if err != nil || cfg == nil || cfg.ServerURL == "" {
+		return
+	}
+	a.srvMu.Lock()
+	a.serverURL = strings.TrimRight(cfg.ServerURL, "/")
+	a.srvMu.Unlock()
+	a.logger.Info("tray: device enrolled; server known", zap.String("server", a.server()))
 }
 
 func (a *app) onReady() {
@@ -68,6 +105,8 @@ func (a *app) onReady() {
 	a.mSignIn = systray.AddMenuItem("Sign in", "Sign in to OpenIDX")
 	a.mSignOut = systray.AddMenuItem("Sign out", "Sign out")
 	a.mSignOut.Hide()
+	a.mHello = systray.AddMenuItem("Set up Windows Hello sign-in",
+		"Register Windows Hello or a security key as your passkey; no phone needed")
 	systray.AddSeparator()
 	a.mConnRoot = systray.AddMenuItem("My Connections", "Launch a privileged session")
 	for i := 0; i < maxConnSlots; i++ {
@@ -78,11 +117,28 @@ func (a *app) onReady() {
 		go a.watchSlot(i, mi)
 	}
 	systray.AddSeparator()
+	a.mHealth = systray.AddMenuItem("Device health", "Security checks on this device")
+	for i := 0; i < maxHealthSlots; i++ {
+		mi := a.mHealth.AddSubMenuItem("", "")
+		mi.Hide()
+		a.healthSlot = append(a.healthSlot, mi)
+		a.healthIssue = append(a.healthIssue, ipc.PostureIssue{})
+		go a.watchHealthSlot(i, mi)
+	}
+	a.mHealth.Hide()
+	mSettings := systray.AddMenuItem("Settings", "")
+	a.mAutostart = mSettings.AddSubMenuItemCheckbox("Start when I sign in", "Start the OpenIDX tray at Windows sign-in", !AutostartDisabled())
+	mUpdates := mSettings.AddSubMenuItem("Check for updates", "Ask the update server whether a newer OpenIDX is published")
+	mAbout := mSettings.AddSubMenuItem("About OpenIDX", "Version, server and device")
+	go a.watchSettings(mUpdates, mAbout)
+	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Quit OpenIDX")
 
-	// Restore a saved session, if any.
+	// Restore a saved session, if any, and renew it at once if it is about to
+	// expire: the tray may have been closed for days.
 	if t, _ := authstore.Load(a.configDir); t != nil {
 		a.setSignedIn(t)
+		go a.keepFresh()
 	}
 	a.updateStatus()
 
@@ -95,15 +151,18 @@ func (a *app) onReady() {
 // only job is to service remote-support sessions (screen capture + input),
 // which must happen where there is an interactive desktop. The Windows service
 // (session 0) handles posture/enrollment but has DisableRemoteSupport set, so
-// this is the single place screen-share runs. Posture double-reporting is
-// harmless (idempotent), and this keeps the user from ever having to launch the
-// agent by hand: the tray auto-starts at login and remote support "just works".
+// this is the single place screen-share runs. The loop is RemoteSupportOnly:
+// it polls the config for a session and runs no posture check, because the
+// service already reports posture with administrator rights and a second,
+// unelevated report from here contradicted it. The tray auto-starts at login,
+// so remote support "just works" without the user launching anything by hand.
 func (a *app) runRemoteSupportAgent() {
 	// Never let a transient failure permanently stop remote-support handling —
 	// that would leave the operator with the "start a new session but it won't
 	// stream until I restart the client" symptom. Recover from panics and
 	// restart the agent loop with a short backoff if Run ever returns.
 	for {
+		delay := 3 * time.Second
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -112,10 +171,18 @@ func (a *app) runRemoteSupportAgent() {
 			}()
 			ag, err := agent.NewAgent(a.logger, a.configDir)
 			if err != nil {
+				if agent.IsNotEnrolled(err) {
+					// Expected on a fresh install; look again in a while.
+					delay = 30 * time.Second
+					return
+				}
 				a.logger.Warn("tray: could not start remote-support agent", zap.Error(err))
 				return
 			}
-			ag.RegisterBuiltinChecks()
+			ag.RemoteSupportOnly = true
+			// An attended session is allowed by the person at the device, in
+			// a prompt only this process (the one with a desktop) can show.
+			ag.ConsentDecider = a.consent.decide
 			a.mu.Lock()
 			a.rsAgent = ag
 			a.mu.Unlock()
@@ -123,34 +190,113 @@ func (a *app) runRemoteSupportAgent() {
 				a.logger.Warn("tray remote-support agent stopped; will restart", zap.Error(err))
 			}
 		}()
-		time.Sleep(3 * time.Second)
+		time.Sleep(delay)
 	}
 }
 
 // updateStatus composes the status line from the sign-in state and the
 // device-service status (best-effort, over the named pipe).
 func (a *app) updateStatus() {
+	a.resolveServer()
 	a.mu.Lock()
 	signedIn := a.tokens != nil
 	a.mu.Unlock()
 
-	signPart := "Not signed in"
-	if signedIn {
-		signPart = "Signed in"
+	st, err := ipc.Query()
+	if err != nil {
+		st = nil
 	}
-	devPart := "device: unknown"
-	if st, err := ipc.Query(); err == nil && st != nil {
-		if st.Enrolled {
-			devPart = "device: enrolled"
-			if st.ZitiEnrolled {
-				devPart += " · ziti"
-			}
-		} else {
-			devPart = "device: not enrolled"
+	if st != nil {
+		if st.Revoked {
+			// The server refuses this device: nothing it asks for will be
+			// granted, so offer no connections. The user's session is bound
+			// to the device and ends with it; the session refresh finds that
+			// out on its own.
+			a.hideConnections()
 		}
-		a.updateBanner(st.RemoteSupportActive, st.RemoteSupportControlled)
+		a.updateBanner(a.remoteSupportState(st))
 	}
-	a.mStatus.SetTitle(signPart + " · " + devPart)
+	a.updateHealth(st)
+	a.mStatus.SetTitle(composeStatus(signedIn, a.server() != "", st))
+}
+
+// updateHealth shows the failing checks under Device health and tells the
+// person once when the device enters a state that refuses launches.
+func (a *app) updateHealth(st *ipc.Status) {
+	a.mu.Lock()
+	prev := a.lastStatus
+	a.lastStatus = st
+	a.mu.Unlock()
+	if st == nil {
+		return
+	}
+	if st.ComplianceStatus == "" && len(st.Issues) == 0 {
+		a.mHealth.Hide()
+	} else {
+		a.mHealth.Show()
+		title := "Device health: all checks pass"
+		if n := postureNote(st); n != "" {
+			title = "Device health: " + n
+		}
+		a.mHealth.SetTitle(title)
+	}
+	a.mu.Lock()
+	for i, mi := range a.healthSlot {
+		if i < len(st.Issues) {
+			a.healthIssue[i] = st.Issues[i]
+			mi.SetTitle(issueTitle(st.Issues[i]))
+			mi.Show()
+		} else {
+			a.healthIssue[i] = ipc.PostureIssue{}
+			mi.Hide()
+		}
+	}
+	a.mu.Unlock()
+	if becameBlocked(prev, st) {
+		go a.tell(launchRefusal(st))
+	}
+}
+
+// watchHealthSlot explains an issue when it is clicked.
+func (a *app) watchHealthSlot(i int, mi *systray.MenuItem) {
+	for range mi.ClickedCh {
+		a.mu.Lock()
+		issue := a.healthIssue[i]
+		a.mu.Unlock()
+		if issue.Check != "" {
+			go a.tell(issueDetail(issue))
+		}
+	}
+}
+
+// remoteSupportState is whether an admin can see or control this device now.
+// The service's status carries its own agent's state, which is always off:
+// the service has remote support disabled. The session that streams runs in
+// this process, so its state is the one that matters; the service's is kept
+// as a second source in case that ever changes.
+func (a *app) remoteSupportState(st *ipc.Status) (active, controlled bool) {
+	active, controlled = st.RemoteSupportActive, st.RemoteSupportControlled
+	a.mu.Lock()
+	rs := a.rsAgent
+	a.mu.Unlock()
+	if rs != nil {
+		ra, rc := rs.RemoteSupportState()
+		active, controlled = active || ra, controlled || rc
+	}
+	return active, controlled
+}
+
+// hideConnections empties the My Connections menu, so a click can launch
+// nothing, without touching the sign-in state.
+func (a *app) hideConnections() {
+	a.mu.Lock()
+	for i := range a.slotID {
+		a.slotID[i] = ""
+	}
+	a.mu.Unlock()
+	for _, mi := range a.connSlot {
+		mi.Hide()
+	}
 }
 
 // updateBanner raises or clears the remote-support notice at the top of the
@@ -174,12 +320,127 @@ func (a *app) updateBanner(active, controlled bool) {
 	systray.SetTooltip(msg)
 }
 
+// watchSettings serves the Settings submenu.
+func (a *app) watchSettings(mUpdates, mAbout *systray.MenuItem) {
+	for {
+		select {
+		case <-a.mAutostart.ClickedCh:
+			enable := !a.mAutostart.Checked()
+			if err := setAutostart(enable); err != nil {
+				a.logger.Warn("tray: could not store the autostart preference", zap.Error(err))
+				a.tell("The preference could not be saved.\n\n" + err.Error())
+				continue
+			}
+			if enable {
+				a.mAutostart.Check()
+			} else {
+				a.mAutostart.Uncheck()
+			}
+		case <-mUpdates.ClickedCh:
+			go a.checkForUpdates()
+		case <-mAbout.ClickedCh:
+			go a.about()
+		}
+	}
+}
+
+// checkForUpdates asks the update server once and reports the verdict. It
+// only reads; the service installs updates, as SYSTEM, on its own schedule.
+func (a *app) checkForUpdates() {
+	cfg, err := agent.LoadConfig(a.configDir)
+	if err != nil || cfg == nil || cfg.UpdateManifestURL == "" {
+		a.tell(updateMessage(Version, "", nil, nil))
+		return
+	}
+	trust, err := updater.TrustForConfig(cfg.UpdateTrustedCertPEM)
+	if err != nil {
+		a.tell(updateMessage(Version, cfg.UpdateManifestURL, nil, err))
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	m, err := updater.Fetch(ctx, cfg.UpdateManifestURL, trust)
+	a.tell(updateMessage(Version, cfg.UpdateManifestURL, m, err))
+}
+
+// about shows what this installation is.
+func (a *app) about() {
+	server := a.server()
+	if server == "" {
+		server = "(not enrolled)"
+	}
+	msg := "OpenIDX agent " + Version + "\n\nServer: " + server
+	if cfg, err := agent.LoadConfig(a.configDir); err == nil && cfg != nil {
+		if cfg.AgentID != "" {
+			msg += "\nAgent ID: " + cfg.AgentID
+		}
+		if cfg.DeviceID != "" {
+			msg += "\nDevice ID: " + cfg.DeviceID
+		}
+	}
+	msg += "\nConfiguration: " + a.configDir
+	a.tell(msg)
+}
+
 func (a *app) statusTicker() {
 	t := time.NewTicker(20 * time.Second)
 	defer t.Stop()
 	for range t.C {
 		a.updateStatus()
+		a.keepFresh()
 	}
+}
+
+// keepFresh renews the session's access token before it expires, and signs
+// the user out when the server says the session is over. It runs on every
+// status tick and once at start-up, so a click on a connection always has a
+// live token behind it.
+func (a *app) keepFresh() {
+	a.mu.Lock()
+	t := a.tokens
+	a.mu.Unlock()
+	if t == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	fresh, outcome, err := refreshIfDue(ctx, a.server(), t, time.Now(), sso.RefreshWithClient)
+	switch outcome {
+	case sessionRefreshed:
+		if serr := authstore.Save(a.configDir, fresh); serr != nil {
+			a.logger.Warn("tray: could not store the refreshed session", zap.Error(serr))
+		}
+		a.mu.Lock()
+		a.tokens = fresh
+		a.mu.Unlock()
+		a.logger.Info("tray: session refreshed")
+	case sessionExpired:
+		a.logger.Warn("tray: the session is over; signing out", zap.Error(err))
+		a.sessionExpired()
+	default:
+		if err != nil {
+			a.logger.Warn("tray: token refresh failed; will retry", zap.Error(err))
+		}
+	}
+}
+
+// sessionExpired drops a session the server will no longer honour. There is
+// nothing to revoke: the refresh token was already refused, or there was
+// none. The menu says so, instead of "Signed in" over a dead token.
+func (a *app) sessionExpired() {
+	_ = authstore.Clear(a.configDir)
+	a.mu.Lock()
+	a.tokens = nil
+	for i := range a.slotID {
+		a.slotID[i] = ""
+	}
+	a.mu.Unlock()
+	for _, mi := range a.connSlot {
+		mi.Hide()
+	}
+	a.mSignIn.Show()
+	a.mSignOut.Hide()
+	a.mStatus.SetTitle("Session expired · sign in again")
 }
 
 func (a *app) loop(mQuit *systray.MenuItem) {
@@ -189,6 +450,8 @@ func (a *app) loop(mQuit *systray.MenuItem) {
 			go a.signIn()
 		case <-a.mSignOut.ClickedCh:
 			a.signOut()
+		case <-a.mHello.ClickedCh:
+			go a.setUpHello()
 		case <-mQuit.ClickedCh:
 			systray.Quit()
 			return
@@ -196,10 +459,87 @@ func (a *app) loop(mQuit *systray.MenuItem) {
 	}
 }
 
-func (a *app) signIn() {
+// offerWayThrough answers a refused connect with the step the person can
+// take: a fresh sign-in for a stale second factor, an access request for an
+// unapproved entry, or the server's reason when there is nothing to offer.
+func (a *app) offerWayThrough(entryID string, err error) {
+	switch refusalActionFor(err) {
+	case actionSignInFresh:
+		if !a.ask("This connection needs a recently verified second factor.\n\n" +
+			"Sign in again now? Your browser will ask for your second factor; " +
+			"the connection is then one click away.") {
+			return
+		}
+		a.signOut()
+		a.signInWith(sso.LoginOptions{Fresh: true})
+		if a.signedIn() {
+			a.tell("Signed in. Click the connection again to open it.")
+		}
+	case actionRequestAccess:
+		if !a.ask("This connection needs an approved access request.\n\n" +
+			"Send a request now? An approver is notified; you can connect once they approve.") {
+			return
+		}
+		a.requestAccess(entryID)
+	default:
+		a.tell(desktoppam.UserMessage(err))
+	}
+}
+
+// requestAccess files an access request for entryID from this device.
+func (a *app) requestAccess(entryID string) {
+	a.mu.Lock()
+	t := a.tokens
+	a.mu.Unlock()
+	if t == nil {
+		return
+	}
+	host, _ := os.Hostname()
+	reason := "Requested from the OpenIDX tray on " + host
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := desktoppam.RequestAccess(ctx, a.server(), t.AccessToken, entryID, reason); err != nil {
+		a.logger.Warn("tray: access request failed", zap.String("entry", entryID), zap.Error(err))
+		a.tell("The request could not be sent.\n\n" + desktoppam.UserMessage(err))
+		return
+	}
+	a.tell("Your request was sent. You can connect once it is approved.")
+}
+
+// signedIn reports whether the tray holds a session.
+func (a *app) signedIn() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.tokens != nil
+}
+
+// setUpHello opens the console's Security Keys page, where the person
+// registers Windows Hello or a security key as a passkey. The ceremony is
+// the browser's and Windows': the private key never leaves the device, and
+// the tray holds nothing from it. The browser signs the person in first if
+// it has no session of its own.
+func (a *app) setUpHello() {
+	url := securityKeysURL(a.server())
+	if url == "" {
+		a.tell(notEnrolledMessage)
+		return
+	}
+	if err := sso.OpenURL(url); err != nil {
+		a.logger.Warn("tray: could not open the Security Keys page", zap.Error(err))
+		a.tell("The browser could not be opened.\n\nOpen this page yourself:\n" + url)
+	}
+}
+
+func (a *app) signIn() { a.signInWith(sso.LoginOptions{}) }
+
+func (a *app) signInWith(opts sso.LoginOptions) {
+	if a.server() == "" {
+		a.tell(notEnrolledMessage)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
-	t, err := sso.LoginWithDevice(ctx, a.serverURL, a.enrolledAgentID())
+	t, err := sso.LoginWithDeviceOptions(ctx, a.server(), a.enrolledAgentID(), opts)
 	if err != nil {
 		a.logger.Warn("tray: sign-in failed", zap.Error(err))
 		a.mStatus.SetTitle("Sign-in failed")
@@ -226,9 +566,9 @@ func (a *app) signOut() {
 	a.mu.Lock()
 	tok := a.tokens
 	a.mu.Unlock()
-	if tok != nil && tok.RefreshToken != "" && a.serverURL != "" {
+	if tok != nil && tok.RefreshToken != "" && a.server() != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		if err := sso.Revoke(ctx, a.serverURL, sso.DesktopClientID, tok.RefreshToken); err != nil {
+		if err := sso.Revoke(ctx, a.server(), sso.DesktopClientID, tok.RefreshToken); err != nil {
 			a.logger.Warn("tray: sign-out revocation failed; the refresh token stays valid until it expires",
 				zap.Error(err))
 		}
@@ -267,7 +607,7 @@ func (a *app) refreshConnections() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	entries, err := desktoppam.ListEntries(ctx, a.serverURL, t.AccessToken)
+	entries, err := desktoppam.ListEntries(ctx, a.server(), t.AccessToken)
 	if err != nil {
 		a.logger.Warn("tray: list connections failed", zap.Error(err))
 		return
@@ -295,11 +635,22 @@ func (a *app) watchSlot(i int, mi *systray.MenuItem) {
 		if id == "" || t == nil {
 			continue
 		}
+		a.mu.Lock()
+		st := a.lastStatus
+		a.mu.Unlock()
+		if reason := launchRefusal(st); reason != "" {
+			go a.tell(reason)
+			continue
+		}
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			if _, err := desktoppam.Connect(ctx, a.serverURL, t.AccessToken, id); err != nil {
+			if _, err := desktoppam.Connect(ctx, a.server(), t.AccessToken, id); err != nil {
 				a.logger.Warn("tray: connect failed", zap.String("entry", id), zap.Error(err))
+				// The log is for the operator; the person who clicked needs
+				// to know why nothing opened and, where there is one, the
+				// way through.
+				a.offerWayThrough(id, err)
 			}
 		}()
 	}

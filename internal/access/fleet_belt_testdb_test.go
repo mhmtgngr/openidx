@@ -111,10 +111,10 @@ func TestFleetBelt_TenantRowsAreInvisibleAcrossTenantsAndThePublicDoorsStillOpen
 		require.NoError(t, err, "the public enrolment door is shut: the redeemer could not see the token without a tenant")
 		assert.Equal(t, orgB, got.OrgID)
 		// Verifying an agent's credential: same shape.
-		org, ok := verifyEnrolledAgent(context.Background(), db, "agent-a", "secret-agent-a")
+		org, _, ok := verifyEnrolledAgent(context.Background(), db, "agent-a", "secret-agent-a")
 		require.True(t, ok, "the agent could not authenticate without a tenant on the context")
 		assert.Equal(t, orgA, org)
-		_, ok = verifyEnrolledAgent(context.Background(), db, "agent-a", "wrong")
+		_, _, ok = verifyEnrolledAgent(context.Background(), db, "agent-a", "wrong")
 		assert.False(t, ok, "a wrong credential authenticated")
 	})
 
@@ -140,7 +140,7 @@ func TestFleetBelt_TenantRowsAreInvisibleAcrossTenantsAndThePublicDoorsStillOpen
 // are measured against the full chain in the fleet tenant isolation test.
 func registeredFleetBeltDDL(t *testing.T) string {
 	t.Helper()
-	var v43, v86, v93, v197 string
+	var v43, v86, v93, v197, v227 string
 	for _, m := range migrations.All() {
 		switch m.Version {
 		case 43:
@@ -151,12 +151,15 @@ func registeredFleetBeltDDL(t *testing.T) string {
 			v93 = m.UpSQL // device_fingerprint, whose key v197 makes per-tenant
 		case 197:
 			v197 = m.UpSQL
+		case 227:
+			v227 = m.UpSQL // the device key the report path reads
 		}
 	}
 	require.NotEmpty(t, v43)
 	require.NotEmpty(t, v86)
 	require.NotEmpty(t, v93)
 	require.NotEmpty(t, v197)
+	require.NotEmpty(t, v227)
 	var out []string
 	for _, table := range []string{"enrolled_agents", "agent_posture_results", "agent_enrollment_tokens"} {
 		re := regexp.MustCompile(`(?s)CREATE TABLE IF NOT EXISTS ` + table + ` \(.*?\);`)
@@ -164,7 +167,7 @@ func registeredFleetBeltDDL(t *testing.T) string {
 		require.NotEmpty(t, stmt, "v43 no longer creates %s", table)
 		out = append(out, stmt)
 	}
-	out = append(out, v86, v93)
+	out = append(out, v86, v93, v227)
 	for _, stmt := range strings.Split(v197, ";") {
 		s := strings.TrimSpace(stmt)
 		switch {

@@ -605,7 +605,15 @@ func (h *RemoteSupportHandler) HandleAgentConsent(c *gin.Context) {
 	}
 	agentID := c.GetHeader("X-Agent-ID")
 	authToken := c.GetHeader("X-Auth-Token")
-	if agentID != row.AgentID || authToken == "" || !h.verifyAgentAuth(c.Request.Context(), agentID, authToken) {
+	if agentID != row.AgentID || authToken == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "agent credentials invalid"})
+		return
+	}
+	if agentOrg, agentStatus, ok := h.verifyAgentAuth(c.Request.Context(), agentID, authToken); !ok {
+		if agentStatus == agentStatusRevoked {
+			refuseRevokedAgent(c, h.auditAgent, agentOrg, agentID)
+			return
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "agent credentials invalid"})
 		return
 	}
@@ -826,7 +834,11 @@ func (h *RemoteSupportHandler) HandleAgentWS(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "agent credentials invalid"})
 		return
 	}
-	if !h.verifyAgentAuth(c.Request.Context(), agentID, authToken) {
+	if agentOrg, agentStatus, ok := h.verifyAgentAuth(c.Request.Context(), agentID, authToken); !ok {
+		if agentStatus == agentStatusRevoked {
+			refuseRevokedAgent(c, h.auditAgent, agentOrg, agentID)
+			return
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "auth token mismatch"})
 		return
 	}
@@ -1133,10 +1145,11 @@ func (h *RemoteSupportHandler) evictSession(sessionID string) {
 // verifyAgentAuth checks the supplied auth token against the
 // enrolled_agents.auth_token_hash for the given agent_id. See agent_auth.go —
 // this was the second of three copies; the shared one also rejects an empty
-// agent id outright and bypasses RLS, which this copy did not.
-func (h *RemoteSupportHandler) verifyAgentAuth(ctx context.Context, agentID, token string) bool {
-	_, ok := verifyEnrolledAgent(ctx, h.db, agentID, token)
-	return ok
+// agent id outright and bypasses RLS, which this copy did not. It returns the
+// agent's tenant and status as well, so that a revoked agent can be answered
+// 403 rather than 401.
+func (h *RemoteSupportHandler) verifyAgentAuth(ctx context.Context, agentID, token string) (orgID, status string, ok bool) {
+	return verifyEnrolledAgent(ctx, h.db, agentID, token)
 }
 
 // activeSessionInfo carries the per-agent session pointer that

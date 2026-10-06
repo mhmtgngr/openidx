@@ -58,7 +58,10 @@ func TestAgentReportRequiresTheAgentsOwnCredential(t *testing.T) {
 			platform          VARCHAR(32),
 			compliance_status VARCHAR(20) NOT NULL DEFAULT 'unknown',
 			compliance_score  DOUBLE PRECISION DEFAULT 0.0,
-			last_report_at    TIMESTAMPTZ
+			last_report_at    TIMESTAMPTZ,
+			-- read by the report path to decide whether a signature is due (v227)
+			device_public_key TEXT,
+			device_key_kind   VARCHAR(16)
 		)`); err != nil {
 		t.Fatalf("create enrolled_agents: %v", err)
 	}

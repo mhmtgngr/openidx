@@ -15,16 +15,17 @@ func TestPluginCheck_ImplementsCheck(t *testing.T) {
 }
 
 func TestPluginCheck_Name(t *testing.T) {
-	pc := NewPluginCheck(&Manifest{Name: "test"}, "/bin/true", "my_check")
+	pc := NewPluginCheck(&Manifest{Name: "test"}, "/bin/true", "", "my_check")
 	assert.Equal(t, "my_check", pc.Name())
 }
 
 func TestPluginCheck_Run_Success(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "plugin.sh")
-	os.WriteFile(script, []byte("#!/bin/bash\necho '{\"status\":\"pass\",\"score\":0.95,\"message\":\"all good\"}'"), 0755)
+	body := []byte("#!/bin/bash\necho '{\"status\":\"pass\",\"score\":0.95,\"message\":\"all good\"}'")
+	os.WriteFile(script, body, 0755)
 
-	pc := NewPluginCheck(&Manifest{Name: "test", TimeoutSeconds: 5}, script, "test_check")
+	pc := NewPluginCheck(&Manifest{Name: "test", TimeoutSeconds: 5}, script, sha256Hex(body), "test_check")
 	result := pc.Run(context.Background(), nil)
 
 	assert.Equal(t, checks.StatusPass, result.Status)
@@ -32,8 +33,35 @@ func TestPluginCheck_Run_Success(t *testing.T) {
 	assert.Equal(t, "all good", result.Message)
 }
 
+// TestPluginCheck_Run_RefusesAnExecutableItWasNotGiven is the other side of
+// Run_Success: the same script is not run when the digest recorded at load
+// time is missing or belongs to other bytes.
+func TestPluginCheck_Run_RefusesAnExecutableItWasNotGiven(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "plugin.sh")
+	marker := filepath.Join(dir, "ran")
+	body := []byte("#!/bin/sh\ntouch " + marker + "\necho '{\"status\":\"pass\",\"score\":1}'\n")
+	if err := os.WriteFile(script, body, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct{ name, digest, want string }{
+		{"no digest recorded", "", "no digest was recorded"},
+		{"another file's digest", sha256Hex([]byte("something else")), "changed since it was loaded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pc := NewPluginCheck(&Manifest{Name: "test", TimeoutSeconds: 5}, script, tc.digest, "test_check")
+			result := pc.Run(context.Background(), nil)
+			assert.Equal(t, checks.StatusError, result.Status)
+			assert.Contains(t, result.Message, tc.want)
+			_, err := os.Stat(marker)
+			assert.True(t, os.IsNotExist(err), "the executable was run")
+		})
+	}
+}
+
 func TestPluginCheck_Run_PluginError(t *testing.T) {
-	pc := NewPluginCheck(&Manifest{Name: "test", TimeoutSeconds: 1}, "/nonexistent/plugin", "test_check")
+	pc := NewPluginCheck(&Manifest{Name: "test", TimeoutSeconds: 1}, "/nonexistent/plugin", sha256Hex(nil), "test_check")
 	result := pc.Run(context.Background(), nil)
 
 	assert.Equal(t, checks.StatusError, result.Status)

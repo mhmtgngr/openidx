@@ -28,6 +28,11 @@ import (
 // nowhere while CI reported success. scripts/check-windows-tests-run.sh now
 // fails the build if the list goes back to being typed.
 
+// The cases below are about ACLs, so they waive the signature with
+// Policy{AllowUnsigned: true}; a refusal for being unsigned would pass the
+// negative cases for the wrong reason. TestDiscoverRefusesAnUnsignedPluginByDefault
+// checks the default on this platform.
+
 // layout writes a minimal plugin under root and returns the plugin directory
 // and the executable, so a test can re-permission any of the three paths.
 func layout(t *testing.T, root string) (dir, exe string) {
@@ -63,7 +68,7 @@ func TestDiscoverLoadsAPluginFromAPrivilegedOnlyTree(t *testing.T) {
 		setProtectedDACL(t, p, privileged(t)...)
 	}
 
-	plugins, err := NewLoader(root, zap.NewNop()).Discover()
+	plugins, err := NewLoader(root, Policy{AllowUnsigned: true}, zap.NewNop()).Discover()
 	if err != nil {
 		t.Fatalf("Discover refused a tree writable only by SYSTEM, Administrators and this "+
 			"process: %v", err)
@@ -112,7 +117,7 @@ func TestDiscoverRefusesWhicheverOfTheThreePathsIsWritable(t *testing.T) {
 				setProtectedDACL(t, p, g...)
 			}
 
-			plugins, err := NewLoader(root, zap.NewNop()).Discover()
+			plugins, err := NewLoader(root, Policy{AllowUnsigned: true}, zap.NewNop()).Discover()
 
 			// The property that matters, whichever way it is reported: nothing
 			// writable by BUILTIN\Users was loaded for the SYSTEM service to run.
@@ -137,11 +142,32 @@ func TestDiscoverRefusesWhicheverOfTheThreePathsIsWritable(t *testing.T) {
 	}
 }
 
+// TestDiscoverRefusesAnUnsignedPluginByDefault: the same privileged-only tree
+// that loads above with signatures waived loads nothing under the default
+// policy, because it carries no plugin.sig. The signed cases need a shell
+// script to run and so are exercised on Linux, in signature_test.go.
+func TestDiscoverRefusesAnUnsignedPluginByDefault(t *testing.T) {
+	root := t.TempDir()
+	dir, exe := layout(t, root)
+	for _, p := range []string{root, dir, exe} {
+		setProtectedDACL(t, p, privileged(t)...)
+	}
+
+	plugins, err := NewLoader(root, Policy{}, zap.NewNop()).Discover()
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(plugins) != 0 {
+		t.Fatalf("Discover registered %d check(s) from a plugin with no plugin.sig under the "+
+			"default policy; the SYSTEM service would run an executable nobody signed", len(plugins))
+	}
+}
+
 // TestDiscoverStillNoOpsOnAMissingDirectoryOnWindows: an unset or absent
 // plugin_dir was never an error and must not become one — that path returns
 // before the trust check, and this pins it.
 func TestDiscoverStillNoOpsOnAMissingDirectoryOnWindows(t *testing.T) {
-	plugins, err := NewLoader(filepath.Join(t.TempDir(), "does-not-exist"), zap.NewNop()).Discover()
+	plugins, err := NewLoader(filepath.Join(t.TempDir(), "does-not-exist"), Policy{AllowUnsigned: true}, zap.NewNop()).Discover()
 	if err != nil {
 		t.Errorf("a missing plugin directory is now an error on Windows: %v", err)
 	}

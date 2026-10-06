@@ -31,6 +31,9 @@ type EnrollResponse struct {
 	PushEnrollToken     string `json:"push_enroll_token,omitempty"`
 	PushEnrollPath      string `json:"push_enroll_path,omitempty"`
 	PushEnrollExpiresIn int    `json:"push_enroll_expires_in,omitempty"`
+	// DeviceKeyBound is true when the server stored the device key this
+	// enrolment sent, so the device's reports must carry its signature.
+	DeviceKeyBound bool `json:"device_key_bound,omitempty"`
 }
 
 // ErrAgentRevoked is returned when the server refuses this device outright.
@@ -46,6 +49,20 @@ type Client struct {
 	authToken  string
 	agentID    string
 	httpClient *http.Client
+	// signer signs posture reports with the device key, when there is one.
+	signer RequestSigner
+	// enrollKey is the device key's public half and kind, sent with the
+	// enrolment so the server binds the device to it from the start.
+	enrollKey, enrollKeyKind string
+}
+
+// SetSigner installs the device-key signer for posture reports.
+func (c *Client) SetSigner(s RequestSigner) { c.signer = s }
+
+// SetEnrollmentDeviceKey makes Enroll send the device's public key (base64
+// PKIX DER) and its kind ("tpm", "software", "file").
+func (c *Client) SetEnrollmentDeviceKey(publicKeyB64, kind string) {
+	c.enrollKey, c.enrollKeyKind = publicKeyB64, kind
 }
 
 // NewClient creates a new Client with a 30-second timeout.
@@ -66,14 +83,19 @@ func (c *Client) Enroll(token string) (*EnrollResponse, error) {
 	url := c.baseURL + "/api/v1/access/agent/enroll"
 
 	hostname, _ := os.Hostname()
-	body, _ := json.Marshal(map[string]string{
+	fields := map[string]interface{}{
 		"token":              token,
 		"hostname":           hostname,
 		"os":                 runtime.GOOS,
 		"arch":               runtime.GOARCH,
 		"platform":           runtime.GOOS + "/" + runtime.GOARCH,
 		"device_fingerprint": deviceFingerprint(hostname),
-	})
+	}
+	if c.enrollKey != "" {
+		// A server that predates device keys ignores the field.
+		fields["device_key"] = map[string]string{"public_key": c.enrollKey, "kind": c.enrollKeyKind}
+	}
+	body, _ := json.Marshal(fields)
 
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -111,6 +133,9 @@ func (c *Client) ReportResults(data []byte) error {
 	req.Header.Set("Authorization", "Bearer "+c.authToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Agent-ID", c.agentID)
+	if err := sign(req, c.signer, data); err != nil {
+		return err
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

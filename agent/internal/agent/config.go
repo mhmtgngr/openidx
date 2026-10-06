@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/openidx/openidx/agent/internal/checks"
+	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/secretfile"
 )
 
@@ -20,6 +21,15 @@ type AgentConfig struct {
 	ZitiIdentityFile string `json:"ziti_identity_file,omitempty"`
 	ZitiServiceName  string `json:"ziti_service_name,omitempty"`
 	PluginDir        string `json:"plugin_dir,omitempty"`
+	// AllowUnsignedPlugins loads plugins from plugin_dir that carry no valid
+	// plugin.sig. It is for a lab, where plugins are being written, not for a
+	// fleet: a plugin runs with the service's privileges (SYSTEM on Windows) on
+	// every check interval, and without the signature nothing says who wrote
+	// it. It waives only the signature; the permission checks, the refusal of
+	// built-in check names and the check before every run that the executable
+	// has not changed since it was loaded still apply. Like plugin_dir it is
+	// obeyed only when ConfigTrusted accepts this file. Default false.
+	AllowUnsignedPlugins bool `json:"allow_unsigned_plugins,omitempty"`
 	// UpdateManifestURL, when set, enables self-update: the service polls this
 	// JSON manifest and applies a newer published MSI. Empty disables it.
 	UpdateManifestURL string `json:"update_manifest_url,omitempty"`
@@ -30,10 +40,12 @@ type AgentConfig struct {
 	// This is a trust anchor, not a preference: whoever it names can install
 	// software on this machine. It belongs in this file because this file
 	// already chooses the manifest URL — anyone who can write one can write the
-	// other — and the file's permissions are what protect both (0600 in a 0700
-	// directory on Unix, an owner-only ACL on Windows). Empty means the pinned
-	// publisher, which is the right answer for anyone consuming OpenIDX
-	// releases.
+	// other — and the file's permissions are what protect both: 0600 in a 0700
+	// directory on Unix; on Windows an ACL that lets SYSTEM and Administrators
+	// write and every signed-in user only read (secretfile.hardenShared), plus
+	// ConfigTrusted, which the service runs before obeying either field. Empty
+	// means the pinned publisher, which is the right answer for anyone
+	// consuming OpenIDX releases.
 	UpdateTrustedCertPEM string `json:"update_trusted_cert,omitempty"`
 	// InsecureSkipVerify skips TLS verification for the signaling WebSocket
 	// (dev/self-signed only). Defaults false. Mirrors the HTTP client posture.
@@ -44,6 +56,10 @@ type AgentConfig struct {
 	// use, ~5-min TTL). Empty once redeemed or when the server did not issue one.
 	PushEnrollToken string `json:"push_enroll_token,omitempty"`
 	PushEnrollPath  string `json:"push_enroll_path,omitempty"`
+	// DeviceKeyBound is true once the server holds this device's key
+	// (agent/internal/devicekey), from enrolment or from the agent's own
+	// registration. Until then the agent keeps offering it.
+	DeviceKeyBound bool `json:"device_key_bound,omitempty"`
 }
 
 // CheckConfig is an alias for checks.CheckConfig so callers that import the
@@ -55,6 +71,10 @@ type ServerConfig struct {
 	Checks         []CheckConfig       `json:"checks"`
 	ReportInterval string              `json:"report_interval"`
 	RemoteSupport  *RemoteSupportBlock `json:"remote_support,omitempty"`
+	// EnforcementPolicy is "block" for a device the server has suspended
+	// (internal/access/agent_api.go HandleConfig), "enforce" otherwise. The
+	// tray refuses privileged launches while it is "block".
+	EnforcementPolicy string `json:"enforcement_policy,omitempty"`
 }
 
 // RemoteSupportBlock is the in-flight remote-support session pointer the server
@@ -134,6 +154,21 @@ func (c *AgentConfig) Save(dir string) error {
 	}
 
 	return nil
+}
+
+// ConfigTrusted reports why agent.json in dir must not be obeyed for the
+// settings that choose what the agent runs (plugin_dir, update_manifest_url,
+// update_trusted_cert), or nil when it is safe to. The file is read by the
+// SYSTEM service, so an account that can write it chooses what SYSTEM runs
+// next. The check is the one a plugin passes before it is executed: on
+// Windows the owner and every ACE, on Unix the mode bits.
+//
+// The agent's own credential (auth_token, server_url) is still read from an
+// untrusted file: a tampered server_url points the agent at an impostor, which
+// gets the posture reports and the device token, but cannot run code here.
+// Refusing to start at all would turn a tampered ACL into a silent outage.
+func ConfigTrusted(dir string) error {
+	return plugin.CheckTrustedPath(ConfigPath(dir))
 }
 
 // LoadConfig reads agent.json from dir and returns the parsed AgentConfig.
