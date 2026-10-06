@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Tray:** the tray never refreshed its access token, so after an hour every privileged connection failed while the menu still said "Signed in". It now renews the token before it expires, and signs the person out when the server has ended the session.
   - **Desktop engine:** the engine behind the desktop app refreshed and revoked its session as the mobile client. The server refuses a refresh under another client, and for a revocation under another client it revokes nothing but still answers 200. So refresh failed and signing out did nothing. A session is now refreshed and revoked as the client it was issued to.
 - **The console's build dependency `source-map-js` is 1.2.2** (GHSA-68fv-2mgg-jv7q, high). It is used only at build time, so nothing the console ships changes.
+- **Enrolling a revoked device again leaves it revoked.** Re-enrolment finds a device by the fingerprint the client sends, and it set the matching agent back to active with a fresh credential, whatever its status. That let two kinds of caller bring back a device an administrator had revoked:
+  - anyone holding a valid enrollment token;
+  - any user of the organization, through `/agent/enroll/oauth`.
+
+  A fingerprint that names a revoked agent now gets `403` with `agent_revoked`. Nothing is minted, and the refusal is audited as `agent.enroll_denied`. Suspended devices still re-enrol.
+- **The published agent install script carries no enrollment token.** The release workflow stamped a reusable enrollment token from a repository variable into `install-openidx-agent.ps1`, a public release asset. `agent-v0.3.0` shipped it that way, and anyone who downloaded the script could enrol a machine into the organization. The script now keeps its placeholder and refuses to run without `-Token`. The release fails if a token is ever stamped again.
 
 ### Added
 - **A device enrols from the console's link on Windows.**
@@ -50,6 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Launches:** while a critical check fails or the server has suspended the device, the tray will not start a privileged connection, and it names the check.
   - A check that errors, or that this OS cannot run, never blocks.
   - The server remains the authority.
+- **Administrators author the posture checks the Windows agent runs.** The console's only posture editor wrote OpenZiti check types, which the agent does not know, so an administrator could not choose what a Windows device checks.
+  - **Console:** Agent Fleet has a **Device agent checks** card. It offers a type picker, typed inputs for each type's params, only the platforms that type runs on, and a severity.
+  - **API:** the existing `/ziti/posture/checks` routes take agent check types too. They validate them and answer `400` with a code when a check is wrong. `GET /ziti/posture/check-types` serves both vocabularies, and the list takes `?kind=agent|ziti`.
+  - **Server:** agents are served only the types they run. OpenZiti check types go only to the controller.
+- **The agent can be released without pushing a tag.** **Actions → Agent Build & Release → Run workflow** on `main`, with a version and `release` ticked, publishes `agent-v<version>` and creates its tag.
 
 ### Fixed
 - **The server and the Windows agent now agree on what a posture check is and what a result looks like.**
@@ -69,6 +80,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A dispatched release builds its images from the commit it tags.**
   - **Before:** `release.yml` started `docker.yml` on the branch the release was dispatched from, so the images were built from wherever that branch had moved by then. Their `VERSION` build argument was also a commit sha. v1.40.0 was tagged at `2923985`, but its images were built from `dec0859`, the next merge. The only difference is a build-time `package-lock.json` entry.
   - **Now:** the hand-off starts `docker.yml` on the release tag, as a pushed tag does. `scripts/check-release-dispatch.sh` goes red if it moves back to the branch.
+- **Installed agents find their updates.** Every default update URL pointed at `releases/latest/download/`. GitHub's "latest" is the server's release, which has no `latest.json` and no MSI, so every agent's update check answered `404`.
+  - **The channel:** agent releases now replace the assets of `agent-latest`, a release that never moves. A release build defaults to it, and enrolling again keeps the channel a device already has.
+  - **"Latest":** agent releases no longer take GitHub's "latest" from the server.
+- **A passkey sign-in in which the authenticator verified the person counts as multi-factor.** A passkey sign-in recorded no authentication methods, so the step-up gate treated it as never verified. That included Windows Hello, which the tray registers as a passkey. A phone-free Windows user could not clear `step_up_required` without the password form.
+  - **With user verification:** a sign-in where the authenticator verified the person by PIN or biometric now records `mfa`.
+  - **Presence only:** a sign-in that only proved presence stays one factor. Such a session no longer counts as multi-factor for device auto-trust either.
+- **A console `Domain` posture check is evaluated.** The device-health evaluator matched only the controller's spelling, `DOMAIN`. A `Domain` check written by the console fell through to "unknown check type" and passed every device.
 
 ### Upgrade notes
 - **Posture enforcement now acts on Windows agents.** Until now every Windows result was stored empty, so no Windows device was ever moved for its posture. After this release:
@@ -80,6 +98,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Unsigned agent plugins stop running.** Sign each plugin with the update publisher's key, or set `update_trusted_cert` to the certificate you sign with. Setting it also replaces the trusted publisher for agent updates. `allow_unsigned_plugins: true` in `agent.json` skips the signature check, for a lab only. The sample `plugin-hello` is unsigned.
 - **A revoked device's agent gets `403`, not `401`.** An integration that drives the agent API should treat `agent_revoked` as final.
 - **Migration v227** adds the device key columns to `enrolled_agents`.
+- **Revoke the enrollment token published with `agent-v0.3.0`.** It was stamped into that release's `install-openidx-agent.ps1` and into the `agent-latest` copy. Revoke it on the server, clear the `AGENT_DEFAULT_ENROLL_TOKEN` repository variable, and delete the script from both releases. From now on, pass `-Token` to the install script.
+- **A revoked device cannot be reinstated yet.** Enrolling it again now gets `403`, and no administrator action yet reinstates a revoked agent or deletes its row.
+- **`Domain` posture checks start failing devices that are not joined to the domain.** Until now such a check passed every device. Review them before upgrading.
+- **A device enrolled before this release with no update URL keeps none.** To turn on self-update for it, set `update_manifest_url` in `%ProgramData%\OpenIDX\agent\agent.json` to `https://github.com/mhmtgngr/openidx/releases/download/agent-latest/latest.json`, or enrol it again.
 
 ## [1.40.0] - 2026-10-05
 
