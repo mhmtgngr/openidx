@@ -32,6 +32,9 @@ func (e *Engine) RunChecks(ctx context.Context, configs []CheckConfig) []EngineR
 	results := make([]EngineResult, 0, len(configs))
 
 	for _, cfg := range configs {
+		if cfg.Disabled {
+			continue
+		}
 		ranAt := time.Now()
 
 		check, ok := e.registry.Get(cfg.Type)

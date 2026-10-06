@@ -2,6 +2,7 @@ package checks
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 )
 
@@ -11,6 +12,47 @@ type CheckConfig struct {
 	Params   map[string]interface{} `json:"params,omitempty"`
 	Severity string                 `json:"severity"`
 	Interval string                 `json:"interval"`
+	// Disabled is true when the server lists the check with enabled:false.
+	// The engine skips it rather than reporting a result nobody asked for.
+	Disabled bool `json:"-"`
+}
+
+// UnmarshalJSON reads the access service's wire shape as well as this
+// struct's own. The server sends each check as {name, enabled, check_type,
+// severity, params} (internal/access/agent_api.go agentCheck), the shape the
+// Android agent reads; this struct only knew "type", so every check the
+// server configured reached the engine with an empty type and ran as
+// "unknown check type". The type is the first of type, check_type and name
+// that is set. A params value that is not a JSON object is ignored rather
+// than failing the whole config, which would drop every other check too.
+func (c *CheckConfig) UnmarshalJSON(b []byte) error {
+	var w struct {
+		Type      string          `json:"type"`
+		CheckType string          `json:"check_type"`
+		Name      string          `json:"name"`
+		Params    json.RawMessage `json:"params"`
+		Severity  string          `json:"severity"`
+		Interval  string          `json:"interval"`
+		Enabled   *bool           `json:"enabled"`
+	}
+	if err := json.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	*c = CheckConfig{Severity: w.Severity, Interval: w.Interval}
+	for _, t := range []string{w.Type, w.CheckType, w.Name} {
+		if t != "" {
+			c.Type = t
+			break
+		}
+	}
+	if len(w.Params) > 0 {
+		var params map[string]interface{}
+		if json.Unmarshal(w.Params, &params) == nil {
+			c.Params = params
+		}
+	}
+	c.Disabled = w.Enabled != nil && !*w.Enabled
+	return nil
 }
 
 // Status represents the outcome of a security check.
