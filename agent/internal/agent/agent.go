@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/agent/internal/checks"
+	"github.com/openidx/openidx/agent/internal/devicekey"
 	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/remotesupport"
 	"github.com/openidx/openidx/agent/internal/transport"
@@ -73,6 +74,11 @@ type Agent struct {
 	// the firewall differently and contradicted the service's results on the
 	// server. Default false = the full cycle.
 	RemoteSupportOnly bool
+
+	// deviceKey signs posture reports once loaded (device_key.go).
+	deviceKey       devicekey.Key
+	deviceKeyFailed bool
+	lastKeyOffer    time.Time
 }
 
 // NewAgent loads the persisted agent config from configDir, creates a transport
@@ -348,6 +354,7 @@ func (a *Agent) RunOnce(ctx context.Context) error {
 		// the checks for it is wasted work and a second error line per cycle.
 		return nil
 	}
+	a.bindDeviceKey()
 
 	engineResults := a.engine.RunChecks(ctx, a.serverCfg.Checks)
 	summary := summarizePosture(engineResults, a.serverCfg.EnforcementPolicy, time.Now().UTC())
