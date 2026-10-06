@@ -46,6 +46,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/openidx/openidx/agent/internal/plugin"
 )
 
 // maxArtifactBytes caps a download. The digest catches a substituted artifact,
@@ -230,14 +232,18 @@ func artifactExt(url string) string {
 	return ext
 }
 
-// downloadVerified downloads artifactURL to a temp file and verifies its
-// SHA-256 against wantSHA. Returns the temp file path (caller removes it).
+// downloadVerified downloads artifactURL to a file under dir and verifies its
+// SHA-256 against wantSHA. Returns the file's path (caller removes it).
 //
 // There is no path through this function that returns a file it did not verify.
 // An empty or malformed wantSHA is refused rather than treated as "no digest
 // requested" — Fetch already rejects such a manifest, and a second caller that
 // forgot to must fail here rather than hand an unchecked installer to msiexec.
-func downloadVerified(ctx context.Context, artifactURL, wantSHA string) (string, error) {
+//
+// dir must be one only this process's account (and administrators) can write;
+// see privateDir. The file's name is random, so nobody can place a file where
+// the download will land.
+func downloadVerified(ctx context.Context, dir, artifactURL, wantSHA string) (string, error) {
 	wantSHA = strings.TrimSpace(wantSHA)
 	if !validDigest(wantSHA) {
 		return "", fmt.Errorf("refusing to download %s without a valid sha256 to check it against", artifactURL)
@@ -258,7 +264,7 @@ func downloadVerified(ctx context.Context, artifactURL, wantSHA string) (string,
 		return "", fmt.Errorf("download returned %d", resp.StatusCode)
 	}
 
-	f, err := os.CreateTemp("", "openidx-update-*"+artifactExt(artifactURL))
+	f, err := os.CreateTemp(dir, "openidx-update-*"+artifactExt(artifactURL))
 	if err != nil {
 		return "", err
 	}
@@ -300,17 +306,73 @@ func CheckAndApply(ctx context.Context, manifestURL, currentVersion string, trus
 	if !Newer(currentVersion, m.Version) {
 		return false, m.Version, nil
 	}
-	path, err := downloadVerified(ctx, m.URL, m.SHA256)
+	dir, err := privateDir()
 	if err != nil {
 		return false, m.Version, err
 	}
-	// Move the artifact to a stable, predictable temp path before applying: the
-	// Windows msiexec path runs asynchronously, and a self-replace reads it as
-	// the new binary.
-	stable := filepath.Join(os.TempDir(), "OpenIDX-"+m.Version+artifactExt(m.URL))
-	_ = os.Rename(path, stable)
-	if err := apply(stable); err != nil {
+	path, err := downloadVerified(ctx, dir, m.URL, m.SHA256)
+	if err != nil {
+		return false, m.Version, err
+	}
+	// The artifact is applied from the path it was verified at, after a second
+	// digest check. It used to be renamed to a predictable path under the temp
+	// directory first, with the rename's error discarded: a file placed there
+	// in advance by anyone who could write the temp directory (every user, for
+	// C:\Windows\Temp) made the rename fail silently, and msiexec then ran that
+	// file as SYSTEM. The directory is private now and the name is random, and
+	// the re-check closes the window between the download and the install.
+	verifyHook(path)
+	if err := verifyFile(path, m.SHA256); err != nil {
+		os.Remove(path)
+		return false, m.Version, err
+	}
+	if err := applyFn(path); err != nil {
 		return false, m.Version, err
 	}
 	return true, m.Version, nil
+}
+
+// applyFn is apply, swapped in tests that must not run an installer.
+var applyFn = apply
+
+// verifyHook runs between the download and the second digest check. It does
+// nothing outside tests, which use it to stand in for a file rewritten in
+// that window.
+var verifyHook = func(string) {}
+
+// verifyFile re-reads path and compares its SHA-256 to wantSHA.
+func verifyFile(path, wantSHA string) error {
+	f, err := os.Open(path) //nolint:gosec // path is the file this package just downloaded into its private directory
+	if err != nil {
+		return fmt.Errorf("re-open artifact: %w", err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("re-read artifact: %w", err)
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); !strings.EqualFold(got, strings.TrimSpace(wantSHA)) {
+		return fmt.Errorf("artifact changed between download and install: got %s want %s", got, wantSHA)
+	}
+	return nil
+}
+
+// privateDir is the directory downloads land in: a subdirectory of the temp
+// directory that only this process's account and administrators can write.
+// It is created if missing and its permissions are set every time; a
+// directory that cannot be made private, or that somebody else owns, is
+// refused, because a download placed where another account can replace it is
+// not a verified download.
+func privateDir() (string, error) {
+	dir := filepath.Join(os.TempDir(), "openidx-updates")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create update directory: %w", err)
+	}
+	if err := makePrivate(dir); err != nil {
+		return "", fmt.Errorf("make %s private: %w", dir, err)
+	}
+	if err := plugin.CheckTrustedPath(dir); err != nil {
+		return "", fmt.Errorf("refusing to download into %s: %w", dir, err)
+	}
+	return dir, nil
 }
