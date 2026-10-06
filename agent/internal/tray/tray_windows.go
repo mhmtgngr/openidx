@@ -28,6 +28,7 @@ type app struct {
 	logger    *zap.Logger
 	configDir string
 	serverURL string
+	consent   *consentGate
 
 	mBanner   *systray.MenuItem
 	mStatus   *systray.MenuItem
@@ -44,7 +45,7 @@ type app struct {
 
 // Run starts the tray UI and blocks until the user quits.
 func Run(logger *zap.Logger, configDir, serverURL string) error {
-	a := &app{logger: logger, configDir: configDir, serverURL: serverURL}
+	a := &app{logger: logger, configDir: configDir, serverURL: serverURL, consent: newConsentGate(askConsent)}
 	systray.Run(a.onReady, func() {})
 	return nil
 }
@@ -120,6 +121,9 @@ func (a *app) runRemoteSupportAgent() {
 				return
 			}
 			ag.RemoteSupportOnly = true
+			// An attended session is allowed by the person at the device, in
+			// a prompt only this process (the one with a desktop) can show.
+			ag.ConsentDecider = a.consent.decide
 			a.mu.Lock()
 			a.rsAgent = ag
 			a.mu.Unlock()
@@ -160,9 +164,26 @@ func (a *app) updateStatus() {
 		default:
 			devPart = "device: not enrolled"
 		}
-		a.updateBanner(st.RemoteSupportActive, st.RemoteSupportControlled)
+		a.updateBanner(a.remoteSupportState(st))
 	}
 	a.mStatus.SetTitle(signPart + " · " + devPart)
+}
+
+// remoteSupportState is whether an admin can see or control this device now.
+// The service's status carries its own agent's state, which is always off:
+// the service has remote support disabled. The session that streams runs in
+// this process, so its state is the one that matters; the service's is kept
+// as a second source in case that ever changes.
+func (a *app) remoteSupportState(st *ipc.Status) (active, controlled bool) {
+	active, controlled = st.RemoteSupportActive, st.RemoteSupportControlled
+	a.mu.Lock()
+	rs := a.rsAgent
+	a.mu.Unlock()
+	if rs != nil {
+		ra, rc := rs.RemoteSupportState()
+		active, controlled = active || ra, controlled || rc
+	}
+	return active, controlled
 }
 
 // hideConnections empties the My Connections menu, so a click can launch

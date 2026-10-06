@@ -193,11 +193,14 @@ func (a *Agent) SyncConfig(ctx context.Context) error {
 	return nil
 }
 
-// defaultConsentDecider is the fallback policy when no native prompt is wired.
-// A managed, enrolled device auto-grants (the admin already has an authorized
-// session and the device is under management); a real attended prompt can be
-// installed via Agent.ConsentDecider to require an explicit Allow/Deny click.
-func defaultConsentDecider(_ *RemoteSupportBlock) string { return "grant" }
+// defaultConsentDecider answers a consent-required session when no prompt is
+// wired: it denies. A session the administrator started as attended is one
+// the person at the device must allow, and a process with no way to ask them
+// cannot say they did. It used to grant, so the runbook's Allow/Deny step was
+// never shown and every attended session began as if it had been. An
+// unattended session (consent_required false) never reaches this; the tray
+// installs a prompt-backed decider (Agent.ConsentDecider) for attended ones.
+func defaultConsentDecider(_ *RemoteSupportBlock) string { return "deny" }
 
 // processRemoteSupportConsent answers a consent-required remote-support session
 // that is still pending. It is a no-op when there is no session, consent is not
@@ -229,6 +232,8 @@ func (a *Agent) processRemoteSupportConsent(rs *RemoteSupportBlock) {
 	}
 	decide := a.ConsentDecider
 	if decide == nil {
+		a.logger.Warn("remote-support session asks for consent and this process has no way to ask the user; denying",
+			zap.String("session_id", rs.SessionID))
 		decide = defaultConsentDecider
 	}
 	decision := decide(rs)
