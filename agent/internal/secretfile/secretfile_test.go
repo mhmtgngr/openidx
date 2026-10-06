@@ -126,3 +126,81 @@ func TestNoEncryptionOffWindows(t *testing.T) {
 		t.Errorf("stored %q, want the plain payload", raw)
 	}
 }
+
+// TestWritePrivatePlainStoresTheBytesAsTheyAre: the desktop GUI parses
+// control-endpoint.json itself and holds no key, so the file must be the
+// plaintext, even with a keystore registered and even on Windows, where Write
+// would seal it with DPAPI.
+func TestWritePrivatePlainStoresTheBytesAsTheyAre(t *testing.T) {
+	use(t, newAESKeystore(t))
+	path := filepath.Join(t.TempDir(), "nested", "control-endpoint.json")
+	data := []byte(`{"addr":"127.0.0.1:50000","token":"drives-the-engine"}`)
+
+	if err := WritePrivatePlain(path, data); err != nil {
+		t.Fatalf("WritePrivatePlain: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != string(data) {
+		t.Errorf("stored %q, want the plain payload %q", raw, data)
+	}
+}
+
+// TestWritePrivatePlainDoesNotReuseWhatIsAlreadyThere: a file left at the path
+// keeps the permissions of whoever created it, and a symlink there would carry
+// the bearer to wherever it points. Either way the secret must land in a new
+// file that only its owner can read. The Windows form of this, the DACL, is in
+// secretfile_windows_test.go.
+func TestWritePrivatePlainDoesNotReuseWhatIsAlreadyThere(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits and symlinks are not the control on Windows; see secretfile_windows_test.go")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "control-endpoint.json")
+	data := []byte(`{"token":"new"}`)
+
+	t.Run("a world-readable file", func(t *testing.T) {
+		if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := WritePrivatePlain(path, data); err != nil {
+			t.Fatalf("WritePrivatePlain: %v", err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			t.Errorf("perm = %o, want no access for group or others", perm)
+		}
+	})
+
+	t.Run("a symlink", func(t *testing.T) {
+		target := filepath.Join(dir, "elsewhere")
+		if err := os.WriteFile(target, []byte("untouched"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Remove(path)
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		if err := WritePrivatePlain(path, data); err != nil {
+			t.Fatalf("WritePrivatePlain: %v", err)
+		}
+		if got, _ := os.ReadFile(target); string(got) != "untouched" {
+			t.Errorf("the write went through the symlink: target now holds %q", got)
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+			t.Errorf("path is %v, want a regular owner-only file", info.Mode())
+		}
+		if got, _ := os.ReadFile(path); string(got) != string(data) {
+			t.Errorf("path holds %q, want %q", got, data)
+		}
+	})
+}

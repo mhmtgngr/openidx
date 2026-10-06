@@ -4,6 +4,7 @@ package secretfile
 
 import (
 	"fmt"
+	"os"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -61,17 +62,76 @@ func unprotect(blob []byte) ([]byte, error) {
 //	the writing user           the only account that can decrypt the DPAPI blob
 //	                           anyway
 func harden(path string) error {
+	dacl, err := privateDACL()
+	if err != nil {
+		return err
+	}
+
+	return windows.SetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	)
+}
+
+// createPrivate creates a new file whose protected DACL is harden's list from
+// the first instant. The descriptor goes to CreateFile itself, so there is no
+// moment in which the directory's inherited ACL applies to the file, and
+// CREATE_NEW fails on an existing path instead of writing into a file somebody
+// else created.
+func createPrivate(path string) (*os.File, error) {
+	dacl, err := privateDACL()
+	if err != nil {
+		return nil, err
+	}
+	sd, err := windows.NewSecurityDescriptor()
+	if err != nil {
+		return nil, fmt.Errorf("security descriptor: %w", err)
+	}
+	if err := sd.SetDACL(dacl, true, false); err != nil {
+		return nil, fmt.Errorf("security descriptor DACL: %w", err)
+	}
+	// Without the protected bit, Windows would merge the directory's
+	// inheritable entries into the file's DACL as it creates the file.
+	if err := sd.SetControl(windows.SE_DACL_PROTECTED, windows.SE_DACL_PROTECTED); err != nil {
+		return nil, fmt.Errorf("security descriptor control: %w", err)
+	}
+	sa := windows.SecurityAttributes{SecurityDescriptor: sd}
+	// CreateFile reads nLength to learn which SECURITY_ATTRIBUTES layout it
+	// was given, and x/sys/windows has no helper for it. unsafe.Sizeof is
+	// evaluated at compile time to a constant: it reads no memory and makes no
+	// pointer, so none of the hazards this rule is about can arise from it.
+	//
+	// nosemgrep: go.lang.security.audit.unsafe.use-of-unsafe-block
+	sa.Length = uint32(unsafe.Sizeof(sa))
+
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateFile(name, windows.GENERIC_WRITE, 0, &sa,
+		windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "create", Path: path, Err: err}
+	}
+	return os.NewFile(uintptr(h), path), nil
+}
+
+// privateDACL builds the three-entry list harden documents: SYSTEM,
+// Administrators and the account this process runs as, each with full control.
+func privateDACL() (*windows.ACL, error) {
 	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
 	if err != nil {
-		return fmt.Errorf("SYSTEM sid: %w", err)
+		return nil, fmt.Errorf("SYSTEM sid: %w", err)
 	}
 	admins, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
 	if err != nil {
-		return fmt.Errorf("Administrators sid: %w", err)
+		return nil, fmt.Errorf("Administrators sid: %w", err)
 	}
 	user, err := currentUserSID()
 	if err != nil {
-		return fmt.Errorf("current user sid: %w", err)
+		return nil, fmt.Errorf("current user sid: %w", err)
 	}
 
 	entries := make([]windows.EXPLICIT_ACCESS, 0, 3)
@@ -90,15 +150,9 @@ func harden(path string) error {
 
 	dacl, err := windows.ACLFromEntries(entries, nil)
 	if err != nil {
-		return fmt.Errorf("building DACL: %w", err)
+		return nil, fmt.Errorf("building DACL: %w", err)
 	}
-
-	return windows.SetNamedSecurityInfo(
-		path,
-		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil,
-	)
+	return dacl, nil
 }
 
 // hardenShared replaces a shared file's inherited permissions with an explicit

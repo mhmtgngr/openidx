@@ -5,8 +5,11 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -153,6 +156,11 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Code string `json:"code"`
+		// Server is the URL the user entered on the GUI's enrol screen. A fresh
+		// install has no agent.json and so no server of its own. The GUI always
+		// sent this field, and the strict decoder used to refuse the request
+		// as an unknown field, so desktop enrolment could not succeed.
+		Server string `json:"server"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
@@ -161,8 +169,45 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "code is required")
 		return
 	}
-	out, err := s.engine.Enroll(body.Code)
+	server := strings.TrimSpace(body.Server)
+	if server != "" {
+		if err := checkServerURL(server); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	out, err := s.engine.enrollAt(body.Code, server)
 	writeEngineJSON(w, out, err)
+}
+
+// checkServerURL accepts a server URL for enrolment only if it is https, or
+// http to a loopback host. That is the rule the updater applies to what it
+// fetches (requireSecureURL in agent/internal/updater). Over plain http the
+// enrolment code and the agent credential the server answers with would cross
+// the network in the clear, so anyone on the path could enrol in this device's
+// place or keep its credential. A loopback server has no network path to
+// listen on, which is why it is the one exception.
+func checkServerURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("server is not a URL: %w", err)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("server %q has no host; enter it as https://host", raw)
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		switch u.Hostname() {
+		case "localhost", "127.0.0.1", "::1":
+			return nil
+		}
+		return fmt.Errorf("server uses http://%s, which would send the enrolment code "+
+			"and the device credential in the clear; use https", u.Hostname())
+	default:
+		return fmt.Errorf("server uses scheme %q; only https (or http to loopback) is accepted", u.Scheme)
+	}
 }
 
 func (s *Server) handlePosture(w http.ResponseWriter, r *http.Request) {

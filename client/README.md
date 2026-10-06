@@ -47,10 +47,17 @@ The transport is platform-dependent (implemented in
   HTTP/1.1 semantics over the socket. The socket's filesystem permissions are
   the trust boundary — **no auth token**.
 - **Windows:** the engine publishes
-  `%ProgramData%\OpenIDX\agent\control-endpoint.json` =
-  `{ "addr": "127.0.0.1:<port>", "token": "<hex>" }`. The client reads that
-  file, connects to the loopback TCP address, and sends
-  `Authorization: Bearer <token>` on **every** request.
+  `{ "addr": "127.0.0.1:<port>", "token": "<hex>" }` as plain JSON in
+  `%LOCALAPPDATA%\OpenIDX\agent\control-endpoint.json`. The file's own DACL
+  (SYSTEM, Administrators and the engine's user, nothing inherited) keeps
+  other accounts out. The client reads that file, or
+  `%ProgramData%\OpenIDX\agent\control-endpoint.json` when there is none (an
+  engine running without LOCALAPPDATA, or an older engine), connects to the
+  loopback TCP address, and sends `Authorization: Bearer <token>` on **every**
+  request. An older engine sealed the file with DPAPI, which Dart cannot open;
+  the client reports that as an `EngineException` asking for an updated
+  `openidx-agent`. A failed connect makes the client read the file again,
+  because a restarted engine has a new port and token.
 
 Endpoint discovery lives in `EngineEndpointResolver.resolve()`.
 

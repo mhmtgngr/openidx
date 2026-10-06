@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,6 +41,10 @@ type fakeBackend struct {
 	pushTicket      string
 	pushDeviceToken string
 	pushPlatform    string
+
+	enrollErr       error
+	enrollCalled    bool
+	enrollServerURL string
 }
 
 func (f *fakeBackend) Login(ctx context.Context, serverURL, agentID string) (*sso.Tokens, error) {
@@ -51,6 +56,11 @@ func (f *fakeBackend) Login(ctx context.Context, serverURL, agentID string) (*ss
 	return f.loginTokens, nil
 }
 func (f *fakeBackend) Enroll(logger *zap.Logger, serverURL, token, configDir string) (string, string, string, error) {
+	f.enrollCalled = true
+	f.enrollServerURL = serverURL
+	if f.enrollErr != nil {
+		return "", "", "", f.enrollErr
+	}
 	return "agent-1", "device-1", "", nil
 }
 func (f *fakeBackend) PamList(ctx context.Context, serverURL, token string) ([]desktoppam.Entry, error) {
@@ -241,6 +251,142 @@ func TestEnrollMissingCode(t *testing.T) {
 	code, _ := post(t, c, base, "/enroll", `{"code":""}`)
 	if code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for missing code, got %d", code)
+	}
+}
+
+// TestEnrollUsesTheServerTheGUISends is the desktop enrol screen's request on a
+// fresh install: no agent.json, so no configured server, and the user's typed
+// URL in the body. The engine used to refuse the body as an unknown field.
+func TestEnrollUsesTheServerTheGUISends(t *testing.T) {
+	be := &fakeBackend{}
+	e := newTestEngine(t, be)
+	e.serverURL = "" // a fresh install has no server of its own
+	c, base, done := startTestServer(t, e)
+	defer done()
+
+	code, body := post(t, c, base, "/enroll", `{"code":"ABCD2345","server":" https://idp.example.com/ "}`)
+	if code != http.StatusOK {
+		t.Fatalf("enroll with a server: code=%d body=%s", code, body)
+	}
+	if be.enrollServerURL != "https://idp.example.com" {
+		t.Errorf("enrolled against %q, want the server the GUI sent", be.enrollServerURL)
+	}
+	var out enrollPayload
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("unmarshal: %v (%s)", err, body)
+	}
+	if out.ServerURL != "https://idp.example.com" {
+		t.Errorf("result names server %q, want https://idp.example.com", out.ServerURL)
+	}
+}
+
+// TestEnrollWithoutAServerUsesTheConfiguredOne keeps the old request working,
+// and keeps refusing it on a device that has no server to fall back on.
+func TestEnrollWithoutAServerUsesTheConfiguredOne(t *testing.T) {
+	be := &fakeBackend{}
+	e := newTestEngine(t, be)
+	c, base, done := startTestServer(t, e)
+	defer done()
+
+	if code, body := post(t, c, base, "/enroll", `{"code":"ABCD2345"}`); code != http.StatusOK {
+		t.Fatalf("enroll without a server: code=%d body=%s", code, body)
+	}
+	if be.enrollServerURL != "https://openidx.test" {
+		t.Errorf("enrolled against %q, want the configured server", be.enrollServerURL)
+	}
+
+	fresh := &fakeBackend{}
+	e2 := newTestEngine(t, fresh)
+	e2.serverURL = ""
+	if _, err := e2.enrollAt("ABCD2345", ""); err == nil {
+		t.Error("enrolment with no server given and none configured succeeded")
+	}
+	if fresh.enrollCalled {
+		t.Error("the backend was called with no server to enrol against")
+	}
+}
+
+// TestEnrollStillRefusesAnUnknownField: accepting "server" must not loosen the
+// strict decoder, which is what turns a misspelt field into a 400 rather than a
+// silently ignored value.
+func TestEnrollStillRefusesAnUnknownField(t *testing.T) {
+	be := &fakeBackend{}
+	e := newTestEngine(t, be)
+	c, base, done := startTestServer(t, e)
+	defer done()
+
+	code, body := post(t, c, base, "/enroll", `{"code":"ABCD2345","server_url":"https://idp.example.com"}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("an unknown field was accepted: code=%d body=%s", code, body)
+	}
+	if be.enrollCalled {
+		t.Error("the backend was called for a request the decoder refused")
+	}
+}
+
+// TestEnrollRefusesAServerThatIsNotHTTPS: the enrolment code and the agent
+// credential the server answers with must not cross the network in the clear.
+func TestEnrollRefusesAServerThatIsNotHTTPS(t *testing.T) {
+	for _, server := range []string{
+		"http://idp.example.com",
+		"ftp://idp.example.com",
+		"idp.example.com",
+		"https://",
+	} {
+		t.Run(server, func(t *testing.T) {
+			be := &fakeBackend{}
+			e := newTestEngine(t, be)
+			c, base, done := startTestServer(t, e)
+			defer done()
+
+			reqBody, _ := json.Marshal(map[string]string{"code": "ABCD2345", "server": server})
+			code, body := post(t, c, base, "/enroll", string(reqBody))
+			if code != http.StatusBadRequest {
+				t.Fatalf("server %q: code=%d body=%s, want 400", server, code, body)
+			}
+			if be.enrollCalled {
+				t.Errorf("server %q reached the backend", server)
+			}
+		})
+	}
+}
+
+// TestCheckServerURLAllowsHTTPSAndLoopbackHTTP is the other side: a real server
+// over https, and a server on this machine over http, which is how a developer
+// runs one.
+func TestCheckServerURLAllowsHTTPSAndLoopbackHTTP(t *testing.T) {
+	for _, server := range []string{
+		"https://idp.example.com",
+		"https://idp.example.com:8443/base",
+		"http://localhost:8080",
+		"http://127.0.0.1:8080",
+		"http://[::1]:8080",
+	} {
+		if err := checkServerURL(server); err != nil {
+			t.Errorf("checkServerURL(%q) = %v, want accepted", server, err)
+		}
+	}
+}
+
+// TestAFailedEnrollmentKeepsTheConfiguredServer: the server the GUI sends
+// becomes the engine's only once enrolment succeeds. A mistyped URL that fails
+// must not become the server a later sign-in or enrolment talks to.
+func TestAFailedEnrollmentKeepsTheConfiguredServer(t *testing.T) {
+	be := &fakeBackend{enrollErr: errors.New("invalid enrollment code")}
+	e := newTestEngine(t, be)
+	c, base, done := startTestServer(t, e)
+	defer done()
+
+	if code, body := post(t, c, base, "/enroll", `{"code":"ABCD2345","server":"https://typo.example.com"}`); code == http.StatusOK {
+		t.Fatalf("a failing enrolment answered 200: %s", body)
+	}
+
+	be.enrollErr = nil
+	if code, body := post(t, c, base, "/enroll", `{"code":"ABCD2345"}`); code != http.StatusOK {
+		t.Fatalf("retry without a server: code=%d body=%s", code, body)
+	}
+	if be.enrollServerURL != "https://openidx.test" {
+		t.Errorf("after a failed enrolment the engine talks to %q, want the configured server", be.enrollServerURL)
 	}
 }
 

@@ -348,17 +348,31 @@ func (e *Engine) SetServer(url string) error {
 // currently-loaded serverURL if present, otherwise require it be pre-set via
 // config (Phase 0 keeps enrollment server-selection in the config dir).
 func (e *Engine) Enroll(code string) (string, error) {
+	return e.enrollAt(code, "")
+}
+
+// enrollAt is Enroll against server when one is given, and against the
+// configured server otherwise. The desktop GUI names the server in its POST
+// /enroll, because a fresh install has no agent.json and so no server of its
+// own. The given server replaces the engine's only once enrollment succeeds, so
+// a mistyped URL cannot redirect a later sign-in.
+func (e *Engine) enrollAt(code, server string) (string, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return "", fmt.Errorf("enrollment code is required")
 	}
-	if e.serverURL == "" {
+	target := e.serverURL
+	if server = strings.TrimRight(strings.TrimSpace(server), "/"); server != "" {
+		target = server
+	}
+	if target == "" {
 		return "", fmt.Errorf("no server configured for enrollment — call SetServer first (or use the enroll deep-link)")
 	}
-	agentID, deviceID, zitiIdentity, err := e.be.Enroll(e.logger, e.serverURL, code, e.configDir)
+	agentID, deviceID, zitiIdentity, err := e.be.Enroll(e.logger, target, code, e.configDir)
 	if err != nil {
 		return "", fmt.Errorf("enrollment failed: %w", err)
 	}
+	e.serverURL = target
 	// Refresh the cached serverURL from the freshly-written config.
 	if cfg, err := agent.LoadConfig(e.configDir); err == nil {
 		e.serverURL = strings.TrimRight(cfg.ServerURL, "/")
