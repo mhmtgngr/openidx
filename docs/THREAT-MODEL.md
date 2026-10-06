@@ -272,6 +272,13 @@ support (WebRTC) sessions are recorded under §4.7's crypto, with retention
 and legal hold. TURN credentials are minted short-lived
 (`internal/access/turn_credentials.go`). A stolen device holds only its own
 Ziti identity: policies limit what it can dial, and the kill switch severs it.
+An administrator's revoke of an agent stands: the agent's credential is
+refused on every agent route, and an enrolment that names the revoked
+agent's device fingerprint, by enrollment token or by OAuth, is refused too
+(403 `agent_revoked`) rather than re-activating the agent with a new token
+(`internal/access/agent_reenrol_revoked_testdb_test.go`). The fingerprint is
+the client's claim, so the enrollment credential, not the revoke, is what
+keeps a machine from enrolling again as a new agent.
 
 ### 4.10 Supply chain and SDLC
 

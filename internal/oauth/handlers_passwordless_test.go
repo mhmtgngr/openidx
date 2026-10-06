@@ -65,3 +65,22 @@ func TestIsValidSessionID(t *testing.T) {
 		})
 	}
 }
+
+// TestPasskeyAuthMethods pins what a passkey-first sign-in records (#1109).
+// With the authenticator's UV flag the sign-in is two factors and carries
+// "mfa", which is what stamps the session for the step-up gate; without it,
+// presence only, it is the key alone.
+func TestPasskeyAuthMethods(t *testing.T) {
+	if got := strings.Join(passkeyAuthMethods(true), " "); got != "hwk user mfa" {
+		t.Errorf("verified passkey records amr %q, want %q", got, "hwk user mfa")
+	}
+	if got := strings.Join(passkeyAuthMethods(false), " "); got != "hwk" {
+		t.Errorf("unverified passkey records amr %q, want %q", got, "hwk")
+	}
+	// Each call is its own slice: the recorder may keep it.
+	a := passkeyAuthMethods(true)
+	a[0] = "changed"
+	if passkeyAuthMethods(true)[0] != "hwk" {
+		t.Error("passkeyAuthMethods hands out a shared slice")
+	}
+}

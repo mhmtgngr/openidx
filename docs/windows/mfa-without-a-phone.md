@@ -60,12 +60,19 @@ second factor is not recent enough (`step_up_required`). The tray then
 offers to sign you in again. Accept, and the browser asks you to
 authenticate afresh.
 
-Sign in with your **password and Windows Hello as the second factor** when
-the page asks for one. Signing in with the **Sign in with a passkey** button
-alone does not clear a step-up today: the server records that sign-in as a
-single factor and does not stamp the session as MFA-verified, so the
-connection is refused again. This is a server-side limitation, tracked
-separately; the tray offers the sign-in either way.
+Sign in with Windows Hello. Either way works: the **Sign in with a passkey**
+button on its own, or your password with Windows Hello as the second factor.
+Windows Hello checks your fingerprint, face or PIN before it signs in, and
+the authenticator reports that check to the server. The server counts a
+passkey sign-in with that check as multi-factor: it records the session's
+methods as `hwk user mfa` and stamps it as MFA-verified, so the connection
+goes through.
+
+A passkey that only checks that you are present counts as one factor, for
+example a security key you touch but that asks for no PIN or fingerprint.
+The server records `hwk` alone and does not stamp the session, so that
+sign-in does not clear a step-up. Use such a key as the second factor after
+your password, or set a PIN on it.
 
 ## Behind the scenes
 
@@ -74,6 +81,12 @@ separately; the tray offers the sign-in either way.
   second factor), `GET .../mfa/webauthn/credentials`. These are self-service:
   any signed-in user may call them for their own account.
 - Passkey-first sign-in: `POST /oauth/passkey-begin` and `/oauth/passkey-finish`.
+  The finish step reads the user-verified (UV) flag from the signed
+  authenticator data and records the session's `amr` from it: `hwk user mfa`
+  with the flag, which also sets `mfa_verified_at` (what the step-up gate
+  reads), and `hwk` without it. The sign-in asks for user verification as
+  "preferred", the browser's default, so an authenticator that can verify the
+  person does.
 - Windows Hello as the second factor: `POST /oauth/mfa-webauthn-begin` and the
   matching finish, driven by the login page after a password sign-in.
 

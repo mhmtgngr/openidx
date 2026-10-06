@@ -126,6 +126,25 @@ Invariants a change must preserve:
   (Windows MachineGuid + hostname); `issueAgentCredentials` upserts by it, so a
   re-install reuses the same `agent_id`/`device_id` and only rotates the auth
   token. Never mint a new agent per process/install. (migration v92)
+- **A revoked device stays revoked.** An enrolment whose fingerprint names an
+  agent an administrator revoked in that organization is answered 403
+  `{"error":"agent revoked","code":"agent_revoked"}`, mints nothing, leaves the
+  agent revoked with its old token hash, and is audited as
+  `agent.enroll_denied` in the agent's organization. That holds on every
+  enrolment path: enrollment token, enrollment session and
+  `/agent/enroll/oauth`. A single-use token presented for a revoked device is
+  spent. Suspended and pending agents still re-enrol to `active`; for a
+  suspended one that is the only way back.
+
+  The admin API has no action that reinstates a revoked agent or deletes its
+  row, so a revoked agent cannot return. Keep in mind what this protects: the
+  revoked agent, meaning its id, its link to the user's known device and its
+  token binding. The fingerprint is the client's own claim. A machine that
+  presents a different fingerprint, for example after a hostname change, is a
+  new device to the server and enrols as a new agent if its enrollment
+  credential is valid. What keeps a machine out is that credential: revoke the
+  enrollment token that admitted it or issue single-use tokens, and for
+  `/agent/enroll/oauth` the user's own sign-in is the credential.
 - **Poll cadences.** `/agent/config` returns `report_interval` = 5s while a
   remote-support session is attached, 30s baseline otherwise. The 30s baseline
   is what lets a *new* session connect without restarting the client.

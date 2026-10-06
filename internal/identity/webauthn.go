@@ -419,36 +419,41 @@ func (s *Service) BeginWebAuthnDiscoverableAuthentication(ctx context.Context) (
 
 // FinishWebAuthnDiscoverableAuthentication completes a discoverable credential assertion.
 // The userHandle from the assertion response is used to look up the user and their credentials.
-func (s *Service) FinishWebAuthnDiscoverableAuthentication(ctx context.Context, sessionData *webauthn.SessionData, response *protocol.ParsedCredentialAssertionData) (string, error) {
+//
+// userVerified is the UV flag of the assertion's authenticator data, read from
+// the credential the library returns after it has checked the signature over
+// that data: the authenticator verified the person (PIN or biometric) as well
+// as proving possession of the key. A sign-in is single-factor without it.
+func (s *Service) FinishWebAuthnDiscoverableAuthentication(ctx context.Context, sessionData *webauthn.SessionData, response *protocol.ParsedCredentialAssertionData) (userID string, userVerified bool, err error) {
 	webAuthn, err := s.getWebAuthnInstance()
 	if err != nil {
-		return "", fmt.Errorf("failed to initialize WebAuthn: %w", err)
+		return "", false, fmt.Errorf("failed to initialize WebAuthn: %w", err)
 	}
 
 	// The user handle from the assertion contains the user ID
 	userHandle := response.Response.UserHandle
 	if len(userHandle) == 0 {
-		return "", fmt.Errorf("no user handle in assertion response")
+		return "", false, fmt.Errorf("no user handle in assertion response")
 	}
 
 	// Parse user ID from the handle (UUID bytes)
 	userUUID, err := uuid.FromBytes(userHandle)
 	if err != nil {
-		return "", fmt.Errorf("invalid user handle format: %w", err)
+		return "", false, fmt.Errorf("invalid user handle format: %w", err)
 	}
-	userID := userUUID.String()
+	userID = userUUID.String()
 
 	// Get user info
 	query := `SELECT id, username, COALESCE(first_name, ''), COALESCE(last_name, '') FROM users WHERE id = $1 AND enabled = true`
 	var uid, uname, firstName, lastName string
 	if err := s.db.Pool.QueryRow(ctx, query, userID).Scan(&uid, &uname, &firstName, &lastName); err != nil {
-		return "", fmt.Errorf("user not found: %w", err)
+		return "", false, fmt.Errorf("user not found: %w", err)
 	}
 
 	// Get credentials for the user
 	credentials, err := s.getWebAuthnCredentials(ctx, userID)
 	if err != nil {
-		return "", fmt.Errorf("failed to get credentials: %w", err)
+		return "", false, fmt.Errorf("failed to get credentials: %w", err)
 	}
 
 	webauthnCreds := make([]webauthn.Credential, 0, len(credentials))
@@ -480,7 +485,7 @@ func (s *Service) FinishWebAuthnDiscoverableAuthentication(ctx context.Context, 
 	credential, err := webAuthn.ValidateDiscoverableLogin(discoverableUserHandler, *sessionData, response)
 	if err != nil {
 		s.logger.Error("WebAuthn discoverable authentication failed", zap.String("user_id", userID), zap.Error(err))
-		return "", fmt.Errorf("failed to verify authentication: %w", err)
+		return "", false, fmt.Errorf("failed to verify authentication: %w", err)
 	}
 
 	// Update sign count
@@ -492,9 +497,10 @@ func (s *Service) FinishWebAuthnDiscoverableAuthentication(ctx context.Context, 
 	s.logger.Info("WebAuthn discoverable authentication successful",
 		zap.String("user_id", userID),
 		zap.String("username", uname),
-		zap.String("credential_id", credentialID))
+		zap.String("credential_id", credentialID),
+		zap.Bool("user_verified", credential.Flags.UserVerified))
 
-	return userID, nil
+	return userID, credential.Flags.UserVerified, nil
 }
 
 // GetWebAuthnCredentials returns all WebAuthn credentials for a user
