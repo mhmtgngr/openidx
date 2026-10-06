@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **A revoked device's credential stops working on every agent route.** Revoking a device left its token valid everywhere except `/agent/config`. A revoked agent could still file posture reports, record remote-support consent and report Windows apps. Every agent-authenticated route now answers a revoked agent `403` with `agent_revoked`, audited in the agent's tenant. A wrong or missing credential still gets `401`, and the token is now compared in constant time.
+- **A device that holds a key must sign its posture reports with it.** An agent proved itself with one bearer token in `agent.json`, which every signed-in Windows user can read. Whoever copied that token could report posture as the device from anywhere.
+  - **The device key:** the desktop agent now keeps an ECDSA P-256 key the operating system will not export. On Windows that is a machine key in the TPM, or in the software key store when there is no usable TPM; elsewhere it is an owner-only file.
+  - **Binding it:** enrolment names the key. A device that enrolled earlier registers it once at `POST /agent/device-key`, signed with the key itself (migration v227).
+  - **Checking it:** from then on, a report from that device needs a valid signature from no more than five minutes ago. A report without one gets `401` with `device_signature_required`, and a wrong or stale one gets `401` with `device_signature_invalid`.
+  - A device with no key reports on its token as before.
+- **The agent runs only plugins its update publisher signed.** The Windows service runs every plugin in `plugin_dir` as SYSTEM, and it only checked who could write the files.
+  - **Signature:** each plugin folder now carries a `plugin.sig`, verified with the same publisher certificate the updater trusts.
+  - **Digest:** the executable's digest is checked again before every run.
+  - **Built-in names:** a plugin that declares a built-in check name, which would silently replace that check, is refused.
+  - **Signing:** `openidx-agent plugin digest --dir <folder>` prints the input a publisher signs. `agent/plugins/README.md` describes the format.
+- **The updater installs the file it verified, from a directory only it can write.**
+  - **Before:** the updater renamed the verified installer to a predictable `%TEMP%\OpenIDX-<version>` path and ignored the rename's error. Under the service, `%TEMP%` is a directory every user can write to, so a file planted there in advance was run by `msiexec` as SYSTEM.
+  - **Now:** the download stays under its random name in a private directory, gets a second digest check, and is installed from there.
+- **`agent.json` is writable only by the service and administrators, and the service obeys it only when it is.** The file names the plugin directory, the update manifest and the update publisher, and the SYSTEM service trusts all three. On Windows the file kept the ACL it inherited from `%ProgramData%`, under which ordinary users can create files and write the ones they created.
+  - **New ACL:** SYSTEM and Administrators get full control and signed-in users read only.
+  - **Ownership check:** a file first created by another account stays owned by it, and an owner can rewrite its ACL, so the service now checks the file's owner and ACL before it loads plugins or applies updates from it.
+- **The service's status pipe lets a signed-in user read it, not take it over.** The pipe gave every signed-in user full control. On a named pipe, full control includes creating another instance of it, which let a user answer the tray with a status of their choosing, and rewriting its ACL. Signed-in users now get read access only.
+- **Attended remote support asks the person at the device.** The prompt that the remote support runbook promises was never wired up, and the default answer granted consent, so every attended session started as if the person had allowed it.
+  - **Prompt:** the tray now asks with an Allow/Deny prompt, and No is the default button.
+  - **Without a prompt:** a process that cannot ask now denies.
+  - **Banner:** the "an administrator can see this device" banner now shows while a session runs.
+  - Unattended sessions, which an administrator chooses when starting the session, are unchanged.
+- **The tray keeps its session alive, and the desktop engine signs out for real.**
+  - **Tray:** the tray never refreshed its access token, so after an hour every privileged connection failed while the menu still said "Signed in". It now renews the token before it expires, and signs the person out when the server has ended the session.
+  - **Desktop engine:** the engine behind the desktop app refreshed and revoked its session as the mobile client. The server refuses a refresh under another client, and for a revocation under another client it revokes nothing but still answers 200. So refresh failed and signing out did nothing. A session is now refreshed and revoked as the client it was issued to.
+- **The console's build dependency `source-map-js` is 1.2.2** (GHSA-68fv-2mgg-jv7q, high). It is used only at build time, so nothing the console ships changes.
+
+### Added
+- **A device enrols from the console's link on Windows.**
+  - **Link:** the MSI registers the `openidx:` scheme. A link from the Add-a-device wizard asks for elevation once, enrols the device, starts the service and shows the outcome.
+  - **Service:** it now waits for an enrolment instead of stopping.
+  - **Tray:** it starts on a fresh install, says the device is not enrolled, and picks up the server after enrolment.
+- **A refused privileged launch offers the way through from the tray.** For `step_up_required` the tray offers a fresh sign-in. For `approval_required` it offers to file an access request.
+- **The tray has a Settings menu.** It offers **Start when I sign in**, a per-user switch over the machine-wide Run key. **Check for updates** reads the signed manifest; installing stays with the service. **About OpenIDX** shows the version, server, agent and device ids.
+- **The tray sets up Windows Hello.** **Set up Windows Hello sign-in** opens the console's Security Keys page, where the person registers Windows Hello or a FIDO2 key as a passkey. `docs/windows/mfa-without-a-phone.md` now describes this flow.
+- **The device tells its user what fails, and the tray stops privileged launches while a critical check fails.**
+  - **Device health:** the tray lists each failing check, and clicking one shows what is wrong and how to fix it.
+  - **Status line:** the tray's status line shows the device's state.
+  - **Launches:** while a critical check fails or the server has suspended the device, the tray will not start a privileged connection, and it names the check.
+  - A check that errors, or that this OS cannot run, never blocks.
+  - The server remains the authority.
+
+### Fixed
+- **The server and the Windows agent now agree on what a posture check is and what a result looks like.**
+  - **Config:** the server sent each check as `check_type` and dropped its parameters, so the Go agent ran every configured check as "unknown check type".
+  - **Reports:** the agent sent each result flat, while the server reads it nested under `result`, so every Windows report was stored empty and compliance stayed `unknown`.
+  - **Now:** the server sends `type` and `params` and accepts both result shapes, which fixes agents already in the field, and the agent sends what the server and the Android agent use.
+  - See the upgrade note: enforcement now acts on Windows results for the first time.
+- **The `agent_version` posture check reports the build's version.** No build ever set the version this check reads, so every released agent reported `dev`, and any `min_version` gate failed on every device.
+- **A revoked device stops reporting, and the tray says so.** The agent logged the `403` every hour and kept checking and reporting. It now stops at the first `403` and resumes after a successful re-enrolment, and the tray shows "REVOKED by an administrator".
+- **The tray's remote-support agent no longer runs posture checks.** It ran every check as the signed-in user and posted a second report that contradicted the service's.
+- **The tray says why a connection did not open.** Every `403` from a privileged connect was reported as "approval required", including a stale second factor, and the tray only logged it. The person now sees the reason and what to do.
+- **The desktop app finds its engine on Windows, and can enrol a fresh device.**
+  - **Endpoint file:** the engine wrote its endpoint file sealed for the current user into a directory every user shares, and the app read it as plain JSON. The engine now writes plain JSON into the user's own profile, private to the user from the moment it is created.
+  - **Enrolment:** the engine also refused the app's enrolment request because of its `server` field.
+- **Approving a push on the phone is recorded as an approval.** The mobile app sent fields the server does not read, so every decision, Approve included, was recorded as a deny. The approval screen now asks for the two-digit number the sign-in screen shows.
+- **The Windows runner exercises the Windows posture checks.** The `manage-bde`, `netsh` and PowerShell paths now run in CI on a Windows host.
+
+### Upgrade notes
+- **Posture enforcement now acts on Windows agents.** Until now every Windows result was stored empty, so no Windows device was ever moved for its posture. After this release:
+  - a failing high-severity check puts the device in a grace period, and it is suspended after 24 hours without a passing report;
+  - a failing critical check makes the device non-compliant;
+  - with `POSTURE_DEVICE_TRUST_GATE=enforce`, the results set the device's Ziti `device-trusted` attribute.
+
+  Review the posture checks configured for Windows devices before upgrading.
+- **Unsigned agent plugins stop running.** Sign each plugin with the update publisher's key, or set `update_trusted_cert` to the certificate you sign with. Setting it also replaces the trusted publisher for agent updates. `allow_unsigned_plugins: true` in `agent.json` skips the signature check, for a lab only. The sample `plugin-hello` is unsigned.
+- **A revoked device's agent gets `403`, not `401`.** An integration that drives the agent API should treat `agent_revoked` as final.
+- **Migration v227** adds the device key columns to `enrolled_agents`.
+
 ## [1.40.0] - 2026-10-05
 
 ### Security
