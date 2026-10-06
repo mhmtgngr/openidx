@@ -143,17 +143,28 @@ periodic heartbeat so trust stays fresh (results expire after 24h).
 
 ## 4. Which check_types the backend understands
 
-Send agent-evaluated software posture (the phone computes pass/fail):
+Send agent-evaluated software posture (the phone computes pass/fail) for the
+device agent check types the server knows. The full list, with the platforms
+each runs on and the params each takes, is in the network access guide
+(`docs/docs/guide/network-access.md`, "Device posture checks") and is served by
+`GET /api/v1/access/ziti/posture/check-types`. For a phone:
 
-| check_type | severity | pass condition |
-|------------|----------|----------------|
-| `screen_lock` | high | device lock / biometric enrolled |
-| `jailbreak_root` | critical | not rooted / jailbroken |
-| `play_integrity` | critical | (Android) Play Integrity token; server-verified |
+| check_type | pass condition |
+|------------|----------------|
+| `screen_lock` | device lock / biometric enrolled |
+| `disk_encryption` | storage encrypted |
+| `play_integrity` | (Android) Play Integrity token; server-verified |
+| `os_version`, `patch_level`, `agent_version` | at or above the configured minimum |
+
+The severity is the one the check is configured with, echoed in the config the
+agent fetches. `GET /agent/config` sends only device agent check types: a Ziti
+posture check (`OS`, `Domain`, ...) or a type no agent implements (an earlier
+draft of this document listed `jailbreak_root`, which nothing implements) is
+never sent.
 
 `status` ∈ {`pass`,`fail`,`unknown`}. `unknown` is not counted as a failure.
-Admins can add/scope more checks in the console (Ziti Network → Posture), tagging
-them `android`/`ios` so they only apply to mobile.
+Admins add and scope these checks in the console (Agent Fleet → Device agent
+checks), tagging them `android`/`ios` so they only apply to mobile.
 
 ---
 
@@ -292,7 +303,9 @@ the web `MySecurityPage` renders.
   see exactly why a phone does/doesn't have remote access.
 - **PAM Connections → “Enable Ziti reach”** button flips an entry to
   `reach_mode:ziti` from the UI.
-- **Ziti Network → Posture checks** now supports platform scoping (android/ios).
+- **Agent Fleet → Device agent checks** edits the checks agents run, scoped by
+  platform (android/ios among them). **Ziti Network → Posture checks** holds
+  only the controller's own checks.
 
 ---
 

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Trash2, Network, Server, Users2, Copy, CheckCircle,
@@ -141,16 +141,7 @@ interface PostureCheck {
   parameters: Record<string, unknown>
   enabled: boolean
   severity: string
-  platforms?: string[] | null
   created_at: string
-}
-
-interface PostureSummary {
-  total_checks: number
-  enabled_checks: number
-  disabled_checks: number
-  by_type: Record<string, number>
-  by_severity: Record<string, number>
 }
 
 interface PostureResult {
@@ -2593,6 +2584,10 @@ function EdgeRouterPoliciesSection() {
 
 const POSTURE_CHECK_TYPES = ['OS', 'Domain', 'MFA', 'Process', 'MAC'] as const
 
+// The Ziti posture checks the controller enforces. The same table holds the
+// device agent checks the OpenIDX agents run; those are listed and edited on
+// the Agent Fleet page, so this section asks for the Ziti kind only. Its
+// counts come from that list too: the posture summary counts both kinds.
 function PostureSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -2601,23 +2596,17 @@ function PostureSection() {
   const [createModal, setCreateModal] = useState(false)
   const [editTarget, setEditTarget] = useState<PostureCheck | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<PostureCheck | null>(null)
-  const [form, setForm] = useState({ name: '', check_type: 'OS', parameters: '{}', severity: 'medium', enabled: true, platforms: [] as string[] })
-
-  const { data: summary } = useQuery({
-    queryKey: ['ziti-posture-summary'],
-    queryFn: () => api.get<PostureSummary>('/api/v1/access/ziti/posture/summary'),
-  })
+  const [form, setForm] = useState({ name: '', check_type: 'OS', parameters: '{}', severity: 'medium', enabled: true })
 
   const { data: checksData, isLoading } = useQuery({
     queryKey: ['ziti-posture-checks'],
-    queryFn: () => api.get<PostureCheck[]>('/api/v1/access/ziti/posture/checks'),
+    queryFn: () => api.get<PostureCheck[]>('/api/v1/access/ziti/posture/checks?kind=ziti'),
   })
 
   const createMutation = useMutation({
     mutationFn: (data: typeof form) => api.post('/api/v1/access/ziti/posture/checks', { ...data, parameters: JSON.parse(data.parameters) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-checks'] })
-      queryClient.invalidateQueries({ queryKey: ['ziti-posture-summary'] })
       setCreateModal(false)
       resetForm()
       toast({ title: t('pages.zitiNetwork.posture.toast.created') })
@@ -2630,7 +2619,6 @@ function PostureSection() {
       api.put(`/api/v1/access/ziti/posture/checks/${id}`, { ...data, parameters: JSON.parse(data.parameters) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-checks'] })
-      queryClient.invalidateQueries({ queryKey: ['ziti-posture-summary'] })
       setEditTarget(null)
       resetForm()
       toast({ title: t('pages.zitiNetwork.posture.toast.updated') })
@@ -2642,14 +2630,13 @@ function PostureSection() {
     mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/posture/checks/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-checks'] })
-      queryClient.invalidateQueries({ queryKey: ['ziti-posture-summary'] })
       setDeleteTarget(null)
       toast({ title: t('pages.zitiNetwork.posture.toast.deleted') })
     },
     onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.posture.toast.deleteFailed'), variant: 'destructive' }),
   })
 
-  const resetForm = () => setForm({ name: '', check_type: 'OS', parameters: '{}', severity: 'medium', enabled: true, platforms: [] })
+  const resetForm = () => setForm({ name: '', check_type: 'OS', parameters: '{}', severity: 'medium', enabled: true })
 
   const openEditModal = (check: PostureCheck) => {
     setForm({
@@ -2658,7 +2645,6 @@ function PostureSection() {
       parameters: JSON.stringify(check.parameters, null, 2),
       severity: check.severity,
       enabled: check.enabled,
-      platforms: Array.isArray(check.platforms) ? check.platforms : [],
     })
     setEditTarget(check)
   }
@@ -2673,16 +2659,28 @@ function PostureSection() {
     return 'secondary'
   }
 
-  const totalChecks = summary?.total_checks || (Array.isArray(checksData) ? checksData.length : 0)
+  const allChecks = Array.isArray(checksData) ? checksData : []
+  const totalChecks = allChecks.length
+  const enabledChecks = allChecks.filter((c) => c.enabled).length
+  const byType = allChecks.reduce<Record<string, number>>((acc, c) => {
+    acc[c.check_type] = (acc[c.check_type] ?? 0) + 1
+    return acc
+  }, {})
 
   return (
     <CollapsibleSection title={t('pages.zitiNetwork.posture.title')} count={totalChecks} icon={Fingerprint} defaultOpen>
+      <p className="mb-3 text-sm text-muted-foreground">
+        {t('pages.zitiNetwork.posture.agentChecksHint')}{' '}
+        <Link to="/agent-fleet" className="text-primary underline-offset-4 hover:underline">
+          {t('pages.zitiNetwork.posture.agentChecksLink')}
+        </Link>
+      </p>
       {/* Summary row */}
-      {summary && (
+      {totalChecks > 0 && (
         <div className="flex gap-4 mb-4 text-sm">
-          <span className="text-green-600 font-medium">{t('pages.zitiNetwork.posture.enabledCount', { n: summary.enabled_checks })}</span>
-          <span className="text-muted-foreground">{t('pages.zitiNetwork.posture.disabledCount', { n: summary.disabled_checks })}</span>
-          {summary.by_type && Object.entries(summary.by_type).map(([type, count]) => (
+          <span className="text-green-600 font-medium">{t('pages.zitiNetwork.posture.enabledCount', { n: enabledChecks })}</span>
+          <span className="text-muted-foreground">{t('pages.zitiNetwork.posture.disabledCount', { n: totalChecks - enabledChecks })}</span>
+          {Object.entries(byType).map(([type, count]) => (
             <Badge key={type} variant="outline" className="text-xs">{type}: {count}</Badge>
           ))}
         </div>
@@ -2705,7 +2703,6 @@ function PostureSection() {
                 <TableHead>{t('pages.zitiNetwork.posture.colName')}</TableHead>
                 <TableHead>{t('pages.zitiNetwork.posture.colType')}</TableHead>
                 <TableHead>{t('pages.zitiNetwork.posture.colSeverity')}</TableHead>
-                <TableHead>{t('pages.zitiNetwork.posture.colPlatforms')}</TableHead>
                 <TableHead>{t('pages.zitiNetwork.posture.colStatus')}</TableHead>
                 <TableHead>{t('pages.zitiNetwork.posture.colCreated')}</TableHead>
                 <TableHead className="w-[50px]" />
@@ -2726,11 +2723,6 @@ function PostureSection() {
                     <Badge variant={severityColor(check.severity)}>
                       {t(`pages.zitiNetwork.posture.severities.${check.severity}`, { defaultValue: check.severity })}
                     </Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {Array.isArray(check.platforms) && check.platforms.length > 0
-                      ? check.platforms.join(', ')
-                      : t('pages.zitiNetwork.posture.allPlatforms')}
                   </TableCell>
                   <TableCell>
                     <Badge variant={check.enabled ? 'default' : 'secondary'}>
@@ -2808,32 +2800,6 @@ function PostureSection() {
                   className="w-full h-24 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
                   placeholder='{"os_type": "Windows", "min_version": "10"}'
                 />
-              </div>
-              <div className="space-y-2">
-                <Label>{t('pages.zitiNetwork.posture.platforms')}</Label>
-                {/* Platform identifiers are shown as the controller names them. */}
-                <div className="flex flex-wrap gap-3">
-                  {['android', 'ios', 'windows', 'macos', 'linux'].map((p) => (
-                    <label key={p} className="flex items-center gap-1.5 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={form.platforms.includes(p)}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            platforms: e.target.checked
-                              ? [...form.platforms, p]
-                              : form.platforms.filter((x) => x !== p),
-                          })
-                        }
-                      />
-                      {p}
-                    </label>
-                  ))}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {t('pages.zitiNetwork.posture.platformsHint')}
-                </p>
               </div>
               <div className="flex items-center gap-2">
                 <Switch id={`ziti-posture-${i}-enabled`} checked={form.enabled} onCheckedChange={(checked) => setForm({ ...form, enabled: checked })} />

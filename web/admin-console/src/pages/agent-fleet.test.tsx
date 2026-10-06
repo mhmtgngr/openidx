@@ -66,11 +66,30 @@ function createWrapper() {
   )
 }
 
+// The page also lists the device agent checks (components/agent-checks-
+// section.tsx, tested on its own); here they answer empty.
+function routeFleet(agents: unknown[]) {
+  return ((url: string) => {
+    if (url.includes('/ziti/posture/check-types')) {
+      return Promise.resolve({ ziti: [], agent: [], severities: [], platforms: [] })
+    }
+    if (url.includes('/ziti/posture/checks')) return Promise.resolve([])
+    return Promise.resolve(agents)
+  }) as typeof api.get
+}
+
 describe('AgentFleetPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     document.body.innerHTML = ''
-    vi.mocked(api.get).mockResolvedValue([activeAgent, pendingAgent, nonCompliantAgent])
+    vi.mocked(api.get).mockImplementation(routeFleet([activeAgent, pendingAgent, nonCompliantAgent]))
+  })
+
+  it('shows the device agent checks the fleet is configured with', async () => {
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    expect(await screen.findByText('Device agent checks')).toBeInTheDocument()
+    expect(api.get).toHaveBeenCalledWith('/api/v1/access/ziti/posture/checks?kind=agent')
+    expect(await screen.findByText(/no agent checks are configured/i)).toBeInTheDocument()
   })
 
   it('renders the page heading and Generate QR button', async () => {
@@ -128,7 +147,7 @@ describe('AgentFleetPage', () => {
   })
 
   it('renders an empty state when no agents are enrolled', async () => {
-    vi.mocked(api.get).mockResolvedValue([])
+    vi.mocked(api.get).mockImplementation(routeFleet([]))
     render(<AgentFleetPage />, { wrapper: createWrapper() })
 
     expect(await screen.findByText('Agent Fleet')).toBeInTheDocument()
@@ -139,6 +158,7 @@ describe('AgentFleetPage', () => {
     const user = userEvent.setup()
     // Route the posture endpoint; the agents list uses the default array mock.
     vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url.includes('/ziti/posture/')) return routeFleet([])(url)
       if (url.includes('/posture')) {
         return Promise.resolve({
           agent_id: 'agt-001',
