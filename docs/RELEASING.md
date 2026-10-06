@@ -215,9 +215,11 @@ gh workflow run windows-client-build.yml --ref main -f version=X.Y.Z -f release=
 Each agent release also replaces the assets of `agent-latest`, the release
 channel that installed agents poll for `latest.json` and the install script
 downloads `OpenIDX.msi` from. Agent releases never take GitHub's "latest",
-which stays with the server line. `agent/packaging/wix/README.md` has the
-details, and `scripts/check-agent-release.sh` holds both the dispatch path and
-the channel.
+which stays with the server line. The published install script carries no
+enrollment token: release assets are public, so the operator passes `-Token`.
+`agent/packaging/wix/README.md` has the details, and
+`scripts/check-agent-release.sh` holds the dispatch path, the channel and the
+token-free script.
 
 ## Versioning policy
 

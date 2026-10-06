@@ -22,7 +22,11 @@
 #   c. each release replaces the assets of the agent-latest channel release;
 #   d. release builds carry that channel as their default manifest URL;
 #   e. nothing under agent/ or in the workflow points a URL at
-#      releases/latest/download again.
+#      releases/latest/download again;
+#   f. the published install script carries no enrollment token. The repository
+#      is public, so its release assets are too, and agent-v0.3.0 shipped a
+#      reusable token stamped from a repository variable: anyone who downloaded
+#      the script could enrol a machine into the organization.
 #
 # Usage: check-agent-release.sh [--enforce]   (non-zero on a finding either way)
 #
@@ -78,7 +82,22 @@ if hits=$(grep -rnE 'https://github\.com/[^[:space:]"]*/releases/latest/download
   done <<<"$hits"
 fi
 
+# f. No enrollment token in a published asset.
+stamp="$(awk '/^      - name: Stamp install script$/{f=1;print;next} f&&/^      - name:/{exit} f' "$wf")"
+if [ -z "$stamp" ]; then
+  finding "the workflow has no 'Stamp install script' step, so nothing shows the published script is token-free"
+else
+  grep -qF "Replace('__ENROLL_TOKEN__'" <<<"$stamp" &&
+    finding "the install script is stamped with an enrollment token; the release asset is public"
+  grep -qE '\$\{\{ *(vars|secrets)\.[A-Za-z0-9_]*TOKEN' <<<"$stamp" &&
+    finding "the stamp step reads a token from vars/secrets; nothing it reads may reach a public asset"
+  grep -qF 'a published script must carry no enrollment token' <<<"$stamp" ||
+    finding "the stamp step no longer fails when the script's -Token default stops being the placeholder"
+fi
+grep -qE '^ +\[string\]\$Token +=  *"__ENROLL_TOKEN__",$' "$ROOT/agent/scripts/install-openidx-agent.ps1" ||
+  finding "install-openidx-agent.ps1's -Token default is not the __ENROLL_TOKEN__ placeholder"
+
 if [ "$fail" -eq 0 ]; then
-  echo "check-agent-release: ok — the agent is releasable by dispatch and agents poll the agent-latest channel"
+  echo "check-agent-release: ok — the agent is releasable by dispatch, agents poll the agent-latest channel, and no token is published"
 fi
 exit "$fail"

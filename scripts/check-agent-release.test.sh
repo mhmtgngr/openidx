@@ -66,5 +66,21 @@ stage
 sed -i 's#releases/download/agent-latest/latest.json#releases/latest/download/latest.json#' "$T/agent/scripts/install-openidx-agent.ps1"
 expect red "the install script points at releases/latest again"
 
+stage
+sed -i "s/\$src.Replace('__SERVER_URL__', \$server)/\$src.Replace('__ENROLL_TOKEN__', \$env:T).Replace('__SERVER_URL__', \$server)/" "$(WF)"
+expect red "the install script is stamped with a token again"
+
+stage
+sed -i 's/^          DEFAULT_SERVER_IP: ${{ vars.AGENT_DEFAULT_SERVER_IP }}$/&\n          DEFAULT_ENROLL_TOKEN: ${{ vars.AGENT_DEFAULT_ENROLL_TOKEN }}/' "$(WF)"
+expect red "the stamp step reads a token variable"
+
+stage
+sed -i 's/a published script must carry no enrollment token/ok/' "$(WF)"
+expect red "the stamp step no longer asserts the placeholder"
+
+stage
+sed -i 's/= "__ENROLL_TOKEN__",/= "0123456789abcdef",/' "$T/agent/scripts/install-openidx-agent.ps1"
+expect red "the script's own -Token default is a literal"
+
 echo "check-agent-release.test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
