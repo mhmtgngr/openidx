@@ -3390,6 +3390,14 @@ paths:
     post:
       tags: [Agent Enrollment]
       summary: Handle enroll
+      description: >-
+        Enrols a device with an enrollment token (Authorization: Bearer, or the
+        enrollment-session code in the body). A device that names a
+        device_fingerprint already enrolled in the token's organization is
+        re-enrolled under the same agent with a new token, unless an
+        administrator revoked that agent: then the answer is 403 with code
+        agent_revoked, nothing is minted and the agent stays revoked. A
+        single-use token presented for a revoked device is spent.
       operationId: handleEnroll
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleEnroll
       requestBody:
@@ -3412,7 +3420,11 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: The device fingerprint names an agent an administrator revoked (`agent_revoked`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -3420,6 +3432,12 @@ paths:
     post:
       tags: [Agent Enrollment]
       summary: Handle enroll O auth
+      description: >-
+        Enrols a device for the signed-in user; the bearer must carry the
+        agent.enroll scope. A device that names a device_fingerprint already
+        enrolled in the caller's organization is re-enrolled under the same
+        agent with a new token, unless an administrator revoked that agent:
+        then the answer is 403 with code agent_revoked and nothing is minted.
       operationId: handleEnrollOAuth
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleEnrollOAuth
       requestBody:
@@ -3442,7 +3460,14 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: >-
+            The token lacks the agent.enroll scope (`insufficient_scope`), or the
+            device fingerprint names an agent an administrator revoked
+            (`agent_revoked`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/ServerError'
 

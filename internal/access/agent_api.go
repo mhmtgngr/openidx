@@ -270,6 +270,15 @@ type issuedAgentCredentials struct {
 	ZitiService string
 }
 
+// revokedAgentError is issueAgentCredentials' refusal to re-enrol a device
+// whose fingerprint names an agent that an administrator revoked. agentID is
+// that agent, for the audit record; it is never sent to the caller.
+type revokedAgentError struct{ agentID string }
+
+func (e revokedAgentError) Error() string {
+	return "agent " + e.agentID + " has been revoked; enrolment does not reinstate it"
+}
+
 // issueAgentCredentials performs the credential-minting half of enrollment
 // shared by every enrollment path:
 //
@@ -284,13 +293,17 @@ type issuedAgentCredentials struct {
 // or session that admitted it, or of the OAuth caller. Every row this writes
 // carries it, and the stable-identity lookup is within it -- one physical
 // machine may be managed by two tenants, and each sees its own agent.
+//
+// The only error it returns is revokedAgentError, when the fingerprint names a
+// revoked agent in orgID. Nothing is written in that case and no credential is
+// minted; the caller answers it with refuseRevokedReenrolment.
 func (h *AgentAPIHandler) issueAgentCredentials(
 	ctx context.Context,
 	req enrollRequest,
 	method string,
 	enrolledByUserID string,
 	orgID string,
-) issuedAgentCredentials {
+) (issuedAgentCredentials, error) {
 	agentID := "agent-" + uuid.New().String()[:8]
 	deviceID := "device-" + uuid.New().String()[:8]
 	authToken := uuid.New().String()
@@ -321,14 +334,31 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 		// This makes re-installs / upgrades idempotent — one physical machine
 		// stays one agent. Falls through to a fresh INSERT when the device is
 		// new or sends no fingerprint (legacy clients).
+		//
+		// A revoked row is the exception. The fingerprint is the client's own
+		// claim, so re-enrolment by fingerprint used to let anyone holding a
+		// valid enrollment token -- or any user of the organization, through
+		// /agent/enroll/oauth -- name a machine an administrator had revoked
+		// and be handed a fresh, active credential for it. An administrator's
+		// revoke now stands: the row is left as it is and no credential is
+		// minted. Suspended and pending rows still re-enrol to active. A
+		// suspension is the grace-period sweep's, not an administrator's, and
+		// re-enrolment is the only thing that lifts it; nothing writes pending
+		// any more, and a re-enrolled pending row gets no more than a fresh
+		// enrolment with the same token would.
 		if fp := strings.TrimSpace(req.DeviceFingerprint); fp != "" {
-			var existingAgentID, existingDeviceID string
+			var existingAgentID, existingDeviceID, existingStatus string
 			err := h.db.Pool.QueryRow(ctx, `
-                SELECT agent_id, device_id FROM enrolled_agents
+                SELECT agent_id, device_id, status FROM enrolled_agents
                 WHERE device_fingerprint = $1 AND org_id = $2
-            `, fp, orgID).Scan(&existingAgentID, &existingDeviceID)
+            `, fp, orgID).Scan(&existingAgentID, &existingDeviceID, &existingStatus)
+			if err == nil && existingStatus == agentStatusRevoked {
+				return issuedAgentCredentials{}, revokedAgentError{agentID: existingAgentID}
+			}
 			if err == nil && existingAgentID != "" {
-				_, upErr := h.db.Pool.Exec(ctx, `
+				// The status test is repeated in the UPDATE so that a revoke
+				// landing between the read above and this write is not undone.
+				tag, upErr := h.db.Pool.Exec(ctx, `
                     UPDATE enrolled_agents
                        SET auth_token_hash = $2, status = 'active', metadata = $3,
                            platform = COALESCE(NULLIF($4,''), platform),
@@ -336,14 +366,20 @@ func (h *AgentAPIHandler) issueAgentCredentials(
                            enrollment_method = COALESCE(NULLIF($6,''), enrollment_method),
                            management_mode = COALESCE(NULLIF($7,''), management_mode),
                            is_device_owner = $8, last_seen_at = NOW()
-                     WHERE agent_id = $1 AND org_id = $9
+                     WHERE agent_id = $1 AND org_id = $9 AND status <> $10
                 `, existingAgentID, authTokenHash, metadata,
-					platform, formFactor, method, managementMode, isDeviceOwner, orgID)
-				if upErr != nil {
+					platform, formFactor, method, managementMode, isDeviceOwner, orgID, agentStatusRevoked)
+				switch {
+				case upErr != nil:
 					h.logger.Error("Failed to refresh existing agent enrollment", zap.Error(upErr))
-				} else {
+				case tag.RowsAffected() == 0:
+					// The row was there a moment ago and nothing deletes agent
+					// rows, so the predicate that stopped matching is the
+					// status: it was revoked in between.
+					return issuedAgentCredentials{}, revokedAgentError{agentID: existingAgentID}
+				default:
 					h.logger.Info("Re-enrolled existing device (stable identity)",
-						zap.String("agent_id", existingAgentID), zap.String("fingerprint", fp))
+						zap.String("agent_id", existingAgentID), logsafe.String("fingerprint", fp))
 					reused := issuedAgentCredentials{
 						AgentID:   existingAgentID,
 						DeviceID:  existingDeviceID,
@@ -356,7 +392,7 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 					// get an overlay identity and remote-support-over-Ziti would
 					// stay off for it.
 					h.ensureAgentZitiIdentity(ctx, existingAgentID, &reused)
-					return reused
+					return reused, nil
 				}
 			}
 		}
@@ -397,7 +433,36 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 	}
 
 	h.ensureAgentZitiIdentity(ctx, agentID, &result)
-	return result
+	return result, nil
+}
+
+// refuseRevokedReenrolment answers an enrolment whose device fingerprint names
+// an agent an administrator revoked, and audits the refusal in the agent's
+// tenant (which is the tenant the enrolment was admitted into: the fingerprint
+// lookup is within it).
+//
+// The answer is the one every agent route gives a revoked agent, 403 with code
+// agent_revoked (see refuseRevokedAgent), so a client tells the two apart from
+// "the server is unreachable" the same way. Nothing in the admin API reinstates
+// a revoked agent or deletes its row, so the description promises no way back;
+// it says what happened.
+//
+// detail names the enrolment path and who or what admitted it, so the audit
+// trail shows who tried to bring the device back.
+func (h *AgentAPIHandler) refuseRevokedReenrolment(c *gin.Context, orgID, agentID, detail string) {
+	ctx := c.Request.Context()
+	if orgID != "" {
+		ctx = orgctx.With(ctx, orgctx.Org{ID: orgID})
+	}
+	detail = "agent revoked; re-enrolment refused " + detail
+	h.logAuditEvent("agent.enroll_denied", agentID, "denied", detail)
+	h.logAuditEventToDB(ctx, "agent.enroll_denied", agentID, "denied", detail)
+	c.JSON(http.StatusForbidden, gin.H{
+		"error": "agent revoked",
+		"code":  "agent_revoked",
+		"error_description": "an administrator revoked this device in this organization, " +
+			"and enrolling it again does not reinstate it",
+	})
 }
 
 // ensureAgentZitiIdentity provisions a Ziti (OpenZiti) identity for the agent
@@ -579,7 +644,20 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 			enrolledBy = sess.CreatedByUID
 		}
 
-		creds := h.issueAgentCredentials(ctx, enrollReq, method, enrolledBy, tok.OrgID)
+		creds, err := h.issueAgentCredentials(ctx, enrollReq, method, enrolledBy, tok.OrgID)
+		var revoked revokedAgentError
+		if errors.As(err, &revoked) {
+			// A single-use token stays spent: the redeemer claims it before
+			// anything is minted, by design, and the refusal does not hand back
+			// a token that was presented for a revoked machine. An enrollment
+			// session it came from stays pending until it expires.
+			detail := fmt.Sprintf("(method=%s token_id=%s)", method, tokenID)
+			if enrolledBy != "" {
+				detail = fmt.Sprintf("(method=%s token_id=%s user=%s)", method, tokenID, enrolledBy)
+			}
+			h.refuseRevokedReenrolment(c, tok.OrgID, revoked.agentID, detail)
+			return
+		}
 
 		// Track the most recent enrolling agent (single-use tokens only; a
 		// reusable token enrolls many, so this field is left for the last one).
@@ -653,7 +731,9 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 		return
 	}
 
-	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "token", "", "")
+	// With no database there is no agent row, so nothing can have been revoked
+	// and issueAgentCredentials has nothing to refuse.
+	creds, _ := h.issueAgentCredentials(c.Request.Context(), enrollReq, "token", "", "")
 	writeEnrollResponse(c, creds, "token", nil)
 	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=token (no-db, development only)")
 }
@@ -760,7 +840,15 @@ func (h *AgentAPIHandler) HandleEnrollOAuth(c *gin.Context) {
 	// false: safe, and silently unlike the path next to it.
 	trusted, mode := decideAutoTrust(h.cfg(), h.logger, amrIndicatesMFA(c.GetStringSlice("amr")), false, org.ID)
 
-	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "oauth", userID, org.ID)
+	creds, err := h.issueAgentCredentials(c.Request.Context(), enrollReq, "oauth", userID, org.ID)
+	var revoked revokedAgentError
+	if errors.As(err, &revoked) {
+		// Refused before the known-device link and the token binding below:
+		// neither may attach a revoked machine to this user.
+		h.refuseRevokedReenrolment(c, org.ID, revoked.agentID,
+			"(method=oauth user="+logsafe.Clean(userID)+")")
+		return
+	}
 
 	// Converge the two device registries: a user-bound enrollment means we know
 	// which OpenIDX user owns this machine, so mirror it into the IAM
