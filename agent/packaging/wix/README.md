@@ -108,6 +108,11 @@ The workflow builds and signs the MSI and publishes a GitHub Release
 - `OpenIDX-<version>.msi`
 - `latest.json` — `{ "version", "url", "sha256", "signature" }` the self-updater
   polls.
+- `install-openidx-agent.ps1` — the one-command installer, stamped with the
+  release's MSI and channel URLs and the `AGENT_DEFAULT_SERVER_URL` /
+  `AGENT_DEFAULT_SERVER_IP` repository variables. It is never stamped with an
+  enrollment token: the asset is public, and a token admits any machine that
+  presents it. Run it as `install-openidx-agent.ps1 -Token <token>`.
 
 It then copies `latest.json`, the MSI (as `OpenIDX.msi`) and the stamped
 install script onto **`agent-latest`**, a release that never moves and whose

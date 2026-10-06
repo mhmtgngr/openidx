@@ -11,15 +11,18 @@
 
   Run in an ELEVATED (Administrator) PowerShell:
 
-    # Minimal (uses the pinned defaults baked in at release time):
-    ./install-openidx-agent.ps1
+    # Minimal (the server and download URLs are the defaults stamped at release):
+    ./install-openidx-agent.ps1 -Token <REUSABLE_ENROLL_TOKEN>
 
     # Override any value:
     ./install-openidx-agent.ps1 -Server https://openidx.example.com -Token <REUSABLE_ENROLL_TOKEN>
 
 .NOTES
-  The __PLACEHOLDER__ values are stamped by CI at release time. When run from a
-  release asset they are already filled in, so a bare invocation just works.
+  CI stamps the __PLACEHOLDER__ values at release time, except the token. The
+  release asset is public, and an enrollment token admits any machine that
+  presents it, so -Token is always yours to pass: mint one with
+  POST /api/v1/access/agent/tokens ({"reusable":true} for a fleet) and hand it
+  out the way you hand out any credential.
 #>
 
 [CmdletBinding()]
