@@ -15,7 +15,7 @@ info:
     holding audit:read (super_admin, admin, operator, auditor,
     compliance_reader); any other caller gets 403 with code
     audit_reader_required. The webhook routes need admin or super_admin.
-  version: 1.40.0
+  version: 1.41.0
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0

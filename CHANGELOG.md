@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.41.0] - 2026-10-06
+
 ### Security
 - **A revoked device's credential stops working on every agent route.** Revoking a device left its token valid everywhere except `/agent/config`. A revoked agent could still file posture reports, record remote-support consent and report Windows apps. Every agent-authenticated route now answers a revoked agent `403` with `agent_revoked`, audited in the agent's tenant. A wrong or missing credential still gets `401`, and the token is now compared in constant time.
 - **A device that holds a key must sign its posture reports with it.** An agent proved itself with one bearer token in `agent.json`, which every signed-in Windows user can read. Whoever copied that token could report posture as the device from anywhere.
@@ -12040,7 +12042,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.40.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.41.0...HEAD
+[1.41.0]: https://github.com/mhmtgngr/openidx/compare/v1.40.0...v1.41.0
 [1.40.0]: https://github.com/mhmtgngr/openidx/compare/v1.39.0...v1.40.0
 [1.39.0]: https://github.com/mhmtgngr/openidx/compare/v1.38.0...v1.39.0
 [1.38.0]: https://github.com/mhmtgngr/openidx/compare/v1.37.0...v1.38.0
