@@ -185,8 +185,10 @@ class ApiClient {
   Future<T> get<T>(String path, {Map<String, dynamic>? query}) =>
       _unwrap<T>(_dio.get<T>(path, queryParameters: query));
 
-  Future<T> post<T>(String path, {Object? data}) =>
-      _unwrap<T>(_dio.post<T>(path, data: data));
+  /// [options] lets a caller change how one request is handled, for example
+  /// which statuses count as an answer rather than an error.
+  Future<T> post<T>(String path, {Object? data, Options? options}) =>
+      _unwrap<T>(_dio.post<T>(path, data: data, options: options));
 
   Future<T> put<T>(String path, {Object? data}) =>
       _unwrap<T>(_dio.put<T>(path, data: data));
