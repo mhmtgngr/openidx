@@ -174,7 +174,8 @@ resulting credentials in the config directory for subsequent runs.`,
 			return fmt.Errorf("either --token or --code is required")
 		}
 		server, _ := cmd.Flags().GetString("server")
-		manifestURL, _ := cmd.Flags().GetString("manifest-url")
+		flagManifest, _ := cmd.Flags().GetString("manifest-url")
+		manifestURL := enrollment.ResolveManifestURL(configDir, cmd.Flags().Changed("manifest-url"), flagManifest)
 
 		logger.Info("enrolling agent",
 			zap.String("server", server),
@@ -532,7 +533,7 @@ func init() {
 	enrollCmd.Flags().String("token", "", "one-time enrollment token")
 	enrollCmd.Flags().String("code", "", "enrollment session code from the Add-a-device wizard / deep-link")
 	enrollCmd.Flags().String("server", "https://openidx.example.com", "OpenIDX server URL")
-	enrollCmd.Flags().String("manifest-url", "", "update manifest URL to persist for self-update (optional)")
+	enrollCmd.Flags().String("manifest-url", "", "update manifest URL to persist for self-update; an empty value turns self-update off (default: keep the device's current one, else this build's release channel)")
 	// Either --token or --code is required; validated in RunE.
 
 	serviceCmd.AddCommand(serviceRunCmd)

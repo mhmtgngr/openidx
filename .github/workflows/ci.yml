@@ -293,6 +293,10 @@ jobs:
         run: bash scripts/check-release-dispatch.test.sh
       - name: A dispatched release must stamp images like a tagged one
         run: bash scripts/check-release-dispatch.sh --enforce
+      - name: Verify the agent-release guard can go red
+        run: bash scripts/check-agent-release.test.sh
+      - name: The agent is releasable by dispatch, and agents poll its release channel
+        run: bash scripts/check-agent-release.sh --enforce
       - name: Verify the release-wave guard can go red
         run: bash scripts/check-release-rollout.test.sh
       - name: The release wave is canary-1, then eu-1, then us-1, and stops on the first cell that does not come up

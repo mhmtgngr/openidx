@@ -32,9 +32,15 @@
     <!-- Public properties usable from a silent msiexec command line. -->
     <Property Id="SERVER_URL" Secure="yes" />
     <Property Id="ENROLL_TOKEN" Secure="yes" Hidden="yes" />
-    <!-- Optional: the update manifest URL persisted at enroll so the service
-         self-updates. e.g. https://github.com/<owner>/<repo>/releases/latest/download/latest.json -->
+    <!-- The update manifest URL persisted at enroll so the service
+         self-updates. A release build defaults it to the agent release channel
+         (…/releases/download/agent-latest/latest.json); pass
+         UPDATE_MANIFEST_URL="" to turn self-update off, or a mirror's URL. -->
+    <?ifdef DefaultManifestURL ?>
+    <Property Id="UPDATE_MANIFEST_URL" Secure="yes" Value="$(var.DefaultManifestURL)" />
+    <?else?>
     <Property Id="UPDATE_MANIFEST_URL" Secure="yes" />
+    <?endif?>
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="OpenIDX" />
