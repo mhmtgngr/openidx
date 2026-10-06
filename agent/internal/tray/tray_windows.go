@@ -95,9 +95,11 @@ func (a *app) onReady() {
 // only job is to service remote-support sessions (screen capture + input),
 // which must happen where there is an interactive desktop. The Windows service
 // (session 0) handles posture/enrollment but has DisableRemoteSupport set, so
-// this is the single place screen-share runs. Posture double-reporting is
-// harmless (idempotent), and this keeps the user from ever having to launch the
-// agent by hand: the tray auto-starts at login and remote support "just works".
+// this is the single place screen-share runs. The loop is RemoteSupportOnly:
+// it polls the config for a session and runs no posture check, because the
+// service already reports posture with administrator rights and a second,
+// unelevated report from here contradicted it. The tray auto-starts at login,
+// so remote support "just works" without the user launching anything by hand.
 func (a *app) runRemoteSupportAgent() {
 	// Never let a transient failure permanently stop remote-support handling —
 	// that would leave the operator with the "start a new session but it won't
@@ -115,7 +117,7 @@ func (a *app) runRemoteSupportAgent() {
 				a.logger.Warn("tray: could not start remote-support agent", zap.Error(err))
 				return
 			}
-			ag.RegisterBuiltinChecks()
+			ag.RemoteSupportOnly = true
 			a.mu.Lock()
 			a.rsAgent = ag
 			a.mu.Unlock()
