@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The console's enrolment link works on Windows.** The Add-a-device link and QR carried only the code. The Windows agent's link handler has no server field, so it enrolled against its built-in `https://openidx.example.com` and failed. The link now also names the server (`openidx://enroll?code=…&server=…`), which every client already reads.
+
 ## [1.41.0] - 2026-10-06
 
 ### Security

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -84,6 +85,22 @@ func (h *AgentAPIHandler) enrollServerURL(c *gin.Context) string {
 	return scheme + "://" + c.Request.Host
 }
 
+// enrollDeepLink builds the openidx://enroll link the wizard renders as the
+// "Open in app" button and the QR. It names the server as well as the code:
+// the link used to carry the code alone, on the theory that the app would fill
+// in the server, but the Windows agent's link handler has no server field and
+// fell back to its built-in default (https://openidx.example.com), so every
+// enrolment started from the console's button on Windows failed. Every client
+// (Windows agent, Flutter app, Android agent) already reads `server`.
+func enrollDeepLink(code, server string) string {
+	q := url.Values{}
+	q.Set("code", code)
+	if server != "" {
+		q.Set("server", server)
+	}
+	return "openidx://enroll?" + q.Encode()
+}
+
 func (h *AgentAPIHandler) enrollSessionTTL() time.Duration {
 	mins := 15
 	if h.zm != nil && h.zm.cfg != nil && h.zm.cfg.EnrollSessionTTLMinutes > 0 {
@@ -152,11 +169,7 @@ func (h *AgentAPIHandler) HandleCreateEnrollSession(c *gin.Context) {
 	}
 
 	server := h.enrollServerURL(c)
-	// Encode only the code in the QR/deep-link — the shorter the payload, the
-	// sparser (more scannable) the QR. The app defaults + shows an editable
-	// server field, and `server` is still returned below for the console to
-	// display / communicate for non-default deployments.
-	deepLink := "openidx://enroll?code=" + token
+	deepLink := enrollDeepLink(token, server)
 
 	h.logAuditEventToDB(ctx, "enroll.session_created", sessionID, "success", "user="+userID)
 	c.JSON(http.StatusOK, gin.H{
