@@ -267,8 +267,21 @@ type AuditQueryResult struct {
 	Sources []string            `json:"sources"`
 }
 
-// SyncExternalAuditEvents syncs audit events from Ziti and Guacamole
+// SyncExternalAuditEvents syncs audit events from Ziti and Guacamole.
+//
+// The sync is install-wide: one poll ingests every tenant's fabric events and
+// remote sessions and stamps each row with the org of the route it belongs to
+// (see the two ingest paths below). It therefore runs under the RLS bypass, and
+// takes it HERE rather than trusting the caller to: the manual-sync endpoint
+// wrapped its context, the five-minute loop in cmd/access-service handed over
+// a bare context.Background(), and under the FORCE RLS policy on
+// unified_audit_events every insert from the loop was refused with 42501 —
+// the cursor held, nothing skipped, and nothing recorded either, on an
+// otherwise healthy install. The contract belongs to the function, not to
+// each place that calls it.
 func (uas *UnifiedAuditService) SyncExternalAuditEvents(ctx context.Context) error {
+	ctx = orgctx.WithBypassRLS(ctx)
+
 	// Sync Ziti events
 	if uas.ziti() != nil && uas.ziti().IsInitialized() {
 		if err := uas.syncZitiAuditEvents(ctx); err != nil {
@@ -586,10 +599,10 @@ func (s *Service) handleSyncExternalAuditEvents(c *gin.Context) {
 		return
 	}
 
-	// Bypass RLS: external-audit correlation maps controller events to routes by
-	// globally-unique ziti_service_name across all tenants (the background caller
-	// already runs bypassed; this is the admin HTTP trigger).
-	err := s.auditService.SyncExternalAuditEvents(orgctx.WithBypassRLS(c.Request.Context()))
+	// The admin HTTP trigger for the same sync the service loop runs every five
+	// minutes. SyncExternalAuditEvents takes the RLS bypass itself, so this
+	// caller passes the request context as it is.
+	err := s.auditService.SyncExternalAuditEvents(c.Request.Context())
 	if err != nil {
 		apperrors.HandleErrorWithLogger(c, apperrors.Internal("sync external audit events", err), s.logger)
 		return
