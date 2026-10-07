@@ -31,7 +31,7 @@ import { api } from '../lib/api'
 const SESSION = {
   id: 'sess-1',
   code: 'ABCDEFGHJKMN',
-  deep_link: 'openidx://enroll?code=ABCDEFGHJKMN',
+  deep_link: 'openidx://enroll?code=ABCDEFGHJKMN&server=https%3A%2F%2Fopenidx.example',
   server: 'https://openidx.example',
   expires_at: new Date(Date.now() + 600_000).toISOString(),
 }
