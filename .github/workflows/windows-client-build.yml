@@ -516,11 +516,18 @@ jobs:
           mkdir -p dist
           # Include the libvpx runtime DLL in the MSI only when the screenshare
           # build produced one (pass -d VpxDll=<path> so the WiX <?ifdef?> fires).
+          # vcpkg's mingw triplet names it libvpx-1.dll. This glob used to be
+          # vpx*.dll, which never matched, so agent-v0.3.0 shipped an exe that
+          # imports libvpx-1.dll without it: 0xC0000135 at launch, the service
+          # never started (1920) and every install rolled back (1603).
           VPX_ARG=""
-          VPX_DLL="$(ls agent/dist/vpx*.dll 2>/dev/null | head -1 || true)"
+          VPX_DLL="$(ls agent/dist/*vpx*.dll 2>/dev/null | head -1 || true)"
           if [ -n "$VPX_DLL" ]; then
             VPX_ARG="-d VpxDll=$VPX_DLL"
             echo "Bundling libvpx runtime: $VPX_DLL"
+          elif [ "${SCREENSHARE_BUILD:-off}" = "on" ]; then
+            echo "::error::the screen-share exe links libvpx but no *vpx*.dll is in agent/dist to bundle"
+            exit 1
           fi
           # Include the MinGW pthread runtime only if the build shipped it as a
           # fallback (normally it's static-linked, so this is absent).
@@ -546,6 +553,35 @@ jobs:
             $PTHREAD_ARG \
             -arch x64 \
             -o "dist/OpenIDX-$AGENT_VERSION.msi"
+
+      # Launch the agent from the MSI itself, not from agent/dist. The capability
+      # check above runs inside agent/dist, where every DLL the build produced
+      # sits next to the exe, so it passed for a 0.3.0 MSI that could not start
+      # on any machine. An administrative install unpacks exactly the files the
+      # MSI carries, and the exe is run from there, outside agent/dist, so a
+      # DLL the package leaves out fails here (0xC0000135) instead of on a
+      # customer's device.
+      - name: Verify the packaged agent launches
+        shell: pwsh
+        env:
+          AGENT_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = (Resolve-Path "dist/OpenIDX-$($env:AGENT_VERSION).msi").Path
+          $out = Join-Path $env:RUNNER_TEMP 'msi-unpacked'
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList '/a', "`"$msi`"", '/qn', "TARGETDIR=`"$out`""
+          if ($p.ExitCode -ne 0) { throw "administrative install of the MSI failed: $($p.ExitCode)" }
+          $exe = Get-ChildItem $out -Recurse -Filter openidx-agent.exe | Select-Object -First 1
+          if (-not $exe) { throw 'the MSI carries no openidx-agent.exe' }
+          Get-ChildItem $exe.DirectoryName | ForEach-Object { "  $($_.Name)" }
+          $stdout = Join-Path $env:RUNNER_TEMP 'caps.txt'
+          $run = Start-Process $exe.FullName -ArgumentList 'capabilities' -WorkingDirectory $env:RUNNER_TEMP `
+            -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdout
+          if ($run.ExitCode -ne 0) {
+            throw ("the agent unpacked from the MSI does not start: exit 0x{0:X8} (0xC0000135 = a DLL the MSI does not carry)" -f $run.ExitCode)
+          }
+          Get-Content $stdout
+          Write-Host "✓ the agent in the MSI starts on its own"
 
       # Sign the packaged MSI (contains the already-signed exe). latest.json is
       # generated AFTER this so its sha256 matches the signed MSI.
