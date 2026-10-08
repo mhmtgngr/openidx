@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The Windows MSI installs again.** The agent-v0.3.0 MSI left out `libvpx-1.dll`, which the screen-share build of the agent imports. On every machine the agent failed to start (`0xC0000135`), the service did not start (`1920`) and the installation rolled back (`1603`). The packaging step looked for `vpx*.dll`, which does not match vcpkg's `libvpx-1.dll`. It now bundles the DLL, fails the build when a screen-share build has none to bundle, and unpacks the finished MSI and starts the agent from it, so a DLL the package is missing fails CI instead of an install.
 - **The console's enrolment link works on Windows.** The Add-a-device link and QR carried only the code. The Windows agent's link handler has no server field, so it enrolled against its built-in `https://openidx.example.com` and failed. The link now also names the server (`openidx://enroll?code=…&server=…`), which every client already reads.
 
 ## [1.41.0] - 2026-10-06
