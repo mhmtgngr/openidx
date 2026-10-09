@@ -1,6 +1,10 @@
 package config
 
-import "go.uber.org/zap"
+import (
+	"time"
+
+	"go.uber.org/zap"
+)
 
 // ValidateProductionConfig performs critical security validation for production
 // deployments. This MUST be called at service startup after configuration is loaded.
@@ -62,6 +66,12 @@ func logReportModeGates(c *Config, log *zap.Logger) {
 	write("AUTHZ: report-mode summary",
 		zap.Int("open_gates", len(open)),
 		zap.Bool("fully_enforcing", len(open) == 0))
+	// A production install reaches this line with an open control only inside
+	// a declared observe window (ValidateProduction refuses otherwise), so the
+	// days left are the one number an operator needs from this block.
+	if status := c.EnforcementWindowStatus(time.Now()); status != "" {
+		write("AUTHZ: "+status, zap.String("enforcement_observe_until", c.EnforcementObserveUntil))
+	}
 }
 
 // LogSecurityWarnings logs actionable security warnings when running in

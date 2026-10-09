@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Ten concurrent sessions per person by default, oldest retired first.** The compiled default was unlimited, so a credential used from a hundred places kept a hundred live sessions. The default is now ten with `terminate_oldest`, which never refuses a sign-in; a value set on the Security tab still wins.
 
+### Security
+- **A production install enforces its authorization controls, or says until when it won't.** Application assignment, the posture → device-trust link, the fresh-second-factor gate, the bot gate, the on-overlay requirement for privileged sessions and the two require-auth switches all had off/observe modes as defaults, and nothing told a production install mid-rollout apart from one that had never been switched on: a startup warning was the whole security posture. `APP_ENV=production` now refuses to start while any of them is open, naming each with what it leaves undone. The one exception is a declared rollout window, `ENFORCEMENT_OBSERVE_UNTIL=YYYY-MM-DD` (at most 30 days ahead): until that day the controls may observe and every service logs the days left; from that day startup refuses again.
+  - **Console:** Security → **Enforcement** lists each control with its mode, what it leaves open, and how many times in the last week its observe mode recorded a refusal it did not carry out (`GET /api/v1/security-posture`), plus the exact settings that close the open ones. The dashboard carries a banner while any control is open.
+  - **Runbook:** `docs/runbooks/enforce-rollout.md`.
+
 ### Fixed
 - **The Windows tray appears right after install, once per session, on the taskbar.**
   - **After install or upgrade:** the MSI's `LaunchTray` action never ran. `WixQuietExec` found no command line (`0x80070057`), it would have blocked the install on a tray that never exits, and upgrades skipped it. So nobody saw the tray until they signed out and back in. The action is gone. Instead the service, which runs as SYSTEM, starts `tray --autostart` in every signed-in session within 15 seconds. That covers an interactive install, a silent or GPO install and an upgrade. It starts a tray at most once per sign-in, so a person who quits the tray or turns "Start when I sign in" off is not overridden.

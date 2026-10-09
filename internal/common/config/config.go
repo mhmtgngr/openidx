@@ -578,6 +578,12 @@ type Config struct {
 	// docs/access-and-login-convergence-design.md.
 	AccessAssignmentEnforce bool `mapstructure:"access_assignment_enforce"`
 
+	// EnforcementObserveUntil (ENFORCEMENT_OBSERVE_UNTIL, YYYY-MM-DD) is the one
+	// way a production install may run with an authorization control in report
+	// mode: for a bounded rollout window, at most maxObserveWindow ahead, after
+	// which startup refuses until the controls enforce. See enforcement.go.
+	EnforcementObserveUntil string `mapstructure:"enforcement_observe_until"`
+
 	// OAuthLoginURL is where /oauth/authorize sends a browser to sign in.
 	// Empty (the default) means "<issuer>/login".
 	//
@@ -1143,6 +1149,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("admin_api_require_auth", false)
 	v.SetDefault("show_all_apps_when_unassigned", false)
 	v.SetDefault("access_assignment_enforce", false)
+	v.SetDefault("enforcement_observe_until", "")
 
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
@@ -1439,6 +1446,7 @@ func bindEnvVars(v *viper.Viper) {
 		"admin_api_require_auth":              "ADMIN_API_REQUIRE_AUTH",
 		"show_all_apps_when_unassigned":       "SHOW_ALL_APPS_WHEN_UNASSIGNED",
 		"access_assignment_enforce":           "ACCESS_ASSIGNMENT_ENFORCE",
+		"enforcement_observe_until":           "ENFORCEMENT_OBSERVE_UNTIL",
 		"oauth_login_url":                     "OAUTH_LOGIN_URL",
 		"shutdown_timeout_seconds":            "SHUTDOWN_TIMEOUT_SECONDS",
 		"public_base_url":                     "PUBLIC_BASE_URL",
@@ -2079,6 +2087,12 @@ func (c *Config) ValidateProduction() error {
 				"this deployment. Set it to the externally reachable name of the access proxy.",
 			host))
 	}
+
+	// Critical: the authorization controls must enforce, or the install is
+	// inside a declared, bounded observe window. A production install that
+	// only reported what it would have refused was, until this check, the
+	// default outcome of forgetting a flag.
+	criticalIssues = append(criticalIssues, c.enforcementIssues(time.Now())...)
 
 	if len(criticalIssues) > 0 {
 		return fmt.Errorf("production security validation failed:\n  - %s",
