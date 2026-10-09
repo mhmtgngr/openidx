@@ -842,6 +842,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/folders", svc.requireAdminRole(), svc.handlePamCreateFolder)
 		api.PUT("/pam/folders/:id", svc.requireAdminRole(), svc.handlePamUpdateFolder)
 		api.DELETE("/pam/folders/:id", svc.requireAdminRole(), svc.handlePamDeleteFolder)
+		// The organization's privileged-session policy (migration 228).
+		api.GET("/pam/policy", svc.handleGetPamPolicy)
+		api.PUT("/pam/policy", svc.requireAdminRole(), svc.handleSetPamPolicy)
 		api.GET("/pam/entries", svc.handlePamListEntries)
 		api.POST("/pam/entries", svc.requireAdminRole(), svc.handlePamCreateEntry)
 		api.GET("/pam/entries/:id", svc.handlePamGetEntry)

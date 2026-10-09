@@ -15,6 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Badge } from '../components/ui/badge'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
+import { PamPolicyCard } from '../components/pam-policy-card'
 import { api } from '../lib/api'
 
 interface PAMOverview {
@@ -167,6 +168,9 @@ export function PAMDashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* The organization's policy for every privileged session. */}
+      <PamPolicyCard />
 
       {/* Detail sections */}
       <div className="grid gap-4 lg:grid-cols-2">
