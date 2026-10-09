@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"math/big"
 	"strings"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // A bypass code is read off one screen and typed on another, by someone who
@@ -34,10 +36,22 @@ func generateBypassCode() (string, error) {
 	return b.String(), nil
 }
 
+// bypassCodeMatches compares a typed code with an issued one: first as typed,
+// so a code issued under the old mixed-case alphabet still verifies, then in
+// the folded form when that differs. Two bcrypt comparisons at most, on a
+// path that is rate-limited and locks after repeated failure.
+func bypassCodeMatches(hash, typed string) bool {
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(typed)) == nil {
+		return true
+	}
+	if folded := normalizeBypassCode(typed); folded != typed {
+		return bcrypt.CompareHashAndPassword([]byte(hash), []byte(folded)) == nil
+	}
+	return false
+}
+
 // normalizeBypassCode folds what a person typed into the form a code was
-// issued in. A code issued before this alphabet (mixed-case base64) still
-// verifies as typed: the fold only changes characters the new alphabet lacks,
-// and bcrypt sees the original on the first comparison when it differs.
+// issued in.
 func normalizeBypassCode(typed string) string {
 	var b strings.Builder
 	for _, r := range strings.ToUpper(strings.TrimSpace(typed)) {

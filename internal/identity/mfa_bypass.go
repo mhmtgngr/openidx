@@ -237,7 +237,7 @@ func (s *Service) VerifyBypassCode(ctx context.Context, userID, code, ipAddress,
 		}
 
 		// Verify code
-		if err := bcrypt.CompareHashAndPassword([]byte(c.codeHash), []byte(normalizeBypassCode(code))); err != nil {
+		if !bypassCodeMatches(c.codeHash, code) {
 			continue // Try next code
 		}
 
