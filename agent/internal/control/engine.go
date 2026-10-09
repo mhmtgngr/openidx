@@ -89,6 +89,9 @@ func NewEngine(configDir string, logger *zap.Logger) (*Engine, error) {
 	if cfg, err := agent.LoadConfig(configDir); err == nil {
 		serverURL = strings.TrimRight(cfg.ServerURL, "/")
 	}
+	if serverURL == "" {
+		serverURL = loadSignedInServer(configDir)
+	}
 	return &Engine{
 		configDir:    configDir,
 		serverURL:    serverURL,
@@ -217,6 +220,41 @@ func (e *Engine) LoginStart() (string, error) {
 	return authURL, nil
 }
 
+// signedInServerFile records the server a phone signed in to without enrolling.
+//
+// SetServer keeps the server in memory only, and an enrolment writes it to
+// agent.json, so a phone that signed in but never enrolled lost it whenever
+// Android killed the process: on Xiaomi that is routinely during the browser
+// step itself. The cold-started process finished the login from the persisted
+// PKCE file and showed the person as signed in, with an empty server, so every
+// API call (push registration, approvals, access) failed with status 0.
+const signedInServerFile = "server_url"
+
+// rememberSignedInServer records the server a login just completed against.
+// Written only after a successful exchange, so a mistyped URL never sticks.
+// agent.json, when there is one, still wins on load.
+func (e *Engine) rememberSignedInServer(server string) {
+	server = strings.TrimRight(strings.TrimSpace(server), "/")
+	if server == "" {
+		return
+	}
+	e.mu.Lock()
+	e.serverURL = server
+	e.mu.Unlock()
+	if err := os.WriteFile(filepath.Join(e.configDir, signedInServerFile), []byte(server+"\n"), 0o600); err != nil {
+		e.logger.Warn("could not record the signed-in server", zap.Error(err))
+	}
+}
+
+// loadSignedInServer returns the server recorded by rememberSignedInServer.
+func loadSignedInServer(configDir string) string {
+	b, err := os.ReadFile(filepath.Join(configDir, signedInServerFile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(string(b)), "/")
+}
+
 // pendingLoginPath is where LoginStart persists the in-flight mobile login so a
 // cold-started process (see LoginStart/LoginFinish) can reload it.
 func (e *Engine) pendingLoginPath() string {
@@ -274,6 +312,7 @@ func (e *Engine) LoginFinish(callbackURL string) (string, error) {
 	e.pendingMobileLogin = nil
 	e.mu.Unlock()
 	_ = os.Remove(e.pendingLoginPath())
+	e.rememberSignedInServer(m.ServerURL())
 	sub, email, exp, _ := decodeJWTClaims(tok.AccessToken)
 	if exp == 0 {
 		exp = tok.ExpiresAt
