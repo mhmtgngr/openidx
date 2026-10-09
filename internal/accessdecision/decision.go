@@ -48,7 +48,12 @@ type Subject struct {
 	DeviceTrusted  bool
 	RiskScore      int
 	Country        string
-	FreshMFA       bool
+	// FreshMFA is judged only when MFAKnown: the proxy knows the device, the
+	// country and the risk of a request but not when the person last proved a
+	// second factor (its session is not the login session), so it reports a
+	// fresh-factor condition unjudged rather than guess.
+	FreshMFA bool
+	MFAKnown bool
 }
 
 // Reason codes a Decision can carry.
@@ -91,6 +96,11 @@ type Decision struct {
 	Allowed bool `json:"allowed"`
 	// WouldDeny is what enforcement would decide; equal to !Allowed when enforced.
 	WouldDeny bool `json:"would_deny"`
+	// ConditionsDeclared is whether the resource has a resource_conditions row.
+	// When it has, those conditions are the resource's; an enforcement point
+	// that also carries a pre-228 copy of them (a proxy route's columns) lets
+	// this decision rule and does not judge its copy a second time.
+	ConditionsDeclared bool `json:"conditions_declared"`
 	// Grant names what let the subject in: "direct", "group:<name>",
 	// "legacy_role:<role>", or "" when nothing did.
 	Grant      string            `json:"grant"`
@@ -113,6 +123,8 @@ type Resource struct {
 	ID, Name, Kind string
 	Enabled        bool
 	Conditions     Conditions
+	// ConditionsDeclared is whether a resource_conditions row exists.
+	ConditionsDeclared bool
 }
 
 // Evaluate decides whether s may reach application appID.
@@ -128,7 +140,7 @@ func Evaluate(ctx context.Context, db *database.PostgresDB, enforce bool, s Subj
 		}
 		return d, err
 	}
-	d.AppName, d.Kind = res.Name, res.Kind
+	d.AppName, d.Kind, d.ConditionsDeclared = res.Name, res.Kind, res.ConditionsDeclared
 	if !res.Enabled {
 		return deny(d, ReasonAppDisabled), nil
 	}
@@ -198,9 +210,10 @@ func judgeConditions(d Decision, c Conditions, s Subject) Decision {
 			Satisfied: ok, Judged: known}, ReasonCountry)
 	}
 	if c.RequireStepUp {
-		add(ConditionResult{Name: ConditionStepUp, Required: "fresh second factor", Observed: observed(s.KnowsSituation, boolWord(s.FreshMFA, "fresh", "stale")),
-			Satisfied: s.FreshMFA, Judged: s.KnowsSituation}, ReasonStepUp)
-		if s.KnowsSituation && !s.FreshMFA {
+		known := s.KnowsSituation && s.MFAKnown
+		add(ConditionResult{Name: ConditionStepUp, Required: "fresh second factor", Observed: observed(known, boolWord(s.FreshMFA, "fresh", "stale")),
+			Satisfied: s.FreshMFA, Judged: known}, ReasonStepUp)
+		if known && !s.FreshMFA {
 			d.StepUp = true
 		}
 	}
@@ -268,14 +281,14 @@ func LoadResource(ctx context.Context, db *database.PostgresDB, appID, orgID str
 		SELECT a.id, a.name, a.kind, a.enabled,
 		       COALESCE(c.require_device_trust, false), c.max_risk_score,
 		       COALESCE(c.allowed_countries, '{}'), COALESCE(c.require_step_up, false),
-		       COALESCE(c.legacy_roles, '{}')
+		       COALESCE(c.legacy_roles, '{}'), c.application_id IS NOT NULL
 		  FROM applications a
 		  LEFT JOIN resource_conditions c ON c.application_id = a.id
 		 WHERE a.id = $1 AND a.org_id = $2`, appID, orgID).Scan(
 		&r.ID, &r.Name, &r.Kind, &r.Enabled,
 		&r.Conditions.RequireDeviceTrust, &maxRisk,
 		&r.Conditions.AllowedCountries, &r.Conditions.RequireStepUp,
-		&r.Conditions.LegacyRoles)
+		&r.Conditions.LegacyRoles, &r.ConditionsDeclared)
 	if err != nil {
 		return r, err
 	}

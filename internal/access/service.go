@@ -2386,10 +2386,27 @@ func (s *Service) handleProxy(c *gin.Context) {
 		// assignmentReplacesLegacy is true, proxyAssignmentDecision ignores the
 		// legacyAllowed argument entirely (see its doc comment), so the value
 		// passed is moot.
+		// The request's situation first — the device, the country, the risk it
+		// carries — so the shared decision judges the resource's conditions for
+		// real instead of listing them unjudged.
+		accessCtx, ctxErr := s.buildAccessContext(c, route, session)
+		if ctxErr != nil {
+			s.logger.Error("Failed to build access context", zap.Error(ctxErr))
+			c.JSON(http.StatusForbidden, gin.H{"error": "context evaluation failed"})
+			return
+		}
+		risk, early := s.scoreAccessContext(accessCtx)
+		if early != nil {
+			s.refuseOnContext(c, route, session, early, c.Request.URL.Path, "")
+			return
+		}
+
 		// The decision itself, shared with the forward-auth path: principals
-		// (assignments, legacy roles) and the resource's conditions, recorded
-		// on both branches, refused only under enforcement.
-		if !s.reachDecision(c, route, session, appID, appOrgID, "proxy") {
+		// (assignments, legacy roles) and the resource's conditions judged
+		// against this situation, recorded on both branches, refused only
+		// under enforcement.
+		ok, conditionsRuled := s.reachDecision(c, route, session, appID, appOrgID, "proxy", situationOf(accessCtx, risk))
+		if !ok {
 			return
 		}
 
@@ -2402,24 +2419,11 @@ func (s *Service) handleProxy(c *gin.Context) {
 			return
 		}
 
-		// Context-aware access evaluation
-		accessCtx, ctxErr := s.buildAccessContext(c, route, session)
-		if ctxErr != nil {
-			s.logger.Error("Failed to build access context", zap.Error(ctxErr))
-			c.JSON(http.StatusForbidden, gin.H{"error": "context evaluation failed"})
-			return
-		}
-		decision := s.evaluateAccessContext(accessCtx)
+		// The route's own conditions, unless the resource declared its own, and
+		// the inline policy.
+		decision := s.judgeRouteContext(accessCtx, risk, !conditionsRuled)
 		if !decision.Allowed {
-			s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
-				"reason":  decision.Reason,
-				"user_id": session.UserID,
-				"path":    c.Request.URL.Path,
-			})
-			if decision.StepUpRequired {
-				c.Header("X-Step-Up-Required", "true")
-			}
-			c.JSON(http.StatusForbidden, gin.H{"error": decision.Reason})
+			s.refuseOnContext(c, route, session, decision, c.Request.URL.Path, "")
 			return
 		}
 		session.RiskScore = decision.RiskScore
