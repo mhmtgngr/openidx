@@ -237,15 +237,16 @@ jobs:
           mkdir -p ~/.gradle/init.d
           cat > ~/.gradle/init.d/pin-debug-key.gradle <<GRADLE
           allprojects {
+              // During evaluation, as soon as the Android plugin has created
+              // the debug signing config: in afterEvaluate AGP has already
+              // read it and refuses the change.
               plugins.withId('com.android.application') {
-                  afterEvaluate {
-                      def debug = android.signingConfigs.getByName('debug')
-                      debug.storeFile = file('$ks')
-                      debug.storeType = 'pkcs12'
-                      debug.storePassword = 'android'
-                      debug.keyAlias = 'androiddebugkey'
-                      debug.keyPassword = 'android'
-                  }
+                  def debug = android.signingConfigs.getByName('debug')
+                  debug.storeFile = file('$ks')
+                  debug.storeType = 'pkcs12'
+                  debug.storePassword = 'android'
+                  debug.keyAlias = 'androiddebugkey'
+                  debug.keyPassword = 'android'
               }
           }
           GRADLE
