@@ -34,6 +34,7 @@ services:
       POSTGRES_USER: openidx
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}
       OPENIDX_APP_PASSWORD: ${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}
+      OPENIDX_BYPASS_PASSWORD: ${OPENIDX_BYPASS_PASSWORD:?OPENIDX_BYPASS_PASSWORD required - run scripts/generate-secrets.sh}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./bootstrap.sql:/docker-entrypoint-initdb.d/00-bootstrap.sql:ro
@@ -288,6 +289,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - DATABASE_BYPASS_URL=postgres://openidx_bypass:${OPENIDX_BYPASS_PASSWORD:?OPENIDX_BYPASS_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - RLS_MODE=${RLS_MODE:-session}
@@ -347,6 +349,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - DATABASE_BYPASS_URL=postgres://openidx_bypass:${OPENIDX_BYPASS_PASSWORD:?OPENIDX_BYPASS_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       # Shared with access-service: its policy checks (/evaluate) present it.
@@ -401,6 +404,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - DATABASE_BYPASS_URL=postgres://openidx_bypass:${OPENIDX_BYPASS_PASSWORD:?OPENIDX_BYPASS_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - RLS_MODE=${RLS_MODE:-session}
@@ -454,6 +458,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - DATABASE_BYPASS_URL=postgres://openidx_bypass:${OPENIDX_BYPASS_PASSWORD:?OPENIDX_BYPASS_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
@@ -505,6 +510,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - DATABASE_BYPASS_URL=postgres://openidx_bypass:${OPENIDX_BYPASS_PASSWORD:?OPENIDX_BYPASS_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - RLS_MODE=${RLS_MODE:-session}
@@ -560,6 +566,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - DATABASE_BYPASS_URL=postgres://openidx_bypass:${OPENIDX_BYPASS_PASSWORD:?OPENIDX_BYPASS_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - RLS_MODE=${RLS_MODE:-session}
       - REDIS_RATELIMIT_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis-ratelimit:6379
@@ -618,6 +625,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - DATABASE_BYPASS_URL=postgres://openidx_bypass:${OPENIDX_BYPASS_PASSWORD:?OPENIDX_BYPASS_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - RLS_MODE=${RLS_MODE:-session}
@@ -1320,6 +1328,7 @@ services:
       - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
       - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
+      - DATABASE_BYPASS_URL=postgres://openidx_bypass:${OPENIDX_BYPASS_PASSWORD:?OPENIDX_BYPASS_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY required - run scripts/generate-secrets.sh}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - RLS_MODE=${RLS_MODE:-session}

@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,6 +23,13 @@ import (
 // predicate `org_id = NULL` and returns no rows (fail-closed).
 func rlsValuesFromContext(ctx context.Context) (orgID, bypass string) {
 	if orgctx.IsBypassRLS(ctx) {
+		// With a bypass pool configured the call never reaches this pool as a
+		// bypass (ScopedPool.target routes it), and a stray one that does is
+		// answered as "no tenant": nothing on the application role ever turns
+		// the GUC on. Without one, the GUC is still the mechanism.
+		if bypassRouting.Load() {
+			return "", "off"
+		}
 		return "", "on"
 	}
 	if org, err := orgctx.From(ctx); err == nil {
@@ -29,6 +37,10 @@ func rlsValuesFromContext(ctx context.Context) (orgID, bypass string) {
 	}
 	return "", "off"
 }
+
+// bypassRouting is set once a bypass pool is open (NewPostgres): from then on
+// the application pool never carries app.bypass_rls = 'on'.
+var bypassRouting atomic.Bool
 
 type rlsState struct{ orgID, bypass string }
 

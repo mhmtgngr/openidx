@@ -1616,5 +1616,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agentDeviceKeysUp,
 			DownSQL:     agentDeviceKeysDown,
 		},
+		{
+			Version:     228,
+			Name:        "bypass_guc_leaves_policies",
+			Description: "Every RLS policy let a session through when current_setting('app.bypass_rls') was 'on', a setting any session may set (issue #964). Bypass-marked work now runs as the openidx_bypass role (BYPASSRLS, DATABASE_BYPASS_URL), for which the policies do not apply, so the clause is removed from every policy. The rewrite runs only when openidx_bypass exists and the migrating role can itself bypass RLS, and fails if any policy still mentions the setting afterwards; otherwise it changes nothing and says so. Down puts the clause back on every policy that scopes by app.org_id.",
+			UpSQL:       bypassGUCLeavesPoliciesUp,
+			DownSQL:     bypassGUCLeavesPoliciesDown,
+		},
 	}
 }

@@ -75,6 +75,7 @@ PAM_GUAC_DB_PASSWORD="$(rand_password)"
 # ... PASSWORD from OPENIDX_APP_PASSWORD, and APISIX resolves its admin key
 # from APISIX_ADMIN_KEY in its own container environment.
 OPENIDX_APP_PASSWORD="$(rand_password)"
+OPENIDX_BYPASS_PASSWORD="$(rand_password)"
 APISIX_ADMIN_KEY="$(rand_password)"
 # What access-service presents to the audit service (every event it writes
 # into the audit trail) and to governance (its policy checks). Hex, because it
@@ -102,6 +103,7 @@ POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 # The application role the services connect as; the postgres init hook sets
 # this role's password from this value (deployments/docker/set-app-role-password.sh).
 OPENIDX_APP_PASSWORD=${OPENIDX_APP_PASSWORD}
+OPENIDX_BYPASS_PASSWORD=${OPENIDX_BYPASS_PASSWORD}
 DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD}@localhost:5432/openidx?sslmode=disable
 
 # ----- Redis -----
