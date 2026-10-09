@@ -85,6 +85,7 @@ import {
   ErrorCatalog,
   APIDocs,
   SystemHealth,
+  EnforcementPage,
   Organizations,
   Delegations,
   Webhooks,
@@ -385,6 +386,7 @@ function App() {
 
         {/* System - Admin Protected */}
         <Route path="system-health" element={<SystemHealth />} />
+        <Route path="enforcement" element={<EnforcementPage />} />
         <Route path="organizations" element={<Organizations />} />
         {/* Branding consolidated into Tenant Management. Keep the route as a
             redirect so old links/bookmarks still resolve. */}

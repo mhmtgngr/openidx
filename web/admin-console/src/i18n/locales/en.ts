@@ -503,6 +503,7 @@ const en = {
       reports: 'Reports',
       aiAgents: 'AI Agents',
       securityPosture: 'Security Posture',
+      enforcement: 'Enforcement',
       identityIntelligence: 'Identity Intelligence',
       recommendations: 'Recommendations',
       predictions: 'Predictions',
@@ -9631,6 +9632,28 @@ const en = {
     // The device-enrolment wizard an end user walks through. The operating
     // system names are product names and stay raw in the page's own const list;
     // so do the enrolment code, the deep link and the QR that encodes it.
+    enforcement: {
+      title: 'Enforcement',
+      subtitle: 'Which authorization controls are enforcing, what the open ones would have refused this week, and the settings that close them.',
+      resource: 'enforcement posture',
+      environment: 'Environment: {{env}}',
+      status: { enforcing: 'Every control is enforcing', open: '{{count}} control(s) are not enforcing' },
+      mode: { off: 'off', observe: 'observe', enforce: 'enforce' },
+      enforcingMeaning: 'Enforcing.',
+      columns: { control: 'Control', mode: 'Mode', meaning: 'What stays open', wouldDeny: 'Would deny (7d)' },
+      envTitle: 'Settings that close the open controls',
+      envHint: 'Paste into the services\' environment and restart. Read docs/runbooks/enforce-rollout.md first: a control with would-deny events above zero will refuse those people.',
+      copy: 'Copy',
+      copied: 'Settings copied',
+      copyFailed: 'Could not copy',
+      banner: {
+        title: '{{count}} authorization control(s) are not enforcing',
+        window: 'observe window until {{until}} ({{days}} day(s) left)',
+        noWindow: 'no observe window declared',
+        wouldDeny: '{{count}} would-deny event(s) this week',
+        link: 'Review and enforce',
+      },
+    },
     addDevice: {
       // The back link is exactly the nav item, so it reuses `nav.items`.
       title: 'Add a device to the network',

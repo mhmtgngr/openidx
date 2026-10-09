@@ -585,6 +585,16 @@ func productionBaseline() *Config {
 		DebugOTPInResponse:        false,
 		VaultKEK:                  "vault-kek-32-bytes-long!!!!!!!!!",
 		AuditChainSecret:          "audit-chain-secret-32-bytes!!!!!",
+		// Production refuses an open authorization control (enforcement.go);
+		// the baseline enforces them all so each case tests what it names.
+		AccessAssignmentEnforce: true,
+		StepUpGate:              "enforce",
+		BotGate:                 "enforce",
+		PostureDeviceTrustGate:  "enforce",
+		PAMRequireZTNA:          "enforce",
+		GuacamoleZitiPublicURL:  "https://guacamole.ziti",
+		AccessAPIRequireAuth:    true,
+		AdminAPIRequireAuth:     true,
 	}
 }
 
@@ -728,6 +738,7 @@ func TestValidateProduction(t *testing.T) {
 		cfg := productionBaseline()
 		cfg.PAMRequireZTNA = "observe"
 		cfg.GuacamoleZitiPublicURL = ""
+		cfg.EnforcementObserveUntil = day(1) // observe is a rollout state: allowed inside a declared window
 
 		assert.NoError(t, cfg.ValidateProduction())
 	})
@@ -946,6 +957,7 @@ func TestValidateProduction(t *testing.T) {
 			ZitiAdminPassword:         defaultZitiAdminPassword,
 		}
 
+		enforceAll(cfg)
 		err := cfg.ValidateProduction()
 		assert.NoError(t, err)
 	})
@@ -966,6 +978,7 @@ func TestValidateProduction(t *testing.T) {
 			AuditChainSecret:          "audit-chain-key-32-bytes-long!!!",
 		}
 
+		enforceAll(cfg)
 		err := cfg.ValidateProduction()
 		assert.NoError(t, err)
 	})
@@ -1040,6 +1053,7 @@ func TestValidateProduction(t *testing.T) {
 			AuditChainSecret:          "audit-chain-key-32-bytes-long!!!",
 		}
 
+		enforceAll(cfg)
 		err := cfg.ValidateProduction()
 		assert.NoError(t, err)
 	})
@@ -1069,7 +1083,7 @@ func TestValidateProduction_Elasticsearch(t *testing.T) {
 	// Base is the "fully secure config" that ValidateProduction accepts as nil,
 	// so these cases isolate the Elasticsearch credential rule.
 	base := func() *Config {
-		return &Config{
+		c := &Config{
 			Environment:               "production",
 			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
 			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
@@ -1083,6 +1097,8 @@ func TestValidateProduction_Elasticsearch(t *testing.T) {
 			VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 			AuditChainSecret:          "audit-chain-key-32-bytes-long!!!",
 		}
+		enforceAll(c)
+		return c
 	}
 
 	t.Run("Passes when elasticsearch_url is unset", func(t *testing.T) {

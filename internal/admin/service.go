@@ -1340,6 +1340,9 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 
 	// System health (Phase 14)
 	admin.GET("/system/health", svc.handleSystemHealth)
+	// Which authorization controls are open, what each would have refused
+	// this week, and the days left in a declared observe window.
+	admin.GET("/security-posture", svc.handleSecurityPosture)
 
 	// Error catalog (Phase 14). One table for the whole install -- it has no
 	// org_id -- so its writes are install-wide.
