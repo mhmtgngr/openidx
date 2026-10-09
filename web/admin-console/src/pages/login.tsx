@@ -1427,6 +1427,9 @@ export function LoginPage() {
                     maxLength={isRecoveryCode ? 32 : 6}
                     placeholder={isRecoveryCode ? '' : '000000'}
                     autoComplete={isRecoveryCode ? 'off' : 'one-time-code'}
+                    autoCapitalize={isRecoveryCode ? 'off' : undefined}
+                    autoCorrect={isRecoveryCode ? 'off' : undefined}
+                    spellCheck={isRecoveryCode ? false : undefined}
                     value={mfaCode}
                     onChange={(e) =>
                       setMfaCode(isRecoveryCode ? e.target.value.trim() : e.target.value.replace(/\D/g, ''))
