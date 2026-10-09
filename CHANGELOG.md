@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Ten concurrent sessions per person by default, oldest retired first.** The compiled default was unlimited, so a credential used from a hundred places kept a hundred live sessions. The default is now ten with `terminate_oldest`, which never refuses a sign-in; a value set on the Security tab still wins.
+
 ### Fixed
 - **The Windows tray appears right after install, once per session, on the taskbar.**
   - **After install or upgrade:** the MSI's `LaunchTray` action never ran. `WixQuietExec` found no command line (`0x80070057`), it would have blocked the install on a tray that never exits, and upgrades skipped it. So nobody saw the tray until they signed out and back in. The action is gone. Instead the service, which runs as SYSTEM, starts `tray --autostart` in every signed-in session within 15 seconds. That covers an interactive install, a silent or GPO install and an upgrade. It starts a tray at most once per sign-in, so a person who quits the tray or turns "Start when I sign in" off is not overridden.
