@@ -58,7 +58,16 @@ CREATE TABLE IF NOT EXISTS migration_notes (
   note TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_migration_notes_org ON migration_notes(org_id);
 GRANT SELECT, INSERT, UPDATE, DELETE ON migration_notes TO openidx_app;
+DROP POLICY IF EXISTS pol_migration_notes_org_scope ON migration_notes;
+CREATE POLICY pol_migration_notes_org_scope ON migration_notes
+  USING (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid)
+  WITH CHECK (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
+ALTER TABLE migration_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE migration_notes FORCE  ROW LEVEL SECURITY;
 
 -- 1. Every route that carried roles or groups and has no application gets one.
 INSERT INTO applications (id, client_id, name, description, type, enabled, org_id, route_id, created_at, updated_at)
