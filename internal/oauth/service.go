@@ -2477,8 +2477,13 @@ func (s *Service) handleLogin(c *gin.Context) {
 			return
 		}
 
-		// Delete the login session from Redis (password step is done)
-		s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
+		// The login session stays for the second factor's lifetime. It is only
+		// the pointer to the pending OIDC request, and the page's "Back to
+		// login" resubmits the password with it: deleting it here made that
+		// button a certain "expired login session" (400), since the page
+		// deliberately keeps the id to stay on the same OIDC request. The
+		// bounded TTL, and the delete when the code is issued, retire it.
+		s.redis.Client.Expire(c.Request.Context(), "login_session:"+req.LoginSession, 10*time.Minute)
 
 		riskLevel := ev.RiskLevel
 
