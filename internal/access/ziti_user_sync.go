@@ -318,19 +318,6 @@ func (zm *ZitiManager) SyncAllUsersToZiti(ctx context.Context) (*BatchSyncResult
 	}, nil
 }
 
-// hasUserTrustedDevice checks if a user has at least one trusted device.
-func (zm *ZitiManager) hasUserTrustedDevice(ctx context.Context, userID string) (bool, error) {
-	var exists bool
-	err := zm.db.Pool.QueryRow(ctx,
-		//orgscope:ignore Ziti user-sync engine; keyed by globally-unique user_id, so the device set is org-bounded
-		`SELECT EXISTS(SELECT 1 FROM known_devices WHERE user_id = $1 AND trusted = true)`,
-		userID).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("check trusted devices for user %s: %w", userID, err)
-	}
-	return exists, nil
-}
-
 // buildUserAttributes combines group names with device trust attribute.
 func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) ([]string, error) {
 	groups, err := zm.getUserGroupNames(ctx, userID)

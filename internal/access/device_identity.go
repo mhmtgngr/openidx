@@ -143,6 +143,7 @@ func (zm *ZitiManager) SyncDeviceIdentity(ctx context.Context, agentID string) e
 			// The name is unique: an older row for the same name (a user
 			// identity cannot share it; a legacy device row can) is reconciled
 			// by name instead.
+			//orgscope:ignore reconciles the one legacy row named dev-<agent_id> for an agent whose org_id was read just above; the write is keyed by name and agent
 			if _, err2 := zm.db.Pool.Exec(orgctx.WithBypassRLS(ctx), `
 				UPDATE ziti_identities SET agent_id = $1, ziti_id = $2, attributes = $3, group_attrs_synced_at = NOW(), updated_at = NOW()
 				 WHERE name = $4 AND agent_id IS NULL`, agentID, r.zitiID, attrsJSON, deviceIdentityName(agentID)); err2 != nil {
@@ -169,6 +170,7 @@ func (zm *ZitiManager) SeverDeviceCircuits(ctx context.Context, agentID string) 
 // syncDeviceIdentitiesForUser re-patches every device the user enrolled, so
 // a change to their groups or assignments reaches their devices too.
 func (zm *ZitiManager) syncDeviceIdentitiesForUser(ctx context.Context, userID string) {
+	//orgscope:ignore one user's enrolled devices by user id, after a change to that user; each device's own org_id scopes the sync that follows
 	rows, err := zm.db.Pool.Query(orgctx.WithBypassRLS(ctx), `
 		SELECT agent_id FROM enrolled_agents
 		 WHERE enrolled_by_user_id = $1::uuid AND status = 'active' AND COALESCE(ziti_identity_id,'') <> ''`, userID)
@@ -198,6 +200,7 @@ const deviceSyncStaleAfter = 5 * time.Minute
 // but no ziti_identities row (enrolled before this release), and rows older
 // than deviceSyncStaleAfter. At most a page per cycle.
 func (zm *ZitiManager) syncStaleDeviceIdentities(ctx context.Context) {
+	//orgscope:ignore background sweep across orgs for stale device identities; bounded to a page, and each agent's own org_id scopes its sync
 	rows, err := zm.db.Pool.Query(orgctx.WithBypassRLS(ctx), `
 		SELECT ea.agent_id FROM enrolled_agents ea
 		  LEFT JOIN ziti_identities zi ON zi.agent_id = ea.agent_id
