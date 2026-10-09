@@ -22,6 +22,7 @@ func productionWithOpenControls() *Config {
 	c.RedisTLSEnabled = true
 	c.TLS = TLSConfig{Enabled: true}
 	c.AgentEnrollmentQuotaPerHour = 100
+	c.DatabaseBypassURL = "postgres://openidx_bypass@db:5432/openidx"
 	return c
 }
 
@@ -34,6 +35,7 @@ func enforceAll(c *Config) {
 	c.GuacamoleZitiPublicURL = "https://guacamole.ziti" // enforce needs the overlay broker's own address
 	c.AccessAPIRequireAuth = true
 	c.AdminAPIRequireAuth = true
+	c.DatabaseBypassURL = "postgres://openidx_bypass@db:5432/openidx"
 }
 
 func day(offset int) string {

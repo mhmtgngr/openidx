@@ -308,11 +308,17 @@ it does not cross one.
 
 ## Known follow-ups
 
-Tenant data isolation is enforced as described above, with one known gap:
-the application's own database role can set `app.bypass_rls`, so a single
-SQL injection could lift the row-level-security boundary
-([#964](https://github.com/mhmtgngr/openidx/issues/964) moves the bypass to a
-dedicated role). Some cross-cutting concerns are still being tightened
+Tenant data isolation is enforced as described above. The bypass of
+row-level security that background work needs is a **role**, `openidx_bypass`
+(`BYPASSRLS`, reached through `DATABASE_BYPASS_URL`), not a session setting:
+the application role never turns `app.bypass_rls` on, and migration 228
+removes the clause that honoured it from every policy once the role exists and
+the migrating owner can itself bypass RLS
+([#964](https://github.com/mhmtgngr/openidx/issues/964)). Production refuses
+to start without the bypass credential. An install that connects its services
+as the table owner (the Helm chart today) keeps the clause until the services
+move to `openidx_app`, because the owner must not be given `BYPASSRLS` while
+requests run as it. Some cross-cutting concerns are still being tightened
 tenant by tenant. Their priority is set in
 [ROADMAP.md](https://github.com/mhmtgngr/openidx/blob/main/ROADMAP.md); the
 archived readiness guide

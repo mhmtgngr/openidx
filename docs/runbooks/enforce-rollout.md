@@ -64,6 +64,30 @@ restart. The startup log reports `open_gates: 0, fully_enforcing: true` and the
 console page shows every control green. Keep the audit query from step 2 as a
 dashboard panel: once enforcing, the same actions appear as `access.decision.deny`.
 
+## The bypass role (before `APP_ENV=production`)
+
+Background work reads across tenants as a role with `BYPASSRLS`, not with a
+session setting the application role could also set (#964). Production refuses
+to start without `DATABASE_BYPASS_URL`. On the reference box, once, as the
+Postgres superuser inside `oidx-pg`:
+
+```sql
+CREATE ROLE openidx_bypass LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE INHERIT IN ROLE openidx_app PASSWORD '<random>';
+GRANT CONNECT ON DATABASE openidx TO openidx_bypass;
+ALTER ROLE openidx BYPASSRLS;   -- the owner that runs migrations; services connect as openidx_app
+```
+
+Then in `~/.config/oidx/common.env`:
+
+```
+DATABASE_BYPASS_URL=postgres://openidx_bypass:<random>@localhost:55432/openidx
+```
+
+Restart the services; each logs that the bypass pool is open. Run
+`oidx-migrate up`: migration 228 now removes the `app.bypass_rls` clause from
+every policy and reports how many. Do **not** give the owner `BYPASSRLS` on an
+install whose services connect as the owner.
+
 ## If the window runs out
 
 A service started after the named day refuses with

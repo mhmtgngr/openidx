@@ -6,6 +6,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ScopedPool is the pool every service already talks to, with the tenant scope
@@ -32,6 +34,11 @@ import (
 // that name is greppable.
 type ScopedPool struct {
 	pool *pgxpool.Pool
+	// bypass, when set, is the pool that serves every call whose context
+	// carries orgctx.WithBypassRLS: a separate connection as a role that has
+	// BYPASSRLS, so no statement the application role runs can lift the
+	// tenant boundary. Nil means the GUC is still the mechanism (see rls.go).
+	bypass *pgxpool.Pool
 
 	// Set only on the READ-REPLICA pool (see readerfallback.go): the primary to
 	// retry on when the replica does not answer, and the breaker that stops
@@ -67,6 +74,23 @@ func NewScopedPool(pool *pgxpool.Pool) *ScopedPool {
 // migrations), pool statistics, and anything running before a tenant exists.
 // Wrong for anything reading or writing a tenant table — in RLS_MODE=local that
 // query carries no scope and FORCE RLS answers it with zero rows.
+// target is the pool a call runs on: the bypass pool for a bypass-marked
+// context when one is configured, the scoped application pool otherwise.
+func (p *ScopedPool) target(ctx context.Context) *pgxpool.Pool {
+	if p.bypass != nil && orgctx.IsBypassRLS(ctx) {
+		return p.bypass
+	}
+	return p.pool
+}
+
+// withBypass routes bypass-marked contexts to pool. Called once by NewPostgres.
+func (p *ScopedPool) withBypass(pool *pgxpool.Pool) *ScopedPool {
+	if p != nil {
+		p.bypass = pool
+	}
+	return p
+}
+
 func (p *ScopedPool) Raw() *pgxpool.Pool {
 	if p == nil {
 		return nil
@@ -92,9 +116,9 @@ func (p *ScopedPool) Query(ctx context.Context, sql string, args ...any) (pgx.Ro
 
 func (p *ScopedPool) query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
 	if CurrentRLSMode() == RLSModeSession {
-		return p.pool.Query(ctx, sql, args...)
+		return p.target(ctx).Query(ctx, sql, args...)
 	}
-	tx, err := p.pool.Begin(ctx)
+	tx, err := p.target(ctx).Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -130,9 +154,9 @@ func (p *ScopedPool) QueryRow(ctx context.Context, sql string, args ...any) pgx.
 
 func (p *ScopedPool) queryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	if CurrentRLSMode() == RLSModeSession {
-		return p.pool.QueryRow(ctx, sql, args...)
+		return p.target(ctx).QueryRow(ctx, sql, args...)
 	}
-	tx, err := p.pool.Begin(ctx)
+	tx, err := p.target(ctx).Begin(ctx)
 	if err != nil {
 		return errRow{err}
 	}
@@ -146,10 +170,10 @@ func (p *ScopedPool) queryRow(ctx context.Context, sql string, args ...any) pgx.
 // Exec runs a statement under the request's tenant scope.
 func (p *ScopedPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	if CurrentRLSMode() == RLSModeSession {
-		return p.pool.Exec(ctx, sql, args...)
+		return p.target(ctx).Exec(ctx, sql, args...)
 	}
 	var tag pgconn.CommandTag
-	err := withTxOn(ctx, p.pool, func(tx pgx.Tx) error {
+	err := withTxOn(ctx, p.target(ctx), func(tx pgx.Tx) error {
 		var e error
 		tag, e = tx.Exec(ctx, sql, args...)
 		return e
@@ -172,7 +196,7 @@ func (p *ScopedPool) Begin(ctx context.Context) (pgx.Tx, error) {
 }
 
 func (p *ScopedPool) begin(ctx context.Context) (pgx.Tx, error) {
-	tx, err := p.pool.Begin(ctx)
+	tx, err := p.target(ctx).Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +211,7 @@ func (p *ScopedPool) begin(ctx context.Context) (pgx.Tx, error) {
 
 // BeginTx is Begin with explicit transaction options.
 func (p *ScopedPool) BeginTx(ctx context.Context, opts pgx.TxOptions) (pgx.Tx, error) {
-	tx, err := p.pool.BeginTx(ctx, opts)
+	tx, err := p.target(ctx).BeginTx(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -206,13 +230,13 @@ func (p *ScopedPool) BeginTx(ctx context.Context, opts pgx.TxOptions) (pgx.Tx, e
 // round trip.
 func (p *ScopedPool) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults {
 	if CurrentRLSMode() == RLSModeSession || b == nil {
-		return p.pool.SendBatch(ctx, b)
+		return p.target(ctx).SendBatch(ctx, b)
 	}
 	orgID, bypass := rlsValuesFromContext(ctx)
 	scoped := &pgx.Batch{}
 	scoped.Queue(setScopeLocalSQL, orgID, bypass)
 	scoped.QueuedQueries = append(scoped.QueuedQueries, b.QueuedQueries...)
-	return &skipFirstBatchResults{BatchResults: p.pool.SendBatch(ctx, scoped)}
+	return &skipFirstBatchResults{BatchResults: p.target(ctx).SendBatch(ctx, scoped)}
 }
 
 // skipFirstBatchResults hides the scope statement's result, so the caller reads
@@ -256,7 +280,7 @@ func (r *skipFirstBatchResults) Close() error { return r.BatchResults.Close() }
 // inferred for (LISTEN/NOTIFY, COPY, advisory locks). Scope it yourself with a
 // transaction if it touches a tenant table.
 func (p *ScopedPool) Acquire(ctx context.Context) (*pgxpool.Conn, error) {
-	return p.pool.Acquire(ctx)
+	return p.target(ctx).Acquire(ctx)
 }
 
 // Ping, Close and Stat are pool operations with no tenant dimension.

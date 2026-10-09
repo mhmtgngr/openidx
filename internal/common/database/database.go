@@ -37,6 +37,8 @@ type PostgresDB struct {
 	// install-wide tables and pool statistics.
 	Pool     *ScopedPool
 	readPool *ScopedPool
+	// bypassPool serves bypass-marked work as the BYPASSRLS role (bypass.go).
+	bypassPool *pgxpool.Pool
 }
 
 // Reader returns the pool to use for read-mostly, replication-lag-tolerant
@@ -162,6 +164,25 @@ func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, e
 		}
 		// On error: leave db.readPool nil. The audit checker (registered
 		// separately) surfaces replica health; startup continues on the primary.
+	}
+
+	if bypassURL := bypassURLFromEnv(); bypassURL != "" {
+		bp, berr := openBypassPool(ctx, bypassURL, tlsCfg)
+		if berr != nil {
+			pool.Close()
+			if db.readPool != nil {
+				db.readPool.Close()
+			}
+			// Refused rather than degraded: an install that configured the
+			// bypass role and cannot use it would run its background work on
+			// the application role with the GUC, the thing the role exists
+			// to end, and after migration 228 that work would see no rows.
+			return nil, berr
+		}
+		db.bypassPool = bp
+		db.Pool.withBypass(bp)
+		db.readPool.withBypass(bp)
+		bypassRouting.Store(true)
 	}
 
 	return db, nil
@@ -290,6 +311,9 @@ func applyPostgresTLS(connString string, cfg PostgresTLSConfig) string {
 func (db *PostgresDB) Close() error {
 	if db.readPool != nil {
 		db.readPool.Close()
+	}
+	if db.bypassPool != nil {
+		db.bypassPool.Close()
 	}
 	db.Pool.Close()
 	return nil
