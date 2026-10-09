@@ -77,14 +77,29 @@ class PushConfig {
     required this.provider,
     required this.senderId,
     required this.topic,
+    this.enabled = false,
+    this.baseUrl = '',
   });
   final String provider;
   final String senderId;
   final String topic;
 
+  /// The server has an ntfy channel configured. Without one there is nothing
+  /// to listen to and push approvals cannot reach this phone.
+  final bool enabled;
+
+  /// The ntfy server, e.g. `https://openidx.tdv.org/ntfy`. The server always
+  /// sent it; the app used to drop it, so it never subscribed to anything.
+  final String baseUrl;
+
+  /// Whether this config names a topic the app can listen on.
+  bool get canListen => enabled && baseUrl.isNotEmpty && topic.isNotEmpty;
+
   factory PushConfig.fromJson(Map<String, dynamic> j) => PushConfig(
         provider: (j['provider'] ?? '') as String,
         senderId: (j['sender_id'] ?? j['fcm_sender_id'] ?? '') as String,
         topic: (j['topic'] ?? '') as String,
+        enabled: (j['enabled'] ?? false) as bool,
+        baseUrl: (j['base_url'] ?? '') as String,
       );
 }
