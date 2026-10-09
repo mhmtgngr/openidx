@@ -61,7 +61,18 @@
                         Start="auto"
                         ErrorControl="normal"
                         Account="LocalSystem"
-                        Arguments="service run --config-dir &quot;[CommonAppDataFolder]OpenIDX\agent&quot;" />
+                        Arguments="service run --config-dir &quot;[CommonAppDataFolder]OpenIDX\agent&quot;">
+          <!-- A service that stops is a device with no posture loop and no
+               tray; Windows restarts it ten seconds after each failure, and
+               the failure count resets daily so a flapping service does not
+               give up after three. Without this the Service Control Manager
+               left it stopped (sc qfailure showed no action). -->
+          <util:ServiceConfig FirstFailureActionType="restart"
+                              SecondFailureActionType="restart"
+                              ThirdFailureActionType="restart"
+                              RestartServiceDelayInSeconds="10"
+                              ResetPeriodInDays="1" />
+        </ServiceInstall>
         <ServiceControl Id="OpenIDXAgentSvcCtl"
                         Name="OpenIDXAgent"
                         Start="install"
