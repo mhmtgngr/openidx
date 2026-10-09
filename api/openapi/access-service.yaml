@@ -5700,6 +5700,54 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/access/pam/policy:
+    get:
+      tags: [PAM]
+      summary: The organization's privileged-session policy
+      operationId: getPamPolicy
+      x-openidx-handler: internal/access.(*Service).handleGetPamPolicy
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [PAM]
+      summary: Set the organization's privileged-session policy
+      operationId: setPamPolicy
+      x-openidx-handler: internal/access.(*Service).handleSetPamPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
   /api/v1/access/recording-retention-policy:
     get:
       tags: [Session Recording]
