@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../mobile/ntfy_inbox.dart';
 import '../mobile/oauth_login_handler.dart';
+import '../mobile/push_setup.dart';
 import '../state/providers.dart';
 import 'mobile_shell.dart';
 import 'screens/home_screen.dart';
@@ -58,7 +59,7 @@ class _RootRouter extends ConsumerWidget {
         // (authenticator-only sign-in is a first-class flow).
         if (status.loggedIn) {
           if (Platform.isIOS || Platform.isAndroid) {
-            return const NtfyInbox(child: MobileShell());
+            return const NtfyInbox(child: PushSetupGate(child: MobileShell()));
           }
           return const HomeScreen();
         }
