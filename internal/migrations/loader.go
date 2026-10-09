@@ -1616,5 +1616,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agentDeviceKeysUp,
 			DownSQL:     agentDeviceKeysDown,
 		},
+		{
+			Version:     228,
+			Name:        "one_resource_model",
+			Description: "The resource is the applications row. applications gains kind (web, network, privileged) and resource_conditions holds the conditions a proxy route carried (require_device_trust, max_risk_score, allowed_countries, require_step_up, posture_profile_id, time_window) plus legacy_roles. Backfill: every route with roles or groups and no application gets one; its groups, and roles that name a group, become group assignments; roles that name no group are kept as legacy_roles and recorded in the new migration_notes table for an administrator to finish. internal/accessdecision reads this model; the route's own columns stay for one release. Down drops the added tables and column.",
+			UpSQL:       oneResourceModelUp,
+			DownSQL:     oneResourceModelDown,
+		},
 	}
 }

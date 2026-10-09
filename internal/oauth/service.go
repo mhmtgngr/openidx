@@ -31,6 +31,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/openidx/openidx/internal/abac"
+	"github.com/openidx/openidx/internal/accessdecision"
 	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/botgate"
 	"github.com/openidx/openidx/internal/common/cell"
@@ -2708,15 +2709,12 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) 
 		return true
 	}
 
-	assigned, aerr := appaccess.Allowed(ctx, s.db, userID, org.ID, appID)
-	if aerr != nil {
-		// Same rule as the lookup above: under enforcement an unanswerable
-		// question is a refusal, not a pass. This application has
-		// require_assignment=true — an operator has explicitly said only
-		// assigned principals may have a token for it.
-		s.logger.Error("assignment gate: allowed check failed",
-			zap.String("application_id", appID), zap.Error(aerr))
-		if s.config != nil && s.config.AccessAssignmentEnforce {
+	enforce := s.config != nil && s.config.AccessAssignmentEnforce
+	d, derr := accessdecision.Evaluate(ctx, s.db, enforce, accessdecision.Subject{UserID: userID, OrgID: org.ID}, appID)
+	if derr != nil {
+		s.logger.Error("assignment gate: decision failed",
+			zap.String("application_id", appID), zap.Error(derr))
+		if enforce {
 			c.JSON(503, gin.H{
 				"error":             "temporarily_unavailable",
 				"error_description": "access assignment could not be verified",
@@ -2725,37 +2723,25 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) 
 		}
 		return true
 	}
-
-	enforce := s.config != nil && s.config.AccessAssignmentEnforce
-	issue, recordWouldDeny := authorizeAssignmentDecision(requiresAssignment, assigned, enforce)
-	if recordWouldDeny {
-		// Durable decision record, on BOTH branches: enforcement must not be
-		// quieter than report mode. This is the write that has to survive —
-		// see recordAssignmentDecision (assignment_audit.go). The logAuditEvent
-		// calls below are kept as-is (harmless duplication; audit_events may be
-		// repaired later) but nothing depends on them landing.
+	issue := d.Allowed
+	if d.WouldDeny {
 		s.recordAssignmentDecision(ctx, userID, clientID, appID, c.ClientIP(), !issue)
 		if !issue {
-			// A real denial under enforcement: a distinct action (mirroring the
-			// proxy's proxy_access_denied — see access/service.go) so an operator
-			// filtering the oauth audit stream for actual denials finds this
-			// request, rather than it landing indistinguishable-by-action from
-			// the report-mode case below.
 			s.logAuditEvent(ctx, "authentication", "oauth", "oauth_access_denied", "denied",
 				userID, c.ClientIP(), appID, "application",
 				map[string]interface{}{
 					"reason":            "not_assigned",
 					"enforcement_point": "oidc",
 					"client_id":         clientID,
+					"explain":           accessdecision.Explain(d),
 				})
 		} else {
-			// Report mode: the request is allowed, but record the gap so the
-			// assignment report can be reviewed before anyone loses reach.
 			s.logAuditEvent(ctx, "authentication", "oauth", "access.assignment.would_deny", "would_deny",
 				userID, c.ClientIP(), appID, "application",
 				map[string]interface{}{
 					"enforcement_point": "oidc",
 					"client_id":         clientID,
+					"explain":           accessdecision.Explain(d),
 				})
 		}
 	}
@@ -2766,7 +2752,6 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) 
 	return true
 }
 
-// issueAuthorizationCode generates an auth code and returns the redirect URL
 func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]string, userID string) {
 	if !s.assignmentGateAllows(c, oauthParams["client_id"], userID) {
 		return

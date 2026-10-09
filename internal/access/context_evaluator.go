@@ -499,28 +499,40 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 		return
 	}
 
-	// Role check
-	if len(route.AllowedRoles) > 0 && !hasAnyRole(session.Roles, route.AllowedRoles) {
-		s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
-			"reason":  "insufficient_roles",
-			"user_id": session.UserID,
-			"path":    originalURI,
-		})
-		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
-		return
-	}
+	// Under enforcement an application-backed route is decided by its
+	// application's principals and conditions; the route's roles and groups
+	// rule otherwise, exactly as handleProxy does. This path used to check
+	// roles and groups and never assignment, so a route the console showed as
+	// assigned to three people was open to every signed-in user behind the
+	// edge.
+	appID, appOrgID := s.appForRoute(c.Request.Context(), route.ID)
+	if !(appID != "" && s.config.AccessAssignmentEnforce) {
+		// Role check
+		if len(route.AllowedRoles) > 0 && !hasAnyRole(session.Roles, route.AllowedRoles) {
+			s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
+				"reason":  "insufficient_roles",
+				"user_id": session.UserID,
+				"path":    originalURI,
+			})
+			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+			return
+		}
 
-	// Group check. allowed_groups is configurable in the admin UI and was
-	// previously stored but never evaluated, so a route restricted only by group
-	// was open to every authenticated user in the org.
-	if len(route.AllowedGroups) > 0 &&
-		!routeGroupsAllow(route.AllowedGroups, s.userGroupNames(c.Request.Context(), session.UserID)) {
-		s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
-			"reason":  "insufficient_groups",
-			"user_id": session.UserID,
-			"path":    originalURI,
-		})
-		c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+		// Group check. allowed_groups is configurable in the admin UI and was
+		// previously stored but never evaluated, so a route restricted only by group
+		// was open to every authenticated user in the org.
+		if len(route.AllowedGroups) > 0 &&
+			!routeGroupsAllow(route.AllowedGroups, s.userGroupNames(c.Request.Context(), session.UserID)) {
+			s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
+				"reason":  "insufficient_groups",
+				"user_id": session.UserID,
+				"path":    originalURI,
+			})
+			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+			return
+		}
+	}
+	if !s.reachDecision(c, route, session, appID, appOrgID, "forward_auth") {
 		return
 	}
 
