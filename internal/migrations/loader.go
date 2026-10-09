@@ -1616,5 +1616,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agentDeviceKeysUp,
 			DownSQL:     agentDeviceKeysDown,
 		},
+		{
+			Version:     228,
+			Name:        "device_identity_agent",
+			Description: "ziti_identities gains agent_id (unique where set): a device's overlay identity is recorded against its enrolled agent, so the attribute sync and the posture code reach a device's identity directly instead of through its enrolling user. Down drops the column and index.",
+			UpSQL:       deviceIdentityAgentUp,
+			DownSQL:     deviceIdentityAgentDown,
+		},
 	}
 }

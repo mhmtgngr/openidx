@@ -339,11 +339,9 @@ func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) (
 	}
 
 	// #device-trusted iff the user has any trusted device.
-	hasTrusted, err := zm.hasUserTrustedDevice(ctx, userID)
-	if err != nil {
-		zm.logger.Warn("Failed to check device trust", zap.String("user_id", userID), zap.Error(err))
-		hasTrusted = false
-	}
+	// The user identity never carries #device-trusted: trust is a device's
+	// own attribute, from its own posture (device_identity.go).
+	hasTrusted := false
 
 	// #browzer-users when BrowZer is enabled.
 	_, browzer := zm.browzerAuthPolicy(ctx)
@@ -555,6 +553,8 @@ func (zm *ZitiManager) SyncGroupAttributesForUser(ctx context.Context, userID st
 	// before BrowZer was enabled), so it retrofits externalId + auth policy on
 	// existing identities, not just freshly created ones.
 	zm.applyBrowZerAuth(ctx, zitiID, userID)
+	// The user's devices carry the same groups and applications.
+	zm.syncDeviceIdentitiesForUser(ctx, userID)
 
 	return nil
 }
@@ -714,6 +714,7 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 		zm.SyncGroupAttributesForUser(ctx, userID)
 	}
 
+	zm.syncStaleDeviceIdentities(ctx)
 	zm.runDeprovisionSweep(ctx)
 }
 

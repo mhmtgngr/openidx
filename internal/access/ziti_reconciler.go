@@ -49,6 +49,9 @@ type DesiredRoute struct {
 	ToURL          string
 	HostingMode    string
 	BrowZerEnabled bool
+	// RequireDeviceTrust: the route admits only a trusted device. Under
+	// assignment enforcement the dial policy becomes AllOf [#app, #device-trusted].
+	RequireDeviceTrust bool
 	// OrgID is the owning org of the route, used for per-org Dial policies when
 	// ZitiPerOrgAttributes is on (Wave A2). Empty for install-wide/default-org routes.
 	OrgID string
@@ -364,7 +367,8 @@ func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRout
 		// instead of an unspecified row winning under a bare LIMIT 1.
 		//orgscope:ignore install-wide Ziti reconcile; keyed by globally-unique ziti_service_name across all orgs
 		`SELECT ziti_service_name, to_url, COALESCE(hosting_mode,'identity'), COALESCE(browzer_enabled,false), COALESCE(org_id::text,''),
-		        COALESCE((SELECT id::text FROM applications WHERE route_id = proxy_routes.id AND enabled = true ORDER BY id LIMIT 1), '')
+		        COALESCE((SELECT id::text FROM applications WHERE route_id = proxy_routes.id AND enabled = true ORDER BY id LIMIT 1), ''),
+		        COALESCE(require_device_trust, false)
 		 FROM proxy_routes
 		 WHERE ziti_enabled = true AND enabled = true
 		   AND ziti_service_name IS NOT NULL AND ziti_service_name != ''`)
@@ -375,7 +379,7 @@ func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRout
 	var out []DesiredRoute
 	for rows.Next() {
 		var d DesiredRoute
-		if err := rows.Scan(&d.ServiceName, &d.ToURL, &d.HostingMode, &d.BrowZerEnabled, &d.OrgID, &d.ApplicationID); err != nil {
+		if err := rows.Scan(&d.ServiceName, &d.ToURL, &d.HostingMode, &d.BrowZerEnabled, &d.OrgID, &d.ApplicationID, &d.RequireDeviceTrust); err != nil {
 			rec.logger.Warn("reconciler: scan route failed", zap.Error(err))
 			continue
 		}
@@ -528,7 +532,7 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	// Roles come from this branch's assignment work (a per-app marker beside, or
 	// under enforcement instead of, the blanket grant); the ForOrg variant is the
 	// mirror-writing path, so the row it upserts carries the route's org.
-	dialRoles := dialIdentityRoles(dialIdentity, d.ApplicationID, rec.assignmentEnforce)
+	dialRoles, semantic := dialPolicyFor(dialIdentity, d.ApplicationID, rec.assignmentEnforce, d.RequireDeviceTrust)
 	// Under enforcement an identity-mode app route's Dial policy no longer names
 	// #access-proxy-clients. That removes the unassigned tunnelers enrolled
 	// with it, and also the access proxy's own identity, which is created with
@@ -539,14 +543,23 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	// that is today's behaviour, and the warning says so.
 	if rec.assignmentEnforce && d.ApplicationID != "" && !isRouterHosted(d.EffectiveMode()) {
 		if proxyID := zm.FindIdentityIDByName(ctx, accessProxyIdentityName); proxyID != "" {
-			dialRoles = append(dialRoles, "@"+proxyID)
+			if semantic == "AllOf" {
+				// AllOf cannot say "@proxy OR (#app AND #device-trusted)"; the
+				// proxy gets its own AnyOf policy on the same service.
+				if _, err := zm.EnsureServicePolicyForOrg(ctx, d.OrgID, "openidx-dial-"+d.ServiceName+"-proxy", "Dial",
+					[]string{svcRole}, []string{"@" + proxyID}); err != nil {
+					rec.logger.Warn("proxy dial policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
+				}
+			} else {
+				dialRoles = append(dialRoles, "@"+proxyID)
+			}
 		} else {
 			rec.logger.Warn("access-proxy identity not found; it cannot dial this service while assignment is enforced",
 				zap.String("svc", d.ServiceName))
 		}
 	}
-	if _, err := zm.EnsureServicePolicyForOrg(ctx, d.OrgID, "openidx-dial-"+d.ServiceName, "Dial",
-		[]string{svcRole}, dialRoles); err != nil {
+	if _, err := zm.EnsureServicePolicyForOrgSemantic(ctx, d.OrgID, "openidx-dial-"+d.ServiceName, "Dial",
+		[]string{svcRole}, dialRoles, semantic); err != nil {
 		rec.logger.Warn("dial policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
 	}
 	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.ServiceName,
@@ -582,6 +595,21 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 // the policy exists and can be inspected before it bites), and REPLACES it once
 // enforcement is on — which is the whole point: the blanket grant is what makes
 // every enrolled identity able to dial an app they were never assigned.
+// dialPolicyFor is dialIdentityRoles plus the device-trust requirement: with
+// assignment enforced and the route requiring a trusted device, the policy is
+// AllOf [#app-<id>, #device-trusted], which only a device identity whose own
+// posture is compliant can satisfy; the user identity never carries
+// #device-trusted, so clientless access to such a route is refused by the
+// overlay itself. In observe mode (or with no application) the requirement
+// cannot be expressed as a refusal and the policy stays as it was.
+func dialPolicyFor(blanket, applicationID string, enforce, requireDeviceTrust bool) (roles []string, semantic string) {
+	roles = dialIdentityRoles(blanket, applicationID, enforce)
+	if enforce && applicationID != "" && requireDeviceTrust {
+		return []string{"#" + appMarkerAttr(applicationID), "#device-trusted"}, "AllOf"
+	}
+	return roles, "AnyOf"
+}
+
 func dialIdentityRoles(blanket, applicationID string, enforce bool) []string {
 	if applicationID == "" {
 		return []string{blanket}
