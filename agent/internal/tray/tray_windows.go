@@ -56,6 +56,12 @@ type app struct {
 
 // Run starts the tray UI and blocks until the user quits.
 func Run(logger *zap.Logger, configDir, serverURL string) error {
+	release, ok := acquireTrayMutex()
+	if !ok {
+		logger.Info("tray: already running in this session; not starting another")
+		return nil
+	}
+	defer release()
 	a := &app{logger: logger, configDir: configDir, serverURL: serverURL, consent: newConsentGate(askConsent)}
 	systray.Run(a.onReady, func() {})
 	return nil
@@ -90,6 +96,7 @@ func (a *app) onReady() {
 	systray.SetIcon(assets.OpenIDXICO)
 	systray.SetTitle("OpenIDX")
 	systray.SetTooltip("OpenIDX")
+	go a.promoteIconOnce()
 
 	// Remote-support banner: hidden until a session is live, then shown at the
 	// very top so the user always sees "An OpenIDX admin can see and control
