@@ -2,6 +2,8 @@ module github.com/openidx/openidx/agent
 
 go 1.26.0
 
+toolchain go1.26.9
+
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/getlantern/systray v1.2.2
