@@ -227,26 +227,32 @@ jobs:
             echo "::warning::ANDROID_DEBUG_KEYSTORE_B64 is not set: this APK is signed with a fresh debug key and cannot update an installed build"
             exit 0
           fi
-          # The Android tooling looks for debug.keystore under ANDROID_USER_HOME,
-          # ANDROID_PREFS_ROOT/.android or ANDROID_SDK_HOME/.android before
-          # ~/.android, and writing only the last one did not take: the APKs
-          # still carried fresh keys. Write every candidate.
-          for v in ANDROID_USER_HOME ANDROID_PREFS_ROOT ANDROID_SDK_HOME; do
-            [ -n "${!v:-}" ] && echo "$v is set"
-          done
-          dirs=("$HOME/.android")
-          [ -n "${ANDROID_USER_HOME:-}" ] && dirs+=("$ANDROID_USER_HOME")
-          [ -n "${ANDROID_PREFS_ROOT:-}" ] && dirs+=("$ANDROID_PREFS_ROOT/.android")
-          [ -n "${ANDROID_SDK_HOME:-}" ] && dirs+=("$ANDROID_SDK_HOME/.android")
-          for d in "${dirs[@]}"; do
-            mkdir -p "$d"
-            printf '%s' "$DEBUG_KEYSTORE_B64" | base64 -d > "$d/debug.keystore"
-          done
-          printf '%s' "$DEBUG_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/debug.keystore"
-          cert=$(openssl pkcs12 -in "$RUNNER_TEMP/debug.keystore" -passin pass:android -nokeys \
+          # Dropping the file at ~/.android/debug.keystore did not take: the
+          # APKs still carried fresh keys. Gradle is told instead, through an
+          # init script, exactly which keystore, alias and passwords the debug
+          # signing config uses, so the generated build.gradle.kts stays
+          # untouched and no default path is relied on.
+          ks="$RUNNER_TEMP/pinned-debug.keystore"
+          printf '%s' "$DEBUG_KEYSTORE_B64" | base64 -d > "$ks"
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/pin-debug-key.gradle <<GRADLE
+          allprojects {
+              plugins.withId('com.android.application') {
+                  afterEvaluate {
+                      def debug = android.signingConfigs.getByName('debug')
+                      debug.storeFile = file('$ks')
+                      debug.storeType = 'pkcs12'
+                      debug.storePassword = 'android'
+                      debug.keyAlias = 'androiddebugkey'
+                      debug.keyPassword = 'android'
+                  }
+              }
+          }
+          GRADLE
+          cert=$(openssl pkcs12 -in "$ks" -passin pass:android -nokeys \
                    | openssl x509 -outform DER | sha256sum | cut -d' ' -f1)
           echo "PINNED_DEBUG_CERT=$cert" >> "$GITHUB_ENV"
-          echo "debug keystore pinned in ${#dirs[@]} location(s)"
+          echo "debug signing pinned through ~/.gradle/init.d/pin-debug-key.gradle"
 
       - name: Build APK
         working-directory: client
