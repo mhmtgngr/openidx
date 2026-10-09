@@ -5,7 +5,7 @@ describe('command palette helpers', () => {
   it('flattens every nav item and carries a domain label', () => {
     const flat = flattenNavItems()
     const totalItems = navigation.reduce(
-      (n, g) => n + g.sections.reduce((m, s) => m + s.items.length, 0),
+      (n, g) => n + g.sections.reduce((m, s) => m + s.items.reduce((k, i) => k + 1 + (i.children?.length ?? 0), 0), 0),
       0
     )
     expect(flat).toHaveLength(totalItems)

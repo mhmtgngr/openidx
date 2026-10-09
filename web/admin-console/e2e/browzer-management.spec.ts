@@ -369,6 +369,8 @@ test.describe('BrowZer Management - Navigation', () => {
 
     await page.goto('/dashboard');
 
+    // BrowZer is a child page of Network Services; open the parent first.
+    await page.getByRole('button', { name: 'Show pages under Network Services' }).click();
     await page.locator('a[href="/browzer-management"]').click();
 
     await expect(page).toHaveURL(/\/browzer-management/);

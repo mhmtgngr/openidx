@@ -19,8 +19,19 @@ describe('Breadcrumbs', () => {
         <Breadcrumbs />
       </MemoryRouter>
     )
-    // Users lives under the IAM domain.
-    expect(screen.getByText('Identity & Access (IAM)')).toBeInTheDocument()
+    // Users lives under the Identity group.
+    expect(screen.getByText('Identity')).toBeInTheDocument()
+  })
+
+  it('links the parent page of a child route', () => {
+    render(
+      <MemoryRouter initialEntries={['/vault-secrets']}>
+        <Breadcrumbs />
+      </MemoryRouter>
+    )
+    expect(screen.getByText('Resources & Access')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'PAM Overview' })).toHaveAttribute('href', '/pam-dashboard')
+    expect(screen.getByText('Vault Secrets')).toBeInTheDocument()
   })
 
   it('renders nothing on /dashboard', () => {
