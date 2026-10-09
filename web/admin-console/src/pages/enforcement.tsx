@@ -3,6 +3,7 @@ import { ShieldCheck, ShieldAlert, Copy } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table'
 import { QueryError } from '../components/query-error'
 import { useToast } from '../hooks/use-toast'
 import { useEnforcementPosture, type EnforcementGate } from '../lib/enforcement'
@@ -27,20 +28,20 @@ function modeVariant(mode: string): 'default' | 'secondary' | 'destructive' | 'o
 function GateRow({ gate }: { gate: EnforcementGate }) {
   const { t } = useTranslation()
   return (
-    <tr className="border-b last:border-0">
-      <td className="py-3 pr-4 align-top font-mono text-xs">{gate.name}</td>
-      <td className="py-3 pr-4 align-top">
+    <TableRow>
+      <TableCell className="align-top font-mono text-xs">{gate.name}</TableCell>
+      <TableCell className="align-top">
         <Badge variant={modeVariant(gate.mode)} data-testid={`mode-${gate.name}`}>
           {t(`pages.enforcement.mode.${gate.mode}`, { defaultValue: gate.mode })}
         </Badge>
-      </td>
-      <td className="py-3 pr-4 align-top text-sm text-muted-foreground">
+      </TableCell>
+      <TableCell className="align-top text-sm text-muted-foreground">
         {gate.enforcing ? t('pages.enforcement.enforcingMeaning') : gate.meaning}
-      </td>
-      <td className="py-3 align-top text-right tabular-nums">
+      </TableCell>
+      <TableCell className="align-top text-right tabular-nums">
         {gate.observe_action ? gate.would_deny_7d : <span className="text-muted-foreground">—</span>}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   )
 }
 
@@ -94,21 +95,21 @@ export function EnforcementPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-xs uppercase text-muted-foreground">
-                    <th className="py-2 pr-4">{t('pages.enforcement.columns.control')}</th>
-                    <th className="py-2 pr-4">{t('pages.enforcement.columns.mode')}</th>
-                    <th className="py-2 pr-4">{t('pages.enforcement.columns.meaning')}</th>
-                    <th className="py-2 text-right">{t('pages.enforcement.columns.wouldDeny')}</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t('pages.enforcement.columns.control')}</TableHead>
+                    <TableHead>{t('pages.enforcement.columns.mode')}</TableHead>
+                    <TableHead>{t('pages.enforcement.columns.meaning')}</TableHead>
+                    <TableHead className="text-right">{t('pages.enforcement.columns.wouldDeny')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {data.gates.map((g) => (
                     <GateRow key={g.name} gate={g} />
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
 
