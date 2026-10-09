@@ -217,6 +217,16 @@ func Install(exePath, configDir string) error {
 	}
 	defer s.Close()
 
+	// Restart after a failure, as the MSI's util:ServiceConfig also sets; a
+	// service installed by hand must not be the one that stays down.
+	if err := s.SetRecoveryActions([]mgr.RecoveryAction{
+		{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
+	}, 24*60*60); err != nil {
+		return fmt.Errorf("set recovery actions: %w", err)
+	}
+
 	if err := s.Start(); err != nil {
 		return fmt.Errorf("start service: %w", err)
 	}
