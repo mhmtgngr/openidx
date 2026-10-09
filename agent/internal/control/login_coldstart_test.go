@@ -90,6 +90,56 @@ func TestLoginFinishColdStart(t *testing.T) {
 	}
 }
 
+// TestColdStartLoginKeepsTheServer is the regression test for a phone that
+// signed in without enrolling: Android killed the app during the browser step,
+// the cold-started process finished the login, and Status reported the person
+// signed in with an empty server, so every API call failed. The server the
+// flow signed in to must be the engine's server afterwards, and a fresh engine
+// over the same config dir (the next app start) must still have it.
+func TestColdStartLoginKeepsTheServer(t *testing.T) {
+	dir := t.TempDir()
+	e := &Engine{configDir: dir, logger: zap.NewNop(), loginTimeout: 5 * time.Second, bridges: map[string]*bridge{}}
+
+	var gotVerifier, gotCode string
+	ts := tokenTestServer(t, &gotVerifier, &gotCode)
+	m, _, err := sso.StartMobileLogin(ts.URL)
+	if err != nil {
+		t.Fatalf("StartMobileLogin: %v", err)
+	}
+	if err := m.Save(e.pendingLoginPath()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	cb := "openidx://oauth-callback?" + url.Values{"code": {"c"}, "state": {m.State()}}.Encode()
+	if _, err := e.LoginFinish(cb); err != nil {
+		t.Fatalf("LoginFinish: %v", err)
+	}
+	if e.serverURL != ts.URL {
+		t.Errorf("engine server after cold-start login = %q, want %q", e.serverURL, ts.URL)
+	}
+
+	next, err := NewEngine(dir, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	if next.serverURL != ts.URL {
+		t.Errorf("next app start has server %q, want %q", next.serverURL, ts.URL)
+	}
+}
+
+// TestNoServerIsRecordedWithoutALogin: SetServer alone (a URL typed but never
+// signed in to) must not survive a restart, so a typo cannot stick.
+func TestNoServerIsRecordedWithoutALogin(t *testing.T) {
+	dir := t.TempDir()
+	e, _ := NewEngine(dir, zap.NewNop())
+	if err := e.SetServer("https://typo.example"); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := NewEngine(dir, zap.NewNop())
+	if next.serverURL != "" {
+		t.Errorf("a server nobody signed in to was kept: %q", next.serverURL)
+	}
+}
+
 // TestLoginFinishNoPending confirms that with neither an in-memory flow nor a
 // persisted file, LoginFinish reports no login in progress.
 func TestLoginFinishNoPending(t *testing.T) {

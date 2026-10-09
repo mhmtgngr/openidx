@@ -212,6 +212,25 @@ jobs:
         working-directory: client
         run: flutter pub get
 
+      # Every runner generated its own ~/.android/debug.keystore, so each build
+      # was signed with a different key and could not update the app already on
+      # a phone (INSTALL_FAILED_UPDATE_INCOMPATIBLE): every test build meant an
+      # uninstall, which drops the sign-in and the push registration with it.
+      # ANDROID_DEBUG_KEYSTORE_B64 pins one debug key (alias androiddebugkey,
+      # store and key password "android", Gradle's debug defaults) for every
+      # build. Without the secret the build still runs, with a fresh key.
+      - name: Pin the debug signing key
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$DEBUG_KEYSTORE_B64" ]; then
+            echo "::warning::ANDROID_DEBUG_KEYSTORE_B64 is not set: this APK is signed with a fresh debug key and cannot update an installed build"
+            exit 0
+          fi
+          mkdir -p ~/.android
+          printf '%s' "$DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          echo "debug keystore pinned"
+
       - name: Build APK
         working-directory: client
         run: flutter build apk --debug
