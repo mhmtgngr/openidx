@@ -7223,6 +7223,24 @@ const en = {
     // strings here are pinned by the page's own test, so they must stay
     // byte-identical to what the page rendered before extraction.
     userAccess360: {
+      why: {
+        title: 'Why can this person reach that?',
+        subtitle: 'The decision every enforcement point takes for this person on an application: the grant, each condition, and the sentence the audit log carries.',
+        pickApp: 'Choose an application',
+        resource: 'access decision',
+        hint: 'Pick an application to see the decision.',
+        verdict: { allowed: 'Allowed', denied: 'Denied', wouldDeny: 'Would deny' },
+        enforced: 'enforced',
+        observe: 'observe mode',
+        stepUp: 'step-up required',
+        grant: 'Grant',
+        noGrant: 'none',
+        columns: { condition: 'Condition', required: 'Required', observed: 'Observed', result: 'Result' },
+        unjudged: 'not known here',
+        satisfied: 'met',
+        failed: 'not met',
+        reasons: 'Reasons',
+      },
       backToUsers: 'Back to users',
       title: 'Access 360',
       resource: 'the user access map',
