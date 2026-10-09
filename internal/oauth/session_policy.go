@@ -26,11 +26,11 @@ type SessionPolicy struct {
 // DefaultSessionPolicy returns the system-wide default session policy
 func DefaultSessionPolicy() SessionPolicy {
 	return SessionPolicy{
-		IdleTimeout:               1800,    // 30 minutes
-		AbsoluteTimeout:           86400,   // 24 hours
-		RememberMeDuration:        2592000, // 30 days
-		ReauthInterval:            0,       // disabled
-		BindSessionToIP:           false,
+		IdleTimeout:        1800,    // 30 minutes
+		AbsoluteTimeout:    86400,   // 24 hours
+		RememberMeDuration: 2592000, // 30 days
+		ReauthInterval:     0,       // disabled
+		BindSessionToIP:    false,
 		// Ten live sessions per person, oldest dropped first. Unlimited was the
 		// default, so a credential used from a hundred places kept a hundred
 		// sessions and nobody was told. Ten covers one person's console, phone,
