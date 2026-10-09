@@ -34,6 +34,7 @@ import { useAuth } from '../lib/auth'
 import { roleLevel, ROLE_LEVELS } from '../lib/roles'
 import { GettingStarted } from '../components/getting-started'
 import { QueryError } from '../components/query-error'
+import { EnforcementBanner } from '../components/enforcement-banner'
 
 // Matches the /api/v1/dashboard recent_events item.
 interface RecentEvent {
@@ -316,6 +317,7 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      <EnforcementBanner />
       <div>
         <h1 className="text-3xl font-bold tracking-tight">{t('nav.items.dashboard')}</h1>
         <p className="text-muted-foreground">

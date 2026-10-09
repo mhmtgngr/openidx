@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **A production install enforces its authorization controls, or says until when it won't.** Application assignment, the posture → device-trust link, the fresh-second-factor gate, the bot gate, the on-overlay requirement for privileged sessions and the two require-auth switches all had off/observe modes as defaults, and nothing told a production install mid-rollout apart from one that had never been switched on: a startup warning was the whole security posture. `APP_ENV=production` now refuses to start while any of them is open, naming each with what it leaves undone. The one exception is a declared rollout window, `ENFORCEMENT_OBSERVE_UNTIL=YYYY-MM-DD` (at most 30 days ahead): until that day the controls may observe and every service logs the days left; from that day startup refuses again.
+  - **Console:** Security → **Enforcement** lists each control with its mode, what it leaves open, and how many times in the last week its observe mode recorded a refusal it did not carry out (`GET /api/v1/security-posture`), plus the exact settings that close the open ones. The dashboard carries a banner while any control is open.
+  - **Runbook:** `docs/runbooks/enforce-rollout.md`.
+
 ### Fixed
 - **The Windows MSI installs again.** The agent-v0.3.0 MSI left out `libvpx-1.dll`, which the screen-share build of the agent imports. On every machine the agent failed to start (`0xC0000135`), the service did not start (`1920`) and the installation rolled back (`1603`). The packaging step looked for `vpx*.dll`, which does not match vcpkg's `libvpx-1.dll`. It now bundles the DLL, fails the build when a screen-share build has none to bundle, and unpacks the finished MSI and starts the agent from it, so a DLL the package is missing fails CI instead of an install.
 - **The console's enrolment link works on Windows.** The Add-a-device link and QR carried only the code. The Windows agent's link handler has no server field, so it enrolled against its built-in `https://openidx.example.com` and failed. The link now also names the server (`openidx://enroll?code=…&server=…`), which every client already reads.

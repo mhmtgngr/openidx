@@ -108,6 +108,7 @@ export const APIDocs = lazy(() => import('./api-docs').then((m) => ({ default: m
 
 // System
 export const SystemHealth = lazy(() => import('./system-health').then((m) => ({ default: m.SystemHealthPage })))
+export const EnforcementPage = lazy(() => import('./enforcement').then((m) => ({ default: m.EnforcementPage })))
 export const Organizations = lazy(() => import('./organizations').then((m) => ({ default: m.OrganizationsPage })))
 export const Delegations = lazy(() => import('./delegations').then((m) => ({ default: m.DelegationsPage })))
 export const Webhooks = lazy(() => import('./webhooks').then((m) => ({ default: m.WebhooksPage })))
