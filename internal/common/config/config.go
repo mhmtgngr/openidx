@@ -1073,6 +1073,15 @@ func Load(serviceName string) (*Config, error) {
 		cfg.AccessProxyDomain = ""
 	}
 
+	// ELASTICSEARCH_URL present and empty means the install runs without
+	// Elasticsearch. Viper ignored the empty variable and fell back to the
+	// localhost default, so an install with no Elasticsearch could not say so:
+	// the audit service kept dialling a port nothing listens on, and
+	// ValidateProduction asked for Elasticsearch credentials it has no use for.
+	if env, ok := os.LookupEnv("ELASTICSEARCH_URL"); ok && strings.TrimSpace(env) == "" {
+		cfg.ElasticsearchURL = ""
+	}
+
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
