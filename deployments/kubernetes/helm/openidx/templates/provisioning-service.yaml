@@ -69,7 +69,7 @@ spec:
             {{- end }}
           {{- if .Values.pgcat.enabled }}
           # Through the transaction pooler, not straight at Postgres (task 2.2).
-          # This replaces the direct DSN in -db-url; see openidx.pooledDatabaseUrl.
+          # This replaces the direct DSN in -db-app-url; see openidx.pooledDatabaseUrl.
           {{- include "openidx.pooledDatabaseUrl" . | nindent 12 }}
           {{- else if .Values.database.planeRoles.enabled }}
           # As this service's availability plane, so an expensive query is
@@ -78,7 +78,7 @@ spec:
           {{- end }}
           envFrom:
             - secretRef:
-                name: {{ include "openidx.fullname" . }}-db-url
+                name: {{ include "openidx.fullname" . }}-db-app-url
             - secretRef:
                 name: {{ include "openidx.fullname" . }}-secrets
             - configMapRef:

@@ -56,6 +56,8 @@ spec:
                   value: {{ .Values.backup.s3.endpoint | quote }}
                 {{- end }}
                 {{- end }}
+              # The OWNER's DSN (-db-url), like the migration Job: a dump must
+              # read every tenant's rows, which openidx_app is not allowed to.
               envFrom:
                 - secretRef:
                     name: {{ include "openidx.fullname" . }}-db-url

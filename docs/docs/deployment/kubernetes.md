@@ -137,6 +137,37 @@ Secret on the first install and keeps it on every upgrade. Set
 cluster (Argo CD, Flux), because each such render would otherwise make a new
 one. A value stored under the same key in `<release>-secrets` wins.
 
+### Database roles
+
+No service connects as the database owner. The chart writes two connection
+secrets:
+
+| Secret | Role | Read by |
+|---|---|---|
+| `<release>-db-url` | the owner (`postgresql.auth.username`, default `openidx`) | the migration Job and the backup CronJob |
+| `<release>-db-app-url` | `DATABASE_URL` as `openidx_app` (`NOBYPASSRLS`, the role row-level security applies to); `DATABASE_BYPASS_URL` as `openidx_bypass` (`BYPASSRLS`, for background work that reads across organizations) | every service |
+
+This matches how compose runs the services. A service started with
+`APP_ENV=production` refuses to start without `DATABASE_BYPASS_URL`.
+
+With the bundled PostgreSQL, the chart generates both role passwords on the
+first install and keeps them on every upgrade. It stores them in the
+`<release>-db-roles` hook Secret. The bootstrap hook sets them on the server
+before the migrations run. It also gives the owner `BYPASSRLS`, as compose's
+`bootstrap.sql` does, so that migration 231 can remove the `app.bypass_rls`
+clause from the policies. Set `secrets.appPassword` and
+`secrets.bypassPassword` when the chart is rendered without a cluster (Argo
+CD, Flux), because each such render would otherwise generate new passwords.
+With `pgcat.enabled`, `openidx_app`'s password is `pgcat.password`.
+
+**Upgrading from v1.42.0 or earlier.** The first upgrade moves every service
+from the owner to `openidx_app`. The bootstrap hook sets the new passwords
+before the pods roll, so no manual step is needed with the bundled database.
+Migration 231 has already run on such an install, and it left the
+`app.bypass_rls` clause in place, so the clause is still there after the
+upgrade. To remove it, follow "The bypass role" in
+`docs/runbooks/enforce-rollout.md`.
+
 ### The audit service's edge port
 
 The API Ingress sends `/api/v1/audit` to the audit service's `edge` port
@@ -148,9 +179,12 @@ Ingress or gateway in front of the audit service should do the same.
 
 ### An external database
 
-`postgresql.enabled=false` points the chart at a database you run. The
-migration Job connects with the DSN in `<release>-db-url` and needs two things
-a plain application role does not have:
+`postgresql.enabled=false` points the chart at a database you run. Use
+External Secrets for its connection strings (below). Create `openidx_bypass`
+and set the passwords of `openidx_app` and `openidx_bypass` yourself; the
+commands are in "The bypass role" in `docs/runbooks/enforce-rollout.md`. The
+migration Job connects with the owner's DSN in `<release>-db-url` and needs
+two things a plain application role does not have:
 
 1. **`CREATE ROLE`, once.** Migration v53 provisions `openidx_app` — the
    `NOSUPERUSER NOBYPASSRLS` runtime role the row-level-security belt is
@@ -188,6 +222,20 @@ externalSecrets:
     kind: ClusterSecretStore
   remoteKeyPrefix: "openidx"
 ```
+
+Store these connection strings under `<remoteKeyPrefix>/`:
+
+| Key | Role | Becomes |
+|---|---|---|
+| `database-url` | the owner | `DATABASE_URL` in `<release>-db-url`, for migrations and backups |
+| `database-app-url` | `openidx_app` | `DATABASE_URL` in `<release>-db-app-url`, for the services |
+| `database-bypass-url` | `openidx_bypass` | `DATABASE_BYPASS_URL` in `<release>-db-app-url` |
+| `redis-url` | | `REDIS_URL` |
+
+Up to v1.42.0 the services read `database-url`, the owner. Add
+`database-app-url` and `database-bypass-url` before you upgrade. Until both
+exist, `<release>-db-app-url` does not sync and the new service pods wait for
+it. The services never fall back to the owner.
 
 ### Scaling
 
