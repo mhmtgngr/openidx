@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/openidx/openidx/agent/internal/secretfile"
@@ -22,10 +24,63 @@ var ErrNoIdentity = errors.New("this device has no enrolled Ziti identity")
 // device_identity.go), and the file carries the same name.
 const identityPrefix = "dev-"
 
+// ErrBadAgentID is returned for an agent id that cannot name a file safely.
+var ErrBadAgentID = errors.New("the agent id cannot name an identity file")
+
+// agentIDPattern is what an agent id may look like to become part of a file
+// name: the server issues UUIDs, and nothing that could be a path separator,
+// "..", a drive letter or a Windows device name gets through.
+var agentIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
 // IdentityFileName is the file the device identity is written to in the
-// tunneler's identity directory.
-func IdentityFileName(agentID string) string {
-	return identityPrefix + agentID + ".json"
+// tunneler's identity directory. The agent id comes from the server's
+// enrolment answer, so it is validated rather than trusted to be a name.
+func IdentityFileName(agentID string) (string, error) {
+	if !agentIDPattern.MatchString(agentID) {
+		return "", fmt.Errorf("%w: %q", ErrBadAgentID, agentID)
+	}
+	name := identityPrefix + agentID + ".json"
+	if filepath.Base(name) != name {
+		return "", fmt.Errorf("%w: %q", ErrBadAgentID, agentID)
+	}
+	return name, nil
+}
+
+// identityPath joins the identity file name to dir and makes sure the result
+// is a direct child of dir.
+func identityPath(dir, agentID string) (string, error) {
+	name, err := IdentityFileName(agentID)
+	if err != nil {
+		return "", err
+	}
+	dst := filepath.Join(dir, name)
+	if filepath.Dir(dst) != filepath.Clean(dir) {
+		return "", fmt.Errorf("%w: %q", ErrBadAgentID, agentID)
+	}
+	return dst, nil
+}
+
+// prepareDir creates the identity directory owner-only, and refuses one that
+// is a symlink or not a directory: the private key is written into it, and a
+// directory that points elsewhere would put the key, and the stale-file
+// removal, wherever whoever made the link chose.
+func prepareDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating tunnel identity directory: %w", err)
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("tunnel identity directory: %w", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+		return fmt.Errorf("tunnel identity directory %s is not a plain directory", dir)
+	}
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return fmt.Errorf("restricting tunnel identity directory: %w", err)
+		}
+	}
+	return nil
 }
 
 // Provisioner puts the agent's enrolled identity (Source, the
@@ -56,6 +111,10 @@ func (p *Provisioner) Provision() (changed bool, err error) {
 	if p.Source == "" || p.AgentID == "" {
 		return false, ErrNoIdentity
 	}
+	dst, err := identityPath(p.Dir, p.AgentID)
+	if err != nil {
+		return false, err
+	}
 	data, err := os.ReadFile(p.Source)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -66,10 +125,9 @@ func (p *Provisioner) Provision() (changed bool, err error) {
 	if !json.Valid(data) {
 		return false, fmt.Errorf("device identity %s is not JSON", p.Source)
 	}
-	if err := os.MkdirAll(p.Dir, 0o700); err != nil {
-		return false, fmt.Errorf("creating tunnel identity directory: %w", err)
+	if err := prepareDir(p.Dir); err != nil {
+		return false, err
 	}
-	dst := filepath.Join(p.Dir, IdentityFileName(p.AgentID))
 	sum := sha256.Sum256(data)
 	_, statErr := os.Stat(dst)
 	if statErr != nil || !p.have || sum != p.copied {
@@ -96,7 +154,13 @@ func (p *Provisioner) Forget() (bool, error) {
 	return removeStale(p.Dir, "")
 }
 
+// removeStale deletes the dev-*.json entries of dir other than keep. It reads
+// only dir itself, and os.Remove on an entry deletes that entry (a symlink is
+// removed, never followed), so nothing outside dir is touched.
 func removeStale(dir, keep string) (bool, error) {
+	if fi, err := os.Lstat(dir); err == nil && (fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir()) {
+		return false, fmt.Errorf("tunnel identity directory %s is not a plain directory", dir)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

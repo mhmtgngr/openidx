@@ -81,6 +81,8 @@ type Agent struct {
 	tun atomic.Pointer[tunnel.Supervisor]
 	// orgAlwaysOn is the server's org_network_policy.always_on.
 	orgAlwaysOn atomic.Bool
+	// tunLocalOn is a trusted agent.json's tunnel.enabled (tunnel.go).
+	tunLocalOn atomic.Bool
 
 	// deviceKey signs posture reports once loaded (device_key.go).
 	deviceKey       devicekey.Key

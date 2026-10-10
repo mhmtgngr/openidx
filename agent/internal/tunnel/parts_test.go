@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -47,55 +46,6 @@ func TestParseIPCStatus(t *testing.T) {
 	}
 }
 
-func TestLocatePrefersTheBundledBinaryThenPath(t *testing.T) {
-	dir := t.TempDir()
-	agentExe := filepath.Join(dir, "bin", "openidx-agent")
-	mk := func(p string) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("x"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", filepath.Join(dir, "path"))
-	if _, err := Locate("", agentExe); !errors.Is(err, ErrNotInstalled) {
-		t.Fatalf("nothing installed: err = %v, want ErrNotInstalled", err)
-	}
-
-	onPath := filepath.Join(dir, "path", BinaryName())
-	mk(onPath)
-	if got, err := Locate("", agentExe); err != nil || got != onPath {
-		t.Fatalf("PATH only: got %q, %v", got, err)
-	}
-
-	libDir := filepath.Join(dir, "lib", "openidx-agent", BinaryName())
-	mk(libDir)
-	if got, _ := Locate("", agentExe); got != libDir {
-		t.Fatalf("lib dir: got %q, want %q", got, libDir)
-	}
-
-	beside := filepath.Join(dir, "bin", BinaryName())
-	mk(beside)
-	if got, _ := Locate("", agentExe); got != beside {
-		t.Fatalf("beside the agent: got %q, want %q", got, beside)
-	}
-
-	if _, err := Locate(filepath.Join(dir, "missing"), agentExe); !errors.Is(err, ErrNotInstalled) {
-		t.Fatalf("a missing explicit path must not fall back: err = %v", err)
-	}
-	if runtime.GOOS != "windows" {
-		noexec := filepath.Join(dir, "noexec")
-		if err := os.WriteFile(noexec, []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := Locate(noexec, agentExe); err == nil {
-			t.Fatal("a non-executable explicit path was accepted")
-		}
-	}
-}
-
 func TestProvisionIdentityCopiesOnceAndRemovesStaleOnes(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "ziti-identity.json")
@@ -121,7 +71,11 @@ func TestProvisionIdentityCopiesOnceAndRemovesStaleOnes(t *testing.T) {
 
 	// The tunneler rewrites its own copy (a new controller list, say). That
 	// is not a new identity: no rewrite and no restart.
-	copyPath := filepath.Join(idDir, IdentityFileName("agent-1"))
+	name, err := IdentityFileName("agent-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyPath := filepath.Join(idDir, name)
 	writeFile(t, copyPath, `{"ztAPI":"https://c","ztAPIs":["https://c","https://c-ha"],"id":{}}`)
 	if changed, err := prov.Provision(); err != nil || changed {
 		t.Fatalf("after the tunneler updated its copy: changed=%v err=%v, want unchanged", changed, err)

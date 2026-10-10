@@ -7,6 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/tunnel"
 )
 
@@ -18,30 +19,61 @@ import (
 // tunnelDir is where the tunneler's identity copy and log live.
 func tunnelDir(configDir string) string { return filepath.Join(configDir, "tunnel") }
 
-// newTunnelSupervisor builds the supervisor from agent.json. binary_path and
-// a non-default mode choose what this process runs with its privileges, so,
-// like plugin_dir, they are obeyed only from a config file nobody but the
-// service and an administrator could have written.
-func (a *Agent) newTunnelSupervisor() *tunnel.Supervisor {
-	cfg := tunnel.Config{
+// tunnelSettings turns agent.json's "tunnel" object into the supervisor's
+// configuration, and says whether the device's own setting turns the tunnel on.
+//
+// Every one of these settings is obeyed only when agent.json, AND the
+// directory holding it, could have been written by nobody but the service and
+// an administrator: binary_path and mode choose what this process runs with
+// LocalSystem/root privileges, probe_address decides what counts as healthy,
+// and enabled decides whether a privileged process starts at all. ConfigTrusted
+// checks the file (Unix: not group/world-writable; Windows: owner and every ACE
+// limited to SYSTEM, Administrators, TrustedInstaller); the directory is
+// checked the same way, because whoever can write it can replace the file. A
+// config that fails is not partly obeyed: the whole object is ignored and the
+// tunnel stays off unless the organization's policy turns it on.
+//
+// What is never configurable, from any source: the arguments (fixed in
+// internal/tunnel), the identity directory (under the config directory) and,
+// whatever binary_path says, the trust check the binary itself must pass
+// (internal/tunnel/locate.go). The server's org_network_policy only turns the
+// tunnel on or off; it names no binary and no argument.
+func (a *Agent) tunnelSettings() (cfg tunnel.Config, localEnabled bool) {
+	cfg = tunnel.Config{
 		Logger:         a.logger,
 		AgentID:        a.config.AgentID,
 		IdentitySource: a.config.ZitiIdentityFile,
 		IdentityDir:    filepath.Join(tunnelDir(a.configDir), "identities"),
 		LogFile:        filepath.Join(tunnelDir(a.configDir), "ziti-edge-tunnel.log"),
 	}
-	if tc := a.config.Tunnel; tc != nil {
-		cfg.ProbeAddress = tc.ProbeAddress
-		if tc.BinaryPath != "" || tc.Mode != "" {
-			if err := ConfigTrusted(a.configDir); err != nil {
-				a.logger.Error("ignoring tunnel.binary_path and tunnel.mode: agent.json could have been "+
-					"written by an account this service does not trust", zap.Error(err))
-			} else {
-				cfg.BinaryPath = tc.BinaryPath
-				cfg.Mode = tunnel.Mode(tc.Mode)
-			}
-		}
+	tc := a.config.Tunnel
+	if tc == nil {
+		return cfg, false
 	}
+	if err := tunnelConfigTrusted(a.configDir); err != nil {
+		a.logger.Error("ignoring agent.json's tunnel settings: agent.json could have been written by "+
+			"an account this service does not trust", zap.Error(err))
+		return cfg, false
+	}
+	cfg.BinaryPath = tc.BinaryPath
+	cfg.Mode = tunnel.Mode(tc.Mode)
+	cfg.ProbeAddress = tc.ProbeAddress
+	return cfg, tc.Enabled
+}
+
+// tunnelConfigTrusted is ConfigTrusted plus the same check on the directory
+// that holds agent.json.
+func tunnelConfigTrusted(configDir string) error {
+	if err := ConfigTrusted(configDir); err != nil {
+		return err
+	}
+	return plugin.CheckTrustedPath(configDir)
+}
+
+// newTunnelSupervisor builds the supervisor from tunnelSettings.
+func (a *Agent) newTunnelSupervisor() *tunnel.Supervisor {
+	cfg, local := a.tunnelSettings()
+	a.tunLocalOn.Store(local)
 	return tunnel.New(cfg)
 }
 
@@ -60,15 +92,14 @@ func (a *Agent) startTunnel(ctx context.Context) {
 	}()
 }
 
-// applyTunnelEnablement turns the tunnel on when agent.json enables it or the
-// organization's policy makes it always on.
+// applyTunnelEnablement turns the tunnel on when a trusted agent.json enables
+// it or the organization's policy makes it always on.
 func (a *Agent) applyTunnelEnablement() {
 	s := a.tun.Load()
 	if s == nil {
 		return
 	}
-	local := a.config.Tunnel != nil && a.config.Tunnel.Enabled
-	s.SetEnabled(local || a.orgAlwaysOn.Load())
+	s.SetEnabled(a.tunLocalOn.Load() || a.orgAlwaysOn.Load())
 }
 
 // applyNetworkPolicy records the server's org_network_policy. A policy that

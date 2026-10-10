@@ -31,6 +31,10 @@ func TestMain(m *testing.M) {
 	if os.Getenv(fakeEnv) == "1" {
 		os.Exit(fakeTunneler(os.Args[1:]))
 	}
+	// The fake tunneler is this test binary, which lives under the
+	// world-writable temporary directory and would rightly be refused.
+	// verifyTrustedBinary has tests of its own (security_test.go).
+	verifyBinary = func(string) error { return nil }
 	os.Exit(m.Run())
 }
 

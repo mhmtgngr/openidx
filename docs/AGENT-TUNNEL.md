@@ -16,8 +16,12 @@ enrolment as `ziti-identity.json` in its config directory.
 
 When the tunnel is on, the agent:
 
-1. finds the tunneler binary: `tunnel.binary_path` if set, otherwise the one
-   installed beside the agent, otherwise `ziti-edge-tunnel` on `PATH`;
+1. finds the tunneler binary: `tunnel.binary_path` if set (an absolute path),
+   otherwise the one installed beside the agent or in
+   `/usr/local/lib/openidx-agent/`. `PATH` is never searched: the agent runs as
+   LocalSystem or root, and a PATH lookup with those privileges runs whatever an
+   ordinary account managed to put in a PATH directory. Whichever file is found
+   must pass a trust check, or it is not run (see "Who can choose the binary");
 2. copies the device identity into `<config dir>/tunnel/identities/dev-<agent_id>.json`
    (owner-only permissions; any other `dev-*.json` there, left by an earlier
    enrolment, is removed);
@@ -93,10 +97,30 @@ Other settings in the same object:
 | `mode` | `child` (the agent runs the tunneler), `external` (systemd runs it; the agent only writes the identity and reads the status) or `auto` (the default: `child` when the agent runs as LocalSystem or root, `external` otherwise). |
 | `probe_address` | A `host:port` reachable only through the tunnel. When the tunneler's command socket does not answer, a TCP connection to it counts as healthy. |
 
-`binary_path` and `mode` decide what the agent runs with its privileges, so,
-like `plugin_dir`, they are obeyed only when `agent.json` passes the same
-ownership and permission check (`ConfigTrusted`); otherwise they are ignored and
-the agent logs why.
+### Who can choose the binary
+
+The agent runs the tunneler with LocalSystem or root privileges, so:
+
+- **The `tunnel` object is obeyed only from a trusted `agent.json`.** The file
+  must pass the check `plugin_dir` passes (`ConfigTrusted`: on Unix not writable
+  by group or others; on Windows owned by, and writable only by, SYSTEM,
+  Administrators or TrustedInstaller), and so must the directory that holds it.
+  If either fails, the whole object, `enabled` included, is ignored, and the
+  agent logs why.
+- **The binary must be one only an administrator could have put there.** On
+  Linux the file and every directory above it must be owned by root (or by the
+  account the agent runs as) and not writable by group or others; symlinks are
+  resolved first. On Windows it must be under Program Files, and the file, its
+  folder and that folder's parent must pass the same owner and permission check
+  as a plugin. A binary that fails is reported and not run; the agent does not
+  try the next location instead.
+- **The server cannot choose a binary or an argument.** `org_network_policy`
+  turns the tunnel on or off and nothing else. The arguments
+  (`run --identity-dir <dir> -P openidx`) and the identity directory are fixed.
+- **The identity file name comes from the agent id**, which the server issued,
+  so the id must match `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`; the agent refuses to
+  write the identity otherwise, and it refuses an identity directory that is a
+  symlink.
 
 ### Linux
 
@@ -162,6 +186,9 @@ when the tunnel is not connected, the reason first.
 - **`not_installed`.** The package was built without the tunneler, the binary
   was removed, or `tunnel.binary_path` names a file that is not there or not
   executable. The agent does not fall back from a `binary_path` that is wrong.
+- **"the tunneler binary is not safe to run".** The file or a directory above it
+  can be written by an account other than root/Administrators; the message
+  names which. Fix the permissions (`chmod go-w`, or `icacls`).
 - **`degraded`, "this device has no enrolled Ziti identity".** The device
   enrolled without an overlay identity (the server issued no Ziti enrolment, or
   enrolling it failed). Enrol the device again.
