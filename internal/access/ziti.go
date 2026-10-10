@@ -2379,6 +2379,23 @@ func (zm *ZitiManager) EnsureEdgeRouterPolicy(ctx context.Context, name string, 
 
 // EnsureServiceEdgeRouterPolicy creates a service-edge-router policy if it doesn't already exist.
 func (zm *ZitiManager) EnsureServiceEdgeRouterPolicy(ctx context.Context, name string, serviceRoles, edgeRouterRoles []string) error {
+	// Look it up first, so a converged pass makes no write; a failed or
+	// non-200 lookup falls through to the create, as before.
+	if data, status, err := zm.mgmtRequest("GET",
+		"/edge/management/v1/service-edge-router-policies?filter="+zitiFilterEquals("name", name), nil); err == nil && status == http.StatusOK {
+		var resp struct {
+			Data []struct {
+				Name string `json:"name"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(data, &resp) == nil {
+			for _, p := range resp.Data {
+				if p.Name == name {
+					return nil
+				}
+			}
+		}
+	}
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":            name,
 		"semantic":        "AnyOf",

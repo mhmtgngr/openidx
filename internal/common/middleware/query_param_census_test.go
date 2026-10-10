@@ -46,7 +46,9 @@ var publicQueryParams = map[string]string{
 	// nothing the caller does not already hold -- and it is the one field that
 	// makes a paging complaint reproducible.
 	"cursor": "pagination (keyset position)",
-	"start":  "time window", "end": "time window", "start_date": "time window",
+	// The network-resource CSV import's "validate only" switch: a boolean.
+	"dry_run": "request mode (validate without writing)",
+	"start":   "time window", "end": "time window", "start_date": "time window",
 	"end_date": "time window", "start_time": "time window", "end_time": "time window",
 	"since": "time window", "from": "time window", "to": "time window",
 	"days": "time window", "period": "time window", "threshold_days": "time window",

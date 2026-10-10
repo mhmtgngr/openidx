@@ -347,8 +347,13 @@ func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) (
 			zm.logger.Warn("failed to load app assignments for ziti attributes",
 				zap.String("user_id", userID), zap.Error(aerr))
 		}
+		// Network resources have no route and are reached only over the
+		// overlay, so their assignment has to travel as a marker too: the
+		// device identity carries it and the network service's Dial policy
+		// names it (networkDialPolicy).
+		network := zm.networkAppIDs(ctx, orgID, refs)
 		for _, r := range refs {
-			if r.RouteID != "" {
+			if r.RouteID != "" || network[r.ID] {
 				appAttrs = append(appAttrs, appMarkerAttr(r.ID))
 			}
 		}
@@ -377,6 +382,35 @@ func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) (
 		}
 	}
 	return attrs, nil
+}
+
+// networkAppIDs reports which of refs are network resources (kind 'network').
+// A failure to read leaves them out, which is the narrower answer.
+func (zm *ZitiManager) networkAppIDs(ctx context.Context, orgID string, refs []appaccess.AppRef) map[string]bool {
+	out := map[string]bool{}
+	var ids []string
+	for _, r := range refs {
+		if r.RouteID == "" {
+			ids = append(ids, r.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return out
+	}
+	rows, err := zm.db.Pool.Query(ctx,
+		`SELECT id::text FROM applications WHERE org_id = $1 AND id::text = ANY($2) AND kind = 'network'`, orgID, ids)
+	if err != nil {
+		zm.logger.Debug("network app markers unavailable", zap.Error(err))
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			out[id] = true
+		}
+	}
+	return out
 }
 
 // liveJITAttributes returns the jit-<request-id> attributes of the user's

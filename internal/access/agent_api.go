@@ -1011,6 +1011,9 @@ type agentReport struct {
 	AgentID  string        `json:"agent_id"`
 	DeviceID string        `json:"device_id"`
 	Results  []checkResult `json:"results"`
+	// TunnelStatus is the OpenZiti tunneler's state as the agent sees it;
+	// optional, absent from agents that do not run one (tunnel_status.go).
+	TunnelStatus *agentTunnelStatus `json:"tunnel_status,omitempty"`
 }
 
 // checkResult represents a single posture check sent by the agent.
@@ -1296,6 +1299,8 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 				zap.Error(dbErr))
 		}
 	}
+
+	h.recordTunnelStatus(c.Request.Context(), agentID, report.TunnelStatus)
 
 	h.logAuditEvent("agent.report", agentID, "success", fmt.Sprintf("score=%.2f", complianceScore))
 	h.logAuditEventToDB(c.Request.Context(), "agent.report", agentID, "success", fmt.Sprintf("score=%.2f", complianceScore))
@@ -1988,6 +1993,10 @@ type agentRecord struct {
 	ComplianceScore  float64    `json:"compliance_score"`
 	LastSeenAt       *time.Time `json:"last_seen_at"`
 	EnrolledAt       *time.Time `json:"enrolled_at"`
+	// TunnelStatus is the tunneler state the agent last reported (nil when it
+	// never reported one); TunnelLastSeen is when it last reported it up.
+	TunnelStatus   *agentTunnelStatus `json:"tunnel_status"`
+	TunnelLastSeen *time.Time         `json:"tunnel_last_seen"`
 }
 
 // HandleListAgents returns a JSON array of all enrolled agents (operator tier).
@@ -2008,7 +2017,8 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 	rows, err := h.db.Pool.Query(ctx, `
 		SELECT agent_id, device_id,
 		       COALESCE(metadata->>'hostname',''), COALESCE(platform, metadata->>'platform',''),
-		       status, compliance_status, compliance_score, last_seen_at, enrolled_at
+		       status, compliance_status, compliance_score, last_seen_at, enrolled_at,
+		       tunnel_status, tunnel_last_seen
 		FROM enrolled_agents
 		WHERE org_id = $1
 		ORDER BY last_seen_at DESC NULLS LAST, enrolled_at DESC
@@ -2023,6 +2033,7 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 	agents := []agentRecord{}
 	for rows.Next() {
 		var rec agentRecord
+		var tunnelRaw []byte
 		if scanErr := rows.Scan(
 			&rec.AgentID,
 			&rec.DeviceID,
@@ -2033,9 +2044,17 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 			&rec.ComplianceScore,
 			&rec.LastSeenAt,
 			&rec.EnrolledAt,
+			&tunnelRaw,
+			&rec.TunnelLastSeen,
 		); scanErr != nil {
 			h.logger.Warn("HandleListAgents: failed to scan row", zap.Error(scanErr))
 			continue
+		}
+		if len(tunnelRaw) > 0 {
+			var ts agentTunnelStatus
+			if json.Unmarshal(tunnelRaw, &ts) == nil {
+				rec.TunnelStatus = &ts
+			}
 		}
 		agents = append(agents, rec)
 	}

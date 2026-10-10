@@ -1644,5 +1644,12 @@ func allMigrations() []*Migration {
 			UpSQL:       bypassGUCLeavesPoliciesUp,
 			DownSQL:     bypassGUCLeavesPoliciesDown,
 		},
+		{
+			Version:     232,
+			Name:        "network_resources",
+			Description: "Network services become resources. network_targets (application_id PK, org_id) says what a network-kind application covers: hosts, CIDRs, DNS names, port ranges, protocols and an optional fixed forward address; the Ziti reconciler turns each row into a service with intercept.v1 and host.v1 configs dialable by device identities. org_network_policy (org_id PK) holds the tunnel posture: always_on (default false), split_tunnel (default true), block_direct_corporate_cidrs (default false); a missing row means those defaults. enrolled_agents gains tunnel_status (jsonb, the tunneler state the agent last reported) and tunnel_last_seen. Both tables are org-scoped under FORCE'd RLS with no app.bypass_rls clause. Down drops the tables and the two columns.",
+			UpSQL:       networkResourcesUp,
+			DownSQL:     networkResourcesDown,
+		},
 	}
 }

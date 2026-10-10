@@ -33,6 +33,8 @@ A slow request's trace then shows *which* hop hurt (OPA / Guacamole / Ziti / DB)
 | `OpenIDXHighLatencyP99` | p99 request latency > 1s over 10m |
 | `OpenIDXDBPoolSaturation` | in-use conns > 80% of the pool max (ties to roadmap #9) |
 | `OpenIDXGoroutineLeak` | > 5000 goroutines for 15m |
+| `OpenIDXAgentTunnelDown` | a device reports in while its OpenZiti tunneler has not been up for 15m (`openidx_tunnel_agents_down`) |
+| `OpenIDXTunnelDialFailures` | device tunnelers report > 0.1 dial failures/s over 10m (`openidx_tunnel_dial_failures_total`) |
 
 Wire alerts to a receiver (Alertmanager / webhook) as a follow-up. Tune the
 thresholds once you've watched a week of baseline.
