@@ -7,6 +7,7 @@ import {
   User,
   Network,
   ChevronDown,
+  ChevronRight,
   Search,
   X,
 } from 'lucide-react'
@@ -18,7 +19,7 @@ import { api } from '../lib/api'
 import { useAppStore } from '../lib/store'
 import { roleLevel, ROLE_LEVELS } from '../lib/roles'
 import { isPlatformAdmin } from '../lib/platform-admin'
-import { filterNavigation, type ViewMode } from '../config/navigation'
+import { filterNavigation, type NavItem, type ViewMode } from '../config/navigation'
 import { CommandPalette } from './command-palette'
 import { LanguageSwitcher } from './language-switcher'
 import { NotificationBell } from './notification-bell'
@@ -144,6 +145,19 @@ export function Layout() {
   const searching = query.trim().length > 0
 
   const groups = filterNavigation({ roles, viewMode: effectiveViewMode, query })
+
+  // A parent's children show while the current page is the parent or one of
+  // them, or after a click on its chevron; collapsing the sidebar to icons
+  // hides them, and a search lists every match flat (filterNavigation).
+  const [openParents, setOpenParents] = useState<string[]>([])
+  const toggleParent = (href: string) =>
+    setOpenParents((prev) => (prev.includes(href) ? prev.filter((h) => h !== href) : [...prev, href]))
+  const childrenShown = (item: NavItem) =>
+    sidebarOpen &&
+    (item.children ?? []).length > 0 &&
+    (openParents.includes(item.href) ||
+      location.pathname === item.href ||
+      (item.children ?? []).some((c) => location.pathname === c.href))
 
   // The organization selector is a platform admin's: super_admin held in the
   // default organization. It used to show for any super_admin, and a
@@ -295,24 +309,65 @@ export function Layout() {
                           {t(section.labelKey)}
                         </div>
                       )}
-                      {section.items.map((item) => (
-                        <NavLink
-                          key={item.href}
-                          to={item.href}
-                          title={sidebarOpen ? undefined : t(item.nameKey)}
-                          onClick={() => setMobileOpen(false)}
-                          className={({ isActive }) =>
-                            `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                              isActive
-                                ? 'bg-blue-50 text-blue-700'
-                                : 'text-muted-foreground hover:bg-muted'
-                            }`
-                          }
-                        >
-                          <item.icon className="h-5 w-5 shrink-0" />
-                          {sidebarOpen && <span className="text-sm">{t(item.nameKey)}</span>}
-                        </NavLink>
-                      ))}
+                      {section.items.map((item) => {
+                        const kids = item.children ?? []
+                        const expanded = childrenShown(item)
+                        return (
+                          <div key={item.href}>
+                            <div className="flex items-center">
+                              <NavLink
+                                to={item.href}
+                                title={sidebarOpen ? undefined : t(item.nameKey)}
+                                onClick={() => setMobileOpen(false)}
+                                className={({ isActive }) =>
+                                  `flex flex-1 items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                                    isActive
+                                      ? 'bg-blue-50 text-blue-700'
+                                      : 'text-muted-foreground hover:bg-muted'
+                                  }`
+                                }
+                              >
+                                <item.icon className="h-5 w-5 shrink-0" />
+                                {sidebarOpen && <span className="text-sm">{t(item.nameKey)}</span>}
+                              </NavLink>
+                              {sidebarOpen && kids.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleParent(item.href)}
+                                  aria-expanded={expanded}
+                                  aria-label={t(expanded ? 'chrome.collapseItem' : 'chrome.expandItem', { name: t(item.nameKey) })}
+                                  className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                >
+                                  <ChevronRight
+                                    className={`h-4 w-4 transition-transform ${expanded ? 'rotate-90' : ''}`}
+                                  />
+                                </button>
+                              )}
+                            </div>
+                            {expanded && (
+                              <div className="ml-4 border-l pl-2" data-testid={`nav-children-${item.href}`}>
+                                {kids.map((child) => (
+                                  <NavLink
+                                    key={child.href}
+                                    to={child.href}
+                                    onClick={() => setMobileOpen(false)}
+                                    className={({ isActive }) =>
+                                      `flex items-center gap-3 px-3 py-1.5 rounded-lg transition-colors ${
+                                        isActive
+                                          ? 'bg-blue-50 text-blue-700'
+                                          : 'text-muted-foreground hover:bg-muted'
+                                      }`
+                                    }
+                                  >
+                                    <child.icon className="h-4 w-4 shrink-0" />
+                                    <span className="text-sm">{t(child.nameKey)}</span>
+                                  </NavLink>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   ))}
               </div>

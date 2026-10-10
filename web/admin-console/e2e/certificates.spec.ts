@@ -523,6 +523,8 @@ test.describe('Certificates Page - Navigation', () => {
 
     await page.goto('/dashboard');
 
+    // Certificates is a child page of Network Services; open the parent first.
+    await page.getByRole('button', { name: 'Show pages under Network Services' }).click();
     await page.locator('a[href="/certificates"]').click();
 
     await expect(page).toHaveURL(/\/certificates/);

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import i18n, { ensureLanguage, setLanguage, supportedLanguages } from '../i18n'
-import { navigation, filterNavigation, flattenNavItems, scoreNavItem } from './navigation'
+import { navigation, filterNavigation, flattenNavItems, scoreNavItem, allNavHrefs } from './navigation'
 
 // The typeof-en typing keeps en/tr catalogs in lockstep with each other; this
 // test pins the third edge — that every key the navigation config references
@@ -21,7 +21,7 @@ describe('navigation i18n', () => {
     if (group.labelKey) allKeys.push(group.labelKey)
     for (const section of group.sections) {
       if (section.labelKey) allKeys.push(section.labelKey)
-      for (const item of section.items) allKeys.push(item.nameKey)
+      for (const item of section.items) allKeys.push(item.nameKey, ...(item.children ?? []).map((c) => c.nameKey))
     }
   }
 
@@ -53,8 +53,7 @@ describe('navigation i18n', () => {
       viewMode: 'admin',
       query: 'kullanıcılar',
     })
-    const hrefs = groups.flatMap((g) => g.sections.flatMap((s) => s.items.map((i) => i.href)))
-    expect(hrefs).toContain('/users')
+    expect(allNavHrefs(groups)).toContain('/users')
   })
 
   it('command-palette scoring matches Turkish names too', async () => {
