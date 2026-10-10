@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `ELASTICSEARCH_URL` set and empty turns Elasticsearch off. Before, the empty value was ignored, so an install without Elasticsearch kept dialling localhost:9200 and production asked for Elasticsearch credentials it had no use for.
+
 ## [1.42.0] - 2026-10-10
 
 ### Changed
