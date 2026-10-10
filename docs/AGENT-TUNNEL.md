@@ -110,10 +110,26 @@ The agent runs the tunneler with LocalSystem or root privileges, so:
 - **The binary must be one only an administrator could have put there.** On
   Linux the file and every directory above it must be owned by root (or by the
   account the agent runs as) and not writable by group or others; symlinks are
-  resolved first. On Windows it must be under Program Files, and the file, its
-  folder and that folder's parent must pass the same owner and permission check
-  as a plugin. A binary that fails is reported and not run; the agent does not
-  try the next location instead.
+  resolved first. On Windows it must be under the native Program Files folder
+  (known-folder API), and the file and every folder up to and including
+  Program Files must pass the plugin owner/permission check: owner SYSTEM,
+  Administrators or TrustedInstaller, and no write, delete, WRITE_DAC or
+  WRITE_OWNER grant to anyone else (deny entries narrow, inherit-only entries
+  are skipped, entries the check cannot evaluate refuse). `wintun.dll`, which
+  the tunneler loads from its own folder, must be there and passes the same
+  check. A binary that fails is reported and not run; the agent does not try
+  the next location instead.
+- **What runs is what was checked.** The agent opens the binary once and keeps
+  it open while it uses it. On Linux it is opened without following a link,
+  its owner and mode are read from the open file, and it is executed through
+  that open file (`/proc/self/fd/N`), so swapping the path afterwards changes
+  nothing. On Windows the tunneler and `wintun.dll` are held open without
+  write or delete sharing, so neither can be changed, deleted or renamed while
+  held, and each handle's final path must be the path that was checked. The
+  Windows release build also pins the bundled `ziti-edge-tunnel.exe` by
+  SHA-256 (`PinnedBinarySHA256`); the held file is hashed when opened and
+  before every start, and a mismatch is refused. The Linux packages are not
+  pinned yet (one build serves both architectures).
 - **The server cannot choose a binary or an argument.** `org_network_policy`
   turns the tunnel on or off and nothing else. The arguments
   (`run --identity-dir <dir> -P openidx`) and the identity directory are fixed.

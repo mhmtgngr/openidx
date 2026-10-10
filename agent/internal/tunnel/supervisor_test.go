@@ -33,7 +33,37 @@ const healthyStatus = `{
 
 // env is one fake tunneler setup.
 type env struct {
-	dir, identitySrc, identityDir, statusFile, startsFile string
+	dir, identitySrc, identityDir, statusFile, startsFile, bin string
+}
+
+// installFake copies this test binary to dir as the tunneler, mode 0755 and
+// (on Windows) with a wintun.dll beside it, so the supervisor opens, checks
+// and executes it through the same path a real install takes.
+func installFake(t *testing.T, dir string) string {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(binDir, BinaryName())
+	if err := os.WriteFile(bin, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		writeFile(t, filepath.Join(binDir, "wintun.dll"), "stand-in")
+	}
+	return bin
 }
 
 func newEnv(t *testing.T, run string) env {
@@ -51,16 +81,16 @@ func newEnv(t *testing.T, run string) env {
 	t.Setenv(fakeStatusEnv, e.statusFile)
 	t.Setenv(fakeStartsEnv, e.startsFile)
 	t.Setenv(fakeRunEnv, run)
+	e.bin = installFake(t, dir)
 	return e
 }
 
 func (e env) config() Config {
-	exe, _ := os.Executable()
 	return Config{
 		AgentID:        "agent-1",
 		IdentitySource: e.identitySrc,
 		IdentityDir:    e.identityDir,
-		BinaryPath:     exe,
+		BinaryPath:     e.bin,
 		Mode:           ModeChild,
 		LogFile:        filepath.Join(e.dir, "tunnel.log"),
 		MinBackoff:     20 * time.Millisecond,

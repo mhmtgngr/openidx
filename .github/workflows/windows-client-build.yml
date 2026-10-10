@@ -423,6 +423,57 @@ jobs:
             echo "release=$release"
           } >> "$GITHUB_OUTPUT"
 
+      # The Windows tunneler zip carries ziti-edge-tunnel.exe and wintun.dll
+      # (the Wintun driver it creates its adapter with). Both go into the MSI
+      # beside openidx-agent.exe, only when the zip matches its pinned SHA-256;
+      # the same release / non-release rule as the Linux packages. It runs
+      # BEFORE the agent is built so the agent can pin the exe's SHA-256.
+      - name: Fetch the OpenZiti tunneler
+        shell: pwsh
+        env:
+          BUNDLE: ${{ github.event_name != 'workflow_dispatch' || inputs.bundle_tunneler }}
+          IS_RELEASE: ${{ steps.ver.outputs.release }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:BUNDLE -ne 'true') {
+            Write-Host "::notice::bundle_tunneler is off: the MSI carries no tunneler"
+            exit 0
+          }
+          $zip = Join-Path $env:RUNNER_TEMP 'ziti-edge-tunnel-Windows_x86_64.zip'
+          $url = "https://github.com/openziti/ziti-tunnel-sdk-c/releases/download/$($env:ZITI_TUNNEL_VERSION)/ziti-edge-tunnel-Windows_x86_64.zip"
+          $problem = $null
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 5
+            $sha = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+            if ($sha -ne $env:ZITI_TUNNEL_SHA256_WINDOWS_X86_64) {
+              $problem = "ziti-edge-tunnel-Windows_x86_64.zip is $sha, not the pinned $($env:ZITI_TUNNEL_SHA256_WINDOWS_X86_64)"
+            }
+          } catch {
+            $problem = "could not download ${url}: $($_.Exception.Message)"
+          }
+          if ($problem) {
+            if ($env:IS_RELEASE -eq 'true') {
+              Write-Host "::error::a release must carry the verified tunneler: $problem"
+              exit 1
+            }
+            Write-Host "::warning::building the MSI WITHOUT the OpenZiti tunneler: $problem"
+            exit 0
+          }
+          $out = 'agent/dist/ziti'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Expand-Archive -Path $zip -DestinationPath $out -Force
+          foreach ($f in 'ziti-edge-tunnel.exe', 'wintun.dll') {
+            if (-not (Test-Path (Join-Path $out $f))) { throw "the verified tunneler zip has no $f" }
+          }
+          & (Join-Path $out 'ziti-edge-tunnel.exe') version
+          # The agent built next pins this exact binary: it hashes the file
+          # it holds before every start and refuses anything else
+          # (agent/internal/tunnel/binary.go, PinnedBinarySHA256).
+          $exeSha = (Get-FileHash -Algorithm SHA256 (Join-Path $out 'ziti-edge-tunnel.exe')).Hash.ToLower()
+          "ZITI_TUNNEL_EXE_SHA256=$exeSha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ZITI_TUNNEL_BUNDLED=on" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Bundling ziti-edge-tunnel $($env:ZITI_TUNNEL_VERSION) (verified)"
+
       - name: Build openidx-agent.exe
         working-directory: agent
         shell: bash
@@ -440,6 +491,11 @@ jobs:
           # itself with a published release.
           if [ "$IS_RELEASE" = true ]; then
             LDFLAGS="$LDFLAGS -X github.com/openidx/openidx/agent/internal/updater.DefaultManifestURL=$AGENT_CHANNEL_MANIFEST"
+          fi
+          # Pin the bundled tunneler: the agent runs only a ziti-edge-tunnel.exe
+          # with this SHA-256 (set by the fetch step when it bundled one).
+          if [ -n "${ZITI_TUNNEL_EXE_SHA256:-}" ]; then
+            LDFLAGS="$LDFLAGS -X github.com/openidx/openidx/agent/internal/tunnel.PinnedBinarySHA256=$ZITI_TUNNEL_EXE_SHA256"
           fi
 
           # Build the real screen-share agent (-tags screenshare, CGO + libvpx).
@@ -573,51 +629,6 @@ jobs:
         run: |
           dotnet tool install --global wix --version 5.0.2
           wix extension add -g WixToolset.Util.wixext/5.0.2
-
-      # The Windows tunneler zip carries ziti-edge-tunnel.exe and wintun.dll
-      # (the Wintun driver it creates its adapter with). Both go into the MSI
-      # beside openidx-agent.exe, only when the zip matches its pinned SHA-256;
-      # the same release / non-release rule as the Linux packages.
-      - name: Fetch the OpenZiti tunneler
-        shell: pwsh
-        env:
-          BUNDLE: ${{ github.event_name != 'workflow_dispatch' || inputs.bundle_tunneler }}
-          IS_RELEASE: ${{ steps.ver.outputs.release }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ($env:BUNDLE -ne 'true') {
-            Write-Host "::notice::bundle_tunneler is off: the MSI carries no tunneler"
-            exit 0
-          }
-          $zip = Join-Path $env:RUNNER_TEMP 'ziti-edge-tunnel-Windows_x86_64.zip'
-          $url = "https://github.com/openziti/ziti-tunnel-sdk-c/releases/download/$($env:ZITI_TUNNEL_VERSION)/ziti-edge-tunnel-Windows_x86_64.zip"
-          $problem = $null
-          try {
-            Invoke-WebRequest -Uri $url -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 5
-            $sha = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
-            if ($sha -ne $env:ZITI_TUNNEL_SHA256_WINDOWS_X86_64) {
-              $problem = "ziti-edge-tunnel-Windows_x86_64.zip is $sha, not the pinned $($env:ZITI_TUNNEL_SHA256_WINDOWS_X86_64)"
-            }
-          } catch {
-            $problem = "could not download ${url}: $($_.Exception.Message)"
-          }
-          if ($problem) {
-            if ($env:IS_RELEASE -eq 'true') {
-              Write-Host "::error::a release must carry the verified tunneler: $problem"
-              exit 1
-            }
-            Write-Host "::warning::building the MSI WITHOUT the OpenZiti tunneler: $problem"
-            exit 0
-          }
-          $out = 'agent/dist/ziti'
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Expand-Archive -Path $zip -DestinationPath $out -Force
-          foreach ($f in 'ziti-edge-tunnel.exe', 'wintun.dll') {
-            if (-not (Test-Path (Join-Path $out $f))) { throw "the verified tunneler zip has no $f" }
-          }
-          & (Join-Path $out 'ziti-edge-tunnel.exe') version
-          "ZITI_TUNNEL_BUNDLED=on" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "Bundling ziti-edge-tunnel $($env:ZITI_TUNNEL_VERSION) (verified)"
 
       - name: Build MSI
         shell: bash

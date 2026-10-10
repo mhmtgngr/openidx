@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -56,10 +55,10 @@ type ipcReading struct {
 }
 
 // queryIPC runs `<bin> tunnel_status -P <pipe>` and reads its answer.
-func queryIPC(ctx context.Context, bin, pipe string, timeout time.Duration) (ipcReading, error) {
+func queryIPC(ctx context.Context, bin *heldBinary, pipe string, timeout time.Duration) (ipcReading, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "tunnel_status", "-P", pipe)
+	cmd := bin.command(ctx, "tunnel_status", "-P", pipe)
 	hideWindow(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -146,10 +145,10 @@ func parseIPCStatus(out []byte) (ipcReading, error) {
 }
 
 // queryVersion runs `<bin> version`, which prints the tunneler's version.
-func queryVersion(ctx context.Context, bin string, timeout time.Duration) string {
+func queryVersion(ctx context.Context, bin *heldBinary, timeout time.Duration) string {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "version")
+	cmd := bin.command(ctx, "version")
 	hideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {

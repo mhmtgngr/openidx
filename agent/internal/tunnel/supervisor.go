@@ -209,8 +209,8 @@ type loop struct {
 	child      *child
 	failures   int
 	nextStart  time.Time
-	lastFail   string // why the tunneler last stopped, while a restart is pending
-	bin        string
+	lastFail   string      // why the tunneler last stopped, while a restart is pending
+	bin        *heldBinary // opened, checked and held (binary.go)
 	version    string
 	wasEnabled bool
 	guard      *processGuard
@@ -228,6 +228,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 	defer func() {
 		s.stopChild(l)
+		l.bin.close()
 		l.guard.close()
 	}()
 	for {
@@ -272,16 +273,32 @@ func (s *Supervisor) step(ctx context.Context, l *loop) time.Duration {
 	}
 	l.wasEnabled = true
 
-	bin, err := Locate(s.cfg.BinaryPath, s.cfg.AgentExe)
+	path, err := Locate(s.cfg.BinaryPath, s.cfg.AgentExe)
 	if err != nil {
 		s.stopChild(l)
-		s.update(StateNotInstalled, err.Error(), "", nil, false)
+		s.dropBinary(l)
+		state := StateNotInstalled
+		if !errors.Is(err, ErrNotInstalled) {
+			state = StateDegraded // there is a tunneler, and it is not safe to run
+		}
+		s.update(state, err.Error(), "", nil, false)
 		return poll
 	}
-	if bin != l.bin {
-		l.bin = bin
-		l.version = queryVersion(ctx, bin, s.cfg.CommandTimeout)
-		s.log.Info("tunnel: using tunneler", zap.String("path", bin), zap.String("version", l.version))
+	if l.bin == nil || l.bin.path != path || !l.bin.stillCurrent() {
+		// A different or replaced file: open and check the new one. A child
+		// started from the old one keeps running until it next restarts.
+		h, err := openBinary(path)
+		if err != nil {
+			s.stopChild(l)
+			s.dropBinary(l)
+			s.update(StateDegraded, err.Error(), "", nil, false)
+			return poll
+		}
+		s.dropBinary(l)
+		l.bin = h
+		l.version = queryVersion(ctx, h, s.cfg.CommandTimeout)
+		s.log.Info("tunnel: using tunneler", zap.String("path", path), zap.String("sha256", h.sum),
+			zap.String("version", l.version))
 	}
 
 	changed, err := s.ids.Provision()
@@ -346,9 +363,21 @@ func (s *Supervisor) observe(ctx context.Context, l *loop) {
 	s.update(StateDegraded, detail, l.version, nil, false)
 }
 
+// dropBinary releases the held binary. On Windows a running child keeps its
+// own image open, so it is not affected.
+func (s *Supervisor) dropBinary(l *loop) {
+	l.bin.close()
+	l.bin = nil
+}
+
 func (s *Supervisor) startChild(l *loop) error {
+	// The held file is hashed again before every start: it is the one that
+	// was checked, and it still matches the build's pin.
+	if err := l.bin.verifyPin(); err != nil {
+		return err
+	}
 	args := []string{"run", "--identity-dir", s.cfg.IdentityDir, "-P", s.cfg.Pipe}
-	cmd := exec.Command(l.bin, args...)
+	cmd := l.bin.command(nil, args...)
 	configureChild(cmd)
 	var logf *os.File
 	if s.cfg.LogFile != "" {
