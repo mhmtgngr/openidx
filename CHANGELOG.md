@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Network services are resources.** A network resource is an application of kind `network`, assigned to users and groups like any other. Its network target (migration 232, `network_targets`) lists what it covers: hosts, CIDRs and DNS names (a leading `*.` is allowed), port ranges, TCP and/or UDP, and optionally a fixed address and port to forward to. The Ziti reconciler turns each one into an `openidx-net-<id>` service with an `intercept.v1` config (what the device's tunneler captures) and a `host.v1` config (the fixed target, or whatever was dialed within the same addresses, ports and protocols), hosted by the routers and dialable by the assignees' enrolled devices; under `ACCESS_ASSIGNMENT_ENFORCE` the dial policy is AllOf `#app-<id>` and `#openidx-agent`, plus `#device-trusted` when the resource requires a trusted device. A pass over a converged controller writes nothing, and a service whose resource lost its target, was disabled or deleted is removed. An assigned network resource now travels as `#app-<id>` onto the device identity.
+  - **API:** `GET/POST /api/v1/access/network-resources`, `GET/PUT/DELETE /api/v1/access/resources/:id/network-target` and a CSV import, `POST /api/v1/access/network-resources/import` (`?dry_run=true` validates only), all admin-only and scoped to the organization. A target is refused without an address, with a CIDR that does not parse or covers everything, or with a port outside 1-65535.
+  - **Console:** Ziti Network → **Network Resources** lists them with what they cover and their overlay state, edits the network target, and opens the access dialog.
+  - **Guide:** `docs/migration-from-globalprotect.md`, from a GlobalProtect rule inventory to a CSV, a pilot group, cutover and rollback.
+- **An organization has a tunnel policy.** `org_network_policy` (migration 232) holds always-on, split tunnel and blocking of direct traffic to corporate CIDRs; with no row an organization runs on demand, split, nothing blocked. `GET/PUT /api/v1/access/network-policy`, and a **Network policy** card beside the network resources. The agents do not read it yet.
+- **The agent reports its tunnel.** `/agent/report` accepts an optional `tunnel_status` (`state`, `version`, `last_seen`, `services[]`, dial failures since the previous report). It is kept on the agent (`enrolled_agents.tunnel_status`, and `tunnel_last_seen`, the server's time of the last report that said up), returned by `GET /api/v1/access/agents` and shown in a **Tunnel** column on Agent Fleet. Dial failures feed `openidx_tunnel_dial_failures_total`; `openidx_tunnel_agents_down` counts devices reporting in with their tunnel down, and two alerts, `OpenIDXAgentTunnelDown` and `OpenIDXTunnelDialFailures`, watch them.
+
+### Deprecated
+- **The free-form Ziti "Add service" form.** `POST /api/v1/access/ziti/services` still creates a service from one host and port with hand-written dial roles, but a network resource does the same from an assignment, with several addresses, port ranges and UDP, and is the way to add one. The form will be removed once existing services have moved.
+
 ## [1.42.0] - 2026-10-10
 
 ### Changed
