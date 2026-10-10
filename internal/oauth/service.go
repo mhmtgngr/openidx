@@ -2177,9 +2177,10 @@ func (s *Service) handleAuthorizeV2(c *gin.Context) {
 // handleLogin handles username/password login for direct OpenIDX authentication
 // deviceTrustGateBlocks reports whether a login must be blocked for clientless
 // device trust: the feature is enabled, the login targets the clientless
-// (BrowZer) client, and the device is not trusted. This is the only enforceable
-// point for device trust on the BrowZer data path (which bypasses the proxy's
-// forward-auth device-trust check). See the design doc.
+// (BrowZer) client, and the device is not trusted. The BrowZer data path does
+// not pass the proxy's forward-auth, so device trust is checked here at sign-in
+// and, under assignment enforcement, by the per-application Dial policy (AllOf
+// #device-trusted). See the clientless row in docs/THREAT-MODEL.md §4.4.
 func (s *Service) deviceTrustGateBlocks(clientID string, deviceTrusted bool) bool {
 	return s.config.RequireDeviceTrustForClientless &&
 		clientID != "" && clientID == s.config.BrowZerClientID &&
