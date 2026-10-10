@@ -51,7 +51,7 @@ func TestAnExternalSessionsControlsCannotBeOpenedBySettings(t *testing.T) {
 	}
 
 	// What the launch answers names the same controls.
-	policy := externalSessionPolicy()
+	policy := externalSessionPolicy(defaultPamPolicy())
 	for k, want := range map[string]interface{}{
 		"approval": true, "recorded": true, "overlay": true,
 		"clipboard": false, "drive": false, "file_transfer": false, "printing": false,

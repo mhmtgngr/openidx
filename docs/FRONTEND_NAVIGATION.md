@@ -59,22 +59,42 @@ the audit implied:
 Everything lives in **`src/config/navigation.ts`**:
 
 ```
-navigation: NavDomainGroup[]        // domains → sections → items
+navigation: NavDomainGroup[]        // groups → items → children (one level)
 filterNavigation({ roles, viewMode, query })  // pure filter the sidebar renders
+findNavPath(pathname)               // group / parent / page, for breadcrumbs
 ```
 
-### Domains
+### Groups
 
-The platform's pillars are first-class, collapsible sidebar groups:
+Seven collapsible groups, in the order an administrator thinks — what people
+reach, who they are, what they reach it from, how it is protected, what
+happened, how the platform is set up:
 
-- *(personal workspace — no heading)*
-- **Identity & Access (IAM)** — Identity, Applications & Federation,
-  Governance, Security & MFA
-- **Zero Trust Network (Ziti)** — Network Access, Devices & Endpoints
-- **Privileged Access (PAM)** — vault, rotation, privileged sessions
-- **Audit & Reporting** — audit trail, analytics & reports
-- **AI & Intelligence**
-- **Platform** — System, Developer
+- *(personal workspace — no heading)* — Dashboard, My Apps & Network, My
+  Access, My Devices, My Security, My Profile
+- **Resources & Access** — Applications, Network Services, Privileged
+  Connections, PAM Overview, Access Policies, Access Reviews, Overlay
+  Network, Remote Support
+- **Identity** — Users, Groups, Roles, Organizations, Identity Providers,
+  Lifecycle, Privacy
+- **Devices** — Devices, Agent Fleet, Kiosk Policies
+- **Security** — MFA, Sessions, Risk & Alerts, Security Posture, Enforcement
+- **Audit & Reporting** — Audit Logs, Analytics, Risk Dashboard, Compliance,
+  Reports
+- **Settings** — System Health, Settings, Notification Mgmt, Developer
+
+The sidebar shows at most `NAV_TOP_LEVEL_LIMIT` (40) top-level entries;
+`navigation.test.ts` enforces it. Every other page is a **child** of one of
+them (`children` on the item) and appears indented beneath its parent while
+the parent or one of its children is the current page, or after a click on
+the parent's chevron. The command palette offers every page, parent or
+child; breadcrumbs read *group / parent / page* and link the parent.
+
+Two rules keep a child from disappearing: a child the caller may see under
+a parent they may not (Network Topology is an operator page under the
+admin-only Overlay Network) is lifted to the group on its own, and a search
+answers with a flat list of matching pages — a child also matches its
+parent's name, so "overlay" finds Network Topology.
 
 ### Role-based visibility
 
@@ -86,7 +106,7 @@ Each item declares a `minRole`. `lib/roles.ts` mirrors the backend hierarchy:
 | 3 | `admin` | everything except super_admin-only entries |
 | 2 | `operator` | day-to-day management (users, groups, devices, sessions, MFA ops, audit) |
 | 1 | `auditor` | Audit & Reporting + personal pages |
-| 1 | `compliance_reader` | audit domain only (matches its backend scoping) |
+| 1 | `compliance_reader` | audit group only (matches its backend scoping) |
 | 0 | `user` | personal workspace |
 
 The tenant selector acts in other organizations, which only a platform admin
@@ -112,15 +132,16 @@ reporting console without logging out. The choice persists in `localStorage`.
 
 ### Menu search
 
-The sidebar search box filters items by name, href, section/domain label and
-per-item `keywords` (e.g. "pam", "ldap", "passkey", "reporter"). While
+The sidebar search box filters pages by name, href, group label, parent name
+and per-item `keywords` (e.g. "pam", "ldap", "passkey", "reporter"). While
 searching, collapsed groups are ignored so results are always visible.
 
 ## Adding a menu item
 
 1. Add the page + `<Route>` in `src/App.tsx` (lazy export in `src/pages/index.ts`).
-2. Add one entry to the right section in `src/config/navigation.ts` with an
-   icon, a `minRole`, and search `keywords`.
+2. Add one entry in `src/config/navigation.ts` with an icon, a `minRole`,
+   and search `keywords` — as a child of the page it belongs under, unless
+   it is a daily stop that earns one of the top-level slots.
 3. Done — `src/config/navigation.test.ts` fails CI if the href has no matching
    route (or is duplicated), which is what previously let unreachable pages
    accumulate.

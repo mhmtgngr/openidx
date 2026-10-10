@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/accessdecision"
 	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
@@ -88,6 +89,11 @@ func (s *Service) appForRoute(ctx context.Context, routeID string) (appID, orgID
 type assignCacheEntry struct {
 	assigned bool
 	at       time.Time
+	// decision is the reach decision for the same (user, application), kept
+	// in this cache so one aging rule governs both and a test or a sweep
+	// that ages the cache ages the decisions with it.
+	decision    accessdecision.Decision
+	hasDecision bool
 }
 
 // assignmentAllowed reports whether userID may reach appID, cached for

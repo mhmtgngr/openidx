@@ -56,8 +56,8 @@ func TestPostureDecidesWhoDialsTheAdminPlane(t *testing.T) {
 	}
 	agentID := "agent-" + suffix
 	if _, err := db.Pool.Exec(ctx, `
-		INSERT INTO enrolled_agents (agent_id, device_id, auth_token_hash, status, enrolled_by_user_id, org_id)
-		VALUES ($1, $2, 'x', 'active', $3::uuid, $4::uuid)`, agentID, "device-"+suffix, userID, org); err != nil {
+		INSERT INTO enrolled_agents (agent_id, device_id, auth_token_hash, status, enrolled_by_user_id, org_id, ziti_identity_id)
+		VALUES ($1, $2, 'x', 'active', $3::uuid, $4::uuid, $5)`, agentID, "device-"+suffix, userID, org, zitiID); err != nil {
 		t.Fatalf("seed enrolled agent: %v", err)
 	}
 
@@ -110,12 +110,20 @@ func TestPostureDecidesWhoDialsTheAdminPlane(t *testing.T) {
 		}
 	})
 	t.Run("a compliant report makes the device trusted and opens the admin plane", func(t *testing.T) {
+		// HandleReport writes the compliance before it calls this; the device
+		// identity's trust is read from the row, never from the argument.
+		if _, err := db.Pool.Exec(ctx, `UPDATE enrolled_agents SET compliance_status = 'compliant' WHERE agent_id = $1`, agentID); err != nil {
+			t.Fatal(err)
+		}
 		agents.applyPostureDeviceTrust(ctx, agentID, "compliant")
 		if !canDial("openidx-admin-api") {
 			t.Fatalf("a compliant device must dial the admin API; attributes %v", ids.get(zitiID))
 		}
 	})
 	t.Run("a failing report takes the trust away and closes it again", func(t *testing.T) {
+		if _, err := db.Pool.Exec(ctx, `UPDATE enrolled_agents SET compliance_status = 'non_compliant' WHERE agent_id = $1`, agentID); err != nil {
+			t.Fatal(err)
+		}
 		agents.applyPostureDeviceTrust(ctx, agentID, "non_compliant")
 		if canDial("openidx-admin-api") {
 			t.Fatalf("an untrusted device must be denied the dial; attributes %v", ids.get(zitiID))

@@ -1472,10 +1472,24 @@ func (zm *ZitiManager) pendingOTTEnrollmentID(ctx context.Context, zitiID string
 
 // CreateServicePolicy creates a Bind or Dial service policy
 func (zm *ZitiManager) CreateServicePolicy(ctx context.Context, name, policyType string, serviceRoles, identityRoles []string) (string, error) {
+	return zm.CreateServicePolicySemantic(ctx, name, policyType, serviceRoles, identityRoles, "AnyOf")
+}
+
+// policySemantic normalises a semantic; anything but AllOf is AnyOf.
+func policySemantic(s string) string {
+	if strings.EqualFold(strings.TrimSpace(s), "AllOf") {
+		return "AllOf"
+	}
+	return "AnyOf"
+}
+
+// CreateServicePolicySemantic creates a policy with the given semantic: AnyOf
+// (any listed role admits) or AllOf (an identity must carry every role).
+func (zm *ZitiManager) CreateServicePolicySemantic(ctx context.Context, name, policyType string, serviceRoles, identityRoles []string, semantic string) (string, error) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":          name,
 		"type":          policyType, // "Bind" or "Dial"
-		"semantic":      "AnyOf",
+		"semantic":      policySemantic(semantic),
 		"serviceRoles":  serviceRoles,
 		"identityRoles": identityRoles,
 	})
@@ -1552,12 +1566,20 @@ func (zm *ZitiManager) EnsureServicePolicy(ctx context.Context, name, policyType
 // (MirrorWritesSkippedNoOrg) and warned about instead of being attached to some
 // default org, which would grant one tenant a view of another's reach.
 func (zm *ZitiManager) EnsureServicePolicyForOrg(ctx context.Context, orgID, name, policyType string, serviceRoles, identityRoles []string) (string, error) {
+	return zm.EnsureServicePolicyForOrgSemantic(ctx, orgID, name, policyType, serviceRoles, identityRoles, "AnyOf")
+}
+
+// EnsureServicePolicyForOrgSemantic converges a policy on roles AND semantic:
+// a policy that exists with the right roles but the wrong semantic is
+// updated, since AnyOf [#app, #device-trusted] admits what AllOf refuses.
+func (zm *ZitiManager) EnsureServicePolicyForOrgSemantic(ctx context.Context, orgID, name, policyType string, serviceRoles, identityRoles []string, semantic string) (string, error) {
+	semantic = policySemantic(semantic)
 	existing, err := zm.GetServicePolicyByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
 	if existing == nil {
-		id, cerr := zm.CreateServicePolicy(ctx, name, policyType, serviceRoles, identityRoles)
+		id, cerr := zm.CreateServicePolicySemantic(ctx, name, policyType, serviceRoles, identityRoles, semantic)
 		if cerr != nil {
 			return "", cerr
 		}
@@ -1565,6 +1587,7 @@ func (zm *ZitiManager) EnsureServicePolicyForOrg(ctx context.Context, orgID, nam
 		return id, nil
 	}
 	if existing.Type == policyType &&
+		policySemantic(existing.Semantic) == semantic &&
 		sameRoleSet(existing.ServiceRoles, serviceRoles) &&
 		sameRoleSet(existing.IdentityRoles, identityRoles) {
 		// Already converged on the CONTROLLER — but the mirror can still be
@@ -1572,7 +1595,7 @@ func (zm *ZitiManager) EnsureServicePolicyForOrg(ctx context.Context, orgID, nam
 		zm.mirrorServicePolicy(ctx, orgID, existing.ID, name, policyType, serviceRoles, identityRoles)
 		return existing.ID, nil
 	}
-	if err := zm.UpdateServicePolicy(ctx, existing.ID, name, policyType, serviceRoles, identityRoles); err != nil {
+	if err := zm.UpdateServicePolicySemantic(ctx, existing.ID, name, policyType, serviceRoles, identityRoles, semantic); err != nil {
 		return "", err
 	}
 	zm.mirrorServicePolicy(ctx, orgID, existing.ID, name, policyType, serviceRoles, identityRoles)
@@ -1613,10 +1636,15 @@ func (zm *ZitiManager) DeleteServicePolicy(ctx context.Context, zitiID string) e
 
 // UpdateServicePolicy updates an existing service policy on the Ziti controller
 func (zm *ZitiManager) UpdateServicePolicy(ctx context.Context, zitiID, name, policyType string, serviceRoles, identityRoles []string) error {
+	return zm.UpdateServicePolicySemantic(ctx, zitiID, name, policyType, serviceRoles, identityRoles, "AnyOf")
+}
+
+// UpdateServicePolicySemantic is UpdateServicePolicy with the policy's semantic.
+func (zm *ZitiManager) UpdateServicePolicySemantic(ctx context.Context, zitiID, name, policyType string, serviceRoles, identityRoles []string, semantic string) error {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":          name,
 		"type":          policyType,
-		"semantic":      "AnyOf",
+		"semantic":      policySemantic(semantic),
 		"serviceRoles":  serviceRoles,
 		"identityRoles": identityRoles,
 	})
@@ -1633,6 +1661,20 @@ func (zm *ZitiManager) UpdateServicePolicy(ctx context.Context, zitiID, name, po
 }
 
 // PatchIdentityRoleAttributes updates the role attributes of a Ziti identity
+// PatchIdentityName renames an identity; the enrolment and attributes stay.
+func (zm *ZitiManager) PatchIdentityName(ctx context.Context, zitiID, name string) error {
+	body, _ := json.Marshal(map[string]interface{}{"name": name})
+	_, statusCode, err := zm.mgmtRequest("PATCH",
+		"/edge/management/v1/identities/"+url.PathEscape(zitiID), body)
+	if err != nil {
+		return fmt.Errorf("failed to rename identity: %w", err)
+	}
+	if statusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d renaming identity", statusCode)
+	}
+	return nil
+}
+
 func (zm *ZitiManager) PatchIdentityRoleAttributes(ctx context.Context, zitiID string, attrs []string) error {
 	body, _ := json.Marshal(map[string]interface{}{
 		"roleAttributes": attrs,

@@ -117,9 +117,13 @@ type Config struct {
 	AdmissionRetryAfter string `mapstructure:"admission_retry_after"`
 
 	// Database connections
-	DatabaseURL      string `mapstructure:"database_url"`
-	RedisURL         string `mapstructure:"redis_url"`
-	ElasticsearchURL string `mapstructure:"elasticsearch_url"`
+	DatabaseURL string `mapstructure:"database_url"`
+	// DatabaseBypassURL (DATABASE_BYPASS_URL) is the credential background work
+	// uses to read across tenants: a role with BYPASSRLS. See
+	// internal/common/database/bypass.go. Required in production.
+	DatabaseBypassURL string `mapstructure:"database_bypass_url"`
+	RedisURL          string `mapstructure:"redis_url"`
+	ElasticsearchURL  string `mapstructure:"elasticsearch_url"`
 
 	// Redis roles. OpenIDX keeps four kinds of state in Redis with four
 	// different loss profiles: rate-limit counters (cheap, high-churn, may be
@@ -1392,6 +1396,7 @@ func bindEnvVars(v *viper.Viper) {
 	// Common environment variable mappings
 	envMappings := map[string]string{
 		"database_url":                        "DATABASE_URL",
+		"database_bypass_url":                 "DATABASE_BYPASS_URL",
 		"rls_mode":                            "RLS_MODE",
 		"nats_url":                            "NATS_URL",
 		"nats_user":                           "NATS_USER",
@@ -2093,6 +2098,13 @@ func (c *Config) ValidateProduction() error {
 	// only reported what it would have refused was, until this check, the
 	// default outcome of forgetting a flag.
 	criticalIssues = append(criticalIssues, c.enforcementIssues(time.Now())...)
+
+	// Critical: background work must read across tenants as the bypass role,
+	// not by setting a GUC on the application role (issue #964).
+	if strings.TrimSpace(c.DatabaseBypassURL) == "" {
+		criticalIssues = append(criticalIssues,
+			"database_bypass_url must be set in production: without a BYPASSRLS role, background work lifts the tenant boundary with a session setting the application role can also set (docs/runbooks/enforce-rollout.md)")
+	}
 
 	if len(criticalIssues) > 0 {
 		return fmt.Errorf("production security validation failed:\n  - %s",

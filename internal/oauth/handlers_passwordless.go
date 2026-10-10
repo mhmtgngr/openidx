@@ -581,7 +581,7 @@ func (s *Service) handleMagicLinkVerify(c *gin.Context) {
 		oauthParams["session_id"] = session.ID
 	}
 
-	if !s.assignmentGateAllows(c, oauthParams["client_id"], userID) {
+	if !s.assignmentGateAllows(c, oauthParams["client_id"], userID, oauthParams["redirect_uri"]) {
 		return
 	}
 

@@ -74,7 +74,22 @@ func ssoSetupDB(t *testing.T) (*Service, *database.PostgresDB) {
 			org_id UUID NOT NULL,
 			name VARCHAR(255) NOT NULL DEFAULT 'app',
 			require_assignment BOOLEAN DEFAULT false,
-			enabled BOOLEAN DEFAULT true
+			enabled BOOLEAN DEFAULT true,
+			kind VARCHAR(20) NOT NULL DEFAULT 'web'
+		)`,
+		`CREATE TABLE resource_conditions (
+			application_id UUID PRIMARY KEY,
+			org_id UUID NOT NULL,
+			require_device_trust BOOLEAN NOT NULL DEFAULT false,
+			max_risk_score INTEGER,
+			allowed_countries TEXT[] NOT NULL DEFAULT '{}',
+			require_step_up BOOLEAN NOT NULL DEFAULT false,
+			legacy_roles TEXT[] NOT NULL DEFAULT '{}'
+		)`,
+		`CREATE TABLE groups (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			org_id UUID NOT NULL,
+			name VARCHAR(255) NOT NULL
 		)`,
 		`CREATE TABLE application_sso_settings (
 			application_id UUID PRIMARY KEY,

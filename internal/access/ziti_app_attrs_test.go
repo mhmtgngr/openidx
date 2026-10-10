@@ -159,11 +159,15 @@ func TestBuildUserAttributesIncludesAppMarkers(t *testing.T) {
 	}
 
 	// Pre-existing attributes must still be present: the new app-marker block
-	// must not displace them.
-	for _, want := range []string{"Engineering", "enrolled-users", "device-trusted"} {
+	// must not displace them. device-trusted is no longer one of them: trust
+	// is a device identity's own attribute (device_identity.go).
+	for _, want := range []string{"Engineering", "enrolled-users"} {
 		if !containsAttr(attrs, want) {
 			t.Errorf("attrs %v missing pre-existing attribute %q", attrs, want)
 		}
+	}
+	if containsAttr(attrs, "device-trusted") {
+		t.Errorf("attrs %v carry device-trusted on the user identity", attrs)
 	}
 
 	// A route-linked directly-assigned app produces its marker.

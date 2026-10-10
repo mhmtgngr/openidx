@@ -273,23 +273,33 @@ func readSource(t *testing.T, path, funcSig string) string {
 // quieter than report mode. A missed call site is silent — no error, no row —
 // which is exactly how the previous version of this record failed.
 func TestProxyGateRecordsOnBothBranches(t *testing.T) {
-	src := readSource(t, "service.go", "func (s *Service) handleProxy(")
+	// Both proxy paths take the same decision through reachDecision; the
+	// forward-auth path used to take none.
+	for _, site := range []struct{ file, fn, point string }{
+		{"service.go", "func (s *Service) handleProxy(", `"proxy"`},
+		{"context_evaluator.go", "func (s *Service) handleAuthDecide(", `"forward_auth"`},
+	} {
+		if caller := readSource(t, site.file, site.fn); !strings.Contains(caller, "s.reachDecision(c, route, session, appID, appOrgID, "+site.point+", situationOf(accessCtx, risk))") {
+			t.Errorf("%s does not take the shared reach decision for %s", site.fn, site.point)
+		}
+	}
+	src := readSource(t, "reach_decision.go", "func (s *Service) reachDecision(")
 
-	gateAt := strings.Index(src, "proxyAssignmentDecision(appID,")
+	gateAt := strings.Index(src, "accessdecision.Evaluate(")
 	if gateAt < 0 {
-		t.Fatal("handleProxy must still evaluate the gate via proxyAssignmentDecision")
+		t.Fatal("reachDecision must evaluate the gate via accessdecision.Evaluate")
 	}
 	after := src[gateAt:]
 
 	recAt := strings.Index(after, "s.recordAssignmentDecision(")
 	if recAt < 0 {
-		t.Fatal("handleProxy must durably record the gate's decision after evaluating it — " +
+		t.Fatal("reachDecision must durably record the gate's decision after evaluating it — " +
 			"a report-only phase whose records go nowhere proves nothing")
 	}
 	if strings.Count(after, "s.recordAssignmentDecision(") != 1 {
 		t.Error("expected a single recording site covering both branches; a second one risks double-counting the report")
 	}
-	if !strings.Contains(after, "!allow || freshAssignment") {
+	if !strings.Contains(after, "!d.Allowed || fresh") {
 		t.Error("the recorder must fire on an actual denial (!allow) as well as on a fresh report-mode gap — " +
 			"enforcement must not be quieter than report mode")
 	}
@@ -297,7 +307,7 @@ func TestProxyGateRecordsOnBothBranches(t *testing.T) {
 	// leave without evidence.
 	denyAt := strings.Index(after, `gin.H{"error": "not assigned to this application"}`)
 	if denyAt < 0 {
-		t.Fatal("could not find the assignment 403 in handleProxy")
+		t.Fatal("could not find the assignment 403 in reachDecision")
 	}
 	if recAt > denyAt {
 		t.Error("the decision must be recorded before the 403 is written")

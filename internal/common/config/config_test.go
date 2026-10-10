@@ -595,6 +595,7 @@ func productionBaseline() *Config {
 		GuacamoleZitiPublicURL:  "https://guacamole.ziti",
 		AccessAPIRequireAuth:    true,
 		AdminAPIRequireAuth:     true,
+		DatabaseBypassURL:       "postgres://openidx_bypass@db:5432/openidx",
 	}
 }
 
@@ -1359,6 +1360,7 @@ func TestValidateProductionRejectsDevBypassAndMockSMS(t *testing.T) {
 		c.EncryptionKey = "0123456789abcdef0123456789abcdef"
 		c.VaultKEK = "0123456789abcdef0123456789abcdef"
 		c.CORSAllowedOrigins = "https://console.example.test"
+		c.DatabaseBypassURL = "postgres://openidx_bypass@db:5432/openidx"
 		return c
 	}
 

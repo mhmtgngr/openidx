@@ -77,7 +77,8 @@ var zitiUserAttrs = map[string]bool{
 // names: added and removed with the request's window, by nobody else.
 func zitiManagedAttr(a string) bool {
 	return zitiHostingAttrs[a] || zitiUserAttrs[a] || strings.HasPrefix(a, "org-") || strings.HasPrefix(a, "app-") ||
-		strings.HasPrefix(a, "jit-")
+		strings.HasPrefix(a, "jit-") || strings.HasPrefix(a, "device-") || strings.HasPrefix(a, "user-") ||
+		strings.HasPrefix(a, "posture-ok-")
 }
 
 // zitiManagedServiceAttrs are service attributes OpenIDX sets itself:

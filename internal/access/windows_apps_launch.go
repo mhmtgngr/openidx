@@ -227,7 +227,7 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 		"recorded":      entry.RecordSession,
 	}
 	if entry.External {
-		body["session_policy"] = externalSessionPolicy()
+		body["session_policy"] = externalSessionPolicy(s.pamPolicyFor(c.Request.Context(), getOrgID(c)))
 	}
 	c.JSON(http.StatusOK, body)
 }

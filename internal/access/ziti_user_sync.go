@@ -318,19 +318,6 @@ func (zm *ZitiManager) SyncAllUsersToZiti(ctx context.Context) (*BatchSyncResult
 	}, nil
 }
 
-// hasUserTrustedDevice checks if a user has at least one trusted device.
-func (zm *ZitiManager) hasUserTrustedDevice(ctx context.Context, userID string) (bool, error) {
-	var exists bool
-	err := zm.db.Pool.QueryRow(ctx,
-		//orgscope:ignore Ziti user-sync engine; keyed by globally-unique user_id, so the device set is org-bounded
-		`SELECT EXISTS(SELECT 1 FROM known_devices WHERE user_id = $1 AND trusted = true)`,
-		userID).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("check trusted devices for user %s: %w", userID, err)
-	}
-	return exists, nil
-}
-
 // buildUserAttributes combines group names with device trust attribute.
 func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) ([]string, error) {
 	groups, err := zm.getUserGroupNames(ctx, userID)
@@ -339,11 +326,9 @@ func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) (
 	}
 
 	// #device-trusted iff the user has any trusted device.
-	hasTrusted, err := zm.hasUserTrustedDevice(ctx, userID)
-	if err != nil {
-		zm.logger.Warn("Failed to check device trust", zap.String("user_id", userID), zap.Error(err))
-		hasTrusted = false
-	}
+	// The user identity never carries #device-trusted: trust is a device's
+	// own attribute, from its own posture (device_identity.go).
+	hasTrusted := false
 
 	// #browzer-users when BrowZer is enabled.
 	_, browzer := zm.browzerAuthPolicy(ctx)
@@ -555,6 +540,8 @@ func (zm *ZitiManager) SyncGroupAttributesForUser(ctx context.Context, userID st
 	// before BrowZer was enabled), so it retrofits externalId + auth policy on
 	// existing identities, not just freshly created ones.
 	zm.applyBrowZerAuth(ctx, zitiID, userID)
+	// The user's devices carry the same groups and applications.
+	zm.syncDeviceIdentitiesForUser(ctx, userID)
 
 	return nil
 }
@@ -714,6 +701,7 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 		zm.SyncGroupAttributesForUser(ctx, userID)
 	}
 
+	zm.syncStaleDeviceIdentities(ctx)
 	zm.runDeprovisionSweep(ctx)
 }
 

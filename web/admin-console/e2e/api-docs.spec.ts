@@ -51,6 +51,8 @@ test.describe('API Documentation Page', () => {
       });
     });
 
+    // API Docs is a child page of Developer; open the parent first.
+    await page.getByRole('button', { name: 'Show pages under Developer' }).click();
     const apiDocsLink = page.locator('a[href="/api-docs"]');
     await expect(apiDocsLink).toBeVisible({ timeout: 10000 });
     await apiDocsLink.click();

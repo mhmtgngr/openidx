@@ -8,6 +8,10 @@ fullnameOverride: ""
 # For production, use externalSecrets (below) or --set flags.
 secrets:
   postgresPassword: ""      # REQUIRED
+  # Password for openidx_bypass, the BYPASSRLS role background work uses to
+  # read across tenants (#964). The bootstrap Job creates the role; this sets
+  # its password and publishes DATABASE_BYPASS_URL. Required in production.
+  bypassPassword: ""
   redisPassword: ""          # REQUIRED
   encryptionKey: ""          # REQUIRED - exactly 32 bytes
   smtpPassword: ""

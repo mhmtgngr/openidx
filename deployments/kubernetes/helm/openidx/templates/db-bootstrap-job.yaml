@@ -100,6 +100,28 @@ data:
     $$;
     SQL
 
+    # The bypass role (issue #964): background work reads across tenants as
+    # this role, which has BYPASSRLS, instead of setting a session GUC on
+    # openidx_app that any session could set. The owner is NOT given
+    # BYPASSRLS here: this chart's services still connect as the owner
+    # (secrets.yaml DATABASE_URL), and the attribute would lift the tenant
+    # boundary for every request. Migration 231 therefore leaves the GUC
+    # clause in place on a chart install until the services move to
+    # openidx_app. The role's password is set out of band like openidx_app's
+    # (secrets.yaml, DATABASE_BYPASS_URL).
+    psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+    DO
+    $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_bypass') THEN
+        CREATE ROLE openidx_bypass LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE INHERIT IN ROLE openidx_app;
+      ELSIF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_bypass' AND rolbypassrls) THEN
+        ALTER ROLE openidx_bypass BYPASSRLS;
+      END IF;
+    END
+    $$;
+    SQL
+
     # The per-plane roles (migration v189), here for the same reason openidx_app
     # is: CREATE ROLE, GRANT and ALTER ROLE ... SET all need a privilege the
     # migration Job's owner role does not have. v189 guards every one of these
@@ -153,6 +175,12 @@ data:
     ALTER ROLE openidx_app PASSWORD :'pw';
     SQL
       echo "openidx_app: password set (the pooler's upstream credential)"
+    fi
+    if [ -n "${OPENIDX_BYPASS_PASSWORD:-}" ]; then
+      psql -U postgres -v ON_ERROR_STOP=1 -v pw="$OPENIDX_BYPASS_PASSWORD" <<'SQL'
+    ALTER ROLE openidx_bypass PASSWORD :'pw';
+    SQL
+      echo "openidx_bypass: password set (DATABASE_BYPASS_URL)"
     fi
 
     # Say what was left behind. A bootstrap that silently did nothing and one
@@ -221,6 +249,14 @@ spec:
                 secretKeyRef:
                   name: openidx-datastore-auth
                   key: app-password
+                  optional: true
+            # The bypass role's password (secrets.bypassPassword), optional
+            # for the same reason.
+            - name: OPENIDX_BYPASS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-datastore-auth
+                  key: bypass-password
                   optional: true
           resources:
             {{- toYaml .Values.migrations.roleBootstrap.resources | nindent 12 }}
