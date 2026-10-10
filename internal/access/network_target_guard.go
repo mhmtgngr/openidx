@@ -110,9 +110,80 @@ var alwaysDenied = []string{
 // platform's container and overlay networks.
 var bridgeInterface = regexp.MustCompile(`^(podman|cni-|cni0|docker|br-|virbr|veth|ziti|tun|tap|flannel|cali|weave|kube)`)
 
-// hostInterfaces lists this host's interfaces; a variable so tests can make
-// the guard independent of the machine they run on.
-var hostInterfaces = net.Interfaces
+// ifaceAddr is one address on one of this host's interfaces.
+type ifaceAddr struct {
+	name   string
+	prefix netip.Prefix // the address with its interface's mask
+}
+
+// hostInterfaces lists this host's interface addresses; a variable so tests
+// can make the guard independent of the machine they run on, or make
+// discovery fail.
+var hostInterfaces = func() ([]ifaceAddr, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	var out []ifaceAddr
+	for _, ifc := range ifaces {
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ad, ok := netip.AddrFromSlice(ipn.IP)
+			if !ok {
+				continue
+			}
+			ones, bits := ipn.Mask.Size()
+			ad = ad.Unmap()
+			if ad.Is4() && bits == 128 {
+				ones -= 96
+			}
+			if p, err := ad.Prefix(ones); err == nil {
+				out = append(out, ifaceAddr{name: ifc.Name, prefix: netip.PrefixFrom(ad, p.Bits())})
+			}
+		}
+	}
+	return out, nil
+}
+
+var (
+	lastIfaceMu   sync.Mutex
+	lastIfaceDeny []netip.Prefix // the last successful discovery's denylist share
+)
+
+// discoverInterfaceDeny returns the denylist share of this host's interfaces:
+// each address, and the whole network of a container, bridge or overlay
+// interface. An error or an empty answer returns the last good share, or an
+// error when there never was one.
+func discoverInterfaceDeny() ([]netip.Prefix, error) {
+	addrs, err := hostInterfaces()
+	if err == nil && len(addrs) == 0 {
+		err = fmt.Errorf("no interface addresses found")
+	}
+	lastIfaceMu.Lock()
+	defer lastIfaceMu.Unlock()
+	if err != nil {
+		if lastIfaceDeny != nil {
+			return lastIfaceDeny, nil
+		}
+		return nil, err
+	}
+	var deny []netip.Prefix
+	for _, a := range addrs {
+		deny = append(deny, hostPrefix(a.prefix.Addr()))
+		if bridgeInterface.MatchString(a.name) {
+			deny = append(deny, a.prefix.Masked())
+		}
+	}
+	lastIfaceDeny = deny
+	return deny, nil
+}
 
 // translationPrefixes embed an IPv4 address in an IPv6 one.
 var (
@@ -135,11 +206,16 @@ var defaultDenyDomains = []string{
 
 // Router endpoints discovered from the controller (refreshRouterHosts).
 var (
-	routerHostsMu sync.Mutex
-	routerHosts   []string
+	routerHostsMu    sync.Mutex
+	routerHosts      []string
+	routerHostsKnown bool // a good list was read at least once
 )
 
 type networkTargetGuard struct {
+	// incomplete, when set, says why the denylist could not be built; the
+	// guard then refuses every target (fail closed).
+	incomplete string
+
 	deny          []netip.Prefix
 	minPrefixV4   int
 	minPrefixV6   int
@@ -226,34 +302,13 @@ var targetGuard = func() *networkTargetGuard {
 	// This host's own addresses, and the whole network of every container,
 	// bridge or overlay interface actually present (podman/CNI/docker
 	// networks whose ranges differ from the defaults above).
-	if ifaces, err := hostInterfaces(); err == nil {
-		for _, ifc := range ifaces {
-			addrs, err := ifc.Addrs()
-			if err != nil {
-				continue
-			}
-			for _, a := range addrs {
-				ipn, ok := a.(*net.IPNet)
-				if !ok {
-					continue
-				}
-				ad, ok := netip.AddrFromSlice(ipn.IP)
-				if !ok {
-					continue
-				}
-				ad = ad.Unmap()
-				g.deny = append(g.deny, hostPrefix(ad))
-				if bridgeInterface.MatchString(ifc.Name) {
-					ones, _ := ipn.Mask.Size()
-					if ad.Is4() && ipn.IP.To4() != nil && len(ipn.Mask) == 16 {
-						ones -= 96
-					}
-					if p, err := ad.Prefix(ones); err == nil {
-						g.deny = append(g.deny, p)
-					}
-				}
-			}
-		}
+	// Fail closed: a discovery that errors or finds nothing (every host has
+	// at least loopback) falls back to the last good list, and with none the
+	// guard is incomplete and refuses every target.
+	if ifaceDeny, err := discoverInterfaceDeny(); err != nil {
+		g.incomplete = "host interface discovery failed and no earlier result exists: " + err.Error()
+	} else {
+		g.deny = append(g.deny, ifaceDeny...)
 	}
 	routerHostsMu.Lock()
 	for _, h := range routerHosts {
@@ -475,6 +530,9 @@ func (g *networkTargetGuard) checkHost(what, h string) error {
 // (ensureNetworkService) call it, on the same maps they hand to EnsureConfig.
 func guardEmittedConfigs(intercept, host map[string]interface{}) []string {
 	g := targetGuard()
+	if g.incomplete != "" {
+		return []string{"the network-target denylist is incomplete (" + g.incomplete + "); refusing every target until it is"}
+	}
 	var errs []string
 	add := func(err error) {
 		if err != nil {
@@ -674,8 +732,21 @@ func refreshRouterHosts(ctx context.Context, zm *ZitiManager) error {
 			}
 		}
 	}
+	// An answer with no router host in it is not a good list: the last good
+	// one stays (a failed request above returns before this, likewise).
+	if len(hosts) == 0 {
+		return fmt.Errorf("the controller listed no router hosts")
+	}
 	routerHostsMu.Lock()
 	routerHosts = hosts
+	routerHostsKnown = true
 	routerHostsMu.Unlock()
 	return nil
+}
+
+// routerHostsAreKnown reports whether a router-host list was ever read.
+func routerHostsAreKnown() bool {
+	routerHostsMu.Lock()
+	defer routerHostsMu.Unlock()
+	return routerHostsKnown
 }

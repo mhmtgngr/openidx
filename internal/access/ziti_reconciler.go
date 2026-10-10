@@ -194,6 +194,10 @@ type ZitiReconciler struct {
 	// lastMirrorRefresh throttles the refresh pass: the reconcile loop ticks
 	// every 30s, but a full controller listing does not need to run that often.
 	lastMirrorRefresh time.Time
+
+	// loadNetwork overrides how network resources are loaded (tests); nil
+	// means loadDesiredNetworkServices.
+	loadNetwork func(context.Context) ([]DesiredNetworkService, error)
 }
 
 // mirrorRefreshPeriod is the minimum gap between two mirror-refresh passes.

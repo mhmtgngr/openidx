@@ -206,6 +206,9 @@ type fakeNetCtrl struct {
 	policies map[string]map[string]interface{} // id -> policy
 	serps    map[string]string                 // name -> id
 	writes   []string
+	routers  []interface{} // edge routers the controller lists
+	// failPolicyWrites makes service-policy creates and updates fail.
+	failPolicyWrites bool
 }
 
 func newFakeNetCtrl() *fakeNetCtrl {
@@ -262,6 +265,11 @@ func (f *fakeNetCtrl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	const base = "/edge/management/v1/"
 	path := strings.TrimPrefix(r.URL.Path, base)
 	coll, id, _ := strings.Cut(path, "/")
+	if f.failPolicyWrites && coll == "service-policies" && (r.Method == http.MethodPost || r.Method == http.MethodPut) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"code":"UNHANDLED"}}`))
+		return
+	}
 	switch {
 	case coll == "configs" && r.Method == http.MethodGet:
 		listByName(f.configs)
@@ -327,7 +335,11 @@ func (f *fakeNetCtrl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		reply(http.StatusOK, map[string]string{})
 	case coll == "edge-routers" && r.Method == http.MethodGet:
-		reply(http.StatusOK, []interface{}{})
+		if f.routers == nil {
+			reply(http.StatusOK, []interface{}{})
+			return
+		}
+		reply(http.StatusOK, f.routers)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"error":{"code":"NOT_FOUND"}}`))

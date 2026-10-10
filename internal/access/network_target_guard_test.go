@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"net"
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -15,8 +16,18 @@ import (
 func pinTargetGuard(t *testing.T) {
 	t.Helper()
 	orig := hostInterfaces
-	hostInterfaces = func() ([]net.Interface, error) { return nil, nil }
-	t.Cleanup(func() { hostInterfaces = orig })
+	lastIfaceMu.Lock()
+	origLast := lastIfaceDeny
+	lastIfaceMu.Unlock()
+	hostInterfaces = func() ([]ifaceAddr, error) {
+		return []ifaceAddr{{name: "lo", prefix: netip.MustParsePrefix("127.0.0.1/8")}}, nil
+	}
+	t.Cleanup(func() {
+		hostInterfaces = orig
+		lastIfaceMu.Lock()
+		lastIfaceDeny = origLast
+		lastIfaceMu.Unlock()
+	})
 }
 
 // The real guard refuses the whole network of a container or bridge

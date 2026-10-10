@@ -190,17 +190,69 @@ func (rec *ZitiReconciler) pruneNetworkServices(ctx context.Context, zm *ZitiMan
 }
 
 // reconcileNetworkServices is the network-resource share of a reconcile pass.
+//
+// It fails closed at every step:
+//   - the routers' advertised hosts join the guard's denylist first; a failed
+//     or empty refresh keeps the last good list, and with none the pass
+//     writes nothing;
+//   - an incomplete denylist (host interface discovery failed with no earlier
+//     result) likewise writes nothing;
+//   - a failure to load the network resources (targets, conditions) removes
+//     every network service's Dial policies, so nothing stays dialable under
+//     a state that could not be read; the services and configs stay and the
+//     next good pass restores the policies;
+//   - a resource whose row does not scan, whose target is refused, or whose
+//     convergence fails at any step is removed from the controller (service,
+//     configs and policies) rather than left with what an earlier pass wrote.
 func (rec *ZitiReconciler) reconcileNetworkServices(ctx context.Context, zm *ZitiManager) {
-	// The routers' advertised hosts join the guard's denylist before any
-	// target is loaded and judged.
 	if err := refreshRouterHosts(ctx, zm); err != nil {
-		rec.logger.Debug("network services: router hosts not refreshed", zap.Error(err))
+		rec.logger.Warn("network services: router hosts not refreshed; keeping the last good list", zap.Error(err))
 	}
-	desired, err := rec.loadDesiredNetworkServices(ctx)
-	if err != nil {
-		rec.logger.Warn("reconcile: load network resources failed; leaving network services as they are", zap.Error(err))
+	if !routerHostsAreKnown() {
+		rec.logger.Warn("network services: no router host list has been read yet; writing nothing this pass")
 		return
 	}
+	if g := targetGuard(); g.incomplete != "" {
+		rec.logger.Warn("network services: denylist incomplete; writing nothing this pass", zap.String("why", g.incomplete))
+		return
+	}
+	load := rec.loadNetwork
+	if load == nil {
+		load = rec.loadDesiredNetworkServices
+	}
+	desired, err := load(ctx)
+	if err != nil {
+		rec.logger.Warn("reconcile: load network resources failed; removing every network service's Dial policies", zap.Error(err))
+		rec.revokeNetworkDials(ctx, zm)
+		return
+	}
+	rec.applyNetworkServices(ctx, zm, desired)
+}
+
+// revokeNetworkDials removes the Dial policies of every network service on
+// the controller, leaving the services and configs for the next good pass.
+func (rec *ZitiReconciler) revokeNetworkDials(ctx context.Context, zm *ZitiManager) {
+	services, err := zm.ListServices(ctx)
+	if err != nil {
+		rec.logger.Warn("network services: list for dial revoke failed", zap.Error(err))
+		return
+	}
+	for _, s := range services {
+		if !strings.HasPrefix(s.Name, networkServicePrefix) {
+			continue
+		}
+		for _, p := range []string{"openidx-dial-" + s.Name, "openidx-orgdial-" + s.Name} {
+			if err := zm.deleteEdgeEntityByName(ctx, "service-policies", p); err != nil {
+				rec.logger.Warn("network services: dial revoke failed", zap.String("policy", p), zap.Error(err))
+			}
+		}
+		rec.setStatus(s.Name, "error: network resources could not be loaded; dial revoked")
+	}
+}
+
+// applyNetworkServices converges the desired network services and removes
+// every other one, including any whose convergence failed this pass.
+func (rec *ZitiReconciler) applyNetworkServices(ctx context.Context, zm *ZitiManager, desired []DesiredNetworkService) {
 	if len(desired) > 0 {
 		// Device identities need an edge-router policy, or every dial fails
 		// with NO_EDGE_ROUTERS_AVAILABLE.
@@ -209,13 +261,29 @@ func (rec *ZitiReconciler) reconcileNetworkServices(ctx context.Context, zm *Zit
 			rec.logger.Warn("network services: agent edge-router policy failed", zap.Error(err))
 		}
 	}
+	kept := make([]DesiredNetworkService, 0, len(desired))
+	failed := map[string]string{}
 	for _, d := range desired {
 		if err := rec.ensureNetworkService(ctx, zm, d); err != nil {
-			rec.setStatus(d.ServiceName, "error: "+err.Error())
-			rec.logger.Warn("reconcile network service failed", zap.String("svc", d.ServiceName), zap.Error(err))
+			failed[d.ServiceName] = "error: " + err.Error() + " (removed from the overlay until it converges)"
+			rec.logger.Warn("reconcile network service failed; removing it", zap.String("svc", d.ServiceName), zap.Error(err))
 			continue
 		}
+		kept = append(kept, d)
 		rec.setStatus(d.ServiceName, "synced")
 	}
-	rec.pruneNetworkServices(ctx, zm, desired)
+	// A service whose convergence failed is not left with what an earlier
+	// pass wrote. Its Dial policies go first, by name, which needs no
+	// service listing; then prune removes it with everything else not kept.
+	for name := range failed {
+		for _, p := range []string{"openidx-dial-" + name, "openidx-orgdial-" + name} {
+			if err := zm.deleteEdgeEntityByName(ctx, "service-policies", p); err != nil {
+				rec.logger.Warn("network services: dial revoke failed", zap.String("policy", p), zap.Error(err))
+			}
+		}
+	}
+	rec.pruneNetworkServices(ctx, zm, kept)
+	for name, st := range failed {
+		rec.setStatus(name, st)
+	}
 }
