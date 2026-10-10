@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.42.0] - 2026-10-10
+
 ### Changed
 - **Ten concurrent sessions per person by default, oldest retired first.** The compiled default was unlimited, so a credential used from a hundred places kept a hundred live sessions. The default is now ten with `terminate_oldest`, which never refuses a sign-in; a value set on the Security tab still wins.
 
@@ -12072,7 +12074,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.41.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.42.0...HEAD
+[1.42.0]: https://github.com/mhmtgngr/openidx/compare/v1.41.0...v1.42.0
 [1.41.0]: https://github.com/mhmtgngr/openidx/compare/v1.40.0...v1.41.0
 [1.40.0]: https://github.com/mhmtgngr/openidx/compare/v1.39.0...v1.40.0
 [1.39.0]: https://github.com/mhmtgngr/openidx/compare/v1.38.0...v1.39.0
