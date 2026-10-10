@@ -74,8 +74,8 @@ and mistakes, not the loss of the VM. The off-box copy below covers that.
 
 When `OIDX_BACKUP_OFFBOX_TARGET` is set, `pg-backup.sh` encrypts each new dump
 with [age](https://age-encryption.org) and uploads it. It never uploads a dump
-without encrypting it. Without a usable recipients file, or without `age`, the
-off-box step fails. The local dump is kept either way.
+without encrypting and signing it. Without a usable recipients file, without
+`age`, or without a signing key, the off-box step fails. The local dump is kept either way.
 
 | Variable | Meaning |
 |---|---|
@@ -83,13 +83,35 @@ off-box step fails. The local dump is kept either way.
 | `OIDX_BACKUP_AGE_RECIPIENTS` | File of age recipient public keys (`age1…`, or ssh public keys), one per line. Required with a target. |
 | `OIDX_BACKUP_OFFBOX_RETENTION_DAYS` | Delete off-box copies older than this many days (default 30; `0` keeps them all). Only files named `openidx-*.dump.*` are deleted. |
 | `OIDX_BACKUP_TEXTFILE_DIR` | node-exporter textfile collector directory. When set, the script writes `openidx_backup.prom` with `openidx_backup_last_success_timestamp_seconds{kind="local"}` and `{kind="offbox"}`. |
+| `OIDX_BACKUP_SIGNING_KEY` | ssh private key (ed25519, no passphrase) held on the box. It signs each copy. Required with a target. |
 | `OIDX_BACKUP_AGE_IDENTITY` | The private key that decrypts the copy. Only the restore drill needs it, and it does not belong on the box (see below). |
+| `OIDX_BACKUP_SIGNING_PUBKEY` | The signing key's public half, pinned on the machine that runs the drill. Never take it from the off-box storage. |
 
-Each run uploads four files: `openidx-<ts>.dump.age` (the ciphertext),
-`openidx-<ts>.dump.sha256` (the plaintext dump's hash, checked after
-decryption), `openidx-<ts>.dump.schema_version`, and last
+**Why the copies are signed.** age keeps a copy secret, but it does not prove
+who made it: anyone with the public recipient key can encrypt a dump of their
+own. The checksum files sit on the same storage as the copy. So someone who can
+write to that storage could replace a copy and its checksums, and a restore
+would accept the forgery. Each copy therefore carries a manifest
+(`openidx-<ts>.dump.manifest`) that names the copy and holds the hashes of the
+ciphertext and of the plaintext dump. The box signs it with
+`ssh-keygen -Y sign` (`.manifest.sig`, namespace `openidx-backup`). The drill
+checks that signature against the pinned public key before it trusts any hash.
+It also checks that the manifest names the copy it was fetched as, so an older
+genuine copy cannot be passed off as the newest. It refuses a copy without a
+valid signature unless you pass `--insecure-unsigned`.
+
+The signature does not stop someone with write access from deleting copies, or
+from removing the newer ones so that an older genuine copy is the newest left.
+The drill logs the signed creation time, so check it. Storage the box cannot
+delete from covers this (see step 2 below).
+
+Each run uploads, in this order: `openidx-<ts>.dump.age` (the ciphertext),
+`openidx-<ts>.dump.sha256` (the plaintext dump's hash),
+`openidx-<ts>.dump.schema_version`, the manifest and its `.sig`, and last
 `openidx-<ts>.dump.age.sha256`. The restore drill uses only copies that have
-this last file, so it never picks up an upload that stopped partway.
+this last file, so it never picks up an upload that stopped partway. It only
+accepts names of the exact form `openidx-YYYYMMDDTHHMMSSZ.dump.age`, so a name
+planted in the listing cannot reach a path or a shell.
 
 The result of the last off-box attempt is in `$OIDX_BACKUP_DIR/last-offbox.json`
 (`timestamp`, `result`, `target`, `object`, `bytes`, `error`). The script exits
@@ -112,16 +134,20 @@ shows as failed.
     else. Any one of the recipients can decrypt.
 
 2. On the box, install `age` and the transfer tool (`rclone`, or `rsync` +
-   `ssh`), then write the public keys and settings:
+   `ssh`). Make the box's signing key, then write the public keys and settings.
+   Copy `backup-signing.pub` to wherever the age identity is kept; the drill
+   pins it from there.
 
     ```bash
     sudo apt-get install -y age rclone          # or rsync for ssh://
+    ssh-keygen -t ed25519 -N '' -C openidx-backup-signing -f ~/.config/oidx/backup-signing
     install -Dm600 /dev/stdin ~/.config/oidx/backup-recipients.txt <<'EOF'
     age1...your-public-key...
     EOF
     install -Dm600 /dev/stdin ~/.config/oidx/backup.env <<'EOF'
     OIDX_BACKUP_OFFBOX_TARGET=offsite:openidx-backups/box1
     OIDX_BACKUP_AGE_RECIPIENTS=/home/cmit/.config/oidx/backup-recipients.txt
+    OIDX_BACKUP_SIGNING_KEY=/home/cmit/.config/oidx/backup-signing
     OIDX_BACKUP_OFFBOX_RETENTION_DAYS=30
     OIDX_BACKUP_TEXTFILE_DIR=/home/cmit/oidx-runtime/textfile
     EOF
@@ -157,28 +183,40 @@ podman run -d --name oidx-node-exporter --network host --pid host \
 
 **Restore drill (do it monthly, and after any change to the keys).** Run it
 from a machine that holds the identity, which should not be the box. It fetches
-the newest complete copy, checks the ciphertext's hash, decrypts it, checks
-the plaintext's hash, and restores it into a throwaway Postgres container with
-no network. That container is removed afterwards. The live database is never
-touched.
+the newest complete copy and verifies the manifest's signature against the
+pinned key. It then checks the ciphertext's hash against the manifest, decrypts
+it, checks the plaintext's hash, and restores it into a throwaway Postgres
+container with no network. That container is removed afterwards. The live
+database is never touched.
 
 ```bash
 OIDX_BACKUP_OFFBOX_TARGET=offsite:openidx-backups/box1 \
 OIDX_BACKUP_AGE_IDENTITY=~/secure/openidx-backup.key \
+OIDX_BACKUP_SIGNING_PUBKEY=~/secure/backup-signing.pub \
   deployments/scripts/pg-restore-verify.sh --from-offbox
 ```
+
+`--insecure-unsigned` restores a copy without a valid signature, for example
+one made before signing existed. It prints a warning, because nothing then
+shows that the copy came from the box.
 
 The throwaway container uses the image of `oidx-pg` when that container exists
 on the machine, and `docker.io/library/postgres:16-alpine` otherwise. Set
 `OIDX_RESTORE_IMAGE` to the image of the Postgres version the box runs.
 
-**Restore for real from off-box (the VM is gone):** fetch and decrypt the copy
-the same way, then restore it as in "Restore for real" above:
+**Restore for real from off-box (the VM is gone):** fetch the copy, verify its
+signature, decrypt it and check it the same way. Take the hashes from the
+verified manifest, not from the `.sha256` files. Then restore it as in
+"Restore for real" above:
 
 ```bash
 rclone copy --include 'openidx-<ts>.dump*' offsite:openidx-backups/box1 ./restore/
 cd restore
-sha256sum openidx-<ts>.dump.age | cut -d' ' -f1 | diff - openidx-<ts>.dump.age.sha256
+echo "openidx-backup namespaces=\"openidx-backup\" $(cut -d' ' -f1,2 ~/secure/backup-signing.pub)" > allowed_signers
+ssh-keygen -Y verify -f allowed_signers -I openidx-backup -n openidx-backup \
+  -s openidx-<ts>.dump.manifest.sig < openidx-<ts>.dump.manifest     # must say "Good"
+cat openidx-<ts>.dump.manifest                                         # name, hashes, created
+sha256sum openidx-<ts>.dump.age                                        # = age_sha256
 age -d -i ~/secure/openidx-backup.key -o openidx-<ts>.dump openidx-<ts>.dump.age
-sha256sum openidx-<ts>.dump | cut -d' ' -f1 | diff - openidx-<ts>.dump.sha256
+sha256sum openidx-<ts>.dump                                            # = dump_sha256
 ```

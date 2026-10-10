@@ -28,6 +28,12 @@
 #                                        ssh://user@host[:port]/path rsync over ssh
 #                                        /some/dir or file:///dir    a local or mounted dir
 #   OIDX_BACKUP_AGE_RECIPIENTS         file of age recipient public keys (required with TARGET)
+#   OIDX_BACKUP_SIGNING_KEY            box-held ssh private key (no passphrase) that signs
+#                                      each copy's manifest (required with TARGET). age
+#                                      gives confidentiality only: anyone holding the
+#                                      PUBLIC recipient key can encrypt a forged dump, and
+#                                      the checksums sit on the same storage. The
+#                                      signature is what the restore drill trusts.
 #   OIDX_BACKUP_OFFBOX_RETENTION_DAYS  delete off-box copies older than N (default: 30; 0 keeps all)
 #
 # Monitoring (optional):
@@ -47,6 +53,9 @@ BACKUP_DIR="${OIDX_BACKUP_DIR:-/home/cmit/oidx-runtime/backups}"
 RETENTION_DAYS="${OIDX_BACKUP_RETENTION_DAYS:-14}"
 OFFBOX_TARGET="${OIDX_BACKUP_OFFBOX_TARGET:-}"
 AGE_RECIPIENTS="${OIDX_BACKUP_AGE_RECIPIENTS:-}"
+SIGNING_KEY="${OIDX_BACKUP_SIGNING_KEY:-}"
+# The ssh signature namespace; pg-restore-verify.sh verifies under the same one.
+SIG_NAMESPACE="openidx-backup"
 OFFBOX_RETENTION_DAYS="${OIDX_BACKUP_OFFBOX_RETENTION_DAYS:-30}"
 TEXTFILE_DIR="${OIDX_BACKUP_TEXTFILE_DIR:-}"
 
@@ -139,7 +148,7 @@ offbox_put() {
       # shellcheck disable=SC2029 # the path is quoted for the remote shell on purpose
       ssh -p "$SSH_PORT" -o BatchMode=yes "$SSH_HOST" "mkdir -p -- $(printf '%q' "$SSH_PATH")" || return 1
       for f in "$@"; do
-        rsync -t --partial -e "ssh -p $SSH_PORT -o BatchMode=yes" "$f" "$SSH_HOST:$SSH_PATH/" || return 1
+        rsync -s -t --partial -e "ssh -p $SSH_PORT -o BatchMode=yes" "$f" "$SSH_HOST:$SSH_PATH/" || return 1
       done ;;
     local)
       dest="${OFFBOX_TARGET#file://}"
@@ -190,6 +199,10 @@ offbox_copy() {
     err="age recipients file '$AGE_RECIPIENTS' holds no age1/ssh recipient; refusing to upload an unencrypted dump"
   elif ! command -v age >/dev/null 2>&1; then
     err="age is not installed; refusing to upload an unencrypted dump"
+  elif [ -z "$SIGNING_KEY" ] || [ ! -r "$SIGNING_KEY" ]; then
+    err="OIDX_BACKUP_SIGNING_KEY is not set or not readable; refusing to upload a copy nobody could tell from a forgery"
+  elif ! command -v ssh-keygen >/dev/null 2>&1; then
+    err="ssh-keygen is not installed; it signs the off-box copy"
   elif [ "$(offbox_mode "$OFFBOX_TARGET")" = rclone ] && ! command -v rclone >/dev/null 2>&1; then
     err="rclone is not installed (target '$OFFBOX_TARGET' is an rclone remote)"
   elif [ "$(offbox_mode "$OFFBOX_TARGET")" = ssh ] && ! command -v rsync >/dev/null 2>&1; then
@@ -223,8 +236,31 @@ offbox_copy() {
   local extra=()
   [ -s "${dump}.schema_version" ] && { cp -p "${dump}.schema_version" "$stage/"; extra+=("$stage/${name}.schema_version"); }
 
+  # The manifest binds the copy's name to both hashes, and the box's signing
+  # key signs it. The restore drill trusts the hashes only through this
+  # signature: the .sha256 sidecars sit on the same storage as the copy, so
+  # whoever can replace one can replace the other. The name inside the
+  # manifest stops a genuine signed copy from being presented under another
+  # (newer) name.
+  local manifest="$stage/${name}.manifest"
+  {
+    echo "openidx-backup-manifest v1"
+    echo "name ${name}.age"
+    echo "age_sha256 $(cat "${enc}.sha256")"
+    echo "dump_sha256 $(tr -d '[:space:]' < "${dump}.sha256")"
+    echo "schema_version $(tr -d '[:space:]' < "${dump}.schema_version" 2>/dev/null || true)"
+    echo "created $(date -u +%FT%TZ)"
+  } > "$manifest"
+  if ! ssh-keygen -Y sign -q -f "$SIGNING_KEY" -n "$SIG_NAMESPACE" "$manifest" </dev/null 2>"$stage/sign.err" \
+     || [ ! -s "${manifest}.sig" ]; then
+    err="signing the manifest failed (the key must have no passphrase): $(head -c 300 "$stage/sign.err")"
+    log "ERROR: off-box: $err"; rm -rf "$stage"
+    write_offbox_status failure "${name}.age" "$bytes" "$err"
+    return 1
+  fi
+
   log "off-box: uploading ${name}.age ($bytes bytes) -> $OFFBOX_TARGET"
-  if ! offbox_put "$enc" "$stage/${name}.sha256" "${extra[@]}" "${enc}.sha256" 2>"$stage/put.err"; then
+  if ! offbox_put "$enc" "$stage/${name}.sha256" "${extra[@]}" "$manifest" "${manifest}.sig" "${enc}.sha256" 2>"$stage/put.err"; then
     err="upload failed: $(tail -c 300 "$stage/put.err")"
     log "ERROR: off-box: $err"; rm -rf "$stage"
     write_offbox_status failure "${name}.age" "$bytes" "$err"

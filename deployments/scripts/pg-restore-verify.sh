@@ -9,12 +9,20 @@
 # database.
 #
 # With --from-offbox it instead fetches the latest encrypted copy that
-# pg-backup.sh shipped to OIDX_BACKUP_OFFBOX_TARGET, checks the ciphertext's
-# sha256, decrypts it with the age identity in OIDX_BACKUP_AGE_IDENTITY, checks
-# the plaintext's sha256, and restores it into a THROWAWAY Postgres container
-# (no network, removed afterwards) -- the live container is never given a file
-# that came from off the box. That is the disaster-recovery path rehearsed:
-# what you would have if this VM were gone.
+# pg-backup.sh shipped to OIDX_BACKUP_OFFBOX_TARGET, verifies the box's ssh
+# signature over its manifest against the PINNED public key in
+# OIDX_BACKUP_SIGNING_PUBKEY, checks the ciphertext's sha256 against the signed
+# manifest, decrypts it with the age identity in OIDX_BACKUP_AGE_IDENTITY,
+# checks the plaintext's sha256 against the signed manifest, and restores it
+# into a THROWAWAY Postgres container (no network, removed afterwards) -- the
+# live container is never given a file that came from off the box. That is the
+# disaster-recovery path rehearsed: what you would have if this VM were gone.
+#
+# Why a signature: age gives confidentiality, not authenticity -- anyone with
+# the public recipient key can encrypt a dump of their own -- and the .sha256
+# sidecars sit on the same storage as the copy. Whoever can write to that
+# storage could substitute both. A copy without a valid signature is refused
+# unless --insecure-unsigned is given, which says so loudly.
 #
 # Run by the oidx-pg-restore-verify.timer (weekly) or by hand. Exit non-zero if
 # the backup fails a checksum or doesn't restore into a sane schema.
@@ -22,11 +30,14 @@
 # Env overrides mirror pg-backup.sh, plus:
 #   OIDX_RESTORE_SCRATCH_DB   scratch db name (default: openidx_restore_verify)
 # and for --from-offbox:
-#   OIDX_BACKUP_OFFBOX_TARGET the same target pg-backup.sh uploads to
-#   OIDX_BACKUP_AGE_IDENTITY  age identity (private key) file that decrypts it
-#   OIDX_RESTORE_IMAGE        image for the throwaway container (default: the
-#                             image of OIDX_PG_CONTAINER when it exists, else
-#                             docker.io/library/postgres:16-alpine)
+#   OIDX_BACKUP_OFFBOX_TARGET  the same target pg-backup.sh uploads to
+#   OIDX_BACKUP_AGE_IDENTITY   age identity (private key) file that decrypts it
+#   OIDX_BACKUP_SIGNING_PUBKEY the box's signing PUBLIC key (the .pub of
+#                              OIDX_BACKUP_SIGNING_KEY), pinned: kept with the
+#                              identity, never read from the off-box storage
+#   OIDX_RESTORE_IMAGE         image for the throwaway container (default: the
+#                              image of OIDX_PG_CONTAINER when it exists, else
+#                              docker.io/library/postgres:16-alpine)
 set -euo pipefail
 
 CONTAINER="${OIDX_PG_CONTAINER:-oidx-pg}"
@@ -35,13 +46,18 @@ BACKUP_DIR="${OIDX_BACKUP_DIR:-/home/cmit/oidx-runtime/backups}"
 SCRATCH="${OIDX_RESTORE_SCRATCH_DB:-openidx_restore_verify}"
 OFFBOX_TARGET="${OIDX_BACKUP_OFFBOX_TARGET:-}"
 AGE_IDENTITY="${OIDX_BACKUP_AGE_IDENTITY:-}"
+SIGNING_PUBKEY="${OIDX_BACKUP_SIGNING_PUBKEY:-}"
+SIG_NAMESPACE="openidx-backup"   # must match pg-backup.sh
+SIG_PRINCIPAL="openidx-backup"
 
 FROM_OFFBOX=0
+INSECURE_UNSIGNED=0
 for arg in "$@"; do
   case "$arg" in
     --from-offbox) FROM_OFFBOX=1 ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
-    *) echo "unknown argument: $arg (expected --from-offbox)" >&2; exit 64 ;;
+    --insecure-unsigned) INSECURE_UNSIGNED=1 ;;
+    -h|--help) sed -n '2,42p' "$0"; exit 0 ;;
+    *) echo "unknown argument: $arg (expected --from-offbox [--insecure-unsigned])" >&2; exit 64 ;;
   esac
 done
 
@@ -80,8 +96,8 @@ restore_and_check() {
   podman exec -i "$c" pg_restore -U "$DB_USER" -d "${SCRATCH}" --no-owner --no-privileges < "$dump" \
     > "$rlog" 2>&1 || log "pg_restore reported warnings (see $rlog)"
 
-  ver="$(podman exec "$c" psql -U "$DB_USER" -d "${SCRATCH}" -tAc "SELECT MAX(version) FROM schema_migrations;" 2>/dev/null | tr -d '[:space:]')"
-  tables="$(podman exec "$c" psql -U "$DB_USER" -d "${SCRATCH}" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d '[:space:]')"
+  ver="$(podman exec "$c" psql -U "$DB_USER" -d "${SCRATCH}" -tAc "SELECT MAX(version) FROM schema_migrations;" 2>/dev/null | tr -d '[:space:]' || true)"
+  tables="$(podman exec "$c" psql -U "$DB_USER" -d "${SCRATCH}" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d '[:space:]' || true)"
   users="$(podman exec "$c" psql -U "$DB_USER" -d "${SCRATCH}" -tAc "SELECT count(*) FROM users;" 2>/dev/null | tr -d '[:space:]' || echo 'n/a')"
 
   log "restored: schema v${ver:-?}, ${tables:-0} public tables, users=${users}"
@@ -124,8 +140,14 @@ offbox_list() {
     local)
       (cd "${OFFBOX_TARGET#file://}" && ls -1 -- openidx-*.dump.age.sha256 2>/dev/null) || true ;;
     *) log "ERROR: OIDX_BACKUP_OFFBOX_TARGET '$OFFBOX_TARGET' is not an rclone remote, ssh:// or a directory"; exit 1 ;;
-  esac | sed 's/\.sha256$//'
+  esac | sed 's/\.sha256$//' | grep -E "^${NAME_RE}\$" || true
 }
+
+# The only names this script will fetch or build a path from: exactly what
+# pg-backup.sh writes. The listing comes from storage we do not trust, so a
+# name with a slash, "..", whitespace or a shell metacharacter is dropped
+# rather than quoted and hoped about.
+NAME_RE='openidx-[0-9]{8}T[0-9]{6}Z\.dump\.age'
 
 # offbox_get <name> <dest-dir>
 offbox_get() {
@@ -133,7 +155,9 @@ offbox_get() {
     rclone) rclone copyto "${OFFBOX_TARGET%/}/$1" "$2/$1" ;;
     ssh)
       parse_ssh_target "$OFFBOX_TARGET"
-      rsync -t -e "ssh -p $SSH_PORT -o BatchMode=yes" "$SSH_HOST:$SSH_PATH/$1" "$2/" ;;
+      # -s: the remote path goes to the remote rsync as an argument, not
+      # through the remote shell.
+      rsync -s -t -e "ssh -p $SSH_PORT -o BatchMode=yes" "$SSH_HOST:$SSH_PATH/$1" "$2/" ;;
     local) cp -p "${OFFBOX_TARGET#file://}/$1" "$2/" ;;
   esac
 }
@@ -180,18 +204,56 @@ if [ "$FROM_OFFBOX" = 1 ]; then
     log "ERROR: --from-offbox needs OIDX_BACKUP_AGE_IDENTITY, an age identity file"; exit 1
   fi
   command -v age >/dev/null 2>&1 || { log "ERROR: age is not installed"; exit 1; }
+  if [ "$INSECURE_UNSIGNED" = 0 ]; then
+    if [ -z "$SIGNING_PUBKEY" ] || [ ! -s "$SIGNING_PUBKEY" ]; then
+      log "ERROR: --from-offbox needs OIDX_BACKUP_SIGNING_PUBKEY, the box's pinned signing public key (or --insecure-unsigned)"; exit 1
+    fi
+    command -v ssh-keygen >/dev/null 2>&1 || { log "ERROR: ssh-keygen is not installed"; exit 1; }
+  fi
 
   enc="$(offbox_list | sort | tail -1)"
   [ -n "$enc" ] || { log "ERROR: no complete off-box copy found at $OFFBOX_TARGET"; exit 1; }
+  # Belt and braces: offbox_list already filtered, and every path below is
+  # built from this one name.
+  [[ "$enc" =~ ^${NAME_RE}$ ]] || { log "ERROR: refusing off-box name '$enc'"; exit 1; }
   log "verifying latest off-box copy: $OFFBOX_TARGET/$enc"
 
   WORK="$(mktemp -d "${TMPDIR:-/tmp}/oidx-offbox-verify.XXXXXX")"
   chmod 700 "$WORK"
   plain="${enc%.age}"
   offbox_get "$enc" "$WORK"
-  offbox_get "${enc}.sha256" "$WORK"
-  offbox_get "${plain}.sha256" "$WORK"
 
+  if [ "$INSECURE_UNSIGNED" = 0 ]; then
+    if ! offbox_get "${plain}.manifest" "$WORK" 2>/dev/null || ! offbox_get "${plain}.manifest.sig" "$WORK" 2>/dev/null; then
+      log "ERROR: $enc has no signed manifest; refusing an unsigned copy (--insecure-unsigned overrides)"; exit 1
+    fi
+    # allowed_signers built here from the pinned key, never from the storage.
+    printf '%s namespaces="%s" %s\n' "$SIG_PRINCIPAL" "$SIG_NAMESPACE" \
+      "$(awk 'NF>=2 && $1 ~ /^(ssh-|ecdsa-|sk-)/ {print $1, $2; exit}' "$SIGNING_PUBKEY")" > "$WORK/allowed_signers"
+    grep -qE ' (ssh-|ecdsa-|sk-)[^ ]+ [A-Za-z0-9+/=]+$' "$WORK/allowed_signers" \
+      || { log "ERROR: OIDX_BACKUP_SIGNING_PUBKEY holds no ssh public key"; exit 1; }
+    if ! ssh-keygen -Y verify -f "$WORK/allowed_signers" -I "$SIG_PRINCIPAL" -n "$SIG_NAMESPACE" \
+         -s "$WORK/${plain}.manifest.sig" < "$WORK/${plain}.manifest" >"$WORK/verify.err" 2>&1; then
+      log "ERROR: the manifest's signature does not verify against the pinned key: $(head -c 300 "$WORK/verify.err")"; exit 1
+    fi
+    # The manifest is now trusted; take every expected value from it, and
+    # require that it names the copy it was fetched as.
+    mf() { awk -v k="$1" '$1 == k {print $2; exit}' "$WORK/${plain}.manifest"; }
+    [ "$(head -1 "$WORK/${plain}.manifest")" = "openidx-backup-manifest v1" ] \
+      || { log "ERROR: unknown manifest format"; exit 1; }
+    [ "$(mf name)" = "$enc" ] || { log "ERROR: the signed manifest is for '$(mf name)', not '$enc'"; exit 1; }
+    mf age_sha256 > "$WORK/${enc}.sha256"
+    mf dump_sha256 > "$WORK/${plain}.sha256"
+    log "signature OK (signed $(mf created), schema v$(mf schema_version))"
+  else
+    log "WARNING: --insecure-unsigned: the copy's authenticity is NOT checked; the checksums come from the same storage as the copy"
+    offbox_get "${enc}.sha256" "$WORK"
+    offbox_get "${plain}.sha256" "$WORK"
+  fi
+
+  if [ ! -s "$WORK/${enc}.sha256" ] || [ ! -s "$WORK/${plain}.sha256" ]; then
+    log "ERROR: missing expected hashes"; exit 1
+  fi
   verify_sha "$WORK/$enc" "$WORK/${enc}.sha256"
   log "ciphertext checksum OK"
   age -d -i "$AGE_IDENTITY" -o "$WORK/$plain" "$WORK/$enc"
