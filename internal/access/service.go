@@ -468,6 +468,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// organization's tunnel policy, and a CSV import for moving a VPN's
 		// rule set across. Targets name internal addresses, so reads are
 		// admin-only like the route table.
+		// A target may not name the controller (network_target_guard.go).
+		if svc.config != nil {
+			SetNetworkTargetPlatformHosts(append([]string{svc.config.ZitiCtrlURL}, strings.Split(svc.config.ZitiCtrlURLs, ",")...)...)
+		}
 		api.GET("/network-resources", adminOnly, svc.handleListNetworkResources)
 		api.POST("/network-resources", adminOnly, svc.handleCreateNetworkResource)
 		api.POST("/network-resources/import", adminOnly, svc.handleImportNetworkResources)

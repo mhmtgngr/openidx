@@ -23,6 +23,7 @@ import (
 // organization's tunnel policy and its defaults, the CSV import with a group
 // assignment, what the reconciler then loads, and the agent's tunnel status.
 func TestNetworkResourceAPIOnTheMigratedSchema(t *testing.T) {
+	pinTargetGuard(t)
 	db, cleanup := setupTestDB(t)
 	if db == nil {
 		t.SkipNow()
@@ -167,6 +168,80 @@ func TestNetworkResourceAPIOnTheMigratedSchema(t *testing.T) {
 	rows := imp["rows"].([]interface{})
 	if warn, _ := rows[1].(map[string]interface{})["warning"].(string); !strings.Contains(warn, "Nobody") {
 		t.Errorf("an unknown group carried no warning: %v", rows[1])
+	}
+
+	// Another organization's resource, target and group are out of reach. The
+	// test role is a superuser, so RLS does not apply here: what holds is the
+	// org_id each query takes from the caller's context.
+	var orgB, appB, groupB string
+	if err := db.Pool.QueryRow(bg, `INSERT INTO organizations (name, slug) VALUES ('net-b', 'net-b') RETURNING id::text`).Scan(&orgB); err != nil {
+		t.Fatalf("seed org B: %v", err)
+	}
+	if err := db.Pool.QueryRow(bg, `INSERT INTO applications (client_id, name, type, kind, org_id)
+		VALUES ('network-b', 'B secrets', 'network', 'network', $1) RETURNING id::text`, orgB).Scan(&appB); err != nil {
+		t.Fatalf("seed org B app: %v", err)
+	}
+	if _, err := db.Pool.Exec(bg, `INSERT INTO network_targets (application_id, org_id, cidrs) VALUES ($1, $2, '{10.99.0.0/24}')`, appB, orgB); err != nil {
+		t.Fatalf("seed org B target: %v", err)
+	}
+	if err := db.Pool.QueryRow(bg, `INSERT INTO groups (org_id, name) VALUES ($1, 'only-in-b') RETURNING id::text`, orgB).Scan(&groupB); err != nil {
+		t.Fatalf("seed org B group: %v", err)
+	}
+	if code, _ := do("GET", "/api/v1/access/resources/"+appB+"/network-target", ""); code != http.StatusNotFound {
+		t.Errorf("org A read org B's target: %d", code)
+	}
+	if code, _ := do("PUT", "/api/v1/access/resources/"+appB+"/network-target", `{"cidrs":["10.98.0.0/24"]}`); code != http.StatusNotFound {
+		t.Errorf("org A wrote org B's target: %d", code)
+	}
+	if code, _ := do("DELETE", "/api/v1/access/resources/"+appB+"/network-target", ""); code != http.StatusNotFound {
+		t.Errorf("org A deleted org B's target: %d", code)
+	}
+	var stillB string
+	if err := db.Pool.QueryRow(bg, `SELECT array_to_string(cidrs::text[], ',') FROM network_targets WHERE application_id = $1`, appB).Scan(&stillB); err != nil || stillB != "10.99.0.0/24" {
+		t.Errorf("org B's target after org A's attempts: %q, %v", stillB, err)
+	}
+	_, listA := do("GET", "/api/v1/access/network-resources", "")
+	for _, r := range listA["resources"].([]interface{}) {
+		if r.(map[string]interface{})["id"] == appB {
+			t.Error("org A's list shows org B's resource")
+		}
+	}
+	reqB := httptest.NewRequest("POST", "/api/v1/access/network-resources/import", strings.NewReader("name,cidrs,group\nSneaky,10.97.0.0/24,only-in-b\n"))
+	wB := httptest.NewRecorder()
+	r.ServeHTTP(wB, reqB)
+	var bAssigned int
+	if err := db.Pool.QueryRow(bg, `SELECT count(*) FROM group_application_assignments WHERE group_id = $1`, groupB).Scan(&bAssigned); err != nil || bAssigned != 0 {
+		t.Errorf("an import in org A assigned org B's group (%d, %v)", bAssigned, err)
+	}
+	if !strings.Contains(wB.Body.String(), "was not found") {
+		t.Errorf("the import did not report org B's group as not found: %s", wB.Body.String())
+	}
+
+	// A target pointing at the platform is refused through the API.
+	if code, _ := do("PUT", "/api/v1/access/resources/"+id+"/network-target", `{"hosts":["169.254.169.254"]}`); code != http.StatusBadRequest {
+		t.Errorf("a metadata-address target answered %d, want 400", code)
+	}
+	if code, _ := do("PUT", "/api/v1/access/resources/"+id+"/network-target", `{"cidrs":["10.0.0.0/8"]}`); code != http.StatusBadRequest {
+		t.Errorf("a /8 target answered %d, want 400", code)
+	}
+	// One written past the API is not converged either.
+	if _, err := db.Pool.Exec(bg, `INSERT INTO network_targets (application_id, org_id, hosts) VALUES ($1, $2, '{127.0.0.1}')`, id, org); err != nil {
+		t.Fatalf("seed a loopback target: %v", err)
+	}
+	loaded, err := rec.loadDesiredNetworkServices(bg)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	for _, d := range loaded {
+		if d.ApplicationID == id {
+			t.Error("the reconciler loads a target that points at loopback")
+		}
+	}
+	if st := rec.StatusSnapshot()[networkServiceName(id)]; !strings.HasPrefix(st, "error:") {
+		t.Errorf("the refused target's converge state is %q, want an error", st)
+	}
+	if _, err := db.Pool.Exec(bg, `DELETE FROM network_targets WHERE application_id = $1`, id); err != nil {
+		t.Fatalf("clean up: %v", err)
 	}
 
 	// An assigned network resource travels as an app marker; a web app with

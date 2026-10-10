@@ -174,6 +174,11 @@ func normalizeNetworkTarget(t NetworkTarget) (NetworkTarget, error) {
 	}
 	out.ForwardPort = t.ForwardPort
 
+	if len(errs) == 0 {
+		// Well-formed; now refuse what points at the platform itself
+		// (network_target_guard.go).
+		errs = targetGuard().check(out)
+	}
 	if len(errs) > 0 {
 		return NetworkTarget{}, errors.New(strings.Join(errs, "; "))
 	}

@@ -85,6 +85,17 @@ Lab network,,10.50.0.0/16,,22;3389;8000-8100,,Engineering
 Intranet,,,*.intranet.corp.example,80;443,tcp,All Staff
 ```
 
+A target may not point at the platform: the routers that host the service
+are the platform's own hosts. Loopback, link-local (including
+`169.254.169.254`), unspecified and multicast addresses, `localhost`, this
+host's addresses and name, the controller's host, CIDRs broader than
+`NETWORK_TARGET_MIN_PREFIX` (default `/16`, IPv6 `/48`) and anything
+overlapping `NETWORK_TARGET_DENY_CIDRS` (comma-separated; by default the
+podman and docker bridges and `100.64.0.0/10`) are refused. DNS names are
+judged by their spelling only, so keep the router hosts' egress rules as the
+backstop for a name that resolves somewhere it should not. Split a larger
+corporate network into /16s, or a platform administrator raises the limit.
+
 Each row is validated on its own: an address that does not parse, a CIDR that
 covers every address (`0.0.0.0/0`), or a port outside 1-65535 is reported on
 its row and does not stop the others. At most 500 rows per file.

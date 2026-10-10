@@ -20,6 +20,7 @@ import (
 )
 
 func TestNetworkTargetNormalization(t *testing.T) {
+	pinTargetGuard(t)
 	got, err := normalizeNetworkTarget(NetworkTarget{
 		Hosts:      []string{" fs1.corp.example ", "10.0.0.5", "fs1.corp.example"},
 		CIDRs:      []string{"10.20.3.4/16"},
@@ -54,6 +55,7 @@ func TestNetworkTargetNormalization(t *testing.T) {
 }
 
 func TestNetworkTargetValidationRefuses(t *testing.T) {
+	pinTargetGuard(t)
 	for name, tgt := range map[string]NetworkTarget{
 		"no address":         {},
 		"bad CIDR":           {CIDRs: []string{"10.0.0.0/33"}},
@@ -74,6 +76,7 @@ func TestNetworkTargetValidationRefuses(t *testing.T) {
 }
 
 func TestNetworkConfigData(t *testing.T) {
+	pinTargetGuard(t)
 	tgt, _ := normalizeNetworkTarget(NetworkTarget{
 		Hosts: []string{"fs1.corp.example"}, CIDRs: []string{"10.20.0.0/16"},
 		PortRanges: []PortRange{{Low: 445, High: 445}},
@@ -142,6 +145,7 @@ func TestNetworkServiceNameIsReserved(t *testing.T) {
 }
 
 func TestParseNetworkImportCSV(t *testing.T) {
+	pinTargetGuard(t)
 	in := "Name,Hosts,CIDRs,DNS_Names,Ports,Protocols,Group\n" +
 		"# a comment line\n" +
 		"File servers,fs1.corp.example;fs2.corp.example,,,445,tcp,Finance\n" +
@@ -346,6 +350,7 @@ func newNetTestManager(t *testing.T, f *fakeNetCtrl) *ZitiManager {
 }
 
 func TestEnsureNetworkServiceConvergesAndIsIdempotent(t *testing.T) {
+	pinTargetGuard(t)
 	f := newFakeNetCtrl()
 	zm := newNetTestManager(t, f)
 	rec := &ZitiReconciler{logger: zap.NewNop(), status: map[string]string{}, assignmentEnforce: true}
@@ -436,6 +441,7 @@ func TestEnsureNetworkServiceConvergesAndIsIdempotent(t *testing.T) {
 }
 
 func TestPruneNetworkServicesRemovesOnlyUndesired(t *testing.T) {
+	pinTargetGuard(t)
 	f := newFakeNetCtrl()
 	zm := newNetTestManager(t, f)
 	rec := &ZitiReconciler{logger: zap.NewNop(), status: map[string]string{}}
