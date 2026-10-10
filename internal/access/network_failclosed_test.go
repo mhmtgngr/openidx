@@ -16,12 +16,15 @@ import (
 func resetRouterHosts(t *testing.T, known bool, hosts ...string) {
 	t.Helper()
 	routerHostsMu.Lock()
-	saved, savedKnown := routerHosts, routerHostsKnown
-	routerHosts, routerHostsKnown = hosts, known
+	saved, savedState := routerHosts, routerHostsState
+	routerHosts, routerHostsState = hosts, discovered{}
+	if known {
+		routerHostsState = discovered{at: guardNow()}
+	}
 	routerHostsMu.Unlock()
 	t.Cleanup(func() {
 		routerHostsMu.Lock()
-		routerHosts, routerHostsKnown = saved, savedKnown
+		routerHosts, routerHostsState = saved, savedState
 		routerHostsMu.Unlock()
 	})
 }
@@ -73,7 +76,7 @@ func TestNetworkPassConvergesWhenEverythingLoads(t *testing.T) {
 	if !f.has("service", d.ServiceName) || !f.has("policy", "openidx-dial-"+d.ServiceName) {
 		t.Fatalf("a good pass did not converge the service; status %q", rec.StatusSnapshot()[d.ServiceName])
 	}
-	if !routerHostsAreKnown() {
+	if ok, _ := routerHostsFresh(); !ok {
 		t.Error("the router hosts were not recorded")
 	}
 }
@@ -200,7 +203,7 @@ func TestInterfaceDiscoveryFailureFailsClosed(t *testing.T) {
 	f, zm, rec, d := failClosedFixture(t)
 	resetRouterHosts(t, true, "edge1.corp.example")
 	lastIfaceMu.Lock()
-	lastIfaceDeny = nil
+	lastIfaceDeny, lastIfaceState = nil, discovered{}
 	lastIfaceMu.Unlock()
 	hostInterfaces = func() ([]ifaceAddr, error) { return nil, errors.New("netlink: permission denied") }
 

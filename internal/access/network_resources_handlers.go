@@ -46,6 +46,26 @@ type networkPolicyView struct {
 	UpdatedAt                 string `json:"updated_at,omitempty"`
 }
 
+// networkGuardReady makes sure the denylist a write is judged against is
+// complete in THIS process: it reads the router hosts from the controller if
+// this instance's copy is not fresh (an API instance need not run the
+// reconciler). When the guard is still incomplete it answers 503 and false;
+// the write is not judged against a partial denylist.
+func (s *Service) networkGuardReady(c *gin.Context) bool {
+	if ok, _ := routerHostsFresh(); !ok {
+		if err := refreshRouterHosts(c.Request.Context(), s.ziti()); err != nil {
+			s.logger.Warn("network target: router hosts could not be read", zap.Error(err))
+		}
+	}
+	if why := targetGuard().incomplete; why != "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "network targets cannot be checked right now: the platform denylist is incomplete (" + why + "); try again once the Ziti controller is reachable",
+		})
+		return false
+	}
+	return true
+}
+
 func (s *Service) networkSyncStatus(name string) string {
 	if s.zitiReconciler == nil {
 		return ""
@@ -223,6 +243,9 @@ func (s *Service) handleCreateNetworkResource(c *gin.Context) {
 	}
 	var target *NetworkTarget
 	if req.Target != nil {
+		if !s.networkGuardReady(c) {
+			return
+		}
 		norm, verr := normalizeNetworkTarget(*req.Target)
 		if verr != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": verr.Error()})
@@ -307,6 +330,9 @@ func (s *Service) handlePutNetworkTarget(c *gin.Context) {
 		return
 	}
 	req.ApplicationID = appID
+	if !s.networkGuardReady(c) {
+		return
+	}
 	norm, err := normalizeNetworkTarget(req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -573,6 +599,9 @@ func (s *Service) handleImportNetworkResources(c *gin.Context) {
 		}
 		defer f.Close()
 		src = io.LimitReader(f, 2<<20)
+	}
+	if !s.networkGuardReady(c) {
+		return
 	}
 	rows, err := parseNetworkImportCSV(src)
 	if err != nil {

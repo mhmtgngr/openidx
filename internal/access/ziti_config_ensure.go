@@ -34,15 +34,26 @@ func (zm *ZitiManager) EnsureConfig(ctx context.Context, name, typeName string, 
 	if body, status, lerr := zm.mgmtRequest("GET", lookupPath, nil); lerr == nil && status == http.StatusOK {
 		var existing struct {
 			Data []struct {
-				ID   string          `json:"id"`
-				Name string          `json:"name"`
-				Data json.RawMessage `json:"data"`
+				ID           string          `json:"id"`
+				Name         string          `json:"name"`
+				ConfigTypeID string          `json:"configTypeId"`
+				Data         json.RawMessage `json:"data"`
 			} `json:"data"`
 		}
 		if json.Unmarshal(body, &existing) == nil {
 			for _, c := range existing.Data {
 				if c.Name != name || c.ID == "" {
 					continue
+				}
+				// A config of the right name but another type is not this
+				// config: it is replaced, not patched (the data of one type
+				// means something else under another).
+				if c.ConfigTypeID != "" && c.ConfigTypeID != zm.resolveConfigTypeID(typeName) {
+					_, ds, derr := zm.mgmtRequest("DELETE", "/edge/management/v1/configs/"+c.ID, nil)
+					if derr != nil || (ds != http.StatusOK && ds != http.StatusNoContent) {
+						return "", fmt.Errorf("replace %s config %s of type %s: status %d: %v", typeName, name, c.ConfigTypeID, ds, derr)
+					}
+					break
 				}
 				var have interface{}
 				if json.Unmarshal(c.Data, &have) == nil && reflect.DeepEqual(have, want) {

@@ -128,7 +128,8 @@ var hostInterfaces = func() ([]ifaceAddr, error) {
 	for _, ifc := range ifaces {
 		addrs, err := ifc.Addrs()
 		if err != nil {
-			continue
+			// A partial answer is not a good one: fail the discovery.
+			return nil, fmt.Errorf("addresses of %s: %w", ifc.Name, err)
 		}
 		for _, a := range addrs {
 			ipn, ok := a.(*net.IPNet)
@@ -152,15 +153,52 @@ var hostInterfaces = func() ([]ifaceAddr, error) {
 	return out, nil
 }
 
+// THE DISCOVERED HALVES OF THE DENYLIST ARE ONLY AS GOOD AS THEY ARE FRESH.
+//
+// The host's interfaces and the routers' advertised hosts are read, not
+// configured. A failed or empty read keeps the last good answer, but only for
+// a bounded time: after denylistMaxFailures consecutive failures or
+// denylistMaxAge since the last good read, the last good answer expires and
+// the guard behaves as if it had never read one -- incomplete, refusing every
+// target, and the reconciler revokes every network service's Dial policies.
+// A router added or readdressed while refreshes fail is therefore not left
+// outside the denylist indefinitely.
+const (
+	denylistMaxAge      = 15 * time.Minute
+	denylistMaxFailures = 3
+)
+
+// guardNow is the guard's clock; tests move it.
+var guardNow = time.Now
+
+// discovered is one discovered half of the denylist with its freshness.
+type discovered struct {
+	at       time.Time // last good read; zero = never
+	failures int       // consecutive failed reads since then
+}
+
+func (d discovered) fresh() (bool, string) {
+	switch {
+	case d.at.IsZero():
+		return false, "never read"
+	case d.failures >= denylistMaxFailures:
+		return false, fmt.Sprintf("%d consecutive failed reads", d.failures)
+	case guardNow().Sub(d.at) > denylistMaxAge:
+		return false, fmt.Sprintf("last good read %s ago", guardNow().Sub(d.at).Round(time.Second))
+	}
+	return true, ""
+}
+
 var (
-	lastIfaceMu   sync.Mutex
-	lastIfaceDeny []netip.Prefix // the last successful discovery's denylist share
+	lastIfaceMu    sync.Mutex
+	lastIfaceDeny  []netip.Prefix // the last successful discovery's denylist share
+	lastIfaceState discovered
 )
 
 // discoverInterfaceDeny returns the denylist share of this host's interfaces:
 // each address, and the whole network of a container, bridge or overlay
-// interface. An error or an empty answer returns the last good share, or an
-// error when there never was one.
+// interface. An error, a partial or an empty answer returns the last good
+// share while it is fresh, and an error once it is not or there never was one.
 func discoverInterfaceDeny() ([]netip.Prefix, error) {
 	addrs, err := hostInterfaces()
 	if err == nil && len(addrs) == 0 {
@@ -169,10 +207,12 @@ func discoverInterfaceDeny() ([]netip.Prefix, error) {
 	lastIfaceMu.Lock()
 	defer lastIfaceMu.Unlock()
 	if err != nil {
-		if lastIfaceDeny != nil {
+		lastIfaceState.failures++
+		if ok, why := lastIfaceState.fresh(); ok {
 			return lastIfaceDeny, nil
+		} else {
+			return nil, fmt.Errorf("%v; last good discovery unusable (%s)", err, why)
 		}
-		return nil, err
 	}
 	var deny []netip.Prefix
 	for _, a := range addrs {
@@ -182,6 +222,7 @@ func discoverInterfaceDeny() ([]netip.Prefix, error) {
 		}
 	}
 	lastIfaceDeny = deny
+	lastIfaceState = discovered{at: guardNow()}
 	return deny, nil
 }
 
@@ -208,7 +249,7 @@ var defaultDenyDomains = []string{
 var (
 	routerHostsMu    sync.Mutex
 	routerHosts      []string
-	routerHostsKnown bool // a good list was read at least once
+	routerHostsState discovered
 )
 
 type networkTargetGuard struct {
@@ -302,15 +343,21 @@ var targetGuard = func() *networkTargetGuard {
 	// This host's own addresses, and the whole network of every container,
 	// bridge or overlay interface actually present (podman/CNI/docker
 	// networks whose ranges differ from the defaults above).
-	// Fail closed: a discovery that errors or finds nothing (every host has
-	// at least loopback) falls back to the last good list, and with none the
-	// guard is incomplete and refuses every target.
+	// Fail closed: a discovery that errors, is partial or finds nothing
+	// (every host has at least loopback) falls back to the last good list
+	// while it is fresh; otherwise the guard is incomplete and refuses every
+	// target. Completeness needs BOTH discovered halves fresh: the router
+	// hosts are read from the controller (refreshRouterHosts, by the
+	// reconciler and by the API before it judges a write).
 	if ifaceDeny, err := discoverInterfaceDeny(); err != nil {
-		g.incomplete = "host interface discovery failed and no earlier result exists: " + err.Error()
+		g.incomplete = "host interface discovery: " + err.Error()
 	} else {
 		g.deny = append(g.deny, ifaceDeny...)
 	}
 	routerHostsMu.Lock()
+	if ok, why := routerHostsState.fresh(); !ok && g.incomplete == "" {
+		g.incomplete = "router hosts: " + why
+	}
 	for _, h := range routerHosts {
 		if a, err := netip.ParseAddr(h); err == nil {
 			g.deny = append(g.deny, hostPrefix(a.Unmap()))
@@ -683,22 +730,61 @@ func (g *networkTargetGuard) checkEmittedPorts(where string, lo, hi int) error {
 // addresses those names resolve to, so a target cannot name a router. Names
 // are the platform's own, so resolving them here is safe; a lookup that
 // fails keeps the name only.
+//
+// Any failure -- the request, the parse, a partial page, an answer with no
+// host -- counts against the last good list's freshness (discovered.fresh)
+// and does not replace it.
 func refreshRouterHosts(ctx context.Context, zm *ZitiManager) error {
-	data, status, err := zm.mgmtRequest("GET", "/edge/management/v1/edge-routers?limit=1000", nil)
-	if err != nil {
+	if zm == nil {
+		err := fmt.Errorf("no Ziti controller connection")
+		routerHostsMu.Lock()
+		routerHostsState.failures++
+		routerHostsMu.Unlock()
 		return err
 	}
+	hosts, err := readRouterHosts(ctx, zm)
+	routerHostsMu.Lock()
+	defer routerHostsMu.Unlock()
+	if err != nil {
+		routerHostsState.failures++
+		return err
+	}
+	routerHosts = hosts
+	routerHostsState = discovered{at: guardNow()}
+	return nil
+}
+
+// routerHostsFresh reports whether the router-host list is usable now.
+func routerHostsFresh() (bool, string) {
+	routerHostsMu.Lock()
+	defer routerHostsMu.Unlock()
+	return routerHostsState.fresh()
+}
+
+func readRouterHosts(ctx context.Context, zm *ZitiManager) ([]string, error) {
+	data, status, err := zm.mgmtRequest("GET", "/edge/management/v1/edge-routers?limit=1000", nil)
+	if err != nil {
+		return nil, err
+	}
 	if status != 200 {
-		return fmt.Errorf("unexpected status %d listing edge routers", status)
+		return nil, fmt.Errorf("unexpected status %d listing edge routers", status)
 	}
 	var resp struct {
 		Data []struct {
 			Hostname           string            `json:"hostname"`
 			SupportedProtocols map[string]string `json:"supportedProtocols"`
 		} `json:"data"`
+		Meta struct {
+			Pagination struct {
+				TotalCount int `json:"totalCount"`
+			} `json:"pagination"`
+		} `json:"meta"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return err
+		return nil, err
+	}
+	if tc := resp.Meta.Pagination.TotalCount; tc > len(resp.Data) {
+		return nil, fmt.Errorf("the controller listed %d of %d routers", len(resp.Data), tc)
 	}
 	seen := map[string]bool{}
 	var hosts []string
@@ -735,18 +821,7 @@ func refreshRouterHosts(ctx context.Context, zm *ZitiManager) error {
 	// An answer with no router host in it is not a good list: the last good
 	// one stays (a failed request above returns before this, likewise).
 	if len(hosts) == 0 {
-		return fmt.Errorf("the controller listed no router hosts")
+		return nil, fmt.Errorf("the controller listed no router hosts")
 	}
-	routerHostsMu.Lock()
-	routerHosts = hosts
-	routerHostsKnown = true
-	routerHostsMu.Unlock()
-	return nil
-}
-
-// routerHostsAreKnown reports whether a router-host list was ever read.
-func routerHostsAreKnown() bool {
-	routerHostsMu.Lock()
-	defer routerHostsMu.Unlock()
-	return routerHostsKnown
+	return hosts, nil
 }

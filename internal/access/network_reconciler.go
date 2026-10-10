@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"go.uber.org/zap"
@@ -109,12 +110,13 @@ func (rec *ZitiReconciler) ensureNetworkService(ctx context.Context, zm *ZitiMan
 			return fmt.Errorf("network service %s not found after create: %w", d.ServiceName, err)
 		}
 	}
-	for _, cfg := range []string{hostID, interceptID} {
-		if err := zm.EnsureServiceConfig(ctx, svc.ID, cfg); err != nil {
-			return err
-		}
-	}
-	if err := rec.ensureServiceAttr(ctx, zm, svc.ID, d.ServiceName); err != nil {
+	// The service itself is converged to exactly what the reconciler would
+	// create: these two configs and no other (a foreign config attached to it
+	// would change what is intercepted or where it lands), these role
+	// attributes and no other (an extra one could match someone else's
+	// policy), and encryption required.
+	if err := zm.convergeNetworkServiceObject(ctx, svc.ID,
+		[]string{hostID, interceptID}, []string{d.ServiceName, "openidx-managed"}); err != nil {
 		return err
 	}
 
@@ -131,15 +133,137 @@ func (rec *ZitiReconciler) ensureNetworkService(ctx context.Context, zm *ZitiMan
 		[]string{svcRole}, dialRoles, semantic); err != nil {
 		return fmt.Errorf("dial policy: %w", err)
 	}
-	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.ServiceName,
+	if err := zm.convergeServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.ServiceName,
 		[]string{svcRole}, []string{"#all"}); err != nil {
-		rec.logger.Debug("network serp (may already exist)", zap.String("svc", d.ServiceName), zap.Error(err))
+		return fmt.Errorf("service edge router policy: %w", err)
 	}
-	if rec.perOrgAttributes && d.OrgID != "" {
-		if _, err := zm.EnsureServicePolicyForOrg(ctx, d.OrgID, "openidx-orgdial-"+d.ServiceName, "Dial",
-			[]string{svcRole}, []string{"#" + orgMarkerAttr(d.OrgID)}); err != nil {
-			rec.logger.Warn("network per-org dial policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
+	// No per-org Dial policy for a network service: #org-<id> would grant
+	// every member of the organization, wider than the assignment-scoped
+	// policy above. One left by an earlier build is removed.
+	if err := zm.deleteEdgeEntityByName(ctx, "service-policies", "openidx-orgdial-"+d.ServiceName); err != nil {
+		return fmt.Errorf("remove per-org dial policy: %w", err)
+	}
+	// Nothing else may apply to the service: a Bind or Dial policy the
+	// reconciler did not write (someone else's, or a #all selector) would
+	// host or reach it outside the assignment. Such drift fails the
+	// convergence, which removes the service (fail closed) and names the
+	// policy in the status.
+	return zm.refuseForeignServicePolicies(ctx, svc.ID, map[string]bool{
+		"openidx-bind-" + d.ServiceName: true,
+		"openidx-dial-" + d.ServiceName: true,
+	})
+}
+
+// convergeNetworkServiceObject sets the service's configs and role
+// attributes to exactly the given sets and encryptionRequired to true,
+// patching only what differs.
+func (zm *ZitiManager) convergeNetworkServiceObject(ctx context.Context, svcID string, configs, attrs []string) error {
+	data, status, err := zm.mgmtRequest("GET", "/edge/management/v1/services/"+svcID, nil)
+	if err != nil {
+		return fmt.Errorf("read service: %w", err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("unexpected status %d reading service %s", status, svcID)
+	}
+	var resp struct {
+		Data struct {
+			Configs            []string `json:"configs"`
+			RoleAttributes     []string `json:"roleAttributes"`
+			EncryptionRequired *bool    `json:"encryptionRequired"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return fmt.Errorf("parse service: %w", err)
+	}
+	patch := map[string]interface{}{}
+	if !sameRoleSet(resp.Data.Configs, configs) {
+		patch["configs"] = configs
+	}
+	if !sameRoleSet(resp.Data.RoleAttributes, attrs) {
+		patch["roleAttributes"] = attrs
+	}
+	if resp.Data.EncryptionRequired != nil && !*resp.Data.EncryptionRequired {
+		patch["encryptionRequired"] = true
+	}
+	if len(patch) == 0 {
+		return nil
+	}
+	body, _ := json.Marshal(patch)
+	_, ps, perr := zm.mgmtRequest("PATCH", "/edge/management/v1/services/"+svcID, body)
+	if perr != nil {
+		return fmt.Errorf("repair service: %w", perr)
+	}
+	if ps != http.StatusOK && ps != http.StatusAccepted {
+		return fmt.Errorf("unexpected status %d repairing service %s", ps, svcID)
+	}
+	return nil
+}
+
+// convergeServiceEdgeRouterPolicy makes the named service-edge-router policy
+// exist with exactly these roles and AnyOf, replacing one that differs.
+func (zm *ZitiManager) convergeServiceEdgeRouterPolicy(ctx context.Context, name string, serviceRoles, edgeRouterRoles []string) error {
+	data, status, err := zm.mgmtRequest("GET",
+		"/edge/management/v1/service-edge-router-policies?filter="+zitiFilterEquals("name", name), nil)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("unexpected status %d reading %s", status, name)
+	}
+	var resp struct {
+		Data []struct {
+			ID              string   `json:"id"`
+			Name            string   `json:"name"`
+			Semantic        string   `json:"semantic"`
+			ServiceRoles    []string `json:"serviceRoles"`
+			EdgeRouterRoles []string `json:"edgeRouterRoles"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return err
+	}
+	for _, p := range resp.Data {
+		if p.Name != name {
+			continue
 		}
+		if policySemantic(p.Semantic) == "AnyOf" && sameRoleSet(p.ServiceRoles, serviceRoles) && sameRoleSet(p.EdgeRouterRoles, edgeRouterRoles) {
+			return nil
+		}
+		if err := zm.deleteEdgeEntityByName(ctx, "service-edge-router-policies", name); err != nil {
+			return fmt.Errorf("replace drifted %s: %w", name, err)
+		}
+		break
+	}
+	return zm.EnsureServiceEdgeRouterPolicy(ctx, name, serviceRoles, edgeRouterRoles)
+}
+
+// refuseForeignServicePolicies fails when any service policy other than the
+// allowed ones applies to the service.
+func (zm *ZitiManager) refuseForeignServicePolicies(ctx context.Context, svcID string, allowed map[string]bool) error {
+	data, status, err := zm.mgmtRequest("GET", "/edge/management/v1/services/"+svcID+"/service-policies?limit=1000", nil)
+	if err != nil {
+		return fmt.Errorf("read the policies that apply to the service: %w", err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("unexpected status %d reading the policies that apply to the service", status)
+	}
+	var resp struct {
+		Data []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return err
+	}
+	var foreign []string
+	for _, p := range resp.Data {
+		if !allowed[p.Name] {
+			foreign = append(foreign, p.Type+" "+p.Name)
+		}
+	}
+	if len(foreign) > 0 {
+		return fmt.Errorf("policies the reconciler did not write apply to this service: %s", strings.Join(foreign, ", "))
 	}
 	return nil
 }
@@ -208,12 +332,12 @@ func (rec *ZitiReconciler) reconcileNetworkServices(ctx context.Context, zm *Zit
 	if err := refreshRouterHosts(ctx, zm); err != nil {
 		rec.logger.Warn("network services: router hosts not refreshed; keeping the last good list", zap.Error(err))
 	}
-	if !routerHostsAreKnown() {
-		rec.logger.Warn("network services: no router host list has been read yet; writing nothing this pass")
-		return
-	}
+	// The guard is complete only while both discovered halves (router hosts,
+	// host interfaces) are fresh. When it is not, nothing new is written and
+	// nothing judged under an older denylist stays dialable.
 	if g := targetGuard(); g.incomplete != "" {
-		rec.logger.Warn("network services: denylist incomplete; writing nothing this pass", zap.String("why", g.incomplete))
+		rec.logger.Warn("network services: denylist incomplete; revoking every network Dial policy and writing nothing", zap.String("why", g.incomplete))
+		rec.revokeNetworkDials(ctx, zm, "denylist incomplete: "+g.incomplete)
 		return
 	}
 	load := rec.loadNetwork
@@ -223,7 +347,7 @@ func (rec *ZitiReconciler) reconcileNetworkServices(ctx context.Context, zm *Zit
 	desired, err := load(ctx)
 	if err != nil {
 		rec.logger.Warn("reconcile: load network resources failed; removing every network service's Dial policies", zap.Error(err))
-		rec.revokeNetworkDials(ctx, zm)
+		rec.revokeNetworkDials(ctx, zm, "network resources could not be loaded")
 		return
 	}
 	rec.applyNetworkServices(ctx, zm, desired)
@@ -231,7 +355,7 @@ func (rec *ZitiReconciler) reconcileNetworkServices(ctx context.Context, zm *Zit
 
 // revokeNetworkDials removes the Dial policies of every network service on
 // the controller, leaving the services and configs for the next good pass.
-func (rec *ZitiReconciler) revokeNetworkDials(ctx context.Context, zm *ZitiManager) {
+func (rec *ZitiReconciler) revokeNetworkDials(ctx context.Context, zm *ZitiManager, why string) {
 	services, err := zm.ListServices(ctx)
 	if err != nil {
 		rec.logger.Warn("network services: list for dial revoke failed", zap.Error(err))
@@ -246,7 +370,7 @@ func (rec *ZitiReconciler) revokeNetworkDials(ctx context.Context, zm *ZitiManag
 				rec.logger.Warn("network services: dial revoke failed", zap.String("policy", p), zap.Error(err))
 			}
 		}
-		rec.setStatus(s.Name, "error: network resources could not be loaded; dial revoked")
+		rec.setStatus(s.Name, "error: "+why+"; dial revoked")
 	}
 }
 

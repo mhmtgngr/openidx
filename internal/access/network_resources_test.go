@@ -204,7 +204,7 @@ type fakeNetCtrl struct {
 	configs  map[string]map[string]interface{} // id -> {id,name,data}
 	services map[string]map[string]interface{} // id -> {id,name,roleAttributes,configs}
 	policies map[string]map[string]interface{} // id -> policy
-	serps    map[string]string                 // name -> id
+	serps    map[string]map[string]interface{} // name -> policy
 	writes   []string
 	routers  []interface{} // edge routers the controller lists
 	// failPolicyWrites makes service-policy creates and updates fail.
@@ -214,7 +214,7 @@ type fakeNetCtrl struct {
 func newFakeNetCtrl() *fakeNetCtrl {
 	return &fakeNetCtrl{
 		configs: map[string]map[string]interface{}{}, services: map[string]map[string]interface{}{},
-		policies: map[string]map[string]interface{}{}, serps: map[string]string{},
+		policies: map[string]map[string]interface{}{}, serps: map[string]map[string]interface{}{},
 	}
 }
 
@@ -275,7 +275,7 @@ func (f *fakeNetCtrl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		listByName(f.configs)
 	case coll == "configs" && r.Method == http.MethodPost:
 		nid := f.id("cfg")
-		f.configs[nid] = map[string]interface{}{"id": nid, "name": in["name"], "data": in["data"]}
+		f.configs[nid] = map[string]interface{}{"id": nid, "name": in["name"], "data": in["data"], "configTypeId": in["configTypeId"]}
 		reply(http.StatusCreated, map[string]string{"id": nid})
 	case coll == "configs" && r.Method == http.MethodPatch:
 		f.configs[id]["data"] = in["data"]
@@ -283,11 +283,35 @@ func (f *fakeNetCtrl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case coll == "configs" && r.Method == http.MethodDelete:
 		delete(f.configs, id)
 		reply(http.StatusOK, map[string]string{})
+	case coll == "services" && strings.HasSuffix(id, "/service-policies") && r.Method == http.MethodGet:
+		// The policies that select this service: #all, @id, or one of its
+		// role attributes.
+		svc := f.services[strings.TrimSuffix(id, "/service-policies")]
+		out := []interface{}{}
+		if svc != nil {
+			sel := map[string]bool{"#all": true, "@" + svc["id"].(string): true}
+			if attrs, ok := svc["roleAttributes"].([]interface{}); ok {
+				for _, a := range attrs {
+					sel["#"+a.(string)] = true
+				}
+			}
+			for _, p := range f.policies {
+				roles, _ := p["serviceRoles"].([]interface{})
+				for _, ro := range roles {
+					if sel[ro.(string)] {
+						out = append(out, p)
+						break
+					}
+				}
+			}
+		}
+		reply(http.StatusOK, out)
 	case coll == "services" && id == "" && r.Method == http.MethodGet:
 		listByName(f.services)
 	case coll == "services" && r.Method == http.MethodPost:
 		nid := f.id("svc")
-		f.services[nid] = map[string]interface{}{"id": nid, "name": in["name"], "roleAttributes": in["roleAttributes"], "configs": in["configs"]}
+		f.services[nid] = map[string]interface{}{"id": nid, "name": in["name"], "roleAttributes": in["roleAttributes"],
+			"configs": in["configs"], "encryptionRequired": in["encryptionRequired"]}
 		reply(http.StatusCreated, map[string]string{"id": nid})
 	case coll == "services" && r.Method == http.MethodGet:
 		reply(http.StatusOK, f.services[id])
@@ -315,8 +339,8 @@ func (f *fakeNetCtrl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(http.StatusOK, map[string]string{})
 	case coll == "service-edge-router-policies" && r.Method == http.MethodGet:
 		out := []interface{}{}
-		if sid, ok := f.serps[netFilterName(r)]; ok {
-			out = append(out, map[string]string{"id": sid, "name": netFilterName(r)})
+		if p, ok := f.serps[netFilterName(r)]; ok {
+			out = append(out, p)
 		}
 		reply(http.StatusOK, out)
 	case coll == "service-edge-router-policies" && r.Method == http.MethodPost:
@@ -325,11 +349,12 @@ func (f *fakeNetCtrl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reply(http.StatusBadRequest, map[string]string{})
 			return
 		}
-		f.serps[name] = f.id("serp")
-		reply(http.StatusCreated, map[string]string{"id": f.serps[name]})
+		in["id"] = f.id("serp")
+		f.serps[name] = in
+		reply(http.StatusCreated, map[string]interface{}{"id": in["id"]})
 	case coll == "service-edge-router-policies" && r.Method == http.MethodDelete:
 		for n, v := range f.serps {
-			if v == id {
+			if v["id"] == id {
 				delete(f.serps, n)
 			}
 		}

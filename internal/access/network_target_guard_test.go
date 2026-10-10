@@ -22,11 +22,23 @@ func pinTargetGuard(t *testing.T) {
 	hostInterfaces = func() ([]ifaceAddr, error) {
 		return []ifaceAddr{{name: "lo", prefix: netip.MustParsePrefix("127.0.0.1/8")}}, nil
 	}
+	lastIfaceMu.Lock()
+	origIfaceState := lastIfaceState
+	lastIfaceMu.Unlock()
+	// The router-host half is fresh, naming one router outside every test
+	// network.
+	routerHostsMu.Lock()
+	origRouters, origRouterState := routerHosts, routerHostsState
+	routerHosts, routerHostsState = []string{"router.pinned.test"}, discovered{at: guardNow()}
+	routerHostsMu.Unlock()
 	t.Cleanup(func() {
 		hostInterfaces = orig
 		lastIfaceMu.Lock()
-		lastIfaceDeny = origLast
+		lastIfaceDeny, lastIfaceState = origLast, origIfaceState
 		lastIfaceMu.Unlock()
+		routerHostsMu.Lock()
+		routerHosts, routerHostsState = origRouters, origRouterState
+		routerHostsMu.Unlock()
 	})
 }
 
