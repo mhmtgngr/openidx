@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - **The free-form Ziti "Add service" form.** `POST /api/v1/access/ziti/services` still creates a service from one host and port with hand-written dial roles, but a network resource does the same from an assignment, with several addresses, port ranges and UDP, and is the way to add one. The form will be removed once existing services have moved.
 
+### Fixed
+
+- `ELASTICSEARCH_URL` set and empty turns Elasticsearch off. Before, the empty value was ignored, so an install without Elasticsearch kept dialling localhost:9200 and production asked for Elasticsearch credentials it had no use for.
+
 ## [1.42.0] - 2026-10-10
 
 ### Changed

@@ -1517,6 +1517,34 @@ func TestReportModeGatesNamesEveryOpenControl(t *testing.T) {
 	}
 }
 
+// TestAnEmptyElasticsearchURLTurnsItOff: an install without Elasticsearch says
+// so with ELASTICSEARCH_URL set and empty. Viper ignored the empty variable and
+// loaded the localhost default, so the audit service dialled a port nothing
+// listens on and the production gate asked for Elasticsearch credentials.
+func TestAnEmptyElasticsearchURLTurnsItOff(t *testing.T) {
+	t.Run("set and empty: off", func(t *testing.T) {
+		t.Setenv("ELASTICSEARCH_URL", "")
+		cfg, err := Load("audit-service")
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if cfg.ElasticsearchURL != "" {
+			t.Fatalf("ELASTICSEARCH_URL=\"\" loaded as %q", cfg.ElasticsearchURL)
+		}
+	})
+	t.Run("unset: the development default", func(t *testing.T) {
+		t.Setenv("ELASTICSEARCH_URL", "")
+		os.Unsetenv("ELASTICSEARCH_URL")
+		cfg, err := Load("audit-service")
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if cfg.ElasticsearchURL != "http://localhost:9200" {
+			t.Fatalf("unset ELASTICSEARCH_URL loaded as %q", cfg.ElasticsearchURL)
+		}
+	})
+}
+
 // TestAnEmptyAccessProxyDomainStaysEmpty: the Helm chart renders
 // ACCESS_PROXY_DOMAIN empty when the install names no ingress host, which is
 // now its default, meaning "no public host yet": vendor-access links are
