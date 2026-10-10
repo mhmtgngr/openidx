@@ -37,13 +37,24 @@ class MfaApi {
   // -- Push -------------------------------------------------------------------
 
   /// `POST /api/v1/identity/mfa/push/register` — register this device's token.
+  ///
+  /// An account that already has a second factor must prove it is its owner
+  /// to add another (internal/identity/factor_proof.go): pass the account
+  /// password as [currentPassword]. Without it such an account is refused with
+  /// 403 `reauthentication_required`.
   Future<void> registerPush({
     required String deviceToken,
     required String platform,
+    String? currentPassword,
   }) async {
     await _api.post<Map<String, dynamic>>(
       '/api/v1/identity/mfa/push/register',
-      data: {'device_token': deviceToken, 'platform': platform},
+      data: {
+        'device_token': deviceToken,
+        'platform': platform,
+        if (currentPassword != null && currentPassword.isNotEmpty)
+          'current_password': currentPassword,
+      },
     );
   }
 

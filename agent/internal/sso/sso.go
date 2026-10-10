@@ -309,6 +309,10 @@ type MobileLogin struct {
 // to validate it out-of-band; Exchange also enforces it).
 func (m *MobileLogin) State() string { return m.state }
 
+// ServerURL is the server this flow signs in to. It is persisted by Save, so a
+// cold-started process still knows where the session it is finishing lives.
+func (m *MobileLogin) ServerURL() string { return m.serverURL }
+
 // BindDevice names the enrolled device this session will belong to. See
 // PendingLogin.BindDevice; it is persisted by Save so a cold-started process
 // still sends it (the Android case this whole flow exists for).

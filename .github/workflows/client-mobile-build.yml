@@ -212,9 +212,58 @@ jobs:
         working-directory: client
         run: flutter pub get
 
+      # Every runner generated its own ~/.android/debug.keystore, so each build
+      # was signed with a different key and could not update the app already on
+      # a phone (INSTALL_FAILED_UPDATE_INCOMPATIBLE): every test build meant an
+      # uninstall, which drops the sign-in and the push registration with it.
+      # ANDROID_DEBUG_KEYSTORE_B64 pins one debug key (alias androiddebugkey,
+      # store and key password "android", Gradle's debug defaults) for every
+      # build. Without the secret the build still runs, with a fresh key.
+      - name: Pin the debug signing key
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$DEBUG_KEYSTORE_B64" ]; then
+            echo "::warning::ANDROID_DEBUG_KEYSTORE_B64 is not set: this APK is signed with a fresh debug key and cannot update an installed build"
+            exit 0
+          fi
+          # Dropping the file at ~/.android/debug.keystore did not take: the
+          # APKs still carried fresh keys. Gradle is told instead, through an
+          # init script, exactly which keystore, alias and passwords the debug
+          # signing config uses, so the generated build.gradle.kts stays
+          # untouched and no default path is relied on.
+          ks="$RUNNER_TEMP/pinned-debug.keystore"
+          printf '%s' "$DEBUG_KEYSTORE_B64" | base64 -d > "$ks"
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/pin-debug-key.gradle <<GRADLE
+          allprojects {
+              // During evaluation, as soon as the Android plugin has created
+              // the debug signing config: in afterEvaluate AGP has already
+              // read it and refuses the change.
+              plugins.withId('com.android.application') {
+                  def debug = android.signingConfigs.getByName('debug')
+                  debug.storeFile = file('$ks')
+                  debug.storeType = 'pkcs12'
+                  debug.storePassword = 'android'
+                  debug.keyAlias = 'androiddebugkey'
+                  debug.keyPassword = 'android'
+              }
+          }
+          GRADLE
+          cert=$(openssl pkcs12 -in "$ks" -passin pass:android -nokeys \
+                   | openssl x509 -outform DER | sha256sum | cut -d' ' -f1)
+          echo "PINNED_DEBUG_CERT=$cert" >> "$GITHUB_ENV"
+          echo "debug signing pinned through ~/.gradle/init.d/pin-debug-key.gradle"
+
       - name: Build APK
         working-directory: client
         run: flutter build apk --debug
+
+      # The build succeeds with any key, so a pin that did not take is only
+      # found when a phone refuses the update. Read the signer out of the APK.
+      - name: Verify the APK carries the pinned key
+        if: env.PINNED_DEBUG_CERT != ''
+        run: python3 scripts/apk-signer-cert.py client/build/app/outputs/flutter-apk/app-debug.apk --expect "$PINNED_DEBUG_CERT"
 
       - uses: actions/upload-artifact@v4
         with:

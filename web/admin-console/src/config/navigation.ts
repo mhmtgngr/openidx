@@ -211,6 +211,7 @@ export const navigation: NavDomainGroup[] = [
         label: 'Security & MFA',
         labelKey: 'nav.sections.securityMfa',
         items: [
+          { name: 'Enforcement', nameKey: 'nav.items.enforcement', href: '/enforcement', icon: ShieldCheck, minRole: 'admin', keywords: ['observe', 'enforce', 'gates', 'would deny', 'production'] },
           { name: 'MFA Management', nameKey: 'nav.items.mfaManagement', href: '/mfa-management', icon: Shield, minRole: 'operator', keywords: ['totp', 'factors', 'reset mfa'] },
           { name: 'Risk Policies', nameKey: 'nav.items.riskPolicies', href: '/risk-policies', icon: Activity, minRole: 'admin', keywords: ['adaptive', 'conditional access'] },
           { name: 'Login Anomalies', nameKey: 'nav.items.loginAnomalies', href: '/login-anomalies', icon: AlertTriangle, minRole: 'operator', keywords: ['impossible travel', 'suspicious'] },

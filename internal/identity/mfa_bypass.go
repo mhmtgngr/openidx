@@ -3,9 +3,7 @@ package identity
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"time"
@@ -82,12 +80,10 @@ func (s *Service) GenerateMFABypassCode(ctx context.Context, req *GenerateBypass
 		return nil, errors.New("user not found")
 	}
 
-	// Generate secure bypass code (16 characters)
-	codeBytes := make([]byte, 12)
-	if _, err := rand.Read(codeBytes); err != nil {
+	code, err := generateBypassCode()
+	if err != nil {
 		return nil, err
 	}
-	code := base64.URLEncoding.EncodeToString(codeBytes)[:16]
 
 	// Hash the code
 	codeHash, err := bcrypt.GenerateFromPassword([]byte(code), bcryptCost)
@@ -241,7 +237,7 @@ func (s *Service) VerifyBypassCode(ctx context.Context, userID, code, ipAddress,
 		}
 
 		// Verify code
-		if err := bcrypt.CompareHashAndPassword([]byte(c.codeHash), []byte(code)); err != nil {
+		if !bypassCodeMatches(c.codeHash, code) {
 			continue // Try next code
 		}
 

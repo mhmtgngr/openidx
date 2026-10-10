@@ -26,13 +26,19 @@ type SessionPolicy struct {
 // DefaultSessionPolicy returns the system-wide default session policy
 func DefaultSessionPolicy() SessionPolicy {
 	return SessionPolicy{
-		IdleTimeout:               1800,    // 30 minutes
-		AbsoluteTimeout:           86400,   // 24 hours
-		RememberMeDuration:        2592000, // 30 days
-		ReauthInterval:            0,       // disabled
-		BindSessionToIP:           false,
-		MaxConcurrentSessions:     0, // unlimited
-		ConcurrentSessionStrategy: "deny_new",
+		IdleTimeout:        1800,    // 30 minutes
+		AbsoluteTimeout:    86400,   // 24 hours
+		RememberMeDuration: 2592000, // 30 days
+		ReauthInterval:     0,       // disabled
+		BindSessionToIP:    false,
+		// Ten live sessions per person, oldest dropped first. Unlimited was the
+		// default, so a credential used from a hundred places kept a hundred
+		// sessions and nobody was told. Ten covers one person's console, phone,
+		// tray, browser and privileged sessions; terminate_oldest never refuses
+		// a sign-in, it retires the session least recently started. The
+		// Security tab's own value still wins when it is set.
+		MaxConcurrentSessions:     10,
+		ConcurrentSessionStrategy: "terminate_oldest",
 	}
 }
 

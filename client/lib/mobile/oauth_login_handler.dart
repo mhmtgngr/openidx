@@ -3,9 +3,9 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../state/api_providers.dart';
 import '../state/providers.dart';
 import 'deep_links.dart';
+import 'push_setup.dart';
 
 /// App-level owner of mobile OAuth login completion.
 ///
@@ -82,12 +82,11 @@ class _MobileOAuthLoginHandlerState
   /// enrollment code. Swallows all errors — login already succeeded.
   Future<void> _autoRegisterPush() async {
     try {
-      final push = await ref.read(pushTokenServiceProvider).resolve();
-      if (push == null) return; // desktop / unsupported
-      await ref
-          .read(mfaApiProvider)
-          .registerPush(deviceToken: push.token, platform: push.platform);
-      ref.invalidate(statusProvider);
+      // An account that already has a second factor is refused without the
+      // password; PushSetupGate asks for it once the shell is up.
+      if (await registerThisPhone(ref) == PushSetupOutcome.registered) {
+        ref.invalidate(statusProvider);
+      }
     } catch (_) {
       // Non-fatal: the user is signed in; push can be added later from Settings.
     }

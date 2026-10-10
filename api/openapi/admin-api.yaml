@@ -6823,6 +6823,27 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/security-posture:
+    get:
+      tags: [System Health]
+      summary: Enforcement posture
+      description: Which authorization controls are open, what each would have refused in the last week, and the days left in a declared observe window.
+      operationId: securityPosture
+      x-openidx-handler: internal/admin.(*Service).handleSecurityPosture
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
   /api/v1/system/health:
     get:
       tags: [System Health]
