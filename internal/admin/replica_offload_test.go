@@ -56,8 +56,8 @@ var offloadedToReplica = map[string]string{
 // The reason is recorded here so nobody has to work it out twice.
 var stayOnPrimary = map[string]string{
 	"enforcement_posture.go": "the Enforcement page's would-deny counts: what an administrator reads before flipping a control from observe to enforce. A replica a few seconds behind would show a zero the primary does not, and the flip would be made on it",
-	"dsar_processor.go": "a worker, not a page: it polls data_subject_requests for work it is about to act on. A lagging replica would hand it a request another replica already took, or hide one that is waiting -- the textbook read-after-write, and the reason Reader() exists to be opted into rather than assumed",
-	"tilequery.go":      "a generic helper that runs whatever SQL its caller hands it. Offloading it would offload every caller at once, including ones nobody has read, which is exactly the decision this census exists to prevent being made by accident",
+	"dsar_processor.go":      "a worker, not a page: it polls data_subject_requests for work it is about to act on. A lagging replica would hand it a request another replica already took, or hide one that is waiting -- the textbook read-after-write, and the reason Reader() exists to be opted into rather than assumed",
+	"tilequery.go":           "a generic helper that runs whatever SQL its caller hands it. Offloading it would offload every caller at once, including ones nobody has read, which is exactly the decision this census exists to prevent being made by accident",
 
 	// AND THE REST OF THE PACKAGE, for one measured reason.
 	//
