@@ -19,7 +19,13 @@ global:
 # This disables the in-chart plaintext Secret and the in-cluster DATABASE_URL/
 # REDIS_URL builder; both are pulled from the store instead. Store the full
 # connection strings (pointing at managed RDS/ElastiCache) under
-# <remoteKeyPrefix>/database-url and <remoteKeyPrefix>/redis-url.
+#   <remoteKeyPrefix>/database-url         the OWNER: migrations and backups only
+#   <remoteKeyPrefix>/database-app-url     openidx_app: every service's DATABASE_URL
+#   <remoteKeyPrefix>/database-bypass-url  openidx_bypass (BYPASSRLS): DATABASE_BYPASS_URL,
+#                                          which APP_ENV=production refuses to start without
+#   <remoteKeyPrefix>/redis-url
+# No service connects as the owner (docs/docs/deployment/kubernetes.md,
+# "Database roles").
 externalSecrets:
   enabled: true
   refreshInterval: "1h"

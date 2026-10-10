@@ -25,6 +25,13 @@ scrape_configs:
         labels:
           env: box
 
+  # node-exporter with the textfile collector, which carries the backup
+  # freshness metric pg-backup.sh writes (OIDX_BACKUP_TEXTFILE_DIR) and so the
+  # OpenIDXBackupStale alert. See deployments/scripts/README.md for running it.
+  - job_name: node
+    static_configs:
+      - targets: ['127.0.0.1:9100']
+
   # APISIX exposes its own Prometheus metrics (edge RPS, latency, upstream health).
   - job_name: apisix
     metrics_path: /apisix/prometheus/metrics

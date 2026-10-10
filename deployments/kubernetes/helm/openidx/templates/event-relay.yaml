@@ -110,7 +110,7 @@ spec:
             {{- end }}
           envFrom:
             - secretRef:
-                name: {{ $fullname }}-db-url
+                name: {{ $fullname }}-db-app-url
             - secretRef:
                 name: {{ $fullname }}-secrets
             - configMapRef:

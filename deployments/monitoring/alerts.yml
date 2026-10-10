@@ -64,3 +64,18 @@ groups:
         annotations:
           summary: "Goroutine count high on {{ $labels.service }}"
           description: "{{ $labels.service }} has >5000 goroutines for 15m — possible leak."
+
+  # Database backups (deployments/scripts/pg-backup.sh). The script writes
+  # openidx_backup_last_success_timestamp_seconds{kind="local|offbox"} to the
+  # node-exporter textfile collector when OIDX_BACKUP_TEXTFILE_DIR is set; the
+  # timer runs daily, so 26h is one missed run plus slack. A kind that was
+  # never configured has no series and cannot fire.
+  - name: openidx-backups
+    rules:
+      - alert: OpenIDXBackupStale
+        expr: time() - openidx_backup_last_success_timestamp_seconds > 26 * 3600
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "No successful {{ $labels.kind }} database backup in over 26h"
+          description: "The last successful {{ $labels.kind }} backup was {{ $value | humanizeDuration }} ago. Check `journalctl --user -u oidx-pg-backup.service` and, for kind=offbox, last-offbox.json in the backup directory (deployments/scripts/README.md)."

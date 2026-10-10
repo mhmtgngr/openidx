@@ -33,6 +33,7 @@ A slow request's trace then shows *which* hop hurt (OPA / Guacamole / Ziti / DB)
 | `OpenIDXHighLatencyP99` | p99 request latency > 1s over 10m |
 | `OpenIDXDBPoolSaturation` | in-use conns > 80% of the pool max (ties to roadmap #9) |
 | `OpenIDXGoroutineLeak` | > 5000 goroutines for 15m |
+| `OpenIDXBackupStale` | no successful local or off-box database backup for 26h (needs node-exporter's textfile collector; see `deployments/scripts/README.md`) |
 
 Wire alerts to a receiver (Alertmanager / webhook) as a follow-up. Tune the
 thresholds once you've watched a week of baseline.

@@ -142,6 +142,49 @@ jobs:
             --set edge.originVerify.value=render-only-placeholder-override \
             > /tmp/render-prod.yaml
 
+      # No service connects as the database owner. Compose runs the services as
+      # openidx_app and background work as openidx_bypass; the chart used to
+      # hand every service the owner's DSN, which is the role FORCE RLS is
+      # easiest to lift for. The owner's DSN (-db-url) is the migration Job's
+      # and the backup CronJob's; every Deployment reads -db-app-url, in both
+      # secret modes.
+      - name: Services connect as openidx_app, not the owner
+        run: |
+          python3 - /tmp/render-default.yaml /tmp/render-prod.yaml <<'PYEOF'
+          import sys, yaml
+          for path in sys.argv[1:]:
+              docs = [d for d in yaml.safe_load_all(open(path)) if d]
+              def by(kind, name):
+                  return next((d for d in docs if d["kind"] == kind and d["metadata"]["name"] == name), None)
+              def refs(c):
+                  return [e["secretRef"]["name"] for e in c.get("envFrom", []) if "secretRef" in e]
+              deps = [d for d in docs if d["kind"] == "Deployment"]
+              for d in deps:
+                  for c in d["spec"]["template"]["spec"]["containers"]:
+                      assert "openidx-db-url" not in refs(c), f"{path}: {d['metadata']['name']} reads the owner's DSN"
+              on_app = {d["metadata"]["name"] for d in deps
+                        if any("openidx-db-app-url" in refs(c) for c in d["spec"]["template"]["spec"]["containers"])}
+              assert len(on_app) >= 8, f"{path}: only {sorted(on_app)} read -db-app-url"
+              mig = by("Job", "openidx-migrate")
+              if mig:
+                  assert refs(mig["spec"]["template"]["spec"]["containers"][0]) == ["openidx-db-url"], "migrations need the owner"
+              if "prod" in path:
+                  es = by("ExternalSecret", "openidx-db-app-url")
+                  keys = {x["secretKey"]: x["remoteRef"]["key"] for x in es["spec"]["data"]}
+                  assert keys["DATABASE_URL"].endswith("/database-app-url"), keys
+                  assert keys["DATABASE_BYPASS_URL"].endswith("/database-bypass-url"), keys
+                  owner = by("ExternalSecret", "openidx-db-url")
+                  assert [x["secretKey"] for x in owner["spec"]["data"]] == ["DATABASE_URL"], owner
+                  assert by("Secret", "openidx-db-roles") is None, "external-secrets mode renders no generated passwords"
+              else:
+                  app = by("Secret", "openidx-db-app-url")["stringData"]
+                  pw = by("Secret", "openidx-db-roles")["stringData"]
+                  assert app["DATABASE_URL"].startswith(f"postgres://openidx_app:{pw['app-password']}@"), "DATABASE_URL is not openidx_app"
+                  assert app["DATABASE_BYPASS_URL"].startswith(f"postgres://openidx_bypass:{pw['bypass-password']}@"), "DATABASE_BYPASS_URL is not openidx_bypass"
+                  assert list(by("Secret", "openidx-db-url")["stringData"]) == ["DATABASE_URL"], "-db-url carries more than the owner's DSN"
+              print(f"{path}: {len(on_app)} Deployments on -db-app-url, migrations on the owner")
+          PYEOF
+
       # The cell shape (values-ci-cell.yaml over values-ci.yaml): pooler,
       # transaction-local scope, streaming replica, plane split and cell id in
       # one render. Every interlock below is exercised on its own; this is the
@@ -160,8 +203,11 @@ jobs:
                       return d
               raise AssertionError(f"{kind}/{name} did not render")
           # Replication renames the primary's Service; every DSN has to follow.
-          db = by("Secret", "openidx-db-url")["stringData"]
+          owner = by("Secret", "openidx-db-url")["stringData"]
+          assert "@openidx-postgresql-primary:5432/" in owner["DATABASE_URL"], owner["DATABASE_URL"]
+          db = by("Secret", "openidx-db-app-url")["stringData"]
           assert "@openidx-postgresql-primary:5432/" in db["DATABASE_URL"], db["DATABASE_URL"]
+          assert "@openidx-postgresql-primary:5432/" in db["DATABASE_BYPASS_URL"], db["DATABASE_BYPASS_URL"]
           assert "@openidx-postgresql-read:5432/" in db["DATABASE_READ_URL"], db["DATABASE_READ_URL"]
           assert db["DATABASE_READ_URL"].startswith("postgres://openidx_app:"), \
               "the replica pool must be the same role as the pooled primary pool"
@@ -171,8 +217,10 @@ jobs:
           env = {e["name"]: e for e in boot}
           assert env["PGHOST"]["value"] == "openidx-postgresql-primary", env["PGHOST"]
           assert env["OPENIDX_APP_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "app-password"
+          assert env["OPENIDX_APP_PASSWORD"]["valueFrom"]["secretKeyRef"]["name"] == "openidx-db-roles"
+          roles = by("Secret", "openidx-db-roles")["stringData"]
+          assert roles["app-password"] == "ci-pgcat-password", "the hook sets the pooler's upstream credential"
           auth = by("Secret", "openidx-datastore-auth")["stringData"]
-          assert auth["app-password"] == "ci-pgcat-password", "the hook sets the pooler's upstream credential"
           assert "replication-password" in auth, "the read replica cannot stream without it"
           np = by("NetworkPolicy", "openidx-postgres-allow")["spec"]["podSelector"]
           comps = {v for e in np.get("matchExpressions", []) if e["key"] == "app.kubernetes.io/component" for v in e["values"]}
@@ -1366,7 +1414,7 @@ jobs:
           # migration that assumes it. Helm completes a hook weight before
           # starting the next, so the whole ordering is three annotations --
           # easy to get silently wrong, and wrong means the install fails.
-          render -s templates/db-bootstrap-job.yaml -s templates/migrate-job.yaml \
+          render -s templates/secrets.yaml -s templates/db-bootstrap-job.yaml -s templates/migrate-job.yaml \
           | python3 -c '
           import sys, yaml
           w = {}
@@ -1377,12 +1425,16 @@ jobs:
               if "helm.sh/hook-weight" in ann:
                   w[(doc["kind"], doc["metadata"]["name"])] = int(ann["helm.sh/hook-weight"])
           print("hook weights:", w)
+          roles = w[("Secret", "openidx-db-roles")]
           cm  = w[("ConfigMap", "openidx-db-bootstrap")]
           job = w[("Job", "openidx-db-bootstrap")]
           mig = w[("Job", "openidx-migrate")]
+          # The passwords are a hook too: on pre-upgrade an ordinary Secret is
+          # still the previous release copy when the bootstrap Job runs.
+          assert roles < job, f"the role-password Secret ({roles}) must exist before the bootstrap Job sets them ({job})"
           assert cm < job, f"the bootstrap script ConfigMap ({cm}) must be created before the Job that mounts it ({job})"
           assert job < mig, f"the bootstrap Job ({job}) must run before the migration Job ({mig})"
-          print("ordering holds: ConfigMap -> bootstrap Job -> migrate Job")
+          print("ordering holds: role passwords + ConfigMap -> bootstrap Job -> migrate Job")
           '
 
           # An external database gets no bootstrap objects: the chart holds no
@@ -1874,17 +1926,40 @@ jobs:
 
           bare=$(via_pool openidx_app ci-pgcat-password openidx 'SELECT count(*) FROM users')
           test "$bare" = "0" || { echo "::error::openidx_app with no tenant scope sees $bare users through the pooler; the belt is not FORCE'd against it"; exit 1; }
+          # The seeded admin's organization, read as the owner on the primary.
+          # The bootstrap hook gives the owner BYPASSRLS (as compose does), so
+          # it sees every row.
+          org=$(kubectl -n "$NS" exec "statefulset/$RELEASE-postgresql-primary" -- \
+            env PGPASSWORD=ci-postgres-password psql -U openidx -d openidx -tAc \
+            "SELECT org_id FROM users ORDER BY created_at LIMIT 1" | tr -d '[:space:]')
+          test -n "$org" || { echo "::error::no seeded user to scope to"; exit 1; }
           # A multi-statement -c runs on one backend, and psql prints EVERY result of
           # it, not only the last: without -q the first run of this step printed
           # "BEGIN", "on", "5" for the query below. -q drops the command tags;
           # tail -n1 keeps the count, which is the last SELECT's single row.
           inside=$(via_pool openidx_app ci-pgcat-password openidx \
-            "BEGIN; SELECT set_config('app.bypass_rls','on',true); SELECT count(*) FROM users" | tail -n1)
-          test "$inside" -ge 1 || { echo "::error::a transaction-local bypass shows $inside users; the seeded admin is missing or the scope did not apply"; exit 1; }
+            "BEGIN; SELECT set_config('app.org_id','$org',true); SELECT count(*) FROM users" | tail -n1)
+          test "$inside" -ge 1 || { echo "::error::a transaction-local org scope ($org) shows $inside users; the seeded admin is missing or the scope did not apply"; exit 1; }
           after=$(via_pool openidx_app ci-pgcat-password openidx \
-            "BEGIN; SELECT set_config('app.bypass_rls','on',true); COMMIT; SELECT count(*) FROM users" | tail -n1)
+            "BEGIN; SELECT set_config('app.org_id','$org',true); COMMIT; SELECT count(*) FROM users" | tail -n1)
           test "$after" = "0" || { echo "::error::the scope outlived its transaction through the pooler: $after users visible after COMMIT"; exit 1; }
-          echo "belt holds through the pooler: bare=0, inside a local bypass=$inside, after COMMIT=0"
+
+          # #964: the bypass is a role, not a setting. Migration 231 ran with
+          # the owner able to bypass RLS, so no policy still honours
+          # app.bypass_rls, and the application role setting it sees nothing.
+          guc=$(via_pool openidx_app ci-pgcat-password openidx \
+            "BEGIN; SELECT set_config('app.bypass_rls','on',true); SELECT count(*) FROM users" | tail -n1)
+          test "$guc" = "0" || { echo "::error::openidx_app setting app.bypass_rls sees $guc users; the GUC clause is still in the policies"; exit 1; }
+          left=$(via_pool openidx_app ci-pgcat-password openidx \
+            "SELECT count(*) FROM pg_policies WHERE qual LIKE '%app.bypass_rls%' OR with_check LIKE '%app.bypass_rls%'")
+          test "$left" = "0" || { echo "::error::$left policies still mention app.bypass_rls"; exit 1; }
+          # And the role the services' DATABASE_BYPASS_URL names does see
+          # across tenants -- straight at the primary, as the services dial it.
+          bypw=$(kubectl -n "$NS" get secret "$RELEASE-db-roles" -o jsonpath='{.data.bypass-password}' | base64 -d)
+          bypass=$(kubectl -n "$NS" exec belt-probe -- env PGPASSWORD="$bypw" \
+            psql -h "$RELEASE-postgresql-primary" -U openidx_bypass -d openidx -qtAc 'SELECT count(*) FROM users')
+          test "$bypass" -ge 1 || { echo "::error::openidx_bypass sees $bypass users; background work would see nothing"; exit 1; }
+          echo "belt holds through the pooler: bare=0, inside org scope=$inside, after COMMIT=0, app.bypass_rls=0, openidx_bypass=$bypass"
 
       - name: Two identity planes and the issuer are Ready through the pooler and read the replica
         run: |

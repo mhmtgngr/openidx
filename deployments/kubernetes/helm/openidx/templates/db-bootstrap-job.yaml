@@ -47,12 +47,15 @@
 # hook-weight orders the two: the ConfigMap at -2, this Job at -1, the
 # migration Job at 0. Helm completes a weight before starting the next.
 #
-# The role stays passwordless, exactly as v53 leaves it — nothing logs in as
-# openidx_app until an operator sets a password out of band and points
-# DATABASE_URL at it — with ONE exception: pgcat.enabled. The pooler's upstream
-# credential IS openidx_app, so with the bundled database this hook sets the
-# role's password to pgcat.password (see the script), or the pooler could never
-# log in and every service behind it would be down with the install green.
+# v53 creates the role passwordless. Every service connects as openidx_app
+# (-db-app-url) and background work as openidx_bypass (DATABASE_BYPASS_URL),
+# never as the owner, so with the bundled database this hook sets both roles'
+# passwords from the -db-roles hook Secret (templates/secrets.yaml) -- with
+# the pooler on, openidx_app's is pgcat.password, the pooler's upstream
+# credential. Without it nobody could log in and every service would be down
+# with the install green. It then gives the owner BYPASSRLS, as compose's
+# bootstrap.sql does, so migration 231 can remove the app.bypass_rls clause;
+# that is safe only because no service connects as the owner any more.
 # With an external database (postgresql.enabled=false) neither object renders,
 # so there the DSN the migration Job uses must itself be able to CREATE ROLE,
 # or openidx_app must already exist.
@@ -102,13 +105,8 @@ data:
 
     # The bypass role (issue #964): background work reads across tenants as
     # this role, which has BYPASSRLS, instead of setting a session GUC on
-    # openidx_app that any session could set. The owner is NOT given
-    # BYPASSRLS here: this chart's services still connect as the owner
-    # (secrets.yaml DATABASE_URL), and the attribute would lift the tenant
-    # boundary for every request. Migration 231 therefore leaves the GUC
-    # clause in place on a chart install until the services move to
-    # openidx_app. The role's password is set out of band like openidx_app's
-    # (secrets.yaml, DATABASE_BYPASS_URL).
+    # openidx_app that any session could set. Its password is set below, from
+    # the -db-roles hook Secret that DATABASE_BYPASS_URL is built from.
     psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
     DO
     $$
@@ -161,10 +159,11 @@ data:
     $$;
     SQL
 
-    # The pooler's upstream credential. pgcat logs in to Postgres as openidx_app
-    # with pgcat.password, and nothing else ever sets that role's password on
-    # the bundled database -- so with pgcat.enabled this hook does, from the
-    # same value the pooler was given (templates/secrets.yaml, app-password).
+    # The services' credentials. Every service logs in as openidx_app (and,
+    # with the pooler on, pgcat does too, with pgcat.password, which is then
+    # the same value), and nothing else ever sets that role's password on the
+    # bundled database -- so this hook does, from -db-roles (templates/
+    # secrets.yaml), which -db-app-url's DSNs are built from in the same render.
     # psql's :'var' quoting, not shell interpolation: the value is a credential
     # and must never be pasted into SQL text. On STDIN, not -c: psql applies
     # variable interpolation to what it reads, and NOT to a -c string, which
@@ -174,7 +173,7 @@ data:
       psql -U postgres -v ON_ERROR_STOP=1 -v pw="$OPENIDX_APP_PASSWORD" <<'SQL'
     ALTER ROLE openidx_app PASSWORD :'pw';
     SQL
-      echo "openidx_app: password set (the pooler's upstream credential)"
+      echo "openidx_app: password set (the services' DATABASE_URL)"
     fi
     if [ -n "${OPENIDX_BYPASS_PASSWORD:-}" ]; then
       psql -U postgres -v ON_ERROR_STOP=1 -v pw="$OPENIDX_BYPASS_PASSWORD" <<'SQL'
@@ -183,12 +182,29 @@ data:
       echo "openidx_bypass: password set (DATABASE_BYPASS_URL)"
     fi
 
+    # The owner runs the migrations and nothing else: no service connects as
+    # it (-db-app-url). It can already disable row-level security on the
+    # tables it owns, so BYPASSRLS adds no power; it lets migration 231 remove
+    # the app.bypass_rls clause the migrator relied on, as compose's
+    # bootstrap.sql does. Set only when the chart built the services' DSNs
+    # itself (OPENIDX_OWNER_ROLE is absent in external-secrets mode, where the
+    # store decides who the services are). :'owner' and \gexec, so the name is
+    # quoted by the server and never pasted into SQL by the shell.
+    if [ -n "${OPENIDX_OWNER_ROLE:-}" ]; then
+      psql -U postgres -v ON_ERROR_STOP=1 -v owner="$OPENIDX_OWNER_ROLE" <<'SQL'
+    SELECT format('ALTER ROLE %I BYPASSRLS', rolname)
+      FROM pg_roles
+     WHERE rolname = :'owner' AND NOT rolbypassrls AND NOT rolsuper
+    \gexec
+    SQL
+    fi
+
     # Say what was left behind. A bootstrap that silently did nothing and one
     # that worked have the same exit code.
     psql -U postgres -v ON_ERROR_STOP=1 -tAc \
       "SELECT rolname || ': login=' || rolcanlogin || ' superuser=' || rolsuper || ' bypassrls=' || rolbypassrls
          FROM pg_roles
-        WHERE rolname IN ('openidx_app', 'openidx_issue', 'openidx_admin', 'openidx_event')
+        WHERE rolname IN ('openidx_app', 'openidx_bypass', 'openidx_issue', 'openidx_admin', 'openidx_event')
         ORDER BY rolname"
 ---
 apiVersion: batch/v1
@@ -241,23 +257,30 @@ spec:
                 secretKeyRef:
                   name: openidx-datastore-auth
                   key: postgres-password
-            # The runtime role's password, present only when the pooler is on
-            # (templates/secrets.yaml). Optional so the key's absence is the
-            # signal, not a failed pod.
+            # The passwords the services' DSNs carry, from the -db-roles hook
+            # Secret (weight -3, so it exists before this Job even on the
+            # pre-upgrade pass). Optional: in external-secrets mode the chart
+            # renders no -db-roles, the store holds the DSNs, and the
+            # passwords are the operator's to set.
             - name: OPENIDX_APP_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: openidx-datastore-auth
+                  name: {{ include "openidx.fullname" . }}-db-roles
                   key: app-password
                   optional: true
-            # The bypass role's password (secrets.bypassPassword), optional
-            # for the same reason.
             - name: OPENIDX_BYPASS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: openidx-datastore-auth
+                  name: {{ include "openidx.fullname" . }}-db-roles
                   key: bypass-password
                   optional: true
+            {{- if not .Values.externalSecrets.enabled }}
+            # The owner, to be given BYPASSRLS (see the script): only when no
+            # service can be connecting as it, i.e. when the chart built the
+            # services' DSNs itself.
+            - name: OPENIDX_OWNER_ROLE
+              value: {{ .Values.postgresql.auth.username | default "openidx" | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.migrations.roleBootstrap.resources | nindent 12 }}
           securityContext:

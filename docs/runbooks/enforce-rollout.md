@@ -88,6 +88,22 @@ Restart the services; each logs that the bypass pool is open. Run
 every policy and reports how many. Do **not** give the owner `BYPASSRLS` on an
 install whose services connect as the owner.
 
+**Helm.** From the chart after v1.42.0, the services connect as `openidx_app`
+and `openidx_bypass`, never as the owner, and with the bundled PostgreSQL the
+bootstrap hook creates the bypass role, sets both passwords and gives the owner
+`BYPASSRLS` (`docs/docs/deployment/kubernetes.md`, "Database roles"). With
+External Secrets, store `database-app-url` and `database-bypass-url` and run
+the SQL above against your database yourself.
+
+An install that already ran migration 231 while the owner lacked `BYPASSRLS`
+recorded it with a NOTICE and changed nothing, so `migrate up` will not run it
+again. Background work still reads through the bypass role, so nothing is
+broken, but the `app.bypass_rls` clause stays in the policies. To remove it,
+run the body of migration 231 (`bypassGUCLeavesPoliciesUp` in
+`internal/migrations/sql_v231.go`) once with `psql` as the owner. It changes
+only the policies that still mention the clause, and it fails if any policy
+still mentions it afterwards.
+
 ## If the window runs out
 
 A service started after the named day refuses with
