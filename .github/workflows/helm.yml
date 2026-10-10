@@ -1926,17 +1926,40 @@ jobs:
 
           bare=$(via_pool openidx_app ci-pgcat-password openidx 'SELECT count(*) FROM users')
           test "$bare" = "0" || { echo "::error::openidx_app with no tenant scope sees $bare users through the pooler; the belt is not FORCE'd against it"; exit 1; }
+          # The seeded admin's organization, read as the owner on the primary.
+          # The bootstrap hook gives the owner BYPASSRLS (as compose does), so
+          # it sees every row.
+          org=$(kubectl -n "$NS" exec "statefulset/$RELEASE-postgresql-primary" -- \
+            env PGPASSWORD=ci-postgres-password psql -U openidx -d openidx -tAc \
+            "SELECT org_id FROM users ORDER BY created_at LIMIT 1" | tr -d '[:space:]')
+          test -n "$org" || { echo "::error::no seeded user to scope to"; exit 1; }
           # A multi-statement -c runs on one backend, and psql prints EVERY result of
           # it, not only the last: without -q the first run of this step printed
           # "BEGIN", "on", "5" for the query below. -q drops the command tags;
           # tail -n1 keeps the count, which is the last SELECT's single row.
           inside=$(via_pool openidx_app ci-pgcat-password openidx \
-            "BEGIN; SELECT set_config('app.bypass_rls','on',true); SELECT count(*) FROM users" | tail -n1)
-          test "$inside" -ge 1 || { echo "::error::a transaction-local bypass shows $inside users; the seeded admin is missing or the scope did not apply"; exit 1; }
+            "BEGIN; SELECT set_config('app.org_id','$org',true); SELECT count(*) FROM users" | tail -n1)
+          test "$inside" -ge 1 || { echo "::error::a transaction-local org scope ($org) shows $inside users; the seeded admin is missing or the scope did not apply"; exit 1; }
           after=$(via_pool openidx_app ci-pgcat-password openidx \
-            "BEGIN; SELECT set_config('app.bypass_rls','on',true); COMMIT; SELECT count(*) FROM users" | tail -n1)
+            "BEGIN; SELECT set_config('app.org_id','$org',true); COMMIT; SELECT count(*) FROM users" | tail -n1)
           test "$after" = "0" || { echo "::error::the scope outlived its transaction through the pooler: $after users visible after COMMIT"; exit 1; }
-          echo "belt holds through the pooler: bare=0, inside a local bypass=$inside, after COMMIT=0"
+
+          # #964: the bypass is a role, not a setting. Migration 231 ran with
+          # the owner able to bypass RLS, so no policy still honours
+          # app.bypass_rls, and the application role setting it sees nothing.
+          guc=$(via_pool openidx_app ci-pgcat-password openidx \
+            "BEGIN; SELECT set_config('app.bypass_rls','on',true); SELECT count(*) FROM users" | tail -n1)
+          test "$guc" = "0" || { echo "::error::openidx_app setting app.bypass_rls sees $guc users; the GUC clause is still in the policies"; exit 1; }
+          left=$(via_pool openidx_app ci-pgcat-password openidx \
+            "SELECT count(*) FROM pg_policies WHERE qual LIKE '%app.bypass_rls%' OR with_check LIKE '%app.bypass_rls%'")
+          test "$left" = "0" || { echo "::error::$left policies still mention app.bypass_rls"; exit 1; }
+          # And the role the services' DATABASE_BYPASS_URL names does see
+          # across tenants -- straight at the primary, as the services dial it.
+          bypw=$(kubectl -n "$NS" get secret "$RELEASE-db-roles" -o jsonpath='{.data.bypass-password}' | base64 -d)
+          bypass=$(kubectl -n "$NS" exec belt-probe -- env PGPASSWORD="$bypw" \
+            psql -h "$RELEASE-postgresql-primary" -U openidx_bypass -d openidx -qtAc 'SELECT count(*) FROM users')
+          test "$bypass" -ge 1 || { echo "::error::openidx_bypass sees $bypass users; background work would see nothing"; exit 1; }
+          echo "belt holds through the pooler: bare=0, inside org scope=$inside, after COMMIT=0, app.bypass_rls=0, openidx_bypass=$bypass"
 
       - name: Two identity planes and the issuer are Ready through the pooler and read the replica
         run: |
