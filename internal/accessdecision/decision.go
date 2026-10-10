@@ -98,7 +98,7 @@ type Decision struct {
 	WouldDeny bool `json:"would_deny"`
 	// ConditionsDeclared is whether the resource has a resource_conditions row.
 	// When it has, those conditions are the resource's; an enforcement point
-	// that also carries a pre-230 copy of them (a proxy route's columns) lets
+	// that also carries a pre-229 copy of them (a proxy route's columns) lets
 	// this decision rule and does not judge its copy a second time.
 	ConditionsDeclared bool `json:"conditions_declared"`
 	// Grant names what let the subject in: "direct", "group:<name>",

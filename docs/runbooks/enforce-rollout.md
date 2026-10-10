@@ -84,7 +84,7 @@ DATABASE_BYPASS_URL=postgres://openidx_bypass:<random>@localhost:55432/openidx
 ```
 
 Restart the services; each logs that the bypass pool is open. Run
-`oidx-migrate up`: migration 228 now removes the `app.bypass_rls` clause from
+`oidx-migrate up`: migration 231 now removes the `app.bypass_rls` clause from
 every policy and reports how many. Do **not** give the owner `BYPASSRLS` on an
 install whose services connect as the owner.
 

@@ -8,7 +8,7 @@ import (
 
 // THE ROUTE'S CONDITIONS ARE THE PRE-228 COPY; THE RESOURCE'S RULE.
 //
-// Migration 228 copied require_device_trust, allowed_countries and
+// Migration 229 copied require_device_trust, allowed_countries and
 // max_risk_score from every application's route into resource_conditions,
 // and the console edits the resource from then on. The proxy judges the
 // resource's conditions through the shared reach decision, with the

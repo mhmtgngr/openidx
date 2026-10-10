@@ -22,7 +22,7 @@ import (
 // record_session defaulted to false, so an internal user's session was
 // neither approved nor recorded unless someone set it on every entry.
 //
-// org_pam_policy (migration 229) holds them per organization. A missing row
+// org_pam_policy (migration 228) holds them per organization. A missing row
 // means defaultPamPolicy: every session capped at 8 h, internal sessions
 // recorded, approval not required, a 60-minute window. The migration gave
 // every organization that existed a row with its old behaviour, so nothing

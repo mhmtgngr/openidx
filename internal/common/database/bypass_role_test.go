@@ -13,7 +13,7 @@ import (
 )
 
 // TestBypassRoleReplacesTheGUC is the end-to-end proof for #964, against a
-// real server: once the bypass role exists and migration 228 has run, the
+// real server: once the bypass role exists and migration 231 has run, the
 // application role cannot read another tenant's rows by setting
 // app.bypass_rls itself, bypass-marked work still sees every tenant (through
 // the bypass pool), and a DATABASE_BYPASS_URL that points at the application
@@ -65,25 +65,25 @@ func TestBypassRoleReplacesTheGUC(t *testing.T) {
 		}
 	}
 
-	// Migration 228, as the superuser owner (can_bypass holds).
+	// Migration 231, as the superuser owner (can_bypass holds).
 	var up string
 	for _, m := range migrations.All() {
-		if m.Version == 228 {
+		if m.Version == 231 {
 			up = m.UpSQL
 		}
 	}
 	if up == "" {
-		t.Fatal("migration 228 is not registered")
+		t.Fatal("migration 231 is not registered")
 	}
 	if _, err := admin.Exec(ctx, up); err != nil {
-		t.Fatalf("migration 228: %v", err)
+		t.Fatalf("migration 231: %v", err)
 	}
 	var qual string
 	if err := admin.QueryRow(ctx, `SELECT qual FROM pg_policies WHERE policyname = 'pol_tenant_rows_org_scope'`).Scan(&qual); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(qual, "bypass_rls") {
-		t.Fatalf("policy still mentions the GUC after migration 228: %s", qual)
+		t.Fatalf("policy still mentions the GUC after migration 231: %s", qual)
 	}
 
 	appDSN := fmt.Sprintf("postgres://openidx_app:app_secret@%s:%s/testdb?sslmode=disable", host, port.Port())

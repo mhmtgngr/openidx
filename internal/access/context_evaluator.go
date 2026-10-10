@@ -206,7 +206,7 @@ func (s *Service) scoreAccessContext(ac *AccessContext) (risk int, early *Access
 // trust, risk ceiling — and then its inline policy. routeConditionsRule is
 // false when the route's application declares resource_conditions: the shared
 // reach decision judged those with this same situation, and the columns on
-// the route are the pre-230 copy kept for rollback, so judging them again
+// the route are the pre-229 copy kept for rollback, so judging them again
 // would let a stale copy overrule the resource. The inline policy has no
 // counterpart on the resource and always runs.
 func (s *Service) judgeRouteContext(ac *AccessContext, riskScore int, routeConditionsRule bool) *AccessDecision {

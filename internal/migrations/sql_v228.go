@@ -1,97 +1,55 @@
 package migrations
 
-// Migration 228: the GUC leaves the policies.
+// Migration 228: per-organization privileged-session policy.
 //
-// Every row-level-security policy let a session through when
-// current_setting('app.bypass_rls') was 'on'. That setting is one any session
-// may set, so a SQL injection on the application role could read every
-// tenant (issue #964). Bypass-marked work now runs as a separate role with the
-// BYPASSRLS attribute (internal/common/database/bypass.go); for that role
-// the policies do not apply at all, and the clause is a hole with no use.
+// Until now the rules around a privileged session were spread between a
+// constant and column defaults. externalid.MaxPamSession (8 h) was the only
+// duration limit and applied to external users alone; the launch-approval
+// window was time.Hour in pam_launch.go; and pam_entries.require_approval /
+// record_session defaulted to false, so an internal user's session was
+// neither approved nor recorded unless someone set it on each entry.
 //
-// This migration removes the clause from every policy, and it does so only
-// when the deployment has finished moving: the bypass role exists, and the
-// role running this migration can itself bypass RLS (the bootstrap gave the
-// owner BYPASSRLS, or it is a superuser). Until then the clause is what lets
-// background work and the migrator see all rows, and removing it would make
-// every sweep see nothing. An install that has not bootstrapped the role gets
-// a NOTICE and no change; production refuses to start without the role, so
-// nobody runs there for long.
+// org_pam_policy holds those rules per organization. A missing row means the
+// secure defaults in internal/access/pam_policy.go: every session capped at
+// 8 h, internal sessions recorded, approval not required, a 60-minute
+// approval window. Every organization that exists at migration time gets a
+// row carrying its behaviour as it was (no cap for internal users, no
+// recording by default), so nothing changes under it until an administrator
+// changes the policy from the PAM dashboard; a new organization starts
+// secure. External users keep the 8-hour ceiling whatever the policy says.
 //
-// The rewrite is textual on pg_get_expr's output, and it verifies itself: a
-// policy that still mentions app.bypass_rls afterwards fails the migration,
-// so an unusual policy is found here rather than left open.
-//
-// Down puts the clause back on every policy that scopes by app.org_id.
-var bypassGUCLeavesPoliciesUp = `-- Migration 228: the bypass GUC leaves the policies.
-DO
-$$
-DECLARE
-  r record;
-  can_bypass boolean;
-  n int := 0;
-  pat_lead text := '\(current_setting\(''app\.bypass_rls''::text, true\) = ''on''::text\) OR ';
-  pat_trail text := ' OR \(current_setting\(''app\.bypass_rls''::text, true\) = ''on''::text\)';
-  new_qual text;
-  new_check text;
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_bypass') THEN
-    RAISE NOTICE 'openidx_bypass does not exist: policies keep the app.bypass_rls clause. Bootstrap the role (deployments/docker/bootstrap.sql) and set DATABASE_BYPASS_URL.';
-    RETURN;
-  END IF;
-  SELECT rolbypassrls OR rolsuper INTO can_bypass FROM pg_roles WHERE rolname = current_user;
-  IF NOT can_bypass THEN
-    RAISE NOTICE 'the migrating role % cannot bypass RLS: policies keep the app.bypass_rls clause. Give the owner BYPASSRLS as the bootstrap does.', current_user;
-    RETURN;
-  END IF;
-  FOR r IN
-    SELECT schemaname, tablename, policyname, qual, with_check
-      FROM pg_policies
-     WHERE schemaname = 'public'
-       AND (qual LIKE '%app.bypass_rls%' OR with_check LIKE '%app.bypass_rls%')
-  LOOP
-    new_qual := regexp_replace(regexp_replace(r.qual, pat_lead, ''), pat_trail, '');
-    new_check := regexp_replace(regexp_replace(r.with_check, pat_lead, ''), pat_trail, '');
-    IF r.with_check IS NULL THEN
-      EXECUTE format('ALTER POLICY %I ON %I.%I USING (%s)', r.policyname, r.schemaname, r.tablename, new_qual);
-    ELSE
-      EXECUTE format('ALTER POLICY %I ON %I.%I USING (%s) WITH CHECK (%s)', r.policyname, r.schemaname, r.tablename, new_qual, new_check);
-    END IF;
-    n := n + 1;
-  END LOOP;
-  IF EXISTS (SELECT 1 FROM pg_policies
-              WHERE schemaname = 'public'
-                AND (qual LIKE '%app.bypass_rls%' OR with_check LIKE '%app.bypass_rls%')) THEN
-    RAISE EXCEPTION 'a policy still mentions app.bypass_rls after the rewrite: % ',
-      (SELECT string_agg(tablename || '.' || policyname, ', ') FROM pg_policies
-        WHERE schemaname = 'public'
-          AND (qual LIKE '%app.bypass_rls%' OR with_check LIKE '%app.bypass_rls%'));
-  END IF;
-  RAISE NOTICE 'migration 228: removed the app.bypass_rls clause from % policies', n;
-END
-$$;
+// idle_timeout_minutes is stored but not yet enforced: the broker reports no
+// per-session activity (docs/docs/guide/privileged-access.md). The column is
+// here so the policy is complete when it does.
+var orgPamPolicyUp = `-- Migration 228: per-organization PAM policy.
+CREATE TABLE IF NOT EXISTS org_pam_policy (
+  org_id UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+  max_session_hours INTEGER NOT NULL DEFAULT 8 CHECK (max_session_hours >= 0 AND max_session_hours <= 168),
+  idle_timeout_minutes INTEGER NOT NULL DEFAULT 0 CHECK (idle_timeout_minutes >= 0 AND idle_timeout_minutes <= 1440),
+  require_approval_internal BOOLEAN NOT NULL DEFAULT false,
+  record_internal BOOLEAN NOT NULL DEFAULT true,
+  launch_approval_window_minutes INTEGER NOT NULL DEFAULT 60 CHECK (launch_approval_window_minutes >= 5 AND launch_approval_window_minutes <= 1440),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by UUID
+);
+
+-- Organizations that exist today keep the behaviour they had.
+INSERT INTO org_pam_policy (org_id, max_session_hours, idle_timeout_minutes, require_approval_internal, record_internal, launch_approval_window_minutes)
+SELECT id, 0, 0, false, false, 60 FROM organizations
+ON CONFLICT (org_id) DO NOTHING;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON org_pam_policy TO openidx_app;
+
+DROP POLICY IF EXISTS pol_org_pam_policy_org_scope ON org_pam_policy;
+CREATE POLICY pol_org_pam_policy_org_scope ON org_pam_policy
+  USING (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid)
+  WITH CHECK (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
+ALTER TABLE org_pam_policy ENABLE ROW LEVEL SECURITY;
+ALTER TABLE org_pam_policy FORCE  ROW LEVEL SECURITY;
 `
 
-var bypassGUCLeavesPoliciesDown = `-- Migration 228 down: the bypass GUC is a way through the policies again.
-DO
-$$
-DECLARE
-  r record;
-  clause text := '(current_setting(''app.bypass_rls''::text, true) = ''on''::text) OR ';
-BEGIN
-  FOR r IN
-    SELECT schemaname, tablename, policyname, qual, with_check
-      FROM pg_policies
-     WHERE schemaname = 'public'
-       AND qual LIKE '%app.org_id%'
-       AND qual NOT LIKE '%app.bypass_rls%'
-  LOOP
-    IF r.with_check IS NULL THEN
-      EXECUTE format('ALTER POLICY %I ON %I.%I USING (%s)', r.policyname, r.schemaname, r.tablename, clause || r.qual);
-    ELSE
-      EXECUTE format('ALTER POLICY %I ON %I.%I USING (%s) WITH CHECK (%s)', r.policyname, r.schemaname, r.tablename, clause || r.qual, clause || r.with_check);
-    END IF;
-  END LOOP;
-END
-$$;
+var orgPamPolicyDown = `-- Migration 228 down: the constants and column defaults rule again.
+DROP TABLE IF EXISTS org_pam_policy;
 `

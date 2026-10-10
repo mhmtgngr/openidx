@@ -105,7 +105,7 @@ data:
     # openidx_app that any session could set. The owner is NOT given
     # BYPASSRLS here: this chart's services still connect as the owner
     # (secrets.yaml DATABASE_URL), and the attribute would lift the tenant
-    # boundary for every request. Migration 228 therefore leaves the GUC
+    # boundary for every request. Migration 231 therefore leaves the GUC
     # clause in place on a chart install until the services move to
     # openidx_app. The role's password is set out of band like openidx_app's
     # (secrets.yaml, DATABASE_BYPASS_URL).

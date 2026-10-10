@@ -176,7 +176,7 @@ func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, e
 			// Refused rather than degraded: an install that configured the
 			// bypass role and cannot use it would run its background work on
 			// the application role with the GUC, the thing the role exists
-			// to end, and after migration 228 that work would see no rows.
+			// to end, and after migration 231 that work would see no rows.
 			return nil, berr
 		}
 		db.bypassPool = bp

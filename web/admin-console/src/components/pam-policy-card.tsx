@@ -13,7 +13,7 @@ import { useToast } from '../hooks/use-toast'
 import { api } from '../lib/api'
 
 // GET/PUT /api/v1/access/pam/policy: the organization's privileged-session
-// policy (migration 229). "default" means no row exists and the secure
+// policy (migration 228). "default" means no row exists and the secure
 // defaults apply; an organization that existed before the migration has a row
 // carrying its old behaviour, which is why the card warns when internal
 // sessions are not recorded.

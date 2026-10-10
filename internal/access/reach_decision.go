@@ -62,7 +62,7 @@ func (sit situation) key() string {
 // reachDecision evaluates, records and, on a refusal, answers. ok is false
 // when the caller must return. conditionsRuled is true when the resource
 // declared its own conditions and this decision judged them under
-// enforcement, so the route's pre-230 copy of them must not be judged again.
+// enforcement, so the route's pre-229 copy of them must not be judged again.
 func (s *Service) reachDecision(c *gin.Context, route *ProxyRoute, session *ProxySession, appID, appOrgID, point string, sit situation) (ok, conditionsRuled bool) {
 	if appID == "" {
 		return true, false // no application behind the route: nothing to decide here

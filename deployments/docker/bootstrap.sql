@@ -34,7 +34,7 @@ BEGIN
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO openidx_bypass', current_database());
   -- The owner runs migrations and seeds. It can already disable row-level
   -- security on the tables it owns, so BYPASSRLS adds no power; it lets
-  -- migration 228 remove the GUC clause the migrator relied on.
+  -- migration 231 remove the GUC clause the migrator relied on.
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx' AND NOT rolbypassrls AND NOT rolsuper) THEN
     ALTER ROLE openidx BYPASSRLS;
   END IF;

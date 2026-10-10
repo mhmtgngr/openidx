@@ -23,14 +23,14 @@ import (
 // attribute and nothing else special (deployments/docker/bootstrap.sql,
 // the Helm bootstrap job, docs/runbooks/enforce-rollout.md). With it set,
 // ScopedPool routes every bypass-marked call to that pool, the application
-// pool never carries the GUC, and migration 228 removes the GUC clause from
+// pool never carries the GUC, and migration 231 removes the GUC clause from
 // every policy so that setting it is nothing more than a harmless string.
 // Without it, the GUC stays the mechanism, and production refuses to start
 // (config.ValidateProduction).
 
 // bypassRoleCheckSQL asks the database whether the credential it was given is
 // what the deployment promised. A DSN that quietly points at the application
-// role would make every background job see no rows after migration 228.
+// role would make every background job see no rows after migration 231.
 const bypassRoleCheckSQL = `SELECT rolbypassrls OR rolsuper FROM pg_roles WHERE rolname = current_user`
 
 // openBypassPool opens DATABASE_BYPASS_URL and verifies the role behind it.

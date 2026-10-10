@@ -1618,31 +1618,31 @@ func allMigrations() []*Migration {
 		},
 		{
 			Version:     228,
-			Name:        "bypass_guc_leaves_policies",
-			Description: "Every RLS policy let a session through when current_setting('app.bypass_rls') was 'on', a setting any session may set (issue #964). Bypass-marked work now runs as the openidx_bypass role (BYPASSRLS, DATABASE_BYPASS_URL), for which the policies do not apply, so the clause is removed from every policy. The rewrite runs only when openidx_bypass exists and the migrating role can itself bypass RLS, and fails if any policy still mentions the setting afterwards; otherwise it changes nothing and says so. Down puts the clause back on every policy that scopes by app.org_id.",
-			UpSQL:       bypassGUCLeavesPoliciesUp,
-			DownSQL:     bypassGUCLeavesPoliciesDown,
-		},
-		{
-			Version:     229,
 			Name:        "org_pam_policy",
 			Description: "The rules around a privileged session become a per-organization policy. org_pam_policy (org_id PK) holds max_session_hours (0 = no cap; external users keep the 8-hour ceiling regardless), idle_timeout_minutes (stored, not yet enforced), require_approval_internal, record_internal and launch_approval_window_minutes. A missing row means the secure defaults: every session capped at 8 h, internal sessions recorded, a 60-minute approval window. Every organization that exists at migration time gets a row carrying its behaviour as it was, so nothing changes under it until an administrator edits the policy; a new organization starts secure. Down drops the table.",
 			UpSQL:       orgPamPolicyUp,
 			DownSQL:     orgPamPolicyDown,
 		},
 		{
-			Version:     230,
+			Version:     229,
 			Name:        "one_resource_model",
 			Description: "The resource is the applications row. applications gains kind (web, network, privileged) and resource_conditions holds the conditions a proxy route carried (require_device_trust, max_risk_score, allowed_countries, require_step_up, posture_profile_id, time_window) plus legacy_roles. Backfill: every route with roles or groups and no application gets one; its groups, and roles that name a group, become group assignments; roles that name no group are kept as legacy_roles and recorded in the new migration_notes table for an administrator to finish. internal/accessdecision reads this model; the route's own columns stay for one release. Down drops the added tables and column.",
 			UpSQL:       oneResourceModelUp,
 			DownSQL:     oneResourceModelDown,
 		},
 		{
-			Version:     231,
+			Version:     230,
 			Name:        "device_identity_agent",
 			Description: "ziti_identities gains agent_id (unique where set): a device's overlay identity is recorded against its enrolled agent, so the attribute sync and the posture code reach a device's identity directly instead of through its enrolling user. Down drops the column and index.",
 			UpSQL:       deviceIdentityAgentUp,
 			DownSQL:     deviceIdentityAgentDown,
+		},
+		{
+			Version:     231,
+			Name:        "bypass_guc_leaves_policies",
+			Description: "Every RLS policy let a session through when current_setting('app.bypass_rls') was 'on', a setting any session may set (issue #964). Bypass-marked work now runs as the openidx_bypass role (BYPASSRLS, DATABASE_BYPASS_URL), for which the policies do not apply, so the clause is removed from every policy. The rewrite runs only when openidx_bypass exists and the migrating role can itself bypass RLS, and fails if any policy still mentions the setting afterwards; otherwise it changes nothing and says so. Down puts the clause back on every policy that scopes by app.org_id.",
+			UpSQL:       bypassGUCLeavesPoliciesUp,
+			DownSQL:     bypassGUCLeavesPoliciesDown,
 		},
 	}
 }

@@ -28,7 +28,7 @@ import (
 // person whose device the proxy has never seen, and an upstream that counts
 // what reaches it. The resource's require_device_trust refuses that person
 // under enforcement and names why; when the resource relaxes it, the route's
-// pre-230 copy of the same condition does not overrule the resource; and
+// pre-229 copy of the same condition does not overrule the resource; and
 // where the resource declared no conditions, or the decision is not
 // enforced, the route's copy rules as it always did.
 func TestProxyJudgesTheResourcesConditions(t *testing.T) {
@@ -160,7 +160,7 @@ func TestProxyJudgesTheResourcesConditions(t *testing.T) {
 		}
 	})
 
-	t.Run("the resource rules over the route's pre-230 copy", func(t *testing.T) {
+	t.Run("the resource rules over the route's pre-229 copy", func(t *testing.T) {
 		exec(`UPDATE resource_conditions SET require_device_trust = false WHERE application_id = $1::uuid`, appID)
 		exec(`UPDATE proxy_routes SET require_device_trust = true WHERE id = $1::uuid`, routeID)
 		before := upstreamHits.Load()
