@@ -504,15 +504,25 @@ func (h *AgentAPIHandler) ensureAgentZitiIdentity(ctx context.Context, agentID s
 			return
 		}
 	}
-	zitiID, zitiJWT, err := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
+	// dev-<agent_id>, with the device's own attributes (device_identity.go).
+	attrs, aerr := h.zm.DeviceAttributes(ctx, agentID)
+	if aerr != nil {
+		attrs = deviceAttributesFrom(agentID, "", nil, false)
+	}
+	name := deviceIdentityName(agentID)
+	zitiID, zitiJWT, err := h.zm.CreateIdentity(ctx, name, "Device", attrs)
 	if err != nil {
 		// The DB row lost its ziti_identity_id but an identity with this name
 		// still exists in the controller (orphan). Delete it and recreate so the
 		// device gets a fresh, un-enrolled JWT it can enroll with.
 		if strings.Contains(err.Error(), "duplicate value") {
-			if orphanID := h.findZitiIdentityByName(ctx, agentID); orphanID != "" {
+			orphanID := h.findZitiIdentityByName(ctx, name)
+			if orphanID == "" {
+				orphanID = h.findZitiIdentityByName(ctx, agentID) // the pre-release name
+			}
+			if orphanID != "" {
 				if delErr := h.zm.DeleteIdentity(ctx, orphanID); delErr == nil {
-					zitiID, zitiJWT, err = h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
+					zitiID, zitiJWT, err = h.zm.CreateIdentity(ctx, name, "Device", attrs)
 				} else {
 					h.logger.Warn("Failed to delete orphan Ziti identity",
 						zap.String("agent_id", agentID), zap.Error(delErr))
@@ -547,6 +557,10 @@ func (h *AgentAPIHandler) ensureAgentZitiIdentity(ctx context.Context, agentID s
 	}
 	result.ZitiJWT = zitiJWT
 	result.ZitiService = remoteSupportZitiService
+	if serr := h.zm.SyncDeviceIdentity(ctx, agentID); serr != nil {
+		h.logger.Warn("device identity: created on the controller but not recorded in ziti_identities; the poller retries",
+			logsafe.String("agent_id", agentID), zap.Error(serr))
+	}
 	h.logger.Info("Ziti identity created for agent",
 		zap.String("agent_id", agentID), zap.String("ziti_id", zitiID))
 }
@@ -573,12 +587,15 @@ func (h *AgentAPIHandler) findZitiIdentityByName(ctx context.Context, agentID st
 // confusing "crypto/rsa: verification error" on every enroll. The agent works
 // fully over HTTPS without it. Operators running a publicly-reachable controller
 // opt in with ZITI_AGENT_OVERLAY_ENABLED=true.
+// agentZitiOverlayEnabled is on unless ZITI_AGENT_OVERLAY_ENABLED says no.
+// It defaulted to off, so most enrolled agents had no overlay identity at
+// all; a device that cannot dial is a device the policy cannot reach.
 func agentZitiOverlayEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("ZITI_AGENT_OVERLAY_ENABLED"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
+	case "0", "false", "no", "off":
 		return false
+	default:
+		return true
 	}
 }
 
@@ -1310,71 +1327,30 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 // Best-effort: any lookup/patch error is logged and swallowed so an agent report
 // always succeeds. Idempotent: only patches when the attribute set changes.
 func (h *AgentAPIHandler) applyPostureDeviceTrust(ctx context.Context, agentID, complianceStatus string) {
-	if h.zm == nil || h.zm.cfg == nil {
+	if h.zm == nil || h.zm.cfg == nil || h.db == nil || h.db.Pool == nil {
 		return
 	}
 	mode := strings.ToLower(strings.TrimSpace(h.zm.cfg.PostureDeviceTrustGate))
 	if mode == "" || mode == "off" {
 		return
 	}
-	if h.db == nil || h.db.Pool == nil {
-		return
-	}
-
-	// Resolve the reporting agent's Ziti identity (controller id) via its
-	// enrolling user, exactly like the posture bridge does.
 	rctx := orgctx.WithBypassRLS(ctx)
-	var zitiID string
-	//orgscope:ignore posture->tier gate resolves the reporting agent's own Ziti identity by globally-unique agent_id within the agent's own tenant (data plane)
-	if err := h.db.Pool.QueryRow(rctx, `
-		SELECT zi.ziti_id FROM ziti_identities zi
-		JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id AND ea.org_id = zi.org_id
-		WHERE ea.agent_id = $1 LIMIT 1`, agentID).Scan(&zitiID); err != nil {
-		h.logger.Debug("posture tier: no Ziti identity for agent's enrolling user",
+	// This device's identity, not its enrolling user's: trust is the
+	// device's own attribute, from its own posture. The sync reads the
+	// compliance the report just wrote, so the same code the poller runs
+	// applies it and nothing overwrites it later.
+	if err := h.zm.SyncDeviceIdentity(rctx, agentID); err != nil {
+		h.logger.Warn("posture tier: device identity sync failed",
 			zap.String("agent_id", agentID), zap.Error(err))
 		return
 	}
-
-	// Compliant (no critical/high posture failure) earns device-trust.
-	wantTrusted := complianceStatus == "compliant"
-
-	attrs, err := h.zm.GetIdentityRoleAttributes(rctx, zitiID)
-	if err != nil {
-		h.logger.Debug("posture tier: read identity attributes failed",
-			zap.String("ziti_id", logsafe.Clean(zitiID)), zap.Error(err))
-		return
+	if mode == "enforce" && complianceStatus != "compliant" {
+		h.zm.SeverDeviceCircuits(rctx, agentID)
 	}
-	next, changed := deviceTrustAttrs(attrs, wantTrusted)
-	if !changed {
-		return // already in the desired state
-	}
-
-	if mode == "observe" {
-		h.logger.Info("posture tier (observe): would change device-trust",
-			zap.String("agent_id", agentID),
-			zap.String("ziti_id", logsafe.Clean(zitiID)),
-			zap.Bool("grant", wantTrusted),
-			zap.String("compliance", complianceStatus))
-		return
-	}
-
-	if err := h.zm.PatchIdentityRoleAttributes(rctx, zitiID, next); err != nil {
-		h.logger.Warn("posture tier: patch identity attributes failed",
-			zap.String("ziti_id", logsafe.Clean(zitiID)), zap.Error(err))
-		return
-	}
-	h.logger.Info("posture tier: device-trust updated",
-		zap.String("agent_id", agentID),
-		zap.String("ziti_id", logsafe.Clean(zitiID)),
-		zap.Bool("granted", wantTrusted),
-		zap.String("compliance", complianceStatus))
+	h.logger.Info("posture tier: device identity updated",
+		zap.String("agent_id", agentID), zap.String("mode", mode), zap.String("compliance", complianceStatus))
 }
 
-// deviceTrustAttrs returns the desired role-attribute set after granting or
-// revoking the `device-trusted` attribute, plus whether a change is needed. It
-// is pure so the tier decision is unit-testable without a controller: given the
-// current attributes and whether trust is wanted, it adds/removes exactly the one
-// attribute and reports changed=false when the set already matches (idempotent).
 func deviceTrustAttrs(attrs []string, wantTrusted bool) (next []string, changed bool) {
 	const trustAttr = "device-trusted"
 	has := false
@@ -1733,6 +1709,7 @@ func (h *AgentAPIHandler) enforceExpiredGracePeriods(ctx context.Context) {
 	defer rows.Close()
 
 	count := 0
+	var lapsed []string
 	for rows.Next() {
 		var agentID string
 		var zitiID *string
@@ -1744,6 +1721,21 @@ func (h *AgentAPIHandler) enforceExpiredGracePeriods(ctx context.Context) {
 		h.logAuditEvent("agent.suspended", agentID, "enforced", "grace period expired")
 		h.logAuditEventToDB(ctx, "agent.suspended", agentID, "enforced", "grace period expired")
 		count++
+		lapsed = append(lapsed, agentID)
+	}
+	rows.Close()
+	// A suspended device is no longer trusted: its identity loses the
+	// attribute (the sync reads the compliance the UPDATE just wrote) and
+	// whatever it was reaching is cut. Before this the row said suspended
+	// and the overlay said nothing.
+	if h.zm != nil {
+		rctx := orgctx.WithBypassRLS(ctx)
+		for _, agentID := range lapsed {
+			if err := h.zm.SyncDeviceIdentity(rctx, agentID); err != nil {
+				h.logger.Warn("grace expiry: device identity sync failed", zap.String("agent_id", agentID), zap.Error(err))
+			}
+			h.zm.SeverDeviceCircuits(rctx, agentID)
+		}
 	}
 	if count > 0 {
 		h.logger.Info("Grace period enforcement complete", zap.Int("suspended", count))
@@ -2252,7 +2244,11 @@ func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
 
 		// Create Ziti identity for the newly approved agent.
 		if h.zm != nil {
-			zitiID, zitiJWT, zitiErr := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
+			approvedAttrs, aerr := h.zm.DeviceAttributes(ctx, agentID)
+			if aerr != nil {
+				approvedAttrs = deviceAttributesFrom(agentID, "", nil, false)
+			}
+			zitiID, zitiJWT, zitiErr := h.zm.CreateIdentity(ctx, deviceIdentityName(agentID), "Device", approvedAttrs)
 			if zitiErr != nil {
 				h.logger.Warn("HandleApproveAgent: failed to create Ziti identity",
 					logsafe.String("agent_id", agentID), zap.Error(zitiErr))
