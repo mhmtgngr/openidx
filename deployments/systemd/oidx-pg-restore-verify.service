@@ -5,6 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# Same optional settings file as oidx-pg-backup.service. This unit verifies
+# the LOCAL copy; the off-box drill is `pg-restore-verify.sh --from-offbox`
+# (deployments/scripts/README.md).
+EnvironmentFile=-%h/.config/oidx/backup.env
 ExecStart=%h/oidx-runtime/scripts/pg-restore-verify.sh
 Nice=15
 IOSchedulingClass=idle
