@@ -305,6 +305,8 @@ read scope holds with OPA off too.
 | `PUSH_MFA_FCM_PROJECT_ID` | string | - | Firebase project. Defaults to the `project_id` in the credentials file. |
 | `PUSH_MFA_APNS_KEY_ID` / `PUSH_MFA_APNS_TEAM_ID` / `PUSH_MFA_APNS_KEY_PATH` / `PUSH_MFA_APNS_BUNDLE_ID` | string | - | APNs token authentication for iOS push. |
 | `PUSH_MFA_APNS_PRODUCTION` | bool | `false` | Use the production APNs host rather than the sandbox. |
+| `PUSH_DEVICE_STALE_DAYS` | int | `30` | Days a push device may go unseen before the login stops offering it as the only way in and shows the user's fallbacks (backup code, email code, an administrator's bypass code) beside it. |
+| `PUSH_DEVICE_DISABLE_DAYS` | int | `90` | Days a push device may go unseen before identity-service's sweep disables it (it is never deleted; re-registering re-enables it). `0` turns the sweep off. |
 | `NTFY_BASE_URL` | url | - | Self-hosted ntfy server for push, the transport the OpenIDX mobile client uses. |
 | `NTFY_TOKEN` | string | - | Bearer for that server. |
 | `NTFY_TOPIC_SECRET` | string | - | Secret from which per-device topics are derived. |

@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"strings"
+	"time"
 
 	"github.com/openidx/openidx/internal/identity"
 )
@@ -73,14 +74,72 @@ func emailUndeliverable(addr string) bool {
 	return false
 }
 
-// hasEnabledPushDevice reports whether a push challenge has anywhere to go. A
-// device the user switched off cannot approve one (the approval gate refuses
-// it), so it does not make push a factor the user has.
-func hasEnabledPushDevice(devices []identity.PushMFADevice) bool {
-	for _, d := range devices {
-		if d.Enabled {
-			return true
-		}
+// mfaPushUnseen tells a user signing in that their phone, their only second
+// factor, has not been seen within PUSH_DEVICE_STALE_DAYS, and what they can
+// use instead.
+type mfaPushUnseen struct {
+	// LastSeenAt is the most recent sighting of any of their push devices.
+	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+	// StaleDays is the window the phone fell outside of.
+	StaleDays int `json:"stale_days"`
+	// Disabled means no push device can be challenged at all: the system
+	// disabled every one of them, so push is not offered.
+	Disabled bool `json:"disabled,omitempty"`
+	// Fallbacks are the other methods this challenge offers, in order.
+	Fallbacks []string `json:"fallbacks"`
+}
+
+// pushUnseenFallbacks applies push liveness to the offered methods.
+//
+// A device unseen within the stale window is still a device: it is sent the
+// challenge if push is chosen, because it may simply be a phone nobody has
+// needed for a while. What changes is that it is never the only way in.
+//
+//   - Push moves behind every other offered method, so a user is not steered
+//     to a phone nobody has seen.
+//   - When push is the user's only primary factor (or every push device was
+//     disabled by the system and the user has no other), the challenge also
+//     offers an administrator's bypass code, whether or not one has been issued
+//     yet: that is the way back in an administrator can hand them, and
+//     VerifyBypassCode still checks it. Backup codes and email codes the user
+//     has are already offered. The returned notice says so.
+//
+// Nothing is removed from the challenge and no challenge is skipped: the
+// evaluation's Enabled verdict is the caller's, and a user whose push devices
+// were all disabled is still challenged (with these fallbacks).
+func pushUnseenFallbacks(methods []string, push identity.PushLiveness, staleAfter time.Duration) ([]string, *mfaPushUnseen) {
+	if push.Fresh > 0 || (push.Stale == 0 && push.Suspended == 0) {
+		return methods, nil
 	}
-	return false
+	out := make([]string, 0, len(methods)+1)
+	otherPrimary := false
+	for _, m := range methods {
+		if m == "push" {
+			continue
+		}
+		if m != "backup" && m != "bypass" {
+			otherPrimary = true
+		}
+		out = append(out, m)
+	}
+	if otherPrimary {
+		// Another factor the user has stands in front; push goes last.
+		if push.Offerable() {
+			out = append(out, "push")
+		}
+		return out, nil
+	}
+	if !hasMethod(out, "bypass") {
+		out = append(out, "bypass")
+	}
+	notice := &mfaPushUnseen{
+		LastSeenAt: push.LastSeen,
+		StaleDays:  int(staleAfter.Hours() / 24),
+		Disabled:   !push.Offerable(),
+		Fallbacks:  append([]string(nil), out...),
+	}
+	if push.Offerable() {
+		out = append(out, "push")
+	}
+	return out, notice
 }

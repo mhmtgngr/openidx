@@ -1295,6 +1295,19 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 				logsafe.String("agent_id", agentID),
 				zap.Error(dbErr))
 		}
+		// A report is the device checking in, so the push approver this agent
+		// registered (migration v135's agent_id link) has been seen too. It is
+		// what keeps an enrolled phone that is rarely asked to approve from
+		// looking dead to the login and the identity-service sweep. A device
+		// the sweep already disabled stays disabled: it comes back by
+		// registering again, not by a report.
+		if _, seenErr := h.db.Pool.Exec(ctx, `
+			UPDATE mfa_push_devices SET last_seen_at = $1
+			 WHERE agent_id = $2 AND org_id = $3 AND COALESCE(enabled, false)`,
+			now, agentID, orgIDFrom(ctx)); seenErr != nil {
+			h.logger.Warn("Failed to record the linked push device as seen",
+				logsafe.String("agent_id", agentID), zap.Error(seenErr))
+		}
 	}
 
 	h.logAuditEvent("agent.report", agentID, "success", fmt.Sprintf("score=%.2f", complianceScore))

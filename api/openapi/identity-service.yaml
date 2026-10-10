@@ -4805,6 +4805,152 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/identity/users/{id}/sign-in-methods:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Users]
+      summary: List a user's sign-in methods (admin)
+      description: >-
+        Every second factor the user has: TOTP, security keys, push devices
+        (with when each was last seen and whether it is active, stale or
+        disabled), backup codes remaining, email and SMS. Admin only, scoped to
+        the caller's organization.
+      operationId: getUserSignInMethods
+      x-openidx-handler: internal/identity.(*Service).handleAdminGetSignInMethods
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/users/{id}/sign-in-methods/{method}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+      - name: method
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [totp, email, sms, backup_codes]
+    delete:
+      tags: [Users]
+      summary: Remove one of a user's sign-in methods (admin)
+      description: Removes the user's TOTP, email code, SMS enrolment or unused backup codes. Audited as mfa.admin_removed.
+      operationId: removeUserSignInMethod
+      x-openidx-handler: internal/identity.(*Service).handleAdminRemoveSignInMethod
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/users/{id}/sign-in-methods/{method}/{credential_id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+      - name: method
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [webauthn, push]
+      - name: credential_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Users]
+      summary: Remove one of a user's security keys or push devices (admin)
+      description: Audited as mfa.admin_removed.
+      operationId: removeUserSignInCredential
+      x-openidx-handler: internal/identity.(*Service).handleAdminRemoveSignInCredential
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/identity/users/{id}/sign-in-methods/{method}/{credential_id}/disable:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+      - name: method
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [push]
+      - name: credential_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Users]
+      summary: Disable one of a user's push devices (admin)
+      description: >-
+        The device keeps its row and still counts as a factor the user has, so
+        the login keeps asking for a second factor and offers the fallbacks.
+        Registering the device again enables it. Audited as
+        push_device.disabled_admin.
+      operationId: disableUserPushDevice
+      x-openidx-handler: internal/identity.(*Service).handleAdminDisableSignInCredential
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /api/v1/identity/users/{id}/set-password:
     parameters:
       - $ref: '#/components/parameters/IdPath'

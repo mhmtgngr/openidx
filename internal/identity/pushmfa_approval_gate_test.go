@@ -36,6 +36,8 @@ var pushGateSchema = []string{
 		last_ip VARCHAR(45), created_at TIMESTAMPTZ DEFAULT NOW(),
 		last_used_at TIMESTAMPTZ, expires_at TIMESTAMPTZ,
 		agent_id VARCHAR(64), device_id VARCHAR(64), enrollment_session_id UUID,
+		-- v233 liveness columns.
+		last_seen_at TIMESTAMPTZ DEFAULT NOW(), disabled_at TIMESTAMPTZ, disabled_reason VARCHAR(32),
 		-- org_id is NOT NULL on the real table (v1.4 belt) and the gate's read
 		-- names it. The fixture omitted the column, so the query could be
 		-- written without a tenant predicate and this suite would not notice --

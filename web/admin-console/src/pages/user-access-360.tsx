@@ -20,6 +20,7 @@ import { ConfirmAction } from '../components/confirm-action'
 import { QueryError } from '../components/query-error'
 import { useToast } from '../hooks/use-toast'
 import { WhyAccessPanel } from '../components/why-access-panel'
+import { SignInMethodsCard } from '../components/sign-in-methods-card'
 
 interface NamedRef { id: string; name: string }
 
@@ -600,6 +601,9 @@ export function UserAccess360Page() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Every second factor, with when each phone was last seen */}
+      <SignInMethodsCard userId={user.id} />
 
       {/* Cross-pillar devices */}
       <Card>
