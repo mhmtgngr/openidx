@@ -279,7 +279,7 @@ func TestProxyGateRecordsOnBothBranches(t *testing.T) {
 		{"service.go", "func (s *Service) handleProxy(", `"proxy"`},
 		{"context_evaluator.go", "func (s *Service) handleAuthDecide(", `"forward_auth"`},
 	} {
-		if caller := readSource(t, site.file, site.fn); !strings.Contains(caller, "s.reachDecision(c, route, session, appID, appOrgID, "+site.point+")") {
+		if caller := readSource(t, site.file, site.fn); !strings.Contains(caller, "s.reachDecision(c, route, session, appID, appOrgID, "+site.point+", situationOf(accessCtx, risk))") {
 			t.Errorf("%s does not take the shared reach decision for %s", site.fn, site.point)
 		}
 	}

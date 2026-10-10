@@ -127,13 +127,29 @@ func (s *Service) buildAccessContext(c *gin.Context, route *ProxyRoute, session 
 	return ac, nil
 }
 
-// evaluateAccessContext runs all context checks in priority order (fail-closed)
+// evaluateAccessContext runs all context checks in priority order
+// (fail-closed): what the request itself says, then the route's conditions,
+// then its inline policy. The two proxy paths call the halves separately,
+// with the shared reach decision between them (see handleProxy).
 func (s *Service) evaluateAccessContext(ac *AccessContext) *AccessDecision {
+	risk, early := s.scoreAccessContext(ac)
+	if early != nil {
+		return early
+	}
+	return s.judgeRouteContext(ac, risk, true)
+}
+
+// scoreAccessContext is what the request itself says, before any condition
+// is read: a blocked address refuses outright; a threat-listed one, a changed
+// user agent, an untrusted device and a weak posture raise the risk score; a
+// posture score of zero refuses. The score is what the resource's risk
+// ceiling is judged against.
+func (s *Service) scoreAccessContext(ac *AccessContext) (risk int, early *AccessDecision) {
 	riskScore := 0
 
 	// 1. IP threat list — hard block
 	if ac.IPBlocked {
-		return &AccessDecision{
+		return riskScore, &AccessDecision{
 			Allowed:   false,
 			Reason:    fmt.Sprintf("access denied: IP %s is blocked (threat type: %s)", ac.ClientIP, ac.IPThreatType),
 			RiskScore: 100,
@@ -141,24 +157,6 @@ func (s *Service) evaluateAccessContext(ac *AccessContext) *AccessDecision {
 	}
 	if ac.IPThreatType != "" {
 		riskScore += 30
-	}
-
-	// 2. Geo-fence check
-	if len(ac.Route.AllowedCountries) > 0 && ac.GeoCountry != "" {
-		allowed := false
-		for _, c := range ac.Route.AllowedCountries {
-			if strings.EqualFold(c, ac.GeoCountry) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return &AccessDecision{
-				Allowed:   false,
-				Reason:    fmt.Sprintf("access denied: country %s not in allowed list", ac.GeoCountry),
-				RiskScore: 80,
-			}
-		}
 	}
 
 	// 3. User-Agent pinning — detect session hijacking via UA change
@@ -179,15 +177,6 @@ func (s *Service) evaluateAccessContext(ac *AccessContext) *AccessDecision {
 		}
 	}
 
-	// 4. Device trust check
-	if ac.Route.RequireDeviceTrust && !ac.DeviceTrusted {
-		return &AccessDecision{
-			Allowed:        false,
-			Reason:         "access denied: device is not trusted",
-			StepUpRequired: true,
-			RiskScore:      70,
-		}
-	}
 	if !ac.DeviceTrusted {
 		riskScore += 15
 	}
@@ -196,7 +185,7 @@ func (s *Service) evaluateAccessContext(ac *AccessContext) *AccessDecision {
 	if len(ac.Route.PostureCheckIDs) > 0 && ac.PostureScore < 0.5 {
 		riskScore += 25
 		if ac.PostureScore == 0 {
-			return &AccessDecision{
+			return riskScore, &AccessDecision{
 				Allowed:        false,
 				Reason:         "access denied: device posture check failed",
 				StepUpRequired: true,
@@ -210,14 +199,55 @@ func (s *Service) evaluateAccessContext(ac *AccessContext) *AccessDecision {
 		riskScore = 100
 	}
 
-	// 6. Risk score threshold
-	if ac.Route.MaxRiskScore > 0 && riskScore > ac.Route.MaxRiskScore {
-		return &AccessDecision{
-			Allowed:        false,
-			Reason:         fmt.Sprintf("access denied: risk score %d exceeds maximum %d", riskScore, ac.Route.MaxRiskScore),
-			StepUpRequired: true,
-			RiskScore:      riskScore,
+	return riskScore, nil
+}
+
+// judgeRouteContext applies the route's own conditions — geo-fence, device
+// trust, risk ceiling — and then its inline policy. routeConditionsRule is
+// false when the route's application declares resource_conditions: the shared
+// reach decision judged those with this same situation, and the columns on
+// the route are the pre-230 copy kept for rollback, so judging them again
+// would let a stale copy overrule the resource. The inline policy has no
+// counterpart on the resource and always runs.
+func (s *Service) judgeRouteContext(ac *AccessContext, riskScore int, routeConditionsRule bool) *AccessDecision {
+	if routeConditionsRule {
+		// 2. Geo-fence check
+		if len(ac.Route.AllowedCountries) > 0 && ac.GeoCountry != "" {
+			allowed := false
+			for _, c := range ac.Route.AllowedCountries {
+				if strings.EqualFold(c, ac.GeoCountry) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return &AccessDecision{
+					Allowed:   false,
+					Reason:    fmt.Sprintf("access denied: country %s not in allowed list", ac.GeoCountry),
+					RiskScore: 80,
+				}
+			}
 		}
+
+		// 4. Device trust check
+		if ac.Route.RequireDeviceTrust && !ac.DeviceTrusted {
+			return &AccessDecision{
+				Allowed:        false,
+				Reason:         "access denied: device is not trusted",
+				StepUpRequired: true,
+				RiskScore:      70,
+			}
+		}
+		// 6. Risk score threshold
+		if ac.Route.MaxRiskScore > 0 && riskScore > ac.Route.MaxRiskScore {
+			return &AccessDecision{
+				Allowed:        false,
+				Reason:         fmt.Sprintf("access denied: risk score %d exceeds maximum %d", riskScore, ac.Route.MaxRiskScore),
+				StepUpRequired: true,
+				RiskScore:      riskScore,
+			}
+		}
+
 	}
 
 	// 7. Inline policy DSL evaluation
@@ -258,6 +288,25 @@ func (s *Service) evaluateAccessContext(ac *AccessContext) *AccessDecision {
 		Allowed:   true,
 		RiskScore: riskScore,
 	}
+}
+
+// refuseOnContext answers a context refusal the way both proxy paths always
+// have: the audit row first, the step-up header when a fresh factor or a
+// trusted device would change the answer, then the 403.
+func (s *Service) refuseOnContext(c *gin.Context, route *ProxyRoute, session *ProxySession, d *AccessDecision, path, method string) {
+	details := map[string]interface{}{
+		"reason":  d.Reason,
+		"user_id": session.UserID,
+		"path":    path,
+	}
+	if method != "" {
+		details["method"] = method
+	}
+	s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", details)
+	if d.StepUpRequired {
+		c.Header("X-Step-Up-Required", "true")
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": d.Reason})
 }
 
 // lookupIPGeo returns the country code and city for an IP address, using cache
@@ -532,34 +581,32 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 			return
 		}
 	}
-	if !s.reachDecision(c, route, session, appID, appOrgID, "forward_auth") {
-		return
-	}
-
-	// Context-aware evaluation
+	// The request's situation first — the device, the country, the risk it
+	// carries — so the shared decision judges the resource's conditions for
+	// real instead of listing them unjudged.
 	accessCtx, err := s.buildAccessContext(c, route, session)
 	if err != nil {
 		s.logger.Error("Failed to build access context", zap.Error(err))
 		c.JSON(http.StatusForbidden, gin.H{"error": "context evaluation failed"})
 		return
 	}
-
 	// Set request method/path in context for DSL evaluation
 	accessCtx.OriginalMethod = originalMethod
 	accessCtx.OriginalURI = originalURI
-
-	decision := s.evaluateAccessContext(accessCtx)
+	risk, early := s.scoreAccessContext(accessCtx)
+	if early != nil {
+		s.refuseOnContext(c, route, session, early, originalURI, originalMethod)
+		return
+	}
+	ok, conditionsRuled := s.reachDecision(c, route, session, appID, appOrgID, "forward_auth", situationOf(accessCtx, risk))
+	if !ok {
+		return
+	}
+	// The route's own conditions, unless the resource declared its own, and
+	// the inline policy.
+	decision := s.judgeRouteContext(accessCtx, risk, !conditionsRuled)
 	if !decision.Allowed {
-		s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
-			"reason":  decision.Reason,
-			"user_id": session.UserID,
-			"path":    originalURI,
-			"method":  originalMethod,
-		})
-		if decision.StepUpRequired {
-			c.Header("X-Step-Up-Required", "true")
-		}
-		c.JSON(http.StatusForbidden, gin.H{"error": decision.Reason})
+		s.refuseOnContext(c, route, session, decision, originalURI, originalMethod)
 		return
 	}
 
