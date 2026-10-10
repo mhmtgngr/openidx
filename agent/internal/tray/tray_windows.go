@@ -42,6 +42,7 @@ type app struct {
 	mHello     *systray.MenuItem
 	mAutostart *systray.MenuItem
 	mHealth    *systray.MenuItem
+	mNetwork   *systray.MenuItem
 
 	mu       sync.Mutex
 	tokens   *sso.Tokens
@@ -50,6 +51,7 @@ type app struct {
 	rsAgent  *agent.Agent // remote-support agent running in this user session
 
 	healthSlot  []*systray.MenuItem
+	tunnelSlot  []*systray.MenuItem
 	healthIssue []ipc.PostureIssue // slot index -> issue shown there
 	lastStatus  *ipc.Status        // the service's latest answer, for the launch gate
 }
@@ -133,6 +135,16 @@ func (a *app) onReady() {
 		go a.watchHealthSlot(i, mi)
 	}
 	a.mHealth.Hide()
+	// Network: the bundled tunneler's state and the services it intercepts.
+	// The lines are information, not actions, so they are disabled.
+	a.mNetwork = systray.AddMenuItem("Network", "The OpenIDX network tunnel")
+	for i := 0; i < maxTunnelSlots; i++ {
+		mi := a.mNetwork.AddSubMenuItem("", "")
+		mi.Disable()
+		mi.Hide()
+		a.tunnelSlot = append(a.tunnelSlot, mi)
+	}
+	a.mNetwork.Hide()
 	mSettings := systray.AddMenuItem("Settings", "")
 	a.mAutostart = mSettings.AddSubMenuItemCheckbox("Start when I sign in", "Start the OpenIDX tray at Windows sign-in", !AutostartDisabled())
 	mUpdates := mSettings.AddSubMenuItem("Check for updates", "Ask the update server whether a newer OpenIDX is published")
@@ -224,7 +236,28 @@ func (a *app) updateStatus() {
 		a.updateBanner(a.remoteSupportState(st))
 	}
 	a.updateHealth(st)
+	a.updateNetwork(st)
 	a.mStatus.SetTitle(composeStatus(signedIn, a.server() != "", st))
+}
+
+// updateNetwork shows the tunnel's state and its services under Network.
+func (a *app) updateNetwork(st *ipc.Status) {
+	title := tunnelTitle(st)
+	if title == "" {
+		a.mNetwork.Hide()
+		return
+	}
+	a.mNetwork.SetTitle(title)
+	a.mNetwork.Show()
+	lines := tunnelLines(st)
+	for i, mi := range a.tunnelSlot {
+		if i < len(lines) {
+			mi.SetTitle(lines[i])
+			mi.Show()
+		} else {
+			mi.Hide()
+		}
+	}
 }
 
 // updateHealth shows the failing checks under Device health and tells the

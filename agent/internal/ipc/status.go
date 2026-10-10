@@ -4,6 +4,8 @@
 // (go-winio) with non-Windows stubs.
 package ipc
 
+import "github.com/openidx/openidx/agent/internal/tunnel"
+
 // PipeName is the Windows named pipe the service listens on.
 const PipeName = `\\.\pipe\openidx-agent`
 
@@ -47,6 +49,11 @@ type Status struct {
 	// currently holds control (view vs control).
 	RemoteSupportActive     bool `json:"remote_support_active,omitempty"`
 	RemoteSupportControlled bool `json:"remote_support_controlled,omitempty"`
+	// Tunnel is the bundled tunneler's state as the service reports it to
+	// the server; nil from a service that supervises none (an older agent).
+	Tunnel *tunnel.Status `json:"tunnel,omitempty"`
+	// TunnelDetail says why the tunnel is in that state, for the tray.
+	TunnelDetail string `json:"tunnel_detail,omitempty"`
 }
 
 // PostureIssue is one check that did not pass, as the tray shows it.

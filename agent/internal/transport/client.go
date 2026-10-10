@@ -122,32 +122,45 @@ func (c *Client) Enroll(token string) (*EnrollResponse, error) {
 	return &enrollResp, nil
 }
 
+// maxReportResponseBytes bounds the report response the agent reads.
+const maxReportResponseBytes = 1 << 20
+
 // ReportResults posts check result data to the agent report endpoint.
 func (c *Client) ReportResults(data []byte) error {
+	_, err := c.ReportResultsResponse(data)
+	return err
+}
+
+// ReportResultsResponse posts check result data to the agent report endpoint
+// and returns the response body (at most 1 MiB of it).
+func (c *Client) ReportResultsResponse(data []byte) ([]byte, error) {
 	url := c.baseURL + "/api/v1/access/agent/report"
 
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("creating report request: %w", err)
+		return nil, fmt.Errorf("creating report request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.authToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Agent-ID", c.agentID)
 	if err := sign(req, c.signer, data); err != nil {
-		return err
+		return nil, err
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("sending report request: %w", err)
+		return nil, fmt.Errorf("sending report request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("report request failed with status %d", resp.StatusCode)
+		return nil, fmt.Errorf("report request failed with status %d", resp.StatusCode)
 	}
 
-	return nil
+	// The report was accepted; a body that cannot be read only loses the
+	// policy it may carry.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxReportResponseBytes))
+	return body, nil
 }
 
 // GetConfig retrieves the agent configuration from the server and returns the
