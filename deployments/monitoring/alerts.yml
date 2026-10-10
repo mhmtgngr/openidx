@@ -79,3 +79,28 @@ groups:
         annotations:
           summary: "No successful {{ $labels.kind }} database backup in over 26h"
           description: "The last successful {{ $labels.kind }} backup was {{ $value | humanizeDuration }} ago. Check `journalctl --user -u oidx-pg-backup.service` and, for kind=offbox, last-offbox.json in the backup directory (deployments/scripts/README.md)."
+
+  - name: openidx-tunnel
+    rules:
+      - alert: OpenIDXAgentTunnelDown
+        # Devices whose agent is still reporting in while their OpenZiti
+        # tunneler is not up (or has not been seen up) for 15 minutes: the
+        # device is on and its network resources are unreachable. A device
+        # that is switched off reports nothing and is not counted.
+        expr: openidx_tunnel_agents_down > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} device(s) report in with their tunnel down"
+          description: "{{ $value }} active device(s) have reported in during the last 15m while their OpenZiti tunneler was not up for 15m. The Agent Fleet page shows which (Tunnel column); check the tunneler service on the device and its enrolment."
+
+      - alert: OpenIDXTunnelDialFailures
+        # Dial failures the tunnelers report, summed across the fleet. A
+        # sustained rate means a network resource's service is unreachable
+        # from its hosting router, or its dial policy refuses the devices.
+        expr: sum(rate(openidx_tunnel_dial_failures_total[10m])) > 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Tunnel dial failures above 6/min"
+          description: "Device tunnelers report {{ $value | humanize }} dial failures per second over 10m. Check the network resource's converge state (GET /api/v1/access/network-resources), the hosting router's reach to the target, and the Dial policy (ACCESS_ASSIGNMENT_ENFORCE, require_device_trust)."

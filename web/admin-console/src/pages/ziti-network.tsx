@@ -35,6 +35,7 @@ import { QueryError } from '../components/query-error'
 import { isPlatformAdminRequired } from '../lib/platform-admin'
 import { useToast } from '../hooks/use-toast'
 import { ConfirmAction } from '../components/confirm-action'
+import { NetworkResourcesPanel } from '../components/network-resources-panel'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -382,7 +383,7 @@ function SearchInput({ value, onChange, placeholder }: { value: string; onChange
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
-const ZITI_TABS = ['connection', 'overview', 'services', 'identities', 'security', 'remote-access']
+const ZITI_TABS = ['connection', 'overview', 'services', 'network-resources', 'identities', 'security', 'remote-access']
 
 export function ZitiNetworkPage() {
   const { t } = useTranslation()
@@ -451,6 +452,10 @@ export function ZitiNetworkPage() {
             <Server className="h-4 w-4" />
             {t('pages.zitiNetwork.tabs.services')}
           </TabsTrigger>
+          <TabsTrigger value="network-resources" className="gap-1.5">
+            <Network className="h-4 w-4" />
+            {t('pages.zitiNetwork.tabs.networkResources')}
+          </TabsTrigger>
           <TabsTrigger value="identities" className="gap-1.5">
             <Users2 className="h-4 w-4" />
             {t('pages.zitiNetwork.tabs.identities')}
@@ -473,6 +478,9 @@ export function ZitiNetworkPage() {
         </TabsContent>
         <TabsContent value="services">
           <ServicesTab />
+        </TabsContent>
+        <TabsContent value="network-resources">
+          <NetworkResourcesPanel />
         </TabsContent>
         <TabsContent value="identities">
           <IdentitiesTab />
