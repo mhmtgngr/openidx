@@ -119,6 +119,9 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 	}()
 	// Periodic self-update (no-op unless update_manifest_url is configured).
 	go h.updateLoop(ctx)
+	// The tray in every signed-in session, right after an install or upgrade
+	// rather than at the next sign-in.
+	go h.trayLoop(ctx)
 
 	s <- svc.Status{State: svc.Running, Accepts: accepted}
 	for {

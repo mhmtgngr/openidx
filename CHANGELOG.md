@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The Windows tray appears right after install, once per session, on the taskbar.**
+  - **After install or upgrade:** the MSI's `LaunchTray` action never ran. `WixQuietExec` found no command line (`0x80070057`), it would have blocked the install on a tray that never exits, and upgrades skipped it. So nobody saw the tray until they signed out and back in. The action is gone. Instead the service, which runs as SYSTEM, starts `tray --autostart` in every signed-in session within 15 seconds. That covers an interactive install, a silent or GPO install and an upgrade. It starts a tray at most once per sign-in, so a person who quits the tray or turns "Start when I sign in" off is not overridden.
+  - **One tray per session:** the Run key, the service and the Start-menu shortcut no longer stack trays; a second one exits.
+  - **On the taskbar:** on Windows 11 the tray moves its icon out of the hidden overflow (^) the first time it runs for a user. If the user hides it again, it stays hidden.
 - **The Windows MSI installs again.** The agent-v0.3.0 MSI left out `libvpx-1.dll`, which the screen-share build of the agent imports. On every machine the agent failed to start (`0xC0000135`), the service did not start (`1920`) and the installation rolled back (`1603`). The packaging step looked for `vpx*.dll`, which does not match vcpkg's `libvpx-1.dll`. It now bundles the DLL, fails the build when a screen-share build has none to bundle, and unpacks the finished MSI and starts the agent from it, so a DLL the package is missing fails CI instead of an install.
 - **The console's enrolment link works on Windows.** The Add-a-device link and QR carried only the code. The Windows agent's link handler has no server field, so it enrolled against its built-in `https://openidx.example.com` and failed. The link now also names the server (`openidx://enroll?code=…&server=…`), which every client already reads.
 
