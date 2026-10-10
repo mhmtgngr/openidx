@@ -153,6 +153,14 @@ func (r *ResilientTransport) ReportResults(data []byte) error {
 	return err
 }
 
+// ReportResultsResponse reports posture over the best available path and
+// returns the response body (nil from a path that cannot return one).
+func (r *ResilientTransport) ReportResultsResponse(data []byte) ([]byte, error) {
+	return runResilient(r,
+		func(t Transport) ([]byte, error) { return reportResponse(t, data) },
+		func(t Transport) ([]byte, error) { return reportResponse(t, data) })
+}
+
 // GetConfig fetches server config over the best available path.
 func (r *ResilientTransport) GetConfig() ([]byte, error) {
 	return runResilient(r,

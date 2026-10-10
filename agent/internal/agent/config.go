@@ -60,6 +60,30 @@ type AgentConfig struct {
 	// (agent/internal/devicekey), from enrolment or from the agent's own
 	// registration. Until then the agent keeps offering it.
 	DeviceKeyBound bool `json:"device_key_bound,omitempty"`
+	// Tunnel configures the bundled OpenZiti tunneler (internal/tunnel), which
+	// gives every application on the device the overlay services this device
+	// may reach: the VPN replacement. Absent means off, unless the server's
+	// org_network_policy.always_on turns it on.
+	Tunnel *TunnelConfig `json:"tunnel,omitempty"`
+}
+
+// TunnelConfig is agent.json's "tunnel" object.
+type TunnelConfig struct {
+	// Enabled turns the tunnel on for this device. Default false: an owner
+	// turns it on per organization (org_network_policy.always_on) or per
+	// device here.
+	Enabled bool `json:"enabled,omitempty"`
+	// BinaryPath is the tunneler to run instead of the bundled one. Like
+	// plugin_dir it chooses what the service runs as SYSTEM/root, so it is
+	// obeyed only when ConfigTrusted accepts agent.json.
+	BinaryPath string `json:"binary_path,omitempty"`
+	// Mode is "child" (the agent runs the tunneler), "external" (the
+	// openidx-tunnel systemd unit does) or "auto"/"" (child when the agent is
+	// privileged, external otherwise).
+	Mode string `json:"mode,omitempty"`
+	// ProbeAddress is an optional host:port, reachable only through the
+	// tunnel, dialled as a health check when the tunneler's IPC is silent.
+	ProbeAddress string `json:"probe_address,omitempty"`
 }
 
 // CheckConfig is an alias for checks.CheckConfig so callers that import the
@@ -75,6 +99,17 @@ type ServerConfig struct {
 	// (internal/access/agent_api.go HandleConfig), "enforce" otherwise. The
 	// tray refuses privileged launches while it is "block".
 	EnforcementPolicy string `json:"enforcement_policy,omitempty"`
+	// OrgNetworkPolicy is the organization's network policy, when the server
+	// sends one. Optional: an older server sends nothing and the device's own
+	// tunnel.enabled decides.
+	OrgNetworkPolicy *OrgNetworkPolicy `json:"org_network_policy,omitempty"`
+}
+
+// OrgNetworkPolicy is the server's org_network_policy object, as the agent
+// reads it from /agent/config or from the /agent/report response.
+type OrgNetworkPolicy struct {
+	// AlwaysOn, when true, turns the tunnel on whatever agent.json says.
+	AlwaysOn *bool `json:"always_on,omitempty"`
 }
 
 // RemoteSupportBlock is the in-flight remote-support session pointer the server

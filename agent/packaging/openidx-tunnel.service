@@ -1,0 +1,35 @@
+# The bundled OpenZiti tunneler, for a Linux install whose agent runs
+# unprivileged (deploy/openidx-agent.service runs it as the openidx-agent
+# user, which cannot open a TUN device). The agent, in tunnel mode "external"
+# (the default when it is not root), writes this device's identity into the
+# identity directory and reads the tunneler's status with
+# `ziti-edge-tunnel tunnel_status -P openidx`; this unit owns the process.
+#
+# Not enabled by the package. Turn the tunnel on in the agent (tunnel.enabled,
+# or the organization's always-on policy), then:
+#   sudo systemctl enable --now openidx-tunnel.service
+# The identity directory is <agent --config-dir>/tunnel/identities; this unit
+# names the one deploy/openidx-agent.service uses. Change both together.
+# See docs/AGENT-TUNNEL.md.
+[Unit]
+Description=OpenIDX network tunnel (OpenZiti ziti-edge-tunnel)
+Documentation=https://github.com/mhmtgngr/openidx/blob/main/docs/AGENT-TUNNEL.md
+After=network-online.target
+Wants=network-online.target
+# The agent removes the identity when the tunnel is turned off; with nothing
+# to load there is nothing to run.
+ConditionDirectoryNotEmpty=/var/lib/openidx-agent/tunnel/identities
+
+[Service]
+Type=simple
+# -P openidx is the IPC discriminator the agent queries, so a second tunneler
+# on the machine is never mistaken for this one.
+ExecStart=/usr/local/lib/openidx-agent/ziti-edge-tunnel run --identity-dir /var/lib/openidx-agent/tunnel/identities -P openidx
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openidx-tunnel
+
+[Install]
+WantedBy=multi-user.target

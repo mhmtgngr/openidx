@@ -17,6 +17,7 @@ import (
 
 	"github.com/openidx/openidx/agent/internal/agent"
 	"github.com/openidx/openidx/agent/internal/ipc"
+	"github.com/openidx/openidx/agent/internal/tunnel"
 	"github.com/openidx/openidx/agent/internal/updater"
 )
 
@@ -35,11 +36,15 @@ func (h *handler) statusProvider() ipc.Status {
 	}
 	var rsActive, rsControlled, revoked bool
 	var posture *agent.PostureSummary
+	var tun *tunnel.Status
+	var tunDetail string
 	h.mu.Lock()
 	if h.agent != nil {
 		rsActive, rsControlled = h.agent.RemoteSupportState()
 		revoked = h.agent.Revoked()
 		posture = h.agent.LastPosture()
+		tun = h.agent.TunnelStatus()
+		tunDetail = h.agent.TunnelDetail()
 	}
 	h.mu.Unlock()
 	st := ipc.Status{
@@ -51,6 +56,8 @@ func (h *handler) statusProvider() ipc.Status {
 		Revoked:                 revoked,
 		RemoteSupportActive:     rsActive,
 		RemoteSupportControlled: rsControlled,
+		Tunnel:                  tun,
+		TunnelDetail:            tunDetail,
 	}
 	fillPosture(&st, posture)
 	return st

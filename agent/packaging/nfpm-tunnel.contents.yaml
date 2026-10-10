@@ -1,0 +1,15 @@
+  # Appended to nfpm.yaml's `contents` by `make package-linux` when the build
+  # fetched and verified the pinned ziti-edge-tunnel (the workflow's "Fetch the
+  # OpenZiti tunneler" step). Indented as items of that list; keep it so.
+  #
+  # The tunneler goes to /usr/local/lib/openidx-agent rather than a bin
+  # directory so it does not shadow an operator's own OpenZiti install on PATH;
+  # the agent looks for it there (internal/tunnel/locate.go).
+  - src: ./dist/ziti-edge-tunnel-linux
+    dst: /usr/local/lib/openidx-agent/ziti-edge-tunnel
+    file_info:
+      mode: 0755
+  - src: ./packaging/openidx-tunnel.service
+    dst: /usr/lib/systemd/system/openidx-tunnel.service
+    file_info:
+      mode: 0644

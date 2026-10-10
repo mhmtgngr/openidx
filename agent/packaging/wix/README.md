@@ -44,6 +44,15 @@ The **pure-Go** exe (default) still runs remote support — it negotiates the
 session and honors keyboard/mouse control — it just sends no video frames. The
 `screenshare` exe adds the live screen stream.
 
+### Bundled OpenZiti tunneler
+
+CI downloads the pinned `ziti-edge-tunnel` release (version and SHA-256 in the
+workflow's top-level `env:`), verifies it, and passes
+`-d ZitiTunnelExe=agent/dist/ziti/ziti-edge-tunnel.exe -d WintunDll=agent/dist/ziti/wintun.dll`.
+Both files are installed beside `openidx-agent.exe`. Without those two
+defines the MSI is built exactly as before, with no tunneler. The agent runs the
+tunneler only when the tunnel is enabled; see `docs/AGENT-TUNNEL.md`.
+
 ## Deploy (silent / GPO / Intune)
 Zero-touch fleet enroll with a **reusable** bootstrap token (one token for all
 devices — mint via `POST /api/v1/access/agent/tokens {"reusable":true}`):

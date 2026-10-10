@@ -83,9 +83,16 @@ func (c *ZitiClient) Enroll(token string) (*EnrollResponse, error) {
 
 // ReportResults delegates to a Client using the Ziti-backed HTTP client.
 func (c *ZitiClient) ReportResults(data []byte) error {
+	_, err := c.ReportResultsResponse(data)
+	return err
+}
+
+// ReportResultsResponse delegates to a Client using the Ziti-backed HTTP
+// client and returns the response body.
+func (c *ZitiClient) ReportResultsResponse(data []byte) ([]byte, error) {
 	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, agentID: c.agentID, httpClient: c.httpClient,
 		signer: c.signer}
-	return inner.ReportResults(data)
+	return inner.ReportResultsResponse(data)
 }
 
 // SetSigner installs the device-key signer for posture reports.

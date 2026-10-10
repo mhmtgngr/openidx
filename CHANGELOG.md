@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The agent runs the OpenZiti tunneler, so a device reaches its overlay services without a VPN.** The Windows MSI and the Linux deb/rpm now carry `ziti-edge-tunnel` v1.18.7, downloaded at build time and packaged only when it matches its pinned SHA-256. When the tunnel is on, the agent copies the device's own overlay identity (`dev-<agent_id>`) into the tunneler's identity directory, runs the tunneler, restarts it with a growing wait when it exits, and reads its health from the tunneler's own status command. On Windows the tunneler is a child of the agent service that dies with it; on Linux the agent runs it when it is root, and otherwise leaves it to the packaged `openidx-tunnel.service`. The tunnel is off until `tunnel.enabled` is set in `agent.json` or the server sends `org_network_policy.always_on`. Each posture report carries `tunnel_status` (state, version, last seen, intercepted services), and the Windows tray shows the state and the services under **Network**. `docs/AGENT-TUNNEL.md` covers what is bundled, how to turn it on, and how to troubleshoot it.
+
 ### Fixed
 
 - `ELASTICSEARCH_URL` set and empty turns Elasticsearch off. Before, the empty value was ignored, so an install without Elasticsearch kept dialling localhost:9200 and production asked for Elasticsearch credentials it had no use for.

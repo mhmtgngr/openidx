@@ -12,6 +12,12 @@ description: |
 vendor: OpenIDX
 homepage: https://github.com/mhmtgngr/openidx
 license: Apache-2.0
+scripts:
+  postinstall: ./packaging/postinstall.sh
+# `contents` must stay the LAST key in this file. When the build has fetched
+# and verified the bundled OpenZiti tunneler, the Makefile appends
+# packaging/nfpm-tunnel.contents.yaml to this file to make the package that
+# carries it; that only works while the list it extends is the one at the end.
 contents:
   # A fixed path, not ./dist/openidx-agent-linux-${ARCH}: nfpm expands
   # environment variables in a known set of top-level fields (name, arch,
@@ -29,5 +35,3 @@ contents:
     dst: /usr/share/applications/openidx.desktop
     file_info:
       mode: 0644
-scripts:
-  postinstall: ./packaging/postinstall.sh

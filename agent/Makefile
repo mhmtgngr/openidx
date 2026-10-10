@@ -54,15 +54,33 @@ build-all: clean
 ## package-linux: build .deb and .rpm for linux amd64+arm64 (requires nfpm)
 ## See https://nfpm.goreleaser.com. macOS .pkg and Windows .msi are built in CI
 ## on their native runners (pkgbuild / WiX); see packaging/DEEPLINK.md.
+##
+## ZITI_TUNNEL_DIR, when set, names a directory holding verified OpenZiti
+## tunneler binaries ziti-edge-tunnel-linux-amd64 and -arm64 (the workflow's
+## "Fetch the OpenZiti tunneler" step); the packages then carry the tunneler and
+## openidx-tunnel.service (packaging/nfpm-tunnel.contents.yaml). It is outside
+## dist/ because build-all starts by deleting dist/. Unset = no tunneler, as
+## before. See docs/AGENT-TUNNEL.md.
+ZITI_TUNNEL_DIR ?=
+
 package-linux: build-all
 	@command -v nfpm >/dev/null || { echo "nfpm not installed: https://nfpm.goreleaser.com"; exit 1; }
 	@mkdir -p $(OUT_DIR)/pkg
-	@set -e; for arch in amd64 arm64; do \
+	@set -e; nfpmcfg=packaging/nfpm.yaml; \
+	if [ -n "$(ZITI_TUNNEL_DIR)" ]; then \
+		nfpmcfg=$(OUT_DIR)/nfpm-tunnel.yaml; \
+		cat packaging/nfpm.yaml packaging/nfpm-tunnel.contents.yaml > $$nfpmcfg; \
+		echo "bundling the OpenZiti tunneler from $(ZITI_TUNNEL_DIR)"; \
+	fi; \
+	for arch in amd64 arm64; do \
 		cp $(OUT_DIR)/$(BINARY)-linux-$$arch $(OUT_DIR)/$(BINARY)-linux ; \
+		if [ -n "$(ZITI_TUNNEL_DIR)" ]; then \
+			install -m 0755 "$(ZITI_TUNNEL_DIR)/ziti-edge-tunnel-linux-$$arch" $(OUT_DIR)/ziti-edge-tunnel-linux ; \
+		fi; \
 		for pkg in deb rpm; do \
-			VERSION=$(VERSION) ARCH=$$arch nfpm pkg -f packaging/nfpm.yaml -p $$pkg -t $(OUT_DIR)/pkg/ ; \
+			VERSION=$(VERSION) ARCH=$$arch nfpm pkg -f $$nfpmcfg -p $$pkg -t $(OUT_DIR)/pkg/ ; \
 		done ; \
-	done; rm -f $(OUT_DIR)/$(BINARY)-linux
+	done; rm -f $(OUT_DIR)/$(BINARY)-linux $(OUT_DIR)/ziti-edge-tunnel-linux $(OUT_DIR)/nfpm-tunnel.yaml
 	@ls -lh $(OUT_DIR)/pkg/
 
 ## help: print this help
