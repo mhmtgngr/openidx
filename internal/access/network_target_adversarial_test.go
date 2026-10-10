@@ -12,7 +12,7 @@ import (
 // emit-time gate accepts.
 func TestNetworkTargetAdversarialPass(t *testing.T) {
 	pinTargetGuard(t)
-	withPlatformHosts(t, "https://ctrl.corp.example:1280", "10.20.99.1")
+	withPlatformHosts(t, "https://ctrl.corp.example:1280", "10.0.0.99")
 	pg := []PortRange{{5432, 5432}}
 
 	loopbackSpellings := []string{
@@ -37,7 +37,7 @@ func TestNetworkTargetAdversarialPass(t *testing.T) {
 		"fd00:ec2::254", "metadata.google.internal", "169.254.169.254.nip.io", "instance-data.ec2.internal",
 	}
 	controllerSpellings := []string{
-		"ctrl.corp.example", "CTRL.CORP.EXAMPLE.", "10.20.99.1", "::ffff:10.20.99.1", "64:ff9b::a14:6301",
+		"ctrl.corp.example", "CTRL.CORP.EXAMPLE.", "10.0.0.99", "::ffff:10.0.0.99", "64:ff9b::a00:63",
 	}
 
 	type field struct {
@@ -73,7 +73,7 @@ func TestNetworkTargetAdversarialPass(t *testing.T) {
 	// Covering CIDRs: anything that contains loopback, metadata or the
 	// controller, in v4 and in every v6 form that embeds v4.
 	for _, c := range []string{
-		"127.0.0.0/8", "126.0.0.0/7", "0.0.0.0/1", "169.254.0.0/16", "10.20.0.0/16", "10.20.99.0/24",
+		"127.0.0.0/8", "126.0.0.0/7", "0.0.0.0/1", "169.254.0.0/16", "10.0.0.0/16", "10.0.0.0/24",
 		"::/0", "::/96", "::ffff:0:0/96", "::ffff:7f00:0/104", "64:ff9b::/96", "64:ff9b::7f00:0/120",
 		"2002::/16", "2002:7f00::/24", "2001::/32", "2001:0:4136:e378::/64",
 	} {
@@ -100,7 +100,7 @@ func TestNetworkTargetRefusesTheSpecialPurposeRegistries(t *testing.T) {
 		}
 	}
 	// Ordinary private and global unicast still pass.
-	for _, a := range []string{"10.20.0.5", "172.16.4.4", "192.168.10.10", "8.8.8.8", "2a02:1234::1", "fd12:3456::1"} {
+	for _, a := range []string{"10.0.0.5", "172.16.0.4", "192.168.1.10", "8.8.8.8", "2a02:1234::1", "fd12:3456::1"} {
 		if _, err := normalizeNetworkTarget(NetworkTarget{Hosts: []string{a}}); err != nil {
 			t.Errorf("%s: refused: %v", a, err)
 		}
@@ -112,30 +112,30 @@ func TestNetworkTargetRefusesTheSpecialPurposeRegistries(t *testing.T) {
 func TestGuardEmittedConfigsJudgesTheMapsThemselves(t *testing.T) {
 	pinTargetGuard(t)
 	goodIntercept := map[string]interface{}{
-		"protocols": []string{"tcp"}, "addresses": []string{"10.20.0.5"},
+		"protocols": []string{"tcp"}, "addresses": []string{"10.0.0.5"},
 		"portRanges": []map[string]interface{}{{"low": 445, "high": 445}},
 	}
-	goodHost := map[string]interface{}{"protocol": "tcp", "address": "10.20.0.5", "port": 445}
+	goodHost := map[string]interface{}{"protocol": "tcp", "address": "10.0.0.5", "port": 445}
 	if errs := guardEmittedConfigs(goodIntercept, goodHost); len(errs) != 0 {
 		t.Fatalf("a clean pair was refused: %v", errs)
 	}
 	for name, h := range map[string]map[string]interface{}{
 		"host.v1 address differs from intercept": {"protocol": "tcp", "address": "127.0.0.1", "port": 5432},
-		"non-canonical address":                  {"protocol": "tcp", "address": "::ffff:10.20.0.5", "port": 445},
+		"non-canonical address":                  {"protocol": "tcp", "address": "::ffff:10.0.0.5", "port": 445},
 		"uppercase name":                         {"protocol": "tcp", "address": "FS1.corp.example", "port": 445},
 		"forwardAddress unbounded":               {"protocol": "tcp", "forwardAddress": true, "port": 445},
-		"allowedAddresses without forward":       {"protocol": "tcp", "address": "10.20.0.5", "allowedAddresses": []string{"127.0.0.1"}, "port": 445},
+		"allowedAddresses without forward":       {"protocol": "tcp", "address": "10.0.0.5", "allowedAddresses": []string{"127.0.0.1"}, "port": 445},
 		"allowedAddresses with loopback": {"protocol": "tcp", "forwardAddress": true,
-			"allowedAddresses": []string{"10.20.0.5", "127.0.0.0/8"}, "port": 445},
+			"allowedAddresses": []string{"10.0.0.5", "127.0.0.0/8"}, "port": 445},
 		"allowedAddresses wildcard": {"protocol": "tcp", "forwardAddress": true,
 			"allowedAddresses": []string{"*.nip.io"}, "port": 445},
 		"empty allowedAddresses": {"protocol": "tcp", "forwardAddress": true, "allowedAddresses": []string{}, "port": 445},
-		"forwardPort unbounded":  {"protocol": "tcp", "address": "10.20.0.5", "forwardPort": true},
-		"port 0":                 {"protocol": "tcp", "address": "10.20.0.5", "port": 0},
-		"bad allowed port range": {"protocol": "tcp", "address": "10.20.0.5", "forwardPort": true,
+		"forwardPort unbounded":  {"protocol": "tcp", "address": "10.0.0.5", "forwardPort": true},
+		"port 0":                 {"protocol": "tcp", "address": "10.0.0.5", "port": 0},
+		"bad allowed port range": {"protocol": "tcp", "address": "10.0.0.5", "forwardPort": true,
 			"allowedPortRanges": []map[string]interface{}{{"low": 0, "high": 70000}}},
-		"protocol icmp":           {"protocol": "icmp", "address": "10.20.0.5", "port": 445},
-		"forwardProtocol unbound": {"forwardProtocol": true, "address": "10.20.0.5", "port": 445},
+		"protocol icmp":           {"protocol": "icmp", "address": "10.0.0.5", "port": 445},
+		"forwardProtocol unbound": {"forwardProtocol": true, "address": "10.0.0.5", "port": 445},
 		"no address at all":       {"protocol": "tcp", "port": 445},
 		"address of another type": {"protocol": "tcp", "address": []interface{}{"127.0.0.1"}, "port": 445},
 	} {
@@ -144,13 +144,13 @@ func TestGuardEmittedConfigsJudgesTheMapsThemselves(t *testing.T) {
 		}
 	}
 	for name, i := range map[string]map[string]interface{}{
-		"intercept loopback": {"protocols": []string{"tcp"}, "addresses": []string{"10.20.0.5", "127.0.0.1"},
+		"intercept loopback": {"protocols": []string{"tcp"}, "addresses": []string{"10.0.0.5", "127.0.0.1"},
 			"portRanges": []map[string]interface{}{{"low": 445, "high": 445}}},
-		"intercept non-canonical CIDR": {"protocols": []string{"tcp"}, "addresses": []string{"10.20.3.4/16"},
+		"intercept non-canonical CIDR": {"protocols": []string{"tcp"}, "addresses": []string{"10.0.0.77/16"},
 			"portRanges": []map[string]interface{}{{"low": 445, "high": 445}}},
 		"intercept no addresses": {"protocols": []string{"tcp"}, "addresses": []string{},
 			"portRanges": []map[string]interface{}{{"low": 445, "high": 445}}},
-		"intercept bad range": {"protocols": []string{"tcp"}, "addresses": []string{"10.20.0.5"},
+		"intercept bad range": {"protocols": []string{"tcp"}, "addresses": []string{"10.0.0.5"},
 			"portRanges": []map[string]interface{}{{"low": 9, "high": 1}}},
 	} {
 		if errs := guardEmittedConfigs(i, goodHost); len(errs) == 0 {
@@ -172,13 +172,13 @@ func TestRefreshRouterHostsDeniesTheRouters(t *testing.T) {
 	})
 	stub := newZitiStub(t)
 	stub.ok("GET /edge/management/v1/edge-routers",
-		`{"data":[{"hostname":"edge1.corp.example","supportedProtocols":{"tls":"tls://10.20.77.7:3022","ws":"wss://[2a02:1234::77]:3023"}}]}`)
+		`{"data":[{"hostname":"edge1.corp.example","supportedProtocols":{"tls":"tls://172.16.0.77:3022","ws":"wss://[2a02:1234::77]:3023"}}]}`)
 	zm := zitiManagerAgainst(t, stub, nil)
 	if err := refreshRouterHosts(context.Background(), zm); err != nil {
 		t.Fatalf("refreshRouterHosts: %v", err)
 	}
 	// pinTargetGuard drops host addresses; read the real guard's lists.
-	for _, h := range []string{"edge1.corp.example", "10.20.77.7", "2a02:1234::77"} {
+	for _, h := range []string{"edge1.corp.example", "172.16.0.77", "2a02:1234::77"} {
 		found := false
 		routerHostsMu.Lock()
 		for _, r := range routerHosts {

@@ -57,11 +57,12 @@ import (
 // name of the tenant's own that resolves into a denied network is not caught
 // here. Egress rules on the router hosts are the backstop for that.
 
-// defaultDenyCIDRs are the platform's own networks: container bridges the
-// services, Postgres and Redis listen on, and the tunneler's intercept range.
+// defaultDenyCIDRs are generic container networks refused when
+// NETWORK_TARGET_DENY_CIDRS is unset. An install's actual podman/CNI/docker
+// networks are found at runtime from its interfaces (discoverInterfaceDeny);
+// a network the host does not show as an interface (a remote database
+// subnet, say) belongs in NETWORK_TARGET_DENY_CIDRS.
 var defaultDenyCIDRs = []string{
-	"10.88.0.0/16",  // podman default bridge
-	"10.89.0.0/16",  // podman compose networks
 	"172.17.0.0/16", // docker default bridge
 }
 

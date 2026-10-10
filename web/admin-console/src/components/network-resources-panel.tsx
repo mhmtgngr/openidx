@@ -49,7 +49,7 @@ export function NetworkTargetSection({ value, onChange }: { value: TargetDraft; 
         </div>
         <div className="space-y-1">
           <Label htmlFor="nt-cidrs">{t('pages.networkResources.target.cidrs')}</Label>
-          <Textarea id="nt-cidrs" rows={3} value={value.cidrs} onChange={set('cidrs')} placeholder="10.20.0.0/16" />
+          <Textarea id="nt-cidrs" rows={3} value={value.cidrs} onChange={set('cidrs')} placeholder="10.0.0.0/16" />
         </div>
         <div className="space-y-1">
           <Label htmlFor="nt-dns">{t('pages.networkResources.target.dnsNames')}</Label>

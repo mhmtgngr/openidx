@@ -68,7 +68,7 @@ func TestNetworkResourceAPIOnTheMigratedSchema(t *testing.T) {
 		t.Errorf("a bad CIDR on create answered %d, want 400", code)
 	}
 	code, created := do("POST", "/api/v1/access/network-resources",
-		`{"name":"File servers","target":{"hosts":["fs1.corp.example"],"cidrs":["10.20.0.0/16"],"port_ranges":[{"low":445,"high":445}],"protocols":["tcp"]}}`)
+		`{"name":"File servers","target":{"hosts":["fs1.corp.example"],"cidrs":["10.0.0.0/16"],"port_ranges":[{"low":445,"high":445}],"protocols":["tcp"]}}`)
 	if code != http.StatusCreated {
 		t.Fatalf("create answered %d: %v", code, created)
 	}
@@ -98,13 +98,13 @@ func TestNetworkResourceAPIOnTheMigratedSchema(t *testing.T) {
 		t.Errorf("an unknown resource answered %d, want 404", code)
 	}
 
-	code, got := do("PUT", "/api/v1/access/resources/"+id+"/network-target", `{"dns_names":["*.corp.example"],"cidrs":["10.20.9.9/16"]}`)
+	code, got := do("PUT", "/api/v1/access/resources/"+id+"/network-target", `{"dns_names":["*.corp.example"],"cidrs":["10.0.0.9/16"]}`)
 	if code != http.StatusOK {
 		t.Fatalf("put target answered %d: %v", code, got)
 	}
 	code, got = do("GET", "/api/v1/access/resources/"+id+"/network-target", "")
 	tgt, _ := got["target"].(map[string]interface{})
-	if code != http.StatusOK || tgt["cidrs"].([]interface{})[0] != "10.20.0.0/16" {
+	if code != http.StatusOK || tgt["cidrs"].([]interface{})[0] != "10.0.0.0/16" {
 		t.Errorf("get target answered %d: %v", code, got)
 	}
 
@@ -144,7 +144,7 @@ func TestNetworkResourceAPIOnTheMigratedSchema(t *testing.T) {
 	if _, err := db.Pool.Exec(ctx, `INSERT INTO groups (org_id, name) VALUES ($1, 'NetOps-p2a')`, org); err != nil {
 		t.Fatalf("seed group: %v", err)
 	}
-	csvBody := "name,cidrs,ports,group\nFinance share,10.30.0.0/24,445,NetOps-p2a\nLab,10.40.0.0/16,22,Nobody\nBad,10.0.0.0/99,,\n"
+	csvBody := "name,cidrs,ports,group\nFinance share,192.168.1.0/24,445,NetOps-p2a\nLab,172.16.0.0/16,22,Nobody\nBad,10.0.0.0/99,,\n"
 	req := httptest.NewRequest("POST", "/api/v1/access/network-resources/import?dry_run=true", strings.NewReader(csvBody))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -181,7 +181,7 @@ func TestNetworkResourceAPIOnTheMigratedSchema(t *testing.T) {
 		VALUES ('network-b', 'B secrets', 'network', 'network', $1) RETURNING id::text`, orgB).Scan(&appB); err != nil {
 		t.Fatalf("seed org B app: %v", err)
 	}
-	if _, err := db.Pool.Exec(bg, `INSERT INTO network_targets (application_id, org_id, cidrs) VALUES ($1, $2, '{10.99.0.0/24}')`, appB, orgB); err != nil {
+	if _, err := db.Pool.Exec(bg, `INSERT INTO network_targets (application_id, org_id, cidrs) VALUES ($1, $2, '{192.0.2.0/24}')`, appB, orgB); err != nil {
 		t.Fatalf("seed org B target: %v", err)
 	}
 	if err := db.Pool.QueryRow(bg, `INSERT INTO groups (org_id, name) VALUES ($1, 'only-in-b') RETURNING id::text`, orgB).Scan(&groupB); err != nil {
@@ -190,14 +190,14 @@ func TestNetworkResourceAPIOnTheMigratedSchema(t *testing.T) {
 	if code, _ := do("GET", "/api/v1/access/resources/"+appB+"/network-target", ""); code != http.StatusNotFound {
 		t.Errorf("org A read org B's target: %d", code)
 	}
-	if code, _ := do("PUT", "/api/v1/access/resources/"+appB+"/network-target", `{"cidrs":["10.98.0.0/24"]}`); code != http.StatusNotFound {
+	if code, _ := do("PUT", "/api/v1/access/resources/"+appB+"/network-target", `{"cidrs":["198.51.100.0/24"]}`); code != http.StatusNotFound {
 		t.Errorf("org A wrote org B's target: %d", code)
 	}
 	if code, _ := do("DELETE", "/api/v1/access/resources/"+appB+"/network-target", ""); code != http.StatusNotFound {
 		t.Errorf("org A deleted org B's target: %d", code)
 	}
 	var stillB string
-	if err := db.Pool.QueryRow(bg, `SELECT array_to_string(cidrs::text[], ',') FROM network_targets WHERE application_id = $1`, appB).Scan(&stillB); err != nil || stillB != "10.99.0.0/24" {
+	if err := db.Pool.QueryRow(bg, `SELECT array_to_string(cidrs::text[], ',') FROM network_targets WHERE application_id = $1`, appB).Scan(&stillB); err != nil || stillB != "192.0.2.0/24" {
 		t.Errorf("org B's target after org A's attempts: %q, %v", stillB, err)
 	}
 	_, listA := do("GET", "/api/v1/access/network-resources", "")
@@ -206,7 +206,7 @@ func TestNetworkResourceAPIOnTheMigratedSchema(t *testing.T) {
 			t.Error("org A's list shows org B's resource")
 		}
 	}
-	reqB := httptest.NewRequest("POST", "/api/v1/access/network-resources/import", strings.NewReader("name,cidrs,group\nSneaky,10.97.0.0/24,only-in-b\n"))
+	reqB := httptest.NewRequest("POST", "/api/v1/access/network-resources/import", strings.NewReader("name,cidrs,group\nSneaky,192.168.1.0/24,only-in-b\n"))
 	wB := httptest.NewRecorder()
 	r.ServeHTTP(wB, reqB)
 	var bAssigned int

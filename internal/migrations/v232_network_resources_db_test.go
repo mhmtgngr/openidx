@@ -46,7 +46,7 @@ func TestV232NetworkTargetsHoldWhatANetworkResourceCovers(t *testing.T) {
 		VALUES ('network-v232', 'File servers', 'network', 'network', $1::uuid) RETURNING id::text`, org)
 
 	if _, err := pool.Exec(ctx, `INSERT INTO network_targets (application_id, org_id, hosts, cidrs, port_ranges)
-		VALUES ($1::uuid, $2::uuid, '{fs1.corp.example}', '{10.20.0.0/16}', '[{"low":445,"high":445}]')`, app, org); err != nil {
+		VALUES ($1::uuid, $2::uuid, '{fs1.corp.example}', '{10.0.0.0/16}', '[{"low":445,"high":445}]')`, app, org); err != nil {
 		t.Fatalf("a target with a host, a CIDR and a port range was refused: %v", err)
 	}
 	if got := scalar(`SELECT array_to_string(protocols, ',') FROM network_targets WHERE application_id = $1::uuid`, app); got != "tcp,udp" {

@@ -23,7 +23,7 @@ func TestNetworkTargetNormalization(t *testing.T) {
 	pinTargetGuard(t)
 	got, err := normalizeNetworkTarget(NetworkTarget{
 		Hosts:      []string{" fs1.corp.example ", "10.0.0.5", "fs1.corp.example"},
-		CIDRs:      []string{"10.20.3.4/16"},
+		CIDRs:      []string{"10.0.0.77/16"},
 		DNSNames:   []string{"*.Corp.Example"},
 		PortRanges: []PortRange{{Low: 8000, High: 8100}, {Low: 445}},
 		Protocols:  []string{"TCP"},
@@ -33,7 +33,7 @@ func TestNetworkTargetNormalization(t *testing.T) {
 	}
 	want := NetworkTarget{
 		Hosts:      []string{"fs1.corp.example", "10.0.0.5"},
-		CIDRs:      []string{"10.20.0.0/16"},
+		CIDRs:      []string{"10.0.0.0/16"},
 		DNSNames:   []string{"*.corp.example"},
 		PortRanges: []PortRange{{Low: 445, High: 445}, {Low: 8000, High: 8100}},
 		Protocols:  []string{"tcp"},
@@ -78,11 +78,11 @@ func TestNetworkTargetValidationRefuses(t *testing.T) {
 func TestNetworkConfigData(t *testing.T) {
 	pinTargetGuard(t)
 	tgt, _ := normalizeNetworkTarget(NetworkTarget{
-		Hosts: []string{"fs1.corp.example"}, CIDRs: []string{"10.20.0.0/16"},
+		Hosts: []string{"fs1.corp.example"}, CIDRs: []string{"10.0.0.0/16"},
 		PortRanges: []PortRange{{Low: 445, High: 445}},
 	})
 	icpt := interceptV1Data(tgt)
-	if !reflect.DeepEqual(icpt["addresses"], []string{"fs1.corp.example", "10.20.0.0/16"}) {
+	if !reflect.DeepEqual(icpt["addresses"], []string{"fs1.corp.example", "10.0.0.0/16"}) {
 		t.Errorf("intercept addresses = %v", icpt["addresses"])
 	}
 	if !reflect.DeepEqual(icpt["protocols"], []string{"tcp", "udp"}) {
@@ -105,9 +105,9 @@ func TestNetworkConfigData(t *testing.T) {
 	}
 
 	// A fixed forward target and a single protocol pin all three.
-	tgt.ForwardAddress, tgt.ForwardPort, tgt.Protocols = "10.20.0.10", 3389, []string{"tcp"}
+	tgt.ForwardAddress, tgt.ForwardPort, tgt.Protocols = "10.0.0.10", 3389, []string{"tcp"}
 	host = hostV1Data(tgt)
-	if host["address"] != "10.20.0.10" || host["port"] != 3389 || host["protocol"] != "tcp" {
+	if host["address"] != "10.0.0.10" || host["port"] != 3389 || host["protocol"] != "tcp" {
 		t.Errorf("fixed host.v1 = %v", host)
 	}
 	for _, k := range []string{"forwardAddress", "forwardPort", "forwardProtocol"} {
@@ -149,9 +149,9 @@ func TestParseNetworkImportCSV(t *testing.T) {
 	in := "Name,Hosts,CIDRs,DNS_Names,Ports,Protocols,Group\n" +
 		"# a comment line\n" +
 		"File servers,fs1.corp.example;fs2.corp.example,,,445,tcp,Finance\n" +
-		"Lab,,10.50.0.0/16,,22;8000-8100,,\n" +
+		"Lab,,172.16.0.0/16,,22;8000-8100,,\n" +
 		"Broken,,10.0.0.0/40,,,,\n" +
-		",,10.1.0.0/16,,,,\n"
+		",,192.168.1.0/24,,,,\n"
 	rows, err := parseNetworkImportCSV(strings.NewReader(in))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -393,7 +393,7 @@ func TestEnsureNetworkServiceConvergesAndIsIdempotent(t *testing.T) {
 	rec := &ZitiReconciler{logger: zap.NewNop(), status: map[string]string{}, assignmentEnforce: true}
 	const app = "22222222-2222-2222-2222-222222222222"
 	tgt, _ := normalizeNetworkTarget(NetworkTarget{
-		CIDRs: []string{"10.20.0.0/16"}, DNSNames: []string{"*.corp.example"},
+		CIDRs: []string{"10.0.0.0/16"}, DNSNames: []string{"*.corp.example"},
 		PortRanges: []PortRange{{Low: 445, High: 445}},
 	})
 	d := DesiredNetworkService{ApplicationID: app, OrgID: "org-1", ServiceName: networkServiceName(app), Target: tgt, RequireDeviceTrust: true}
@@ -421,7 +421,7 @@ func TestEnsureNetworkServiceConvergesAndIsIdempotent(t *testing.T) {
 			intercept, _ = c["data"].(map[string]interface{})
 		}
 	}
-	if intercept == nil || !reflect.DeepEqual(intercept["addresses"], []interface{}{"10.20.0.0/16", "*.corp.example"}) {
+	if intercept == nil || !reflect.DeepEqual(intercept["addresses"], []interface{}{"10.0.0.0/16", "*.corp.example"}) {
 		t.Errorf("intercept.v1 data = %v", intercept)
 	}
 	var dial, bind map[string]interface{}

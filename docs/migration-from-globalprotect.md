@@ -66,7 +66,7 @@ only `name` is required:
 |---|---|
 | `name` | The resource's name, as users and administrators will see it |
 | `hosts` | IP addresses or host names, separated by `;` |
-| `cidrs` | Networks, separated by `;` (e.g. `10.20.0.0/16`) |
+| `cidrs` | Networks, separated by `;` (e.g. `10.0.0.0/16`) |
 | `dns_names` | Domains, separated by `;`; a leading `*.` matches every name under it |
 | `ports` | Ports and ranges, separated by `;` (e.g. `445;8000-8100`); empty means every port |
 | `protocols` | `tcp`, `udp` or both separated by `;`; empty means both |
@@ -80,7 +80,7 @@ name,hosts,cidrs,dns_names,ports,protocols,group
 # From rule "GP-FileShares"
 File servers,fs1.corp.example;fs2.corp.example,,,445,tcp,Finance
 # From rule "GP-Lab"
-Lab network,,10.50.0.0/16,,22;3389;8000-8100,,Engineering
+Lab network,,172.16.0.0/16,,22;3389;8000-8100,,Engineering
 # From access route "corp-intranet"
 Intranet,,,*.intranet.corp.example,80;443,tcp,All Staff
 ```
@@ -91,7 +91,8 @@ are the platform's own hosts. Loopback, link-local (including
 host's addresses and name, the controller's host, CIDRs broader than
 `NETWORK_TARGET_MIN_PREFIX` (default `/16`, IPv6 `/48`) and anything
 overlapping `NETWORK_TARGET_DENY_CIDRS` (comma-separated; by default the
-podman and docker bridges and `100.64.0.0/10`) are refused, as are the
+docker bridge, while the podman, CNI and docker networks actually present
+are found from the host's interfaces) are refused, as are `100.64.0.0/10`, the
 other reserved ranges, IPv6 addresses that embed a refused IPv4 one, names
 under wildcard-DNS services such as nip.io (`NETWORK_TARGET_DENY_DOMAINS`
 adds more) and ports in `NETWORK_TARGET_DENY_PORTS`. Write IPv4 addresses

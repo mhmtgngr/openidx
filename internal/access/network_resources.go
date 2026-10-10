@@ -95,8 +95,8 @@ func appendUnique(list []string, s string) []string {
 }
 
 // normalizeNetworkTarget checks a target and returns it in the form it is
-// stored and rendered in: lists cleaned, CIDRs canonical (10.1.2.3/16 becomes
-// 10.1.0.0/16), port ranges sorted, protocols lower-case and defaulted to
+// stored and rendered in: lists cleaned, CIDRs canonical (192.0.2.77/24 becomes
+// 192.0.2.0/24), port ranges sorted, protocols lower-case and defaulted to
 // tcp+udp, an empty port list meaning every port.
 func normalizeNetworkTarget(t NetworkTarget) (NetworkTarget, error) {
 	var errs []string

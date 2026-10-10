@@ -120,7 +120,7 @@ func TestNetworkTargetRefusesThePlatform(t *testing.T) {
 		"CIDR broader than /16":    {CIDRs: []string{"10.0.0.0/8"}},
 		"every address":            {CIDRs: []string{"0.0.0.0/0"}},
 		"v6 broader than /48":      {CIDRs: []string{"2001:db8::/32"}},
-		"podman network":           {CIDRs: []string{"10.89.0.0/24"}},
+		"podman network":           {CIDRs: []string{"172.17.0.0/24"}},
 		"host in docker bridge":    {Hosts: []string{"172.17.0.2"}},
 		"tunneler intercept range": {CIDRs: []string{"100.64.0.0/16"}},
 
@@ -180,17 +180,17 @@ func TestNetworkTargetRefusesThePlatform(t *testing.T) {
 		in   NetworkTarget
 		want func(NetworkTarget) bool
 	}{
-		"private /16": {NetworkTarget{CIDRs: []string{"10.20.0.0/16"}}, nil},
-		"host and domain": {NetworkTarget{Hosts: []string{"10.20.0.5", "FS1.Corp.Example."}, DNSNames: []string{"*.Intranet.Corp.Example."}},
+		"private /16": {NetworkTarget{CIDRs: []string{"10.0.0.0/16"}}, nil},
+		"host and domain": {NetworkTarget{Hosts: []string{"10.0.0.5", "FS1.Corp.Example."}, DNSNames: []string{"*.Intranet.Corp.Example."}},
 			func(t NetworkTarget) bool {
 				return t.Hosts[1] == "fs1.corp.example" && t.DNSNames[0] == "*.intranet.corp.example"
 			}},
 		"v6 /64":  {NetworkTarget{CIDRs: []string{"2A02:1234:1:2::/64"}}, func(t NetworkTarget) bool { return t.CIDRs[0] == "2a02:1234:1:2::/64" }},
-		"forward": {NetworkTarget{CIDRs: []string{"10.30.0.0/24"}, ForwardAddress: "10.30.0.10", ForwardPort: 3389}, nil},
-		"mapped corporate host is unmapped": {NetworkTarget{Hosts: []string{"::ffff:10.20.0.5"}},
-			func(t NetworkTarget) bool { return t.Hosts[0] == "10.20.0.5" }},
-		"mapped corporate CIDR is unmapped": {NetworkTarget{CIDRs: []string{"::ffff:10.20.0.0/112"}},
-			func(t NetworkTarget) bool { return t.CIDRs[0] == "10.20.0.0/16" }},
+		"forward": {NetworkTarget{CIDRs: []string{"192.168.1.0/24"}, ForwardAddress: "192.168.1.10", ForwardPort: 3389}, nil},
+		"mapped corporate host is unmapped": {NetworkTarget{Hosts: []string{"::ffff:10.0.0.5"}},
+			func(t NetworkTarget) bool { return t.Hosts[0] == "10.0.0.5" }},
+		"mapped corporate CIDR is unmapped": {NetworkTarget{CIDRs: []string{"::ffff:10.0.0.0/112"}},
+			func(t NetworkTarget) bool { return t.CIDRs[0] == "10.0.0.0/16" }},
 	} {
 		got, err := normalizeNetworkTarget(c.in)
 		if err != nil {
@@ -206,19 +206,19 @@ func TestNetworkTargetRefusesThePlatform(t *testing.T) {
 func TestNetworkTargetGuardIsConfigurable(t *testing.T) {
 	pinTargetGuard(t)
 	t.Setenv("NETWORK_TARGET_MIN_PREFIX", "8")
-	t.Setenv("NETWORK_TARGET_DENY_CIDRS", "192.168.50.0/24, 10.200.0.0/16, fc00::/7")
+	t.Setenv("NETWORK_TARGET_DENY_CIDRS", "192.168.1.0/24, 10.0.0.0/16, fc00::/7")
 	t.Setenv("NETWORK_TARGET_DENY_DOMAINS", "rebind.example")
 	t.Setenv("NETWORK_TARGET_DENY_PORTS", "5432,6379,8000-8010")
 	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/8"}}); err == nil ||
-		!strings.Contains(err.Error(), "10.200.0.0/16") {
+		!strings.Contains(err.Error(), "10.0.0.0/16") {
 		t.Errorf("a /8 overlapping a configured deny network: %v", err)
 	}
 	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"11.0.0.0/8"}, PortRanges: []PortRange{{443, 443}}}); err != nil {
 		t.Errorf("NETWORK_TARGET_MIN_PREFIX=8 still refuses a /8: %v", err)
 	}
 	for name, tgt := range map[string]NetworkTarget{
-		"host in configured CIDR": {Hosts: []string{"192.168.50.7"}},
-		"mapped host in it":       {Hosts: []string{"::ffff:192.168.50.7"}},
+		"host in configured CIDR": {Hosts: []string{"192.168.1.7"}},
+		"mapped host in it":       {Hosts: []string{"::ffff:192.168.1.7"}},
 		"ULA when listed":         {Hosts: []string{"fd12::1"}},
 		"configured domain":       {DNSNames: []string{"*.x.rebind.example"}},
 		"postgres port":           {Hosts: []string{"11.0.0.1"}, PortRanges: []PortRange{{5000, 6000}}},
@@ -234,7 +234,7 @@ func TestNetworkTargetGuardIsConfigurable(t *testing.T) {
 		t.Errorf("a port outside NETWORK_TARGET_DENY_PORTS was refused: %v", err)
 	}
 	// The configured list replaces the default platform networks.
-	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.89.0.0/24"}, PortRanges: []PortRange{{443, 443}}}); err != nil {
+	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"172.17.0.0/24"}, PortRanges: []PortRange{{443, 443}}}); err != nil {
 		t.Errorf("the default list still applies when NETWORK_TARGET_DENY_CIDRS is set: %v", err)
 	}
 }
@@ -268,7 +268,7 @@ func TestEnsureNetworkServiceRefusesADeniedTargetAtEmit(t *testing.T) {
 	for _, tgt := range []NetworkTarget{
 		{Hosts: []string{"127.0.0.1"}},
 		{Hosts: []string{"0177.0.0.1"}},
-		{Hosts: []string{"10.20.0.5"}, ForwardAddress: "::ffff:169.254.169.254"},
+		{Hosts: []string{"10.0.0.5"}, ForwardAddress: "::ffff:169.254.169.254"},
 		{DNSNames: []string{"*.nip.io"}},
 	} {
 		d := DesiredNetworkService{ApplicationID: "x", OrgID: "o", ServiceName: networkServiceName("x"), Target: tgt}
@@ -286,17 +286,17 @@ func TestEnsureNetworkServiceRefusesADeniedTargetAtEmit(t *testing.T) {
 func TestNetworkConfigsCarryTheCanonicalForm(t *testing.T) {
 	pinTargetGuard(t)
 	tgt, err := normalizeNetworkTarget(NetworkTarget{
-		Hosts: []string{"FS1.Corp.Example.", "::ffff:10.20.0.5"}, CIDRs: []string{"10.20.3.4/16"},
-		ForwardAddress: "::ffff:10.20.0.9", ForwardPort: 445,
+		Hosts: []string{"FS1.Corp.Example.", "::ffff:10.0.0.5"}, CIDRs: []string{"10.0.0.77/16"},
+		ForwardAddress: "::ffff:10.0.0.9", ForwardPort: 445,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	addrs := interceptV1Data(tgt)["addresses"].([]string)
-	if strings.Join(addrs, ",") != "fs1.corp.example,10.20.0.5,10.20.0.0/16" {
+	if strings.Join(addrs, ",") != "fs1.corp.example,10.0.0.5,10.0.0.0/16" {
 		t.Errorf("intercept addresses = %v", addrs)
 	}
-	if hostV1Data(tgt)["address"] != "10.20.0.9" {
+	if hostV1Data(tgt)["address"] != "10.0.0.9" {
 		t.Errorf("host.v1 address = %v", hostV1Data(tgt)["address"])
 	}
 }

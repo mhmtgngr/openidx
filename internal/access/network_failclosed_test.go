@@ -35,11 +35,11 @@ func failClosedFixture(t *testing.T) (*fakeNetCtrl, *ZitiManager, *ZitiReconcile
 	f := newFakeNetCtrl()
 	f.routers = []interface{}{map[string]interface{}{
 		"id": "er-1", "hostname": "edge1.corp.example", "roleAttributes": []string{"ziti-routers"},
-		"supportedProtocols": map[string]string{"tls": "tls://10.30.77.7:3022"},
+		"supportedProtocols": map[string]string{"tls": "tls://172.16.0.77:3022"},
 	}}
 	zm := newNetTestManager(t, f)
 	rec := &ZitiReconciler{logger: zap.NewNop(), status: map[string]string{}, assignmentEnforce: true}
-	tgt, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}, PortRanges: []PortRange{{445, 445}}})
+	tgt, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}, PortRanges: []PortRange{{445, 445}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestARefusedTargetIsRemovedNotLeftLive(t *testing.T) {
 		t.Fatal("setup: the service did not converge")
 	}
 
-	t.Setenv("NETWORK_TARGET_DENY_CIDRS", "10.20.0.0/16")
+	t.Setenv("NETWORK_TARGET_DENY_CIDRS", "10.0.0.0/16")
 	rec.reconcileNetworkServices(context.Background(), zm)
 	if f.has("service", d.ServiceName) {
 		t.Error("the service survived a refused target")
@@ -207,7 +207,7 @@ func TestInterfaceDiscoveryFailureFailsClosed(t *testing.T) {
 	lastIfaceMu.Unlock()
 	hostInterfaces = func() ([]ifaceAddr, error) { return nil, errors.New("netlink: permission denied") }
 
-	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}}); err == nil ||
+	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}}); err == nil ||
 		!strings.Contains(err.Error(), "incomplete") {
 		t.Errorf("a target was accepted with an incomplete denylist: %v", err)
 	}
@@ -223,22 +223,22 @@ func TestInterfaceDiscoveryFailureFailsClosed(t *testing.T) {
 
 	// An empty answer is a failure too.
 	hostInterfaces = func() ([]ifaceAddr, error) { return nil, nil }
-	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}}); err == nil {
+	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}}); err == nil {
 		t.Error("an empty interface list was taken as a good one")
 	}
 
 	// A good discovery, then a failed one: the good result is kept.
 	hostInterfaces = func() ([]ifaceAddr, error) {
-		return []ifaceAddr{{name: "podman1", prefix: netip.MustParsePrefix("10.90.0.1/24")}}, nil
+		return []ifaceAddr{{name: "podman1", prefix: netip.MustParsePrefix("172.18.0.1/24")}}, nil
 	}
-	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}}); err != nil {
+	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}}); err != nil {
 		t.Fatalf("a good discovery still refuses: %v", err)
 	}
 	hostInterfaces = func() ([]ifaceAddr, error) { return nil, errors.New("gone") }
-	if _, err := normalizeNetworkTarget(NetworkTarget{Hosts: []string{"10.90.0.50"}}); err == nil {
+	if _, err := normalizeNetworkTarget(NetworkTarget{Hosts: []string{"172.18.0.50"}}); err == nil {
 		t.Error("after a failed discovery the last good bridge network is no longer refused")
 	}
-	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}}); err != nil {
+	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}}); err != nil {
 		t.Errorf("the last good discovery was not used: %v", err)
 	}
 }

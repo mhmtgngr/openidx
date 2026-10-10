@@ -49,12 +49,12 @@ func TestTheLastGoodRouterListExpires(t *testing.T) {
 			// One failed refresh is tolerated: the last good list stays.
 			f.routers = []interface{}{}
 			_ = refreshRouterHosts(context.Background(), zm)
-			if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}}); err != nil {
+			if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}}); err != nil {
 				t.Fatalf("one failed refresh already refuses: %v", err)
 			}
 
 			expire(t, f, zm)
-			if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}}); err == nil ||
+			if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}}); err == nil ||
 				!strings.Contains(err.Error(), "incomplete") {
 				t.Errorf("a target was judged against an expired router list: %v", err)
 			}
@@ -77,25 +77,25 @@ func TestTheLastGoodRouterListExpires(t *testing.T) {
 // The interface half expires the same way.
 func TestTheLastGoodInterfaceDiscoveryExpires(t *testing.T) {
 	pinTargetGuard(t)
-	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}}); err != nil {
+	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}}); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	hostInterfaces = func() ([]ifaceAddr, error) { return nil, errors.New("gone") }
 	for i := 0; i < denylistMaxFailures-1; i++ {
-		if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}}); err != nil {
+		if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}}); err != nil {
 			t.Fatalf("failure %d already refuses: %v", i+1, err)
 		}
 	}
-	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}}); err == nil {
+	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}}); err == nil {
 		t.Error("the last good interface discovery outlived its failure bound")
 	}
 
 	// And by age, with the discovery still failing.
 	pinTargetGuard(t)
-	_, _ = normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}})
+	_, _ = normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}})
 	hostInterfaces = func() ([]ifaceAddr, error) { return nil, errors.New("gone") }
 	moveGuardClock(t, denylistMaxAge+time.Minute)
-	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}}); err == nil {
+	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}}); err == nil {
 		t.Error("the last good interface discovery outlived its age bound")
 	}
 }
@@ -109,7 +109,7 @@ func TestAPartialInterfaceAnswerIsAFailure(t *testing.T) {
 	hostInterfaces = func() ([]ifaceAddr, error) {
 		return []ifaceAddr{{name: "lo", prefix: netip.MustParsePrefix("127.0.0.1/8")}}, errors.New("addresses of podman1: busy")
 	}
-	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.20.0.0/16"}}); err == nil {
+	if _, err := normalizeNetworkTarget(NetworkTarget{CIDRs: []string{"10.0.0.0/16"}}); err == nil {
 		t.Error("a partial interface answer was taken as complete")
 	}
 }
@@ -201,7 +201,7 @@ func TestDriftOnTheControllerIsRepaired(t *testing.T) {
 	if svc["encryptionRequired"] != true {
 		t.Errorf("encryptionRequired after repair = %v", svc["encryptionRequired"])
 	}
-	if addrs := asStrings(find(f.configs, d.ServiceName+"-intercept")["data"].(map[string]interface{})["addresses"]); strings.Join(addrs, ",") != "10.20.0.0/16" {
+	if addrs := asStrings(find(f.configs, d.ServiceName+"-intercept")["data"].(map[string]interface{})["addresses"]); strings.Join(addrs, ",") != "10.0.0.0/16" {
 		t.Errorf("intercept addresses after repair = %v", addrs)
 	}
 	dial := find(f.policies, "openidx-dial-"+d.ServiceName)

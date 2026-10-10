@@ -35,7 +35,7 @@ const resource = {
   sync_status: 'synced',
   target: {
     hosts: ['fs1.corp.example'],
-    cidrs: ['10.20.0.0/16'],
+    cidrs: ['10.0.0.0/16'],
     dns_names: [],
     port_ranges: [{ low: 445, high: 445 }],
     protocols: ['tcp'],
@@ -47,14 +47,14 @@ describe('network target draft', () => {
     const { target, error } = targetFromDraft({
       ...EMPTY_DRAFT,
       hosts: 'fs1.corp.example, fs2.corp.example',
-      cidrs: '10.20.0.0/16\n10.30.0.0/16',
+      cidrs: '10.0.0.0/16\n192.168.0.0/16',
       ports: '445, 8000-8100',
       udp: false,
     })
     expect(error).toBeUndefined()
     expect(target).toEqual({
       hosts: ['fs1.corp.example', 'fs2.corp.example'],
-      cidrs: ['10.20.0.0/16', '10.30.0.0/16'],
+      cidrs: ['10.0.0.0/16', '192.168.0.0/16'],
       dns_names: [],
       port_ranges: [{ low: 445, high: 445 }, { low: 8000, high: 8100 }],
       protocols: ['tcp'],
@@ -77,7 +77,7 @@ describe('network target draft', () => {
     expect(d.ports).toBe('445')
     expect(d.tcp).toBe(true)
     expect(d.udp).toBe(false)
-    expect(targetFromDraft(d).target?.cidrs).toEqual(['10.20.0.0/16'])
+    expect(targetFromDraft(d).target?.cidrs).toEqual(['10.0.0.0/16'])
   })
 })
 
@@ -96,7 +96,7 @@ describe('NetworkResourcesPanel', () => {
   it('lists the resources with what they cover and the network policy', async () => {
     render(<NetworkResourcesPanel />, { wrapper: wrapper() })
     expect(await screen.findByText('File servers')).toBeInTheDocument()
-    expect(screen.getByText('fs1.corp.example, 10.20.0.0/16')).toBeInTheDocument()
+    expect(screen.getByText('fs1.corp.example, 10.0.0.0/16')).toBeInTheDocument()
     expect(screen.getByText('445 · TCP')).toBeInTheDocument()
     expect(screen.getByText('Synced')).toBeInTheDocument()
     expect(await screen.findByText('Network policy')).toBeInTheDocument()
@@ -108,7 +108,7 @@ describe('NetworkResourcesPanel', () => {
     render(<NetworkResourcesPanel />, { wrapper: wrapper() })
     fireEvent.click(await screen.findByRole('button', { name: /Add network resource/ }))
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Lab' } })
-    fireEvent.change(screen.getByLabelText('CIDRs'), { target: { value: '10.50.0.0/16' } })
+    fireEvent.change(screen.getByLabelText('CIDRs'), { target: { value: '172.16.0.0/16' } })
     fireEvent.change(screen.getByLabelText('Ports'), { target: { value: '22' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(api.post).toHaveBeenCalled())
@@ -116,7 +116,7 @@ describe('NetworkResourcesPanel', () => {
     expect(url).toBe('/api/v1/access/network-resources')
     expect(body).toMatchObject({
       name: 'Lab',
-      target: { cidrs: ['10.50.0.0/16'], port_ranges: [{ low: 22, high: 22 }], protocols: ['tcp', 'udp'] },
+      target: { cidrs: ['172.16.0.0/16'], port_ranges: [{ low: 22, high: 22 }], protocols: ['tcp', 'udp'] },
     })
   })
 
