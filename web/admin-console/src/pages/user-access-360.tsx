@@ -19,6 +19,7 @@ import { api } from '../lib/api'
 import { ConfirmAction } from '../components/confirm-action'
 import { QueryError } from '../components/query-error'
 import { useToast } from '../hooks/use-toast'
+import { WhyAccessPanel } from '../components/why-access-panel'
 
 interface NamedRef { id: string; name: string }
 
@@ -741,6 +742,9 @@ export function UserAccess360Page() {
           )}
         </CardContent>
       </Card>
+
+      {/* Why can this person reach that? */}
+      {id && <WhyAccessPanel userId={id} />}
 
       {/* Kill switch dialog */}
       <Dialog open={killOpen} onOpenChange={setKillOpen}>
