@@ -7,7 +7,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 const defaultTimeout = 10e9 // 10 s
@@ -41,6 +44,43 @@ func TestTheHeldTunnelerCannotBeReplacedWhileHeld(t *testing.T) {
 	h.close()
 	if err := os.Rename(bin, bin+".moved"); err != nil {
 		t.Fatalf("released binary still locked: %v", err)
+	}
+}
+
+// The same file reached through another spelling (letter case here; the CI
+// temp directory adds an 8.3 short name) is the held file, not a swap.
+func TestTheHeldTunnelerIsMatchedByIdentityNotSpelling(t *testing.T) {
+	bin := installFake(t, t.TempDir())
+	for _, p := range []string{bin, strings.ToUpper(bin), strings.ToLower(bin)} {
+		h, err := openBinary(p)
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		h.close()
+	}
+}
+
+// A different file at the checked path is refused.
+func TestSameFileRefusesADifferentFile(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.exe")
+	b := filepath.Join(dir, "b.exe")
+	writeFile(t, a, "a")
+	writeFile(t, b, "b")
+	f, err := openLocked(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(windows.Handle(f.Fd()), &info); err != nil {
+		t.Fatal(err)
+	}
+	if err := sameFile(info, b); !errors.Is(err, ErrUntrustedBinary) {
+		t.Fatalf("a different file was taken for the held one: %v", err)
+	}
+	if err := sameFile(info, a); err != nil {
+		t.Fatalf("the held file itself was refused: %v", err)
 	}
 }
 

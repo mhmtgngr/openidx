@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/sys/windows"
 )
@@ -16,14 +15,12 @@ import (
 // would run as SYSTEM inside it.
 const wintunDLL = "wintun.dll"
 
-// volumeNameDOS is VOLUME_NAME_DOS (0), which x/sys/windows does not name.
-const volumeNameDOS = 0x0
-
 // openBinary opens the tunneler and wintun.dll beside it WITHOUT
 // FILE_SHARE_WRITE or FILE_SHARE_DELETE, so while the supervisor holds them
 // nobody can write, delete or rename either file (nor, therefore, rename a
 // folder above them out from under the path). Only then are they checked: no
-// reparse point, the handle's final path is the path that was checked, and
+// reparse point, the checked path still names the held file (volume serial and
+// file index, compared through a second open), and
 // verifyBinary's owner/DACL check passes for each and every folder up to
 // Program Files. The checked path is executed; it cannot be changed while the
 // handles are held. The handles are kept for as long as the supervisor uses
@@ -55,8 +52,7 @@ func openBinary(path string) (*heldBinary, error) {
 }
 
 // openLocked opens path for reading, sharing read access only, refuses a
-// reparse point or a non-file, and checks that the handle's final path is
-// path.
+// reparse point or a non-file, and checks that path names the held file.
 func openLocked(path string) (*os.File, error) {
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
@@ -77,36 +73,43 @@ func openLocked(path string) (*os.File, error) {
 		_ = f.Close()
 		return nil, fmt.Errorf("%w: %s is a link or a directory", ErrUntrustedBinary, path)
 	}
-	final, err := finalPath(hdl)
-	if err != nil {
+	// The path CreateProcess will open must name the file this handle holds.
+	// That is a question of file identity, not of spelling: the same file is
+	// reached through 8.3 short names (C:\Users\RUNNER~1), other letter case
+	// or a mount point, and comparing path strings refused a path that was
+	// the held file. So the path is opened again, the way the loader opens it
+	// (following any links), and the two handles' volume serial number and
+	// file index are compared.
+	if err := sameFile(info, path); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("%w: %s: %v", ErrUntrustedBinary, path, err)
-	}
-	if !strings.EqualFold(final, filepath.Clean(path)) {
-		_ = f.Close()
-		return nil, fmt.Errorf("%w: %s resolves to %s", ErrUntrustedBinary, path, final)
+		return nil, err
 	}
 	return f, nil
 }
 
-// finalPath is the handle's path with the \\?\ prefix removed.
-func finalPath(h windows.Handle) (string, error) {
-	buf := make([]uint16, windows.MAX_LONG_PATH)
-	n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), volumeNameDOS)
+// sameFile opens path afresh with no data access and reports an error unless
+// it is the file whose information is held.
+func sameFile(held windows.ByHandleFileInformation, path string) error {
+	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return "", err
+		return fmt.Errorf("%w: %s: %v", ErrUntrustedBinary, path, err)
 	}
-	if int(n) > len(buf) {
-		return "", fmt.Errorf("final path too long")
+	h, err := windows.CreateFile(p, windows.FILE_READ_ATTRIBUTES,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
+		windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return fmt.Errorf("%w: reopening %s: %v", ErrUntrustedBinary, path, err)
 	}
-	s := windows.UTF16ToString(buf[:n])
-	switch {
-	case strings.HasPrefix(s, `\\?\UNC\`):
-		s = `\\` + s[len(`\\?\UNC\`):]
-	case strings.HasPrefix(s, `\\?\`):
-		s = s[len(`\\?\`):]
+	defer windows.CloseHandle(h)
+	var now windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &now); err != nil {
+		return fmt.Errorf("%w: %s: %v", ErrUntrustedBinary, path, err)
 	}
-	return s, nil
+	if now.VolumeSerialNumber != held.VolumeSerialNumber ||
+		now.FileIndexHigh != held.FileIndexHigh || now.FileIndexLow != held.FileIndexLow {
+		return fmt.Errorf("%w: %s does not name the file that was opened and checked", ErrUntrustedBinary, path)
+	}
+	return nil
 }
 
 // stillCurrent is true while the handles are held: the files cannot change.
