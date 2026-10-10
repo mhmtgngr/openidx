@@ -2641,7 +2641,7 @@ func authorizeAssignmentDecision(requiresAssignment, assigned, enforce bool) (is
 // path, this handler already runs inside a resolved org context (the
 // tenant-resolution middleware ran before /oauth/authorize), so there is no
 // need for orgctx.WithBypassRLS here.
-func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) bool {
+func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string, redirectURI ...string) bool {
 	if clientID == "" {
 		return true
 	}
@@ -2700,6 +2700,21 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) 
 	// It sits here rather than at each of the six mint sites so it cannot be
 	// forgotten at one of them, which is the failure mode
 	// TestNoUngatedMintSite exists to catch for the assignment half.
+	// The clientless client serves every BrowZer route: the application this
+	// sign-in is for is the one behind the redirect's host, and assignment is
+	// required for it whatever the shared client says (browzer_gate.go).
+	if s.isBrowZerClient(clientID) {
+		redirect := ""
+		if len(redirectURI) > 0 {
+			redirect = redirectURI[0]
+		}
+		if redirect == "" {
+			redirect = c.Query("redirect_uri")
+		}
+		if routeApp := s.browzerRouteApp(ctx, org.ID, redirect); routeApp != "" {
+			appID, requiresAssignment = routeApp, true
+		}
+	}
 	if !s.abacGateAllows(c, userID, clientID, appID) {
 		return false
 	}
@@ -2758,7 +2773,7 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string) 
 }
 
 func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]string, userID string) {
-	if !s.assignmentGateAllows(c, oauthParams["client_id"], userID) {
+	if !s.assignmentGateAllows(c, oauthParams["client_id"], userID, oauthParams["redirect_uri"]) {
 		return
 	}
 
@@ -3501,7 +3516,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 		return
 	}
 
-	if !s.assignmentGateAllows(c, originalParams["client_id"], user.ID) {
+	if !s.assignmentGateAllows(c, originalParams["client_id"], user.ID, originalParams["redirect_uri"]) {
 		return
 	}
 
@@ -3594,7 +3609,7 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 		return
 	}
 
-	if !s.assignmentGateAllows(c, req.ClientID, userID) {
+	if !s.assignmentGateAllows(c, req.ClientID, userID, req.RedirectURI) {
 		return
 	}
 
@@ -3719,7 +3734,7 @@ func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
 	// unchanged, which is this plan's binding constraint.
 	preReq, perr := s.authorizeHandler.GetStoredAuthorizationRequest(c.Request.Context(), req.AuthSession)
 	if perr == nil {
-		if !s.assignmentGateAllows(c, preReq.ClientID, userID) {
+		if !s.assignmentGateAllows(c, preReq.ClientID, userID, preReq.RedirectURI) {
 			return
 		}
 	} else if s.config != nil && s.config.AccessAssignmentEnforce {

@@ -368,7 +368,7 @@ func (s *Service) authorizeFromBrowserSession(c *gin.Context, oauthParams map[st
 
 	oauthParams["session_id"] = sess.ID
 
-	if !s.assignmentGateAllows(c, oauthParams["client_id"], sess.UserID) {
+	if !s.assignmentGateAllows(c, oauthParams["client_id"], sess.UserID, oauthParams["redirect_uri"]) {
 		return true
 	}
 
@@ -511,7 +511,7 @@ func (s *Service) handleLoginResume(c *gin.Context) {
 	if prompt.Consent {
 		// The client asked for the consent screen to be shown again. The
 		// assignment gate still comes first, as at every other entry.
-		if !s.assignmentGateAllows(c, oauthParams["client_id"], sess.UserID) {
+		if !s.assignmentGateAllows(c, oauthParams["client_id"], sess.UserID, oauthParams["redirect_uri"]) {
 			return
 		}
 		s.beginConsent(c, oauthParams, sess.UserID)
