@@ -91,7 +91,11 @@ are the platform's own hosts. Loopback, link-local (including
 host's addresses and name, the controller's host, CIDRs broader than
 `NETWORK_TARGET_MIN_PREFIX` (default `/16`, IPv6 `/48`) and anything
 overlapping `NETWORK_TARGET_DENY_CIDRS` (comma-separated; by default the
-podman and docker bridges and `100.64.0.0/10`) are refused. DNS names are
+podman and docker bridges and `100.64.0.0/10`) are refused, as are the
+other reserved ranges, IPv6 addresses that embed a refused IPv4 one, names
+under wildcard-DNS services such as nip.io (`NETWORK_TARGET_DENY_DOMAINS`
+adds more) and ports in `NETWORK_TARGET_DENY_PORTS`. Write IPv4 addresses
+as dotted quads: other numeric spellings (`127.1`, `0177.0.0.1`) are refused. DNS names are
 judged by their spelling only, so keep the router hosts' egress rules as the
 backstop for a name that resolves somewhere it should not. Split a larger
 corporate network into /16s, or a platform administrator raises the limit.

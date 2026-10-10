@@ -3,7 +3,6 @@ package access
 import (
 	"errors"
 	"fmt"
-	"net"
 	"regexp"
 	"sort"
 	"strings"
@@ -85,6 +84,16 @@ func cleanList(in []string) []string {
 	return out
 }
 
+// appendUnique appends s unless the canonical list already holds it.
+func appendUnique(list []string, s string) []string {
+	for _, x := range list {
+		if x == s {
+			return list
+		}
+	}
+	return append(list, s)
+}
+
 // normalizeNetworkTarget checks a target and returns it in the form it is
 // stored and rendered in: lists cleaned, CIDRs canonical (10.1.2.3/16 becomes
 // 10.1.0.0/16), port ranges sorted, protocols lower-case and defaulted to
@@ -93,32 +102,36 @@ func normalizeNetworkTarget(t NetworkTarget) (NetworkTarget, error) {
 	var errs []string
 	out := NetworkTarget{ApplicationID: t.ApplicationID}
 
+	// Every address is canonicalised once (network_target_guard.go), and the
+	// canonical form is what is checked, stored and written to Ziti, so the
+	// guard and the router's parser read the same thing.
 	for _, h := range cleanList(t.Hosts) {
-		if net.ParseIP(h) == nil && !validHostName(h) {
-			errs = append(errs, fmt.Sprintf("host %q is neither an IP address nor a host name", h))
+		c, err := canonicalHost(h)
+		if err != nil {
+			errs = append(errs, "host "+err.Error())
 			continue
 		}
-		out.Hosts = append(out.Hosts, h)
+		out.Hosts = appendUnique(out.Hosts, c)
 	}
 	for _, c := range cleanList(t.CIDRs) {
-		_, n, err := net.ParseCIDR(c)
+		p, err := canonicalPrefix(c)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("CIDR %q does not parse", c))
+			errs = append(errs, "CIDR "+err.Error())
 			continue
 		}
-		if ones, _ := n.Mask.Size(); ones == 0 {
+		if p.Bits() == 0 {
 			errs = append(errs, fmt.Sprintf("CIDR %q covers every address; a network resource names the networks it covers", c))
 			continue
 		}
-		out.CIDRs = append(out.CIDRs, n.String())
+		out.CIDRs = appendUnique(out.CIDRs, p.String())
 	}
 	for _, d := range cleanList(t.DNSNames) {
-		name := strings.TrimPrefix(d, "*.")
-		if !validHostName(name) || !strings.Contains(name, ".") {
-			errs = append(errs, fmt.Sprintf("DNS name %q is not a domain (a leading *. is allowed)", d))
+		c, err := canonicalDNSName(d)
+		if err != nil {
+			errs = append(errs, "DNS name "+err.Error())
 			continue
 		}
-		out.DNSNames = append(out.DNSNames, strings.ToLower(d))
+		out.DNSNames = appendUnique(out.DNSNames, c)
 	}
 	if len(out.Hosts)+len(out.CIDRs)+len(out.DNSNames) == 0 && len(errs) == 0 {
 		errs = append(errs, "at least one host, CIDR or DNS name is required")
@@ -165,9 +178,12 @@ func normalizeNetworkTarget(t NetworkTarget) (NetworkTarget, error) {
 		out.Protocols = []string{"tcp", "udp"}
 	}
 
-	out.ForwardAddress = strings.TrimSpace(t.ForwardAddress)
-	if out.ForwardAddress != "" && net.ParseIP(out.ForwardAddress) == nil && !validHostName(out.ForwardAddress) {
-		errs = append(errs, fmt.Sprintf("forward address %q is neither an IP address nor a host name", out.ForwardAddress))
+	if fa := strings.TrimSpace(t.ForwardAddress); fa != "" {
+		c, err := canonicalHost(fa)
+		if err != nil {
+			errs = append(errs, "forward address "+err.Error())
+		}
+		out.ForwardAddress = c
 	}
 	if t.ForwardPort != 0 && (t.ForwardPort < 1 || t.ForwardPort > 65535) {
 		errs = append(errs, fmt.Sprintf("forward port %d is not within 1-65535", t.ForwardPort))

@@ -75,6 +75,13 @@ func (rec *ZitiReconciler) loadDesiredNetworkServices(ctx context.Context) ([]De
 // attaches only what is missing, and EnsureServicePolicyForOrgSemantic updates
 // a policy only when its roles or semantic differ.
 func (rec *ZitiReconciler) ensureNetworkService(ctx context.Context, zm *ZitiManager, d DesiredNetworkService) error {
+	// Re-validate at emit time: what is written to Ziti is exactly the
+	// canonical, guard-checked target, whatever path produced d.
+	target, err := normalizeNetworkTarget(d.Target)
+	if err != nil {
+		return fmt.Errorf("network target refused: %w", err)
+	}
+	d.Target = target
 	interceptID, err := zm.EnsureConfig(ctx, d.ServiceName+"-intercept", "intercept.v1", interceptV1Data(d.Target))
 	if err != nil {
 		return err

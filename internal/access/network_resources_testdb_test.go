@@ -224,6 +224,25 @@ func TestNetworkResourceAPIOnTheMigratedSchema(t *testing.T) {
 	if code, _ := do("PUT", "/api/v1/access/resources/"+id+"/network-target", `{"cidrs":["10.0.0.0/8"]}`); code != http.StatusBadRequest {
 		t.Errorf("a /8 target answered %d, want 400", code)
 	}
+	// Every write path goes through the guard: create, and the import with
+	// dry_run off.
+	if code, _ := do("POST", "/api/v1/access/network-resources", `{"name":"sneak","target":{"hosts":["0177.0.0.1"]}}`); code != http.StatusBadRequest {
+		t.Errorf("create with an octal loopback answered %d, want 400", code)
+	}
+	reqD := httptest.NewRequest("POST", "/api/v1/access/network-resources/import",
+		strings.NewReader("name,hosts,cidrs,dns_names\nmapped,::ffff:169.254.169.254,,\nrebind,,,*.nip.io\nwide,,10.0.0.0/8,\n"))
+	wD := httptest.NewRecorder()
+	r.ServeHTTP(wD, reqD)
+	var impD map[string]interface{}
+	_ = json.Unmarshal(wD.Body.Bytes(), &impD)
+	if impD["created"].(float64) != 0 || impD["failed"].(float64) != 3 {
+		t.Errorf("the import accepted a denied target: %v", impD)
+	}
+	var sneaks int
+	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM applications WHERE org_id = $1 AND name IN ('sneak','mapped','rebind','wide')`, org).Scan(&sneaks); err != nil || sneaks != 0 {
+		t.Errorf("%d applications were created from refused targets (%v)", sneaks, err)
+	}
+
 	// One written past the API is not converged either.
 	if _, err := db.Pool.Exec(bg, `INSERT INTO network_targets (application_id, org_id, hosts) VALUES ($1, $2, '{127.0.0.1}')`, id, org); err != nil {
 		t.Fatalf("seed a loopback target: %v", err)
