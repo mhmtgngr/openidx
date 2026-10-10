@@ -69,6 +69,44 @@ type PushMFADevice struct {
 	AgentID             string `json:"agent_id,omitempty"`
 	DeviceID            string `json:"device_id,omitempty"`
 	EnrollmentSessionID string `json:"enrollment_session_id,omitempty"`
+	// Liveness (migration v233). LastSeenAt is the last time the device itself
+	// proved it was alive: registering, answering a challenge, or a posture
+	// report from its linked agent. It is never NULL when read: a row the
+	// migration could not backfill reads its last approval, else its creation.
+	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+	// DisabledAt/DisabledReason are set when the system disabled the device:
+	// "stale" (the sweep) or "admin" (the console). A device switched off any
+	// other way has neither.
+	DisabledAt     *time.Time `json:"disabled_at,omitempty"`
+	DisabledReason string     `json:"disabled_reason,omitempty"`
+}
+
+// pushDeviceColumns is the column list every push device read scans, in
+// scanPushDevice's order.
+const pushDeviceColumns = `id, user_id, device_token, platform, COALESCE(device_name, ''), COALESCE(device_model, ''),
+	       COALESCE(os_version, ''), COALESCE(app_version, ''), COALESCE(enabled, false), COALESCE(trusted, false), COALESCE(last_ip, ''),
+	       created_at, last_used_at, expires_at,
+	       COALESCE(agent_id, ''), COALESCE(device_id, ''),
+	       COALESCE(enrollment_session_id::text, ''),
+	       COALESCE(last_seen_at, last_used_at, created_at), disabled_at, COALESCE(disabled_reason, '')`
+
+// rowScanner is the Scan half of pgx.Row and pgx.Rows.
+type rowScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanPushDevice(row rowScanner) (*PushMFADevice, error) {
+	var d PushMFADevice
+	if err := row.Scan(
+		&d.ID, &d.UserID, &d.DeviceToken, &d.Platform, &d.DeviceName, &d.DeviceModel,
+		&d.OSVersion, &d.AppVersion, &d.Enabled, &d.Trusted, &d.LastIP,
+		&d.CreatedAt, &d.LastUsedAt, &d.ExpiresAt,
+		&d.AgentID, &d.DeviceID, &d.EnrollmentSessionID,
+		&d.LastSeenAt, &d.DisabledAt, &d.DisabledReason,
+	); err != nil {
+		return nil, err
+	}
+	return &d, nil
 }
 
 // PushMFAChallenge represents a push notification challenge
@@ -273,14 +311,9 @@ func (s *Service) CreatePushMFAChallenge(ctx context.Context, request *PushMFACh
 		return nil, fmt.Errorf("no push MFA devices registered")
 	}
 
-	// Find first enabled device (in production, allow user to choose or send to all)
-	var targetDevice *PushMFADevice
-	for _, d := range devices {
-		if d.Enabled {
-			targetDevice = &d
-			break
-		}
-	}
+	// The challenge goes to the enabled device seen most recently: a phone
+	// that answered yesterday rather than whichever install registered last.
+	targetDevice := mostRecentlySeenEnabled(devices)
 
 	if targetDevice == nil {
 		return nil, fmt.Errorf("no enabled push MFA devices found")
@@ -474,18 +507,10 @@ func (s *Service) GetPushMFAChallenge(ctx context.Context, challengeID string) (
 
 // GetPushMFADevices returns all push MFA devices for a user
 func (s *Service) GetPushMFADevices(ctx context.Context, userID string) ([]PushMFADevice, error) {
-	query := `
-		SELECT id, user_id, device_token, platform, COALESCE(device_name, ''), COALESCE(device_model, ''),
-		       COALESCE(os_version, ''), COALESCE(app_version, ''), enabled, trusted, COALESCE(last_ip, ''),
-		       created_at, last_used_at, expires_at,
-		       COALESCE(agent_id, ''), COALESCE(device_id, ''),
-		       COALESCE(enrollment_session_id::text, '')
+	rows, err := s.db.Pool.Query(ctx, `SELECT `+pushDeviceColumns+`
 		FROM mfa_push_devices
 		WHERE user_id = $1
-		ORDER BY created_at DESC
-	`
-
-	rows, err := s.db.Pool.Query(ctx, query, userID)
+		ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -493,33 +518,13 @@ func (s *Service) GetPushMFADevices(ctx context.Context, userID string) ([]PushM
 
 	var devices []PushMFADevice
 	for rows.Next() {
-		var device PushMFADevice
-		err := rows.Scan(
-			&device.ID,
-			&device.UserID,
-			&device.DeviceToken,
-			&device.Platform,
-			&device.DeviceName,
-			&device.DeviceModel,
-			&device.OSVersion,
-			&device.AppVersion,
-			&device.Enabled,
-			&device.Trusted,
-			&device.LastIP,
-			&device.CreatedAt,
-			&device.LastUsedAt,
-			&device.ExpiresAt,
-			&device.AgentID,
-			&device.DeviceID,
-			&device.EnrollmentSessionID,
-		)
+		device, err := scanPushDevice(rows)
 		if err != nil {
 			return nil, err
 		}
-		devices = append(devices, device)
+		devices = append(devices, *device)
 	}
-
-	return devices, nil
+	return devices, rows.Err()
 }
 
 // DeletePushMFADevice removes a push MFA device
@@ -544,42 +549,9 @@ func (s *Service) DeletePushMFADevice(ctx context.Context, userID, deviceID stri
 // Helper functions
 
 func (s *Service) getPushDeviceByToken(ctx context.Context, token string) (*PushMFADevice, error) {
-	query := `
-		SELECT id, user_id, device_token, platform, COALESCE(device_name, ''), COALESCE(device_model, ''),
-		       COALESCE(os_version, ''), COALESCE(app_version, ''), enabled, trusted, COALESCE(last_ip, ''),
-		       created_at, last_used_at, expires_at,
-		       COALESCE(agent_id, ''), COALESCE(device_id, ''),
-		       COALESCE(enrollment_session_id::text, '')
+	return scanPushDevice(s.db.Pool.QueryRow(ctx, `SELECT `+pushDeviceColumns+`
 		FROM mfa_push_devices
-		WHERE device_token = $1
-	`
-
-	var device PushMFADevice
-	err := s.db.Pool.QueryRow(ctx, query, token).Scan(
-		&device.ID,
-		&device.UserID,
-		&device.DeviceToken,
-		&device.Platform,
-		&device.DeviceName,
-		&device.DeviceModel,
-		&device.OSVersion,
-		&device.AppVersion,
-		&device.Enabled,
-		&device.Trusted,
-		&device.LastIP,
-		&device.CreatedAt,
-		&device.LastUsedAt,
-		&device.ExpiresAt,
-		&device.AgentID,
-		&device.DeviceID,
-		&device.EnrollmentSessionID,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &device, nil
+		WHERE device_token = $1`, token))
 }
 
 func (s *Service) storePushDevice(ctx context.Context, device *PushMFADevice) error {
@@ -596,8 +568,8 @@ func (s *Service) storePushDevice(ctx context.Context, device *PushMFADevice) er
 		INSERT INTO mfa_push_devices
 		(id, user_id, device_token, platform, device_name, device_model,
 		 os_version, app_version, enabled, trusted, last_ip, created_at, org_id,
-		 agent_id, device_id, enrollment_session_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		 agent_id, device_id, enrollment_session_id, last_seen_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $12)
 	`
 
 	_, err = s.db.Pool.Exec(ctx, query,
@@ -632,13 +604,19 @@ func nullStr(s string) interface{} {
 }
 
 func (s *Service) updatePushDevice(ctx context.Context, device *PushMFADevice) error {
+	// Re-registering is the device proving it is alive, so it is seen now,
+	// and a device the system disabled for going unseen (or an administrator
+	// disabled) that registers again is enabled with its marks cleared.
 	query := `
 		UPDATE mfa_push_devices
 		SET device_name = $1, device_model = $2, os_version = $3,
 		    app_version = $4, enabled = $5, last_ip = $6, trusted = $7,
 		    agent_id = COALESCE($8, agent_id),
 		    device_id = COALESCE($9, device_id),
-		    enrollment_session_id = COALESCE($10, enrollment_session_id)
+		    enrollment_session_id = COALESCE($10, enrollment_session_id),
+		    last_seen_at = NOW(),
+		    disabled_at = CASE WHEN $5 THEN NULL ELSE disabled_at END,
+		    disabled_reason = CASE WHEN $5 THEN NULL ELSE disabled_reason END
 		WHERE id = $11
 	`
 
@@ -659,8 +637,11 @@ func (s *Service) updatePushDevice(ctx context.Context, device *PushMFADevice) e
 	return err
 }
 
+// updatePushDeviceLastUsed records that the device answered a challenge. An
+// answer, approve or deny, is the device proving it is alive, so it is also
+// seen.
 func (s *Service) updatePushDeviceLastUsed(ctx context.Context, deviceID string) error {
-	query := `UPDATE mfa_push_devices SET last_used_at = $1 WHERE id = $2`
+	query := `UPDATE mfa_push_devices SET last_used_at = $1, last_seen_at = $1 WHERE id = $2`
 	_, err := s.db.Pool.Exec(ctx, query, time.Now(), deviceID)
 	return err
 }

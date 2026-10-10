@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1231,6 +1232,8 @@ func TestConfigDefaults(t *testing.T) {
 	assert.True(t, cfg.PushMFA.Enabled)
 	assert.Equal(t, 60, cfg.PushMFA.ChallengeTimeout)
 	assert.False(t, cfg.PushMFA.AutoApprove)
+	assert.Equal(t, 30, cfg.PushMFA.StaleDeviceDays)
+	assert.Equal(t, 90, cfg.PushMFA.DisableDeviceDays)
 	assert.True(t, cfg.AdaptiveMFA.Enabled)
 	assert.Equal(t, 30, cfg.AdaptiveMFA.NewDeviceRiskScore)
 	assert.Equal(t, 20, cfg.AdaptiveMFA.NewLocationRiskScore)
@@ -1268,6 +1271,31 @@ func TestZitiReconcilerFlagCanBeDisabled(t *testing.T) {
 	if c.ZitiReconcilerEnabled {
 		t.Fatalf("ZITI_RECONCILER=false should disable the reconciler")
 	}
+}
+
+// The two push-device liveness windows are read from their unprefixed
+// variables, like the rest of push MFA's settings.
+func TestPushDeviceLivenessWindowsFromEnv(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/test")
+	t.Setenv("PUSH_DEVICE_STALE_DAYS", "14")
+	t.Setenv("PUSH_DEVICE_DISABLE_DAYS", "0")
+	c, err := Load("test-service")
+	require.NoError(t, err)
+	assert.Equal(t, 14, c.PushMFA.StaleDeviceDays)
+	assert.Equal(t, 14*24*time.Hour, c.PushMFA.StaleDeviceAfter())
+	// 0 turns the sweep off rather than disabling every device at once.
+	assert.Equal(t, 0, c.PushMFA.DisableDeviceDays)
+	assert.Equal(t, time.Duration(0), c.PushMFA.DisableDeviceAfter())
+}
+
+// A config built without Load (tests, embedded services) still gets the
+// documented stale window, and no sweep.
+func TestPushDeviceLivenessZeroValue(t *testing.T) {
+	var p PushMFAConfig
+	assert.Equal(t, 30*24*time.Hour, p.StaleDeviceAfter())
+	assert.Equal(t, time.Duration(0), p.DisableDeviceAfter())
+	p.DisableDeviceDays = 90
+	assert.Equal(t, 90*24*time.Hour, p.DisableDeviceAfter())
 }
 
 func BenchmarkLoad(b *testing.B) {

@@ -510,6 +510,34 @@ describe('LoginPage', () => {
       expect(mockLocation.href).toBe('https://app.example.com/callback?code=xyz')
     })
 
+    // Push was the only factor and the phone is gone: the challenge offers the
+    // bypass code beside it, and the page says why.
+    it('says the phone has not been seen and names the fallbacks', async () => {
+      jsonOnce({
+        mfa_required: true,
+        mfa_session: 'mfa-1',
+        mfa_methods: ['bypass', 'push'],
+        mfa_push_unseen: { last_seen_at: '2026-06-01T12:00:00Z', stale_days: 30, fallbacks: ['bypass'] },
+      })
+      await signIn()
+      const notice = await screen.findByRole('status')
+      expect(notice).toHaveTextContent(/your phone has not been seen since/i)
+      expect(notice).toHaveTextContent(/Bypass Code/)
+      expect(notice).toHaveTextContent(/ask an administrator for a bypass code/i)
+    })
+
+    it('says a phone the system disabled no longer receives requests', async () => {
+      jsonOnce({
+        mfa_required: true,
+        mfa_session: 'mfa-1',
+        mfa_methods: ['bypass'],
+        mfa_push_unseen: { stale_days: 30, disabled: true, fallbacks: ['bypass'] },
+      })
+      await signIn()
+      await screen.findByLabelText(/verification code/i)
+      expect(screen.getByRole('status')).toHaveTextContent(/no longer receives sign-in requests/i)
+    })
+
     it('after the grace period, a bypass code of letters and digits can be entered and sent', async () => {
       jsonOnce({
         mfa_required: true,

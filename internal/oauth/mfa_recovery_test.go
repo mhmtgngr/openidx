@@ -3,6 +3,7 @@ package oauth
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/openidx/openidx/internal/identity"
 )
@@ -63,14 +64,91 @@ func TestEmailUndeliverable(t *testing.T) {
 	}
 }
 
-func TestHasEnabledPushDevice(t *testing.T) {
-	if hasEnabledPushDevice(nil) {
+func TestPushOfferable(t *testing.T) {
+	now := time.Now()
+	window := 30 * 24 * time.Hour
+	if identity.AssessPushLiveness(nil, now, window).Offerable() {
 		t.Error("no devices: push offered")
 	}
-	if hasEnabledPushDevice([]identity.PushMFADevice{{Enabled: false}}) {
+	if identity.AssessPushLiveness([]identity.PushMFADevice{{Enabled: false, CreatedAt: now}}, now, window).Offerable() {
 		t.Error("only a switched-off device: push offered")
 	}
-	if !hasEnabledPushDevice([]identity.PushMFADevice{{Enabled: false}, {Enabled: true}}) {
+	if !identity.AssessPushLiveness([]identity.PushMFADevice{{Enabled: false}, {Enabled: true, CreatedAt: now}}, now, window).Offerable() {
 		t.Error("an enabled device: push not offered")
+	}
+}
+
+// The admin lockout: push was the only factor, to a phone that no longer
+// existed, and the login offered push and nothing else.
+func TestPushUnseenFallbacks(t *testing.T) {
+	now := time.Now()
+	window := 30 * 24 * time.Hour
+	old := now.Add(-45 * 24 * time.Hour)
+	recent := now.Add(-2 * 24 * time.Hour)
+	stalePhone := identity.PushMFADevice{Enabled: true, CreatedAt: old, LastSeenAt: &old}
+	freshPhone := identity.PushMFADevice{Enabled: true, CreatedAt: old, LastSeenAt: &recent}
+	swept := identity.PushMFADevice{Enabled: false, CreatedAt: old, LastSeenAt: &old, DisabledAt: &now, DisabledReason: identity.PushDisabledStale}
+
+	cases := []struct {
+		name       string
+		methods    []string
+		devices    []identity.PushMFADevice
+		want       []string
+		wantNotice bool
+		disabled   bool
+	}{
+		{"a phone seen recently changes nothing",
+			[]string{"push", "backup"}, []identity.PushMFADevice{freshPhone},
+			[]string{"push", "backup"}, false, false},
+		{"one fresh phone among stale ones changes nothing",
+			[]string{"push"}, []identity.PushMFADevice{stalePhone, freshPhone},
+			[]string{"push"}, false, false},
+		{"push-only, phone unseen: the bypass code is offered first and push last",
+			[]string{"push"}, []identity.PushMFADevice{stalePhone},
+			[]string{"bypass", "push"}, true, false},
+		{"push-only, phone unseen, backup codes held: backup and bypass before push",
+			[]string{"push", "backup"}, []identity.PushMFADevice{stalePhone},
+			[]string{"backup", "bypass", "push"}, true, false},
+		{"an issued bypass code is not offered twice",
+			[]string{"push", "backup", "bypass"}, []identity.PushMFADevice{stalePhone},
+			[]string{"backup", "bypass", "push"}, true, false},
+		{"another factor the user has: push only moves last, no notice",
+			[]string{"push", "totp", "backup"}, []identity.PushMFADevice{stalePhone},
+			[]string{"totp", "backup", "push"}, false, false},
+		{"every phone disabled by the sweep: still challenged, with the fallbacks",
+			nil, []identity.PushMFADevice{swept},
+			[]string{"bypass"}, true, true},
+		{"a disabled phone beside another factor: nothing to add",
+			[]string{"email"}, []identity.PushMFADevice{swept},
+			[]string{"email"}, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			live := identity.AssessPushLiveness(tc.devices, now, window)
+			got, notice := pushUnseenFallbacks(tc.methods, live, window)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("methods = %v, want %v", got, tc.want)
+			}
+			if (notice != nil) != tc.wantNotice {
+				t.Fatalf("notice = %+v, want present=%v", notice, tc.wantNotice)
+			}
+			if notice == nil {
+				return
+			}
+			if notice.Disabled != tc.disabled {
+				t.Errorf("notice.Disabled = %v, want %v", notice.Disabled, tc.disabled)
+			}
+			if notice.StaleDays != 30 {
+				t.Errorf("notice.StaleDays = %d, want 30", notice.StaleDays)
+			}
+			if notice.LastSeenAt == nil || !notice.LastSeenAt.Equal(old) {
+				t.Errorf("notice.LastSeenAt = %v, want %v", notice.LastSeenAt, old)
+			}
+			for _, f := range notice.Fallbacks {
+				if f == "push" {
+					t.Errorf("push listed as its own fallback: %v", notice.Fallbacks)
+				}
+			}
+		})
 	}
 }

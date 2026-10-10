@@ -1644,5 +1644,12 @@ func allMigrations() []*Migration {
 			UpSQL:       bypassGUCLeavesPoliciesUp,
 			DownSQL:     bypassGUCLeavesPoliciesDown,
 		},
+		{
+			Version:     233,
+			Name:        "push_device_last_seen",
+			Description: "mfa_push_devices gains last_seen_at (the last time the device proved it was alive: registration, answering a challenge, or a posture report from its linked agent), disabled_at and disabled_reason ('stale' from the identity-service sweep, 'admin' from the console). Existing rows are backfilled from last_used_at, else created_at; the code reads COALESCE(last_seen_at, last_used_at, created_at) so an unreached row behaves the same. A partial index on last_seen_at over enabled rows serves the sweep. Down drops the columns and index.",
+			UpSQL:       pushDeviceLastSeenUp,
+			DownSQL:     pushDeviceLastSeenDown,
+		},
 	}
 }

@@ -2501,6 +2501,9 @@ func (s *Service) handleLogin(c *gin.Context) {
 		if ev.EnrollmentDue != nil {
 			body["mfa_enrollment_due"] = ev.EnrollmentDue
 		}
+		if ev.PushUnseen != nil {
+			body["mfa_push_unseen"] = ev.PushUnseen
+		}
 		c.JSON(200, body)
 		return
 	}

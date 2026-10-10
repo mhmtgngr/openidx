@@ -407,8 +407,11 @@ func main() {
 	if serviceProfile.ServesAdmin() {
 		identityService.StartRoleExpirationChecker(bgCtx)
 		identityService.StartExternalAccountSweep(bgCtx)
+		// Disables (never deletes) push devices unseen for
+		// PUSH_DEVICE_DISABLE_DAYS, across every org: admin-plane work too.
+		identityService.StartPushDeviceSweep(bgCtx)
 	} else {
-		log.Info("role expiration and external account sweeps not started: this process serves the ISSUE plane only",
+		log.Info("role expiration, external account and push device sweeps not started: this process serves the ISSUE plane only",
 			zap.String("service_profile", string(serviceProfile)),
 			zap.String("runs_in", "the SERVICE_PROFILE=admin half"))
 	}

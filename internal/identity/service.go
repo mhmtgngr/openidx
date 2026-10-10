@@ -4297,6 +4297,12 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.GET("/mfa/bypass-codes", svc.handleListBypassCodes)
 		identity.DELETE("/mfa/bypass-codes/:code_id", svc.handleRevokeBypassCode)
 		identity.DELETE("/users/:id/bypass-codes", svc.handleRevokeAllBypassCodes)
+
+		// A user's sign-in methods (Admin): list, remove, disable a push device.
+		identity.GET("/users/:id/sign-in-methods", svc.handleAdminGetSignInMethods)
+		identity.DELETE("/users/:id/sign-in-methods/:method", svc.handleAdminRemoveSignInMethod)
+		identity.DELETE("/users/:id/sign-in-methods/:method/:credential_id", svc.handleAdminRemoveSignInCredential)
+		identity.POST("/users/:id/sign-in-methods/:method/:credential_id/disable", svc.handleAdminDisableSignInCredential)
 		identity.POST("/mfa/bypass-codes/verify", svc.handleVerifyBypassCode)
 		identity.GET("/mfa/bypass-codes/audit", svc.handleGetBypassAuditLog)
 

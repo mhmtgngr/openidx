@@ -57,6 +57,11 @@ type mfaEvaluation struct {
 	// External marks an external (vendor) user, whose sign-in is held to
 	// strong factors by holdExternalToStrongFactors.
 	External bool
+	// PushUnseen is set when push is the user's only primary factor and none
+	// of their push devices has been seen within PUSH_DEVICE_STALE_DAYS. The
+	// login response carries it so the sign-in page can say the phone has not
+	// been seen and point at the fallbacks offered beside it.
+	PushUnseen *mfaPushUnseen
 	// Challenge is the final answer: this login must be completed with a second
 	// factor before an authorization code may be issued.
 	Challenge   bool
@@ -152,13 +157,21 @@ func (s *Service) evaluateMFAPolicies(
 		ev.Enabled = true
 	}
 	pushDevices, _ := s.identityService.GetPushDevices(ctx, user.ID)
-	if hasEnabledPushDevice(pushDevices) {
+	push := identity.AssessPushLiveness(pushDevices, time.Now(), s.identityService.PushDeviceStaleAfter())
+	if push.Offerable() {
 		ev.Methods = append(ev.Methods, "push")
+		ev.Enabled = true
+	} else if push.Suspended > 0 {
+		// Every push device was disabled by the system (unseen too long, or
+		// an administrator). Push cannot be offered, but the user HAS a second
+		// factor: they are still asked for one, never let through on the
+		// password alone. See pushUnseenFallbacks below.
 		ev.Enabled = true
 	}
 	// FastPass preference: an enrolled phone IS the authenticator, so offer push
 	// first. Purely a reordering — it never adds a method or weakens the verdict.
-	if hasEnrolledPushApprover(pushDevices) {
+	// Not for a phone nobody has seen within the stale window.
+	if hasEnrolledPushApprover(pushDevices) && push.Fresh > 0 {
 		ev.Methods = preferMethod(ev.Methods, "push")
 	}
 	if smsEnr, _ := s.identityService.GetSMSEnrollment(ctx, user.ID); smsEnr != nil && smsEnr.Verified && smsEnr.Enabled {
@@ -182,6 +195,7 @@ func (s *Service) evaluateMFAPolicies(
 	if ok, _ := s.identityService.HasActiveBypassCode(ctx, user.ID); ok {
 		ev.Methods = append(ev.Methods, "bypass")
 	}
+	ev.Methods, ev.PushUnseen = pushUnseenFallbacks(ev.Methods, push, s.identityService.PushDeviceStaleAfter())
 
 	// A trusted browser can stand in for the factor.
 	if fingerprint != "" {
