@@ -150,7 +150,7 @@ services:
   # Schema first (the Helm chart's migration Job runs the same command from
   # the same image), then the seed rows migrations do not create.
   migrate:
-    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/tools:${OPENIDX_VERSION:-v1.41.0}
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/tools:${OPENIDX_VERSION:-v1.42.0}
     entrypoint: ["/app/migrate"]
     command: ["up"]
     environment:
@@ -215,7 +215,7 @@ services:
   #---------------------------------------------------------------------------
 
   identity-service:
-    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/identity-service:${OPENIDX_VERSION:-v1.41.0}
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/identity-service:${OPENIDX_VERSION:-v1.42.0}
     restart: unless-stopped
     environment:
       - APP_ENV=development
@@ -273,7 +273,7 @@ services:
     logging: *logging
 
   governance-service:
-    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/governance-service:${OPENIDX_VERSION:-v1.41.0}
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/governance-service:${OPENIDX_VERSION:-v1.42.0}
     restart: unless-stopped
     environment:
       - APP_ENV=development
@@ -326,7 +326,7 @@ services:
     logging: *logging
 
   provisioning-service:
-    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/provisioning-service:${OPENIDX_VERSION:-v1.41.0}
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/provisioning-service:${OPENIDX_VERSION:-v1.42.0}
     restart: unless-stopped
     environment:
       - APP_ENV=development
@@ -376,7 +376,7 @@ services:
     logging: *logging
 
   audit-service:
-    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/audit-service:${OPENIDX_VERSION:-v1.41.0}
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/audit-service:${OPENIDX_VERSION:-v1.42.0}
     restart: unless-stopped
     environment:
       - APP_ENV=development
@@ -434,7 +434,7 @@ services:
     logging: *logging
 
   admin-api:
-    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/admin-api:${OPENIDX_VERSION:-v1.41.0}
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/admin-api:${OPENIDX_VERSION:-v1.42.0}
     restart: unless-stopped
     environment:
       - APP_ENV=development
@@ -493,7 +493,7 @@ services:
     logging: *logging
 
   oauth-service:
-    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/oauth-service:${OPENIDX_VERSION:-v1.41.0}
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/oauth-service:${OPENIDX_VERSION:-v1.42.0}
     restart: unless-stopped
     environment:
       - APP_ENV=development
@@ -550,7 +550,7 @@ services:
     logging: *logging
 
   access-service:
-    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/access-service:${OPENIDX_VERSION:-v1.41.0}
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/access-service:${OPENIDX_VERSION:-v1.42.0}
     restart: unless-stopped
     environment:
       - APP_ENV=development
@@ -640,7 +640,7 @@ services:
   #---------------------------------------------------------------------------
 
   admin-console:
-    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/admin-console:${OPENIDX_VERSION:-v1.41.0}
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/admin-console:${OPENIDX_VERSION:-v1.42.0}
     restart: unless-stopped
     volumes:
       - ./nginx/admin-console.lite.conf:/etc/nginx/conf.d/default.conf:ro
@@ -950,7 +950,7 @@ services:
   # browzer-cert-init made, by the access-service image so the file belongs to
   # its user.
   ziti-trust-init:
-    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/access-service:${OPENIDX_VERSION:-v1.41.0}
+    image: ${OPENIDX_IMAGE_REGISTRY:-ghcr.io/mhmtgngr/openidx}/access-service:${OPENIDX_VERSION:-v1.42.0}
     profiles: ["ziti"]
     user: "0:0"
     entrypoint: ["/bin/sh", "-c"]

@@ -154,7 +154,7 @@ A second run changes nothing it was not asked to change. Lost the password?
 `./scripts/lite-up.sh --reset-admin-password`.
 
 **Images.** The published ones, `ghcr.io/mhmtgngr/openidx/<service>`, all at
-one release: `OPENIDX_VERSION`, default `v1.41.0`. v1.37.0 is the first
+one release: `OPENIDX_VERSION`, default `v1.42.0`. v1.37.0 is the first
 release whose console image calls its own origin. To try an unreleased
 `main`, set `OPENIDX_VERSION` in `.env` to the full commit SHA of a `main`
 commit (docker.yml tags every image with it).
