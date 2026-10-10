@@ -193,7 +193,7 @@ func normalizeNetworkTarget(t NetworkTarget) (NetworkTarget, error) {
 	if len(errs) == 0 {
 		// Well-formed; now refuse what points at the platform itself
 		// (network_target_guard.go).
-		errs = targetGuard().check(out)
+		errs = guardEmittedConfigs(interceptV1Data(out), hostV1Data(out))
 	}
 	if len(errs) > 0 {
 		return NetworkTarget{}, errors.New(strings.Join(errs, "; "))

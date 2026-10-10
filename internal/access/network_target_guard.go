@@ -1,6 +1,8 @@
 package access
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
@@ -10,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // A NETWORK TARGET MUST NOT POINT AT THE PLATFORM.
@@ -60,24 +63,56 @@ var defaultDenyCIDRs = []string{
 	"10.88.0.0/16",  // podman default bridge
 	"10.89.0.0/16",  // podman compose networks
 	"172.17.0.0/16", // docker default bridge
-	"100.64.0.0/10", // CGNAT: ziti-edge-tunnel's intercept/DNS range
 }
 
-// alwaysDenied are refused whatever the configuration says.
+// alwaysDenied are refused whatever the configuration says: every entry of
+// the IANA IPv4 and IPv6 special-purpose address registries that is not a
+// plain private or globally routable unicast block, plus the overlay's own
+// CGNAT range and the cloud metadata addresses. (10/8, 172.16/12,
+// 192.168/16 and fc00::/7 are where corporate networks live, so they are
+// refused only where the platform uses them: the defaults above, the
+// interfaces found at startup, NETWORK_TARGET_DENY_CIDRS.)
 var alwaysDenied = []string{
-	"0.0.0.0/8",         // "this network"
-	"127.0.0.0/8",       // loopback
-	"169.254.0.0/16",    // link-local, incl. 169.254.169.254
-	"192.0.0.0/24",      // IETF protocol assignments
-	"198.18.0.0/15",     // benchmarking
-	"224.0.0.0/4",       // multicast
-	"240.0.0.0/4",       // reserved, incl. 255.255.255.255
-	"::/128",            // unspecified
+	// IPv4 (RFC 6890 registry)
+	"0.0.0.0/8",       // "this network"
+	"100.64.0.0/10",   // CGNAT; ziti-edge-tunnel's intercept/DNS range
+	"127.0.0.0/8",     // loopback
+	"169.254.0.0/16",  // link-local, incl. 169.254.169.254
+	"192.0.0.0/24",    // IETF protocol assignments
+	"192.0.2.0/24",    // TEST-NET-1
+	"192.88.99.0/24",  // 6to4 relay anycast
+	"198.18.0.0/15",   // benchmarking
+	"198.51.100.0/24", // TEST-NET-2
+	"203.0.113.0/24",  // TEST-NET-3
+	"224.0.0.0/4",     // multicast
+	"240.0.0.0/4",     // reserved, incl. 255.255.255.255
+	// IPv6
+	"::/96",             // IPv4-compatible (deprecated), incl. :: and ::1
 	"::1/128",           // loopback
+	"64:ff9b::/96",      // NAT64 well-known
+	"64:ff9b:1::/48",    // NAT64 local-use
+	"100::/64",          // discard-only
+	"2001::/32",         // Teredo (embedded IPv4, obfuscated)
+	"2001:2::/48",       // benchmarking
+	"2001:10::/28",      // ORCHID
+	"2001:20::/28",      // ORCHIDv2
+	"2001:db8::/32",     // documentation
+	"2002::/16",         // 6to4
+	"3fff::/20",         // documentation
+	"5f00::/16",         // SRv6 SIDs
 	"fe80::/10",         // link-local
+	"fec0::/10",         // site-local (deprecated)
 	"ff00::/8",          // multicast
 	"fd00:ec2::254/128", // AWS IPv6 metadata
 }
+
+// bridgeInterface matches the host interfaces whose networks are the
+// platform's container and overlay networks.
+var bridgeInterface = regexp.MustCompile(`^(podman|cni-|cni0|docker|br-|virbr|veth|ziti|tun|tap|flannel|cali|weave|kube)`)
+
+// hostInterfaces lists this host's interfaces; a variable so tests can make
+// the guard independent of the machine they run on.
+var hostInterfaces = net.Interfaces
 
 // translationPrefixes embed an IPv4 address in an IPv6 one.
 var (
@@ -88,7 +123,21 @@ var (
 )
 
 // defaultDenyDomains turn any name into any address (127.0.0.1.nip.io).
-var defaultDenyDomains = []string{"nip.io", "sslip.io", "xip.io", "localtest.me", "lvh.me", "localhost"}
+// The container runtimes' and clouds' own names for the host and its
+// metadata service are refused with them.
+var defaultDenyDomains = []string{
+	"nip.io", "sslip.io", "xip.io", "localtest.me", "lvh.me", "traefik.me", "localhost.direct",
+	"localhost", "localdomain",
+	"host.containers.internal", "host.docker.internal", "gateway.docker.internal",
+	"docker.internal", "containers.internal",
+	"metadata.google.internal", "ec2.internal", "compute.internal",
+}
+
+// Router endpoints discovered from the controller (refreshRouterHosts).
+var (
+	routerHostsMu sync.Mutex
+	routerHosts   []string
+)
 
 type networkTargetGuard struct {
 	deny          []netip.Prefix
@@ -174,16 +223,47 @@ var targetGuard = func() *networkTargetGuard {
 			}
 		}
 	}
-	// This host's own addresses.
-	if addrs, err := net.InterfaceAddrs(); err == nil {
-		for _, a := range addrs {
-			if ipn, ok := a.(*net.IPNet); ok {
-				if ad, ok := netip.AddrFromSlice(ipn.IP); ok {
-					g.deny = append(g.deny, hostPrefix(ad.Unmap()))
+	// This host's own addresses, and the whole network of every container,
+	// bridge or overlay interface actually present (podman/CNI/docker
+	// networks whose ranges differ from the defaults above).
+	if ifaces, err := hostInterfaces(); err == nil {
+		for _, ifc := range ifaces {
+			addrs, err := ifc.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, a := range addrs {
+				ipn, ok := a.(*net.IPNet)
+				if !ok {
+					continue
+				}
+				ad, ok := netip.AddrFromSlice(ipn.IP)
+				if !ok {
+					continue
+				}
+				ad = ad.Unmap()
+				g.deny = append(g.deny, hostPrefix(ad))
+				if bridgeInterface.MatchString(ifc.Name) {
+					ones, _ := ipn.Mask.Size()
+					if ad.Is4() && ipn.IP.To4() != nil && len(ipn.Mask) == 16 {
+						ones -= 96
+					}
+					if p, err := ad.Prefix(ones); err == nil {
+						g.deny = append(g.deny, p)
+					}
 				}
 			}
 		}
 	}
+	routerHostsMu.Lock()
+	for _, h := range routerHosts {
+		if a, err := netip.ParseAddr(h); err == nil {
+			g.deny = append(g.deny, hostPrefix(a.Unmap()))
+		} else {
+			g.platformNames[h] = true
+		}
+	}
+	routerHostsMu.Unlock()
 	if h, err := os.Hostname(); err == nil && h != "" {
 		g.platformNames[strings.ToLower(h)] = true
 	}
@@ -250,6 +330,12 @@ func canonicalHost(s string) (string, error) {
 	name := strings.ToLower(trimmed)
 	if strings.Contains(name, ":") || !validHostName(name) {
 		return "", fmt.Errorf("%q is neither an IP address nor a host name", s)
+	}
+	// A single-label name resolves through /etc/hosts, search domains or the
+	// container runtime's DNS on the router's host (postgres, redis,
+	// oidx-pg): a fully qualified name only.
+	if !strings.Contains(name, ".") {
+		return "", fmt.Errorf("%q is not a fully qualified name", s)
 	}
 	if looksNumeric(name) {
 		return "", fmt.Errorf("%q is an address in a spelling other than a dotted quad; write it as one", s)
@@ -376,37 +462,220 @@ func (g *networkTargetGuard) checkHost(what, h string) error {
 	return g.checkName(what, h)
 }
 
-// check applies the guard to a canonicalised target.
-func (g *networkTargetGuard) check(t NetworkTarget) []string {
+// ---- the gate over what is emitted ----
+
+// guardEmittedConfigs is the one gate between a network target and the
+// controller. It reads the intercept.v1 and host.v1 data exactly as they will
+// be written -- not the target they were built from -- and judges every
+// address, port and protocol that appears in either: intercept addresses,
+// host.v1 address/allowedAddresses, port/portRanges/allowedPortRanges,
+// protocol/allowedProtocols. A value that is not already in its canonical
+// spelling is refused too, so nothing reaches Ziti in a form the guard did not
+// parse itself. Both the API (normalizeNetworkTarget) and the reconciler
+// (ensureNetworkService) call it, on the same maps they hand to EnsureConfig.
+func guardEmittedConfigs(intercept, host map[string]interface{}) []string {
+	g := targetGuard()
 	var errs []string
 	add := func(err error) {
 		if err != nil {
 			errs = append(errs, err.Error())
 		}
 	}
-	for _, h := range t.Hosts {
-		add(g.checkHost("host", h))
-	}
-	for _, c := range t.CIDRs {
-		p, err := netip.ParsePrefix(c)
-		if err != nil {
-			add(fmt.Errorf("CIDR %q does not parse", c))
-			continue
+	addresses := func(where string, v interface{}) {
+		switch x := v.(type) {
+		case nil:
+		case string:
+			add(g.checkEmittedAddress(where, x))
+		case []string:
+			if len(x) == 0 {
+				add(fmt.Errorf("%s is empty", where))
+			}
+			for _, s := range x {
+				add(g.checkEmittedAddress(where, s))
+			}
+		default:
+			add(fmt.Errorf("%s has an unexpected shape %T", where, v))
 		}
-		add(g.checkPrefix(p))
 	}
-	for _, d := range t.DNSNames {
-		add(g.checkName("DNS name", d))
+	ports := func(where string, v interface{}) {
+		switch x := v.(type) {
+		case nil:
+		case int:
+			add(g.checkEmittedPorts(where, x, x))
+		case []map[string]interface{}:
+			if len(x) == 0 {
+				add(fmt.Errorf("%s is empty", where))
+			}
+			for _, r := range x {
+				lo, ok1 := r["low"].(int)
+				hi, ok2 := r["high"].(int)
+				if !ok1 || !ok2 {
+					add(fmt.Errorf("%s holds a malformed range", where))
+					continue
+				}
+				add(g.checkEmittedPorts(where, lo, hi))
+			}
+		default:
+			add(fmt.Errorf("%s has an unexpected shape %T", where, v))
+		}
 	}
-	if t.ForwardAddress != "" {
-		add(g.checkHost("forward address", t.ForwardAddress))
-	}
-	for _, r := range t.PortRanges {
-		for _, d := range g.denyPorts {
-			if r.Low <= d.High && d.Low <= r.High {
-				add(fmt.Errorf("port range %d-%d covers %d-%d, which NETWORK_TARGET_DENY_PORTS refuses", r.Low, r.High, d.Low, d.High))
+	protocols := func(where string, v interface{}) {
+		var list []string
+		switch x := v.(type) {
+		case nil:
+			return
+		case string:
+			list = []string{x}
+		case []string:
+			list = x
+		default:
+			add(fmt.Errorf("%s has an unexpected shape %T", where, v))
+			return
+		}
+		for _, p := range list {
+			if p != "tcp" && p != "udp" {
+				add(fmt.Errorf("%s %q is not tcp or udp", where, p))
 			}
 		}
 	}
+
+	addresses("intercept.v1 addresses", intercept["addresses"])
+	ports("intercept.v1 portRanges", intercept["portRanges"])
+	protocols("intercept.v1 protocols", intercept["protocols"])
+
+	addresses("host.v1 address", host["address"])
+	addresses("host.v1 allowedAddresses", host["allowedAddresses"])
+	ports("host.v1 port", host["port"])
+	ports("host.v1 allowedPortRanges", host["allowedPortRanges"])
+	protocols("host.v1 protocol", host["protocol"])
+	protocols("host.v1 allowedProtocols", host["allowedProtocols"])
+	// A forward* switch with nothing to bound it would let the dialer choose.
+	for _, pair := range [][2]string{{"forwardAddress", "allowedAddresses"}, {"forwardPort", "allowedPortRanges"}, {"forwardProtocol", "allowedProtocols"}} {
+		if host[pair[0]] == true && host[pair[1]] == nil {
+			add(fmt.Errorf("host.v1 %s is set without %s", pair[0], pair[1]))
+		}
+		if host[pair[0]] != true && host[pair[1]] != nil {
+			add(fmt.Errorf("host.v1 %s is set without %s", pair[1], pair[0]))
+		}
+	}
+	if host["address"] == nil && host["forwardAddress"] != true {
+		add(fmt.Errorf("host.v1 has neither address nor forwardAddress"))
+	}
+	if host["port"] == nil && host["forwardPort"] != true {
+		add(fmt.Errorf("host.v1 has neither port nor forwardPort"))
+	}
 	return errs
+}
+
+// checkEmittedAddress judges one address string as Ziti will read it: a CIDR,
+// an IP literal, a *.domain wildcard or a host name, each of which must
+// already be in its canonical spelling.
+func (g *networkTargetGuard) checkEmittedAddress(where, s string) error {
+	if strings.Contains(s, "/") {
+		p, err := canonicalPrefix(s)
+		if err != nil {
+			return fmt.Errorf("%s: CIDR %w", where, err)
+		}
+		if p.String() != s {
+			return fmt.Errorf("%s: %q is not in canonical form (%s)", where, s, p)
+		}
+		if p.Bits() == 0 {
+			return fmt.Errorf("%s: %s covers every address", where, s)
+		}
+		return g.checkPrefix(p)
+	}
+	if strings.HasPrefix(s, "*.") {
+		c, err := canonicalDNSName(s)
+		if err != nil {
+			return fmt.Errorf("%s: DNS name %w", where, err)
+		}
+		if c != s {
+			return fmt.Errorf("%s: %q is not in canonical form (%s)", where, s, c)
+		}
+		return g.checkName(where, s)
+	}
+	c, err := canonicalHost(s)
+	if err != nil {
+		return fmt.Errorf("%s: %w", where, err)
+	}
+	if c != s {
+		return fmt.Errorf("%s: %q is not in canonical form (%s)", where, s, c)
+	}
+	return g.checkHost(where, s)
+}
+
+// checkEmittedPorts refuses a range outside 1-65535 or overlapping
+// NETWORK_TARGET_DENY_PORTS.
+func (g *networkTargetGuard) checkEmittedPorts(where string, lo, hi int) error {
+	if lo < 1 || hi > 65535 || lo > hi {
+		return fmt.Errorf("%s %d-%d is not within 1-65535 with low <= high", where, lo, hi)
+	}
+	for _, d := range g.denyPorts {
+		if lo <= d.High && d.Low <= hi {
+			return fmt.Errorf("%s %d-%d covers %d-%d, which NETWORK_TARGET_DENY_PORTS refuses", where, lo, hi, d.Low, d.High)
+		}
+	}
+	return nil
+}
+
+// ---- router endpoints ----
+
+// refreshRouterHosts records every edge router's advertised host (its
+// hostname and the hosts of its supportedProtocols listener URLs), and the
+// addresses those names resolve to, so a target cannot name a router. Names
+// are the platform's own, so resolving them here is safe; a lookup that
+// fails keeps the name only.
+func refreshRouterHosts(ctx context.Context, zm *ZitiManager) error {
+	data, status, err := zm.mgmtRequest("GET", "/edge/management/v1/edge-routers?limit=1000", nil)
+	if err != nil {
+		return err
+	}
+	if status != 200 {
+		return fmt.Errorf("unexpected status %d listing edge routers", status)
+	}
+	var resp struct {
+		Data []struct {
+			Hostname           string            `json:"hostname"`
+			SupportedProtocols map[string]string `json:"supportedProtocols"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	var hosts []string
+	addHost := func(h string) {
+		h = strings.TrimSuffix(strings.ToLower(strings.Trim(strings.TrimSpace(h), "[]")), ".")
+		if h == "" || seen[h] {
+			return
+		}
+		seen[h] = true
+		hosts = append(hosts, h)
+		if _, err := netip.ParseAddr(h); err == nil {
+			return
+		}
+		lctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if ips, err := net.DefaultResolver.LookupNetIP(lctx, "ip", h); err == nil {
+			for _, ip := range ips {
+				s := ip.Unmap().String()
+				if !seen[s] {
+					seen[s] = true
+					hosts = append(hosts, s)
+				}
+			}
+		}
+	}
+	for _, r := range resp.Data {
+		addHost(r.Hostname)
+		for _, u := range r.SupportedProtocols {
+			if pu, err := url.Parse(u); err == nil && pu.Host != "" {
+				addHost(pu.Hostname())
+			}
+		}
+	}
+	routerHostsMu.Lock()
+	routerHosts = hosts
+	routerHostsMu.Unlock()
+	return nil
 }

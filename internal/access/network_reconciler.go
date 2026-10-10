@@ -82,11 +82,17 @@ func (rec *ZitiReconciler) ensureNetworkService(ctx context.Context, zm *ZitiMan
 		return fmt.Errorf("network target refused: %w", err)
 	}
 	d.Target = target
-	interceptID, err := zm.EnsureConfig(ctx, d.ServiceName+"-intercept", "intercept.v1", interceptV1Data(d.Target))
+	// Build the configs once, gate exactly those maps, and write exactly
+	// those maps: nothing reaches the controller that the guard did not see.
+	interceptData, hostData := interceptV1Data(d.Target), hostV1Data(d.Target)
+	if errs := guardEmittedConfigs(interceptData, hostData); len(errs) > 0 {
+		return fmt.Errorf("network target refused: %s", strings.Join(errs, "; "))
+	}
+	interceptID, err := zm.EnsureConfig(ctx, d.ServiceName+"-intercept", "intercept.v1", interceptData)
 	if err != nil {
 		return err
 	}
-	hostID, err := zm.EnsureConfig(ctx, d.ServiceName+"-host", "host.v1", hostV1Data(d.Target))
+	hostID, err := zm.EnsureConfig(ctx, d.ServiceName+"-host", "host.v1", hostData)
 	if err != nil {
 		return err
 	}
@@ -185,6 +191,11 @@ func (rec *ZitiReconciler) pruneNetworkServices(ctx context.Context, zm *ZitiMan
 
 // reconcileNetworkServices is the network-resource share of a reconcile pass.
 func (rec *ZitiReconciler) reconcileNetworkServices(ctx context.Context, zm *ZitiManager) {
+	// The routers' advertised hosts join the guard's denylist before any
+	// target is loaded and judged.
+	if err := refreshRouterHosts(ctx, zm); err != nil {
+		rec.logger.Debug("network services: router hosts not refreshed", zap.Error(err))
+	}
 	desired, err := rec.loadDesiredNetworkServices(ctx)
 	if err != nil {
 		rec.logger.Warn("reconcile: load network resources failed; leaving network services as they are", zap.Error(err))

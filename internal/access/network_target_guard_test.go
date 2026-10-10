@@ -3,32 +3,57 @@ package access
 import (
 	"context"
 	"net"
-	"net/netip"
 	"strings"
 	"testing"
 
 	"go.uber.org/zap"
 )
 
-// pinTargetGuard replaces the host-derived guard with the configured part
-// only (no interface addresses, no host name), so tests that use private
-// addresses do not depend on the machine they run on.
+// pinTargetGuard makes the guard see no host interfaces, so tests that use
+// private addresses do not depend on the machine they run on. Everything
+// else (the registries, the configuration, platform and router hosts) stays.
 func pinTargetGuard(t *testing.T) {
 	t.Helper()
-	orig := targetGuard
-	targetGuard = func() *networkTargetGuard {
-		g := orig()
-		var deny []netip.Prefix
-		for _, d := range g.deny {
-			if d.Bits() == d.Addr().BitLen() && !d.Addr().IsLoopback() && d.Addr() != netip.MustParseAddr("fd00:ec2::254") && !d.Addr().IsUnspecified() {
-				continue // a host address: this machine's interfaces or platform hosts
-			}
-			deny = append(deny, d)
-		}
-		g.deny = deny
-		return g
+	orig := hostInterfaces
+	hostInterfaces = func() ([]net.Interface, error) { return nil, nil }
+	t.Cleanup(func() { hostInterfaces = orig })
+}
+
+// The real guard refuses the whole network of a container or bridge
+// interface present on this host, not only its address.
+func TestNetworkTargetRefusesThisHostsBridgeNetworks(t *testing.T) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Skipf("no interfaces: %v", err)
 	}
-	t.Cleanup(func() { targetGuard = orig })
+	for _, ifc := range ifaces {
+		if !bridgeInterface.MatchString(ifc.Name) {
+			continue
+		}
+		addrs, _ := ifc.Addrs()
+		for _, a := range addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok || ipn.IP.To4() == nil {
+				continue
+			}
+			ones, _ := ipn.Mask.Size()
+			if ones < 16 || ones > 30 {
+				continue
+			}
+			// Another address in the same network, not the interface's own.
+			other := make(net.IP, 4)
+			copy(other, ipn.IP.Mask(ipn.Mask).To4())
+			other[3] += 2
+			if other.Equal(ipn.IP.To4()) {
+				other[3]++
+			}
+			if _, err := normalizeNetworkTarget(NetworkTarget{Hosts: []string{other.String()}}); err == nil {
+				t.Errorf("%s on bridge %s (%s) was accepted", other, ifc.Name, ipn)
+			}
+			return
+		}
+	}
+	t.Skip("no container or bridge interface on this machine")
 }
 
 func withPlatformHosts(t *testing.T, hosts ...string) {
@@ -137,7 +162,7 @@ func TestNetworkTargetRefusesThePlatform(t *testing.T) {
 			func(t NetworkTarget) bool {
 				return t.Hosts[1] == "fs1.corp.example" && t.DNSNames[0] == "*.intranet.corp.example"
 			}},
-		"v6 /64":  {NetworkTarget{CIDRs: []string{"2001:DB8:1:2::/64"}}, func(t NetworkTarget) bool { return t.CIDRs[0] == "2001:db8:1:2::/64" }},
+		"v6 /64":  {NetworkTarget{CIDRs: []string{"2A02:1234:1:2::/64"}}, func(t NetworkTarget) bool { return t.CIDRs[0] == "2a02:1234:1:2::/64" }},
 		"forward": {NetworkTarget{CIDRs: []string{"10.30.0.0/24"}, ForwardAddress: "10.30.0.10", ForwardPort: 3389}, nil},
 		"mapped corporate host is unmapped": {NetworkTarget{Hosts: []string{"::ffff:10.20.0.5"}},
 			func(t NetworkTarget) bool { return t.Hosts[0] == "10.20.0.5" }},
