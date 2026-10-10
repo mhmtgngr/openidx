@@ -106,7 +106,7 @@ func hardenExternalGuacParams(params map[string]string) {
 // externalSessionPolicy is what an external user's launch answers about the
 // controls it ran under, so the console shows what is enforced rather than
 // what the entry says.
-func externalSessionPolicy() gin.H {
+func externalSessionPolicy(pol PamPolicy) gin.H {
 	return gin.H{
 		"approval":      true,
 		"recorded":      true,
@@ -115,7 +115,7 @@ func externalSessionPolicy() gin.H {
 		"drive":         false,
 		"file_transfer": false,
 		"printing":      false,
-		"max_minutes":   int(externalid.MaxPamSession.Minutes()),
+		"max_minutes":   int(pol.externalSessionCap().Minutes()),
 	}
 }
 

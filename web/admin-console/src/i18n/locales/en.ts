@@ -9654,6 +9654,23 @@ const en = {
         link: 'Review and enforce',
       },
     },
+    pamPolicy: {
+      title: 'Privileged session policy',
+      subtitle: 'Applies to every connection in this organization. External users keep their own, stricter rules.',
+      source: { policy: 'Set for this organization', default: 'Defaults' },
+      maxSessionHours: 'Maximum session length (hours)',
+      maxSessionHoursHint: '0 = no cap for internal users; external users never exceed 8 hours.',
+      idleTimeoutMinutes: 'Idle timeout (minutes)',
+      idleTimeoutHint: 'Stored for a future release; the broker does not yet report session activity, so this is not enforced.',
+      requireApprovalInternal: 'Require approval for internal users',
+      recordInternal: 'Record internal users\' sessions',
+      launchApprovalWindowMinutes: 'Approval window (minutes)',
+      launchApprovalWindowHint: 'How long a launch request waits for its approver before it lapses.',
+      save: 'Save policy',
+      saved: 'Privileged session policy saved',
+      saveFailed: 'Could not save the policy',
+      notRecordingWarning: 'Internal users\' sessions are not recorded. New organizations record them by default.',
+    },
     addDevice: {
       // The back link is exactly the nav item, so it reuses `nav.items`.
       title: 'Add a device to the network',

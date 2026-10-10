@@ -294,6 +294,8 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 		return // loadPamLaunchEntry already wrote the error
 	}
 	pinExternalPamPolicy(&entry, caller)
+	pol := s.pamPolicyFor(ctx, org.ID)
+	pinOrgPamPolicy(&entry, caller, pol)
 
 	if isAdmin {
 		entry.AdminBypass = s.pamAdminBypass(ctx, org.ID, &entry, userID, pamCallerRoles(c))
@@ -399,7 +401,7 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 		"reach_mode":          entry.ReachMode,
 	}
 	if entry.External {
-		body["session_policy"] = externalSessionPolicy()
+		body["session_policy"] = externalSessionPolicy(pol)
 	}
 	for k, v := range hooks.Response {
 		body[k] = v
@@ -833,7 +835,8 @@ func (s *Service) createPamAccessRequest(c *gin.Context, entryID string) {
 		}
 	}
 
-	expiresAt := time.Now().Add(time.Hour)
+	// The window comes from the organization's policy (60 minutes unless set).
+	expiresAt := time.Now().Add(s.pamPolicyFor(c.Request.Context(), getOrgID(c)).LaunchApprovalWindow())
 	var requestID string
 	err = s.db.Pool.QueryRow(ctx, `
 		INSERT INTO pam_entry_access_requests (org_id, entry_id, requester_id, reason, status, expires_at)
@@ -898,7 +901,8 @@ func (s *Service) decidePamRequestAs(c *gin.Context, newStatus, auditAction stri
 	// <> approver so it is atomic with the status check.
 	guard := ""
 	if newStatus == "approved" {
-		// A launch request lives an hour, and an approval past that is one
+		// A launch request lives for the organization's approval window (60
+		// minutes unless set), and an approval past that is one
 		// checkAndConsumePamApproval never honours: refused here, not recorded
 		// as an approval nobody can use.
 		guard = ` AND r.requester_id <> NULLIF($2,'')::uuid

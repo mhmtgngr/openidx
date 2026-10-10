@@ -1623,5 +1623,12 @@ func allMigrations() []*Migration {
 			UpSQL:       bypassGUCLeavesPoliciesUp,
 			DownSQL:     bypassGUCLeavesPoliciesDown,
 		},
+		{
+			Version:     229,
+			Name:        "org_pam_policy",
+			Description: "The rules around a privileged session become a per-organization policy. org_pam_policy (org_id PK) holds max_session_hours (0 = no cap; external users keep the 8-hour ceiling regardless), idle_timeout_minutes (stored, not yet enforced), require_approval_internal, record_internal and launch_approval_window_minutes. A missing row means the secure defaults: every session capped at 8 h, internal sessions recorded, a 60-minute approval window. Every organization that exists at migration time gets a row carrying its behaviour as it was, so nothing changes under it until an administrator edits the policy; a new organization starts secure. Down drops the table.",
+			UpSQL:       orgPamPolicyUp,
+			DownSQL:     orgPamPolicyDown,
+		},
 	}
 }

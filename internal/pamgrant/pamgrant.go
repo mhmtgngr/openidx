@@ -128,6 +128,14 @@ type LapsedSession struct {
 // judges every external session, those two kinds included. When more than one
 // applies, the reason is the first of grant_ended, moderation_ended and
 // max_duration.
+// DefaultMaxSessionHours caps a privileged session in an organization that has
+// no org_pam_policy row. It must match defaultPamPolicy in internal/access.
+const DefaultMaxSessionHours = 8
+
+// The duration cap comes from org_pam_policy: max_session_hours per
+// organization (0 = no cap for internal users), DefaultMaxSessionHours when
+// the organization has no row, and for an external user never more than
+// maxExternal whatever the row says.
 func LapsedSessions(ctx context.Context, q Lister, maxExternal time.Duration, limit int) ([]LapsedSession, error) {
 	rows, err := q.Query(ctx,
 		//orgscope:ignore install-wide sweep of live PAM entry sessions; each grant, role, group and user is matched in the session's own org
@@ -154,15 +162,21 @@ func LapsedSessions(ctx context.Context, q Lister, maxExternal time.Duration, li
 		            (s.moderation_id IS NOT NULL
 		             AND NOT EXISTS (SELECT 1 FROM guacamole_moderation_sessions m
 		                              WHERE m.id = s.moderation_id AND m.org_id = s.org_id AND m.status = 'active')) AS unmoderated,
-		            ($2::bigint > 0 AND s.started_at < NOW() - make_interval(secs => $2::bigint)
-		             AND EXISTS (SELECT 1 FROM users u
-		                          WHERE u.id = s.user_id AND u.org_id = s.org_id AND u.user_type = 'external')) AS overlong
+		            (cap.secs > 0 AND s.started_at < NOW() - make_interval(secs => cap.secs)) AS overlong
 		       FROM pam_entry_sessions s
+		       LEFT JOIN org_pam_policy p ON p.org_id = s.org_id
+		       CROSS JOIN LATERAL (
+		         SELECT (CASE
+		           WHEN EXISTS (SELECT 1 FROM users u
+		                         WHERE u.id = s.user_id AND u.org_id = s.org_id AND u.user_type = 'external')
+		             THEN LEAST(COALESCE(NULLIF(p.max_session_hours, 0) * 3600, $2::bigint), $2::bigint)
+		           ELSE COALESCE(p.max_session_hours, $3::int) * 3600
+		         END)::bigint AS secs) cap
 		      WHERE s.status = 'active' AND s.user_id IS NOT NULL
 		   ) judged
 		  WHERE lapsed OR unmoderated OR overlong
 		  ORDER BY started_at
-		  LIMIT $1`, limit, int64(maxExternal/time.Second))
+		  LIMIT $1`, limit, int64(maxExternal/time.Second), DefaultMaxSessionHours)
 	if err != nil {
 		return nil, fmt.Errorf("list PAM entry sessions that have to end: %w", err)
 	}
