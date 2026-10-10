@@ -5748,6 +5748,38 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
+  /api/v1/access/decisions/explain:
+    get:
+      tags: [Access Control]
+      summary: Why a person may or may not reach an application
+      description: The decision the enforcement points take for the given user on the given application, with the grant and every condition named, and the same sentence the audit log carries.
+      operationId: explainReach
+      x-openidx-handler: internal/access.(*Service).handleExplainReach
+      parameters:
+        - name: user
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: app
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
   /api/v1/access/recording-retention-policy:
     get:
       tags: [Session Recording]

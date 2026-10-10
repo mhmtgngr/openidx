@@ -283,9 +283,9 @@ func TestAssignmentGateRecordsOnBothBranches(t *testing.T) {
 	}
 	fn := body[:end]
 
-	gateAt := strings.Index(fn, "authorizeAssignmentDecision(")
+	gateAt := strings.Index(fn, "accessdecision.Evaluate(")
 	if gateAt < 0 {
-		t.Fatal("assignmentGateAllows must still evaluate authorizeAssignmentDecision")
+		t.Fatal("assignmentGateAllows must evaluate the gate via accessdecision.Evaluate")
 	}
 	after := fn[gateAt:]
 

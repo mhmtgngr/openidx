@@ -70,6 +70,7 @@ var publicQueryParams = map[string]string{
 	// Identifiers of objects. A UUID in a log is what makes the log useful, and
 	// it is not a credential: holding one grants nothing without a token.
 	"user_id": "object id", "org": "org slug or id",
+	"user": "object id (the person an access decision is explained for)", "app": "object id (the application it is explained for)",
 	// `agent_id` was here until the agent surface started authenticating. It was
 	// declared public because GET /agent/config read it out of the query string
 	// — which was the whole problem: the id was not a credential, it was the

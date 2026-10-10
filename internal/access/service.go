@@ -610,6 +610,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Assignment report: who loses reach if ACCESS_ASSIGNMENT_ENFORCE is
 		// flipped on — diffs today's Ziti reach against assignment-derived reach.
 		api.GET("/assignment-report", adminOnly, svc.handleAssignmentReport)
+		// Why a person may or may not reach an application, in one sentence.
+		api.GET("/decisions/explain", svc.requireAdminRole(), svc.handleExplainReach)
 
 		// Cross-pillar device correlation: a user's devices with IAM trust +
 		// Ziti compliance/posture side by side, and a device-scoped revoke.
@@ -2387,50 +2389,10 @@ func (s *Service) handleProxy(c *gin.Context) {
 		// assignmentReplacesLegacy is true, proxyAssignmentDecision ignores the
 		// legacyAllowed argument entirely (see its doc comment), so the value
 		// passed is moot.
-		var assigned, freshAssignment bool
-		if appID != "" {
-			assigned, freshAssignment = s.assignmentAllowed(c.Request.Context(), session.UserID, appOrgID, appID)
-		}
-		allow, wouldDeny := proxyAssignmentDecision(appID, assigned, s.config.AccessAssignmentEnforce, true)
-		if wouldDeny {
-			// Durable decision record, on BOTH branches: enforcement must not
-			// be quieter than report mode. This is the write that has to
-			// survive — see recordAssignmentDecision. The logAuditEvent calls
-			// below are kept as-is (harmless duplication; audit_events may be
-			// repaired later) but nothing depends on them landing.
-			if !allow || freshAssignment {
-				s.recordAssignmentDecision(c.Request.Context(), route, session.UserID, appID, c.ClientIP(), !allow)
-			}
-			if !allow {
-				// A real denial under enforcement: audit it as an actual proxy
-				// denial (action "proxy_access_denied" is the only action
-				// logAuditEvent stamps outcome:"failure" for) so an operator
-				// filtering the proxy audit stream for denials finds this
-				// request, instead of it landing as a success-outcome
-				// "would_deny" record indistinguishable from the report-mode
-				// case below.
-				s.logAuditEvent(c, "proxy_access_denied", route.ID, "proxy_route", map[string]interface{}{
-					"reason":         "not_assigned",
-					"user_id":        session.UserID,
-					"path":           c.Request.URL.Path,
-					"application_id": appID,
-				})
-			} else if freshAssignment {
-				// Report mode: record the gap. This fires on every allowed
-				// request from an unassigned caller to an app-backed route —
-				// every asset load, not just the page — so it is throttled to
-				// once per assignmentAllowed cache TTL per (user, application)
-				// via the freshAssignment flag, rather than one audit POST per
-				// request.
-				s.logAuditEvent(c, "access.assignment.would_deny", appID, "application", map[string]interface{}{
-					"enforcement_point": "proxy",
-					"user_id":           session.UserID,
-					"route":             route.Name,
-				})
-			}
-		}
-		if !allow {
-			c.JSON(http.StatusForbidden, gin.H{"error": "not assigned to this application"})
+		// The decision itself, shared with the forward-auth path: principals
+		// (assignments, legacy roles) and the resource's conditions, recorded
+		// on both branches, refused only under enforcement.
+		if !s.reachDecision(c, route, session, appID, appOrgID, "proxy") {
 			return
 		}
 
