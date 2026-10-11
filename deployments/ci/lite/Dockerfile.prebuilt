@@ -18,7 +18,8 @@
 # bin/<binary> and entrypoint-access.sh.
 
 FROM alpine:3.24 AS runtime
-RUN apk add --no-cache ca-certificates tzdata wget && \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache ca-certificates tzdata wget && \
     rm -rf /var/cache/apk/* && \
     addgroup -S openidx && \
     adduser -S openidx -G openidx

@@ -38,7 +38,8 @@ FROM alpine:3.24
 
 # postgresql16-client: cmd/backup shells out to pg_dump/pg_restore/psql;
 # the major is pinned to the stack's postgres:16 server.
-RUN apk add --no-cache ca-certificates tzdata postgresql16-client && \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache ca-certificates tzdata postgresql16-client && \
     rm -rf /var/cache/apk/*
 
 RUN addgroup -S openidx && \

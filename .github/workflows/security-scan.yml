@@ -120,13 +120,32 @@ jobs:
             echo "No published image for ${{ matrix.service }} yet — skipping image scan until the image pipeline publishes to GHCR."
           fi
 
-      - name: Run Trivy vulnerability scanner
+      # Two runs, the same split as the filesystem scan below. With format
+      # sarif and no limit-severities-for-sarif, trivy-action reports EVERY
+      # severity and applies exit-code to all of them, so a single MEDIUM
+      # (zlib CVE-2026-85091, October 2026) turned the nightly red for days
+      # while TRIVY_SEVERITY said CRITICAL,HIGH. The SARIF run feeds the
+      # Security tab and never fails; the table run is the gate and prints
+      # what it found in the log.
+      - name: Run Trivy vulnerability scanner (SARIF for the Security tab)
         if: steps.pull.outputs.available == 'true'
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:main
           format: 'sarif'
           output: 'trivy-results.sarif'
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: '0'
+          ignore-unfixed: ${{ env.TRIVY_IGNORE_UNFIXED }}
+          vuln-type: 'os,library'
+          scan-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:main
+
+      - name: Run Trivy vulnerability scanner (the gate)
+        if: steps.pull.outputs.available == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:main
+          format: 'table'
           severity: ${{ env.TRIVY_SEVERITY }}
           exit-code: ${{ env.TRIVY_EXIT_CODE }}
           ignore-unfixed: ${{ env.TRIVY_IGNORE_UNFIXED }}
@@ -135,7 +154,7 @@ jobs:
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
-        if: steps.pull.outputs.available == 'true'
+        if: always() && steps.pull.outputs.available == 'true'
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'nightly-${{ matrix.service }}'
