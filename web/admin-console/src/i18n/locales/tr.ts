@@ -8,6 +8,12 @@ const tr: typeof en = {
     label: 'Dil',
   },
   components: {
+    vendorSupport: {
+      start: 'Desteği başlat',
+      failed: 'Destek oturumu başlatılamadı',
+      title: '{{device}} üzerinde destek',
+      description: 'Ekranı görmeden önce cihazdaki kişinin oturuma izin vermesi gerekir. Oturum kaydedilir ve en geç {{until}} tarihinde sona erer.',
+    },
     publishToVendor: {
       title: '{{name}} bir tedarikçiye yayınla',
       description: 'Tedarikçiye açın ve isterseniz şimdi bunun için bir görevlendirme başlatın. Tedarikçinin kişileri buna yalnızca bir görevlendirme kapsadığı sürece erişir.',

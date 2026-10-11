@@ -1,11 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 const { authState } = vi.hoisted(() => ({ authState: { roles: ['user'] as string[] } }))
 
-vi.mock('../lib/api', () => ({ api: { get: vi.fn() } }))
+vi.mock('../lib/api', () => ({ api: { get: vi.fn(), post: vi.fn() }, baseURL: 'https://idp.example.test' }))
+vi.mock('../hooks/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }))
+vi.mock('../components/remote-support/relay-renderer', () => ({
+  RelayRenderer: ({ wsUrl }: { wsUrl: string }) => <div data-testid="relay">{wsUrl}</div>,
+}))
 vi.mock('../lib/auth', () => ({ useAuth: () => ({ user: { id: 'u-1', roles: authState.roles } }) }))
 
 import { VendorPortalPage } from './vendor-portal'
@@ -80,5 +85,21 @@ describe('VendorPortalPage', () => {
     renderAt('/dashboard')
     expect(screen.getAllByText('employee dashboard').length).toBeGreaterThan(0)
     expect(api.get).not.toHaveBeenCalled()
+  })
+
+  it('starts support on a device its running engagement covers and opens the relay viewer', async () => {
+    const withDevice = {
+      ...external,
+      engagements: [{ ...external.engagements[0], targets: [{ target_type: 'device', target_id: 'agent-7', name: 'plant-pc' }] },
+        { ...external.engagements[1], targets: [{ target_type: 'device', target_id: 'agent-8', name: 'later-pc' }] }],
+    }
+    vi.mocked(api.get).mockResolvedValue(withDevice)
+    vi.mocked(api.post).mockResolvedValue({ id: 's-1', admin_ws: '/api/v1/access/my/remote-support/sessions/s-1/ws', expires_at: '2099-10-11T18:00:00Z' })
+    renderAt('/vendor')
+    const buttons = await screen.findAllByRole('button', { name: /Start support/ })
+    expect(buttons).toHaveLength(1)
+    await userEvent.setup().click(buttons[0])
+    expect(api.post).toHaveBeenCalledWith('/api/v1/access/my/remote-support/sessions', { agent_id: 'agent-7' })
+    expect(await screen.findByTestId('relay')).toHaveTextContent('wss://idp.example.test/api/v1/access/my/remote-support/sessions/s-1/ws')
   })
 })

@@ -10,6 +10,7 @@ import { QueryError } from '../components/query-error'
 import { useAuth } from '../lib/auth'
 import { roleLevel, ROLE_LEVELS } from '../lib/roles'
 import { useVendorSelf, type MyVendorEngagement } from '../lib/external-access'
+import { VendorSupportButton } from '../components/vendor-support'
 
 // The vendor portal: what an external (vendor) user sees first. Their work
 // (engagements: what each covers and until when), who sponsors them, when
@@ -148,6 +149,9 @@ function EngagementCard({ engagement: e }: { engagement: MyVendorEngagement }) {
                 <Icon className="h-4 w-4 text-muted-foreground" />
                 <span>{x.name}</span>
                 <Badge variant="outline">{t(`pages.externalUsers.engagements.types.${x.target_type}`)}</Badge>
+                {x.target_type === 'device' && e.state === 'running' && (
+                  <VendorSupportButton agentId={x.target_id} deviceName={x.name} />
+                )}
               </li>
             )
           })}

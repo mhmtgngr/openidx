@@ -71,6 +71,12 @@ type RemoteSupportHandler struct {
 
 	mu       sync.Mutex
 	sessions map[string]*signalingSession
+
+	// recorders are the broker-side recordings of vendor sessions
+	// (remote_support_external.go), by session id; a nil entry caches "this
+	// session is not broker-recorded".
+	recMu     sync.Mutex
+	recorders map[string]*ivfRecorder
 }
 
 // NewRemoteSupportHandler constructs the handler. auditAgent is optional;
@@ -930,6 +936,11 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, ra
 		if mt == websocket.TextMessage {
 			sess.recordReplay(role, data)
 		}
+		// A vendor session is recorded by the broker: the device's relay
+		// frames go to its recording whether or not a viewer is attached.
+		if role == peerAgent && mt == websocket.BinaryMessage {
+			h.recordRelayFrame(sessionID, data)
+		}
 		if target := sess.otherPeer(role); target != nil {
 			// enqueue is non-blocking for video (drops under backpressure) so a
 			// slow peer never stalls this read loop — the fix for the 1006 close
@@ -1122,6 +1133,7 @@ func (h *RemoteSupportHandler) endSession(ctx context.Context, sessionID, reason
 // live broker entry. Used both on explicit end and when a new session supersedes
 // an older in-flight one for the same agent.
 func (h *RemoteSupportHandler) evictSession(sessionID string) {
+	defer h.closeRecorder(sessionID)
 	h.mu.Lock()
 	sess, ok := h.sessions[sessionID]
 	if ok {
@@ -1259,6 +1271,7 @@ func (h *RemoteSupportHandler) StartJanitor(ctx context.Context, idleAfter time.
 				return
 			case <-ticker.C:
 				h.expireOrphanSessions(ctx, idleAfter)
+				h.endLapsedVendorSessions(ctx)
 			}
 		}
 	}()

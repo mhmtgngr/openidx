@@ -5760,6 +5760,101 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/access/my/remote-support/sessions:
+    get:
+      tags: [My Access]
+      summary: My vendor support sessions
+      description: The caller's own vendor remote-support sessions, newest first; a live one carries the viewer path.
+      operationId: myVendorSupportSessions
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleVendorListSessions
+      responses:
+        '200':
+          description: Success
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [My Access]
+      summary: Start vendor support on an engagement's device
+      description: For an external user whose account is in effect, on an enrolled device a running engagement covers (naming them or nobody). The session always requires the person at the device to Allow it, uses the relay transport, is recorded by the broker (IVF) and ends with the engagement or after the external session ceiling. Asks for a fresh second factor. 409 when the device already has a session.
+      operationId: startMyVendorSupportSession
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleVendorStartSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id]
+              properties:
+                agent_id: {type: string}
+                notes: {type: string}
+      responses:
+        '201':
+          description: The session, with the viewer path and its expiry
+        '404':
+          description: No such device in the organization
+        '409':
+          description: The device already has a session
+        '503':
+          description: Recording is not configured
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/my/remote-support/sessions/{id}/end:
+    post:
+      tags: [My Access]
+      summary: End my vendor support session
+      operationId: endMyVendorSupportSession
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleVendorEndSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Ended
+        '404':
+          description: Not one of the caller's live sessions
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/my/remote-support/sessions/{id}/ws:
+    get:
+      tags: [My Access]
+      summary: Vendor support viewer WebSocket
+      description: The relay viewer for the caller's own live vendor session, while its engagement still allows it.
+      operationId: myVendorSupportWS
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleVendorWS
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '101':
+          description: Switching protocols
+        '404':
+          description: Not one of the caller's live sessions
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /api/v1/access/my/ziti/services:
     get:
       tags: [My Access]

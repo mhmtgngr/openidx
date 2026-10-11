@@ -10,6 +10,12 @@ const en = {
   // dialog every destructive action routes through -- stayed English on a
   // console that is otherwise translated.
   components: {
+    vendorSupport: {
+      start: 'Start support',
+      failed: 'Could not start the support session',
+      title: 'Support on {{device}}',
+      description: 'The person at the device must allow the session before you see the screen. It is recorded and ends by {{until}} at the latest.',
+    },
     publishToVendor: {
       title: 'Publish {{name}} to a vendor',
       description: 'Open it to the vendor and, if you like, start an engagement for it now. The vendor\'s people reach it only while an engagement covers it.',

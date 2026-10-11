@@ -1142,6 +1142,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// The operator tier goes on the session routes: the console gives Remote
 		// Support to operators.
 		remoteSupport.RegisterRemoteSupportAdminRoutes(api, svc.requireFreshMFA("remote_support.start_session"), svc.requireAdminRole(), operatorTier)
+		// A vendor's technician on an engagement's device, from the browser
+		// (Phase 3c): the caller's own sessions only, never the operator tier.
+		remoteSupport.RegisterRemoteSupportVendorRoutes(api, svc.requireFreshMFA("remote_support.vendor_start_session"))
 		remoteSupport.StartJanitor(context.Background(), 5*time.Minute, time.Minute)
 		if svc.guacamoleClient != nil {
 			remoteSupport.SetGuacamoleClient(svc.guacamoleClient)

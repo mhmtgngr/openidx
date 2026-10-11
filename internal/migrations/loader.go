@@ -1665,5 +1665,12 @@ func allMigrations() []*Migration {
 			UpSQL:       vendorEngagementsUp,
 			DownSQL:     vendorEngagementsDown,
 		},
+		{
+			Version:     235,
+			Name:        "remote_support_external",
+			Description: "A vendor's technician helps on an engagement's device from the browser. remote_support_sessions gains engagement_id (the engagement that allows the session; the access janitor ends and evicts it when the engagement ends, closes or stops covering the device or the technician), expires_at (the engagement's end or the external session ceiling, whichever is first), server_recording (the broker records the relay transport's VP8 frames itself rather than trusting the viewer's browser) and recording_format ('webm' for a browser recording, 'ivf' for the broker's). A partial index serves the janitor. Columns under the table's existing org policy; down drops them.",
+			UpSQL:       remoteSupportExternalUp,
+			DownSQL:     remoteSupportExternalDown,
+		},
 	}
 }

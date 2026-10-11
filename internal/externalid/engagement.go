@@ -47,11 +47,15 @@ const MaxEngagementDays = MaxAccountDays
 
 // EngagementState is what I13 says about one user and one target.
 type EngagementState struct {
+	// External is whether the user is an external user with a vendor.
+	External bool
 	// Applies is whether the user is an external user of a vendor that
-	// requires engagements. When false, nothing else is set.
+	// requires engagements.
 	Applies bool
 	// EngagementID and EndsAt name the running engagement that covers the
-	// target, the one ending last; empty when none does.
+	// target, the one ending last; empty when none does. They are read for
+	// every external user, whatever the vendor requires: some access (remote
+	// support on a device) exists only through an engagement.
 	EngagementID string
 	EndsAt       *time.Time
 }
@@ -92,10 +96,7 @@ func EngagementFor(ctx context.Context, q Querier, orgID, userID, targetType, ta
 	if err != nil {
 		return EngagementState{}, err
 	}
-	if !require {
-		return EngagementState{}, nil
-	}
-	st.Applies = true
+	st.External, st.Applies = true, require
 	if engagementID != nil {
 		st.EngagementID = *engagementID
 	} else {
