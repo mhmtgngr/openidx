@@ -204,8 +204,8 @@ of Postgres (global-scale plan task 2.2).
 
 It is an `env` entry rather than another `envFrom` source on purpose. `env`
 beats `envFrom` by documented Kubernetes precedence, so this cleanly replaces
-the direct DATABASE_URL that the -db-url secret carries; the alternative --
-mounting a second secret after -db-url and relying on later-source-wins for a
+the direct DATABASE_URL that the -db-app-url secret carries; the alternative --
+mounting a second secret after -db-app-url and relying on later-source-wins for a
 duplicate key -- works today but is not a promise the API makes.
 
 The migration Job, the bootstrap hook and the backup CronJob deliberately do
@@ -303,7 +303,7 @@ DATABASE_URL for a service's plane role (task 2.4).
 
 Placed in `env:` rather than `envFrom:` on purpose: an `env` entry beats a
 `secretRef` key of the same name, so this overrides the fleet-wide DSN in
--db-url for this one service without the two disagreeing anywhere else.
+-db-app-url for this one service without the two disagreeing anywhere else.
 */}}
 {{- define "openidx.planeDatabaseUrl" -}}
 {{- $plane := include "openidx.planeFor" . -}}
@@ -413,6 +413,37 @@ lookup sees no cluster under `helm template`, so a GitOps tool that renders
 with it gets a new value on every render and pods restarted at different times
 would disagree. Set secrets.internalServiceToken there.
 */}}
+{{/*
+openidx.dbRolePassword is the password of one of the two Postgres roles the
+services connect as: openidx_app (key "app-password"), the NOBYPASSRLS role
+every request runs as, and openidx_bypass (key "bypass-password"), the
+BYPASSRLS role background work reads across tenants with (#964). The services
+never connect as the database owner; only the migration Job and the backup
+CronJob do. In order of precedence:
+  1. the value the operator set (secrets.appPassword / secrets.bypassPassword,
+     or pgcat.password for the app role while the pooler is on);
+  2. the value the release's -db-roles Secret already holds, so an upgrade
+     keeps the password the bootstrap hook set on the server;
+  3. a new random value, on the first install.
+Include it ONCE per render and keep the result in a variable (templates/
+secrets.yaml does): two calls on a first install are two different random
+values. lookup sees no cluster under `helm template`, so a GitOps render gets
+a new value every time; set both passwords explicitly there.
+Usage: include "openidx.dbRolePassword" (dict "ctx" $ "key" "app-password" "value" .Values.secrets.appPassword)
+*/}}
+{{- define "openidx.dbRolePassword" -}}
+{{- if .value -}}
+{{- .value -}}
+{{- else -}}
+{{- $s := lookup "v1" "Secret" .ctx.Release.Namespace (printf "%s-db-roles" (include "openidx.fullname" .ctx)) -}}
+{{- if and $s (hasKey $s "data") $s.data (hasKey $s.data .key) -}}
+{{- index $s.data .key | b64dec -}}
+{{- else -}}
+{{- randAlphaNum 40 -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "openidx.internalServiceToken" -}}
 {{- if .Values.secrets.internalServiceToken -}}
 {{- .Values.secrets.internalServiceToken -}}

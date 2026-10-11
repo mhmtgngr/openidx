@@ -964,6 +964,34 @@ type PushMFAConfig struct {
 	APNSProduction   bool   `mapstructure:"apns_production"`   // Use the production APNS host (default: sandbox)
 	ChallengeTimeout int    `mapstructure:"challenge_timeout"` // Timeout in seconds (default: 60)
 	AutoApprove      bool   `mapstructure:"auto_approve"`      // Auto-approve for development (NEVER use in production)
+	// StaleDeviceDays is how long a push device may go unseen (no
+	// registration, no answered challenge, no report from its linked agent)
+	// before the login stops offering it as the only way in and offers the
+	// user's fallbacks beside it. PUSH_DEVICE_STALE_DAYS, default 30.
+	StaleDeviceDays int `mapstructure:"stale_device_days"`
+	// DisableDeviceDays is how long a push device may go unseen before the
+	// identity-service sweep disables it (never deletes it). 0 turns the sweep
+	// off. PUSH_DEVICE_DISABLE_DAYS, default 90.
+	DisableDeviceDays int `mapstructure:"disable_device_days"`
+}
+
+// StaleDeviceAfter is StaleDeviceDays as a duration, with the default of 30
+// days for a zero or negative value (a config built without Load).
+func (p PushMFAConfig) StaleDeviceAfter() time.Duration {
+	days := p.StaleDeviceDays
+	if days <= 0 {
+		days = 30
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
+
+// DisableDeviceAfter is DisableDeviceDays as a duration. Zero or negative
+// means the sweep is off, and the result is 0.
+func (p PushMFAConfig) DisableDeviceAfter() time.Duration {
+	if p.DisableDeviceDays <= 0 {
+		return 0
+	}
+	return time.Duration(p.DisableDeviceDays) * 24 * time.Hour
 }
 
 // SMSConfig holds SMS MFA configuration
@@ -1319,6 +1347,8 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("push_mfa.challenge_timeout", 60)
 	v.SetDefault("push_mfa.auto_approve", false)
 	v.SetDefault("push_mfa.apns_production", false)
+	v.SetDefault("push_mfa.stale_device_days", 30)
+	v.SetDefault("push_mfa.disable_device_days", 90)
 
 	// SMS MFA defaults
 	v.SetDefault("sms.enabled", false)
@@ -1577,6 +1607,8 @@ func bindEnvVars(v *viper.Viper) {
 		"push_mfa.apns_key_path":        "PUSH_MFA_APNS_KEY_PATH",
 		"push_mfa.apns_bundle_id":       "PUSH_MFA_APNS_BUNDLE_ID",
 		"push_mfa.apns_production":      "PUSH_MFA_APNS_PRODUCTION",
+		"push_mfa.stale_device_days":    "PUSH_DEVICE_STALE_DAYS",
+		"push_mfa.disable_device_days":  "PUSH_DEVICE_DISABLE_DAYS",
 		// Turkish SMS providers
 		"sms.netgsm_usercode":        "NETGSM_USERCODE",
 		"sms.netgsm_password":        "NETGSM_PASSWORD",

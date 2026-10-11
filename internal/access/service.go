@@ -462,6 +462,25 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// is gated like the route list it summarises.
 		api.GET("/overview", adminOnly, svc.handleAccessOverview)
 
+		// Network resources (the server side of the VPN replacement): a
+		// kind='network' application, its network target (what the device's
+		// tunneler intercepts and where the hosting router forwards), the
+		// organization's tunnel policy, and a CSV import for moving a VPN's
+		// rule set across. Targets name internal addresses, so reads are
+		// admin-only like the route table.
+		// A target may not name the controller (network_target_guard.go).
+		if svc.config != nil {
+			SetNetworkTargetPlatformHosts(append([]string{svc.config.ZitiCtrlURL}, strings.Split(svc.config.ZitiCtrlURLs, ",")...)...)
+		}
+		api.GET("/network-resources", adminOnly, svc.handleListNetworkResources)
+		api.POST("/network-resources", adminOnly, svc.handleCreateNetworkResource)
+		api.POST("/network-resources/import", adminOnly, svc.handleImportNetworkResources)
+		api.GET("/resources/:id/network-target", adminOnly, svc.handleGetNetworkTarget)
+		api.PUT("/resources/:id/network-target", adminOnly, svc.handlePutNetworkTarget)
+		api.DELETE("/resources/:id/network-target", adminOnly, svc.handleDeleteNetworkTarget)
+		api.GET("/network-policy", adminOnly, svc.handleGetNetworkPolicy)
+		api.PUT("/network-policy", adminOnly, svc.handlePutNetworkPolicy)
+
 		// OpenZiti management endpoints.
 		//
 		// One controller serves every organization, and its objects carry no
@@ -1072,6 +1091,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// operator tier of the console's Agent Fleet page, and a user's own
 		// enrollment stays open.
 		agentHandler := NewAgentAPIHandler(svc.logger, svc.db, svc.ziti(), svc.config)
+		// openidx_tunnel_agents_down, for the tunnel-down alert.
+		RegisterTunnelDownGauge(svc.db, svc.logger)
 		// Redis lets enrollment mint a push-enrollment ticket so a freshly-enrolled
 		// device self-registers as a push-MFA approver in one step (FastPass).
 		if svc.redis != nil {

@@ -530,6 +530,18 @@ describe('i18n', () => {
       ...['compliant', 'grace_period', 'non_compliant', 'unknown'].map(
         (k) => `pages.agentFleet.complianceStatuses.${k}`,
       ),
+      // tunnel-status-badge: the tunneler states an agent reports.
+      ...['up', 'down', 'starting', 'stopped', 'not_installed', 'unknown'].map(
+        (k) => `pages.agentFleet.tunnelStates.${k}`,
+      ),
+      // network-resources-panel: the draft errors and the policy toggles.
+      ...['needName', 'needAddress', 'badPort', 'needProtocol'].map(
+        (k) => `pages.networkResources.errors.${k}`,
+      ),
+      ...['always_on', 'split_tunnel', 'block_direct_corporate_cidrs'].flatMap((k) => [
+        `pages.networkResources.policy.${k}`,
+        `pages.networkResources.policy.${k}Hint`,
+      ]),
       // ziti-ai-insights: detector output, the shared severity scale used by
       // anomalies/risk/recommendations alike, and the resolved subject kinds.
       ...[

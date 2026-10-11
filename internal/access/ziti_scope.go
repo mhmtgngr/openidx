@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -231,6 +232,11 @@ func (s *Service) ownsZitiTerminator(ctx context.Context, orgID, id string) (boo
 // broker and the BrowZer router service.
 func reservedZitiServiceName(name string) bool {
 	if name == remoteSupportZitiService || name == BrowZerRouterServiceName {
+		return true
+	}
+	// Network resources' services are named by the reconciler from the
+	// application id (network_resources.go); nothing else may take the prefix.
+	if strings.HasPrefix(name, networkServicePrefix) {
 		return true
 	}
 	for _, d := range defaultDarkServices() {

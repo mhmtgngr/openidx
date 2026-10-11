@@ -194,6 +194,10 @@ type ZitiReconciler struct {
 	// lastMirrorRefresh throttles the refresh pass: the reconcile loop ticks
 	// every 30s, but a full controller listing does not need to run that often.
 	lastMirrorRefresh time.Time
+
+	// loadNetwork overrides how network resources are loaded (tests); nil
+	// means loadDesiredNetworkServices.
+	loadNetwork func(context.Context) ([]DesiredNetworkService, error)
 }
 
 // mirrorRefreshPeriod is the minimum gap between two mirror-refresh passes.
@@ -781,6 +785,9 @@ func (rec *ZitiReconciler) reconcileOnce(ctx context.Context) {
 	for _, d := range desired {
 		rec.reconcileRoute(ctx, zm, d)
 	}
+	// Network resources (kind='network' applications with a network target):
+	// one tunneler-intercepted service each, dialable by device identities.
+	rec.reconcileNetworkServices(ctx, zm)
 	// Dark-platform: converge OpenIDX's own surfaces as tier'd overlay-only
 	// services. No-op unless a DARK_MODE tier populated darkServices.
 	if len(rec.darkServices) > 0 {

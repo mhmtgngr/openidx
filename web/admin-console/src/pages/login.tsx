@@ -43,6 +43,16 @@ interface EnrollmentDue {
   overdue?: boolean
 }
 
+// PushUnseen is the server's notice that the user's only second factor is a
+// phone nobody has seen within PUSH_DEVICE_STALE_DAYS (or one the system has
+// disabled), and which other methods this challenge offers instead.
+interface PushUnseen {
+  last_seen_at?: string
+  stale_days: number
+  disabled?: boolean
+  fallbacks: string[]
+}
+
 // linkErrors maps the reasons a sign-in link (handleMagicLinkVerify), or a
 // sign-in through a social or enterprise identity provider
 // (externalSignInNeedsMore), is sent back to this page with to what the page
@@ -127,6 +137,8 @@ export function LoginPage() {
   // the sign-in, because a user who is not challenged sees no other screen.
   const [enrollmentDue, setEnrollmentDue] = useState<EnrollmentDue | null>(null)
   const [pendingRedirect, setPendingRedirect] = useState<{ url: string; due: EnrollmentDue } | null>(null)
+  // The phone-not-seen notice, shown on the MFA screens.
+  const [pushUnseen, setPushUnseen] = useState<PushUnseen | null>(null)
 
   // WebAuthn state
   const [webauthnLoading, setWebauthnLoading] = useState(false)
@@ -587,6 +599,7 @@ export function LoginPage() {
         setMfaCode('')
         setError('')
         setEnrollmentDue(data.mfa_enrollment_due ?? null)
+        setPushUnseen(data.mfa_push_unseen ?? null)
         // Offer "trust this browser" only when the server says this browser
         // isn't trusted yet; the choice is sent with the verification below.
         setCanTrustBrowser(!!data.can_trust_browser)
@@ -882,6 +895,7 @@ export function LoginPage() {
     setTrustBrowserChoice(false)
     setCanTrustBrowser(false)
     setEnrollmentDue(null)
+    setPushUnseen(null)
   }
 
   const handleForceLogin = async (terminateSessionId: string) => {
@@ -936,6 +950,30 @@ export function LoginPage() {
         : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(deadline),
     })
   }
+
+  const pushUnseenNotice = (notice: PushUnseen): string => {
+    const fallbacks = notice.fallbacks.map((m) => getMfaMethodInfo(m).label).join(', ')
+    const seen = notice.last_seen_at ? new Date(notice.last_seen_at) : null
+    let text: string
+    if (notice.disabled) {
+      text = t('login.pushUnseen.disabled', { days: notice.stale_days, fallbacks })
+    } else if (seen && !Number.isNaN(seen.getTime())) {
+      text = t('login.pushUnseen.seen', {
+        when: new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(seen),
+        fallbacks,
+      })
+    } else {
+      text = t('login.pushUnseen.neverSeen', { days: notice.stale_days, fallbacks })
+    }
+    return `${text} ${t('login.pushUnseen.askAdmin')}`
+  }
+
+  const pushUnseenBanner = pushUnseen && (
+    <div role="status" className="flex items-start gap-2 p-3 mb-4 bg-amber-50 border border-amber-200 rounded-md">
+      <AlertCircle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+      <p className="text-sm text-amber-800">{pushUnseenNotice(pushUnseen)}</p>
+    </div>
+  )
 
   const enrollmentBanner = enrollmentDue && (
     <div role="status" className="flex items-start gap-2 p-3 mb-4 bg-amber-50 border border-amber-200 rounded-md">
@@ -1213,6 +1251,7 @@ export function LoginPage() {
               </div>
             )}
             {enrollmentBanner}
+            {pushUnseenBanner}
 
             {mfaMethods.map((method) => {
               const info = getMfaMethodInfo(method)
@@ -1317,6 +1356,7 @@ export function LoginPage() {
               </div>
             )}
             {enrollmentBanner}
+            {pushUnseenBanner}
 
             {/* Trust this browser: sent WITH the verification below, which is
                 what actually records the trust server-side (and lets adaptive

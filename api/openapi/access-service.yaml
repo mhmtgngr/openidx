@@ -36,6 +36,7 @@ tags:
   - name: Kiosk Mode
   - name: MCP Gateway
   - name: My Access
+  - name: Network Resources
   - name: OpenZiti Overlay
   - name: Overview
   - name: PAM Checkout Controls
@@ -203,6 +204,206 @@ paths:
                   $ref: '#/components/schemas/IdpSummary'
 
   # --- Routes ---
+  /api/v1/access/network-resources:
+    get:
+      tags: [Network Resources]
+      summary: List network resources
+      description: >-
+        Admin only: a target names internal addresses. Every kind=network
+        application of the caller's organization, with its network target (or
+        null) and the reconciler's converge state for its overlay service.
+      operationId: listNetworkResources
+      x-openidx-handler: internal/access.(*Service).handleListNetworkResources
+      responses:
+        '200':
+          description: Network resources
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resources:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NetworkResource'
+                  total: { type: integer }
+        '403': { description: Not an admin, or no organization context }
+    post:
+      tags: [Network Resources]
+      summary: Create a network resource
+      description: >-
+        Admin only. Creates an application of kind network and, when given, its
+        network target in one transaction. Assign it to users or groups like any
+        application; the reconciler gives the assignees' enrolled devices a Dial
+        policy on its overlay service.
+      operationId: createNetworkResource
+      x-openidx-handler: internal/access.(*Service).handleCreateNetworkResource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 255 }
+                description: { type: string }
+                target:
+                  $ref: '#/components/schemas/NetworkTarget'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkResource'
+        '400': { description: The name is missing or the target does not validate; the message names the value }
+        '403': { description: Not an admin, or no organization context }
+
+  /api/v1/access/network-resources/import:
+    post:
+      tags: [Network Resources]
+      summary: Import network resources from CSV
+      description: >-
+        Admin only. The body is CSV (or a multipart form field named file), at
+        most 500 rows. The header names the columns in any order: name
+        (required), hosts, cidrs, dns_names, ports, protocols, forward_address,
+        forward_port, group. Lists inside a cell are separated by ';', ports
+        are single ports or low-high ranges. Each row is validated on its own;
+        a bad row is reported and does not stop the others. A group names a
+        group of the organization the new resource is assigned to. With
+        dry_run=true nothing is written. See docs/migration-from-globalprotect.md.
+      operationId: importNetworkResources
+      x-openidx-handler: internal/access.(*Service).handleImportNetworkResources
+      parameters:
+        - name: dry_run
+          in: query
+          required: false
+          schema: { type: boolean }
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema: { type: string }
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: Per-row results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dry_run: { type: boolean }
+                  created: { type: integer }
+                  failed: { type: integer }
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '400': { description: The CSV has no name column, cannot be read, or has more than 500 rows }
+        '403': { description: Not an admin, or no organization context }
+
+  /api/v1/access/resources/{id}/network-target:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Network Resources]
+      summary: Get a resource's network target
+      description: Admin only.
+      operationId: getNetworkTarget
+      x-openidx-handler: internal/access.(*Service).handleGetNetworkTarget
+      responses:
+        '200':
+          description: The target, the overlay service name and its converge state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  target:
+                    $ref: '#/components/schemas/NetworkTarget'
+                  service_name: { type: string }
+                  sync_status: { type: string }
+        '403': { description: Not an admin }
+        '404': { description: No such resource in this organization, or it has no target }
+    put:
+      tags: [Network Resources]
+      summary: Set a resource's network target
+      description: >-
+        Admin only. The resource must be of kind network. At least one host,
+        CIDR or DNS name; CIDRs must parse and are stored canonical; port ranges
+        lie within 1-65535 (none means every port); protocols are tcp and/or udp
+        (none means both). The reconciler converges the overlay service.
+      operationId: putNetworkTarget
+      x-openidx-handler: internal/access.(*Service).handlePutNetworkTarget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NetworkTarget'
+      responses:
+        '200': { description: Saved; the body carries the target as stored }
+        '400': { description: The target does not validate; the message names each value }
+        '403': { description: Not an admin }
+        '404': { description: No such resource in this organization }
+        '409': { description: The resource is not of kind network }
+    delete:
+      tags: [Network Resources]
+      summary: Remove a resource's network target
+      description: Admin only. The reconciler then removes the overlay service.
+      operationId: deleteNetworkTarget
+      x-openidx-handler: internal/access.(*Service).handleDeleteNetworkTarget
+      responses:
+        '204': { description: Removed }
+        '403': { description: Not an admin }
+        '404': { description: The resource has no target }
+
+  /api/v1/access/network-policy:
+    get:
+      tags: [Network Resources]
+      summary: Get the organization's tunnel policy
+      description: Admin only. A missing row answers the defaults (on demand, split tunnel, nothing blocked).
+      operationId: getNetworkPolicy
+      x-openidx-handler: internal/access.(*Service).handleGetNetworkPolicy
+      responses:
+        '200':
+          description: The policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkPolicy'
+        '403': { description: Not an admin, or no organization context }
+    put:
+      tags: [Network Resources]
+      summary: Set the organization's tunnel policy
+      description: Admin only. Fields left out keep their value.
+      operationId: putNetworkPolicy
+      x-openidx-handler: internal/access.(*Service).handlePutNetworkPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NetworkPolicy'
+      responses:
+        '200':
+          description: The policy as stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkPolicy'
+        '403': { description: Not an admin, or no organization context }
+
   /api/v1/access/upstream-pools:
     get:
       tags: [Upstream Pools]
@@ -3730,7 +3931,13 @@ paths:
         /agent/device-key), the report must also carry X-Agent-Key-Timestamp
         and X-Agent-Key-Signature over the exact body; without them it is
         refused 401 with code device_signature_required, and with a wrong or
-        stale signature 401 with code device_signature_invalid.
+        stale signature 401 with code device_signature_invalid. An optional
+        tunnel_status object ({state: up|down|starting|stopped|not_installed|unknown,
+        version, last_seen (RFC 3339), services: [{name, status, dial_failures}],
+        dial_failures}) reports the OpenZiti tunneler; it is stored on the
+        agent (GET /agents returns it with tunnel_last_seen, the server's time
+        of the last report that said up), and its dial failures since the
+        previous report feed openidx_tunnel_dial_failures_total.
       operationId: handleReport
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleReport
       requestBody:
@@ -9431,6 +9638,52 @@ components:
         port: { type: integer }
         weight: { type: integer }
         enabled: { type: boolean }
+    PortRange:
+      type: object
+      required: [low, high]
+      properties:
+        low: { type: integer, minimum: 1, maximum: 65535 }
+        high: { type: integer, minimum: 1, maximum: 65535 }
+    NetworkTarget:
+      type: object
+      description: >-
+        What a network resource covers: the addresses the device's tunneler
+        intercepts (hosts, CIDRs, DNS names with an optional leading *.), the
+        ports and protocols, and optionally a fixed address and port the
+        hosting router forwards to instead of the dialed one.
+      properties:
+        hosts: { type: array, items: { type: string } }
+        cidrs: { type: array, items: { type: string } }
+        dns_names: { type: array, items: { type: string } }
+        port_ranges:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortRange'
+        protocols:
+          type: array
+          items: { type: string, enum: [tcp, udp] }
+        forward_address: { type: string }
+        forward_port: { type: integer, minimum: 1, maximum: 65535 }
+    NetworkResource:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        enabled: { type: boolean }
+        service_name: { type: string, description: The overlay service the reconciler converges for it }
+        target:
+          allOf:
+            - $ref: '#/components/schemas/NetworkTarget'
+          nullable: true
+        sync_status: { type: string }
+    NetworkPolicy:
+      type: object
+      properties:
+        always_on: { type: boolean, default: false }
+        split_tunnel: { type: boolean, default: true }
+        block_direct_corporate_cidrs: { type: boolean, default: false }
+        updated_at: { type: string, format: date-time }
     UpstreamPool:
       type: object
       properties:

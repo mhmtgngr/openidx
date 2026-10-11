@@ -16,6 +16,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/remotesupport"
 	"github.com/openidx/openidx/agent/internal/transport"
+	"github.com/openidx/openidx/agent/internal/tunnel"
 	"github.com/openidx/openidx/agent/internal/updater"
 )
 
@@ -74,6 +75,14 @@ type Agent struct {
 	// the firewall differently and contradicted the service's results on the
 	// server. Default false = the full cycle.
 	RemoteSupportOnly bool
+
+	// tun supervises the bundled OpenZiti tunneler (tunnel.go). Nil until
+	// Run starts it, and always nil in a RemoteSupportOnly agent.
+	tun atomic.Pointer[tunnel.Supervisor]
+	// orgAlwaysOn is the server's org_network_policy.always_on.
+	orgAlwaysOn atomic.Bool
+	// tunLocalOn is a trusted agent.json's tunnel.enabled (tunnel.go).
+	tunLocalOn atomic.Bool
 
 	// deviceKey signs posture reports once loaded (device_key.go).
 	deviceKey       devicekey.Key
@@ -235,6 +244,7 @@ func (a *Agent) SyncConfig(ctx context.Context) error {
 
 	a.serverCfg = &cfg
 	a.logger.Info("server config synced", zap.Int("checks", len(cfg.Checks)))
+	a.applyNetworkPolicy(cfg.OrgNetworkPolicy)
 	if !a.DisableRemoteSupport {
 		a.processRemoteSupportConsent(cfg.RemoteSupport)
 	}
@@ -309,6 +319,9 @@ type reportPayload struct {
 	DeviceID   string         `json:"device_id"`
 	Results    []engineResult `json:"results"`
 	ReportedAt time.Time      `json:"reported_at"`
+	// TunnelStatus is the bundled tunneler's state. Omitted by an agent that
+	// supervises none, so the server can tell "no tunnel support" from "off".
+	TunnelStatus *tunnel.Status `json:"tunnel_status,omitempty"`
 }
 
 // engineResult is one result in the report, in the shape the access service
@@ -377,10 +390,11 @@ func (a *Agent) RunOnce(ctx context.Context) error {
 	}
 
 	payload := reportPayload{
-		AgentID:    a.config.AgentID,
-		DeviceID:   a.config.DeviceID,
-		Results:    results,
-		ReportedAt: time.Now().UTC(),
+		AgentID:      a.config.AgentID,
+		DeviceID:     a.config.DeviceID,
+		Results:      results,
+		ReportedAt:   time.Now().UTC(),
+		TunnelStatus: a.TunnelStatus(),
 	}
 
 	data, err := json.Marshal(payload)
@@ -388,7 +402,13 @@ func (a *Agent) RunOnce(ctx context.Context) error {
 		return fmt.Errorf("marshaling report payload: %w", err)
 	}
 
-	if err := a.client.ReportResults(data); err != nil {
+	if rr, ok := a.client.(transport.ReportResponder); ok {
+		body, err := rr.ReportResultsResponse(data)
+		if err != nil {
+			return fmt.Errorf("reporting results: %w", err)
+		}
+		a.applyReportResponse(body)
+	} else if err := a.client.ReportResults(data); err != nil {
 		return fmt.Errorf("reporting results: %w", err)
 	}
 
@@ -406,6 +426,9 @@ func (a *Agent) Revoked() bool { return a.revoked.Load() }
 // specified by serverCfg.ReportInterval. It blocks until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
 	a.logger.Info("agent starting", zap.String("agent_id", a.config.AgentID))
+	if !a.RemoteSupportOnly {
+		a.startTunnel(ctx)
+	}
 
 	if err := a.RunOnce(ctx); err != nil {
 		a.logger.Error("initial run failed", zap.Error(err))

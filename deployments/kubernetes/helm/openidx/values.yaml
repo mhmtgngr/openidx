@@ -7,10 +7,28 @@ fullnameOverride: ""
 # Provide values here for development/testing only.
 # For production, use externalSecrets (below) or --set flags.
 secrets:
+  # The database OWNER's password (postgresql.auth.username, default
+  # `openidx`). Only the migration Job and the backup CronJob connect as the
+  # owner (-db-url); no service does.
   postgresPassword: ""      # REQUIRED
-  # Password for openidx_bypass, the BYPASSRLS role background work uses to
-  # read across tenants (#964). The bootstrap Job creates the role; this sets
-  # its password and publishes DATABASE_BYPASS_URL. Required in production.
+  # The services never connect as the owner. Every service's DATABASE_URL is
+  # openidx_app (NOSUPERUSER NOBYPASSRLS, the role the FORCE RLS belt applies
+  # to) and its DATABASE_BYPASS_URL is openidx_bypass (BYPASSRLS, what
+  # background work reads across tenants with, #964; production refuses to
+  # start without it). Both DSNs are in -db-app-url, and the bootstrap hook
+  # sets both passwords on the bundled database from the -db-roles hook
+  # Secret.
+  #
+  # Empty generates each password on the first install and keeps it on every
+  # upgrade (read back from -db-roles). Set them when the chart is rendered
+  # without a cluster (Argo CD, Flux), where every render would otherwise make
+  # new ones. With pgcat.enabled, openidx_app's password IS pgcat.password:
+  # leave appPassword empty or set it to the same value.
+  #
+  # In external-secrets mode neither is used: store the DSNs under
+  # <remoteKeyPrefix>/database-app-url and /database-bypass-url (and the
+  # owner's under /database-url), and set the passwords on the server.
+  appPassword: ""
   bypassPassword: ""
   redisPassword: ""          # REQUIRED
   encryptionKey: ""          # REQUIRED - exactly 32 bytes

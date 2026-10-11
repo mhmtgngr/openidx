@@ -101,6 +101,23 @@
       </Component>
       <?endif?>
 
+      <!-- Optional: the bundled OpenZiti tunneler and the Wintun driver DLL it
+           creates its adapter with, from the pinned ziti-edge-tunnel release
+           (windows-client-build.yml verifies its SHA-256 before passing
+           -d ZitiTunnelExe=<path> -d WintunDll=<path>). They sit beside
+           openidx-agent.exe, where the agent looks first
+           (internal/tunnel/locate.go). The agent service runs the tunneler as
+           its child, only when the tunnel is enabled; nothing here registers
+           it as a service of its own. See docs/AGENT-TUNNEL.md. -->
+      <?ifdef ZitiTunnelExe ?>
+      <Component Id="ZitiTunnel">
+        <File Id="ZitiTunnelExeFile" Name="ziti-edge-tunnel.exe" Source="$(var.ZitiTunnelExe)" KeyPath="yes" />
+      </Component>
+      <Component Id="WintunRuntime">
+        <File Id="WintunDllFile" Name="wintun.dll" Source="$(var.WintunDll)" KeyPath="yes" />
+      </Component>
+      <?endif?>
+
       <!-- Launch the tray for the interactive user at login. -->
       <Component Id="TrayAutostart">
         <RegistryValue Root="HKMU"

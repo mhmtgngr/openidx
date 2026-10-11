@@ -167,6 +167,12 @@ func (s *Service) handleListZitiServices(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"services": services})
 }
 
+// handleCreateZitiService creates a free-form service from one host and port
+// with hand-written dial roles.
+//
+// It is deprecated (CHANGELOG): a network resource (network_resources.go) does this from an
+// application's assignments, with several addresses, port ranges and UDP, and
+// the reconciler keeps it converged. This stays until existing services move.
 func (s *Service) handleCreateZitiService(c *gin.Context) {
 	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OpenZiti is not configured"})

@@ -28,6 +28,7 @@ import {
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 import { AgentChecksSection } from '../components/agent-checks-section'
+import { TunnelStatusBadge, type TunnelStatus } from '../components/tunnel-status-badge'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -50,6 +51,8 @@ interface AgentRecord {
   enrolled_at: string | null
   platform?: string
   form_factor?: string
+  tunnel_status?: TunnelStatus | null
+  tunnel_last_seen?: string | null
 }
 
 interface QrPayloadResponse {
@@ -237,6 +240,7 @@ export function AgentFleetPage() {
                   <TableHead>{t('pages.agentFleet.colPlatform')}</TableHead>
                   <TableHead>{t('pages.agentFleet.colStatus')}</TableHead>
                   <TableHead>{t('pages.agentFleet.colCompliance')}</TableHead>
+                  <TableHead>{t('pages.agentFleet.colTunnel')}</TableHead>
                   <TableHead>{t('pages.agentFleet.colLastSeen')}</TableHead>
                   <TableHead className="w-12" />
                 </TableRow>
@@ -267,6 +271,9 @@ export function AgentFleetPage() {
                     </TableCell>
                     <TableCell>
                       <ComplianceBadge status={agent.compliance_status} score={agent.compliance_score} lastReportAt={agent.last_seen_at} />
+                    </TableCell>
+                    <TableCell>
+                      <TunnelStatusBadge status={agent.tunnel_status} lastSeen={agent.tunnel_last_seen} />
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {agent.last_seen_at ? new Date(agent.last_seen_at).toLocaleString() : '—'}
@@ -302,7 +309,7 @@ export function AgentFleetPage() {
                 ))}
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                       {t('pages.agentFleet.empty')}
                     </TableCell>
                   </TableRow>

@@ -5,6 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# Optional settings: the off-box copy (OIDX_BACKUP_OFFBOX_TARGET,
+# OIDX_BACKUP_AGE_RECIPIENTS, OIDX_BACKUP_OFFBOX_RETENTION_DAYS) and the
+# node-exporter textfile metric (OIDX_BACKUP_TEXTFILE_DIR). See
+# deployments/scripts/README.md. The leading "-" makes the file optional.
+EnvironmentFile=-%h/.config/oidx/backup.env
 # Installed copy of deployments/scripts/pg-backup.sh.
 ExecStart=%h/oidx-runtime/scripts/pg-backup.sh
 Nice=10

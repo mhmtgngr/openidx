@@ -16,7 +16,7 @@
   can be served without the database, so neither is here.
 
   NO PLATFORM SECRET, DELIBERATELY. Every other service mounts -secrets and
-  -db-url through envFrom. This one does not, and the binary is built for that:
+  -db-app-url through envFrom. This one does not, and the binary is built for that:
   it skips the platform production validator, which would demand an encryption
   key, a vault KEK and an audit chain secret from a process that encrypts
   nothing, has no vault and seals no chain. Mounting them so it could serve a
