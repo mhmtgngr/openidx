@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.43.0] - 2026-10-11
+
 ### Added
 - **Network services are resources.** A network resource is an application of kind `network`, assigned to users and groups like any other. Its network target (migration 232, `network_targets`) lists what it covers: hosts, CIDRs and DNS names (a leading `*.` is allowed), port ranges, TCP and/or UDP, and optionally a fixed address and port to forward to. The Ziti reconciler turns each one into an `openidx-net-<id>` service with an `intercept.v1` config (what the device's tunneler captures) and a `host.v1` config (the fixed target, or whatever was dialed within the same addresses, ports and protocols), hosted by the routers and dialable by the assignees' enrolled devices; under `ACCESS_ASSIGNMENT_ENFORCE` the dial policy is AllOf `#app-<id>` and `#openidx-agent`, plus `#device-trusted` when the resource requires a trusted device. A pass over a converged controller writes nothing, and a service whose resource lost its target, was disabled or deleted is removed. An assigned network resource now travels as `#app-<id>` onto the device identity.
   - **API:** `GET/POST /api/v1/access/network-resources`, `GET/PUT/DELETE /api/v1/access/resources/:id/network-target` and a CSV import, `POST /api/v1/access/network-resources/import` (`?dry_run=true` validates only), all admin-only and scoped to the organization. A target is refused without an address, with a CIDR that does not parse, or with a port outside 1-65535. Every query takes the organization from the caller, including the group looked up by name on import.
@@ -19,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `ELASTICSEARCH_URL` set and empty turns Elasticsearch off. Before, the empty value was ignored, so an install without Elasticsearch kept dialling localhost:9200 and production asked for Elasticsearch credentials it had no use for.
+- **A phone that is gone no longer locks its owner out.** A push device row lived forever, so an administrator whose only second factor was push to a phone that no longer existed was offered push and nothing else at every sign-in. Push devices now record when they were last seen (`last_seen_at`, migration 233): registering or re-registering, approving or denying a challenge, and a posture report from the enrolled agent the phone is linked to all count. When push is a person's only factor and none of their phones has been seen for `PUSH_DEVICE_STALE_DAYS` (default 30), the sign-in still asks for a second factor but offers their backup codes, email code and an administrator's bypass code ahead of push, and says when the phone was last seen. The challenge also now goes to the phone seen most recently rather than to the newest install.
 
 ### Deprecated
 - **The free-form Ziti "Add service" form.** `POST /api/v1/access/ziti/services` still creates a service from one host and port with hand-written dial roles, but a network resource does the same from an assignment, with several addresses, port ranges and UDP, and is the way to add one. The form will be removed once existing services have moved.
@@ -29,7 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 - **The threat model covers the clientless path.** BrowZer traffic does not pass the access proxy's forward-auth. §4.4 now names the two controls that apply instead, since #1145: the sign-in gate, which requires assignment to the application behind the `redirect_uri` through `internal/accessdecision`, and the per-application Dial policy, which requires `#device-trusted` when the route does. Both need `ACCESS_ASSIGNMENT_ENFORCE` on. R7, about unencrypted backups, now describes the off-box copy.
-- **A phone that is gone no longer locks its owner out.** A push device row lived forever, so an administrator whose only second factor was push to a phone that no longer existed was offered push and nothing else at every sign-in. Push devices now record when they were last seen (`last_seen_at`, migration 233): registering or re-registering, approving or denying a challenge, and a posture report from the enrolled agent the phone is linked to all count. When push is a person's only factor and none of their phones has been seen for `PUSH_DEVICE_STALE_DAYS` (default 30), the sign-in still asks for a second factor but offers their backup codes, email code and an administrator's bypass code ahead of push, and says when the phone was last seen. The challenge also now goes to the phone seen most recently rather than to the newest install.
   - **Sweep:** identity-service disables (never deletes) push devices unseen for `PUSH_DEVICE_DISABLE_DAYS` (default 90; `0` turns it off), once an hour on the admin plane, with one `push_device.disabled_stale` audit event per device. A disabled phone still counts as a factor the person has, so they are asked for a fallback rather than let in on the password alone. Registering the phone again turns it back on.
   - **Console:** the user detail page (User Access 360) has a **Sign-in methods** card listing the authenticator app, security keys, phones with when each was last seen and whether it is active, not seen recently or disabled, email and SMS codes and backup codes left, and warns when a stale phone is the only way in. An administrator can remove any of them or disable a phone (`GET /api/v1/identity/users/{id}/sign-in-methods`, `DELETE …/{method}`, `DELETE …/{method}/{credential_id}`, `POST …/push/{credential_id}/disable`); each action is admin-only, limited to the administrator's organization and audited.
 
@@ -12100,7 +12102,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.42.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.43.0...HEAD
+[1.43.0]: https://github.com/mhmtgngr/openidx/compare/v1.42.0...v1.43.0
 [1.42.0]: https://github.com/mhmtgngr/openidx/compare/v1.41.0...v1.42.0
 [1.41.0]: https://github.com/mhmtgngr/openidx/compare/v1.40.0...v1.41.0
 [1.40.0]: https://github.com/mhmtgngr/openidx/compare/v1.39.0...v1.40.0
