@@ -544,7 +544,7 @@ func (s *Service) writeEngagementError(c *gin.Context, err error, what string) {
 		}
 		c.JSON(status, gin.H{"error": r.Error(), "code": externalid.Code(r)})
 	default:
-		s.logger.Error(what+" failed", zap.Error(err))
+		s.logger.Error("engagement operation failed", zap.String("operation", what), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to " + what})
 	}
 }
