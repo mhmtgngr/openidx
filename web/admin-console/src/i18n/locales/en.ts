@@ -10,6 +10,19 @@ const en = {
   // dialog every destructive action routes through -- stayed English on a
   // console that is otherwise translated.
   components: {
+    publishToVendor: {
+      title: 'Publish {{name}} to a vendor',
+      description: 'Open it to the vendor and, if you like, start an engagement for it now. The vendor\'s people reach it only while an engagement covers it.',
+      vendor: 'Vendor organization',
+      chooseVendor: 'Choose a vendor',
+      closedList: 'This vendor is on a closed list: publishing opens this resource to it.',
+      engage: 'Start an engagement now',
+      engageHint: 'Every active account of the vendor gets it until the end you choose. Required for a vendor without a closed list.',
+      ends: 'Ends',
+      publish: 'Publish',
+      done: '{{name}} published to {{vendor}}',
+      failed: 'Could not publish',
+    },
     // The privileged-session decisions in the Access Requests approvals tab.
     // Connect on an entry whose session waits for a moderator.
     moderationWait: {
@@ -1916,6 +1929,8 @@ const en = {
         revokeDescription: 'The link stops working. An account that was already created from it is not affected.',
         closeTitle: 'Close {{name}}?',
         closeDescription: 'Every account of this vendor is disabled and signed out now. A closed vendor cannot be reopened.',
+        suspendVendorTitle: 'Suspend {{name}} now?',
+        suspendVendorDescription: 'Every account of this vendor is suspended and signed out, its PAM sessions end and its running engagements lose their access at once. Reactivate it later from Edit; each account then waits for its sponsor.',
       },
       extendDialog: {
         title: 'Extend {{name}}',
@@ -1969,6 +1984,7 @@ const en = {
         empty: 'No vendor organizations',
         edit: 'Edit',
         close: 'Close',
+        suspend: 'Suspend now',
         until: 'until {{date}}',
         days: '{{n}} days',
         closedList: 'Closed list',
@@ -2088,6 +2104,7 @@ const en = {
         linkCopied: 'Invitation link copied',
         vendorSaved: 'Vendor organization {{name}} saved',
         vendorClosed: 'Vendor organization closed; its accounts are disabled',
+        vendorSuspended: 'Vendor suspended; {{n}} account(s) signed out and their access cut',
         failed: 'The change was refused',
       },
     },
@@ -2236,6 +2253,7 @@ const en = {
         ssoSettings: 'SSO Settings',
         manageAccess: 'Manage Access',
         manageAccessTitle: 'The single grant surface — assigning access here is what decides real access',
+        publishToVendor: 'Publish to vendor',
         deleting: 'Deleting...',
         delete: 'Delete Application',
       },

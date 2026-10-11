@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Trans, useTranslation } from 'react-i18next'
-import { Plus, Search, MoreHorizontal, Globe, Smartphone, Server, ExternalLink, Edit, Trash2, Settings, Copy, RefreshCw, ChevronLeft, ChevronRight, AppWindow, Users } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Globe, Smartphone, Server, ExternalLink, Edit, Trash2, Settings, Copy, RefreshCw, ChevronLeft, ChevronRight, AppWindow, Users, Building2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -38,6 +38,7 @@ import {
 } from '../components/ui/alert-dialog'
 import { useToast } from '../hooks/use-toast'
 import { ManageAppAccessDialog } from '../components/manage-app-access-dialog'
+import { PublishToVendorDialog } from '../components/publish-to-vendor-dialog'
 
 interface Application {
   id: string
@@ -108,6 +109,7 @@ export function ApplicationsPage() {
   const [regenerateModal, setRegenerateModal] = useState(false)
   const [regenerateApp, setRegenerateApp] = useState<Application | null>(null)
   const [manageAccessApp, setManageAccessApp] = useState<Application | null>(null)
+  const [publishApp, setPublishApp] = useState<Application | null>(null)
   const [newSecret, setNewSecret] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null)
   const [page, setPage] = useState(0)
@@ -538,6 +540,10 @@ export function ApplicationsPage() {
                               >
                                 <Users className="mr-2 h-4 w-4" />
                                 {t('pages.applications.menu.manageAccess')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => setPublishApp(app)}>
+                                <Building2 className="mr-2 h-4 w-4" />
+                                {t('pages.applications.menu.publishToVendor')}
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
@@ -1026,6 +1032,16 @@ export function ApplicationsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {publishApp && (
+        <PublishToVendorDialog
+          targetType="application"
+          targetId={publishApp.id}
+          targetName={publishApp.name}
+          open={!!publishApp}
+          onOpenChange={(open) => !open && setPublishApp(null)}
+        />
+      )}
 
       {manageAccessApp && (
         <ManageAppAccessDialog

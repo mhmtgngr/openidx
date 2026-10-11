@@ -8,6 +8,19 @@ const tr: typeof en = {
     label: 'Dil',
   },
   components: {
+    publishToVendor: {
+      title: '{{name}} bir tedarikçiye yayınla',
+      description: 'Tedarikçiye açın ve isterseniz şimdi bunun için bir görevlendirme başlatın. Tedarikçinin kişileri buna yalnızca bir görevlendirme kapsadığı sürece erişir.',
+      vendor: 'Tedarikçi kuruluş',
+      chooseVendor: 'Tedarikçi seçin',
+      closedList: 'Bu tedarikçi kapalı listede: yayınlamak bu kaynağı ona açar.',
+      engage: 'Şimdi bir görevlendirme başlat',
+      engageHint: 'Tedarikçinin tüm etkin hesapları seçtiğiniz bitişe kadar erişir. Kapalı listesi olmayan tedarikçi için gereklidir.',
+      ends: 'Bitiş',
+      publish: 'Yayınla',
+      done: '{{name}}, {{vendor}} tedarikçisine yayınlandı',
+      failed: 'Yayınlanamadı',
+    },
     // Erişim Talepleri onay sekmesindeki ayrıcalıklı oturum kararları.
     // Moderatör bekleyen bir kayıtta Bağlan.
     moderationWait: {
@@ -1905,6 +1918,8 @@ const tr: typeof en = {
         revokeDescription: 'Bağlantı çalışmaz hâle gelir. Bu bağlantıyla zaten oluşturulmuş bir hesap etkilenmez.',
         closeTitle: '{{name}} kapatılsın mı?',
         closeDescription: 'Bu tedarikçinin tüm hesapları hemen devre dışı bırakılır ve oturumları kapatılır. Kapatılan bir tedarikçi yeniden açılamaz.',
+        suspendVendorTitle: '{{name}} şimdi askıya alınsın mı?',
+        suspendVendorDescription: 'Bu tedarikçinin tüm hesapları askıya alınır ve oturumları kapatılır, PAM oturumları sona erer ve devam eden görevlendirmeleri erişimini hemen kaybeder. Daha sonra Düzenle\'den yeniden etkinleştirebilirsiniz; her hesap sponsorunu bekler.',
       },
       extendDialog: {
         title: '{{name}} hesabını uzat',
@@ -1958,6 +1973,7 @@ const tr: typeof en = {
         empty: 'Tedarikçi kuruluş yok',
         edit: 'Düzenle',
         close: 'Kapat',
+        suspend: 'Şimdi askıya al',
         until: '{{date}} tarihine kadar',
         days: '{{n}} gün',
         closedList: 'Kapalı liste',
@@ -2077,6 +2093,7 @@ const tr: typeof en = {
         linkCopied: 'Davet bağlantısı kopyalandı',
         vendorSaved: '{{name}} tedarikçi kuruluşu kaydedildi',
         vendorClosed: 'Tedarikçi kuruluş kapatıldı; hesapları devre dışı bırakıldı',
+        vendorSuspended: 'Tedarikçi askıya alındı; {{n}} hesabın oturumu kapatıldı ve erişimi kesildi',
         failed: 'Değişiklik reddedildi',
       },
     },
@@ -2225,6 +2242,7 @@ const tr: typeof en = {
         ssoSettings: 'SSO Ayarları',
         manageAccess: 'Erişimi Yönet',
         manageAccessTitle: 'Tek yetkilendirme yüzeyi — gerçek erişimi burada atanan erişim belirler',
+        publishToVendor: 'Tedarikçiye yayınla',
         deleting: 'Siliniyor...',
         delete: 'Uygulamayı Sil',
       },

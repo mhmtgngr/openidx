@@ -197,6 +197,7 @@
     "POST /vendor-orgs",
     "POST /vendor-orgs/:id/close",
     "POST /vendor-orgs/:id/engagements",
+    "POST /vendor-orgs/:id/suspend",
     "POST /vendor-orgs/:id/targets",
     "PUT /biometric/policies/:policy_id",
     "PUT /device-trust-settings",

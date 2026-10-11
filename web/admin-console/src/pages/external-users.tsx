@@ -711,6 +711,22 @@ function VendorsTab() {
     onError: (err) => toast({ title: t('common.error'), description: apiErrorText(err, t('pages.externalUsers.toasts.failed')), variant: 'destructive' }),
   })
 
+  const suspend = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.post<{ summary?: { users_suspended?: number } }>(`/api/v1/identity/vendor-orgs/${id}/suspend`, { reason }),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['vendor-orgs'] })
+      queryClient.invalidateQueries({ queryKey: ['external-users'] })
+      queryClient.invalidateQueries({ queryKey: ['engagements'] })
+      toast({
+        title: t('common.success'),
+        description: t('pages.externalUsers.toasts.vendorSuspended', { n: res?.summary?.users_suspended ?? 0 }),
+        variant: 'success',
+      })
+    },
+    onError: (err) => toast({ title: t('common.error'), description: apiErrorText(err, t('pages.externalUsers.toasts.failed')), variant: 'destructive' }),
+  })
+
   const counts = (v: VendorOrg) =>
     Object.entries(v.external_users ?? {})
       .filter(([, n]) => n > 0)
@@ -780,6 +796,22 @@ function VendorsTab() {
                       {v.status !== 'closed' && (
                         <>
                           <Button variant="outline" size="sm" onClick={() => setEditing(v)}>{t('pages.externalUsers.vendors.edit')}</Button>
+                          {v.status === 'active' && (
+                            <ConfirmAction
+                              title={t('pages.externalUsers.confirm.suspendVendorTitle', { name: v.name })}
+                              description={t('pages.externalUsers.confirm.suspendVendorDescription')}
+                              confirmLabel={t('pages.externalUsers.vendors.suspend')}
+                              destructive
+                              requireReason
+                              onConfirm={(reason) => suspend.mutateAsync({ id: v.id, reason: reason ?? '' }).catch(() => undefined)}
+                            >
+                              {(open) => (
+                                <Button variant="outline" size="sm" className="text-orange-700" onClick={open}>
+                                  {t('pages.externalUsers.vendors.suspend')}
+                                </Button>
+                              )}
+                            </ConfirmAction>
+                          )}
                           <ConfirmAction
                             title={t('pages.externalUsers.confirm.closeTitle', { name: v.name })}
                             description={t('pages.externalUsers.confirm.closeDescription')}

@@ -313,3 +313,88 @@ func TestAnEngagementGrantsItsTargetsForItsWindowAndNothingElse(t *testing.T) {
 		t.Fatalf("engagement for a suspended vendor = %d %v, want 409", code, body)
 	}
 }
+
+// One-click suspension: the vendor and its live accounts are suspended, the
+// running engagement's grants are cut before the response, a second
+// suspension is a 409, and a suspension without a reason is refused.
+func TestSuspendingAVendorCutsItsEngagementsAtOnce(t *testing.T) {
+	db, cleanup := setupMigratedDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+	gin.SetMode(gin.TestMode)
+	const org = "00000000-0000-0000-0000-000000000010"
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: org})
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	scalar := func(q string, args ...interface{}) string {
+		t.Helper()
+		var v string
+		if err := db.Pool.QueryRow(ctx, q, args...).Scan(&v); err != nil {
+			t.Fatalf("(%s): %v", q, err)
+		}
+		return v
+	}
+	admin := scalar(`INSERT INTO users (org_id, username, email) VALUES ($1, $2::text, $2::text || '@example.test') RETURNING id::text`, org, "sus-admin-"+suffix)
+	sponsor := scalar(`INSERT INTO users (org_id, username, email) VALUES ($1, $2::text, $2::text || '@example.test') RETURNING id::text`, org, "sus-sponsor-"+suffix)
+	entry := scalar(`INSERT INTO pam_entries (org_id, name, entry_type, hostname, port) VALUES ($1, $2, 'ssh', 'h.example.test', 22) RETURNING id::text`, org, "sus-db-"+suffix)
+	vendor := scalar(`INSERT INTO vendor_organizations (org_id, name, require_engagement, default_sponsor_user_id) VALUES ($1, $2, true, $3) RETURNING id::text`,
+		org, "Sus "+suffix, sponsor)
+	member := scalar(`
+		INSERT INTO users (org_id, username, email, user_type, vendor_org_id, sponsor_user_id, account_expires_at, account_status)
+		VALUES ($1, $2::text, $2::text || '@supplier.example.test', 'external', $3, $4, NOW() + interval '30 days', 'active')
+		RETURNING id::text`, org, "sus-member-"+suffix, vendor, sponsor)
+
+	svc := NewService(db, nil, &config.Config{}, zap.NewNop())
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: org}))
+		c.Set("user_id", admin)
+		c.Next()
+	})
+	r.POST("/vendor-orgs/:id/engagements", svc.handleCreateEngagement)
+	r.POST("/vendor-orgs/:id/suspend", svc.handleSuspendVendorOrg)
+	call := func(path string, body interface{}) (int, map[string]interface{}) {
+		t.Helper()
+		b, _ := json.Marshal(body)
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(b)))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		out := map[string]interface{}{}
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return w.Code, out
+	}
+	if code, body := call("/vendor-orgs/"+vendor+"/engagements", map[string]interface{}{
+		"title": "Work", "ends_at": time.Now().Add(2 * time.Hour),
+		"targets": []map[string]string{{"target_type": "pam_entry", "target_id": entry}},
+	}); code != http.StatusCreated {
+		t.Fatalf("create engagement = %d %v", code, body)
+	}
+	if n := scalar(`SELECT count(*)::text FROM pam_entry_grants WHERE principal_id = $1 AND expires_at > NOW()`, member); n != "1" {
+		t.Fatalf("the member should hold the engagement's grant, got %s", n)
+	}
+	if code, _ := call("/vendor-orgs/"+vendor+"/suspend", map[string]string{}); code != http.StatusBadRequest {
+		t.Fatalf("a suspension without a reason = %d, want 400", code)
+	}
+	code, body := call("/vendor-orgs/"+vendor+"/suspend", map[string]string{"reason": "incident 42"})
+	if code != http.StatusOK {
+		t.Fatalf("suspend = %d %v", code, body)
+	}
+	summary := body["summary"].(map[string]interface{})
+	if summary["users_suspended"] != float64(1) || summary["pam_grants_cut"] != float64(1) {
+		t.Fatalf("summary = %v", summary)
+	}
+	if got := scalar(`SELECT account_status || '/' || enabled::text FROM users WHERE id = $1`, member); got != "suspended/false" {
+		t.Fatalf("the member should be suspended and disabled, got %s", got)
+	}
+	if n := scalar(`SELECT count(*)::text FROM pam_entry_grants WHERE principal_id = $1 AND expires_at > NOW()`, member); n != "0" {
+		t.Fatalf("the member should hold no live grant after the suspension, got %s", n)
+	}
+	if got := scalar(`SELECT status FROM vendor_organizations WHERE id = $1`, vendor); got != "suspended" {
+		t.Fatalf("vendor status = %s", got)
+	}
+	if code, _ := call("/vendor-orgs/"+vendor+"/suspend", map[string]string{"reason": "again"}); code != http.StatusConflict {
+		t.Fatalf("a second suspension = %d, want 409", code)
+	}
+}
