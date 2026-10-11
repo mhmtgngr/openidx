@@ -94,9 +94,16 @@ func ssoSetupDB(t *testing.T) (*Service, *database.PostgresDB) {
 		// accessdecision reads invariant I13 (engagements, migration 234)
 		// for every subject: the user's type and vendor, and the vendor's
 		// running engagements. A user with no row here is not external.
+		// The identity columns are the ones the scope-claims fixture, built
+		// on this one, seeds (its CREATE ... IF NOT EXISTS finds this table).
 		`CREATE TABLE users (
 			id UUID PRIMARY KEY,
 			org_id UUID NOT NULL,
+			username TEXT,
+			email TEXT,
+			first_name TEXT,
+			last_name TEXT,
+			email_verified BOOLEAN DEFAULT false,
 			user_type VARCHAR(16) NOT NULL DEFAULT 'internal',
 			vendor_org_id UUID
 		)`,
