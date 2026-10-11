@@ -237,6 +237,7 @@ olarak; hiçbiri konsol ayarı değildir. Her biri için negatif test şarttır 
 | I10 | Dış kullanıcılar üç ayda bir `external_access` türünde bir inceleme kampanyasına girer; karar verilmeyen kalem `auto_revoke` ile kapanır (kuruluş politikası) | Kampanya çalıştırıcı |
 | I11 | Dış kullanıcı yalnızca kendi tedarikçi kuruluşuna açılmış hedefler için talep açabilir (kuruluş "kapalı liste" modunu seçtiyse) | Talep oluşturma |
 | I12 | Dış kullanıcı başka bir kullanıcıyı davet edemez, grup oluşturamaz, kendi hesap süresini uzatamaz; uzatma sponsorun açtığı bir taleptir ve onay politikasından geçer | İlgili API'ler |
+| I13 | Tedarikçi kuruluş "yalnızca görevlendirmeyle" (`require_engagement`, v234; API ile oluşturulan yeni tedarikçilerde varsayılan açık) çalışıyorsa dış kullanıcısı bir hedefe yalnızca o hedefi kapsayan, başlamış, bitmemiş ve onu (ya da kimseyi adlandırmıyorsa tedarikçinin tüm kullanıcılarını) içeren bir görevlendirme içinde erişir, onu başlatır ve talep eder; talep penceresi görevlendirmenin bitişini geçemez | `accessdecision` (uygulama), PAM başlatma, talep oluşturma (`externalid.CheckEngagement`) |
 
 ### 5.3 Yaşam döngüsü
 
@@ -354,6 +355,18 @@ yetki (talep, onaylayan, pencere), her oturum (hedef, başlangıç/bitiş, kayna
 adres, kayıt bağlantısı), reddedilen girişimler, break-glass (dış kullanıcı
 için hiç olmamalı). Bu yeni bir depo değildir; birleşik denetim üzerinde bir
 sorgu ve bir sayfadır ve denetçiye verilen "tedarikçi erişim kanıtı"dır.
+
+**Görevlendirme (v234).** Tedarikçinin işi artık bir birimdir: tedarikçi,
+sponsor, pencere (`starts_at`–`ends_at`, en çok 365 gün ve sözleşme içinde),
+işteki kişiler (boşsa tedarikçinin tüm etkin hesapları) ve kapsadığı hedefler
+(uygulama, PAM kaydı, cihaz). Görevlendirme devam ederken kimlik servisi
+üyelerine her uygulamaya bir atama ve her PAM kaydına bir `connect` yetkisi
+yazar, bunları penceresinde tutar ve bitince/kapatılınca keser; bütün
+uygulama noktaları bu yetkileri zaten okuduğundan görevlendirmenin ayrı bir
+uygulaması yoktur. Kapanış raporu görevlendirme başına üretilir
+(`GET /api/v1/identity/engagements/:id/report`): üyeler, penceredeki PAM
+oturumları (kayıtlı mı, kapsam içinde mi), erişim talepleri, görevlendirmenin
+cihazlarındaki uzaktan destek oturumları ve üyelerin denetlenen işlemleri.
 
 ---
 
@@ -542,6 +555,7 @@ sütun ve tablo adları öneridir; adlandırma kararı D10.
 | `users` | `user_type VARCHAR(16) NOT NULL DEFAULT 'internal'` (`internal`/`external`/`service`); `vendor_org_id UUID NULL REFERENCES vendor_organizations`; `sponsor_user_id UUID NULL REFERENCES users`; `account_expires_at TIMESTAMPTZ NULL`; `account_status` (`invited`/`pending_mfa`/`active`/`suspended`/`expired`/`disabled`); CHECK: `user_type <> 'external' OR (vendor_org_id IS NOT NULL AND sponsor_user_id IS NOT NULL AND account_expires_at IS NOT NULL)` | I1; yüklemler tek satırdan okunur |
 | `vendor_organizations` (yeni) | `id, org_id, name, status, contact_name, contact_email, contract_start, contract_end, allowed_email_domains TEXT[], default_expiry_days INT, closed_list BOOLEAN, notes` | §5.1 |
 | `vendor_org_targets` (yeni, isteğe bağlı) | `vendor_org_id, target_type (pam_entry/application/network_service), target_id` | I11 kapalı liste modu |
+| `vendor_engagements`, `vendor_engagement_targets`, `vendor_engagement_app_grants` (v234) | görevlendirme: tedarikçi, sponsor, pencere, üyeler, hedefler; uygulamaya yazılan pencerenin kaydı; `pam_entry_grants.engagement_id`; `vendor_organizations.require_engagement` | I13, §5.9 |
 | `groups` | `external_allowed BOOLEAN NOT NULL DEFAULT false` | I3 |
 | `user_invitations` | `user_type, vendor_org_id, sponsor_user_id, account_expires_at` | §5.5 |
 | `access_requests` | `resource_type` değerlerine `pam_entry`, `cloud_role`, `ssh_principal`, `delegation`, `account_extension`; `sponsor_user_id` (dış kullanıcı talebinde kopya); `scheduled_start_at` (isteğe bağlı) | §6.2, §5.3 |

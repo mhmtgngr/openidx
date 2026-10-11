@@ -31,6 +31,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/externalid"
 )
 
 // Subject is who is asking, and what is known about the situation. Zero
@@ -66,10 +67,12 @@ const (
 	ReasonAppDisabled     = "application_disabled"
 	ReasonNoSuchApp       = "no_such_application"
 	ReasonNoSubject       = "no_subject"
+	ReasonNoEngagement    = "no_engagement"
 	ConditionDeviceTrust  = "device_trust"
 	ConditionRiskCeiling  = "risk_ceiling"
 	ConditionCountry      = "country"
 	ConditionStepUp       = "fresh_mfa"
+	ConditionEngagement   = "engagement"
 	GrantDirect           = "direct"
 	GrantGroupPrefix      = "group:"
 	GrantLegacyRolePrefix = "legacy_role:"
@@ -160,6 +163,24 @@ func Evaluate(ctx context.Context, db *database.PostgresDB, enforce bool, s Subj
 	d.Grant = grant
 	if grant == "" {
 		d = deny(d, ReasonNotAssigned)
+	}
+	// I13: an external user of a vendor that requires engagements reaches
+	// the application only inside a running engagement that covers it. It
+	// is a principal condition, judged for every caller: the database knows
+	// it, whatever the caller knows of the situation.
+	eng, err := externalid.EngagementFor(ctx, db.Pool, s.OrgID, s.UserID, "application", appID)
+	if err != nil {
+		return d, fmt.Errorf("accessdecision: engagement: %w", err)
+	}
+	if eng.Applies {
+		cr := ConditionResult{Name: ConditionEngagement, Required: "running engagement", Observed: "none", Judged: true, Satisfied: eng.Covered()}
+		if eng.Covered() {
+			cr.Observed = "engagement " + eng.EngagementID
+		}
+		d.Conditions = append(d.Conditions, cr)
+		if !cr.Satisfied {
+			d = deny(d, ReasonNoEngagement)
+		}
 	}
 	d = judgeConditions(d, res.Conditions, s)
 	// Under observe mode the verdict applies to nobody; WouldDeny carries it.

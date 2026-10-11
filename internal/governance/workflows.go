@@ -320,6 +320,23 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		return
 	}
 
+	// Invariant I13 at the request: an external user whose vendor requires
+	// engagements asks only for a target a running engagement covers, for a
+	// window that ends with it.
+	if err := externalid.CheckEngagement(c.Request.Context(), s.db.Pool, org.ID, requesterID, body.ResourceType, body.ResourceID, expiresAt); err != nil {
+		if r := externalid.Refusal(err); r != nil {
+			status := http.StatusForbidden
+			if errors.Is(r, externalid.ErrWindowPastEngagement) {
+				status = http.StatusBadRequest
+			}
+			c.JSON(status, gin.H{"error": r.Error(), "code": externalid.Code(r)})
+			return
+		}
+		s.logger.Error("could not check the requester's engagements", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create access request"})
+		return
+	}
+
 	id := uuid.New().String()
 	now := time.Now()
 

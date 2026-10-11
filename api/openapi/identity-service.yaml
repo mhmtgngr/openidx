@@ -5201,6 +5201,189 @@ paths:
         '404':
           description: Not found
 
+  /api/v1/identity/vendor-orgs/{id}/engagements:
+    get:
+      tags: [Vendor Engagements]
+      summary: List a vendor's engagements
+      operationId: listVendorEngagements
+      x-openidx-handler: internal/identity.(*Service).handleListVendorEngagements
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The vendor's engagements, newest first, with their targets
+        '404':
+          description: No such vendor organization
+    post:
+      tags: [Vendor Engagements]
+      summary: Start or schedule an engagement
+      description: An engagement names a sponsor, a window (at most 365 days, within the vendor's contract), the vendor's people on it and its targets. While it runs, its members hold a connect grant on each PAM entry and an assignment to each application, ending with it; for a vendor with require_engagement on, its external users reach, launch and request only inside a running engagement covering the target.
+      operationId: createEngagement
+      x-openidx-handler: internal/identity.(*Service).handleCreateEngagement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: {type: string, maxLength: 200}
+                purpose: {type: string}
+                ticket_ref: {type: string, maxLength: 200}
+                sponsor_user_id: {type: string, format: uuid, description: Defaults to the vendor's default sponsor.}
+                starts_at: {type: string, format: date-time, description: Defaults to now on a create.}
+                ends_at: {type: string, format: date-time}
+                member_user_ids:
+                  type: array
+                  description: External users of the vendor on the engagement; empty means every live external user of the vendor.
+                  items: {type: string, format: uuid}
+                targets:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      target_type: {type: string, enum: [application, pam_entry, device]}
+                      target_id: {type: string, description: An application or PAM entry id, or an enrolled agent id.}
+      responses:
+        '201':
+          description: The engagement
+        '400':
+          description: Invalid window, members or targets
+        '404':
+          description: No such vendor organization
+        '409':
+          description: The vendor organization is not active
+
+  /api/v1/identity/engagements:
+    get:
+      tags: [Vendor Engagements]
+      summary: List engagements
+      operationId: listEngagements
+      x-openidx-handler: internal/identity.(*Service).handleListEngagements
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema: {type: string, enum: [scheduled, running, ended, closed]}
+      responses:
+        '200':
+          description: The organization's engagements, newest first
+
+  /api/v1/identity/engagements/{id}:
+    get:
+      tags: [Vendor Engagements]
+      summary: Read an engagement
+      operationId: getEngagement
+      x-openidx-handler: internal/identity.(*Service).handleGetEngagement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The engagement with its targets
+        '404':
+          description: Not found
+    put:
+      tags: [Vendor Engagements]
+      summary: Change an open engagement
+      description: Title, purpose, ticket, sponsor, members, targets and end may change; the start only before it starts. Its grants follow before the response. Fields left out keep their value.
+      operationId: updateEngagement
+      x-openidx-handler: internal/identity.(*Service).handleUpdateEngagement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: {type: string, maxLength: 200}
+                purpose: {type: string}
+                ticket_ref: {type: string, maxLength: 200}
+                sponsor_user_id: {type: string, format: uuid, description: Defaults to the vendor's default sponsor.}
+                starts_at: {type: string, format: date-time, description: Defaults to now on a create.}
+                ends_at: {type: string, format: date-time}
+                member_user_ids:
+                  type: array
+                  description: External users of the vendor on the engagement; empty means every live external user of the vendor.
+                  items: {type: string, format: uuid}
+                targets:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      target_type: {type: string, enum: [application, pam_entry, device]}
+                      target_id: {type: string, description: An application or PAM entry id, or an enrolled agent id.}
+      responses:
+        '200':
+          description: The engagement
+        '400':
+          description: Invalid window, members or targets
+        '404':
+          description: Not found
+        '409':
+          description: The engagement is closed
+
+  /api/v1/identity/engagements/{id}/close:
+    post:
+      tags: [Vendor Engagements]
+      summary: Close an engagement now
+      description: Cancelled when it had not started, closed otherwise. The grants it wrote are cut before the response.
+      operationId: closeEngagement
+      x-openidx-handler: internal/identity.(*Service).handleCloseEngagement
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: {type: string}
+      responses:
+        '200':
+          description: The closed engagement
+        '404':
+          description: Not found
+        '409':
+          description: Already closed
+
+  /api/v1/identity/engagements/{id}/report:
+    get:
+      tags: [Vendor Engagements]
+      summary: What happened during an engagement
+      description: The members, their PAM sessions (with whether each was recorded) and access requests in the window, the remote-support sessions on the engagement's devices, the members' audited actions by count, and the grants it still holds.
+      operationId: engagementReport
+      x-openidx-handler: internal/identity.(*Service).handleEngagementReport
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The report
+        '404':
+          description: Not found
+
   /api/v1/identity/external-users:
     get:
       tags: [External Users]

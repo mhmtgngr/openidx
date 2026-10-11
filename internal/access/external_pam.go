@@ -204,20 +204,26 @@ func presentPamEntryToExternal(e *PamEntry) {
 	e.Actions = actions
 }
 
-// refuseClosedTarget is invariant I11 at a launch: an external user whose
-// vendor organization is on a closed list launches only an entry opened to
-// the vendor, whatever grant they hold. It answers 403
-// external_target_not_open, audited as pam.launch_denied, and reports true
-// when it wrote a response (a 500 when the list could not be read).
+// refuseClosedTarget is invariants I11 and I13 at a launch: an external user
+// whose vendor organization is on a closed list launches only an entry opened
+// to the vendor, and one whose vendor requires engagements launches only
+// inside a running engagement that covers the entry, whatever grant they
+// hold. It answers 403 (external_target_not_open, external_no_engagement),
+// audited as pam.launch_denied, and reports true when it wrote a response (a
+// 500 when the list or the engagements could not be read).
 func (s *Service) refuseClosedTarget(c *gin.Context, orgID string, caller pamCaller, entryID string) bool {
 	if !caller.External {
 		return false
 	}
-	err := externalid.CheckTargetOpen(c.Request.Context(), s.db.Pool, orgID, caller.UserID, "pam_entry", entryID)
+	ctx := c.Request.Context()
+	err := externalid.CheckTargetOpen(ctx, s.db.Pool, orgID, caller.UserID, "pam_entry", entryID)
+	if err == nil {
+		err = externalid.CheckEngagement(ctx, s.db.Pool, orgID, caller.UserID, "pam_entry", entryID, nil)
+	}
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, externalid.ErrTargetNotOpen) {
+	if errors.Is(err, externalid.ErrTargetNotOpen) || errors.Is(err, externalid.ErrNoEngagement) {
 		s.refuseExternalPam(c, "pam.launch_denied", entryID, "pam_entry", http.StatusForbidden, err,
 			map[string]interface{}{"entry_id": entryID})
 		return true

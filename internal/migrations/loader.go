@@ -1658,5 +1658,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pushDeviceLastSeenUp,
 			DownSQL:     pushDeviceLastSeenDown,
 		},
+		{
+			Version:     234,
+			Name:        "vendor_engagements",
+			Description: "Vendor engagements: vendor_engagements (vendor, sponsor, title, purpose, ticket_ref, starts_at < ends_at, member_user_ids with empty meaning every live external user of the vendor, status open|closed with closed_at/closed_by/close_reason ended|closed|cancelled|vendor_closed, grants_synced_at) and vendor_engagement_targets (application, pam_entry or device by id). While an engagement runs the identity service writes its grants and keeps them to its window: PAM connect grants carry pam_entry_grants.engagement_id (unique per engagement, entry and member; v216's standing key now also excludes them), and the window written on a shared application assignment is recorded in vendor_engagement_app_grants.written_until so only a row still carrying it is cut. vendor_organizations.require_engagement (default false; the vendor API creates a vendor with it on) makes a vendor's external users reach, launch and request only inside a running engagement covering the target. Org-scoped tables under FORCE'd RLS with no app.bypass_rls clause. Down drops the tables, the column and the switch, deleting the engagement-written PAM grants.",
+			UpSQL:       vendorEngagementsUp,
+			DownSQL:     vendorEngagementsDown,
+		},
 	}
 }
