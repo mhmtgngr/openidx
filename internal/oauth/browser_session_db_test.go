@@ -91,6 +91,35 @@ func ssoSetupDB(t *testing.T) (*Service, *database.PostgresDB) {
 			org_id UUID NOT NULL,
 			name VARCHAR(255) NOT NULL
 		)`,
+		// accessdecision reads invariant I13 (engagements, migration 234)
+		// for every subject: the user's type and vendor, and the vendor's
+		// running engagements. A user with no row here is not external.
+		`CREATE TABLE users (
+			id UUID PRIMARY KEY,
+			org_id UUID NOT NULL,
+			user_type VARCHAR(16) NOT NULL DEFAULT 'internal',
+			vendor_org_id UUID
+		)`,
+		`CREATE TABLE vendor_organizations (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			org_id UUID NOT NULL,
+			require_engagement BOOLEAN NOT NULL DEFAULT false
+		)`,
+		`CREATE TABLE vendor_engagements (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			org_id UUID NOT NULL,
+			vendor_org_id UUID NOT NULL,
+			status VARCHAR(16) NOT NULL DEFAULT 'open',
+			starts_at TIMESTAMPTZ NOT NULL,
+			ends_at TIMESTAMPTZ NOT NULL,
+			member_user_ids UUID[] NOT NULL DEFAULT '{}'
+		)`,
+		`CREATE TABLE vendor_engagement_targets (
+			engagement_id UUID NOT NULL,
+			org_id UUID NOT NULL,
+			target_type VARCHAR(32) NOT NULL,
+			target_id TEXT NOT NULL
+		)`,
 		`CREATE TABLE application_sso_settings (
 			application_id UUID PRIMARY KEY,
 			require_consent BOOLEAN DEFAULT false
