@@ -46,7 +46,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
 FROM alpine:3.24
 
 # Install runtime dependencies and clean up in same layer
-RUN apk add --no-cache ca-certificates tzdata wget && \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache ca-certificates tzdata wget && \
     rm -rf /var/cache/apk/*
 
 # Create non-root user in same layer

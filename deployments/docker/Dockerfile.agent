@@ -26,7 +26,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
 # Runtime stage
 FROM alpine:3.24
 
-RUN apk add --no-cache ca-certificates tzdata curl && \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache ca-certificates tzdata curl && \
     rm -rf /var/cache/apk/*
 
 RUN addgroup -S openidx && adduser -S openidx -G openidx

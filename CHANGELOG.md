@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The nightly image scan fails only on what it says it gates on.** With SARIF output and no `limit-severities-for-sarif`, trivy-action reports every severity and applies the exit code to all of them, so a MEDIUM in alpine's zlib (CVE-2026-85091) had kept the nightly Security Scanning run red since 2026-10-08 although `TRIVY_SEVERITY` is `CRITICAL,HIGH`. The image scan now runs twice, like the filesystem scan: a SARIF run for the Security tab that never fails, and a table run that is the gate and prints its findings. Every alpine runtime stage now runs `apk upgrade` before installing its packages, so images pick up fixes published after the base tag (zlib `1.3.2-r1`).
+
 ## [1.43.0] - 2026-10-11
 
 ### Added

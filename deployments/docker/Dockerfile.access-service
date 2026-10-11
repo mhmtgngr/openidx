@@ -53,7 +53,8 @@ FROM alpine:3.24
 # (see internal/access/remote_support_retention.go generateGuacTranscripts).
 # The feature is LookPath-gated; removing guacamole-server only disables transcript
 # generation — it does not break the service.
-RUN apk add --no-cache ca-certificates tzdata wget guacamole-server && \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache ca-certificates tzdata wget guacamole-server && \
     addgroup -S openidx && \
     adduser -S openidx -G openidx && \
     mkdir -p /ziti /shared-config /shared-certs && \
