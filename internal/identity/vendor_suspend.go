@@ -48,7 +48,7 @@ func (s *Service) handleSuspendVendorOrg(c *gin.Context) {
 		return
 	}
 	fail := func(what string, err error) {
-		s.logger.Error("suspend vendor organization: "+what, logsafe.String("id", id), zap.Error(err))
+		s.logger.Error("suspend vendor organization failed", zap.String("step", what), logsafe.String("id", id), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to suspend the vendor organization"})
 	}
 	tx, err := s.db.Pool.Begin(ctx)
