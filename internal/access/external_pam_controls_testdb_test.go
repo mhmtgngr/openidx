@@ -404,6 +404,7 @@ func (f *externalPamFixture) router(userID string, roles ...string) *gin.Engine 
 	r.GET("/pam/sponsored/moderation", f.svc.handlePamListSponsoredModeration)
 	r.POST("/pam/sponsored/moderation/:id/join", f.svc.handlePamSponsorJoinModeration)
 	r.POST("/temp-access", f.svc.handleCreateTempAccess)
+	r.GET("/my/vendor", f.svc.handleMyVendor)
 	return r
 }
 

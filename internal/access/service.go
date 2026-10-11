@@ -647,6 +647,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// enriched with connection details. Deliberately not adminOnly.
 		api.GET("/my/ziti/services", svc.handleMyZitiServices)
 
+		// Self-service: the vendor portal's view of an external user's own
+		// vendor, sponsor, account end and engagements. Deliberately not
+		// adminOnly; an internal caller gets {"external": false}.
+		api.GET("/my/vendor", svc.handleMyVendor)
+
 		// Phase 3: Posture checks. Definitions are admin-managed; they, the
 		// summary of the organization's results and one identity's posture and
 		// its evaluation carry the operator tier. The device self-report is

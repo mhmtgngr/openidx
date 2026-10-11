@@ -21,6 +21,7 @@ vi.mock('./lib/auth', () => ({
 vi.mock('@/lib/store', () => ({ useAppStore: () => ({ theme: 'light' }) }))
 // The layout's chrome is not under test; its outlet is.
 vi.mock('@/components/layout', () => ({ Layout: () => <Outlet /> }))
+vi.mock('@/components/vendor-aware-home', () => ({ VendorAwareHome: ({ children }: { children: React.ReactNode }) => <>{children}</> }))
 vi.mock('./pages/dashboard', () => ({ DashboardPage: () => <div>dashboard page</div> }))
 vi.mock('./pages/applications', () => ({ ApplicationsPage: () => <div>applications page</div> }))
 vi.mock('./pages/saml-service-providers', () => ({ SAMLServiceProvidersPage: () => <div>saml providers page</div> }))

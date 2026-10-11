@@ -107,3 +107,40 @@ export function useVendors() {
   })
 }
 
+
+// ---- The caller's own vendor (vendor portal) ----
+
+export interface MyVendorEngagement {
+  id: string
+  title: string
+  purpose: string
+  ticket_ref: string
+  sponsor_name: string
+  starts_at: string
+  ends_at: string
+  state: 'running' | 'scheduled'
+  targets: Array<{ target_type: 'application' | 'pam_entry' | 'device'; target_id: string; name: string }>
+}
+
+export interface MyVendor {
+  external: boolean
+  vendor?: { id: string; name: string; require_engagement: boolean; closed_list: boolean }
+  account_status?: string
+  account_expires_at?: string | null
+  sponsor?: { name: string; email: string }
+  engagements?: MyVendorEngagement[]
+}
+
+// useVendorSelf reads GET /api/v1/access/my/vendor: whether the caller is an
+// external (vendor) user, and if so their vendor, sponsor and engagements.
+// The token does not carry the user type, so this is how the console knows.
+// Staff never are external (an external user holds only the user role), so
+// callers pass enabled=false for them and nothing is fetched.
+export function useVendorSelf(enabled: boolean) {
+  return useQuery({
+    queryKey: ['my-vendor'],
+    enabled,
+    staleTime: 60_000,
+    queryFn: async () => (await api.get<MyVendor>('/api/v1/access/my/vendor')) ?? { external: false },
+  })
+}

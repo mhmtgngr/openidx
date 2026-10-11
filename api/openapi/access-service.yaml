@@ -5738,6 +5738,28 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/access/my/vendor:
+    get:
+      tags: [My Access]
+      summary: My vendor, sponsor and engagements
+      description: For an external (vendor) user, their vendor organization (with require_engagement and closed_list), account status and end, sponsor, and their running and scheduled engagements with what each covers. An internal user gets {"external": false}.
+      operationId: myVendor
+      x-openidx-handler: internal/access.(*Service).handleMyVendor
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /api/v1/access/my/ziti/services:
     get:
       tags: [My Access]

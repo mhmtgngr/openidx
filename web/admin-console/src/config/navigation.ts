@@ -80,6 +80,7 @@ import {
   Brain,
   Server,
   Home,
+  Briefcase,
 } from 'lucide-react'
 import i18n from '@/i18n'
 import { hasMinRole, type MinRole } from '@/lib/roles'
@@ -611,3 +612,27 @@ export function scoreNavItem(item: FlatNavItem, q: string): number {
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
+
+// The vendor portal's menu. An external (vendor) user holds only the user
+// role, so the full navigation would offer them the employee self-service
+// pages too; this is what their work needs and nothing else. The layout uses
+// it when GET /api/v1/access/my/vendor says the caller is external.
+export const vendorNavigation: NavDomainGroup[] = [
+  {
+    id: 'home',
+    label: '',
+    icon: Home,
+    sections: [
+      {
+        label: '',
+        items: [
+          { name: 'My Work', nameKey: 'nav.items.vendorPortal', href: '/vendor', icon: Briefcase, minRole: 'user', keywords: ['engagements', 'vendor', 'home'] },
+          { name: 'My Apps & Network', nameKey: 'nav.items.myAppsNetwork', href: '/my-network', icon: Globe, minRole: 'user', keywords: ['connect', 'remote', 'servers', 'apps'] },
+          { name: 'Access Requests', nameKey: 'nav.items.accessRequests', href: '/access-requests', icon: GitPullRequest, minRole: 'user', keywords: ['request access'] },
+          { name: 'My Sessions', nameKey: 'nav.items.mySessions', href: '/sessions', icon: Monitor, minRole: 'user', keywords: ['sign out'] },
+          { name: 'My Profile', nameKey: 'nav.items.myProfile', href: '/profile', icon: User, minRole: 'user', keywords: ['account', 'password', 'mfa'] },
+        ],
+      },
+    ],
+  },
+]
