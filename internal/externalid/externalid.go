@@ -484,7 +484,10 @@ func IsRefusal(err error) bool {
 		ErrExpiryRequired, ErrExpiryPast, ErrExpiryTooLong, ErrExpiryContract, ErrVendorNotActive, ErrSponsorInvalid,
 		ErrTypeImmutable, ErrGroupHasExternal, ErrIdentityIncomplete, ErrAccountNotLive, ErrNotActivated, ErrFactorNotAllowed, ErrEmailDomain,
 		ErrWindowRequired, ErrWindowPastAccount, ErrRevealForbidden, ErrSSHCAForbidden, ErrCloudJITForbidden,
-		ErrRecordingUnavailable, ErrBrokerIdentityRequired, ErrTargetNotOpen} {
+		ErrRecordingUnavailable, ErrBrokerIdentityRequired, ErrTargetNotOpen,
+		ErrNoEngagement, ErrWindowPastEngagement, ErrEngagementTargetType, ErrEngagementClosed, ErrEngagementWindow,
+		ErrEngagementTooLong, ErrEngagementMember, ErrEngagementNoTargets, ErrEngagementBadTarget, ErrEngagementTargetShut,
+		ErrEngagementContract} {
 		if errors.Is(err, r) {
 			return true
 		}
@@ -538,6 +541,22 @@ func Code(err error) string {
 		return "external_broker_identity_required"
 	case errors.Is(err, ErrTargetNotOpen):
 		return "external_target_not_open"
+	case errors.Is(err, ErrNoEngagement):
+		return "external_no_engagement"
+	case errors.Is(err, ErrWindowPastEngagement):
+		return "external_window_past_engagement"
+	case errors.Is(err, ErrEngagementTargetType):
+		return "external_engagement_target_type"
+	case errors.Is(err, ErrEngagementClosed):
+		return "engagement_closed"
+	case errors.Is(err, ErrEngagementWindow), errors.Is(err, ErrEngagementTooLong), errors.Is(err, ErrEngagementContract):
+		return "engagement_window_invalid"
+	case errors.Is(err, ErrEngagementMember):
+		return "engagement_member_invalid"
+	case errors.Is(err, ErrEngagementNoTargets), errors.Is(err, ErrEngagementBadTarget):
+		return "engagement_target_invalid"
+	case errors.Is(err, ErrEngagementTargetShut):
+		return "engagement_target_not_open"
 	}
 	return ""
 }

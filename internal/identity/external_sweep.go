@@ -151,6 +151,9 @@ func (s *Service) sweepExternalAccounts(ctx context.Context) {
 		s.runExternalSweepStep(ctx, step)
 	}
 	s.severDepartedExternals(ctx)
+	// After the accounts move, so a member whose account just ended loses
+	// the engagement's grants in the same tick.
+	s.sweepEngagements(ctx)
 }
 
 func (s *Service) runExternalSweepStep(ctx context.Context, step externalSweepStep) {

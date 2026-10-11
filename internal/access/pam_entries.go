@@ -1267,7 +1267,7 @@ func (s *Service) handlePamAddEntryGrant(c *gin.Context) {
 	err = s.db.Pool.QueryRow(ctx, `
 		INSERT INTO pam_entry_grants (org_id, entry_id, principal_type, principal_id, actions, granted_by, expires_at)
 		SELECT $1, id, $3, $4, $5, NULLIF($6,'')::uuid, $7 FROM pam_entries WHERE id = $2 AND org_id = $1
-		ON CONFLICT (entry_id, principal_type, principal_id) WHERE request_id IS NULL
+		ON CONFLICT (entry_id, principal_type, principal_id) WHERE request_id IS NULL AND engagement_id IS NULL
 		DO UPDATE SET actions = EXCLUDED.actions, expires_at = EXCLUDED.expires_at
 		RETURNING id`,
 		org.ID, entryID, req.PrincipalType, req.PrincipalID, req.Actions,

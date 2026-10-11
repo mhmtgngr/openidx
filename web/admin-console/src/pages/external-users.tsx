@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Building2, Copy, MoreHorizontal, Plus, UserPlus, Users } from 'lucide-react'
@@ -19,6 +19,9 @@ import { QueryError } from '../components/query-error'
 import { ConfirmAction } from '../components/confirm-action'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
+import { SponsorPicker, apiErrorText, useVendors, type VendorOrg } from '../lib/external-access'
+export type { VendorOrg } from '../lib/external-access'
+import { EngagementsTab } from '../components/vendor-engagements'
 
 // External (vendor) accounts, their invitations and their vendor
 // organizations: the console half of Phase 1 of the third-party access
@@ -47,25 +50,6 @@ export interface ExternalUser {
   reactivate_until?: string
 }
 
-export interface VendorOrg {
-  id: string
-  name: string
-  status: string
-  contact_name: string
-  contact_email: string
-  contract_start?: string | null
-  contract_end?: string | null
-  allowed_email_domains: string[] | null
-  default_expiry_days: number
-  default_sponsor_user_id: string
-  notes: string
-  closed_at?: string
-  external_users?: Record<string, number>
-  // On a closed list, the vendor's users ask for and launch only the targets
-  // opened to it (invariant I11 of the third-party access framework).
-  closed_list?: boolean
-}
-
 // A PAM entry, an application or a network service opened to a vendor on a
 // closed list.
 interface VendorTarget {
@@ -87,10 +71,6 @@ interface Invitation {
   sponsor_user_id?: string
   account_expires_at?: string
 }
-
-type ApiError = { response?: { data?: { error?: string } }; message?: string }
-const apiErrorText = (err: unknown, fallback: string) =>
-  (err as ApiError)?.response?.data?.error || fallback
 
 const ACCOUNT_STATUSES = ['pending_mfa', 'active', 'suspended', 'expired', 'disabled'] as const
 
@@ -114,72 +94,6 @@ const displayName = (u: { first_name?: string; last_name?: string; username: str
 
 const invitationLink = (token: string) => `${window.location.origin}/accept-invite?token=${encodeURIComponent(token)}`
 
-// ---- Sponsor picker ----
-
-interface Candidate { id: string; label: string }
-
-// An enabled internal user of the organization: the only kind the identity
-// service accepts as a sponsor (externalid.CheckSponsor). The filter here is a
-// convenience; the route refuses anyone else.
-function toCandidate(u: Record<string, unknown>): Candidate | null {
-  const userType = String(u.userType ?? u.user_type ?? 'internal')
-  const enabled = Boolean(u.enabled ?? u.active ?? false)
-  if (userType === 'external' || userType === 'service' || !enabled) return null
-  const name = (u.name ?? {}) as Record<string, unknown>
-  const emails = (u.emails ?? []) as Array<{ value?: string }>
-  const username = String(u.userName ?? u.username ?? '')
-  const full = [name.givenName, name.familyName].filter(Boolean).join(' ')
-  const email = String(emails[0]?.value ?? u.email ?? '')
-  return { id: String(u.id ?? ''), label: `${full || username}${email ? ` <${email}>` : ''}` }
-}
-
-function SponsorPicker({ id, value, onChange, optional }: {
-  id: string
-  value: string
-  onChange: (v: string) => void
-  optional?: boolean
-}) {
-  const { t } = useTranslation()
-  const [search, setSearch] = useState('')
-  const [debounced, setDebounced] = useState('')
-  useEffect(() => {
-    const h = setTimeout(() => setDebounced(search.trim()), 250)
-    return () => clearTimeout(h)
-  }, [search])
-  const { data: candidates = [] } = useQuery({
-    queryKey: ['sponsor-candidates', debounced],
-    queryFn: async () => {
-      const params = new URLSearchParams({ offset: '0', limit: '50' })
-      if (debounced) params.set('search', debounced)
-      const res = await api.getWithHeaders<Record<string, unknown>[]>(`/api/v1/identity/users?${params.toString()}`)
-      return (res.data || []).map(toCandidate).filter((c): c is Candidate => c !== null)
-    },
-  })
-  return (
-    <div className="space-y-2">
-      <Input
-        aria-label={t('pages.externalUsers.sponsor.search')}
-        placeholder={t('pages.externalUsers.sponsor.search')}
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
-      <select
-        id={id}
-        aria-labelledby={`${id}-label`}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-      >
-        <option value="">{optional ? t('pages.externalUsers.sponsor.default') : t('pages.externalUsers.sponsor.choose')}</option>
-        {value && !candidates.some((c) => c.id === value) && (
-          <option value={value}>{t('pages.externalUsers.sponsor.current')}</option>
-        )}
-        {candidates.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-      </select>
-    </div>
-  )
-}
-
 // ---- The page ----
 
 export function ExternalUsersPage() {
@@ -195,20 +109,15 @@ export function ExternalUsersPage() {
           <TabsTrigger value="accounts">{t('pages.externalUsers.tabs.accounts')}</TabsTrigger>
           <TabsTrigger value="invitations">{t('pages.externalUsers.tabs.invitations')}</TabsTrigger>
           <TabsTrigger value="vendors">{t('pages.externalUsers.tabs.vendors')}</TabsTrigger>
+          <TabsTrigger value="engagements">{t('pages.externalUsers.tabs.engagements')}</TabsTrigger>
         </TabsList>
         <TabsContent value="accounts"><AccountsTab /></TabsContent>
         <TabsContent value="invitations"><InvitationsTab /></TabsContent>
         <TabsContent value="vendors"><VendorsTab /></TabsContent>
+        <TabsContent value="engagements"><EngagementsTab /></TabsContent>
       </Tabs>
     </div>
   )
-}
-
-function useVendors() {
-  return useQuery({
-    queryKey: ['vendor-orgs'],
-    queryFn: async () => (await api.get<{ vendor_organizations: VendorOrg[] }>('/api/v1/identity/vendor-orgs')).vendor_organizations ?? [],
-  })
 }
 
 // ---- Accounts ----
@@ -850,6 +759,9 @@ function VendorsTab() {
                         {v.closed_list && (
                           <Badge variant="outline" className="ml-2">{t('pages.externalUsers.vendors.closedList')}</Badge>
                         )}
+                        {v.require_engagement && (
+                          <Badge variant="outline" className="ml-2">{t('pages.externalUsers.vendors.requireEngagement')}</Badge>
+                        )}
                       </p>
                       {(v.allowed_email_domains ?? []).length > 0 && (
                         <p className="text-xs text-muted-foreground">{(v.allowed_email_domains ?? []).join(', ')}</p>
@@ -914,6 +826,8 @@ function VendorDialog({ vendor, onClose }: { vendor: VendorOrg | null; onClose: 
     default_sponsor_user_id: vendor?.default_sponsor_user_id ?? '',
     notes: vendor?.notes ?? '',
     closed_list: !!vendor?.closed_list,
+    // A new vendor starts with engagements required, as the API creates it.
+    require_engagement: vendor ? !!vendor.require_engagement : true,
   })
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }))
@@ -933,6 +847,7 @@ function VendorDialog({ vendor, onClose }: { vendor: VendorOrg | null; onClose: 
         default_sponsor_user_id: form.default_sponsor_user_id,
         notes: form.notes,
         closed_list: form.closed_list,
+        require_engagement: form.require_engagement,
       }
       return vendor
         ? api.put(`/api/v1/identity/vendor-orgs/${vendor.id}`, body)
@@ -1015,6 +930,19 @@ function VendorDialog({ vendor, onClose }: { vendor: VendorOrg | null; onClose: 
             <span>
               <span className="font-medium">{t('pages.externalUsers.vendorDialog.closedList')}</span>
               <span className="block text-xs text-muted-foreground">{t('pages.externalUsers.vendorDialog.closedListHint')}</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              id="xv-require-engagement"
+              type="checkbox"
+              className="mt-1"
+              checked={form.require_engagement}
+              onChange={(e) => setForm((f) => ({ ...f, require_engagement: e.target.checked }))}
+            />
+            <span>
+              <span className="font-medium">{t('pages.externalUsers.vendorDialog.requireEngagement')}</span>
+              <span className="block text-xs text-muted-foreground">{t('pages.externalUsers.vendorDialog.requireEngagementHint')}</span>
             </span>
           </label>
           <DialogFooter>
