@@ -15,7 +15,7 @@ A release is cut by pushing a `vX.Y.Z` git tag — everything else is automated.
    ```
 
    Pull requests do not edit `CHANGELOG.md`; each adds `changelog.d/<slug>.md`
-   (see [changelog.d/README.md](../changelog.d/README.md)). The script merges
+   (see `changelog.d/README.md`). The script merges
    every fragment, and anything still written under `[Unreleased]`, into a new
    `## [X.Y.Z] - YYYY-MM-DD` section grouped by heading, moves the
    `[Unreleased]` compare link on and adds the `[X.Y.Z]` one, and deletes the
