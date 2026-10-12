@@ -293,6 +293,13 @@ jobs:
         run: bash scripts/check-release-dispatch.test.sh
       - name: A dispatched release must stamp images like a tagged one
         run: bash scripts/check-release-dispatch.sh --enforce
+      # PRs write changelog.d/<slug>.md instead of CHANGELOG.md's [Unreleased]
+      # (two PRs in flight always conflicted there). The release step folds the
+      # fragments in; a malformed one is caught on its own PR, not at release.
+      - name: Verify the changelog-fragment guard and assembler can go red
+        run: bash scripts/check-changelog-fragments.test.sh
+      - name: Every changelog fragment is one the release step can assemble
+        run: bash scripts/check-changelog-fragments.sh
       - name: Verify the agent-release guard can go red
         run: bash scripts/check-agent-release.test.sh
       - name: The agent is releasable by dispatch, and agents poll its release channel

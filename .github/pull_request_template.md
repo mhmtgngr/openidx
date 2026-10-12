@@ -27,3 +27,4 @@
 - [ ] Self-reviewed the changes
 - [ ] Added tests for new functionality
 - [ ] Updated documentation if needed
+- [ ] User-facing change described in `changelog.d/<slug>.md` (not in `CHANGELOG.md`)

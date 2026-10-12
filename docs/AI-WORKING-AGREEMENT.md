@@ -83,7 +83,8 @@ A change is done only when all of the following hold:
   "windows" or "lessons" to `CHANGELOG.md`, plan documents or anything under
   `docs/archive/`, which holds dated records only. Progress belongs in the
   PR description and the GitHub issue. A CHANGELOG entry is one or two
-  user-facing lines.
+  user-facing lines, written as a fragment in `changelog.d/<slug>.md` rather
+  than into `CHANGELOG.md` itself (see `changelog.d/README.md`).
 - **One topic per PR,** small enough for one human review.
 - **No site-specific values in product code.** Real hostnames, IP addresses,
   home directories and organisation names belong in an operator's environment
