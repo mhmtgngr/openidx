@@ -467,6 +467,33 @@ accessService:
     maxReplicas: 10
     targetCPUUtilizationPercentage: 60
     targetMemoryUtilizationPercentage: 80
+  # Remote support is NOT replica-safe on its own. The relay broker keeps each
+  # session's pairing (device <-> technician), its sponsor watchers and the
+  # broker-side recorder in the memory of the one pod that accepted the session
+  # (internal/access/remote_support_api.go). With more than one replica
+  # (replicaCount, autoscaling or keda.services.access-service) every request
+  # for a session must reach that same pod, or the device and the technician
+  # wait in two different pods and never meet.
+  #
+  # stickyIngress renders a separate Ingress (templates/remote-support-ingress.yaml)
+  # for the remote-support paths only, hashed on the session id in the path
+  # (ingress-nginx use-regex + upstream-hash-by). It needs ingress.enabled and
+  # an ingress-nginx controller. With another controller set enabled: false and
+  # give /api/v1/access/**/remote-support/**/sessions/<id> session affinity
+  # there yourself, or run the access service with one replica. Any other
+  # Ingress you add for the access-service Service must carry the same
+  # upstream-hash-by, because ingress-nginx keeps one hash per upstream.
+  # A pod that goes away still drops the sessions it held.
+  remoteSupport:
+    stickyIngress:
+      enabled: true
+      className: ""          # empty: ingress.className
+      # Extra annotations. The defaults keep an idle session socket open (the
+      # controller's 60s default would cut it) and admit recording chunks.
+      annotations:
+        nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+        nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+        nginx.ingress.kubernetes.io/proxy-body-size: "50m"
 
 # PAM dedicated session brokers (two Guacamole stacks + a ziti-tunnel sidecar +
 # a shared recordings PVC). Disabled by default; enable to make brokered PAM
