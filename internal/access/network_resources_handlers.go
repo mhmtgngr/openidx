@@ -44,6 +44,28 @@ type networkPolicyView struct {
 	SplitTunnel               bool   `json:"split_tunnel"`
 	BlockDirectCorporateCIDRs bool   `json:"block_direct_corporate_cidrs"`
 	UpdatedAt                 string `json:"updated_at,omitempty"`
+	// Version is the policy version devices receive (tunnel_policy.go), and
+	// Devices how many active devices report applying it. Both are absent
+	// when they cannot be read; the policy itself is still answered.
+	Version string               `json:"version,omitempty"`
+	Devices *tunnelPolicyDevices `json:"devices,omitempty"`
+}
+
+// withRollout fills v's Version and Devices. Best-effort: a failure is logged
+// and leaves them empty.
+func (s *Service) withRollout(ctx context.Context, orgID string, v *networkPolicyView) {
+	p, err := loadAgentNetworkPolicy(ctx, s.db, orgID)
+	if err != nil {
+		s.logger.Warn("network policy: could not compute the version devices receive", zap.Error(err))
+		return
+	}
+	v.Version = p.Version
+	d, err := countTunnelPolicyDevices(ctx, s.db, orgID, p.Version)
+	if err != nil {
+		s.logger.Warn("network policy: could not count the devices that applied it", zap.Error(err))
+		return
+	}
+	v.Devices = &d
 }
 
 // networkGuardReady makes sure the denylist a write is judged against is
@@ -406,6 +428,7 @@ func (s *Service) handleGetNetworkPolicy(c *gin.Context) {
 	if updated != nil {
 		v.UpdatedAt = *updated
 	}
+	s.withRollout(ctx, org.ID, &v)
 	c.JSON(http.StatusOK, v)
 }
 
@@ -453,6 +476,7 @@ func (s *Service) handlePutNetworkPolicy(c *gin.Context) {
 	s.logAuditEvent(c, "network_policy.update", org.ID, "organization", map[string]interface{}{
 		"always_on": v.AlwaysOn, "split_tunnel": v.SplitTunnel, "block_direct_corporate_cidrs": v.BlockDirectCorporateCIDRs,
 	})
+	s.withRollout(ctx, org.ID, &v)
 	c.JSON(http.StatusOK, v)
 }
 

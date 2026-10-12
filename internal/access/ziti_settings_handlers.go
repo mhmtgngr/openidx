@@ -37,7 +37,7 @@ func validateZitiConnSettings(in ZitiConnSettingsView) string {
 }
 
 // requireAdminRole guards the access-service admin surface (Ziti connection
-// management, PAM entry/folder/grant CRUD, guacamole credentials, temp-access,
+// management, PAM entry/folder/grant CRUD, guacamole credentials,
 // …). The router always attaches an auth middleware that sets "roles" from a
 // verified JWT (AuthWithAPIKey in prod, SoftAuth in dev), so this enforces an
 // admin role by default in EVERY environment. The all-callers-are-admin dev

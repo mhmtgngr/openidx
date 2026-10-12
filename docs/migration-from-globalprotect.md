@@ -165,7 +165,11 @@ Move groups across in waves, largest last:
    (or the portal's agent configuration), so their client stops connecting.
 4. After the last wave, turn on **Block direct corporate access** if the
    corporate networks should be reachable only through the overlay, and
-   retire the gateway's access routes.
+   retire the gateway's access routes. The agent enforces the block on Linux
+   devices where it runs as root; Windows and macOS devices report it as not
+   enforced (`docs/AGENT-TUNNEL.md`, "The organization's network policy"), so
+   block direct access for them at the network if it matters. The Network policy card shows how
+   many devices run the current policy.
 
 Keep the GlobalProtect gateway and its configuration for at least one month
 after the last wave.

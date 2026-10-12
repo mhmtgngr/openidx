@@ -106,7 +106,11 @@ func main() {
 		if err != nil {
 			log.Fatal("Failed to get version", zap.Error(err))
 		}
-		fmt.Printf("Current migration version: %d\n", version)
+		if version == 0 {
+			fmt.Println("Current migration version: 0 (no migrations applied)")
+		} else {
+			fmt.Printf("Current migration version: %d\n", version)
+		}
 
 	case "create":
 		if len(os.Args) < 3 {

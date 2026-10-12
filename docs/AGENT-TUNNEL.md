@@ -131,7 +131,9 @@ The agent runs the tunneler with LocalSystem or root privileges, so:
   before every start, and a mismatch is refused. The Linux packages are not
   pinned yet (one build serves both architectures).
 - **The server cannot choose a binary or an argument.** `org_network_policy`
-  turns the tunnel on or off and nothing else. The arguments
+  turns the tunnel on or off and gives the ranges the direct-access block
+  covers (parsed as IP prefixes before they reach nft; anything else refuses
+  the whole set), and nothing else. The arguments
   (`run --identity-dir <dir> -P openidx`) and the identity directory are fixed.
 - **The identity file name comes from the agent id**, which the server issued,
   so the id must match `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`; the agent refuses to
@@ -162,6 +164,58 @@ Either run the agent with `PrivateTmp=false` and in the `ziti` group, or set
 `tunnel.probe_address`; otherwise the agent reports `degraded` even when the
 tunnel works.
 
+## The organization's network policy
+
+The Network Resources page's **Network policy** (`org_network_policy`) reaches
+an active agent (never a pending or suspended one) as `org_network_policy` in `/agent/config` and in the answer to every
+posture report:
+
+```json
+"org_network_policy": {
+  "always_on": true,
+  "split_tunnel": true,
+  "block_direct_corporate_cidrs": true,
+  "corporate_cidrs": ["10.0.0.0/16", "192.168.1.7/32"],
+  "version": "3f1c0a9e5b7d2c44"
+}
+```
+
+`corporate_cidrs` are the CIDRs and IP-address hosts of the organization's
+enabled network resources (DNS names cannot be blocked by address), sent only
+while the block is on. `version` is a digest of everything above; the agent
+reports it back once applied.
+
+| Switch | Windows | Linux, agent as root | Linux, agent unprivileged (`external`) | macOS |
+|---|---|---|---|---|
+| Always on | Enforced: tunnel on, restarted on exit | Enforced | Enforced (identity written; the unit runs the tunneler) | No tunneler bundled: `not_installed` |
+| Split tunnel | Always split | Always split | Always split | — |
+| Full tunnel (split off) | Not enforced: gap `full_tunnel` | Not enforced: gap `full_tunnel` | Not enforced: gap `full_tunnel` | Gap `full_tunnel` |
+| Block direct corporate access | Not enforced: gap `block_direct` | Enforced with nftables | Not enforced: gap `block_direct` | Gap `block_direct` |
+
+- **Always on** has no user override: the tray offers no off switch, and
+  `agent.json` (administrators only) cannot turn off what the policy turned on.
+- **Split tunnel** is how `ziti-edge-tunnel` works: it intercepts only the
+  addresses of the services this device may dial. A full tunnel would need an
+  overlay service that carries all traffic to an egress router, which OpenIDX
+  does not configure, so a policy with split tunnel off is reported as the gap
+  `full_tunnel` rather than claimed.
+- **Block direct corporate access** loads an nftables table, `inet
+  openidx_direct`, whose output and forward chains reject traffic to the
+  corporate ranges unless it leaves through the tunneler's interface
+  (`ziti0`, `ziti1`, ...) or comes from a process running as root. Root is let
+  through because the tunneler and the agent must reach the controller and the
+  routers wherever they are, and because root could remove the table anyway.
+  The table is replaced in one transaction, removed when the policy turns the
+  block off, and left in place when the agent stops (a reboot clears it). A DNS
+  server inside a blocked range is reachable only through the overlay, so make
+  it a network resource first. Windows would need a WFP filter with a
+  per-application exemption for the tunneler, and macOS a pf anchor; until
+  then those devices report the gap `block_direct`.
+
+The Agent Fleet page shows **Policy applied** or **Policy pending** beside each
+device's tunnel state, and the Network policy card counts the devices that run
+the current version.
+
 ## What the server and the tray see
 
 Each posture report carries:
@@ -171,9 +225,19 @@ Each posture report carries:
   "state": "connected",
   "version": "v1.18.7",
   "last_seen": "2026-10-10T12:00:00Z",
-  "services": ["erp-web", "rdp-finance"]
+  "services": ["erp-web", "rdp-finance"],
+  "mode": "split",
+  "policy_version": "3f1c0a9e5b7d2c44",
+  "policy_gaps": ["block_direct"],
+  "last_error": ""
 }
 ```
+
+`mode`, `policy_version`, `policy_gaps` and `last_error` are sent once the
+server has delivered a versioned policy. `policy_version` is left out while
+applying the policy failed; `last_error` then says why (otherwise it carries
+the reason the tunnel is degraded or not installed). The server stores
+`connected` as `up` and `degraded` as `down`; `off` is not counted as down.
 
 | `state` | Meaning |
 |---|---|
@@ -229,4 +293,7 @@ tested with a stand-in binary, not against a live controller:
   files are in the MSI and that `ziti-edge-tunnel.exe version` runs from it, not
   that it opens an adapter);
 - whether the Wintun adapter and DNS (NRPT) rules are cleaned up when the agent
-  stops the tunneler on Windows, where it can only be killed, not asked to stop.
+  stops the tunneler on Windows, where it can only be killed, not asked to stop;
+- the direct-access block's nft script against a live nftables: its shape is
+  unit-tested, and `TestDirectBlockScriptParses` checks it with `nft -c` only
+  when the tests run as root.

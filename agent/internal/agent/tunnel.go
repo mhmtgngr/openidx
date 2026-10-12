@@ -36,8 +36,10 @@ func tunnelDir(configDir string) string { return filepath.Join(configDir, "tunne
 // What is never configurable, from any source: the arguments (fixed in
 // internal/tunnel), the identity directory (under the config directory) and,
 // whatever binary_path says, the trust check the binary itself must pass
-// (internal/tunnel/locate.go). The server's org_network_policy only turns the
-// tunnel on or off; it names no binary and no argument.
+// (internal/tunnel/locate.go). The server's org_network_policy turns the
+// tunnel on or off and gives the ranges the direct-access block covers, which
+// are parsed as prefixes before they reach nft; it names no binary and no
+// argument.
 func (a *Agent) tunnelSettings() (cfg tunnel.Config, localEnabled bool) {
 	cfg = tunnel.Config{
 		Logger:         a.logger,
@@ -81,6 +83,7 @@ func (a *Agent) newTunnelSupervisor() *tunnel.Supervisor {
 // once, by Run.
 func (a *Agent) startTunnel(ctx context.Context) {
 	s := a.newTunnelSupervisor()
+	a.directBlock.Store(tunnel.NewDirectBlock())
 	a.tun.Store(s)
 	a.applyTunnelEnablement()
 	a.logger.Info("tunnel supervisor ready", zap.String("mode", string(s.Mode())),
@@ -102,16 +105,111 @@ func (a *Agent) applyTunnelEnablement() {
 	s.SetEnabled(a.tunLocalOn.Load() || a.orgAlwaysOn.Load())
 }
 
-// applyNetworkPolicy records the server's org_network_policy. A policy that
-// does not mention always_on leaves the last known value alone.
+// applyNetworkPolicy records the server's org_network_policy and enforces
+// what this device can of it. A policy that does not mention always_on
+// leaves the last known value alone; one without a version (a server older
+// than the rest of the policy) is read for always_on only.
+//
+// What each switch does here:
+//
+//   - always_on: the tunnel is enabled whatever agent.json says, and the
+//     supervisor restarts the tunneler whenever it exits (with backoff). There
+//     is no user-facing way to disconnect: the tray shows the tunnel and
+//     offers no off switch, and agent.json, which only an administrator can
+//     write, cannot turn off what the policy turned on.
+//   - split_tunnel: the bundled tunneler (ziti-edge-tunnel) intercepts only
+//     the addresses of the overlay services this device may dial, so the
+//     device always runs split. A policy asking for a full tunnel is
+//     reported as the gap "full_tunnel" rather than claimed.
+//   - block_direct_corporate_cidrs: loaded into the firewall where the
+//     platform has a hook (internal/tunnel/directblock.go, Linux as root);
+//     elsewhere reported as the gap "block_direct".
+//
+// The version is reported back as applied only when nothing failed; gaps do
+// not hold it back (they are what the device can do, and say so), an error
+// does, and the next policy delivery tries again.
 func (a *Agent) applyNetworkPolicy(p *OrgNetworkPolicy) {
-	if p == nil || p.AlwaysOn == nil {
+	if p == nil {
 		return
 	}
-	if a.orgAlwaysOn.Swap(*p.AlwaysOn) != *p.AlwaysOn {
-		a.logger.Info("organization network policy", zap.Bool("always_on", *p.AlwaysOn))
+	if p.AlwaysOn != nil {
+		if a.orgAlwaysOn.Swap(*p.AlwaysOn) != *p.AlwaysOn {
+			a.logger.Info("organization network policy", zap.Bool("always_on", *p.AlwaysOn))
+		}
+		a.applyTunnelEnablement()
 	}
-	a.applyTunnelEnablement()
+	if p.Version == "" {
+		return
+	}
+	a.policyMu.Lock()
+	defer a.policyMu.Unlock()
+	prev := a.netPolicy.Load()
+	if prev != nil && prev.policy.Version == p.Version && prev.err == "" && prev.enforcer == a.directBlock.Load() {
+		return
+	}
+	cp := *p
+	cp.CorporateCIDRs = append([]string(nil), p.CorporateCIDRs...)
+	ap := a.enforceNetworkPolicy(cp, prev)
+	a.netPolicy.Store(ap)
+	a.logger.Info("organization network policy applied", zap.String("version", ap.policy.Version),
+		zap.String("mode", ap.mode), zap.Strings("gaps", ap.gaps), zap.String("error", ap.err))
+}
+
+// appliedPolicy is a versioned org_network_policy and what this device made
+// of it.
+type appliedPolicy struct {
+	policy OrgNetworkPolicy
+	mode   string   // "split": see applyNetworkPolicy
+	gaps   []string // what the policy asks for and this device cannot enforce
+	err    string   // why applying it failed; "" when it did not
+	// enforcer is the DirectBlock it was applied with; nil in a process that
+	// supervises no tunnel. A policy applied before startTunnel is applied
+	// again once there is one.
+	enforcer *tunnel.DirectBlock
+	blocking bool // the block is loaded
+}
+
+// enforceNetworkPolicy applies p; prev is the policy applied before, if any.
+func (a *Agent) enforceNetworkPolicy(p OrgNetworkPolicy, prev *appliedPolicy) *appliedPolicy {
+	d := a.directBlock.Load()
+	ap := &appliedPolicy{policy: p, mode: "split", enforcer: d}
+	if p.SplitTunnel != nil && !*p.SplitTunnel {
+		ap.gaps = append(ap.gaps, "full_tunnel")
+	}
+	block := p.BlockDirectCorporateCIDRs != nil && *p.BlockDirectCorporateCIDRs
+	if d == nil {
+		// The tray's agent, or before Run: this process never touches the
+		// firewall. What it would not enforce is still said.
+		if block {
+			ap.gaps = append(ap.gaps, "block_direct")
+		}
+		return ap
+	}
+	if err := d.Supported(); err != nil {
+		if block {
+			ap.gaps = append(ap.gaps, "block_direct")
+			a.logger.Warn("the organization's policy blocks direct corporate access; this device cannot enforce it",
+				zap.Error(err))
+		}
+		return ap
+	}
+	switch {
+	case block:
+		if err := d.Apply(p.CorporateCIDRs); err != nil {
+			ap.err = err.Error()
+			a.logger.Error("blocking direct corporate access failed", zap.Error(err))
+			return ap
+		}
+		ap.blocking = len(p.CorporateCIDRs) > 0
+	case prev == nil || prev.enforcer != d || prev.blocking || prev.err != "":
+		// The first policy this process applies also removes a block an
+		// earlier run left behind when the policy has since turned it off.
+		if err := d.Clear(); err != nil {
+			ap.err = err.Error()
+			a.logger.Error("removing the direct corporate access block failed", zap.Error(err))
+		}
+	}
+	return ap
 }
 
 // applyReportResponse reads org_network_policy from a report response, when
@@ -137,6 +235,17 @@ func (a *Agent) TunnelStatus() *tunnel.Status {
 		return nil
 	}
 	st := s.Status()
+	if ap := a.netPolicy.Load(); ap != nil {
+		st.Mode = ap.mode
+		if ap.err == "" {
+			st.PolicyVersion = ap.policy.Version
+		}
+		st.PolicyGaps = append([]string(nil), ap.gaps...)
+		st.LastError = ap.err
+	}
+	if st.LastError == "" && (st.State == tunnel.StateDegraded || st.State == tunnel.StateNotInstalled) {
+		st.LastError = s.Detail()
+	}
 	return &st
 }
 

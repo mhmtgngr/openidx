@@ -31,6 +31,10 @@ export interface NetworkPolicy {
   split_tunnel: boolean
   block_direct_corporate_cidrs: boolean
   updated_at?: string
+  /** The version devices receive; read-only. */
+  version?: string
+  /** Active devices by whether they report applying that version; read-only. */
+  devices?: { applied: number; pending: number; unreported: number }
 }
 
 /** The editable form of a target: lists as text, one entry per line or comma. */

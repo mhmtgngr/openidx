@@ -14,7 +14,7 @@ import (
 // (/apps) routes in RegisterRoutes. App publishing (register an internal app →
 // discover paths → publish as a proxy route) is an admin operation that exposes
 // infrastructure, so — like every sibling management surface (ziti/*, guacamole
-// credentials, temp-access) — the routes carry `adminOnly`. Before this, any
+// credentials) — the routes carry `adminOnly`. Before this, any
 // authenticated user could register/discover/publish/delete published apps.
 //
 // Only admin/super_admin pass; missing, malformed, non-admin, or empty roles

@@ -534,9 +534,25 @@ func (m *Migrator) Status(ctx context.Context) (*Status, error) {
 	return status, nil
 }
 
-// Version returns the current migration version
+// Version returns the current migration version. It only reads: unlike up,
+// down and status it never creates the ledger tables, so it works as the
+// runtime role (openidx_app), which has no CREATE on the schema. It used to go
+// through ensureSchemaTable and failed with 42501 for that role, the one a
+// deploy's preflight naturally has at hand. A database with no
+// schema_migrations table has no migrations applied: version 0.
 func (m *Migrator) Version(ctx context.Context) (int, error) {
-	return m.getCurrentVersion(ctx)
+	var exists bool
+	if err := m.db.QueryRow(ctx, "SELECT to_regclass('schema_migrations') IS NOT NULL").Scan(&exists); err != nil {
+		return 0, fmt.Errorf("failed to look for the schema_migrations table: %w", err)
+	}
+	if !exists {
+		return 0, nil
+	}
+	var version int
+	if err := m.db.QueryRow(ctx, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&version); err != nil {
+		return 0, fmt.Errorf("failed to get current version: %w", err)
+	}
+	return version, nil
 }
 
 // Status represents migration status

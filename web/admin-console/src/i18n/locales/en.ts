@@ -6630,6 +6630,12 @@ const en = {
         split_tunnelHint: 'Only network resources go through the overlay; other traffic goes direct.',
         block_direct_corporate_cidrs: 'Block direct corporate access',
         block_direct_corporate_cidrsHint: "Refuse traffic to the resources' CIDRs that does not go through the overlay.",
+        fullTunnelGap:
+          'The bundled tunneler intercepts only network resources, so devices keep running split and report the full tunnel as not enforced.',
+        blockDirectScope:
+          'Enforced by the agent on Linux devices where it runs as root (nftables). Windows and macOS devices report it as not enforced.',
+        rollout: 'Applied on {{applied}} devices · pending on {{pending}} · {{unreported}} not reporting a tunnel',
+        version: 'Policy version {{version}}',
         saved: 'Network policy saved',
         saveFailed: 'Could not save the network policy',
       },
@@ -7263,15 +7269,6 @@ const en = {
           serviceDisableFailed: 'Failed to disable BrowZer on service',
         },
       },
-      tempAccess: {
-        historyTitle: 'Temporary access links (retired)',
-        retired: 'Temporary access links no longer open sessions and cannot be created. A vendor reaches what an engagement covers, with their own account: External users → Engagements. The links issued before are listed here until their history is exported.',
-        colName: 'Name',
-        colTarget: 'Target',
-        colUsage: 'Usage',
-        colIssued: 'Issued',
-        uses: '{{used}} uses',
-      },
       // The explain dialog's body — the summary, every hop title, detail, fix
       // and technical line — is composed by the backend, so only the dialog's
       // own chrome is translated here.
@@ -7561,7 +7558,6 @@ const en = {
         partJit: '{{n}} JIT grants',
         partPrivSessions: '{{n}} privileged sessions',
         partPamGrants: '{{n}} PAM connection grants',
-        partTempLinks: '{{n}} temporary access links',
         partNetwork: '{{n}} network sessions',
       },
     },
@@ -8172,11 +8168,25 @@ const en = {
         down: 'Down',
         starting: 'Starting',
         stopped: 'Stopped',
+        off: 'Off',
         not_installed: 'Not installed',
         unknown: 'Unknown',
       },
       tunnelDetail: 'Version {{version}} · {{count}} services · last up {{when}}',
       tunnelNeverUp: 'never',
+      tunnelMode: 'Mode: {{mode}}',
+      tunnelGaps: 'Not enforced on this device: {{gaps}}',
+      tunnelGapNames: {
+        full_tunnel: 'full tunnel',
+        block_direct: 'blocking direct corporate access',
+      },
+      tunnelLastError: 'Last error: {{error}}',
+      policyStates: {
+        applied: 'Policy applied',
+        pending: 'Policy pending',
+      },
+      policyAppliedDetail: 'Runs policy version {{version}} since {{when}}',
+      policyPendingDetail: 'Reports policy version {{version}}; the current policy reaches it at its next report',
       unknownPlatform: 'unknown',
       empty: 'No agents match the current filters.',
       approveAgent: 'Approve agent',
