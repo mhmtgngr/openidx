@@ -423,9 +423,9 @@ type pamSessionResult struct {
 // pamLaunchFailure is why a brokered launch did not happen.
 //
 // The launch core used to answer its own failures with c.JSON. Two of its three
-// callers are JSON APIs, so that was right for them and wrong for the third:
-// `GET /temp-access/:token` is an HTML route an outside party opens in a
-// browser, and a vendor whose broker was misconfigured got a raw object
+// callers were JSON APIs, so that was right for them and wrong for the third:
+// `GET /temp-access/:token` (since retired) was an HTML route an outside party
+// opened in a browser, and a vendor whose broker was misconfigured got a raw object
 // reading {"error":"the OpenZiti PAM broker is not configured"} — a page that
 // is both unusable and a description of this deployment's internals to somebody
 // with no account here.

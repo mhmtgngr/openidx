@@ -28,8 +28,8 @@ import (
 // That reason expired. v145 belted magic_links, which is the same shape — a
 // single-use secret redeemed by someone with no session — and redeems it under
 // orgctx.WithBypassRLS, pinned by TestPreResolutionLookupsUnderRLS. v148 does
-// the same here, so these tests must prove BOTH halves: the belt is on, and
-// redemption still works with no organization on the context.
+// the same here. Links have since been retired (D2) and no longer redeem, so
+// what is left to prove is the history: its reads stay inside the tenant.
 //
 // The second table is the one v71's "the belt would add no protection there"
 // missed. temp_access_usage — who redeemed a link, from which IP, with what
@@ -41,12 +41,11 @@ import (
 // TestTempAccess_TenantIsolation in temp_access_isolation_test.go already
 // covers v71's half — list/get/revoke never cross tenants — against a
 // hand-rolled schema. This file is the v148 half and needs the REAL migrations,
-// because what it exercises is the redemption path, the usage record and the
-// expiry sweep, none of which that schema has.
+// because what it exercises is the usage record and the expiry sweep, neither
+// of which that schema has.
 //
 // The pool connects as the container superuser, which bypasses RLS, so what
-// these prove is the explicit predicate in each query and that redemption still
-// works without an organization; the belt itself is proved under the
+// these prove is the explicit predicate in each query; the belt itself is proved under the
 // NOSUPERUSER role by test/integration/cross_org_test.go.
 func TestTempAccess_BeltAndUsageRecord(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -143,53 +142,13 @@ func TestTempAccess_BeltAndUsageRecord(t *testing.T) {
 		return w
 	}
 
-	t.Run("redemption works with no organization on the context", func(t *testing.T) {
-		// The half v71 was protecting, and the half a naive belt breaks. This
-		// runs the real handler on a bare context — no orgctx.With at all —
-		// which is exactly how a vendor's browser arrives.
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest("GET", "/temp-access/"+tokenA, nil)
-		c.Params = append(c.Params, gin.Param{Key: "token", Value: tokenA})
-		svc.handleUseTempAccess(c)
-
-		// 503, not the 302 this asserted before v188. Redemption now runs the
-		// PAM launch core, and this Service has no Guacamole client, so
-		// brokerFor returns nil and launchPamSession fails closed with
-		// "no session broker is configured" — which is the point: reaching that
-		// refusal proves the bypassed token lookup found the row, the link was
-		// not refused as legacy, and the launch core was entered. A 404 would
-		// mean the belt swallowed the lookup (the failure v71 declined the belt
-		// to avoid); a 410 would mean the link had no entry to launch.
-		if w.Code != http.StatusServiceUnavailable {
-			t.Fatalf("redemption returned %d with no org on the context, want 503 "+
-				"(the launch core reached, no broker configured in this test). "+
-				"404 means the FORCE-RLS lookup found nothing and every vendor link has stopped "+
-				"redeeming; 410 means the link was refused as legacy (body: %s)",
-				w.Code, w.Body.String())
-		}
-
-		// The use is recorded, in the ISSUING tenant — not the redeemer's
-		// (there isn't one) and not the oldest org.
-		var n int
-		if err := db.Pool.QueryRow(ctx,
-			`SELECT COUNT(*) FROM temp_access_usage WHERE link_id = $1 AND org_id = $2`, linkA, orgA).Scan(&n); err != nil {
-			t.Fatalf("read usage: %v", err)
-		}
-		if n != 1 {
-			t.Fatalf("the vendor connected and %d usage rows landed in org A; the record of an "+
-				"outside party reaching an internal host must not go missing", n)
-		}
-		var uses int
-		if err := db.Pool.QueryRow(ctx,
-			`SELECT current_uses FROM temp_access_links WHERE id = $1`, linkA).Scan(&uses); err != nil {
-			t.Fatalf("read link: %v", err)
-		}
-		if uses != 1 {
-			t.Fatalf("current_uses = %d after one redemption, want 1 (the max-uses limit is "+
-				"enforced from this counter)", uses)
-		}
-	})
+	// The use history a link carries from before links were retired: one
+	// connection, recorded in the issuing tenant.
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO temp_access_usage (link_id, ip_address, user_agent, connected_at, org_id)
+		VALUES ($1, '203.0.113.7', 'vendor-browser/1.0', NOW(), $2)`, linkA, orgA); err != nil {
+		t.Fatalf("seed usage: %v", err)
+	}
 
 	t.Run("usage history is scoped by the query, not by statement order", func(t *testing.T) {
 		// Org B asking for org A's link id must get a 404 from the link check.

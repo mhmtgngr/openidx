@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,16 +17,13 @@ import (
 	"github.com/openidx/openidx/internal/migrations"
 )
 
-// Every temp_access.* event used to be a zap log line behind a comment saying
-// an implementation "would send to audit service". On the migrated schema,
-// through the real handlers: a redemption lands temp_access.used and, with no
-// broker here, temp_access.launch_failed in the issuing tenant's unified
-// trail with no actor and the redeemer's address; an expired link lands
-// temp_access.refused with its reason; an unknown token lands nothing; a
-// revocation lands temp_access.revoked with the administrator as actor. The
-// other tenant's trail carries none of it, and its administrator's query does
-// not see it.
-func TestTempAccessEventsLandInTheUnifiedAuditTrail(t *testing.T) {
+// Temporary access links are retired. On the migrated schema, through the
+// real handlers: opening any link -- live, expired or never issued -- gets the
+// 410 retirement page and writes nothing; revoking a link from its history
+// still lands temp_access.revoked with the administrator as actor in the
+// issuing tenant's unified trail. The other tenant's trail carries none of it,
+// and its administrator's query does not see it.
+func TestARetiredLinkOpensNothingAndItsRevocationIsAudited(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, cleanup := setupTestDB(t)
 	if db == nil {
@@ -100,7 +98,7 @@ func TestTempAccessEventsLandInTheUnifiedAuditTrail(t *testing.T) {
 		c.Request.Header.Set("User-Agent", "vendor-browser/1.0")
 		c.Request.RemoteAddr = "203.0.113.7:51234"
 		c.Params = append(c.Params, gin.Param{Key: "token", Value: token})
-		svc.handleUseTempAccess(c)
+		svc.handleRetiredTempAccess(c)
 		return w
 	}
 	type event struct {
@@ -142,56 +140,25 @@ func TestTempAccessEventsLandInTheUnifiedAuditTrail(t *testing.T) {
 		return n
 	}
 
-	// A redemption. 503: the launch core is reached and there is no broker in
-	// this test, which is the shape TestTempAccess_BeltAndUsageRecord pins.
-	if w := redeem(liveToken); w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("redemption: %d %s", w.Code, w.Body.String())
-	}
-	used := eventsOf("temp_access.used", liveLink)
-	if len(used) != 1 {
-		t.Fatalf("temp_access.used rows for the link: %d, want 1", len(used))
-	}
-	if used[0].orgID != orgA {
-		t.Errorf("temp_access.used filed under org %s, want the issuing org %s", used[0].orgID, orgA)
-	}
-	if used[0].userID != nil {
-		t.Errorf("temp_access.used names an actor %q; the redeemer is anonymous", *used[0].userID)
-	}
-	if used[0].actorIP != "203.0.113.7" {
-		t.Errorf("temp_access.used actor_ip = %q, want the redeemer's address", used[0].actorIP)
-	}
-	if got := used[0].details["issuer_id"]; got != issuer {
-		t.Errorf("temp_access.used issuer_id = %v, want %s", got, issuer)
-	}
-	if got := used[0].details["user_agent"]; got != "vendor-browser/1.0" {
-		t.Errorf("temp_access.used user_agent = %v", got)
-	}
-	failed := eventsOf("temp_access.launch_failed", liveLink)
-	if len(failed) != 1 || failed[0].details["code"] != "broker_unconfigured" {
-		t.Errorf("temp_access.launch_failed rows: %+v, want one with code broker_unconfigured", failed)
-	}
-
-	// An expired link is refused, and the refusal is a row with its reason.
-	if w := redeem(expiredToken); w.Code != http.StatusGone {
-		t.Fatalf("expired redemption: %d, want 410", w.Code)
-	}
-	refused := eventsOf("temp_access.refused", expiredLink)
-	if len(refused) != 1 || refused[0].details["reason"] != "expired" || refused[0].orgID != orgA {
-		t.Errorf("temp_access.refused rows: %+v, want one in org A with reason expired", refused)
-	}
-	if n := len(eventsOf("temp_access.used", expiredLink)); n != 0 {
-		t.Errorf("an expired link recorded %d uses", n)
-	}
-
-	// An unknown token names no link and lands nothing: the trail is not a
-	// place a stranger can write into by guessing.
+	// Links no longer redeem. A live link, an expired one and a token never
+	// issued get the same 410 page, and none of them touches the link or the
+	// trail: the page reads nothing, so it cannot tell a visitor which tokens
+	// exist, and a stranger cannot write into the trail by guessing.
 	before := tempEventsIn(orgA)
-	if w := redeem("no-such-" + suffix); w.Code != http.StatusNotFound {
-		t.Fatalf("unknown token: %d, want 404", w.Code)
+	for _, token := range []string{liveToken, expiredToken, "no-such-" + suffix} {
+		w := redeem(token)
+		if w.Code != http.StatusGone || !strings.Contains(w.Body.String(), "Retired") {
+			t.Fatalf("opening %s: %d %s, want the 410 retirement page", token, w.Code, w.Body.String())
+		}
 	}
 	if after := tempEventsIn(orgA); after != before {
-		t.Errorf("an unknown token added %d rows to org A's trail", after-before)
+		t.Errorf("opening retired links added %d rows to org A's trail", after-before)
 	}
+	var uses int
+	if err := db.Pool.QueryRow(ctx, `SELECT current_uses FROM temp_access_links WHERE id = $1`, liveLink).Scan(&uses); err != nil || uses != 0 {
+		t.Errorf("the live link's use count is %d (%v), want 0", uses, err)
+	}
+	_ = expiredLink
 
 	// A revocation by an administrator of org A, through the handler.
 	w := httptest.NewRecorder()
@@ -209,20 +176,12 @@ func TestTempAccessEventsLandInTheUnifiedAuditTrail(t *testing.T) {
 	if len(revoked) != 1 || revoked[0].userID == nil || *revoked[0].userID != admin || revoked[0].orgID != orgA {
 		t.Errorf("temp_access.revoked rows: %+v, want one in org A with the administrator as actor", revoked)
 	}
-	// And a redemption of the revoked link is refused with that reason.
-	if w := redeem(liveToken); w.Code != http.StatusForbidden {
-		t.Fatalf("revoked redemption: %d, want 403", w.Code)
-	}
-	if r := eventsOf("temp_access.refused", liveLink); len(r) != 1 || r[0].details["reason"] != "revoked" {
-		t.Errorf("temp_access.refused after revocation: %+v, want one with reason revoked", r)
-	}
-
 	// The other tenant's trail carries none of it, by column and by query.
 	if n := tempEventsIn(orgB); n != 0 {
 		t.Errorf("org B's trail carries %d temp access events", n)
 	}
 	res, err := svc.auditService.QueryEvents(orgctx.With(ctx, orgctx.Org{ID: orgB}),
-		&AuditQueryFilters{EventTypes: []string{"temp_access.used", "temp_access.refused", "temp_access.revoked"}, Limit: 50})
+		&AuditQueryFilters{EventTypes: []string{"temp_access.revoked"}, Limit: 50})
 	if err != nil {
 		t.Fatalf("query as org B: %v", err)
 	}
@@ -230,11 +189,11 @@ func TestTempAccessEventsLandInTheUnifiedAuditTrail(t *testing.T) {
 		t.Errorf("org B's administrator sees %d of org A's temp access events", len(res.Events))
 	}
 	res, err = svc.auditService.QueryEvents(orgctx.With(ctx, orgctx.Org{ID: orgA}),
-		&AuditQueryFilters{EventTypes: []string{"temp_access.used"}, Limit: 50})
+		&AuditQueryFilters{EventTypes: []string{"temp_access.revoked"}, Limit: 50})
 	if err != nil {
 		t.Fatalf("query as org A: %v", err)
 	}
 	if len(res.Events) == 0 {
-		t.Error("org A's administrator does not see the temp_access.used event on the Unified Audit query")
+		t.Error("org A's administrator does not see the temp_access.revoked event on the Unified Audit query")
 	}
 }

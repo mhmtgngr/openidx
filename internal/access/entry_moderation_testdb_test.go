@@ -269,10 +269,6 @@ func TestAModeratedEntryOpensOnlyWhileItsModeratorWatches(t *testing.T) {
 		`{"host":"md-db.example.test","principal":"deploy"}`); code != http.StatusForbidden || body["code"] != "moderated_entry_needs_broker" {
 		t.Errorf("an SSH certificate for a moderated entry: %d %v, want 403 moderated_entry_needs_broker", code, body)
 	}
-	if code, body := f.call(f.admin, http.MethodPost, "/temp-access",
-		fmt.Sprintf(`{"name":"md-link","pam_entry_id":%q,"duration_mins":30}`, mod), "admin"); code != http.StatusBadRequest || body["code"] != "moderated_entry_needs_broker" {
-		t.Errorf("a temporary access link to a moderated entry: %d %v, want 400 moderated_entry_needs_broker", code, body)
-	}
 	host := f.entry("md-apphost", "rdp", "ziti", 3389, `{}`)
 	f.exec(`UPDATE pam_entries SET require_moderator = true, require_approval = true WHERE id = $1`, host)
 	hostApproval := f.scalar(`INSERT INTO pam_entry_access_requests (org_id, entry_id, requester_id, reason, status, expires_at)

@@ -7013,7 +7013,8 @@ paths:
   /api/v1/access/temp-access:
     get:
       tags: [Temporary Access]
-      summary: List temp access
+      summary: List temp access (history)
+      description: Temporary access links are retired; none is issued or redeems. The links issued before remain listable, with their use history, until the table is exported and dropped.
       operationId: listTempAccess
       x-openidx-handler: internal/access.(*Service).handleListTempAccess
       responses:
@@ -7024,34 +7025,6 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '500':
-          $ref: '#/components/responses/ServerError'
-    post:
-      tags: [Temporary Access]
-      summary: Create temp access
-      operationId: createTempAccess
-      x-openidx-handler: internal/access.(*Service).handleCreateTempAccess
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '400':
-          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -9465,25 +9438,13 @@ paths:
           type: string
     get:
       tags: [Temporary Access]
-      summary: Use temp access
+      summary: Retired temp access link
+      description: Temporary access links are retired. Every token gets the same static page saying how vendor access works now; nothing is looked up.
       operationId: useTempAccess
-      x-openidx-handler: internal/access.(*Service).handleUseTempAccess
+      x-openidx-handler: internal/access.(*Service).handleRetiredTempAccess
       responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/ServerError'
+        '410':
+          description: The retirement page (text/html)
 
   # ---- Sponsors and moderators (third-party access framework, Phase 2) ----
 

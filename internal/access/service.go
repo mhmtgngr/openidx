@@ -988,13 +988,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/app-hosts/:entryId/agent", svc.requireAdminRole(), svc.handleWindowsAppHostLinkAgent)
 		api.DELETE("/pam/app-hosts/:entryId/agent", svc.requireAdminRole(), svc.handleWindowsAppHostUnlinkAgent)
 
-		// Temporary access links for support/vendor access
-		// PAM vendor access to internal SSH/RDP/VNC hosts is a privileged
-		// operation — gate management to admins, matching the guacamole PAM
-		// routes above. (The public token-redemption route is registered
-		// separately on the root router, without auth.)
+		// Temporary access links are retired (D2): none is issued and none
+		// redeems. Their history stays readable, and revocable, by admins
+		// until the table is exported and dropped.
 		api.GET("/temp-access", adminOnly, svc.handleListTempAccess)
-		api.POST("/temp-access", adminOnly, svc.handleCreateTempAccess)
 		api.GET("/temp-access/:id", adminOnly, svc.handleGetTempAccess)
 		api.DELETE("/temp-access/:id", adminOnly, svc.handleRevokeTempAccess)
 		api.GET("/temp-access/:id/usage", adminOnly, svc.handleGetTempAccessUsage)
@@ -1300,8 +1297,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 	// context exists). One param route avoids a gin static-vs-wildcard conflict.
 	router.GET("/downloads/:file", svc.handleAgentDownload)
 
-	// Temp access public endpoint (no auth - uses token)
-	router.GET("/temp-access/:token", svc.handleUseTempAccess)
+	// A retired temporary access link: the page says how access works now.
+	router.GET("/temp-access/:token", svc.handleRetiredTempAccess)
 
 	// Catch-all reverse proxy (must be last)
 	router.NoRoute(svc.handleProxy)

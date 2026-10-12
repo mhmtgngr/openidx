@@ -3683,108 +3683,20 @@ function RemoteAccessTab() {
   )
 }
 
-// ─── Temporary Access Links Section ──────────────────────────────────────────
+// ─── Temporary Access Links (retired) ────────────────────────────────────────
 
+// Temporary access links are retired: none is issued and none opens a session.
+// What the links issued before did stays visible here, read-only, until the
+// history is exported; a vendor's access is an engagement now. Nothing renders
+// once there is no history.
 function TempAccessLinksSection() {
-  const { toast } = useToast()
-  const queryClient = useQueryClient()
   const { t } = useTranslation()
-  const [createModal, setCreateModal] = useState(false)
-  const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<TempAccessLink | null>(null)
-
-  const [form, setForm] = useState({
-    name: '',
-    description: '',
-    pam_entry_id: '',
-    duration_mins: 120,
-    max_uses: 0,
-    allowed_ips: '',
-    notify_on_use: false,
-  })
-
-  // Fetch temp access links
-  const { data: linksData, isLoading } = useQuery({
+  const { data: linksData } = useQuery({
     queryKey: ['temp-access-links'],
-    queryFn: () => api.get<{ links: TempAccessLink[] }>('/api/v1/access/temp-access'),
+    queryFn: () => api.get<{ links: TempAccessLink[] | null }>('/api/v1/access/temp-access'),
   })
-
-  // The targets a link may point at. Only session entries can be brokered — a
-  // credential or a note has nothing to launch — and the server enforces that
-  // too, so this filter is for the operator's benefit rather than the gate.
-  const { data: entriesData } = useQuery({
-    queryKey: ['pam-entries', 'temp-access-targets'],
-    queryFn: () => api.pam.listEntries({}),
-  })
-  const sessionEntries = (entriesData?.entries || []).filter((e) => e.kind === 'session')
-
-  // Create mutation
-  const createMutation = useMutation({
-    mutationFn: (data: typeof form) => api.post<TempAccessLink>('/api/v1/access/temp-access', {
-      ...data,
-      duration_mins: Number(data.duration_mins),
-      max_uses: Number(data.max_uses),
-      allowed_ips: data.allowed_ips ? data.allowed_ips.split(',').map(ip => ip.trim()).filter(Boolean) : [],
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['temp-access-links'] })
-      setCreateModal(false)
-      resetForm()
-      toast({ title: t('pages.zitiNetwork.tempAccess.toast.created'), description: t('pages.zitiNetwork.tempAccess.toast.createdDesc') })
-    },
-    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.tempAccess.toast.createFailed'), variant: 'destructive' }),
-  })
-
-  // Revoke mutation
-  const revokeMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/access/temp-access/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['temp-access-links'] })
-      setDeleteTarget(null)
-      toast({ title: t('pages.zitiNetwork.tempAccess.toast.revoked') })
-    },
-    onError: () => toast({ title: t('common.error'), description: t('pages.zitiNetwork.tempAccess.toast.revokeFailed'), variant: 'destructive' }),
-  })
-
-  const resetForm = () => setForm({
-    name: '',
-    description: '',
-    pam_entry_id: '',
-    duration_mins: 120,
-    max_uses: 0,
-    allowed_ips: '',
-    notify_on_use: false,
-  })
-
-  const copyToClipboard = (text: string, id: string) => {
-    navigator.clipboard.writeText(text)
-    setCopiedId(id)
-    toast({ title: t('pages.zitiNetwork.tempAccess.toast.copied') })
-    setTimeout(() => setCopiedId(null), 2000)
-  }
-
   const links = linksData?.links || []
-
-  const getStatusBadge = (link: TempAccessLink) => {
-    const now = new Date()
-    const expires = new Date(link.expires_at)
-    if (link.status === 'revoked') return <Badge variant="destructive">{t('pages.zitiNetwork.tempAccess.revoked')}</Badge>
-    if (link.status === 'expired' || expires < now) return <Badge variant="secondary">{t('pages.zitiNetwork.tempAccess.expired')}</Badge>
-    if (link.max_uses > 0 && link.current_uses >= link.max_uses) return <Badge variant="secondary">{t('pages.zitiNetwork.tempAccess.used')}</Badge>
-    return <Badge className="bg-green-600">{t('pages.zitiNetwork.tempAccess.active')}</Badge>
-  }
-
-  const getTimeRemaining = (expiresAt: string) => {
-    const now = new Date()
-    const expires = new Date(expiresAt)
-    const diff = expires.getTime() - now.getTime()
-    if (diff <= 0) return t('pages.zitiNetwork.tempAccess.expired')
-    const hours = Math.floor(diff / (1000 * 60 * 60))
-    const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-    if (hours > 24) return t('pages.zitiNetwork.tempAccess.remainingDays', { d: Math.floor(hours / 24), h: hours % 24 })
-    if (hours > 0) return t('pages.zitiNetwork.tempAccess.remainingHours', { h: hours, m: mins })
-    return t('pages.zitiNetwork.tempAccess.remainingMinutes', { m: mins })
-  }
+  if (links.length === 0) return null
 
   const protocolIcon = (protocol: string) => {
     switch (protocol) {
@@ -3795,275 +3707,51 @@ function TempAccessLinksSection() {
     }
   }
 
-  const protocolColor = (protocol: string) => {
-    switch (protocol) {
-      case 'ssh': return 'bg-green-600'
-      case 'rdp': return 'bg-primary'
-      case 'vnc': return 'bg-purple-600'
-      default: return 'bg-gray-600'
-    }
-  }
-
   return (
     <div className="space-y-4" data-testid="temp-access-section">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Key className="h-5 w-5 text-muted-foreground" />
-          <h3 className="text-lg font-semibold">{t('pages.zitiNetwork.tempAccess.title')}</h3>
-          <Badge variant="outline" className="ml-2">{links.length}</Badge>
-        </div>
-        <Button size="sm" onClick={() => setCreateModal(true)}>
-          <Plus className="h-4 w-4 mr-1" />
-          {t('pages.zitiNetwork.tempAccess.create')}
-        </Button>
+      <div className="flex items-center gap-2">
+        <Key className="h-5 w-5 text-muted-foreground" />
+        <h3 className="text-lg font-semibold">{t('pages.zitiNetwork.tempAccess.historyTitle')}</h3>
+        <Badge variant="outline" className="ml-2">{links.length}</Badge>
       </div>
-
-      <p className="text-sm text-muted-foreground">
-        {t('pages.zitiNetwork.tempAccess.desc')}
-      </p>
-
-      {isLoading ? (
-        <Spinner />
-      ) : links.length === 0 ? (
-        <EmptyState
-          icon={Link2}
-          title={t('pages.zitiNetwork.tempAccess.emptyTitle')}
-          description={t('pages.zitiNetwork.tempAccess.emptyDesc')}
-        />
-      ) : (
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('pages.zitiNetwork.tempAccess.colName')}</TableHead>
-                <TableHead>{t('pages.zitiNetwork.tempAccess.colTarget')}</TableHead>
-                <TableHead>{t('pages.zitiNetwork.tempAccess.colStatus')}</TableHead>
-                <TableHead>{t('pages.zitiNetwork.tempAccess.colUsage')}</TableHead>
-                <TableHead>{t('pages.zitiNetwork.tempAccess.colExpires')}</TableHead>
-                <TableHead>{t('pages.zitiNetwork.tempAccess.colUrl')}</TableHead>
-                <TableHead className="w-[50px]"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {links.map((link) => (
-                <TableRow key={link.id}>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <div className={`p-1.5 rounded ${protocolColor(link.protocol)}`}>
-                        {protocolIcon(link.protocol)}
-                      </div>
-                      <div>
-                        <p className="font-medium">{link.name}</p>
-                        {link.description && (
-                          <p className="text-xs text-muted-foreground">{link.description}</p>
-                        )}
-                      </div>
+      <p className="text-sm text-muted-foreground">{t('pages.zitiNetwork.tempAccess.retired')}</p>
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('pages.zitiNetwork.tempAccess.colName')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.tempAccess.colTarget')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.tempAccess.colUsage')}</TableHead>
+              <TableHead>{t('pages.zitiNetwork.tempAccess.colIssued')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {links.map((link) => (
+              <TableRow key={link.id}>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    {protocolIcon(link.protocol)}
+                    <div>
+                      <p className="font-medium">{link.name}</p>
+                      <p className="text-xs text-muted-foreground">{link.created_by_email}</p>
                     </div>
-                  </TableCell>
-                  <TableCell>
-                    <code className="text-sm bg-muted px-1.5 py-0.5 rounded">
-                      {link.target_host}:{link.target_port}
-                    </code>
-                  </TableCell>
-                  <TableCell>{getStatusBadge(link)}</TableCell>
-                  <TableCell>
-                    <span className="text-sm">
-                      {link.max_uses > 0
-                        ? t('pages.zitiNetwork.tempAccess.usesOfMax', { used: link.current_uses, max: link.max_uses })
-                        : t('pages.zitiNetwork.tempAccess.uses', { used: link.current_uses })}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="text-sm">{getTimeRemaining(link.expires_at)}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      <code className="text-xs bg-muted px-1.5 py-0.5 rounded max-w-[200px] truncate">
-                        {link.access_url}
-                      </code>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => copyToClipboard(link.access_url, link.id)}
-                      >
-                        {copiedId === link.id ? (
-                          <CheckCircle className="h-3.5 w-3.5 text-green-600" />
-                        ) : (
-                          <Copy className="h-3.5 w-3.5" />
-                        )}
-                      </Button>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => copyToClipboard(link.access_url, link.id)}>
-                          <Copy className="h-4 w-4 mr-2" />
-                          {t('pages.zitiNetwork.tempAccess.copyUrl')}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => window.open(link.access_url, '_blank')}>
-                          <ExternalLink className="h-4 w-4 mr-2" />
-                          {t('pages.zitiNetwork.tempAccess.openLink')}
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          className="text-red-600"
-                          onClick={() => setDeleteTarget(link)}
-                          disabled={link.status !== 'active'}
-                        >
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          {t('pages.zitiNetwork.tempAccess.revokeAccess')}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
-      )}
-
-      {/* Create Dialog */}
-      <Dialog open={createModal} onOpenChange={setCreateModal}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{t('pages.zitiNetwork.tempAccess.dialogTitle')}</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(form) }} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
-                <Label>{t('pages.zitiNetwork.tempAccess.name')}</Label>
-                <Input
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder={t('pages.zitiNetwork.tempAccess.namePlaceholder')}
-                  required
-                />
-              </div>
-              <div className="col-span-2">
-                <Label>{t('pages.zitiNetwork.tempAccess.description')}</Label>
-                <Input
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  placeholder={t('pages.zitiNetwork.tempAccess.descriptionPlaceholder')}
-                />
-              </div>
-              {/* The target is a PAM connection, not a hostname typed here.
-                  That entry carries the reach mode, the recording flag and the
-                  vault credential, and redemption launches it through the same
-                  brokered path the console's own Connect button uses — which is
-                  what a link typed as host+port could never inherit. */}
-              <div className="col-span-2">
-                <Label htmlFor="ziti-network-temp-entry">{t('pages.zitiNetwork.tempAccess.targetEntry')}</Label>
-                <select id="ziti-network-temp-entry"
-                  value={form.pam_entry_id}
-                  onChange={(e) => setForm({ ...form, pam_entry_id: e.target.value })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  required
-                >
-                  <option value="">{t('pages.zitiNetwork.tempAccess.targetEntryPlaceholder')}</option>
-                  {sessionEntries.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name} — {e.entry_type.toUpperCase()} {e.hostname}{e.port ? `:${e.port}` : ''}
-                      {e.ziti_enabled ? ' · ZTNA' : ''}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t('pages.zitiNetwork.tempAccess.targetEntryHint')}
-                </p>
-              </div>
-              <div>
-                <Label htmlFor="ziti-network-duration">{t('pages.zitiNetwork.tempAccess.duration')}</Label>
-                <Input id="ziti-network-duration"
-                  type="number"
-                  value={form.duration_mins}
-                  onChange={(e) => setForm({ ...form, duration_mins: parseInt(e.target.value) || 120 })}
-                  min={5}
-                  max={10080}
-                  required
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  {form.duration_mins >= 60
-                    ? t('pages.zitiNetwork.tempAccess.remainingHours', { h: Math.floor(form.duration_mins / 60), m: form.duration_mins % 60 })
-                    : t('pages.zitiNetwork.tempAccess.remainingMinutes', { m: form.duration_mins })}
-                </p>
-              </div>
-              <div>
-                <Label htmlFor="ziti-network-max-uses">{t('pages.zitiNetwork.tempAccess.maxUses')}</Label>
-                <Input id="ziti-network-max-uses"
-                  type="number"
-                  value={form.max_uses}
-                  onChange={(e) => setForm({ ...form, max_uses: parseInt(e.target.value) || 0 })}
-                  min={0}
-                />
-              </div>
-              <div className="col-span-2">
-                <Label htmlFor="ziti-network-allowed-ips">{t('pages.zitiNetwork.tempAccess.allowedIps')}</Label>
-                <Input
-                  id="ziti-network-allowed-ips"
-                  value={form.allowed_ips}
-                  onChange={(e) => setForm({ ...form, allowed_ips: e.target.value })}
-                  placeholder="203.0.113.9, 198.51.100.0/24"
-                />
-              </div>
-              <div className="col-span-2 flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <Switch id="ziti-network-notify-on-use"
-                    checked={form.notify_on_use}
-                    onCheckedChange={(v) => setForm({ ...form, notify_on_use: v })}
-                  />
-                  <Label htmlFor="ziti-network-notify-on-use" className="text-sm">{t('pages.zitiNetwork.tempAccess.notifyOnUse')}</Label>
-                </div>
-                {form.notify_on_use && (
-                  <span className="text-xs text-muted-foreground">
-                    {t('pages.zitiNetwork.tempAccess.notifyRecipient')}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <code className="text-sm bg-muted px-1.5 py-0.5 rounded">{link.target_host}:{link.target_port}</code>
+                </TableCell>
+                <TableCell>
+                  <span className="text-sm">
+                    {t('pages.zitiNetwork.tempAccess.uses', { used: link.current_uses })}
+                    {link.last_used_at && ` · ${new Date(link.last_used_at).toLocaleString()}`}
                   </span>
-                )}
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="outline" onClick={() => { setCreateModal(false); resetForm() }}>
-                {t('common.cancel')}
-              </Button>
-              <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? t('pages.zitiNetwork.tempAccess.creating') : t('pages.zitiNetwork.tempAccess.submit')}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Revoke Confirmation */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('pages.zitiNetwork.tempAccess.revokeTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('pages.zitiNetwork.tempAccess.revokeDesc', { name: deleteTarget?.name ?? '' })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-600 hover:bg-red-700"
-              onClick={() => deleteTarget && revokeMutation.mutate(deleteTarget.id)}
-            >
-              {t('pages.zitiNetwork.tempAccess.revokeAccess')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+                </TableCell>
+                <TableCell className="text-sm">{new Date(link.created_at).toLocaleString()}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
     </div>
   )
 }
