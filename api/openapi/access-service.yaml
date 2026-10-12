@@ -5856,6 +5856,67 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/access/remote-support/sponsored/sessions:
+    get:
+      tags: [Remote Support]
+      summary: Vendor support sessions I sponsor
+      description: The live vendor remote-support sessions whose technician, or whose engagement, the caller sponsors, with each one's read-only watch path. Empty for anyone who sponsors no one.
+      operationId: listSponsoredSupportSessions
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleSponsorListSessions
+      responses:
+        '200':
+          description: Success
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sponsored/sessions/{id}/watch:
+    get:
+      tags: [Remote Support]
+      summary: Watch a vendor support session (read-only)
+      description: The sponsor's viewer WebSocket. It receives the device's relay frames; the broker forwards nothing the viewer sends except a keyframe request, so the device cannot be driven from it.
+      operationId: watchSponsoredSupportSession
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleSponsorWatchWS
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '101':
+          description: Switching protocols
+        '404':
+          description: Not a live vendor session the caller sponsors
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sponsored/sessions/{id}/end:
+    post:
+      tags: [Remote Support]
+      summary: End a vendor support session I sponsor
+      description: Ends the session and closes the technician's, the device's and every watcher's connection. Asks for a fresh second factor.
+      operationId: endSponsoredSupportSession
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleSponsorEndSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Ended
+        '404':
+          description: Not a live vendor session the caller sponsors
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /api/v1/access/my/ziti/services:
     get:
       tags: [My Access]

@@ -10,6 +10,22 @@ const en = {
   // dialog every destructive action routes through -- stayed English on a
   // console that is otherwise translated.
   components: {
+    sponsoredSupport: {
+      title: 'Vendor support sessions',
+      description: 'Live remote-support sessions of the vendor technicians you sponsor. Watching is view-only; ending closes the session for everyone.',
+      technician: 'Technician',
+      device: 'Device',
+      engagement: 'Engagement',
+      started: 'Started',
+      actions: 'Actions',
+      awaitingConsent: 'Awaiting consent',
+      watch: 'Watch',
+      end: 'End',
+      ended: 'The support session was ended',
+      endFailed: 'Could not end the support session',
+      watchTitle: '{{technician}} on {{device}}',
+      watchDescription: 'View only: nothing you do here reaches the device.',
+    },
     vendorSupport: {
       start: 'Start support',
       failed: 'Could not start the support session',

@@ -8,6 +8,22 @@ const tr: typeof en = {
     label: 'Dil',
   },
   components: {
+    sponsoredSupport: {
+      title: 'Tedarikçi destek oturumları',
+      description: 'Sponsoru olduğunuz tedarikçi teknisyenlerinin canlı uzaktan destek oturumları. İzleme yalnızca görüntülemedir; sonlandırmak oturumu herkes için kapatır.',
+      technician: 'Teknisyen',
+      device: 'Cihaz',
+      engagement: 'Engagement',
+      started: 'Başlangıç',
+      actions: 'İşlemler',
+      awaitingConsent: 'Onay bekleniyor',
+      watch: 'İzle',
+      end: 'Sonlandır',
+      ended: 'Destek oturumu sonlandırıldı',
+      endFailed: 'Destek oturumu sonlandırılamadı',
+      watchTitle: '{{technician}} — {{device}}',
+      watchDescription: 'Yalnızca görüntüleme: burada yaptığınız hiçbir şey cihaza ulaşmaz.',
+    },
     vendorSupport: {
       start: 'Desteği başlat',
       failed: 'Destek oturumu başlatılamadı',
