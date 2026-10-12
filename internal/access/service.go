@@ -1143,8 +1143,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// (Phase 3c): the caller's own sessions only, never the operator tier.
 		remoteSupport.RegisterRemoteSupportVendorRoutes(api, svc.requireFreshMFA("remote_support.vendor_start_session"))
 		// The technician's sponsor watches (read-only in the broker) and may
-		// end their live sessions (Phase 3e).
-		remoteSupport.RegisterRemoteSupportSponsorRoutes(api, svc.requireFreshMFA("remote_support.sponsor_end_session"))
+		// end their live sessions (Phase 3e). Watching takes a ticket minted
+		// behind its own step-up, as a PAM sponsor's watch does.
+		remoteSupport.RegisterRemoteSupportSponsorRoutes(api, svc.requireFreshMFA("remote_support.sponsor_watch"), svc.requireFreshMFA("remote_support.sponsor_end_session"))
 		remoteSupport.StartJanitor(context.Background(), 5*time.Minute, time.Minute)
 		if svc.guacamoleClient != nil {
 			remoteSupport.SetGuacamoleClient(svc.guacamoleClient)

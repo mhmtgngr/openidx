@@ -23,6 +23,7 @@ const en = {
       end: 'End',
       ended: 'The support session was ended',
       endFailed: 'Could not end the support session',
+      watchFailed: 'Could not start watching the support session',
       watchTitle: '{{technician}} on {{device}}',
       watchDescription: 'View only: nothing you do here reaches the device.',
     },
@@ -308,6 +309,7 @@ const en = {
       popOutHint: 'Open in a separate window (great for a second monitor)',
       endSession: 'End session',
       screenLabel: 'Remote screen. Keyboard and pointer input is sent to the remote machine.',
+      reconnectRefused: 'The connection dropped and could not be reopened. Close the viewer and open it again.',
     },
     remoteSupportViewer: {
       controlActiveHint: 'You are controlling the device — click to release',
@@ -321,6 +323,7 @@ const en = {
       fullscreenHint: 'Fullscreen (Esc to exit) — best for pixel-accurate control',
       endSession: 'End session',
       screenLabel: 'Remote screen. Keyboard and pointer input is sent to the remote machine.',
+      reconnectRefused: 'The connection dropped and could not be reopened. Close the viewer and open it again.',
       inputHelp: 'Tap = single press · drag = swipe · Esc = back · Enter / Backspace / Tab pass through · arrows + page keys need the OpenIDX keyboard active on the device.',
       viewOnlyHelp: 'View-only — input is disabled for this session.',
       typePlaceholder: 'Type and press Enter to inject into the focused field…',
@@ -4910,6 +4913,14 @@ const en = {
       },
       openViewer: 'Open viewer',
       downloadRecording: 'Download recording ({{size}})',
+      playRecording: 'Play recording',
+      player: {
+        title: 'Recording of session {{id}}',
+        description: 'Played from the stored recording. Download keeps a copy.',
+        loading: 'Loading the recording…',
+        failed: 'The recording could not be loaded',
+        download: 'Download',
+      },
       confirmRelease: {
         title: 'Release legal hold on this recording?',
         description:

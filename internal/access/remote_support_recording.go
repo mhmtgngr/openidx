@@ -546,6 +546,12 @@ func (h *RemoteSupportHandler) HandleFinalizeRecording(c *gin.Context) {
 // served to anyone who knew its session id. There is no owner check beyond the
 // organization: reviewing another operator's session is what the recording
 // list on the Remote Support page is for.
+//
+// A vendor session is recorded by the broker as IVF (VP8 frames, as the relay
+// carried them); a staff session by the viewer's browser as WebM. The IVF is
+// served remuxed to WebM (remote_support_webm.go) so the console can play it;
+// ?format=ivf serves the stored original byte for byte, and so does a
+// recording the remux cannot index, rather than serving nothing.
 func (h *RemoteSupportHandler) HandleDownloadRecording(c *gin.Context) {
 	if h.recordingStore == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "recording not configured"})
@@ -556,6 +562,15 @@ func (h *RemoteSupportHandler) HandleDownloadRecording(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "recording not found"})
 		return
 	}
+	var format string
+	if err := h.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT recording_format FROM remote_support_sessions WHERE id = $1 AND org_id = $2`,
+		sessionID, remoteSupportOrg(c)).Scan(&format); err != nil {
+		format = ""
+	}
+	if format == "ivf" && c.Query("format") != "ivf" && h.serveIVFAsWebM(c, sessionID) {
+		return
+	}
 	reader, size, err := h.recordingStore.Open(sessionID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "recording not found"})
@@ -563,13 +578,8 @@ func (h *RemoteSupportHandler) HandleDownloadRecording(c *gin.Context) {
 	}
 	defer reader.Close()
 
-	// A vendor session is recorded by the broker as IVF (VP8 frames, as the
-	// relay carried them); a staff session by the viewer's browser as WebM.
 	filename, contentType := "openidx-recording-"+sessionID+".webm", "video/webm"
-	var format string
-	if err := h.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT recording_format FROM remote_support_sessions WHERE id = $1 AND org_id = $2`,
-		sessionID, remoteSupportOrg(c)).Scan(&format); err == nil && format == "ivf" {
+	if format == "ivf" {
 		filename, contentType = "openidx-recording-"+sessionID+".ivf", "video/x-ivf"
 	}
 	c.Header("Content-Type", contentType)
@@ -585,4 +595,36 @@ func (h *RemoteSupportHandler) HandleDownloadRecording(c *gin.Context) {
 		h.logger.Warn("HandleDownloadRecording: copy failed",
 			logsafe.String("session_id", sessionID), zap.Error(err))
 	}
+}
+
+// serveIVFAsWebM answers with the session's IVF recording remuxed to WebM,
+// reading the store twice: once for the index, once for the frames. It
+// reports false, having written nothing, when the recording cannot be
+// indexed, so the caller serves the original instead.
+func (h *RemoteSupportHandler) serveIVFAsWebM(c *gin.Context, sessionID string) bool {
+	scan, _, err := h.recordingStore.Open(sessionID)
+	if err != nil {
+		return false
+	}
+	ix, err := scanIVF(scan)
+	_ = scan.Close()
+	if err != nil {
+		h.logger.Warn("recording: the IVF could not be indexed for WebM; serving the original",
+			logsafe.String("session_id", sessionID), zap.Error(err))
+		return false
+	}
+	frames, _, err := h.recordingStore.Open(sessionID)
+	if err != nil {
+		return false
+	}
+	defer frames.Close()
+	layout := newWebMLayout(ix)
+	c.Header("Content-Type", "video/webm")
+	c.Header("Content-Disposition", `attachment; filename="openidx-recording-`+sessionID+`.webm"`)
+	c.Header("Content-Length", strconv.FormatInt(layout.size, 10))
+	if err := layout.writeTo(c.Writer, frames); err != nil {
+		h.logger.Warn("recording: the WebM remux failed part way",
+			logsafe.String("session_id", sessionID), zap.Error(err))
+	}
+	return true
 }

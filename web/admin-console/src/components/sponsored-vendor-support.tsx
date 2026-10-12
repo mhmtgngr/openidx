@@ -18,6 +18,12 @@ import { useToast } from '../hooks/use-toast'
 // read-only in the broker: whatever this viewer sends, the device receives
 // only keyframe requests from it. Nothing renders for someone who sponsors no
 // one.
+//
+// Watching and ending each ask for a fresh second factor on the server. The
+// socket cannot ask, so Watch first fetches a one-use ticket (POST
+// .../watch-ticket, which carries the step-up) and opens the socket with the
+// path it answers. A step-up refusal is shown in the server's own words, as
+// the session queue does.
 
 export interface SponsoredSupportSession {
   id: string
@@ -32,15 +38,39 @@ export interface SponsoredSupportSession {
   watch_ws: string
 }
 
+interface WatchTicket {
+  ticket: string
+  expires_in: number
+  watch_ws: string
+}
+
+type ApiFailure = { response?: { data?: { error?: string; error_description?: string } } }
+
+// A step-up refusal says what is needed in error_description; anything else
+// in error.
+function failureText(err: unknown, fallback: string): string {
+  return (err as ApiFailure)?.response?.data?.error_description || apiErrorText(err, fallback)
+}
+
+const watchTicket = (id: string) =>
+  api.post<WatchTicket>(`/api/v1/access/remote-support/sponsored/sessions/${id}/watch-ticket`, {})
+
+const wsURL = (path: string) => baseURL.replace(/^http/, 'ws') + path
+
 export function SponsoredVendorSupport() {
   const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
-  const [watching, setWatching] = useState<SponsoredSupportSession | null>(null)
+  const [watching, setWatching] = useState<{ session: SponsoredSupportSession; wsPath: string } | null>(null)
   const { data } = useQuery({
     queryKey: ['sponsored-support-sessions'],
     queryFn: () => api.get<{ sessions: SponsoredSupportSession[] }>('/api/v1/access/remote-support/sponsored/sessions'),
     refetchInterval: 30_000,
+  })
+  const watch = useMutation({
+    mutationFn: (s: SponsoredSupportSession) => watchTicket(s.id),
+    onSuccess: (res, s) => setWatching({ session: s, wsPath: res.watch_ws }),
+    onError: (err) => toast({ title: t('common.error'), description: failureText(err, t('components.sponsoredSupport.watchFailed')), variant: 'destructive' }),
   })
   const end = useMutation({
     mutationFn: (id: string) => api.post(`/api/v1/access/remote-support/sponsored/sessions/${id}/end`, {}),
@@ -49,7 +79,7 @@ export function SponsoredVendorSupport() {
       queryClient.invalidateQueries({ queryKey: ['sponsored-support-sessions'] })
       toast({ title: t('common.success'), description: t('components.sponsoredSupport.ended'), variant: 'success' })
     },
-    onError: (err) => toast({ title: t('common.error'), description: apiErrorText(err, t('components.sponsoredSupport.endFailed')), variant: 'destructive' }),
+    onError: (err) => toast({ title: t('common.error'), description: failureText(err, t('components.sponsoredSupport.endFailed')), variant: 'destructive' }),
   })
   const sessions = data?.sessions ?? []
   if (sessions.length === 0) return null
@@ -85,7 +115,7 @@ export function SponsoredVendorSupport() {
                 <TableCell>{new Date(s.started_at).toLocaleString()}</TableCell>
                 <TableCell>
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setWatching(s)}>
+                    <Button variant="outline" size="sm" disabled={watch.isPending} onClick={() => watch.mutate(s)}>
                       <Eye className="h-3 w-3 mr-1" />{t('components.sponsoredSupport.watch')}
                     </Button>
                     <Button variant="destructive" size="sm" disabled={end.isPending} onClick={() => end.mutate(s.id)}>
@@ -102,10 +132,17 @@ export function SponsoredVendorSupport() {
         <Dialog open onOpenChange={(o) => { if (!o) setWatching(null) }}>
           <DialogContent className="max-w-6xl" onOpenAutoFocus={(e) => e.preventDefault()}>
             <DialogHeader>
-              <DialogTitle>{t('components.sponsoredSupport.watchTitle', { technician: watching.technician, device: watching.device_name })}</DialogTitle>
+              <DialogTitle>{t('components.sponsoredSupport.watchTitle', { technician: watching.session.technician, device: watching.session.device_name })}</DialogTitle>
               <DialogDescription>{t('components.sponsoredSupport.watchDescription')}</DialogDescription>
             </DialogHeader>
-            <RelayRenderer wsUrl={baseURL.replace(/^http/, 'ws') + watching.watch_ws} mode="view" onEnd={() => end.mutate(watching.id)} />
+            {/* A ticket opens one socket, so each reconnect asks for another
+                (inside the step-up's freshness window it asks nothing more). */}
+            <RelayRenderer
+              wsUrl={wsURL(watching.wsPath)}
+              resolveWsUrl={async () => wsURL((await watchTicket(watching.session.id)).watch_ws)}
+              mode="view"
+              onEnd={() => end.mutate(watching.session.id)}
+            />
           </DialogContent>
         </Dialog>
       )}

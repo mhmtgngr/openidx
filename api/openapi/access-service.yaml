@@ -5875,7 +5875,12 @@ paths:
     get:
       tags: [Remote Support]
       summary: Watch a vendor support session (read-only)
-      description: The sponsor's viewer WebSocket. It receives the device's relay frames; the broker forwards nothing the viewer sends except a keyframe request, so the device cannot be driven from it.
+      description: >-
+        The sponsor's viewer WebSocket. It receives the device's relay frames;
+        the broker forwards nothing the viewer sends except a keyframe request,
+        so the device cannot be driven from it. Opens only with a ticket from
+        POST .../watch-ticket minted for this session and this caller, which
+        the connection spends.
       operationId: watchSponsoredSupportSession
       x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleSponsorWatchWS
       parameters:
@@ -5883,13 +5888,60 @@ paths:
           in: path
           required: true
           schema: {type: string, format: uuid}
+        - name: ticket
+          in: query
+          required: true
+          description: A one-use watch ticket from POST .../watch-ticket.
+          schema: {type: string}
       responses:
         '101':
           description: Switching protocols
+        '403':
+          description: >-
+            No ticket, or one that is spent, expired, or minted for another
+            session or caller (code watch_ticket_required).
         '404':
           description: Not a live vendor session the caller sponsors
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sponsored/sessions/{id}/watch-ticket:
+    post:
+      tags: [Remote Support]
+      summary: Get a ticket to watch a vendor support session I sponsor
+      description: >-
+        Mints a ticket that opens the read-only watch socket once: single use,
+        valid for 60 seconds, bound to the session and the caller. Asks for a
+        fresh second factor (remote_support.sponsor_watch), as watching a PAM
+        session does; the socket itself cannot ask, so the step-up sits here.
+        Answers the ticket, its lifetime in seconds (expires_in) and the socket
+        path with the ticket on it (watch_ws).
+      operationId: mintSponsoredSupportWatchTicket
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleSponsorWatchTicket
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: The ticket
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticket: {type: string}
+                  expires_in: {type: integer}
+                  watch_ws: {type: string}
+        '404':
+          description: Not a live vendor session the caller sponsors
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -6410,17 +6462,34 @@ paths:
       - $ref: '#/components/parameters/IdPath'
     get:
       tags: [Remote Support]
-      summary: Handle download recording
+      summary: Download a session recording
+      description: >-
+        The session's recording as WebM (VP8), playable in a browser. A staff
+        session's recording is stored as WebM by the viewer's browser and served
+        as stored. A vendor session's is recorded by the broker as IVF and served
+        remuxed to WebM with an exact Content-Length (the frames are not
+        re-encoded); format=ivf serves the stored IVF original instead, and so
+        does a recording the remux cannot read.
       operationId: handleDownloadRecording
       x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleDownloadRecording
+      parameters:
+        - name: format
+          in: query
+          required: false
+          description: ivf for a vendor session's stored original; omitted, WebM.
+          schema: {type: string, enum: [ivf]}
       responses:
         '200':
-          description: Success
+          description: The recording
           content:
-            application/json:
+            video/webm:
               schema:
-                type: object
-                additionalProperties: true
+                type: string
+                format: binary
+            video/x-ivf:
+              schema:
+                type: string
+                format: binary
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

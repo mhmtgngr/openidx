@@ -135,7 +135,8 @@ func TestASponsorSeesAndEndsTheirVendorsSupportSession(t *testing.T) {
 			c.Set("user_id", user)
 			c.Next()
 		})
-		h.RegisterRemoteSupportSponsorRoutes(r.Group(""), func(c *gin.Context) { c.Next() })
+		pass := func(c *gin.Context) { c.Next() }
+		h.RegisterRemoteSupportSponsorRoutes(r.Group(""), pass, pass)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(method, path, nil))
 		out := map[string]interface{}{}
@@ -164,6 +165,41 @@ func TestASponsorSeesAndEndsTheirVendorsSupportSession(t *testing.T) {
 		if code, _ := call(who, http.MethodPost, "/remote-support/sponsored/sessions/"+id+"/end"); code != http.StatusNotFound {
 			t.Fatalf("a non-sponsor ending = %d, want 404", code)
 		}
+		if code, _ := call(who, http.MethodPost, "/remote-support/sponsored/sessions/"+id+"/watch-ticket"); code != http.StatusNotFound {
+			t.Fatalf("a non-sponsor asking for a watch ticket = %d, want 404", code)
+		}
+	}
+
+	// Watching takes a ticket: none, or one minted for someone else, is a
+	// 403; the sponsor's own opens the socket (the recorder is not a
+	// WebSocket client, so the upgrade itself answers 400) exactly once.
+	watch := "/remote-support/sponsored/sessions/" + id + "/watch"
+	if code, body := call(f.admin, http.MethodGet, watch); code != http.StatusForbidden || body["code"] != "watch_ticket_required" {
+		t.Fatalf("watching without a ticket = %d %v, want 403 watch_ticket_required", code, body)
+	}
+	ticketFor := func(who string) (string, string) {
+		t.Helper()
+		code, body := call(who, http.MethodPost, "/remote-support/sponsored/sessions/"+id+"/watch-ticket")
+		tok, _ := body["ticket"].(string)
+		ws, _ := body["watch_ws"].(string)
+		if code != http.StatusOK || tok == "" || ws != sponsorSessionPath(id)+"?ticket="+tok || body["expires_in"] != float64(60) {
+			t.Fatalf("a sponsor's watch ticket = %d %v", code, body)
+		}
+		return tok, ws
+	}
+	tok, _ := ticketFor(f.admin)
+	if code, _ := call(engSponsor, http.MethodGet, watch+"?ticket="+tok); code != http.StatusForbidden {
+		t.Fatalf("another sponsor presenting the ticket = %d, want 403", code)
+	}
+	if code, _ := call(f.admin, http.MethodGet, watch+"?ticket="+tok); code != http.StatusForbidden {
+		t.Fatalf("a ticket already presented once = %d, want 403: tickets are spent on first use", code)
+	}
+	tok, _ = ticketFor(f.admin)
+	if code, _ := call(f.admin, http.MethodGet, watch+"?ticket="+tok); code != http.StatusBadRequest {
+		t.Fatalf("the sponsor's own ticket = %d, want the upgrade attempted (400 from a non-WebSocket client)", code)
+	}
+	if code, _ := call(f.admin, http.MethodGet, watch+"?ticket="+tok); code != http.StatusForbidden {
+		t.Fatalf("reusing a spent ticket = %d, want 403", code)
 	}
 
 	if code, body := call(engSponsor, http.MethodPost, "/remote-support/sponsored/sessions/"+id+"/end"); code != http.StatusOK {
@@ -174,5 +210,79 @@ func TestASponsorSeesAndEndsTheirVendorsSupportSession(t *testing.T) {
 	}
 	if code, _ := call(f.admin, http.MethodGet, "/remote-support/sponsored/sessions/"+id+"/watch"); code != http.StatusNotFound {
 		t.Fatalf("watching an ended session = %d, want 404", code)
+	}
+}
+
+// A vendor session going live tells its sponsors -- the technician's and the
+// engagement's, once each, with a link to Access requests. It happens on the
+// flip to active only, so a second markActive tells no one again, and a staff
+// session (no engagement) tells no one at all.
+func TestAVendorSupportSessionGoingLiveTellsItsSponsors(t *testing.T) {
+	f := newExternalPamFixture(t)
+	agent := "agent-sn-" + f.suffix
+	f.exec(`INSERT INTO enrolled_agents (agent_id, device_id, status, auth_token_hash, org_id, metadata)
+		VALUES ($1, $1, 'active', 'x', $2, '{"hostname": "PLANT-PC"}')`, agent, f.org)
+	vendor := f.scalar(`SELECT vendor_org_id::text FROM users WHERE id = $1`, f.external)
+	engSponsor := f.scalar(`INSERT INTO users (org_id, username, email) VALUES ($1, $2::text, $2::text || '@example.test') RETURNING id::text`,
+		f.org, "xp-engsponsor-"+f.suffix)
+	eng := f.scalar(`INSERT INTO vendor_engagements (org_id, vendor_org_id, title, sponsor_user_id, starts_at, ends_at)
+		VALUES ($1, $2, 'Printer fix', $3, NOW() - interval '1 minute', NOW() + interval '2 hours') RETURNING id::text`, f.org, vendor, engSponsor)
+	id := f.scalar(`INSERT INTO remote_support_sessions (agent_id, admin_user_id, status, mode, org_id, consent_required, consent_status,
+		    transport, engagement_id, expires_at, server_recording, recording_format)
+		VALUES ($1, $2, 'pending', 'interactive', $3, true, 'granted', 'relay', $4, NOW() + interval '1 hour', true, 'ivf')
+		RETURNING id::text`, agent, f.external, f.org, eng)
+	staff := f.scalar(`INSERT INTO remote_support_sessions (agent_id, admin_user_id, status, mode, org_id)
+		VALUES ($1, $2, 'pending', 'interactive', $3) RETURNING id::text`, agent+"-staff", f.operator, f.org)
+
+	h := NewRemoteSupportHandler(zap.NewNop(), f.db, nil)
+	told := func(sponsor, session string) int {
+		t.Helper()
+		var n int
+		if err := f.db.Pool.QueryRow(f.octx(), `
+			SELECT COUNT(*) FROM notifications
+			 WHERE user_id = $1 AND type = 'sponsored_access' AND link = '/access-requests'
+			   AND metadata->>'session_id' = $2 AND metadata->>'kind' = 'remote_support_session_started'`,
+			sponsor, session).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	waitTold := func(sponsor string) {
+		t.Helper()
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+			if told(sponsor, id) > 0 {
+				return
+			}
+		}
+		t.Fatalf("sponsor %s was not told the session went live", sponsor)
+	}
+
+	h.markActive(f.octx(), id)
+	waitTold(f.admin)
+	waitTold(engSponsor)
+	if got := f.scalar(`SELECT body FROM notifications WHERE user_id = $1 AND metadata->>'session_id' = $2`, f.admin, id); got !=
+		f.externalAccount+" is connected to PLANT-PC for Printer fix. The session is recorded; you can watch it or end it." {
+		t.Fatalf("notification body = %q", got)
+	}
+
+	// Already active: no second flip, no second notification. A staff
+	// session goes live and tells no one, even asked directly.
+	h.markActive(f.octx(), id)
+	h.markActive(f.octx(), staff)
+	h.notifySponsorsOfSupportSession(f.octx(), f.org, staff)
+	time.Sleep(300 * time.Millisecond)
+	if a, e := told(f.admin, id), told(engSponsor, id); a != 1 || e != 1 {
+		t.Fatalf("after a second markActive the sponsors hold %d and %d notifications, want 1 each", a, e)
+	}
+	if n := f.scalar(`SELECT COUNT(*)::text FROM notifications WHERE metadata->>'session_id' = $1`, staff); n != "0" {
+		t.Fatalf("a staff session told %s people, want no one", n)
+	}
+
+	// One person sponsoring both the technician and the engagement is told
+	// once per go-live, not twice.
+	f.exec(`UPDATE vendor_engagements SET sponsor_user_id = $2 WHERE id = $1`, eng, f.admin)
+	h.notifySponsorsOfSupportSession(f.octx(), f.org, id)
+	if n := told(f.admin, id); n != 2 {
+		t.Fatalf("a sponsor of both holds %d notifications after one more go-live, want 2 (one per go-live)", n)
 	}
 }

@@ -77,6 +77,10 @@ type RemoteSupportHandler struct {
 	// session is not broker-recorded".
 	recMu     sync.Mutex
 	recorders map[string]*ivfRecorder
+
+	// watchTickets are the sponsors' one-use watch tickets
+	// (remote_support_sponsor.go).
+	watchTickets watchTicketStore
 }
 
 // NewRemoteSupportHandler constructs the handler. auditAgent is optional;
@@ -1139,13 +1143,20 @@ func (h *RemoteSupportHandler) markActive(ctx context.Context, sessionID string)
 	// activity stamp this statement sets. Auditing it as a success afterwards
 	// would repeat the mistake the consent denial made -- a record of
 	// something the database does not hold.
+	//
+	// The flip RETURNs the session's tenant and engagement, so a vendor
+	// session's sponsors are told the moment it goes live (and only then:
+	// a session already active returns no row).
+	var org, engagement string
 	//orgscope:ignore broker signalling path — no request context, keyed on the session id
-	if _, err := h.db.Pool.Exec(orgctx.WithBypassRLS(ctx), `
+	err := h.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), `
         UPDATE remote_support_sessions
            SET status = 'active', accepted_at = COALESCE(accepted_at, NOW()),
                last_activity_at = NOW()
          WHERE id = $1 AND status = 'pending'
-    `, sessionID); err != nil {
+        RETURNING COALESCE(org_id::text, ''), COALESCE(engagement_id::text, '')
+    `, sessionID).Scan(&org, &engagement)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		h.logger.Error("both peers connected but the remote-support session could not be marked active; "+
 			"it is being relayed while the record still says pending",
 			logsafe.String("session_id", sessionID), zap.Error(err))
@@ -1153,6 +1164,15 @@ func (h *RemoteSupportHandler) markActive(ctx context.Context, sessionID string)
 		return
 	}
 	h.audit(ctx, "remote_support.session_active", sessionID, "success", "")
+	if err == nil && engagement != "" && org != "" {
+		// Off the signalling loop: the session is live whatever the
+		// notification does, and a slow write must not hold the relay.
+		go func() {
+			nctx, cancel := context.WithTimeout(orgctx.With(context.Background(), orgctx.Org{ID: org}), 30*time.Second)
+			defer cancel()
+			h.notifySponsorsOfSupportSession(nctx, org, sessionID)
+		}()
+	}
 }
 
 // touchSession bumps last_activity_at so a stalled session can be aged out.
