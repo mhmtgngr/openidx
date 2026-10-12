@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -83,6 +84,14 @@ type Agent struct {
 	orgAlwaysOn atomic.Bool
 	// tunLocalOn is a trusted agent.json's tunnel.enabled (tunnel.go).
 	tunLocalOn atomic.Bool
+	// netPolicy is the last versioned org_network_policy the server sent and
+	// how this device applied it; directBlock enforces its block on direct
+	// corporate access where the platform can (tunnel.go). directBlock is set
+	// by startTunnel, so only the process that supervises the tunnel ever
+	// touches the firewall.
+	netPolicy   atomic.Pointer[appliedPolicy]
+	directBlock atomic.Pointer[tunnel.DirectBlock]
+	policyMu    sync.Mutex
 
 	// deviceKey signs posture reports once loaded (device_key.go).
 	deviceKey       devicekey.Key

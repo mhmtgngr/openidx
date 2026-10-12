@@ -1672,5 +1672,12 @@ func allMigrations() []*Migration {
 			UpSQL:       remoteSupportExternalUp,
 			DownSQL:     remoteSupportExternalDown,
 		},
+		{
+			Version:     237,
+			Name:        "tunnel_policy_applied",
+			Description: "The organization's tunnel policy reaches the device. org_network_policy is delivered in /agent/config and the /agent/report answer with a version (a digest of the switches and the corporate ranges the block covers), and the agent echoes the version it applied in its tunnel_status. enrolled_agents gains tunnel_policy_version (the version the device last reported applying) and tunnel_policy_applied_at (the server's clock when that version changed), so the console can show which devices run the current policy and which are pending. Columns under the table's existing org policy; down drops them.",
+			UpSQL:       tunnelPolicyAppliedUp,
+			DownSQL:     tunnelPolicyAppliedDown,
+		},
 	}
 }

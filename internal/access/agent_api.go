@@ -1324,11 +1324,17 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 	// never fails the report and is inert unless explicitly enabled.
 	h.applyPostureDeviceTrust(c.Request.Context(), agentID, complianceStatus)
 
-	c.JSON(http.StatusAccepted, gin.H{
+	// The answer carries the tunnel policy too, so a policy change reaches a
+	// device at its next report as well as at its next config sync.
+	resp := gin.H{
 		"status":              "accepted",
 		"compliance_score":    complianceScore,
 		"enforcement_actions": enforcementActions,
-	})
+	}
+	if p := h.agentNetworkPolicy(c.Request.Context()); p != nil {
+		resp["org_network_policy"] = p
+	}
+	c.JSON(http.StatusAccepted, resp)
 }
 
 // applyPostureDeviceTrust upgrades/downgrades an enrolled device's Ziti tier from
@@ -1579,6 +1585,38 @@ type agentConfigResponse struct {
 	// windows_app_host (migration v120). It tells the agent to run the host-prep
 	// script's -Report and POST the JSON back, so the app catalog auto-syncs.
 	WindowsAppDiscovery *windowsAppDiscoveryJob `json:"windows_app_discovery,omitempty"`
+	// OrgNetworkPolicy is the organization's tunnel policy with its version
+	// (tunnel_policy.go). Omitted when it cannot be read, so the agent keeps
+	// the last policy it had rather than falling back to the defaults.
+	OrgNetworkPolicy *agentNetworkPolicy `json:"org_network_policy,omitempty"`
+}
+
+// writeAgentConfig answers /agent/config with cfg and the organization's
+// tunnel policy. A suspended device is told nothing about the tunnel: it has
+// no overlay access to tunnel to.
+func (h *AgentAPIHandler) writeAgentConfig(c *gin.Context, cfg agentConfigResponse) {
+	if cfg.EnforcementPolicy != "block" {
+		cfg.OrgNetworkPolicy = h.agentNetworkPolicy(c.Request.Context())
+	}
+	c.JSON(http.StatusOK, cfg)
+}
+
+// agentNetworkPolicy is the caller's organization's tunnel policy, or nil
+// when there is no database or it cannot be read (logged).
+func (h *AgentAPIHandler) agentNetworkPolicy(ctx context.Context) *agentNetworkPolicy {
+	if h.db == nil || h.db.Pool == nil {
+		return nil
+	}
+	orgID := orgIDFrom(ctx)
+	if orgID == "" {
+		return nil
+	}
+	p, err := loadAgentNetworkPolicy(ctx, h.db, orgID)
+	if err != nil {
+		h.logger.Warn("could not read the organization's tunnel policy for an agent", zap.Error(err))
+		return nil
+	}
+	return p
 }
 
 // windowsAppDiscoveryJob is the discovery hint handed to an agent bound to a
@@ -1809,7 +1847,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	//    caller no longer reaches this: it is answered 401 above. An agent's own
 	//    client treats any error as "use defaults", so nothing breaks for one.)
 	if h.db == nil || h.db.Pool == nil {
-		c.JSON(http.StatusOK, defaultAgentConfig())
+		h.writeAgentConfig(c, defaultAgentConfig())
 		return
 	}
 
@@ -1830,7 +1868,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		// Agent not found or DB error — return defaults.
 		h.logger.Warn("HandleConfig: could not fetch agent status",
 			logsafe.String("agent_id", agentID), zap.Error(err))
-		c.JSON(http.StatusOK, defaultAgentConfig())
+		h.writeAgentConfig(c, defaultAgentConfig())
 		return
 	}
 	agentPlatform := ""
@@ -1860,7 +1898,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			EnrollmentStatus:  status,
 			DeviceTrusted:     trusted,
 		}
-		c.JSON(http.StatusOK, cfg)
+		h.writeAgentConfig(c, cfg)
 		return
 
 	case "pending":
@@ -1873,7 +1911,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			EnrollmentStatus:  status,
 			DeviceTrusted:     trusted,
 		}
-		c.JSON(http.StatusOK, cfg)
+		h.writeAgentConfig(c, cfg)
 		return
 
 	case "active":
@@ -1900,7 +1938,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		if queryErr != nil {
 			h.logger.Warn("HandleConfig: could not query posture_checks",
 				logsafe.String("agent_id", agentID), zap.Error(queryErr))
-			c.JSON(http.StatusOK, h.defaultConfigWithSupport(ctx, agentID))
+			h.writeAgentConfig(c, h.defaultConfigWithSupport(ctx, agentID))
 			return
 		}
 		defer rows.Close()
@@ -1939,7 +1977,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		// has a support session (and, for attended support, could never grant
 		// consent). checks stays empty; the rest of the config is the default.
 		if len(checks) == 0 {
-			c.JSON(http.StatusOK, h.defaultConfigWithSupport(ctx, agentID))
+			h.writeAgentConfig(c, h.defaultConfigWithSupport(ctx, agentID))
 			return
 		}
 
@@ -1986,12 +2024,12 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		// windows_app_host, telling it to -Report and POST the catalog JSON back.
 		cfg.WindowsAppDiscovery = h.windowsAppDiscoveryForAgent(ctx, agentID)
 
-		c.JSON(http.StatusOK, cfg)
+		h.writeAgentConfig(c, cfg)
 		return
 
 	default:
 		// Unknown status — return defaults.
-		c.JSON(http.StatusOK, defaultAgentConfig())
+		h.writeAgentConfig(c, defaultAgentConfig())
 	}
 }
 
@@ -2010,6 +2048,14 @@ type agentRecord struct {
 	// never reported one); TunnelLastSeen is when it last reported it up.
 	TunnelStatus   *agentTunnelStatus `json:"tunnel_status"`
 	TunnelLastSeen *time.Time         `json:"tunnel_last_seen"`
+	// TunnelPolicyVersion is the tunnel policy version the device last
+	// reported applying, TunnelPolicyAppliedAt when that changed, and
+	// TunnelPolicyState "applied" when it is the organization's current
+	// version, "pending" when it is not, "" when the device reports no tunnel
+	// status (tunnel_policy.go).
+	TunnelPolicyVersion   *string    `json:"tunnel_policy_version"`
+	TunnelPolicyAppliedAt *time.Time `json:"tunnel_policy_applied_at"`
+	TunnelPolicyState     string     `json:"tunnel_policy_state"`
 }
 
 // HandleListAgents returns a JSON array of all enrolled agents (operator tier).
@@ -2031,7 +2077,7 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 		SELECT agent_id, device_id,
 		       COALESCE(metadata->>'hostname',''), COALESCE(platform, metadata->>'platform',''),
 		       status, compliance_status, compliance_score, last_seen_at, enrolled_at,
-		       tunnel_status, tunnel_last_seen
+		       tunnel_status, tunnel_last_seen, tunnel_policy_version, tunnel_policy_applied_at
 		FROM enrolled_agents
 		WHERE org_id = $1
 		ORDER BY last_seen_at DESC NULLS LAST, enrolled_at DESC
@@ -2042,6 +2088,13 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 		return
 	}
 	defer rows.Close()
+
+	// The current policy version, to say which devices run it. Unknown when
+	// it cannot be read: every device's state is then "".
+	current := ""
+	if p := h.agentNetworkPolicy(ctx); p != nil {
+		current = p.Version
+	}
 
 	agents := []agentRecord{}
 	for rows.Next() {
@@ -2059,6 +2112,8 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 			&rec.EnrolledAt,
 			&tunnelRaw,
 			&rec.TunnelLastSeen,
+			&rec.TunnelPolicyVersion,
+			&rec.TunnelPolicyAppliedAt,
 		); scanErr != nil {
 			h.logger.Warn("HandleListAgents: failed to scan row", zap.Error(scanErr))
 			continue
@@ -2069,6 +2124,7 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 				rec.TunnelStatus = &ts
 			}
 		}
+		rec.TunnelPolicyState = tunnelPolicyState(rec.TunnelPolicyVersion, rec.TunnelStatus != nil, current)
 		agents = append(agents, rec)
 	}
 	if rows.Err() != nil {

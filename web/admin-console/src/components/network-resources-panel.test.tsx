@@ -140,6 +140,26 @@ describe('NetworkResourcesPanel', () => {
     expect(body).toMatchObject({ port_ranges: [{ low: 445, high: 445 }, { low: 139, high: 139 }] })
   })
 
+  it('shows how far the policy has reached and what devices cannot enforce', async () => {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url.endsWith('/network-resources')) return Promise.resolve({ resources: [resource], total: 1 })
+      if (url.endsWith('/network-policy')) {
+        return Promise.resolve({
+          always_on: true, split_tunnel: false, block_direct_corporate_cidrs: true,
+          version: '0123456789abcdef', devices: { applied: 3, pending: 1, unreported: 2 },
+        })
+      }
+      return Promise.resolve([])
+    })
+    render(<NetworkResourcesPanel />, { wrapper: wrapper() })
+    expect(await screen.findByTestId('np-rollout')).toHaveTextContent(
+      'Applied on 3 devices · pending on 1 · 2 not reporting a tunnel',
+    )
+    expect(screen.getByTestId('np-rollout')).toHaveTextContent('0123456789abcdef')
+    expect(screen.getByTestId('np-full-tunnel-gap')).toBeInTheDocument()
+    expect(screen.getByTestId('np-block-scope')).toHaveTextContent('Linux')
+  })
+
   it('changes the network policy one switch at a time', async () => {
     vi.mocked(api.put).mockResolvedValue({ always_on: true, split_tunnel: true, block_direct_corporate_cidrs: false })
     render(<NetworkResourcesPanel />, { wrapper: wrapper() })

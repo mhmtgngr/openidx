@@ -531,9 +531,13 @@ describe('i18n', () => {
         (k) => `pages.agentFleet.complianceStatuses.${k}`,
       ),
       // tunnel-status-badge: the tunneler states an agent reports.
-      ...['up', 'down', 'starting', 'stopped', 'not_installed', 'unknown'].map(
+      ...['up', 'down', 'starting', 'stopped', 'off', 'not_installed', 'unknown'].map(
         (k) => `pages.agentFleet.tunnelStates.${k}`,
       ),
+      // ...the tunnel-policy gaps an agent reports, and whether it applied
+      // the current policy.
+      ...['full_tunnel', 'block_direct'].map((k) => `pages.agentFleet.tunnelGapNames.${k}`),
+      ...['applied', 'pending'].map((k) => `pages.agentFleet.policyStates.${k}`),
       // network-resources-panel: the draft errors and the policy toggles.
       ...['needName', 'needAddress', 'badPort', 'needProtocol'].map(
         (k) => `pages.networkResources.errors.${k}`,
