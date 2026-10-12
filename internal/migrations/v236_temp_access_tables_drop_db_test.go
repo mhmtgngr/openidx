@@ -50,10 +50,11 @@ func TestV236DropsTheRetiredTempAccessTables(t *testing.T) {
 			"indexes": scalar(`SELECT COALESCE(string_agg(indexdef, ',' ORDER BY indexname), '')
 				FROM pg_indexes WHERE schemaname = 'public'
 				 AND tablename IN ('temp_access_links', 'temp_access_usage')`),
-			"constraints": scalar(`SELECT COALESCE(string_agg(conrelid::regclass::text || ':' || pg_get_constraintdef(oid), ',' ORDER BY 1), '')
+			"constraints": scalar(`SELECT COALESCE(string_agg(conrelid::regclass::text || ':' || pg_get_constraintdef(oid), ','
+				ORDER BY conrelid::regclass::text, pg_get_constraintdef(oid)), '')
 				FROM pg_constraint WHERE conrelid IN (SELECT oid FROM pg_class
 				 WHERE relname IN ('temp_access_links', 'temp_access_usage') AND relnamespace = 'public'::regnamespace)`),
-			"policies": scalar(`SELECT COALESCE(string_agg(tablename || '.' || policyname, ',' ORDER BY tablename), '')
+			"policies": scalar(`SELECT COALESCE(string_agg(tablename || '.' || policyname, ',' ORDER BY tablename, policyname), '')
 				FROM pg_policies WHERE schemaname = 'public'
 				 AND tablename IN ('temp_access_links', 'temp_access_usage')`),
 			"rls": scalar(`SELECT COALESCE(string_agg(relname || ':' || relrowsecurity::text || ':' || relforcerowsecurity::text, ',' ORDER BY relname), '')
