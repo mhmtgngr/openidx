@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/migrations"
 )
 
@@ -35,10 +36,12 @@ func delegationTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("OPENIDX_TEST_DATABASE_URL")
+		// The whole schema is migrated in, so a configured server lends a
+		// scratch database rather than its own (testsupport.ScratchDatabase).
+		dsn, _ = testsupport.ScratchDatabase(t)
 	}
 	if dsn == "" {
-		t.Skip("no DATABASE_URL/OPENIDX_TEST_DATABASE_URL; ci.yml supplies one to this matrix shard")
+		t.Skip("no DATABASE_URL, and no TEST_POSTGRES_DSN role that may create a scratch database; ci.yml supplies DATABASE_URL to this matrix shard")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

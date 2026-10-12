@@ -3,12 +3,12 @@ package celldir
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/migrations"
 )
 
@@ -44,7 +44,7 @@ import (
 // configuration in which FORCE is observable at all.
 func openDirectory(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the tenant-directory tests (they need a real Postgres)")
 	}

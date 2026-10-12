@@ -44,6 +44,11 @@ SCAN="${OPENIDX_TESTREACH_ROOT:-$ROOT}"
 # a single literal name, which is the guard failing in exactly the way it exists
 # to prevent. The pattern is a glob, so it must stay unquoted at its use site.
 GATE_VAR='Getenv("OPENIDX_*_DATABASE_URL")'
+# testsupport.ScratchDatabase is the same gate behind a helper: it answers ok
+# only when TEST_POSTGRES_SUPERUSER_DSN or TEST_POSTGRES_DSN names a role that
+# may create databases, and the unit matrix's role may not. A helper that calls
+# it needs a fallback exactly as one that reads the variable does.
+GATE_SCRATCH='testsupport.ScratchDatabase('
 
 fail=0
 finding() {
@@ -137,7 +142,7 @@ done <<<"$records"
 # trips this is told to say so with the marker.
 checked=0
 while IFS=$'\t' read -r file line name marker body; do
-  case "$body" in *$GATE_VAR*) ;; *) continue ;; esac
+  case "$body" in *$GATE_VAR* | *"$GATE_SCRATCH"*) ;; *) continue ;; esac
   checked=$((checked + 1))
 
   if [ "$marker" = "!BARE!" ]; then
@@ -161,9 +166,23 @@ while IFS=$'\t' read -r file line name marker body; do
   done
 
   if [ "$delegates" -eq 0 ]; then
-    finding "$file:$line: $name skips unless its OPENIDX_*_DATABASE_URL is set, and ci.yml never sets one — this test runs nowhere. Start a container (testsupport.RunOrSkip), read DATABASE_URL, or delegate to a helper in this package that does."
+    finding "$file:$line: $name skips unless its OPENIDX_*_DATABASE_URL is set or testsupport.ScratchDatabase can create a database, and the unit matrix gives it neither — this test runs nowhere. Start a container (testsupport.RunOrSkip), read DATABASE_URL, or delegate to a helper in this package that does."
   fi
 done <<<"$records"
+
+# The other half of reachability. Helpers gated on TEST_POSTGRES_DSN (read
+# through testsupport.PostgresDSN) and with no container fallback -- the RLS
+# belts, the suites that build their own tables -- are reachable only because
+# the unit matrix sets that variable. It was once set only in the rls-isolation
+# job, for hand-picked -run patterns, and 21 such tests skipped in every unit
+# run. If the test-unit job stops setting it, they all go back to skipping.
+WF="$SCAN/.github/workflows/ci.yml"
+if [ -f "$WF" ]; then
+  if ! awk '/^  test-unit:/ { on = 1; next } on && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { exit } on' "$WF" |
+    grep -qE '^[[:space:]]+TEST_POSTGRES_DSN:[[:space:]]*[^[:space:]]'; then
+    finding "$WF: the test-unit job no longer sets TEST_POSTGRES_DSN, so every test gated on testsupport.PostgresDSN() without a container fallback skips in the unit matrix"
+  fi
+fi
 
 if [ "$fail" -eq 0 ]; then
   echo "check-test-reachability: ok — $checked database-gated test helper(s), every one reachable from CI"

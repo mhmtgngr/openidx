@@ -182,11 +182,11 @@ added to the table runs on the next release. A pull request that renames or
 removes a named test fails CI (`scripts/check-display-enforcement-tests.sh`)
 until the table changes with it.
 
-To run it yourself, point it at a scratch database. The tests drop and rebuild
-its public schema.
+To run it yourself, point it at a PostgreSQL server as a role that may create
+databases. Each suite creates and drops a scratch database of its own there.
 
 ```sh
-OPENIDX_TEST_DATABASE_URL=postgres://… scripts/run-display-enforcement-tests.sh /tmp/evidence
+TEST_POSTGRES_DSN=postgres://… scripts/run-display-enforcement-tests.sh /tmp/evidence
 ```
 
 ## Runs

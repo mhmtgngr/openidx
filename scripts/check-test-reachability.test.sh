@@ -249,5 +249,43 @@ func downSweepDB(t *testing.T) *pool {
 GO
 expect ok "a private variable with a container fallback is reachable"
 
+# 13. A helper behind testsupport.ScratchDatabase with no fallback: the unit
+# matrix's role may not create databases, so it would skip there.
+fresh
+cat >"$WD/pkg/scratch_test.go" <<'GO'
+package pkg
+
+func setupDB(t *testing.T) *pool {
+	url, ok := testsupport.ScratchDatabase(t)
+	if !ok {
+		t.Skip("no scratch database")
+	}
+	return open(url)
+}
+GO
+expect red "a ScratchDatabase helper with no fallback"
+
+# 14. The unit matrix must keep setting TEST_POSTGRES_DSN: the belts and the
+# suites that build their own tables have no other path.
+fresh
+printf 'package pkg\n\nfunc TestX(t *testing.T) {}\n' >"$WD/pkg/x_test.go"
+mkdir -p "$WD/.github/workflows"
+cat >"$WD/.github/workflows/ci.yml" <<'YML'
+jobs:
+  test-unit:
+    steps:
+      - name: Run tests
+        env:
+          TEST_POSTGRES_DSN: postgres://app@localhost/unit
+        run: go test ./...
+  test-race:
+    steps:
+      - run: go test ./...
+YML
+expect ok "the unit matrix sets TEST_POSTGRES_DSN"
+sed -i '/TEST_POSTGRES_DSN/d' "$WD/.github/workflows/ci.yml"
+printf '      - env:\n          TEST_POSTGRES_DSN: x\n' >>"$WD/.github/workflows/ci.yml"
+expect red "only another job sets TEST_POSTGRES_DSN"
+
 echo "check-test-reachability.test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

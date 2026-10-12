@@ -3,7 +3,6 @@ package events
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/migrations"
 )
 
@@ -24,7 +24,7 @@ import (
 // by construction and proves none of them.
 func openOutboxPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the outbox tests (they need a real Postgres)")
 	}

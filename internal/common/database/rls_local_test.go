@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // These tests run against a real Postgres because the property under test is a
@@ -24,7 +25,7 @@ import (
 // DB-backed tests use.
 func openTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the RLS isolation tests (they need a real Postgres)")
 	}

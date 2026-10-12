@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/revocation"
 )
 
@@ -33,7 +34,7 @@ import (
 
 func openAdminSeverPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the admin sever tests (they need a real Postgres)")
 	}

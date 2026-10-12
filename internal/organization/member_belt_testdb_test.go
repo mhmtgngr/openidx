@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -16,6 +15,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // ADDING A MEMBER, MEASURED AS THE APPLICATION ROLE.
@@ -34,7 +34,7 @@ import (
 //   - the platform admin, scoped to the default organization, adds B's user
 //     to A, which the belt alone would have answered as no user at all.
 func TestAddingAMemberUnderTheBelt(t *testing.T) {
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the member lookup under the belt")
 	}

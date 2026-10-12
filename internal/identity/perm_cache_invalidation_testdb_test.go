@@ -18,6 +18,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // A REVOKED PERMISSION HAS TO STOP BEING HONOURED, and the thing standing
@@ -35,7 +36,7 @@ import (
 
 func openPermPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the permission cache tests (they need a real Postgres)")
 	}

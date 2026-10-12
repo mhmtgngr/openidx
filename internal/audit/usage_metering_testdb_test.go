@@ -2,7 +2,6 @@ package audit
 
 import (
 	"context"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/migrations"
 )
 
@@ -25,7 +25,7 @@ import (
 // incrementing the same row from the same cursor is not a race a mock can have.
 func openMeteringPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the usage metering tests (they need a real Postgres)")
 	}

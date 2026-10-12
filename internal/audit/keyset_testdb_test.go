@@ -3,7 +3,6 @@ package audit
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +39,7 @@ func setupKeysetTestDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
 	ctx := context.Background()
 
-	if dsn := os.Getenv("TEST_POSTGRES_DSN"); dsn != "" {
+	if dsn := testsupport.PostgresDSN(); dsn != "" {
 		db, err := database.NewPostgres(dsn)
 		if err != nil {
 			t.Skipf("TEST_POSTGRES_DSN set but unreachable: %v", err)

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // TWO STORES, AND ONLY ONE OF THEM IS THE RECORD.
@@ -138,7 +138,7 @@ func (f *fakeES) waitForDoc(t *testing.T, id string) {
 // the table unqualified, which is what makes the redirect work.
 func openAuditESPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the audit index ordering tests (they need a real Postgres)")
 	}

@@ -18,10 +18,12 @@
 # `--- SKIP`, a skipped subtest, no result line at all, or a `go test` that
 # exits non-zero.
 #
-# ONE PACKAGE AT A TIME. The tests drop and rebuild the public schema of the
-# database OPENIDX_TEST_DATABASE_URL names, so two packages at once would
-# destroy each other's tables. Point it at a scratch database. It is required,
-# because the report names the server the tests ran against.
+# TEST_POSTGRES_DSN names the server (OPENIDX_TEST_DATABASE_URL is honoured as
+# its deprecated alias). The suites create a scratch database of their own on
+# it per call (testsupport.ScratchDatabase), so it must be a role that may
+# create databases. It is required, because the report names the server the
+# tests ran against. Packages still run one at a time, so each log is one
+# package's.
 #
 # Tests under test/integration are not run here: they need the stack the
 # integration job starts. The report lists them as running there.
@@ -43,9 +45,10 @@ if [ -z "$OUT" ]; then
   echo "usage: run-display-enforcement-tests.sh <output-dir>" >&2
   exit 2
 fi
-if [ -z "${OPENIDX_TEST_DATABASE_URL:-}" ]; then
-  echo "run-display-enforcement-tests: OPENIDX_TEST_DATABASE_URL is not set." >&2
-  echo "  Point it at a scratch database: the tests drop and rebuild its public schema." >&2
+TEST_DSN="${TEST_POSTGRES_DSN:-${OPENIDX_TEST_DATABASE_URL:-}}"
+if [ -z "$TEST_DSN" ]; then
+  echo "run-display-enforcement-tests: TEST_POSTGRES_DSN is not set." >&2
+  echo "  Point it at a server where the role may create databases: each suite makes its own." >&2
   exit 2
 fi
 mkdir -p "$OUT/logs" || exit 2
@@ -76,8 +79,8 @@ done <<<"$map"
 
 # ---- what it runs on ---------------------------------------------------------
 if command -v psql >/dev/null 2>&1; then
-  if ! pg_version="$(psql "$OPENIDX_TEST_DATABASE_URL" -XAtqc 'SHOW server_version' 2>&1)"; then
-    echo "run-display-enforcement-tests: cannot reach the database OPENIDX_TEST_DATABASE_URL names:" >&2
+  if ! pg_version="$(psql "$TEST_DSN" -XAtqc 'SHOW server_version' 2>&1)"; then
+    echo "run-display-enforcement-tests: cannot reach the database TEST_POSTGRES_DSN names:" >&2
     echo "  $pg_version" >&2
     exit 2
   fi

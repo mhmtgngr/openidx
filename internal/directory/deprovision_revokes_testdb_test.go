@@ -2,7 +2,6 @@ package directory
 
 import (
 	"context"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // A DEPROVISION IS NOT DONE WHEN THE ROW IS DISABLED.
@@ -31,7 +31,7 @@ import (
 
 func openDirectoryPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the deprovision tests (they need a real Postgres)")
 	}

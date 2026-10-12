@@ -3,7 +3,6 @@ package audit
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/migrations"
 )
 
@@ -38,12 +38,6 @@ func setupComplianceSchemaDB(t *testing.T) (*database.PostgresDB, func()) {
 	if db == nil {
 		return nil, func() {}
 	}
-	for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
-		if _, err := db.Pool.Exec(ctx, stmt); err != nil {
-			cleanup()
-			t.Fatalf("reset test schema (%s): %v", stmt, err)
-		}
-	}
 	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 		cleanup()
 		t.Fatalf("migrate to latest: %v", err)
@@ -55,10 +49,10 @@ func setupComplianceSchemaDB(t *testing.T) (*database.PostgresDB, func()) {
 // OPENIDX_TEST_DATABASE_URL, or a throwaway container.
 func complianceSchemaPool(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
-	if url := os.Getenv("OPENIDX_TEST_DATABASE_URL"); url != "" {
+	if url, ok := testsupport.ScratchDatabase(t); ok {
 		db, err := database.NewPostgres(url)
 		if err != nil {
-			t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+			t.Fatalf("scratch database on %s unreachable: %v", testsupport.PostgresEnv, err)
 			return nil, func() {}
 		}
 		return db, func() { db.Close() }

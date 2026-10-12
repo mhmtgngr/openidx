@@ -3,7 +3,6 @@ package access
 import (
 	"context"
 	"errors"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // THE ROTATION WAS ALWAYS CLAIMED; LOSING THE CLAIM WAS REPORTED AS A FAILURE.
@@ -54,7 +54,7 @@ import (
 
 func setupRotationCert(t *testing.T, certType string) (string, string, *pgxpool.Pool) {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the certificate rotation claim test")
 	}

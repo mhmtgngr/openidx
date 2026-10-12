@@ -96,21 +96,20 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # OPENIDX_TEST_DATABASE_URL is the variable every named test's setup
-      # helper reads. Without it they start throwaway containers, as they do in
-      # the unit jobs. Here they use the service, so the report can name the
-      # server they ran on. They drop and rebuild its public schema, which is
-      # why the script runs one package at a time. They connect as the
-      # service's superuser, the same privilege the containers give them.
-      # Nothing here tests row-level security, so no role is set up. No named
-      # test reads TEST_POSTGRES_DSN; one that did would skip here, and a skip
-      # fails the run.
+      # TEST_POSTGRES_DSN (testsupport.PostgresDSN) is the variable every named
+      # test's setup helper reads. Without it they start throwaway containers,
+      # as they do in the unit jobs. Here they use the service, so the report
+      # can name the server they ran on: as its superuser, each suite creates
+      # and drops a scratch database of its own on it
+      # (testsupport.ScratchDatabase), the same privilege and the same empty
+      # database a container gives them. Nothing here tests row-level
+      # security, so no unprivileged role is set up.
       #
       # DATABASE_URL and REDIS_URL are the unit jobs' own two variables, so a
       # test finds here what it finds in the job the table says it runs in.
       - name: Run the named tests, one package at a time
         env:
-          OPENIDX_TEST_DATABASE_URL: postgres://openidx:test_secret@localhost:5432/openidx_test?sslmode=disable
+          TEST_POSTGRES_DSN: postgres://openidx:test_secret@localhost:5432/openidx_test?sslmode=disable
           DATABASE_URL: postgres://openidx:test_secret@localhost:5432/openidx_test?sslmode=disable
           REDIS_URL: redis://localhost:6379
           EVIDENCE_REF: ${{ inputs.ref || github.ref_name }}

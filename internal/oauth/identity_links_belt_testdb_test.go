@@ -2,7 +2,6 @@ package oauth
 
 import (
 	"context"
-	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/migrations"
 )
 
@@ -32,7 +32,7 @@ import (
 //     in each tenant -- the decision v200 records -- and neither tenant sees
 //     the other's row.
 func TestIdentityLinksBelt_TenantRowsAreInvisibleAcrossTenants(t *testing.T) {
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the identity-links belt test")
 	}

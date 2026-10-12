@@ -2,7 +2,6 @@ package directory
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -65,27 +64,18 @@ CREATE TABLE IF NOT EXISTS directory_sync_state (
 
 const routingOrgID = "00000000-0000-0000-0000-000000000010"
 
-// routingSetupDB gives the test its tables. OPENIDX_TEST_DATABASE_URL points it
-// at an existing server instead of starting a container — the same escape hatch
-// internal/identity/testdb_test.go and internal/migrations carry, for a machine
-// with Postgres and no Docker daemon. CI does not set it and keeps using
-// throwaway containers. On the env path the public schema is dropped and
-// recreated, so run ONE package at a time against that variable.
+// routingSetupDB gives the test its tables, in a scratch database on the server
+// TEST_POSTGRES_DSN names when its role may create databases
+// (testsupport.ScratchDatabase), or else in a throwaway container, as in CI.
 func routingSetupDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
 	ctx := context.Background()
 
-	if url := os.Getenv("OPENIDX_TEST_DATABASE_URL"); url != "" {
+	if url, ok := testsupport.ScratchDatabase(t); ok {
 		db, err := database.NewPostgres(url)
 		if err != nil {
-			t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+			t.Fatalf("scratch database on %s unreachable: %v", testsupport.PostgresEnv, err)
 			return nil, func() {}
-		}
-		for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
-			if _, err := db.Pool.Exec(ctx, stmt); err != nil {
-				db.Close()
-				t.Fatalf("reset test schema (%s): %v", stmt, err)
-			}
 		}
 		if _, err := db.Pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS pgcrypto`); err != nil {
 			db.Close()

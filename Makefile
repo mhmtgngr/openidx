@@ -117,7 +117,7 @@ test-integration:
 	$(GOTEST) -v -tags=integration ./test/integration/... ./cmd/rekey/...
 
 # The database-gated packages, against a real PostgreSQL. `make test` on a
-# machine with neither Docker nor OPENIDX_TEST_DATABASE_URL skips them all and
+# machine with neither Docker nor TEST_POSTGRES_DSN skips them all and
 # still prints ok, which is how a red CI arrives after a green local run.
 # Needs OPENIDX_DB_SUITE_ADMIN_URL; see scripts/db-suite.sh.
 test-db:

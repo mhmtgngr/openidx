@@ -406,10 +406,6 @@ jobs:
           CREATE ROLE openidx_app LOGIN PASSWORD 'apppw';
           GRANT ALL ON SCHEMA public TO openidx_app;
           ALTER DATABASE openidx_rls OWNER TO openidx_app;
-          -- A throwaway database for the suites that build the whole schema
-          -- from the registered migrations (setupTestDB drops and recreates
-          -- public on every call, so it must never point at openidx_rls).
-          CREATE DATABASE openidx_scratch;
           SQL
 
       # Negative control first: pointed at the superuser, the suite must REFUSE
@@ -790,7 +786,10 @@ jobs:
       - name: The device fleet is one tenant's, and an agent still enrols and reports with no tenant on its context
         env:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
-          OPENIDX_TEST_DATABASE_URL: postgres://postgres:test_secret@127.0.0.1:5433/openidx_scratch?sslmode=disable
+          # The migration half takes a scratch database of its own from the
+          # superuser (testsupport.ScratchDatabase); the belt half stays on
+          # openidx_app.
+          TEST_POSTGRES_SUPERUSER_DSN: postgres://postgres:test_secret@127.0.0.1:5433/postgres?sslmode=disable
         run: |
           set -euo pipefail
           out=$(go test ./internal/access/ -run 'TestFleetBelt|TestFleet_TenantIsolation|TestKioskPolicy_TenantIsolation|TestEnrollFingerprintIsPerTenant' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
@@ -1533,6 +1532,26 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # TEST_POSTGRES_DSN is the one variable a database-backed test reads
+      # (internal/common/testsupport.PostgresDSN). It was set only in the
+      # rls-isolation job, for hand-picked -run patterns, so every other suite
+      # gated on it -- 21 tests in internal/identity, internal/admin,
+      # internal/oauth and internal/organization among them -- skipped here on
+      # every run while the job reported success. The role is production's
+      # openidx_app shape (no superuser, no BYPASSRLS), because the
+      # row-level-security belts refuse a role that passes them by bypassing;
+      # it owns its database, so the suites can create schemas and tables. It
+      # cannot create databases, so the suites that build the whole schema
+      # (testsupport.ScratchDatabase) keep using throwaway containers.
+      - name: Create the unprivileged test role
+        env:
+          PGPASSWORD: test_secret
+        run: |
+          psql -h localhost -U openidx -d openidx_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE openidx_app LOGIN PASSWORD 'apppw' NOSUPERUSER NOBYPASSRLS NOCREATEDB;
+          CREATE DATABASE openidx_unit OWNER openidx_app;
+          SQL
+
       # The matrix label reads like a path ("internal/metrics", "pkg/"), so it
       # cannot go into a filename as-is: -coverprofile=coverage_internal/metrics.out
       # asks Go to write into a directory that does not exist, and it fails in
@@ -1552,6 +1571,7 @@ jobs:
       - name: Run tests with coverage
         env:
           RUN_FILTER: ${{ matrix.run }}
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@localhost:5432/openidx_unit?sslmode=disable
           DATABASE_URL: postgres://openidx:test_secret@localhost:5432/openidx_test?sslmode=disable
           REDIS_URL: redis://localhost:6379
         run: |

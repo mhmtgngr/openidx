@@ -2,7 +2,6 @@ package access
 
 import (
 	"context"
-	"os"
 	"sync"
 	"testing"
 
@@ -14,6 +13,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // THE LIFECYCLE SWEEP RUNS IN EVERY REPLICA, and its own comment says that is
@@ -46,7 +46,7 @@ import (
 
 func openSweepPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the background sweep idempotence tests")
 	}

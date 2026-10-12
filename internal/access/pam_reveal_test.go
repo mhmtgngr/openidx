@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/migrations"
 	"github.com/openidx/openidx/internal/vault"
 )
@@ -44,8 +44,8 @@ func pamRevealTestDB(t *testing.T) *database.PostgresDB {
 	t.Helper()
 	ctx := context.Background()
 
-	url := os.Getenv("OPENIDX_TEST_DATABASE_URL")
-	if url == "" {
+	url, ok := testsupport.ScratchDatabase(t)
+	if !ok {
 		db, cleanup := setupTestDB(t)
 		if db == nil {
 			t.SkipNow()
@@ -59,13 +59,7 @@ func pamRevealTestDB(t *testing.T) *database.PostgresDB {
 
 	db, err := database.NewPostgres(url)
 	if err != nil {
-		t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
-	}
-	for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
-		if _, err := db.Pool.Exec(ctx, stmt); err != nil {
-			db.Close()
-			t.Fatalf("reset schema (%s): %v", stmt, err)
-		}
+		t.Fatalf("scratch database on %s unreachable: %v", testsupport.PostgresEnv, err)
 	}
 	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 		db.Close()
