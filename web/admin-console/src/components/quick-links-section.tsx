@@ -1,8 +1,7 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import * as Icons from 'lucide-react'
-import { ExternalLink, Link2, Play } from 'lucide-react'
+import { ExternalLink, Play } from 'lucide-react'
 import { Card, CardContent } from './ui/card'
 import { Badge } from './ui/badge'
 import { Dialog, DialogContent } from './ui/dialog'
@@ -11,13 +10,15 @@ import { openPamSessionWindow } from '../lib/pam-session-handoff'
 import { QueryError } from './query-error'
 import { useToast } from '../hooks/use-toast'
 import { apiErrorBody } from '../lib/api-error'
-import { TerminalSession } from './remote/terminal-session'
+import { quickLinkIcon } from '../lib/quick-link-icons'
+import { LoadingSpinner } from './ui/loading-spinner'
 
-// Resolve a lucide icon by name (admin picks one); fall back to Link2.
-function iconFor(name: string) {
-  const C = (Icons as unknown as Record<string, React.ComponentType<{ className?: string }>>)[name]
-  return C || Link2
-}
+// xterm is a few hundred kB and only a PAM quick link opened in the terminal
+// dialog needs it, so it loads when that dialog first renders, not with the
+// My Apps & Network page.
+const TerminalSession = lazy(() =>
+  import('./remote/terminal-session').then((m) => ({ default: m.TerminalSession })),
+)
 
 /**
  * QuickLinksSection is the "Quick links" block of the combined My Apps & Network
@@ -119,7 +120,7 @@ export function QuickLinksSection({ search }: { search: string }) {
             <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{category}</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {items.map((link) => {
-                const Icon = iconFor(link.icon)
+                const Icon = quickLinkIcon(link.icon)
                 return (
                   <Card key={link.id} className="hover:shadow-lg transition-shadow cursor-pointer group" onClick={() => open(link)}>
                     <CardContent className="p-4">
@@ -157,7 +158,15 @@ export function QuickLinksSection({ search }: { search: string }) {
       <Dialog open={!!terminalLink} onOpenChange={(o) => { if (!o) setTerminalLink(null) }}>
         <DialogContent className="max-w-4xl p-0 overflow-hidden">
           {terminalLink?.pam_entry_id && (
-            <TerminalSession entryId={terminalLink.pam_entry_id} entryName={terminalLink.title} onClose={() => setTerminalLink(null)} />
+            <Suspense
+              fallback={
+                <div className="flex h-64 items-center justify-center">
+                  <LoadingSpinner size="lg" />
+                </div>
+              }
+            >
+              <TerminalSession entryId={terminalLink.pam_entry_id} entryName={terminalLink.title} onClose={() => setTerminalLink(null)} />
+            </Suspense>
           )}
         </DialogContent>
       </Dialog>
