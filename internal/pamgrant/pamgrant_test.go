@@ -58,25 +58,25 @@ func itoa(n int64) string {
 	return string(b)
 }
 
-var tables = []string{"pam_entry_grants", "pam_entry_access_requests", "pam_active_checkouts", "temp_access_links", "brokered_sessions",
+var tables = []string{"pam_entry_grants", "pam_entry_access_requests", "pam_active_checkouts", "brokered_sessions",
 	"guacamole_moderation_sessions"}
 
 func TestEndForUserWritesEveryTableScopedToTheUserAndOrg(t *testing.T) {
 	q := &stubExecer{rows: map[string]int64{
 		"pam_entry_grants": 1, "pam_entry_access_requests": 2, "pam_active_checkouts": 3,
-		"temp_access_links": 4, "brokered_sessions": 5, "guacamole_moderation_sessions": 6,
+		"brokered_sessions": 5, "guacamole_moderation_sessions": 6,
 	}}
 	c, errs := EndForUser(context.Background(), q, "user-1", "org-1")
 	if len(errs) != 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
-	want := Counts{GrantsExpired: 1, ApprovalsRevoked: 2, LeasesReleased: 3, TempLinksRevoked: 4, BrokeredEnded: 5,
+	want := Counts{GrantsExpired: 1, ApprovalsRevoked: 2, LeasesReleased: 3, BrokeredEnded: 5,
 		ModerationsEnded: 6}
 	if c != want {
 		t.Errorf("counts = %+v, want %+v", c, want)
 	}
-	if c.Total() != 21 {
-		t.Errorf("Total() = %d, want 21", c.Total())
+	if c.Total() != 17 {
+		t.Errorf("Total() = %d, want 17", c.Total())
 	}
 	if len(q.calls) != len(tables) {
 		t.Fatalf("%d statements, want %d", len(q.calls), len(tables))
@@ -132,12 +132,12 @@ func TestEndForUserAttemptsEveryTableAndNamesTheOneThatFailed(t *testing.T) {
 }
 
 func TestEndForDisabledUsersWritesEveryTableWithNoTenantTermAndAnEnabledUserGuard(t *testing.T) {
-	q := &stubExecer{rows: map[string]int64{"temp_access_links": 2}}
+	q := &stubExecer{rows: map[string]int64{"brokered_sessions": 2}}
 	c, errs := EndForDisabledUsers(context.Background(), q)
 	if len(errs) != 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
-	if c.TempLinksRevoked != 2 || c.Total() != 2 {
+	if c.BrokeredEnded != 2 || c.Total() != 2 {
 		t.Errorf("counts = %+v", c)
 	}
 	if len(q.calls) != len(tables) {

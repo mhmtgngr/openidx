@@ -62,8 +62,8 @@ func TestDeprovisionUser_RevokesPAMState(t *testing.T) {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 		`CREATE TABLE user_roles (user_id UUID, role_id UUID, org_id UUID, expires_at TIMESTAMPTZ)`,
 		// The PAM entry surface internal/pamgrant ends: the leaver's own
-		// connection grants, launch approvals, exclusive leases, issued
-		// temporary access links and brokered-session ledger rows.
+		// connection grants, launch approvals, exclusive leases and
+		// brokered-session ledger rows.
 		`CREATE TABLE pam_entry_grants (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, entry_id UUID,
 			principal_type VARCHAR(32), principal_id VARCHAR(255), actions TEXT[], expires_at TIMESTAMPTZ)`,
@@ -73,9 +73,6 @@ func TestDeprovisionUser_RevokesPAMState(t *testing.T) {
 		`CREATE TABLE pam_active_checkouts (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, entry_id UUID,
 			principal_id UUID, status VARCHAR(16), released_at TIMESTAMPTZ)`,
-		`CREATE TABLE temp_access_links (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, created_by UUID,
-			status VARCHAR(20), updated_at TIMESTAMPTZ)`,
 		`CREATE TABLE brokered_sessions (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, user_id UUID,
 			status VARCHAR(16), ended_at TIMESTAMPTZ)`,
@@ -106,8 +103,6 @@ func TestDeprovisionUser_RevokesPAMState(t *testing.T) {
 		`INSERT INTO pam_entry_access_requests (org_id, entry_id, requester_id, status) VALUES ('` + orgID + `',gen_random_uuid(),'` + otherID + `','pending')`,
 		`INSERT INTO pam_active_checkouts (org_id, entry_id, principal_id, status) VALUES ('` + orgID + `',gen_random_uuid(),'` + userID + `','active')`,
 		`INSERT INTO pam_active_checkouts (org_id, entry_id, principal_id, status) VALUES ('` + orgID + `',gen_random_uuid(),'` + otherID + `','active')`,
-		`INSERT INTO temp_access_links (org_id, created_by, status) VALUES ('` + orgID + `','` + userID + `','active')`,
-		`INSERT INTO temp_access_links (org_id, created_by, status) VALUES ('` + orgID + `','` + otherID + `','active')`,
 		`INSERT INTO brokered_sessions (org_id, user_id, status) VALUES ('` + orgID + `','` + userID + `','active')`,
 		`INSERT INTO brokered_sessions (org_id, user_id, status) VALUES ('` + orgID + `','` + otherID + `','active')`,
 	}
@@ -142,7 +137,7 @@ func TestDeprovisionUser_RevokesPAMState(t *testing.T) {
 
 	// The PAM entry surface: every one of the leaver's rows ended, every one
 	// of the other user's kept.
-	pamLive := func(u string) (grants, approvals, leases, links, brokered int) {
+	pamLive := func(u string) (grants, approvals, leases, brokered int) {
 		t.Helper()
 		for _, q := range []struct {
 			dst *int
@@ -151,7 +146,6 @@ func TestDeprovisionUser_RevokesPAMState(t *testing.T) {
 			{&grants, `SELECT COUNT(*) FROM pam_entry_grants WHERE principal_type='user' AND principal_id=$1 AND (expires_at IS NULL OR expires_at > NOW())`},
 			{&approvals, `SELECT COUNT(*) FROM pam_entry_access_requests WHERE requester_id=$1 AND status IN ('pending','approved')`},
 			{&leases, `SELECT COUNT(*) FROM pam_active_checkouts WHERE principal_id=$1 AND status='active'`},
-			{&links, `SELECT COUNT(*) FROM temp_access_links WHERE created_by=$1 AND status='active'`},
 			{&brokered, `SELECT COUNT(*) FROM brokered_sessions WHERE user_id=$1 AND status='active'`},
 		} {
 			if err := db.Pool.QueryRow(ctx, q.sql, u).Scan(q.dst); err != nil {
@@ -160,11 +154,11 @@ func TestDeprovisionUser_RevokesPAMState(t *testing.T) {
 		}
 		return
 	}
-	if g, a, l, k, b := pamLive(userID); g != 0 || a != 0 || l != 0 || k != 0 || b != 0 {
-		t.Errorf("disabled user still holds the PAM entry surface: grants=%d approvals=%d leases=%d links=%d brokered=%d", g, a, l, k, b)
+	if g, a, l, b := pamLive(userID); g != 0 || a != 0 || l != 0 || b != 0 {
+		t.Errorf("disabled user still holds the PAM entry surface: grants=%d approvals=%d leases=%d brokered=%d", g, a, l, b)
 	}
-	if g, a, l, k, b := pamLive(otherID); g != 1 || a != 1 || l != 1 || k != 1 || b != 1 {
-		t.Errorf("other user's PAM entry surface was touched: grants=%d approvals=%d leases=%d links=%d brokered=%d", g, a, l, k, b)
+	if g, a, l, b := pamLive(otherID); g != 1 || a != 1 || l != 1 || b != 1 {
+		t.Errorf("other user's PAM entry surface was touched: grants=%d approvals=%d leases=%d brokered=%d", g, a, l, b)
 	}
 
 	// Collateral check: the other principal's lease and role grant survive.

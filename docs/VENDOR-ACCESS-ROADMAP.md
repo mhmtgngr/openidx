@@ -24,6 +24,13 @@
 > redemption are the record of how it got here, not of what runs. The
 > `temp_access_links` and `temp_access_usage` tables leave in a later migration,
 > once the owner has exported them.
+>
+> **The tables are dropped in migration 236 (after v1.44.0).** The read-only
+> history went with them: the admin list/get/revoke/usage routes, the console's
+> history section, and the kill switch's, lifecycle sweep's and JIT expiry
+> sweep's writes to the links. Only the 410 page for `GET /temp-access/:token`
+> remains, and it reads nothing. An install that wants the history exports the
+> two tables before upgrading.
 
 ## 1. The short answer
 

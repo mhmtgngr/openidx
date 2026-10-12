@@ -961,8 +961,8 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 		log.Warn("deprovision: ending time-bound elevations failed", zap.Error(err))
 	}
 	// The PAM entry surface: the leaver's own connection grants, launch
-	// approvals, exclusive leases, issued temporary access links and brokered
-	// session ledger rows. pamEntryAllowed reads pam_entry_grants at the moment
+	// approvals, exclusive leases, brokered session ledger rows and
+	// moderations. pamEntryAllowed reads pam_entry_grants at the moment
 	// of a connect, so without this a disabled user kept every PAM connection
 	// they had until its own expiry. The live entry sessions on the broker are
 	// ended by the access-service lifecycle sweep, as the Guacamole ones are.

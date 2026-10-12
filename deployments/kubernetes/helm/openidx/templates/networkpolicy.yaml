@@ -329,6 +329,20 @@ spec:
       ports:
         - protocol: TCP
           port: 8007
+    {{- if and .Values.ingress.enabled (dig "remoteSupport" "stickyIngress" "enabled" false .Values.accessService) }}
+    # Ingress controller (nginx), for the session-hashed remote-support
+    # Ingress (templates/remote-support-ingress.yaml).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8007
+    {{- end }}
 ---
 ###############################################################################
 # Admin Console (port 80)

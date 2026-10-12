@@ -46,6 +46,20 @@ import (
 
 // RemoteSupportHandler owns the broker (peer registry + signaling fan-out)
 // and the admin HTTP surface. Construct one per access-service instance.
+//
+// REPLICAS: the broker state below (sessions: the device/technician pairing
+// and the sponsor watchers; recorders: the broker-side recordings) lives in
+// this process only and is not shared between access-service replicas. Every
+// request for one session -- the device's, the technician's and the vendor's
+// WebSockets, the sponsor's watch socket, end, and the recording uploads --
+// must reach the same instance, or the peers wait in two processes and never
+// meet. The Helm chart routes the remote-support paths through their own
+// Ingress hashed on the session id in the path
+// (deployments/kubernetes/helm/openidx/templates/remote-support-ingress.yaml,
+// values accessService.remoteSupport). A new remote-support route that
+// carries a session id must keep the id in the path segment that Ingress
+// captures (.../remote-support/[sponsored/]sessions/<id>...), or it loses
+// the affinity.
 type RemoteSupportHandler struct {
 	logger               *zap.Logger
 	db                   *database.PostgresDB

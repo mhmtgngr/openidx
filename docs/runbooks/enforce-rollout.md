@@ -110,3 +110,42 @@ A service started after the named day refuses with
 `the observe window ended on …: set each control above to enforce`. Either flip
 (step 3) or, if an application is still being assigned, declare a new window
 with a date you intend to keep.
+
+## Upgrading the reference box (`scripts/box-deploy.sh`)
+
+Every change above reaches the box through a release deploy. Since v1.44.0 that
+deploy is `scripts/box-deploy.sh`, one step at a time (it is not
+`scripts/deploy-box.sh`, which deploys the docker-compose stack). Build the
+seven services and `cmd/migrate` into `~/oidx-runtime/stage-<version>/` as
+`oidx-<name>`, the console into `stage-<version>/dist/`, write the release to
+`stage-<version>/VERSION`, then:
+
+```
+export VERSION=v1.45.0 EXPECT_SCHEMA=236     # the last migration the release ships
+scripts/box-deploy.sh preflight   # stage complete? live schema (saved for rollback), owner URL present, units
+scripts/box-deploy.sh rehearse    # newest backup -> throwaway postgres:16-alpine on 127.0.0.1:55499 -> migrate up
+scripts/box-deploy.sh dump        # fresh pg_dump from oidx-pg (path saved for rollback)
+scripts/box-deploy.sh stop
+scripts/box-deploy.sh migrate     # as the owner; fails unless the live schema reaches EXPECT_SCHEMA
+scripts/box-deploy.sh swap        # binaries keep .rollback-<ts>; dist is rsynced INTO the bind-mounted dir
+scripts/box-deploy.sh start
+scripts/box-deploy.sh verify      # /health per port, edge via SNI, schema, error lines in /tmp/oidx-logs/<svc>.log
+```
+
+The rehearsal never uses a scratch database inside `oidx-pg`: roles are
+cluster-global and migrations create them. It copies the live role names
+(without logins) into the throwaway container, restores, migrates with the
+staged binary and removes the container (`REHEARSE_KEEP=1` keeps it). Run
+`verify` again after the first five-minute background tick.
+
+`scripts/box-deploy.sh rollback` stops the units and puts back the binaries and
+console saved under the same rollback suffix (`TS`, kept in
+`stage-<version>/rollback_ts`). It does not touch the database: it prints the
+two ways back, `oidx-migrate down <previous schema>` as the owner or a
+`pg_restore --clean --if-exists` of the pre-deploy dump. Units, binaries and
+paths are overridable (`UNITS`, `BINS`, `RT`, `DIST`, see the script header).
+The script never prints a database URL and refuses to run under `set -x`.
+
+The three PAM Ziti-broker containers have no unit of their own; after a reboot
+they stay stopped. `scripts/box-pam-units.sh` shows the units it would add,
+and `scripts/box-pam-units.sh --apply` writes and enables them.
