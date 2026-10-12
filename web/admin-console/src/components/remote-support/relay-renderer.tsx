@@ -21,6 +21,11 @@ interface Props {
   // autoFullscreen requests fullscreen automatically once streaming starts.
   // Used by the standalone pop-out window.
   autoFullscreen?: boolean
+  // resolveWsUrl, when provided, is asked for a fresh URL before every
+  // reconnect; the first connection still uses wsUrl. A socket opened with a
+  // one-use ticket (the sponsor's watch) cannot reconnect on the same URL.
+  // If it rejects, the viewer stops and says so.
+  resolveWsUrl?: () => Promise<string>
 }
 
 type RelayState = 'connecting' | 'streaming' | 'error' | 'closed'
@@ -28,7 +33,7 @@ type RelayState = 'connecting' | 'streaming' | 'error' | 'closed'
 // A 1-byte header precedes each VP8 frame: bit0 = keyframe.
 const RELAY_FLAG_KEYFRAME = 0x01
 
-export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: Props) {
+export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen, resolveWsUrl }: Props) {
   const { t } = useTranslation()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
@@ -50,6 +55,28 @@ export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: 
   // Nonce at which we last had a healthy stream; the retry budget is measured
   // relative to it, so a drop after a good stream gets a fresh set of retries.
   const lastGoodNonceRef = useRef(0)
+  // The URL for each reconnect, when resolveWsUrl supplies them. Held in a
+  // ref so a parent passing a fresh closure each render does not reconnect.
+  const resolveRef = useRef(resolveWsUrl)
+  resolveRef.current = resolveWsUrl
+  const [resolved, setResolved] = useState<{ nonce: number; url: string } | null>(null)
+  useEffect(() => {
+    const resolve = resolveRef.current
+    if (!resolve || reconnectNonce === 0) return
+    let live = true
+    resolve().then(
+      (url) => { if (live) setResolved({ nonce: reconnectNonce, url }) },
+      () => {
+        if (!live) return
+        setErrorMessage(t('components.relayRenderer.reconnectRefused'))
+        setState('error')
+      },
+    )
+    return () => { live = false }
+  }, [reconnectNonce, t])
+  const connectUrl = resolveWsUrl && reconnectNonce > 0
+    ? (resolved?.nonce === reconnectNonce ? resolved.url : null)
+    : wsUrl
 
   useEffect(() => {
     if (typeof VideoDecoder === 'undefined') {
@@ -57,8 +84,9 @@ export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: 
       setErrorMessage('This browser lacks WebCodecs VP8 (use Chrome/Edge, or switch the session to WebRTC).')
       return
     }
+    if (!connectUrl) return // waiting for resolveWsUrl
 
-    const ws = new WebSocket(wsUrl, tokenSubprotocols())
+    const ws = new WebSocket(connectUrl, tokenSubprotocols())
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
 
@@ -170,7 +198,7 @@ export function RelayRenderer({ wsUrl, mode, onEnd, onPopOut, autoFullscreen }: 
       try { decoder.close() } catch { /* already closed */ }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsUrl, reconnectNonce])
+  }, [connectUrl, reconnectNonce])
 
   function sendJSON(obj: Record<string, unknown>) {
     const ws = wsRef.current

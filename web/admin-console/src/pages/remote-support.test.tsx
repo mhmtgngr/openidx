@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -108,6 +108,28 @@ describe('RemoteSupportPage', () => {
     expect(await screen.findByText('Remote support')).toBeInTheDocument()
     expect(await screen.findByText('Sessions')).toBeInTheDocument()
     expect(await screen.findByText('agent-sparse')).toBeInTheDocument()
+  })
+
+  it('plays a session recording in the console player', async () => {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url.includes('/remote-support/sessions')) {
+        return Promise.resolve([{
+          id: 'sess-rec-11223344', agent_id: 'agent-rec', mode: 'interactive', status: 'ended',
+          started_at: '2026-06-09T10:00:00Z', recording_url: '/rec/sess-rec', recording_size_bytes: 2048,
+        }]) as ReturnType<typeof api.get>
+      }
+      return routeGet(url) as ReturnType<typeof api.get>
+    })
+    const fetchMock = vi.fn(() => new Promise(() => {})) // stays loading; the player's own test covers playback
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      render(<RemoteSupportPage />, { wrapper: createWrapper() })
+      fireEvent.click(await screen.findByRole('button', { name: /play recording/i }))
+      expect(await screen.findByText(/recording of session sess-rec/i)).toBeInTheDocument()
+      expect(fetchMock).toHaveBeenCalledWith('/api/v1/access/remote-support/sessions/sess-rec-11223344/recording', expect.anything())
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('shows the empty "No sessions yet." state when the list is empty', async () => {

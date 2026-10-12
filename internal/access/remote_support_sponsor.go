@@ -10,25 +10,122 @@ package access
 //
 // Anything that is not a live vendor session the caller sponsors answers 404,
 // so a sponsor learns nothing about other sessions.
+//
+// Watching asks for a fresh second factor, as watching a PAM session does
+// (pam.sponsor_watch). The viewer is a WebSocket, and the freshness gate
+// answers a refusal the console can act on only on an ordinary request, so the
+// step-up sits on a POST that mints a watch ticket -- one use, sixty seconds,
+// bound to the session and the sponsor -- and the socket opens only with one.
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/logsafe"
+	"github.com/openidx/openidx/internal/notifications"
 )
 
-// RegisterRemoteSupportSponsorRoutes mounts the sponsor's routes. Ending a
-// session asks for a fresh second factor; listing and watching only look.
-func (h *RemoteSupportHandler) RegisterRemoteSupportSponsorRoutes(r *gin.RouterGroup, stepUp gin.HandlerFunc) {
+// RegisterRemoteSupportSponsorRoutes mounts the sponsor's routes. Minting a
+// watch ticket and ending a session each ask for a fresh second factor, under
+// actions of their own so the audit tells them apart; listing only looks, and
+// the watch socket takes the ticket in place of a gate of its own.
+func (h *RemoteSupportHandler) RegisterRemoteSupportSponsorRoutes(r *gin.RouterGroup, watchStepUp, endStepUp gin.HandlerFunc) {
 	r.GET("/remote-support/sponsored/sessions", h.HandleSponsorListSessions)
+	r.POST("/remote-support/sponsored/sessions/:id/watch-ticket", withGate(watchStepUp, h.HandleSponsorWatchTicket)...)
 	r.GET("/remote-support/sponsored/sessions/:id/watch", h.HandleSponsorWatchWS)
-	r.POST("/remote-support/sponsored/sessions/:id/end", withGate(stepUp, h.HandleSponsorEndSession)...)
+	r.POST("/remote-support/sponsored/sessions/:id/end", withGate(endStepUp, h.HandleSponsorEndSession)...)
+}
+
+// ---- Watch tickets ----
+
+// watchTicketTTL is how long a minted ticket opens the socket: long enough for
+// the browser to connect, short enough that one found later is worthless.
+const watchTicketTTL = 60 * time.Second
+
+type watchTicket struct {
+	sessionID, userID, orgID string
+	expires                  time.Time
+}
+
+// watchTicketStore holds the outstanding watch tickets in this process. That
+// is enough because the broker is single-replica already: a session's peers
+// meet in RemoteSupportHandler.sessions, which is in-process too, so a
+// deployment that spread a sponsor's two requests over replicas would have no
+// session to watch on the second one either. A restart forgets the tickets,
+// which costs the sponsor one more step-up. The zero value is ready.
+type watchTicketStore struct {
+	mu      sync.Mutex
+	tickets map[string]watchTicket
+}
+
+// mint issues a ticket for (session, user, org), pruning expired ones.
+func (s *watchTicketStore) mint(sessionID, userID, orgID string, now time.Time) (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	tok := base64.RawURLEncoding.EncodeToString(raw[:])
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tickets == nil {
+		s.tickets = map[string]watchTicket{}
+	}
+	for k, t := range s.tickets {
+		if !now.Before(t.expires) {
+			delete(s.tickets, k)
+		}
+	}
+	s.tickets[tok] = watchTicket{sessionID: sessionID, userID: userID, orgID: orgID, expires: now.Add(watchTicketTTL)}
+	return tok, nil
+}
+
+// consume spends a ticket. It is gone after the first attempt whatever the
+// answer, so a ticket presented for the wrong session or by the wrong user
+// cannot then be retried for the right one.
+func (s *watchTicketStore) consume(tok, sessionID, userID, orgID string, now time.Time) bool {
+	if tok == "" {
+		return false
+	}
+	s.mu.Lock()
+	t, ok := s.tickets[tok]
+	delete(s.tickets, tok)
+	s.mu.Unlock()
+	return ok && now.Before(t.expires) && t.sessionID == sessionID && t.userID == userID && t.orgID == orgID
+}
+
+// HandleSponsorWatchTicket — POST /remote-support/sponsored/sessions/:id/watch-ticket:
+// a one-use ticket that opens the sponsor's viewer on a live vendor session
+// they sponsor, with the socket path that carries it.
+func (h *RemoteSupportHandler) HandleSponsorWatchTicket(c *gin.Context) {
+	id := c.Param("id")
+	if !h.sponsoredSupportSessionLive(c, id) {
+		return
+	}
+	user := getUserID(c)
+	tok, err := h.watchTickets.mint(id, user, remoteSupportOrg(c), time.Now())
+	if err != nil {
+		h.logger.Error("sponsored remote support: minting a watch ticket failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not prepare the watch"})
+		return
+	}
+	h.audit(c.Request.Context(), "remote_support.sponsor_watch_ticket", id, "success", "user="+user)
+	c.JSON(http.StatusOK, gin.H{
+		"ticket":     tok,
+		"expires_in": int(watchTicketTTL.Seconds()),
+		"watch_ws":   sponsorSessionPath(id) + "?ticket=" + tok,
+	})
 }
 
 // sponsoredBy is true when the vendor session s (its technician u, its
@@ -135,11 +232,20 @@ func (h *RemoteSupportHandler) sponsoredSupportSessionLive(c *gin.Context, id st
 	return true
 }
 
-// HandleSponsorWatchWS — GET /remote-support/sponsored/sessions/:id/watch:
-// the sponsor's read-only viewer.
+// HandleSponsorWatchWS — GET /remote-support/sponsored/sessions/:id/watch?ticket=:
+// the sponsor's read-only viewer. It opens only with a ticket from
+// watch-ticket minted for this session and this caller, and spends it.
 func (h *RemoteSupportHandler) HandleSponsorWatchWS(c *gin.Context) {
 	id := c.Param("id")
 	if !h.sponsoredSupportSessionLive(c, id) {
+		return
+	}
+	if !h.watchTickets.consume(c.Query("ticket"), id, getUserID(c), remoteSupportOrg(c), time.Now()) {
+		h.audit(c.Request.Context(), "remote_support.sponsor_watch", id, "failure", "user="+getUserID(c)+" reason=no_valid_ticket")
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "watching needs a watch ticket from POST .../watch-ticket, which asks for a fresh second factor",
+			"code":  "watch_ticket_required",
+		})
 		return
 	}
 	var respHeader http.Header
@@ -188,4 +294,62 @@ func (h *RemoteSupportHandler) HandleSponsorEndSession(c *gin.Context) {
 	h.evictSession(id)
 	h.audit(ctx, "remote_support.sponsor_session_ended", id, "success", "user="+user)
 	c.JSON(http.StatusOK, gin.H{"status": "ended"})
+}
+
+// sponsoredSupportLink is where a sponsor's notification sends them: Access
+// requests, where the Vendor support sessions panel lists the session with
+// Watch and End.
+const sponsoredSupportLink = "/access-requests"
+
+// notifySponsorsOfSupportSession tells the sponsors of a vendor session -- the
+// technician's sponsor and the engagement's, once each -- that it went live,
+// the remote-support counterpart of notifySponsorOfSession for a PAM session.
+// Each sponsor told is audited as remote_support.sponsor_notified, and one
+// whose write failed as a failure of it; a sponsor who switched the
+// notification type off is not told and leaves no record, as on the PAM side.
+// Best-effort: the session is already being relayed, and nothing here can end
+// it. A staff session, which has no engagement, finds no row and tells no one.
+func (h *RemoteSupportHandler) notifySponsorsOfSupportSession(ctx context.Context, orgID, sessionID string) {
+	if h.db == nil || h.db.Pool == nil {
+		return
+	}
+	var tech, techID, device, engagementID, engagement, techSponsor, engSponsor string
+	err := h.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(NULLIF(u.email, ''), u.username), u.id::text,
+		       COALESCE(NULLIF(ag.metadata->>'hostname', ''), s.agent_id), e.id::text, e.title,
+		       COALESCE(u.sponsor_user_id::text, ''), COALESCE(e.sponsor_user_id::text, '')
+		  FROM remote_support_sessions s
+		  JOIN users u ON u.id = s.admin_user_id AND u.org_id = s.org_id
+		  JOIN vendor_engagements e ON e.id = s.engagement_id AND e.org_id = s.org_id
+		  LEFT JOIN enrolled_agents ag ON ag.agent_id = s.agent_id AND ag.org_id = s.org_id
+		 WHERE s.id = $1::uuid AND s.org_id = $2::uuid`, sessionID, orgID).
+		Scan(&tech, &techID, &device, &engagementID, &engagement, &techSponsor, &engSponsor)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return
+	}
+	if err != nil {
+		h.logger.Warn("notify sponsors of a support session: could not read the session", logsafe.String("session_id", sessionID), zap.Error(err))
+		return
+	}
+	notif := notifications.NewService(h.db, h.logger)
+	told := map[string]bool{}
+	for _, sponsor := range []string{techSponsor, engSponsor} {
+		if sponsor == "" || sponsor == techID || told[sponsor] {
+			continue
+		}
+		told[sponsor] = true
+		if !notif.Enabled(ctx, sponsor, "in_app", notifications.TypeSponsoredAccess) {
+			continue
+		}
+		if err := notif.CreateMultiChannelNotification(ctx, sponsor, orgID, notifications.TypeSponsoredAccess,
+			"A vendor user you sponsor started a remote-support session",
+			fmt.Sprintf("%s is connected to %s for %s. The session is recorded; you can watch it or end it.", tech, device, engagement),
+			sponsoredSupportLink,
+			map[string]interface{}{"session_id": sessionID, "engagement_id": engagementID, "user_id": techID, "kind": "remote_support_session_started"}); err != nil {
+			h.logger.Warn("notify sponsors of a support session failed", logsafe.String("session_id", sessionID), zap.String("sponsor_id", sponsor), zap.Error(err))
+			h.audit(ctx, "remote_support.sponsor_notified", sessionID, "failure", "sponsor="+sponsor)
+			continue
+		}
+		h.audit(ctx, "remote_support.sponsor_notified", sessionID, "success", "sponsor="+sponsor)
+	}
 }

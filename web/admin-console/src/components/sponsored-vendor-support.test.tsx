@@ -7,10 +7,12 @@ vi.mock('../lib/api', () => ({
   api: { get: vi.fn(), post: vi.fn() },
   baseURL: 'https://idp.example.test',
 }))
-vi.mock('../hooks/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }))
-const relay = vi.fn()
+const toast = vi.fn()
+vi.mock('../hooks/use-toast', () => ({ useToast: () => ({ toast }) }))
+type RelayProps = { wsUrl: string; mode: string; resolveWsUrl?: () => Promise<string> }
+const relay = vi.fn<(props: RelayProps) => void>()
 vi.mock('./remote-support/relay-renderer', () => ({
-  RelayRenderer: (props: { wsUrl: string; mode: string }) => {
+  RelayRenderer: (props: RelayProps) => {
     relay(props)
     return <div data-testid="relay">{props.mode}</div>
   },
@@ -33,6 +35,10 @@ const session = {
   engagement_title: 'Printer fix', status: 'active', consent_status: 'granted',
   started_at: '2026-10-12T08:00:00Z', watch_ws: '/api/v1/access/remote-support/sponsored/sessions/s-1/watch',
 }
+const ticketPath = '/api/v1/access/remote-support/sponsored/sessions/s-1/watch-ticket'
+const ticket = (tok: string) => ({
+  ticket: tok, expires_in: 60, watch_ws: `/api/v1/access/remote-support/sponsored/sessions/s-1/watch?ticket=${tok}`,
+})
 
 describe('SponsoredVendorSupport', () => {
   beforeEach(() => {
@@ -47,16 +53,39 @@ describe('SponsoredVendorSupport', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('watches a session in the view-only viewer on the watch socket', async () => {
+  it('asks for a watch ticket, then watches in the view-only viewer on the ticketed socket', async () => {
     vi.mocked(api.get).mockResolvedValue({ sessions: [session] })
+    vi.mocked(api.post).mockResolvedValueOnce(ticket('t-1'))
     const user = userEvent.setup()
     renderCard()
     await user.click(await screen.findByRole('button', { name: /Watch/ }))
+    expect(api.post).toHaveBeenCalledWith(ticketPath, {})
     expect(await screen.findByTestId('relay')).toHaveTextContent('view')
-    expect(relay).toHaveBeenLastCalledWith(expect.objectContaining({
+    const props = relay.mock.lastCall![0]
+    expect(props).toEqual(expect.objectContaining({
       mode: 'view',
-      wsUrl: 'wss://idp.example.test/api/v1/access/remote-support/sponsored/sessions/s-1/watch',
+      wsUrl: 'wss://idp.example.test/api/v1/access/remote-support/sponsored/sessions/s-1/watch?ticket=t-1',
     }))
+
+    // A reconnect cannot reuse a spent ticket: it asks for a new one.
+    vi.mocked(api.post).mockResolvedValueOnce(ticket('t-2'))
+    await expect(props.resolveWsUrl!()).resolves.toBe(
+      'wss://idp.example.test/api/v1/access/remote-support/sponsored/sessions/s-1/watch?ticket=t-2')
+    expect(api.post).toHaveBeenLastCalledWith(ticketPath, {})
+  })
+
+  it('shows the step-up refusal and opens no viewer when the ticket is refused', async () => {
+    vi.mocked(api.get).mockResolvedValue({ sessions: [session] })
+    vi.mocked(api.post).mockRejectedValueOnce({
+      response: { status: 403, data: { error: 'step_up_required', error_description: 'this action requires a recently verified second factor' } },
+    })
+    const user = userEvent.setup()
+    renderCard()
+    await user.click(await screen.findByRole('button', { name: /Watch/ }))
+    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+      description: 'this action requires a recently verified second factor', variant: 'destructive',
+    })))
+    expect(screen.queryByTestId('relay')).not.toBeInTheDocument()
   })
 
   it('ends a session', async () => {

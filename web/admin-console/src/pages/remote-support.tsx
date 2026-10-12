@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Video, Play, Square, MonitorPlay, Eye, MousePointer2, Clock,
   CheckCircle2, XCircle, AlertCircle, Download, Trash2, Infinity as InfinityIcon,
-  Lock, Unlock, Shield, Globe,
+  Lock, Unlock, Shield, Globe, PlayCircle,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -24,6 +24,8 @@ import { QueryError } from '../components/query-error'
 import { RemoteSupportViewer } from '../components/remote-support/remote-support-viewer'
 import { RelayRenderer } from '../components/remote-support/relay-renderer'
 import { ConfirmAction } from '../components/confirm-action'
+import { RecordingPlayer } from '../components/remote-support/recording-player'
+import { fetchRecording, saveRecording } from '../lib/remote-support-recording'
 
 /**
  * Remote support admin page (Phase 4). Lists sessions, lets an admin start
@@ -71,6 +73,7 @@ export function RemoteSupportPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [startOpen, setStartOpen] = useState(false)
+  const [playing, setPlaying] = useState<string | null>(null)
   const [viewerSession, setViewerSession] = useState<{
     id: string
     agentId: string
@@ -219,6 +222,17 @@ export function RemoteSupportPage() {
                               <Square className="h-3 w-3" />
                             </Button>
                           </>
+                        )}
+                        {s.recording_url && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setPlaying(s.id)}
+                            title={t('pages.remoteSupport.playRecording')}
+                            aria-label={t('pages.remoteSupport.playRecording')}
+                          >
+                            <PlayCircle className="h-3 w-3" />
+                          </Button>
                         )}
                         {s.recording_url && (
                           <Button
@@ -388,6 +402,8 @@ export function RemoteSupportPage() {
           </DialogContent>
         </Dialog>
       )}
+
+      {playing && <RecordingPlayer sessionId={playing} onClose={() => setPlaying(null)} />}
     </div>
   )
 }
@@ -804,28 +820,17 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
 }
 
 /**
- * Trigger a browser download of the assembled recording. We construct a
- * link with the OAuth bearer in a query param won't work — the endpoint
- * requires the Authorization header — so we fetch the blob through the
- * shared axios client, then create an object URL and click an anchor.
+ * Trigger a browser download of the assembled recording (WebM; a vendor
+ * session's IVF arrives remuxed). A link with the OAuth bearer in a query
+ * param won't work — the endpoint requires the Authorization header — so we
+ * fetch the blob, then create an object URL and click an anchor.
  */
 async function downloadRecording(sessionId: string) {
-  const token = localStorage.getItem('token')
-  const url = `/api/v1/access/remote-support/sessions/${sessionId}/recording`
-  const resp = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-  if (!resp.ok) {
-    console.warn('recording download failed', resp.status)
-    return
+  try {
+    saveRecording(sessionId, await fetchRecording(sessionId))
+  } catch (err) {
+    console.warn('recording download failed', err)
   }
-  const blob = await resp.blob()
-  const objectUrl = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = objectUrl
-  a.download = `openidx-recording-${sessionId}.webm`
-  a.click()
-  URL.revokeObjectURL(objectUrl)
 }
 
 function formatBytes(bytes: number): string {
