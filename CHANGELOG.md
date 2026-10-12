@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.44.0] - 2026-10-12
+
 ### Added
 - **Vendor engagements.** A vendor's work is now one unit: a vendor organization, an internal sponsor, a window (at most 365 days, within the vendor's contract), the vendor's people on it (none named means every active account of the vendor) and what it covers: applications (network resources included), PAM entries and enrolled devices (migration 234: `vendor_engagements`, `vendor_engagement_targets`, `vendor_engagement_app_grants`, `pam_entry_grants.engagement_id`). While an engagement runs, the identity service gives each member an assignment to each application and a connect grant on each PAM entry, kept to its window; when it ends or is closed, it takes back what it gave and nothing else (an assignment a request gave for longer, or a standing one, is left as it was). The external-account sweep starts a scheduled engagement on time, follows members whose accounts start or stop being active, and closes an engagement past its window or whose vendor is closed. Every change is audited.
   - **API:** `GET/POST /api/v1/identity/vendor-orgs/:id/engagements`, `GET /api/v1/identity/engagements[?state=scheduled|running|ended|closed]`, `GET/PUT /api/v1/identity/engagements/:id`, `POST /api/v1/identity/engagements/:id/close`, and `GET /api/v1/identity/engagements/:id/report`: the members, their PAM sessions in the window (recorded or not, in scope or not), their access requests, the remote-support sessions on the engagement's devices, their audited actions by count, and the grants it still holds.
@@ -12119,7 +12121,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.43.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.44.0...HEAD
+[1.44.0]: https://github.com/mhmtgngr/openidx/compare/v1.43.0...v1.44.0
 [1.43.0]: https://github.com/mhmtgngr/openidx/compare/v1.42.0...v1.43.0
 [1.42.0]: https://github.com/mhmtgngr/openidx/compare/v1.41.0...v1.42.0
 [1.41.0]: https://github.com/mhmtgngr/openidx/compare/v1.40.0...v1.41.0
