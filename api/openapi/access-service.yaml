@@ -3604,6 +3604,13 @@ paths:
                       The IAM device-trust flag on the linked known_devices row,
                       which the overlay's #device-trusted attribute follows.
                       Only meaningful alongside enrollment_status=active.
+                  org_network_policy:
+                    allOf:
+                      - $ref: '#/components/schemas/AgentNetworkPolicy'
+                    description: >-
+                      The organization's tunnel policy, sent only to an agent
+                      whose enrolment is active (never pending or suspended); also
+                      absent when it cannot be read, and the agent keeps the last policy it had.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3932,12 +3939,20 @@ paths:
         and X-Agent-Key-Signature over the exact body; without them it is
         refused 401 with code device_signature_required, and with a wrong or
         stale signature 401 with code device_signature_invalid. An optional
-        tunnel_status object ({state: up|down|starting|stopped|not_installed|unknown,
-        version, last_seen (RFC 3339), services: [{name, status, dial_failures}],
-        dial_failures}) reports the OpenZiti tunneler; it is stored on the
-        agent (GET /agents returns it with tunnel_last_seen, the server's time
-        of the last report that said up), and its dial failures since the
-        previous report feed openidx_tunnel_dial_failures_total.
+        tunnel_status object reports the OpenZiti tunneler: state
+        (up, down, starting, stopped, off, not_installed or unknown; the Go
+        agent's connected and degraded are read as up and down), version,
+        last_seen (RFC 3339), services (names, or objects with name, status
+        and dial_failures), dial_failures, and how the device applied the
+        organization's tunnel policy: mode (split or full), policy_version
+        (the org_network_policy version applied), policy_gaps (full_tunnel,
+        block_direct: what the policy asks for and the device cannot enforce)
+        and last_error. It is stored on the agent (GET /agents returns it with
+        tunnel_last_seen, the server's time of the last report that said up,
+        and the applied version), and its dial failures since the previous
+        report feed openidx_tunnel_dial_failures_total. The answer carries the
+        organization's tunnel policy as org_network_policy (an AgentNetworkPolicy)
+        when the agent is active, so a change reaches the device at its next report.
       operationId: handleReport
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleReport
       requestBody:
@@ -4078,6 +4093,14 @@ paths:
     get:
       tags: [Agent Fleet]
       summary: Handle list agents
+      description: >-
+        The organization's enrolled agents. Each carries tunnel_status (the
+        tunneler state it last reported, see POST /agent/report),
+        tunnel_last_seen, tunnel_policy_version (the tunnel policy version it
+        last reported applying), tunnel_policy_applied_at (when that changed)
+        and tunnel_policy_state: applied when it is the organization's current
+        version, pending when it is not, empty when the device reports no
+        tunnel status.
       operationId: handleListAgents
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleListAgents
       responses:
@@ -9729,6 +9752,41 @@ components:
         split_tunnel: { type: boolean, default: true }
         block_direct_corporate_cidrs: { type: boolean, default: false }
         updated_at: { type: string, format: date-time }
+        version:
+          type: string
+          readOnly: true
+          description: >-
+            The policy version devices receive (16 hex characters, a digest of
+            the switches and of the corporate ranges the block covers). Absent
+            when it cannot be read.
+        devices:
+          type: object
+          readOnly: true
+          description: >-
+            The organization's active devices by whether they report applying
+            this version. Absent when it cannot be read.
+          properties:
+            applied: { type: integer, description: Report this version }
+            pending: { type: integer, description: Report a tunnel status with another version or none }
+            unreported: { type: integer, description: Report no tunnel status at all }
+    AgentNetworkPolicy:
+      type: object
+      description: >-
+        The organization's tunnel policy as an agent receives it in
+        /agent/config and in the /agent/report answer. The agent echoes
+        version in tunnel_status.policy_version once applied.
+      properties:
+        always_on: { type: boolean }
+        split_tunnel: { type: boolean }
+        block_direct_corporate_cidrs: { type: boolean }
+        corporate_cidrs:
+          type: array
+          items: { type: string }
+          description: >-
+            The ranges the block refuses outside the tunnel: the CIDRs and IP
+            hosts of the organization's enabled network resources, as canonical
+            prefixes, at most 1024. Empty while the block is off.
+        version: { type: string, description: 16 hex characters }
     UpstreamPool:
       type: object
       properties:

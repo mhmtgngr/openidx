@@ -144,7 +144,25 @@ export function NetworkPolicyCard() {
           <>
             {toggle('always_on', 'np-always-on')}
             {toggle('split_tunnel', 'np-split')}
+            {data && !data.split_tunnel && (
+              <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="np-full-tunnel-gap">
+                {t('pages.networkResources.policy.fullTunnelGap')}
+              </p>
+            )}
             {toggle('block_direct_corporate_cidrs', 'np-block')}
+            {data?.block_direct_corporate_cidrs && (
+              <p className="text-xs text-muted-foreground" data-testid="np-block-scope">
+                {t('pages.networkResources.policy.blockDirectScope')}
+              </p>
+            )}
+            {data?.devices && (
+              <div className="border-t pt-3 text-xs text-muted-foreground" data-testid="np-rollout">
+                <p>{t('pages.networkResources.policy.rollout', data.devices)}</p>
+                {data.version && (
+                  <p className="font-mono">{t('pages.networkResources.policy.version', { version: data.version })}</p>
+                )}
+              </div>
+            )}
           </>
         )}
       </CardContent>

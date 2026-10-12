@@ -110,6 +110,21 @@ type ServerConfig struct {
 type OrgNetworkPolicy struct {
 	// AlwaysOn, when true, turns the tunnel on whatever agent.json says.
 	AlwaysOn *bool `json:"always_on,omitempty"`
+	// SplitTunnel false asks for a full tunnel (every packet through the
+	// overlay). The bundled tunneler intercepts only the overlay services, so
+	// the agent runs split whatever this says and reports "full_tunnel" as a
+	// gap when it is false.
+	SplitTunnel *bool `json:"split_tunnel,omitempty"`
+	// BlockDirectCorporateCIDRs refuses traffic to CorporateCIDRs that does
+	// not go through the tunnel, where the platform has a hook for it
+	// (internal/tunnel/directblock.go); elsewhere "block_direct" is reported
+	// as a gap.
+	BlockDirectCorporateCIDRs *bool    `json:"block_direct_corporate_cidrs,omitempty"`
+	CorporateCIDRs            []string `json:"corporate_cidrs,omitempty"`
+	// Version identifies the policy; the agent echoes the version it applied
+	// in its tunnel status. A server older than the field sends none, and
+	// then only AlwaysOn is read, as before.
+	Version string `json:"version,omitempty"`
 }
 
 // RemoteSupportBlock is the in-flight remote-support session pointer the server
