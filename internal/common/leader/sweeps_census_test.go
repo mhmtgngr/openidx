@@ -143,6 +143,9 @@ var tickerCensus = map[string]sweep{
 		"RETURNING above it, and that is what the measurement is of",
 		fn: "enforceExpiredGracePeriods"},
 
+	"internal/access/remote_support_external.go": {how: coordPerProcess, reason: "the IVF recorder's flush ticker writes the frames THIS pod's broker relayed for one live " +
+		"session to that session's own file; it lives and dies with the session's WebSocket on this replica, so " +
+		"there is nothing another replica could do for it"},
 	"internal/access/remote_support_retention.go": {how: coordIdempotent, reason: "MEASURED (guac_recording_double_seal_test.go, guac_seal_claim_testdb_test.go). Five sweeps on one " +
 		"ticker; the census question guessed the sealer was a chain-shaped write, and it is worse than that. " +
 		"sealOneGuacRecording REWRITES THE RECORDING IN PLACE and the candidate query claimed nothing, so two " +
