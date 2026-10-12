@@ -6,7 +6,7 @@ import {
   Plus, Trash2, Network, Server, Users2, Copy, CheckCircle,
   Shield, Router, Fingerprint, RefreshCw, FileKey, AlertTriangle,
   Monitor, ExternalLink, MoreHorizontal, Search, ChevronDown, ChevronRight,
-  LayoutDashboard, Clock, Link2, Key, Terminal, MonitorPlay, Lock, Pencil, ScrollText,
+  LayoutDashboard, Clock, Link2, Key, Lock, Pencil, ScrollText,
   Settings, Zap, Upload, Download,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -222,30 +222,6 @@ interface BrowZerStatus {
   oidc_client_id?: string
   bootstrapper_url?: string
   reason?: string
-}
-
-interface TempAccessLink {
-  id: string
-  token: string
-  name: string
-  description?: string
-  protocol: string
-  target_host: string
-  target_port: number
-  username?: string
-  created_by: string
-  created_by_email: string
-  expires_at: string
-  max_uses: number
-  current_uses: number
-  allowed_ips?: string[]
-  require_mfa: boolean
-  notify_on_use: boolean
-  access_url: string
-  status: 'active' | 'expired' | 'revoked' | 'used'
-  last_used_at?: string
-  last_used_ip?: string
-  created_at: string
 }
 
 interface ZitiConfigType {
@@ -3646,9 +3622,6 @@ function RemoteAccessTab() {
         </div>
       )}
 
-      {/* Temporary Access Links Section */}
-      <TempAccessLinksSection />
-
       {/* How it works - collapsible */}
       <button
         onClick={() => setShowHowItWorks(!showHowItWorks)}
@@ -3679,79 +3652,6 @@ function RemoteAccessTab() {
           </CardContent>
         </Card>
       )}
-    </div>
-  )
-}
-
-// ─── Temporary Access Links (retired) ────────────────────────────────────────
-
-// Temporary access links are retired: none is issued and none opens a session.
-// What the links issued before did stays visible here, read-only, until the
-// history is exported; a vendor's access is an engagement now. Nothing renders
-// once there is no history.
-function TempAccessLinksSection() {
-  const { t } = useTranslation()
-  const { data: linksData } = useQuery({
-    queryKey: ['temp-access-links'],
-    queryFn: () => api.get<{ links: TempAccessLink[] | null }>('/api/v1/access/temp-access'),
-  })
-  const links = linksData?.links || []
-  if (links.length === 0) return null
-
-  const protocolIcon = (protocol: string) => {
-    switch (protocol) {
-      case 'ssh': return <Terminal className="h-4 w-4" />
-      case 'rdp': return <MonitorPlay className="h-4 w-4" />
-      case 'vnc': return <Monitor className="h-4 w-4" />
-      default: return <Server className="h-4 w-4" />
-    }
-  }
-
-  return (
-    <div className="space-y-4" data-testid="temp-access-section">
-      <div className="flex items-center gap-2">
-        <Key className="h-5 w-5 text-muted-foreground" />
-        <h3 className="text-lg font-semibold">{t('pages.zitiNetwork.tempAccess.historyTitle')}</h3>
-        <Badge variant="outline" className="ml-2">{links.length}</Badge>
-      </div>
-      <p className="text-sm text-muted-foreground">{t('pages.zitiNetwork.tempAccess.retired')}</p>
-      <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('pages.zitiNetwork.tempAccess.colName')}</TableHead>
-              <TableHead>{t('pages.zitiNetwork.tempAccess.colTarget')}</TableHead>
-              <TableHead>{t('pages.zitiNetwork.tempAccess.colUsage')}</TableHead>
-              <TableHead>{t('pages.zitiNetwork.tempAccess.colIssued')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {links.map((link) => (
-              <TableRow key={link.id}>
-                <TableCell>
-                  <div className="flex items-center gap-2">
-                    {protocolIcon(link.protocol)}
-                    <div>
-                      <p className="font-medium">{link.name}</p>
-                      <p className="text-xs text-muted-foreground">{link.created_by_email}</p>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <code className="text-sm bg-muted px-1.5 py-0.5 rounded">{link.target_host}:{link.target_port}</code>
-                </TableCell>
-                <TableCell>
-                  <span className="text-sm">
-                    {t('pages.zitiNetwork.tempAccess.uses', { used: link.current_uses })}
-                    {link.last_used_at && ` · ${new Date(link.last_used_at).toLocaleString()}`}
-                  </span>
-                </TableCell>
-                <TableCell className="text-sm">{new Date(link.created_at).toLocaleString()}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Card>
     </div>
   )
 }

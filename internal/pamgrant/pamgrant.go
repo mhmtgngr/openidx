@@ -206,10 +206,6 @@ type Counts struct {
 	// LeasesReleased is the user's active pam_active_checkouts rows, the
 	// exclusive leases that block every other principal from an entry.
 	LeasesReleased int64
-	// TempLinksRevoked is the active temp_access_links rows the user issued:
-	// access handed to somebody outside on a URL nobody signs in to, redeemed
-	// as long as it is active whatever happens to its issuer.
-	TempLinksRevoked int64
 	// BrokeredEnded is the user's active brokered_sessions ledger rows. The
 	// SSH certificates and cloud credentials those sessions issued cannot be
 	// recalled and expire by their own TTL; a caller that reports this number
@@ -257,9 +253,6 @@ func EndForUser(ctx context.Context, q Execer, userID, orgID string) (Counts, []
 	run("release_pam_entry_leases", &c.LeasesReleased,
 		`UPDATE pam_active_checkouts SET status = 'revoked', released_at = NOW()
 		  WHERE principal_id = $1 AND org_id = $2 AND status = 'active'`)
-	run("revoke_temp_access_links", &c.TempLinksRevoked,
-		`UPDATE temp_access_links SET status = 'revoked', updated_at = NOW()
-		  WHERE created_by = $1 AND org_id = $2 AND status = 'active'`)
 	run("end_brokered_sessions", &c.BrokeredEnded,
 		`UPDATE brokered_sessions SET status = 'ended', ended_at = NOW()
 		  WHERE user_id = $1 AND org_id = $2 AND status = 'active'`)
@@ -301,11 +294,6 @@ func EndForDisabledUsers(ctx context.Context, q Execer) (Counts, []error) {
 		`UPDATE pam_active_checkouts l SET status = 'revoked', released_at = NOW()
 		  WHERE l.status = 'active'
 		    AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = l.principal_id AND u.enabled = true)`)
-	run("revoke_temp_access_links", &c.TempLinksRevoked,
-		//orgscope:ignore install-wide lifecycle reconcile sweep (disabled/deleted users -> PAM teardown)
-		`UPDATE temp_access_links t SET status = 'revoked', updated_at = NOW()
-		  WHERE t.status = 'active'
-		    AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = t.created_by AND u.enabled = true)`)
 	run("end_brokered_sessions", &c.BrokeredEnded,
 		//orgscope:ignore install-wide lifecycle reconcile sweep (disabled/deleted users -> PAM teardown)
 		`UPDATE brokered_sessions b SET status = 'ended', ended_at = NOW()
@@ -323,12 +311,12 @@ func EndForDisabledUsers(ctx context.Context, q Execer) (Counts, []error) {
 
 // Total is the number of rows a pass ended, for a log line.
 func (c Counts) Total() int64 {
-	return c.GrantsExpired + c.ApprovalsRevoked + c.LeasesReleased + c.TempLinksRevoked + c.BrokeredEnded +
+	return c.GrantsExpired + c.ApprovalsRevoked + c.LeasesReleased + c.BrokeredEnded +
 		c.ModerationsEnded
 }
 
 // String is the log form.
 func (c Counts) String() string {
-	return fmt.Sprintf("grants=%d approvals=%d leases=%d temp_links=%d brokered=%d moderations=%d",
-		c.GrantsExpired, c.ApprovalsRevoked, c.LeasesReleased, c.TempLinksRevoked, c.BrokeredEnded, c.ModerationsEnded)
+	return fmt.Sprintf("grants=%d approvals=%d leases=%d brokered=%d moderations=%d",
+		c.GrantsExpired, c.ApprovalsRevoked, c.LeasesReleased, c.BrokeredEnded, c.ModerationsEnded)
 }

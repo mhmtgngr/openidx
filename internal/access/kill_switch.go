@@ -9,9 +9,8 @@
 //	      JIT elevations, terminate live Guacamole sessions; expire the
 //	      user's own PAM entry grants, revoke their pending and approved
 //	      launch approvals, release their exclusive leases, end their live
-//	      PAM entry sessions on the broker, revoke the temporary access
-//	      links they issued, and end their brokered SSH and cloud sessions
-//	      in the ledger,
+//	      PAM entry sessions on the broker, and end their brokered SSH and
+//	      cloud sessions in the ledger,
 //	Ziti: terminate the identity's edge + API sessions on the controller
 //	      (severing live circuits), for the user identity and any device
 //	      identities the user enrolled.
@@ -72,13 +71,13 @@ type KillSwitchResult struct {
 	// The PAM entry surface. Until these were added the emergency control
 	// left a user holding every PAM connection grant they had, every launch
 	// approval already given to them, every exclusive lease, every live entry
-	// session, every vendor link they had issued and every brokered SSH or
-	// cloud session, and the response said nothing about any of it.
+	// session, every vendor link they had issued (retired in D2, the table
+	// dropped in migration 236) and every brokered SSH or cloud session, and
+	// the response said nothing about any of it.
 	PamEntryGrantsExpired    int64 `json:"pam_entry_grants_expired"`
 	PamEntryApprovalsRevoked int64 `json:"pam_entry_approvals_revoked"`
 	PamEntryLeasesReleased   int64 `json:"pam_entry_leases_released"`
 	PamEntrySessionsEnded    int   `json:"pam_entry_sessions_ended"`
-	TempAccessLinksRevoked   int64 `json:"pam_temp_links_revoked"`
 	// BrokeredSessionsEnded counts ledger rows. The short-lived SSH
 	// certificates and cloud credentials those sessions issued cannot be
 	// recalled; they expire by their own TTL, and a warning says so whenever
@@ -151,7 +150,6 @@ func (s *Service) handleUserKillSwitch(c *gin.Context) {
 			"pam_entry_approvals_revoked":    result.PamEntryApprovalsRevoked,
 			"pam_entry_leases_released":      result.PamEntryLeasesReleased,
 			"pam_entry_sessions_ended":       result.PamEntrySessionsEnded,
-			"pam_temp_links_revoked":         result.TempAccessLinksRevoked,
 			"pam_brokered_sessions_ended":    result.BrokeredSessionsEnded,
 			"pam_moderations_ended":          result.ModerationsEnded,
 			"ziti_edge_sessions_terminated":  result.ZitiEdgeSessions,
@@ -335,7 +333,6 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 	res.PamEntryGrantsExpired = pam.GrantsExpired
 	res.PamEntryApprovalsRevoked = pam.ApprovalsRevoked
 	res.PamEntryLeasesReleased = pam.LeasesReleased
-	res.TempAccessLinksRevoked = pam.TempLinksRevoked
 	res.BrokeredSessionsEnded = pam.BrokeredEnded
 	res.ModerationsEnded = pam.ModerationsEnded
 	if res.BrokeredSessionsEnded > 0 {
@@ -420,7 +417,6 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 		zap.Int64("pam_entry_approvals_revoked", res.PamEntryApprovalsRevoked),
 		zap.Int64("pam_entry_leases_released", res.PamEntryLeasesReleased),
 		zap.Int("pam_entry_sessions_ended", res.PamEntrySessionsEnded),
-		zap.Int64("temp_links_revoked", res.TempAccessLinksRevoked),
 		zap.Int64("brokered_sessions_ended", res.BrokeredSessionsEnded),
 		zap.Int64("moderations_ended", res.ModerationsEnded),
 		zap.Int("ziti_edge_sessions", res.ZitiEdgeSessions),

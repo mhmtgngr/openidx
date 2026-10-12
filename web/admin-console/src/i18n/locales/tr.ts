@@ -7222,15 +7222,6 @@ const tr: typeof en = {
           serviceDisableFailed: 'Serviste BrowZer devre dışı bırakılamadı',
         },
       },
-      tempAccess: {
-        historyTitle: 'Geçici erişim linkleri (kaldırıldı)',
-        retired: 'Geçici erişim linkleri artık oturum açmıyor ve oluşturulamıyor. Tedarikçi, kendi hesabıyla, bir engagement\'ın kapsadığı kaynaklara erişir: Dış kullanıcılar → Engagements. Daha önce verilen linkler, geçmişleri dışa aktarılana kadar burada listelenir.',
-        colName: 'Ad',
-        colTarget: 'Hedef',
-        colUsage: 'Kullanım',
-        colIssued: 'Verildiği tarih',
-        uses: '{{used}} kullanım',
-      },
       explain: {
         title: '“{{name}}” nasıl çalışır',
         checking: 'Kontrol ediliyor…',
@@ -7509,7 +7500,6 @@ const tr: typeof en = {
         partJit: '{{n}} JIT yetkisi',
         partPrivSessions: '{{n}} ayrıcalıklı oturum',
         partPamGrants: '{{n}} PAM bağlantı yetkisi',
-        partTempLinks: '{{n}} geçici erişim bağlantısı',
         partNetwork: '{{n}} ağ oturumu',
       },
     },
