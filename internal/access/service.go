@@ -647,6 +647,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// enriched with connection details. Deliberately not adminOnly.
 		api.GET("/my/ziti/services", svc.handleMyZitiServices)
 
+		// Self-service: the vendor portal's view of an external user's own
+		// vendor, sponsor, account end and engagements. Deliberately not
+		// adminOnly; an internal caller gets {"external": false}.
+		api.GET("/my/vendor", svc.handleMyVendor)
+
 		// Phase 3: Posture checks. Definitions are admin-managed; they, the
 		// summary of the organization's results and one identity's posture and
 		// its evaluation carry the operator tier. The device self-report is
@@ -983,13 +988,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/app-hosts/:entryId/agent", svc.requireAdminRole(), svc.handleWindowsAppHostLinkAgent)
 		api.DELETE("/pam/app-hosts/:entryId/agent", svc.requireAdminRole(), svc.handleWindowsAppHostUnlinkAgent)
 
-		// Temporary access links for support/vendor access
-		// PAM vendor access to internal SSH/RDP/VNC hosts is a privileged
-		// operation — gate management to admins, matching the guacamole PAM
-		// routes above. (The public token-redemption route is registered
-		// separately on the root router, without auth.)
+		// Temporary access links are retired (D2): none is issued and none
+		// redeems. Their history stays readable, and revocable, by admins
+		// until the table is exported and dropped.
 		api.GET("/temp-access", adminOnly, svc.handleListTempAccess)
-		api.POST("/temp-access", adminOnly, svc.handleCreateTempAccess)
 		api.GET("/temp-access/:id", adminOnly, svc.handleGetTempAccess)
 		api.DELETE("/temp-access/:id", adminOnly, svc.handleRevokeTempAccess)
 		api.GET("/temp-access/:id/usage", adminOnly, svc.handleGetTempAccessUsage)
@@ -1137,6 +1139,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// The operator tier goes on the session routes: the console gives Remote
 		// Support to operators.
 		remoteSupport.RegisterRemoteSupportAdminRoutes(api, svc.requireFreshMFA("remote_support.start_session"), svc.requireAdminRole(), operatorTier)
+		// A vendor's technician on an engagement's device, from the browser
+		// (Phase 3c): the caller's own sessions only, never the operator tier.
+		remoteSupport.RegisterRemoteSupportVendorRoutes(api, svc.requireFreshMFA("remote_support.vendor_start_session"))
+		// The technician's sponsor watches (read-only in the broker) and may
+		// end their live sessions (Phase 3e).
+		remoteSupport.RegisterRemoteSupportSponsorRoutes(api, svc.requireFreshMFA("remote_support.sponsor_end_session"))
 		remoteSupport.StartJanitor(context.Background(), 5*time.Minute, time.Minute)
 		if svc.guacamoleClient != nil {
 			remoteSupport.SetGuacamoleClient(svc.guacamoleClient)
@@ -1289,8 +1297,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 	// context exists). One param route avoids a gin static-vs-wildcard conflict.
 	router.GET("/downloads/:file", svc.handleAgentDownload)
 
-	// Temp access public endpoint (no auth - uses token)
-	router.GET("/temp-access/:token", svc.handleUseTempAccess)
+	// A retired temporary access link: the page says how access works now.
+	router.GET("/temp-access/:token", svc.handleRetiredTempAccess)
 
 	// Catch-all reverse proxy (must be last)
 	router.NoRoute(svc.handleProxy)

@@ -1,9 +1,11 @@
 import { useEffect, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from '@/components/layout'
+import { VendorAwareHome } from '@/components/vendor-aware-home'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import {
   Dashboard,
+  VendorPortal,
   Users,
   Groups,
   Roles,
@@ -254,7 +256,8 @@ function App() {
         }
       >
         <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="dashboard" element={<VendorAwareHome><Dashboard /></VendorAwareHome>} />
+        <Route path="vendor" element={<VendorPortal />} />
 
         {/* My Pages (user-facing) */}
         <Route path="profile" element={<UserProfile />} />

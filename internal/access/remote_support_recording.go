@@ -563,8 +563,16 @@ func (h *RemoteSupportHandler) HandleDownloadRecording(c *gin.Context) {
 	}
 	defer reader.Close()
 
-	filename := "openidx-recording-" + sessionID + ".webm"
-	c.Header("Content-Type", "video/webm")
+	// A vendor session is recorded by the broker as IVF (VP8 frames, as the
+	// relay carried them); a staff session by the viewer's browser as WebM.
+	filename, contentType := "openidx-recording-"+sessionID+".webm", "video/webm"
+	var format string
+	if err := h.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT recording_format FROM remote_support_sessions WHERE id = $1 AND org_id = $2`,
+		sessionID, remoteSupportOrg(c)).Scan(&format); err == nil && format == "ivf" {
+		filename, contentType = "openidx-recording-"+sessionID+".ivf", "video/x-ivf"
+	}
+	c.Header("Content-Type", contentType)
 	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
 	// Encrypted backend doesn't know the plaintext length up front;
 	// omit Content-Length so the response falls back to chunked transfer

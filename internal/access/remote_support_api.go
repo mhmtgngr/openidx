@@ -71,6 +71,12 @@ type RemoteSupportHandler struct {
 
 	mu       sync.Mutex
 	sessions map[string]*signalingSession
+
+	// recorders are the broker-side recordings of vendor sessions
+	// (remote_support_external.go), by session id; a nil entry caches "this
+	// session is not broker-recorded".
+	recMu     sync.Mutex
+	recorders map[string]*ivfRecorder
 }
 
 // NewRemoteSupportHandler constructs the handler. auditAgent is optional;
@@ -147,7 +153,15 @@ type signalingSession struct {
 	// the admin's answer is bound to a specific offer's ICE ufrag and must never
 	// be replayed to a reconnected device. Reset on every fresh agent bind.
 	agentReplay [][]byte
+
+	// watchers are read-only viewers (a vendor technician's sponsor): they
+	// receive the device's relay frames and nothing else, and the broker
+	// drops everything they send but a keyframe request (see runPeer).
+	watchers map[*brokerConn]struct{}
 }
+
+// maxWatchers bounds the read-only viewers on one session.
+const maxWatchers = 4
 
 // brokerConn wraps a websocket.Conn with a single writer goroutine fed by a
 // bounded channel. This decouples the two peers' read loops: a slow reader (e.g.
@@ -856,6 +870,7 @@ type peerRole int
 const (
 	peerAdmin peerRole = iota
 	peerAgent
+	peerWatcher
 )
 
 // runPeer registers the connection in the broker and pumps messages until
@@ -870,7 +885,10 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, ra
 	defer conn.Close()
 
 	sess := h.bindPeer(sessionID, conn, role)
-	defer h.unbindPeer(sess, role)
+	if sess == nil {
+		return
+	}
+	defer h.unbindPeer(sess, conn, role)
 
 	// Read deadline + pong handler: the keepalive pings below must be answered
 	// within the window or the peer is considered dead. This gives deterministic
@@ -889,8 +907,9 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, ra
 		}
 	}
 
-	// If both peers are now connected, flip status → active.
-	if sess.hasBothPeers() {
+	// If both peers are now connected, flip status → active. A watcher is
+	// neither peer.
+	if role != peerWatcher && sess.hasBothPeers() {
 		h.markActive(ctx, sessionID)
 	}
 
@@ -921,6 +940,17 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, ra
 		if mt != websocket.TextMessage && mt != websocket.BinaryMessage {
 			continue
 		}
+		// A watcher only looks. The one message it may send is a keyframe
+		// request, which its decoder needs to start and to recover; input,
+		// control and anything else stops here, whatever the viewer runs.
+		if role == peerWatcher {
+			if mt == websocket.TextMessage && isKeyframeRequest(data) {
+				if agent := sess.otherPeer(peerAdmin); agent != nil {
+					agent.enqueue(mt, data)
+				}
+			}
+			continue
+		}
 		h.touchSession(ctx, sessionID)
 		// Buffer for replay to a peer that joins later, then relay to the peer
 		// that's already connected (if any). Only TEXT signaling is buffered:
@@ -930,17 +960,37 @@ func (h *RemoteSupportHandler) runPeer(ctx context.Context, sessionID string, ra
 		if mt == websocket.TextMessage {
 			sess.recordReplay(role, data)
 		}
+		// A vendor session is recorded by the broker: the device's relay
+		// frames go to its recording whether or not a viewer is attached.
+		if role == peerAgent && mt == websocket.BinaryMessage {
+			h.recordRelayFrame(sessionID, data)
+		}
 		if target := sess.otherPeer(role); target != nil {
 			// enqueue is non-blocking for video (drops under backpressure) so a
 			// slow peer never stalls this read loop — the fix for the 1006 close
 			// cascade that made relay unstable.
 			target.enqueue(mt, data)
 		}
+		if role == peerAgent && mt == websocket.BinaryMessage {
+			for _, w := range sess.watcherConns() {
+				w.enqueue(mt, data)
+			}
+		}
 	}
 }
 
+// isKeyframeRequest reports whether a viewer's text message is exactly a
+// keyframe request ({"event":"request_keyframe"}).
+func isKeyframeRequest(data []byte) bool {
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil || len(m) != 1 {
+		return false
+	}
+	return m["event"] == "request_keyframe"
+}
+
 // bindPeer attaches conn to the session broker entry, creating it on first
-// peer.
+// peer. It returns nil for a watcher past maxWatchers.
 func (h *RemoteSupportHandler) bindPeer(sessionID string, conn *brokerConn, role peerRole) *signalingSession {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -952,6 +1002,17 @@ func (h *RemoteSupportHandler) bindPeer(sessionID string, conn *brokerConn, role
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	switch role {
+	case peerWatcher:
+		if len(sess.watchers) >= maxWatchers {
+			if !ok {
+				delete(h.sessions, sessionID)
+			}
+			return nil
+		}
+		if sess.watchers == nil {
+			sess.watchers = map[*brokerConn]struct{}{}
+		}
+		sess.watchers[conn] = struct{}{}
 	case peerAdmin:
 		// If a previous admin connection lingers, drop it.
 		if sess.adminConn != nil {
@@ -976,15 +1037,21 @@ func (h *RemoteSupportHandler) bindPeer(sessionID string, conn *brokerConn, role
 // unbindPeer detaches the connection. When neither peer remains we drop the
 // broker entry; the session row stays in Postgres until explicitly ended so
 // reconnect-after-network-blip works.
-func (h *RemoteSupportHandler) unbindPeer(sess *signalingSession, role peerRole) {
+func (h *RemoteSupportHandler) unbindPeer(sess *signalingSession, conn *brokerConn, role peerRole) {
 	sess.mu.Lock()
 	switch role {
 	case peerAdmin:
-		sess.adminConn = nil
+		if sess.adminConn == conn {
+			sess.adminConn = nil
+		}
 	case peerAgent:
-		sess.agentConn = nil
+		if sess.agentConn == conn {
+			sess.agentConn = nil
+		}
+	case peerWatcher:
+		delete(sess.watchers, conn)
 	}
-	empty := sess.adminConn == nil && sess.agentConn == nil
+	empty := sess.adminConn == nil && sess.agentConn == nil && len(sess.watchers) == 0
 	sess.mu.Unlock()
 	if !empty {
 		return
@@ -998,6 +1065,20 @@ func (s *signalingSession) hasBothPeers() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.adminConn != nil && s.agentConn != nil
+}
+
+// watcherConns returns the session's watchers at this moment.
+func (s *signalingSession) watcherConns() []*brokerConn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.watchers) == 0 {
+		return nil
+	}
+	out := make([]*brokerConn, 0, len(s.watchers))
+	for w := range s.watchers {
+		out = append(out, w)
+	}
+	return out
 }
 
 func (s *signalingSession) otherPeer(role peerRole) *brokerConn {
@@ -1122,6 +1203,7 @@ func (h *RemoteSupportHandler) endSession(ctx context.Context, sessionID, reason
 // live broker entry. Used both on explicit end and when a new session supersedes
 // an older in-flight one for the same agent.
 func (h *RemoteSupportHandler) evictSession(sessionID string) {
+	defer h.closeRecorder(sessionID)
 	h.mu.Lock()
 	sess, ok := h.sessions[sessionID]
 	if ok {
@@ -1138,6 +1220,10 @@ func (h *RemoteSupportHandler) evictSession(sessionID string) {
 			sess.agentConn.Close()
 			sess.agentConn = nil
 		}
+		for w := range sess.watchers {
+			w.Close()
+		}
+		sess.watchers = nil
 		sess.mu.Unlock()
 	}
 }
@@ -1259,6 +1345,7 @@ func (h *RemoteSupportHandler) StartJanitor(ctx context.Context, idleAfter time.
 				return
 			case <-ticker.C:
 				h.expireOrphanSessions(ctx, idleAfter)
+				h.endLapsedVendorSessions(ctx)
 			}
 		}
 	}()

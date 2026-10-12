@@ -15,6 +15,15 @@
 > [docs/plans/2026-09-28-ucuncu-taraf-erisimi-ve-gecici-yetkilendirme-cercevesi.md](./plans/2026-09-28-ucuncu-taraf-erisimi-ve-gecici-yetkilendirme-cercevesi.md)
 > (Turkish), with the decisions it needs in [ADR 0002](./adr/0002-third-party-access-and-temporary-privilege.md)
 > (proposed). This document stays the record of V0 and of what exists today.
+>
+> **Temporary access links are retired (2026-10, D2).** The vendor framework
+> (external users, sponsors, engagements, browser remote support) replaced
+> them: no link is issued, `GET /temp-access/:token` answers every token with
+> the same static 410 page, and administrators keep a read-only history of the
+> links issued before. The sections below describing the link's issuance and
+> redemption are the record of how it got here, not of what runs. The
+> `temp_access_links` and `temp_access_usage` tables leave in a later migration,
+> once the owner has exported them.
 
 ## 1. The short answer
 

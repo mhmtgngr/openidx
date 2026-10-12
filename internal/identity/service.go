@@ -4236,6 +4236,7 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.GET("/vendor-orgs/:id", svc.handleGetVendorOrg)
 		identity.PUT("/vendor-orgs/:id", svc.handleUpdateVendorOrg)
 		identity.POST("/vendor-orgs/:id/close", svc.handleCloseVendorOrg)
+		identity.POST("/vendor-orgs/:id/suspend", svc.handleSuspendVendorOrg)
 		// What a vendor on a closed list may ask for and launch (I11, migration v219)
 		identity.GET("/vendor-orgs/:id/targets", svc.handleListVendorTargets)
 		identity.POST("/vendor-orgs/:id/targets", svc.handleAddVendorTarget)

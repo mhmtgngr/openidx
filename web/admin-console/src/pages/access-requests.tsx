@@ -16,6 +16,7 @@ import {
 } from '../components/ui/alert-dialog'
 import { QueryError } from '../components/query-error'
 import { SessionQueue } from '../components/session-queue'
+import { SponsoredVendorSupport } from '../components/sponsored-vendor-support'
 import { useSessionQueue } from '../hooks/use-session-queue'
 import { api, VaultSecretMeta } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
@@ -461,6 +462,7 @@ export function AccessRequestsPage() {
             </CardContent>
           </Card>
           <SessionQueue isAdmin={isAdmin} />
+          <SponsoredVendorSupport />
         </TabsContent>
 
         <TabsContent value="all-requests">

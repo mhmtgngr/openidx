@@ -19,7 +19,8 @@ import { api } from '../lib/api'
 import { useAppStore } from '../lib/store'
 import { roleLevel, ROLE_LEVELS } from '../lib/roles'
 import { isPlatformAdmin } from '../lib/platform-admin'
-import { filterNavigation, type NavItem, type ViewMode } from '../config/navigation'
+import { filterNavigation, vendorNavigation, type NavItem, type ViewMode } from '../config/navigation'
+import { useVendorSelf } from '../lib/external-access'
 import { CommandPalette } from './command-palette'
 import { LanguageSwitcher } from './language-switcher'
 import { NotificationBell } from './notification-bell'
@@ -144,7 +145,11 @@ export function Layout() {
   const effectiveViewMode: ViewMode = level >= ROLE_LEVELS.operator ? viewMode : 'admin'
   const searching = query.trim().length > 0
 
-  const groups = filterNavigation({ roles, viewMode: effectiveViewMode, query })
+  // An external (vendor) user gets the vendor portal's menu. Only a plain
+  // user can be one, so staff never ask.
+  const { data: vendorSelf } = useVendorSelf(level < ROLE_LEVELS.operator)
+  const groups = filterNavigation({ roles, viewMode: effectiveViewMode, query },
+    vendorSelf?.external ? vendorNavigation : undefined)
 
   // A parent's children show while the current page is the parent or one of
   // them, or after a click on its chevron; collapsing the sidebar to icons

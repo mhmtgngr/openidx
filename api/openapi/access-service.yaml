@@ -5738,6 +5738,185 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/access/my/vendor:
+    get:
+      tags: [My Access]
+      summary: My vendor, sponsor and engagements
+      description: >-
+        For an external (vendor) user, their vendor organization (with require_engagement and closed_list), account status and end, sponsor, and their running and scheduled engagements with what each covers. An internal user gets {"external": false}.
+      operationId: myVendor
+      x-openidx-handler: internal/access.(*Service).handleMyVendor
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/my/remote-support/sessions:
+    get:
+      tags: [My Access]
+      summary: My vendor support sessions
+      description: The caller's own vendor remote-support sessions, newest first; a live one carries the viewer path.
+      operationId: myVendorSupportSessions
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleVendorListSessions
+      responses:
+        '200':
+          description: Success
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [My Access]
+      summary: Start vendor support on an engagement's device
+      description: For an external user whose account is in effect, on an enrolled device a running engagement covers (naming them or nobody). The session always requires the person at the device to Allow it, uses the relay transport, is recorded by the broker (IVF) and ends with the engagement or after the external session ceiling. Asks for a fresh second factor. 409 when the device already has a session.
+      operationId: startMyVendorSupportSession
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleVendorStartSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id]
+              properties:
+                agent_id: {type: string}
+                notes: {type: string}
+      responses:
+        '201':
+          description: The session, with the viewer path and its expiry
+        '404':
+          description: No such device in the organization
+        '409':
+          description: The device already has a session
+        '503':
+          description: Recording is not configured
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/my/remote-support/sessions/{id}/end:
+    post:
+      tags: [My Access]
+      summary: End my vendor support session
+      operationId: endMyVendorSupportSession
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleVendorEndSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Ended
+        '404':
+          description: Not one of the caller's live sessions
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/my/remote-support/sessions/{id}/ws:
+    get:
+      tags: [My Access]
+      summary: Vendor support viewer WebSocket
+      description: The relay viewer for the caller's own live vendor session, while its engagement still allows it.
+      operationId: myVendorSupportWS
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleVendorWS
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '101':
+          description: Switching protocols
+        '404':
+          description: Not one of the caller's live sessions
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sponsored/sessions:
+    get:
+      tags: [Remote Support]
+      summary: Vendor support sessions I sponsor
+      description: The live vendor remote-support sessions whose technician, or whose engagement, the caller sponsors, with each one's read-only watch path. Empty for anyone who sponsors no one.
+      operationId: listSponsoredSupportSessions
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleSponsorListSessions
+      responses:
+        '200':
+          description: Success
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sponsored/sessions/{id}/watch:
+    get:
+      tags: [Remote Support]
+      summary: Watch a vendor support session (read-only)
+      description: The sponsor's viewer WebSocket. It receives the device's relay frames; the broker forwards nothing the viewer sends except a keyframe request, so the device cannot be driven from it.
+      operationId: watchSponsoredSupportSession
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleSponsorWatchWS
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '101':
+          description: Switching protocols
+        '404':
+          description: Not a live vendor session the caller sponsors
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/remote-support/sponsored/sessions/{id}/end:
+    post:
+      tags: [Remote Support]
+      summary: End a vendor support session I sponsor
+      description: Ends the session and closes the technician's, the device's and every watcher's connection. Asks for a fresh second factor.
+      operationId: endSponsoredSupportSession
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleSponsorEndSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Ended
+        '404':
+          description: Not a live vendor session the caller sponsors
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /api/v1/access/my/ziti/services:
     get:
       tags: [My Access]
@@ -6834,7 +7013,8 @@ paths:
   /api/v1/access/temp-access:
     get:
       tags: [Temporary Access]
-      summary: List temp access
+      summary: List temp access (history)
+      description: Temporary access links are retired; none is issued or redeems. The links issued before remain listable, with their use history, until the table is exported and dropped.
       operationId: listTempAccess
       x-openidx-handler: internal/access.(*Service).handleListTempAccess
       responses:
@@ -6845,34 +7025,6 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '500':
-          $ref: '#/components/responses/ServerError'
-    post:
-      tags: [Temporary Access]
-      summary: Create temp access
-      operationId: createTempAccess
-      x-openidx-handler: internal/access.(*Service).handleCreateTempAccess
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '400':
-          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -9286,25 +9438,13 @@ paths:
           type: string
     get:
       tags: [Temporary Access]
-      summary: Use temp access
+      summary: Retired temp access link
+      description: Temporary access links are retired. Every token gets the same static page saying how vendor access works now; nothing is looked up.
       operationId: useTempAccess
-      x-openidx-handler: internal/access.(*Service).handleUseTempAccess
+      x-openidx-handler: internal/access.(*Service).handleRetiredTempAccess
       responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/ServerError'
+        '410':
+          description: The retirement page (text/html)
 
   # ---- Sponsors and moderators (third-party access framework, Phase 2) ----
 

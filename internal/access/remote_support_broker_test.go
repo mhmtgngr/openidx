@@ -3,6 +3,7 @@ package access
 import (
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,14 @@ func newBrokerTestServer(t *testing.T) (*RemoteSupportHandler, *httptest.Server)
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/admin/")
 		h.runPeer(r.Context(), id, conn, peerAdmin)
+	})
+	mux.HandleFunc("/watch/", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := h.upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/watch/")
+		h.runPeer(r.Context(), id, conn, peerWatcher)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -312,4 +321,85 @@ func containsMsg(msgs []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// A watcher (a vendor technician's sponsor) sees the device's screen and
+// cannot drive it. It receives the device's relay frames alongside the
+// technician, never the signaling, and the broker forwards nothing it sends
+// but a bare keyframe request: input dressed as a keyframe request, or sent
+// on its own, stops at the broker. The technician's own input still flows,
+// and evicting the session closes the watcher too.
+func TestBrokerWatcherOnlyLooks(t *testing.T) {
+	h, srv := newBrokerTestServer(t)
+	sid := "sess-watch"
+
+	dev := dialWS(t, srv, "/agent/"+sid)
+	adm := dialWS(t, srv, "/admin/"+sid)
+	watch := dialWS(t, srv, "/watch/"+sid)
+	time.Sleep(100 * time.Millisecond)
+
+	frame := []byte{0x01, 'V', 'P', '8'}
+	if err := dev.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := dev.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+		t.Fatal(err)
+	}
+	if got := readN(t, adm, 2); got[1] != string(frame) {
+		t.Fatalf("the technician should get the device's messages: %q", got)
+	}
+	_ = watch.SetReadDeadline(time.Now().Add(3 * time.Second))
+	mt, data, err := watch.ReadMessage()
+	if err != nil || mt != websocket.BinaryMessage || string(data) != string(frame) {
+		t.Fatalf("the watcher's first message should be the frame, not signaling: %d %q %v", mt, data, err)
+	}
+
+	for _, m := range []string{
+		`{"event":"tap","x":10,"y":10}`,
+		`{"event":"request_keyframe","then":"tap"}`,
+		`{"event":"control_state","active":true}`,
+	} {
+		if err := watch.WriteMessage(websocket.TextMessage, []byte(m)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = watch.WriteMessage(websocket.BinaryMessage, []byte("input"))
+	if err := watch.WriteMessage(websocket.TextMessage, []byte(`{"event":"request_keyframe"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.WriteMessage(websocket.TextMessage, []byte(`{"event":"tap","x":1,"y":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	got := readN(t, dev, 2)
+	sort.Strings(got) // two senders: arrival order is not theirs to promise
+	if got[0] != `{"event":"request_keyframe"}` || got[1] != `{"event":"tap","x":1,"y":1}` {
+		t.Fatalf("the device should get the watcher's keyframe request and the technician's input, nothing else: %q", got)
+	}
+	_ = dev.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, extra, err := dev.ReadMessage(); err == nil {
+		t.Fatalf("the device got more than it should: %q", extra)
+	}
+
+	h.evictSession(sid)
+	_ = watch.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, _, err := watch.ReadMessage(); err == nil {
+		t.Fatal("evicting the session should close the watcher")
+	}
+}
+
+// Watchers are bounded per session.
+func TestBrokerWatchersAreBounded(t *testing.T) {
+	_, srv := newBrokerTestServer(t)
+	sid := "sess-watchers"
+	dev := dialWS(t, srv, "/agent/"+sid)
+	for i := 0; i < maxWatchers; i++ {
+		dialWS(t, srv, "/watch/"+sid)
+	}
+	time.Sleep(100 * time.Millisecond)
+	extra := dialWS(t, srv, "/watch/"+sid)
+	_ = extra.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, _, err := extra.ReadMessage(); err == nil {
+		t.Fatal("a watcher past the bound should be closed")
+	}
+	_ = dev
 }

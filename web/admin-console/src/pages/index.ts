@@ -16,6 +16,7 @@ export const Roles = lazy(() => import('./roles').then((m) => ({ default: m.Role
 export const Directories = lazy(() => import('./directories').then((m) => ({ default: m.DirectoriesPage })))
 export const ServiceAccounts = lazy(() => import('./service-accounts').then((m) => ({ default: m.ServiceAccountsPage })))
 export const ExternalUsers = lazy(() => import('./external-users').then((m) => ({ default: m.ExternalUsersPage })))
+export const VendorPortal = lazy(() => import('./vendor-portal').then((m) => ({ default: m.VendorPortalPage })))
 export const IdentityProviders = lazy(() => import('./identity-providers').then((m) => ({ default: m.IdentityProvidersPage })))
 
 // Applications

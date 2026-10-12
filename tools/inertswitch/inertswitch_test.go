@@ -130,32 +130,3 @@ func TestTheRegisterMatchesTheTree(t *testing.T) {
 		}
 	}
 }
-
-// TestTheSwitchThisGateWasBuiltForIsDecidedNow. notify_on_use is the reason this
-// tool exists: bound, stored, selected back, rendered by the console, and never
-// once compared. It must read as decided, and it must still be in the census —
-// a field that vanished from the census would also "pass".
-func TestTheSwitchThisGateWasBuiltForIsDecidedNow(t *testing.T) {
-	if testing.Short() || racecost.Enabled {
-		t.Skip("loads and type-checks the whole module; see moduleOnce")
-	}
-	switches, decided := moduleState(t)
-
-	const key = "access.CreateTempAccessRequest.NotifyOnUse"
-	found := false
-	for _, s := range switches {
-		if s.Key == key {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("%s is not in the census. Either the field is gone — in which case delete this "+
-			"test — or the binder detection stopped seeing its handler, in which case this gate "+
-			"is not watching the route it was built for.", key)
-	}
-	if !decided[key] {
-		t.Errorf("%s reads as inert. It notifies the link's issuer at "+
-			"internal/access/temp_access.go tempLinkNotifyRecipient; if that has been undone, "+
-			"the console is offering a switch that does nothing again.", key)
-	}
-}

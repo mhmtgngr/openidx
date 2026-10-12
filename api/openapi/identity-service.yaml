@@ -5201,6 +5201,37 @@ paths:
         '404':
           description: Not found
 
+  /api/v1/identity/vendor-orgs/{id}/suspend:
+    post:
+      tags: [Vendor Organizations]
+      summary: Suspend a vendor now
+      description: Suspends an active vendor organization and every live account it holds, severs each (sessions and tokens revoked, PAM grants and sessions ended, overlay identity removed by the deprovision sweep) and cuts the grants of its started engagements before the response. A reason is required. Reactivate through PUT /vendor-orgs/{id} with status active.
+      operationId: suspendVendorOrg
+      x-openidx-handler: internal/identity.(*Service).handleSuspendVendorOrg
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string}
+      responses:
+        '200':
+          description: The suspended vendor and what was cut (users_suspended, engagements, pam_grants_cut, app_assignments_cut)
+        '400':
+          description: No reason given
+        '404':
+          description: Not found
+        '409':
+          description: The vendor is not active
+
   /api/v1/identity/vendor-orgs/{id}/engagements:
     get:
       tags: [Vendor Engagements]
