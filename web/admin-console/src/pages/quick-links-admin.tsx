@@ -15,6 +15,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '../components/ui/alert-dialog'
 import { api, QuickLink, QuickLinkInput } from '../lib/api'
+import { QUICK_LINK_ICON_NAMES } from '../lib/quick-link-icons'
 import { QueryError } from '../components/query-error'
 import { useToast } from '../hooks/use-toast'
 
@@ -26,8 +27,6 @@ import { useToast } from '../hooks/use-toast'
 const CATEGORIES = ['Support', 'Collaboration', 'Monitoring', 'IT', 'Other']
 /** Role names are the JWT's own vocabulary and render as they are stored. */
 const ROLES = ['user', 'operator', 'admin', 'super_admin']
-/** lucide icon identifiers, not prose. */
-const ICONS = ['Link2', 'Video', 'MessageSquare', 'Headphones', 'LifeBuoy', 'Monitor', 'Server', 'Ticket', 'Globe', 'Mail', 'Phone', 'Terminal']
 
 const emptyForm: QuickLinkInput = {
   title: '', description: '', category: 'Support', icon: 'Link2',
@@ -254,7 +253,7 @@ export function QuickLinksAdminPage() {
                 <label htmlFor="quick-links-admin-icon" className="text-sm font-medium">{t('pages.quickLinks.dialog.icon')}</label>
                 <Select value={form.icon} onValueChange={(v) => setForm((f) => ({ ...f, icon: v }))}>
                   <SelectTrigger id="quick-links-admin-icon"><SelectValue /></SelectTrigger>
-                  <SelectContent>{ICONS.map((i) => <SelectItem key={i} value={i}>{i}</SelectItem>)}</SelectContent>
+                  <SelectContent>{QUICK_LINK_ICON_NAMES.map((i) => <SelectItem key={i} value={i}>{i}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div>

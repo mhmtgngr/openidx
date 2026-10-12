@@ -7,14 +7,27 @@ A release is cut by pushing a `vX.Y.Z` git tag — everything else is automated.
 
 1. `main` is green (Go CI, Frontend CI, Docker Build, Helm, Terraform).
 2. All PRs intended for the release are merged.
-3. Update `CHANGELOG.md`: rename the `[Unreleased]` section to
-   `[X.Y.Z] - YYYY-MM-DD`, add its compare-link definition at the bottom of the
-   file, and start a fresh empty `[Unreleased]`.
+3. Assemble `CHANGELOG.md` from the fragments:
+
+   ```bash
+   scripts/changelog-assemble.sh --dry-run X.Y.Z   # read what will be written
+   scripts/changelog-assemble.sh X.Y.Z             # write it (date defaults to today, UTC)
+   ```
+
+   Pull requests do not edit `CHANGELOG.md`; each adds `changelog.d/<slug>.md`
+   (see `changelog.d/README.md`). The script merges
+   every fragment, and anything still written under `[Unreleased]`, into a new
+   `## [X.Y.Z] - YYYY-MM-DD` section grouped by heading, moves the
+   `[Unreleased]` compare link on and adds the `[X.Y.Z]` one, and deletes the
+   fragments. Commit `CHANGELOG.md` and the deleted fragments together with the
+   version bump. It refuses a malformed fragment (naming its file and line)
+   and a version that already has a section, before writing anything.
 
    **This is the step that gets skipped.** It was missed on all eight releases
    from v1.28.0 to v1.33.3, so 359 lines of shipped work sat under
    `[Unreleased]` reading as unshipped, and the compare links stopped at
-   v1.17.0. If you do only one thing here, do this one.
+   v1.17.0. If you do only one thing here, do this one. A release whose
+   `changelog.d/` still holds fragments after it is tagged has skipped it.
 4. `VERSION` matches the tag you are about to push, and
    `bash scripts/check-version-sync.sh --enforce` is green — it holds the
    console, the Helm chart's `appVersion`, the Flutter client and the seven

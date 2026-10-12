@@ -89,6 +89,35 @@ func main() {
 		}
 	}
 
+	// A package split across several entries by `run:` regexes is only
+	// covered if the regexes partition its tests; see shards.go.
+	entries, err := matrixEntries(filepath.Join(*root, workflowPath))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "testmatrix: %v\n", err)
+		os.Exit(2)
+	}
+	shardChecked, shardFinds, err := shardFindings(*root, entries)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "testmatrix: %v\n", err)
+		os.Exit(2)
+	}
+	if len(shardFinds) > 0 {
+		fmt.Printf("\ntestmatrix: the sharded matrix entries do not partition their tests (%d finding(s)):\n\n", len(shardFinds))
+		for _, f := range shardFinds {
+			fmt.Printf("  %s\n", f)
+		}
+		fmt.Print(`
+Every top-level Test/Example/Fuzz function under a sharded entry's paths: must
+match exactly one of the group's run: regexes. Widen or narrow a regex in
+` + workflowPath + ` -- the last shard of a group is the natural catch-all.
+`)
+		if *failOnFindings {
+			defer os.Exit(1)
+		}
+	} else if shardChecked > 0 {
+		fmt.Printf("testmatrix: %d test functions under sharded entries, each matched by exactly one shard\n", shardChecked)
+	}
+
 	if len(findings) == 0 {
 		fmt.Printf("testmatrix: all %d packages holding tests are run by a named job\n", len(pkgs))
 		return

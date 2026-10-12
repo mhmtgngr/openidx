@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // WHAT A READ REPLICA REFUSES, MEASURED INSTEAD OF ASSUMED.
@@ -45,7 +45,7 @@ import (
 // transaction read-only, and 25006 is the error a standby raises. Which is
 // exactly what this test needs -- a replica that this container does not have.
 func TestTheOffloadedHandlersAnswerOverAReadOnlyReplica(t *testing.T) {
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the read-replica path test")
 	}

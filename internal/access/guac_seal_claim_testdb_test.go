@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // THE SEAL IS ANNOUNCED, AND AN ANNOUNCEMENT MADE TWICE IS A WRONG ANSWER.
@@ -33,7 +34,7 @@ import (
 // with its own connection pool because one pool shared by goroutines is one
 // process pretending to be two.
 func TestTwoConcurrentSealersAnnounceTheSealOnce(t *testing.T) {
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the seal claim test")
 	}
@@ -121,7 +122,7 @@ func countRows(t *testing.T, pool *pgxpool.Pool, q string) int {
 // the first renames over it -- and therefore both reach the announcement. One
 // of them must claim it, and only that one announces.
 func TestOnlyTheClaimingReplicaAnnouncesASeal(t *testing.T) {
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the seal claim test")
 	}

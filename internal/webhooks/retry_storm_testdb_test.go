@@ -20,6 +20,7 @@ import (
 	"github.com/openidx/openidx/internal/common/netutil"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // THE QUEUE IS REDIS AND THE RECORD IS POSTGRESQL, and the sweep that bridges
@@ -44,7 +45,7 @@ import (
 
 func openWebhookPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the webhook retry tests (they need a real Postgres)")
 	}

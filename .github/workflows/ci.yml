@@ -12,16 +12,15 @@ permissions:
   pull-requests: read
   checks: write
 
-env:
-  # A CACHE-KEY component only. setup-go is given go-version-file: go.mod so it
-  # installs the exact `toolchain` line, and the pin therefore lives in one
-  # place. Asking for '1.26' here is what made every job download a toolchain:
-  # the runner's cache holds 1.26.7, setup-go reported "Successfully set up Go
-  # version 1.26", and the next `go` command fetched go1.26.8 from
-  # proxy.golang.org -- ~70 MB per job, unretried. One of those TLS handshakes
-  # timed out and took Unit Tests (internal/notifications) down with it.
-  GO_VERSION: '1.26'
-  CACHE_VERSION: v1
+# No workflow-level Go version or cache key. Every setup-go step reads go.mod,
+# and setup-go@v6 installs its `toolchain` line (v5 installed the `go` line,
+# 1.26.0, and the next `go` command fetched the pinned toolchain from
+# proxy.golang.org -- ~70 MB per job, unretried; one timed-out handshake took
+# Unit Tests (internal/notifications) down with it). setup-go's own cache is
+# the ONLY cache over ~/go/pkg/mod and ~/.cache/go-build: a second
+# actions/cache over the same paths, plus that toolchain download landing in
+# ~/go/pkg/mod/golang.org/toolchain@* before the restore, is what made restores
+# fail with `tar: ... Cannot open: File exists`.
 
 # A newer push to a pull request supersedes the runs of the one before it.
 # Those runs' results are not what the PR is reviewed on, and with this
@@ -293,6 +292,13 @@ jobs:
         run: bash scripts/check-release-dispatch.test.sh
       - name: A dispatched release must stamp images like a tagged one
         run: bash scripts/check-release-dispatch.sh --enforce
+      # PRs write changelog.d/<slug>.md instead of CHANGELOG.md's [Unreleased]
+      # (two PRs in flight always conflicted there). The release step folds the
+      # fragments in; a malformed one is caught on its own PR, not at release.
+      - name: Verify the changelog-fragment guard and assembler can go red
+        run: bash scripts/check-changelog-fragments.test.sh
+      - name: Every changelog fragment is one the release step can assemble
+        run: bash scripts/check-changelog-fragments.sh
       - name: Verify the agent-release guard can go red
         run: bash scripts/check-agent-release.test.sh
       - name: The agent is releasable by dispatch, and agents poll its release channel
@@ -386,7 +392,7 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -400,10 +406,6 @@ jobs:
           CREATE ROLE openidx_app LOGIN PASSWORD 'apppw';
           GRANT ALL ON SCHEMA public TO openidx_app;
           ALTER DATABASE openidx_rls OWNER TO openidx_app;
-          -- A throwaway database for the suites that build the whole schema
-          -- from the registered migrations (setupTestDB drops and recreates
-          -- public on every call, so it must never point at openidx_rls).
-          CREATE DATABASE openidx_scratch;
           SQL
 
       # Negative control first: pointed at the superuser, the suite must REFUSE
@@ -784,7 +786,10 @@ jobs:
       - name: The device fleet is one tenant's, and an agent still enrols and reports with no tenant on its context
         env:
           TEST_POSTGRES_DSN: postgres://openidx_app:apppw@127.0.0.1:5433/openidx_rls?sslmode=disable
-          OPENIDX_TEST_DATABASE_URL: postgres://postgres:test_secret@127.0.0.1:5433/openidx_scratch?sslmode=disable
+          # The migration half takes a scratch database of its own from the
+          # superuser (testsupport.ScratchDatabase); the belt half stays on
+          # openidx_app.
+          TEST_POSTGRES_SUPERUSER_DSN: postgres://postgres:test_secret@127.0.0.1:5433/postgres?sslmode=disable
         run: |
           set -euo pipefail
           out=$(go test ./internal/access/ -run 'TestFleetBelt|TestFleet_TenantIsolation|TestKioskPolicy_TenantIsolation|TestEnrollFingerprintIsPerTenant' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
@@ -1197,7 +1202,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -1327,21 +1332,10 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Set up Go build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-build-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-build-${{ matrix.go-version }}-
-            ${{ runner.os }}-go-build-
 
       - name: Download dependencies
         run: go mod download
@@ -1392,8 +1386,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - package: internal/access
+          # internal/access is four entries, not one. As one job it ran 858 s
+          # of tests (almost all sequential, container-backed DB tests) and
+          # was the longest leg of this matrix at ~18 minutes. Each entry
+          # passes its `run:` regex to `go test -run`; together they must
+          # match every top-level Test/Example/Fuzz function exactly once,
+          # which tools/testmatrix checks against the tree (testmatrix job).
+          # Split by the letter after "Test", balanced on measured runtime:
+          # TestA* alone was 245 s and TestThe* 146 s. The last shard is the
+          # catch-all for names that start with anything else.
+          - package: internal/access (1/4)
             paths: ./internal/access/...
+            run: '^Test(A[A-Za-m]|[B-D])'
+          - package: internal/access (2/4)
+            paths: ./internal/access/...
+            run: '^Test(A([^A-Za-m]|$)|[E-L])'
+          - package: internal/access (3/4)
+            paths: ./internal/access/...
+            run: '^Test[M-S]'
+          - package: internal/access (4/4)
+            paths: ./internal/access/...
+            run: '^Test([T-Z]|[^A-Z]|$)|^Example|^Fuzz'
           - package: internal/admin
             paths: ./internal/admin/...
           - package: internal/apikeys
@@ -1514,21 +1527,30 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up Go build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
-            ${{ runner.os }}-go-build-
+      # TEST_POSTGRES_DSN is the one variable a database-backed test reads
+      # (internal/common/testsupport.PostgresDSN). It was set only in the
+      # rls-isolation job, for hand-picked -run patterns, so every other suite
+      # gated on it -- 21 tests in internal/identity, internal/admin,
+      # internal/oauth and internal/organization among them -- skipped here on
+      # every run while the job reported success. The role is production's
+      # openidx_app shape (no superuser, no BYPASSRLS), because the
+      # row-level-security belts refuse a role that passes them by bypassing;
+      # it owns its database, so the suites can create schemas and tables. It
+      # cannot create databases, so the suites that build the whole schema
+      # (testsupport.ScratchDatabase) keep using throwaway containers.
+      - name: Create the unprivileged test role
+        env:
+          PGPASSWORD: test_secret
+        run: |
+          psql -h localhost -U openidx -d openidx_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE openidx_app LOGIN PASSWORD 'apppw' NOSUPERUSER NOBYPASSRLS NOCREATEDB;
+          CREATE DATABASE openidx_unit OWNER openidx_app;
+          SQL
 
       # The matrix label reads like a path ("internal/metrics", "pkg/"), so it
       # cannot go into a filename as-is: -coverprofile=coverage_internal/metrics.out
@@ -1541,10 +1563,15 @@ jobs:
         run: |
           slug='${{ matrix.package }}'
           slug="${slug%/}"
-          echo "slug=${slug//\//_}" >> "$GITHUB_OUTPUT"
+          # Sharded entries are labelled "pkg (1/4)": spaces and parentheses
+          # cannot go unquoted into -coverprofile or into an artifact name.
+          slug="$(printf '%s' "$slug" | tr -c 'A-Za-z0-9_+.-' '_')"
+          echo "slug=${slug}" >> "$GITHUB_OUTPUT"
 
       - name: Run tests with coverage
         env:
+          RUN_FILTER: ${{ matrix.run }}
+          TEST_POSTGRES_DSN: postgres://openidx_app:apppw@localhost:5432/openidx_unit?sslmode=disable
           DATABASE_URL: postgres://openidx:test_secret@localhost:5432/openidx_test?sslmode=disable
           REDIS_URL: redis://localhost:6379
         run: |
@@ -1573,7 +1600,10 @@ jobs:
           #
           # matrix.flags is empty for every entry but `tools`, which passes
           # -short; the reason is written out beside that entry above.
-          go test -v -race -timeout 30m ${{ matrix.flags }} -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ${{ matrix.paths }}
+          #
+          # RUN_FILTER is a sharded entry's `run:` regex (empty otherwise; see
+          # the internal/access entries above).
+          go test -v -race -timeout 30m ${{ matrix.flags }} ${RUN_FILTER:+-run "$RUN_FILTER"} -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ${{ matrix.paths }}
 
       # Upload whatever coverage was produced even when the tests failed, so a
       # red run still yields a coverage artifact to inspect.
@@ -1634,21 +1664,10 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Set up Go build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
-            ${{ runner.os }}-go-build-
 
       - name: Run integration tests
         env:
@@ -1898,21 +1917,10 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Set up Go build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
-            ${{ runner.os }}-go-build-
 
       - name: Run benchmarks on base branch
         run: |
@@ -1971,21 +1979,10 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Set up Go build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
-            ${{ runner.os }}-go-build-
 
       # Formatting is gated here, with the toolchain go.mod pins, rather than by
       # golangci-lint's gofmt formatter. golangci-lint's gofmt is whatever the
@@ -2043,7 +2040,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -2113,7 +2110,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -2169,7 +2166,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -2223,7 +2220,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -2280,7 +2277,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -2344,7 +2341,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -2396,7 +2393,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -2452,7 +2449,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -2522,7 +2519,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -2580,7 +2577,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -2624,21 +2621,10 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Set up Go build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
-            ${{ runner.os }}-go-build-
 
       - name: Run govulncheck
         run: |
@@ -2661,7 +2647,13 @@ jobs:
       # resolve to the runner's cached 1.26.7, which is why this was green.
       # Each module is now scanned with the toolchain it actually pins.
       - name: Set up Go for the agent module
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
+        # setup-go@v6 exports GOTOOLCHAIN=local for the rest of the job, and
+        # with GOTOOLCHAIN=local it reads the `go` line instead of `toolchain`
+        # -- so without this, the agent would be scanned against go1.26.0's
+        # standard library, the regression described above.
+        env:
+          GOTOOLCHAIN: auto
         with:
           go-version-file: agent/go.mod
           cache: false
@@ -2690,7 +2682,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -2823,7 +2815,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -2907,7 +2899,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -3035,7 +3027,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -3123,7 +3115,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -3296,7 +3288,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true

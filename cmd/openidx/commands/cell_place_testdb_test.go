@@ -3,7 +3,6 @@ package commands
 import (
 	"bytes"
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/openidx/openidx/internal/common/celldir"
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/migrations"
 )
 
@@ -30,7 +30,7 @@ import (
 
 func openDirectoryDB(t *testing.T) (string, *pgx.Conn) {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the placement-tool tests (they need a real Postgres)")
 	}

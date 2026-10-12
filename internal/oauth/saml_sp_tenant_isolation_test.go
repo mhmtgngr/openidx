@@ -2,13 +2,13 @@ package oauth
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // Tenant isolation for saml_service_providers — the registry of the federation
@@ -144,8 +144,9 @@ func TestSAMLServiceProviderIsolation(t *testing.T) {
 	})
 }
 
-// setupSAMLIsolationDB prefers OPENIDX_TEST_DATABASE_URL and otherwise starts a
-// throwaway container, then applies the table shape.
+// setupSAMLIsolationDB prefers a scratch database on the server TEST_POSTGRES_DSN
+// names (testsupport.ScratchDatabase) and otherwise starts a throwaway
+// container, then applies the table shape.
 //
 // It used to take only the first path, on the argument that a suite which can
 // run against a plain Postgres should not skip merely because no Docker daemon
@@ -168,8 +169,8 @@ func setupSAMLIsolationDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
 	ctx := context.Background()
 
-	url := os.Getenv("OPENIDX_TEST_DATABASE_URL")
-	if url == "" {
+	url, ok := testsupport.ScratchDatabase(t)
+	if !ok {
 		db, containerCleanup := ssfSetupTestDB(t)
 		if _, err := db.Pool.Exec(ctx, samlSPIsolationSchema); err != nil {
 			containerCleanup()
@@ -181,7 +182,7 @@ func setupSAMLIsolationDB(t *testing.T) (*database.PostgresDB, func()) {
 
 	db, err := database.NewPostgres(url)
 	if err != nil {
-		t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+		t.Fatalf("scratch database on %s unreachable: %v", testsupport.PostgresEnv, err)
 		return nil, func() {}
 	}
 	if _, err := db.Pool.Exec(ctx, samlSPIsolationSchema); err != nil {

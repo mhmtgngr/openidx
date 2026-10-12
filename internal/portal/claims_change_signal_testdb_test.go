@@ -3,7 +3,6 @@ package portal
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -12,26 +11,22 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/ssfsignal"
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/migrations"
 )
 
-// portalMigratedDB is a database with the product's schema: the one
-// OPENIDX_TEST_DATABASE_URL names, reset, or the package's container.
+// portalMigratedDB is a database with the product's schema: either
+// a scratch database on the server TEST_POSTGRES_DSN names, or the package's
+// container.
 func portalMigratedDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
 	var db *database.PostgresDB
 	cleanup := func() {}
-	if url := os.Getenv("OPENIDX_TEST_DATABASE_URL"); url != "" {
+	if url, ok := testsupport.ScratchDatabase(t); ok {
 		var err error
 		if db, err = database.NewPostgres(url); err != nil {
-			t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+			t.Fatalf("scratch database on %s unreachable: %v", testsupport.PostgresEnv, err)
 			return nil, cleanup
-		}
-		for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
-			if _, err := db.Pool.Exec(context.Background(), stmt); err != nil {
-				db.Close()
-				t.Fatalf("reset test schema (%s): %v", stmt, err)
-			}
 		}
 		cleanup = func() { db.Close() }
 	} else if db, cleanup = setupPortalTestDB(t); db == nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"os"
 	"testing"
 	"time"
 
@@ -39,10 +38,10 @@ func adminPoolOrSkip(t *testing.T) (*database.PostgresDB, string, func()) {
 	t.Helper()
 	ctx := context.Background()
 
-	if url := os.Getenv("OPENIDX_TEST_DATABASE_URL"); url != "" {
+	if url, ok := testsupport.ScratchDatabase(t); ok {
 		db, err := database.NewPostgres(url)
 		if err != nil {
-			t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+			t.Fatalf("scratch database on %s unreachable: %v", testsupport.PostgresEnv, err)
 		}
 		return db, url, func() { db.Close() }
 	}

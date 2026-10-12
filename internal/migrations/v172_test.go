@@ -36,11 +36,6 @@ func TestV172SSFReceivedTenant(t *testing.T) {
 	ctx := context.Background()
 	pool := db.Pool
 
-	for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
-		if _, err := pool.Exec(ctx, stmt); err != nil {
-			t.Fatalf("reset schema (%s): %v", stmt, err)
-		}
-	}
 	m := migrations.NewMigrator(pool.Raw(), zap.NewNop())
 
 	// Stop one short of v172 and seed the shape the table has had since v99:

@@ -2,7 +2,6 @@ package access
 
 import (
 	"context"
-	"os"
 	"sync"
 	"testing"
 
@@ -13,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // THE USER-SYNC POLLER IS CHECK-THEN-ACT ACROSS TWO SYSTEMS, AND NOTHING
@@ -35,7 +35,7 @@ import (
 // that had just been synced. An operator watching for sync failures saw one
 // every thirty seconds that meant nothing.
 func TestOnlyOneReplicaCreatesAUsersZitiIdentity(t *testing.T) {
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the Ziti identity claim test")
 	}

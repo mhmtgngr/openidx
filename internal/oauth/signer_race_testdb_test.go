@@ -2,7 +2,6 @@ package oauth
 
 import (
 	"context"
-	"os"
 	"sync"
 	"testing"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/signingkeys"
 )
 
@@ -47,7 +47,7 @@ import (
 // Measured both ways rather than assumed: reintroducing `s.privateKey =
 // snap.priv` alone does NOT turn this test red.
 func TestRefreshingTheSignerDoesNotRaceWithSAMLSigning(t *testing.T) {
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the signer refresh race test")
 	}

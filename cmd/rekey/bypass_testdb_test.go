@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,7 +24,7 @@ import (
 // and whether a GUC took, are facts about PostgreSQL and not about Go.
 func rekeyProbePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the rekey bypass check (it needs a real Postgres)")
 	}
@@ -61,7 +61,7 @@ func TestARekeyThatCannotSeeAcrossTenantsIsDetected(t *testing.T) {
 // is what the pool does on its own the moment a connection ages out, a health
 // check churns one, or anything runs concurrently.
 func TestEveryConnectionTheRekeyPoolOpensCarriesTheBypass(t *testing.T) {
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the rekey bypass check (it needs a real Postgres)")
 	}

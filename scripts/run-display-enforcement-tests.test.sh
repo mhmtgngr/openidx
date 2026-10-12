@@ -80,7 +80,7 @@ scenario() {
 run() {
   local d="$1" db="$2" root="${3:-$tree}"
   env PATH="$bin:$PATH" FAKE_GO="$d/go" OPENIDX_EVIDENCE_ROOT="$root" \
-    OPENIDX_TEST_DATABASE_URL="$db" bash "$RUNNER" "$d/out" >"$d/stdout" 2>&1
+    TEST_POSTGRES_DSN="$db" OPENIDX_TEST_DATABASE_URL= bash "$RUNNER" "$d/out" >"$d/stdout" 2>&1
   rc=$?
 }
 
@@ -193,8 +193,8 @@ check "go test exiting non-zero fails the run, even with every PASS printed" \
 # ---- it refuses to run rather than run blind -----------------------------------
 d="$(scenario nodb "$A_PASS" "$B_PASS")"
 run "$d" ""
-check "no OPENIDX_TEST_DATABASE_URL: exit 2" exited 2
-check "no OPENIDX_TEST_DATABASE_URL: nothing run" called
+check "no TEST_POSTGRES_DSN: exit 2" exited 2
+check "no TEST_POSTGRES_DSN: nothing run" called
 
 cp -r "$tree" "$tmp/renamed-tree"
 sed -i 's/TestBetaRefuses/TestBetaRefusesNow/' "$tmp/renamed-tree/internal/beta/beta_test.go"

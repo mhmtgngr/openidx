@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test test-db guards lint clean dev dev-infra docker helm docs smoke-test ha-drill k8s-chaos ddos-drill dr-game-day dark-drill dark-drill-live build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
+.PHONY: all build test test-db guards changelog-check lint clean dev dev-infra docker helm docs smoke-test ha-drill k8s-chaos ddos-drill dr-game-day dark-drill dark-drill-live build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -117,7 +117,7 @@ test-integration:
 	$(GOTEST) -v -tags=integration ./test/integration/... ./cmd/rekey/...
 
 # The database-gated packages, against a real PostgreSQL. `make test` on a
-# machine with neither Docker nor OPENIDX_TEST_DATABASE_URL skips them all and
+# machine with neither Docker nor TEST_POSTGRES_DSN skips them all and
 # still prints ok, which is how a red CI arrives after a green local run.
 # Needs OPENIDX_DB_SUITE_ADMIN_URL; see scripts/db-suite.sh.
 test-db:
@@ -128,6 +128,11 @@ test-db:
 # CI runs -- which is how a guard came to be missed before a push.
 guards:
 	@./scripts/run-ci-guards.sh
+
+# Validate changelog.d/ fragments. The release step itself is
+# `scripts/changelog-assemble.sh X.Y.Z` (docs/RELEASING.md).
+changelog-check:
+	@./scripts/check-changelog-fragments.sh
 
 test-e2e:
 	@echo "🎭 Running end-to-end tests..."

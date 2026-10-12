@@ -2,7 +2,6 @@ package access
 
 import (
 	"context"
-	"os"
 	"sync"
 	"testing"
 
@@ -12,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // THE GRACE-PERIOD ENFORCER SUSPENDS A DEVICE AND SAYS SO IN THE AUDIT TRAIL,
@@ -76,7 +76,7 @@ func TestEightConcurrentGracePeriodEnforcersSuspendAndAnnounceOnce(t *testing.T)
 // RETURNING cursor cannot starve another of connections.
 func replicaPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool, err := pgxpool.New(context.Background(), os.Getenv("TEST_POSTGRES_DSN"))
+	pool, err := pgxpool.New(context.Background(), testsupport.PostgresDSN())
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 	return pool

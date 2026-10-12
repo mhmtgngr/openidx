@@ -4,13 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/testsupport"
 	"github.com/openidx/openidx/internal/migrations"
 )
 
@@ -22,7 +22,7 @@ import (
 // keeps its original kid whatever cell it is imported into -- tokens minted
 // before the upgrade carry that kid and must go on verifying.
 func TestGeneratedKidsCarryTheCellAndTheLegacyImportKeepsItsName(t *testing.T) {
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	dsn := testsupport.PostgresDSN()
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN not set; skipping the cell kid test")
 	}

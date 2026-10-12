@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -20,27 +19,22 @@ import (
 
 // abacTestDB returns a database migrated to the latest schema.
 //
-// OPENIDX_TEST_DATABASE_URL, when set, points the harness at an existing
-// server instead of starting a container, the same escape hatch
-// internal/admin and internal/access carry. The public schema is DROPPED and
-// rebuilt on that path, so point it at a scratch database and run one package
-// at a time. CI does not set it and uses a throwaway container.
+// TEST_POSTGRES_DSN (testsupport.PostgresDSN), when it names a role that may
+// create databases, gives each call an empty scratch database of its own on
+// that server (testsupport.ScratchDatabase) instead of starting a container --
+// for a machine with Postgres and no Docker daemon. Several packages can share
+// the server at once. Otherwise, as in CI, it starts a throwaway container.
 func abacTestDB(t *testing.T) *database.PostgresDB {
 	t.Helper()
 	ctx := context.Background()
 
 	var db *database.PostgresDB
-	if url := os.Getenv("OPENIDX_TEST_DATABASE_URL"); url != "" {
+	if url, ok := testsupport.ScratchDatabase(t); ok {
 		var err error
 		if db, err = database.NewPostgres(url); err != nil {
-			t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+			t.Fatalf("scratch database on %s unreachable: %v", testsupport.PostgresEnv, err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
-			if _, err := db.Pool.Exec(ctx, stmt); err != nil {
-				t.Fatalf("reset test schema (%s): %v", stmt, err)
-			}
-		}
 	} else {
 		req := testcontainers.ContainerRequest{
 			Image:        "postgres:16-alpine",

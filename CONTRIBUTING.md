@@ -76,7 +76,13 @@ deployments/            # Docker, Kubernetes, Terraform configs
    what CI runs rather than a copy that can drift from it. It prints the few
    invocations it cannot run locally — the ones CI computes an argument for —
    instead of counting them as passes.
-6. **Open a Pull Request** against `main`. It can merge once the
+6. **Describe user-facing changes in a changelog fragment**, not in
+   `CHANGELOG.md`: add `changelog.d/<your-branch-slug>.md` with
+   `### Added` / `### Changed` / `### Fixed` / … headings and `- ` bullets
+   ([changelog.d/README.md](changelog.d/README.md)). Fragments never conflict
+   with each other; the release step folds them into `CHANGELOG.md`
+   ([docs/RELEASING.md](docs/RELEASING.md)). `make changelog-check` validates them.
+7. **Open a Pull Request** against `main`. It can merge once the
    [required checks](#required-checks) pass.
 
 ## Branching Strategy

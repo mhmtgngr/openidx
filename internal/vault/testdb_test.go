@@ -3,7 +3,6 @@ package vault
 import (
 	"context"
 	"encoding/base64"
-	"os"
 	"testing"
 	"time"
 
@@ -22,9 +21,11 @@ import (
 // tables: a test that builds its own approximation of vault_secrets can pass
 // against a shape production does not have.
 //
-// OPENIDX_TEST_DATABASE_URL points the harness at an existing server, for a
-// machine with Postgres and no Docker daemon; CI does not set it and uses a
-// throwaway container. On that path the public schema is dropped first.
+// TEST_POSTGRES_DSN (testsupport.PostgresDSN), when it names a role that may
+// create databases, gives each call an empty scratch database of its own on
+// that server (testsupport.ScratchDatabase) instead of starting a container --
+// for a machine with Postgres and no Docker daemon. Several packages can share
+// the server at once. Otherwise, as in CI, it starts a throwaway container.
 
 // testOrg is the organization the migration set seeds.
 const testOrg = "00000000-0000-0000-0000-000000000010"
@@ -33,16 +34,10 @@ func vaultTestDB(t *testing.T) *database.PostgresDB {
 	t.Helper()
 	ctx := context.Background()
 
-	if url := os.Getenv("OPENIDX_TEST_DATABASE_URL"); url != "" {
+	if url, ok := testsupport.ScratchDatabase(t); ok {
 		db, err := database.NewPostgres(url)
 		if err != nil {
-			t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
-		}
-		for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
-			if _, err := db.Pool.Exec(ctx, stmt); err != nil {
-				db.Close()
-				t.Fatalf("reset schema (%s): %v", stmt, err)
-			}
+			t.Fatalf("scratch database on %s unreachable: %v", testsupport.PostgresEnv, err)
 		}
 		if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(ctx, -1); err != nil {
 			db.Close()

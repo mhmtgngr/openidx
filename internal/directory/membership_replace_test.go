@@ -2,12 +2,12 @@ package directory
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"go.uber.org/zap/zaptest"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // A directory sync must not report success over a group whose membership it
@@ -29,29 +29,22 @@ import (
 // does when a statement inside a transaction fails, so a fake would test the
 // fake.
 //
-// OPENIDX_TEST_DATABASE_URL is honoured first, which is how it is run against a
-// database that is already up. When it is not set the test falls back to
+// A scratch database on the server TEST_POSTGRES_DSN names is used first, which
+// is how it is run against a database that is already up. When it is not set the test falls back to
 // setupGroupsDB, this package's container harness -- and that fallback is the
 // point, not a convenience: ci.yml sets no OPENIDX_*_DATABASE_URL, so a helper
 // that only reads one would make this test skip on every CI run, which
 // scripts/check-test-reachability.sh catches and refuses. It caught this one.
 func membershipTestDB(t *testing.T) (*database.PostgresDB, func()) {
 	t.Helper()
-	url := os.Getenv("OPENIDX_TEST_DATABASE_URL")
-	if url == "" {
+	url, ok := testsupport.ScratchDatabase(t)
+	if !ok {
 		return setupGroupsDB(t)
 	}
 	db, err := database.NewPostgres(url)
 	if err != nil {
-		t.Skipf("OPENIDX_TEST_DATABASE_URL set but unreachable: %v", err)
+		t.Fatalf("scratch database on %s unreachable: %v", testsupport.PostgresEnv, err)
 		return nil, func() {}
-	}
-	ctx := context.Background()
-	for _, stmt := range []string{"DROP SCHEMA public CASCADE", "CREATE SCHEMA public"} {
-		if _, err := db.Pool.Exec(ctx, stmt); err != nil {
-			db.Close()
-			t.Fatalf("reset test schema (%s): %v", stmt, err)
-		}
 	}
 	return db, func() { db.Close() }
 }
