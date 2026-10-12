@@ -167,7 +167,7 @@ tunnel works.
 ## The organization's network policy
 
 The Network Resources page's **Network policy** (`org_network_policy`) reaches
-the agent as `org_network_policy` in `/agent/config` and in the answer to every
+an active agent (never a pending or suspended one) as `org_network_policy` in `/agent/config` and in the answer to every
 posture report:
 
 ```json

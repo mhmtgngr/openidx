@@ -3608,9 +3608,9 @@ paths:
                     allOf:
                       - $ref: '#/components/schemas/AgentNetworkPolicy'
                     description: >-
-                      The organization's tunnel policy. Absent for a suspended
-                      device and when the policy cannot be read; the agent then
-                      keeps the last policy it had.
+                      The organization's tunnel policy, sent only to an agent
+                      whose enrolment is active (never pending or suspended); also
+                      absent when it cannot be read, and the agent keeps the last policy it had.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3951,8 +3951,8 @@ paths:
         tunnel_last_seen, the server's time of the last report that said up,
         and the applied version), and its dial failures since the previous
         report feed openidx_tunnel_dial_failures_total. The answer carries the
-        organization's tunnel policy as org_network_policy (an
-        AgentNetworkPolicy), so a change reaches the device at its next report.
+        organization's tunnel policy as org_network_policy (an AgentNetworkPolicy)
+        when the agent is active, so a change reaches the device at its next report.
       operationId: handleReport
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleReport
       requestBody:

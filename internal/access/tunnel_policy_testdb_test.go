@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -162,5 +163,118 @@ func TestTunnelPolicyDeliveryAndRolloutOnTheMigratedSchema(t *testing.T) {
 	}
 	if stored != nil || appliedAtSet {
 		t.Errorf("after a report without a version: %v, applied_at set %v", stored, appliedAtSet)
+	}
+}
+
+// The tunnel policy carries the organization's corporate ranges, so both
+// routes that hand it out, /agent/config and the /agent/report answer, give
+// it to an active agent only: never to a pending or suspended one, an unknown
+// one, or when it cannot be read.
+func TestTunnelPolicyGoesOnlyToAnActiveAgent(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	if db == nil {
+		t.SkipNow()
+	}
+	t.Cleanup(cleanup)
+	bg := context.Background()
+	if err := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop()).MigrateTo(bg, -1); err != nil {
+		t.Fatalf("migrate to latest: %v", err)
+	}
+	const org = "00000000-0000-0000-0000-000000000010"
+	ctx := orgctx.With(bg, orgctx.Org{ID: org})
+	var app string
+	if err := db.Pool.QueryRow(ctx, `INSERT INTO applications (client_id, name, type, kind, org_id)
+		VALUES ('net-gate', 'Finance', 'network', 'network', $1) RETURNING id::text`, org).Scan(&app); err != nil {
+		t.Fatalf("seed network app: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO network_targets (application_id, org_id, cidrs)
+		VALUES ($1, $2, '{10.42.0.0/16}')`, app, org); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO org_network_policy (org_id, always_on, block_direct_corporate_cidrs)
+		VALUES ($1, true, true)`, org); err != nil {
+		t.Fatalf("set policy: %v", err)
+	}
+	for _, a := range []struct{ id, status string }{
+		{"gate-active", "active"}, {"gate-pending", "pending"}, {"gate-suspended", "suspended"},
+	} {
+		if _, err := db.Pool.Exec(ctx, `INSERT INTO enrolled_agents (agent_id, device_id, auth_token_hash, status, org_id)
+			VALUES ($1, $1, $2, $3, $4)`, a.id, sha256Hex("secret-"+a.id), a.status, org); err != nil {
+			t.Fatalf("seed agent: %v", err)
+		}
+	}
+
+	gin.SetMode(gin.TestMode)
+	h := NewAgentAPIHandler(zap.NewNop(), db, nil, &config.Config{})
+	r := gin.New()
+	r.GET("/agent/config", h.HandleConfig)
+	r.POST("/agent/report", h.HandleReport)
+	// call answers whether the route's response carried the policy, and with
+	// what status.
+	call := func(method, path, agentID string) (int, bool) {
+		t.Helper()
+		var body *strings.Reader
+		if method == http.MethodPost {
+			body = strings.NewReader(`{"agent_id":"` + agentID + `","results":[]}`)
+		} else {
+			body = strings.NewReader("")
+		}
+		req := httptest.NewRequest(method, path, body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Agent-ID", agentID)
+		req.Header.Set("X-Auth-Token", "secret-"+agentID)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		var out map[string]json.RawMessage
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		_, has := out["org_network_policy"]
+		if has && strings.Contains(w.Body.String(), "10.42.0.0/16") != has {
+			t.Errorf("%s %s for %s carried a policy without its ranges: %s", method, path, agentID, w.Body.String())
+		}
+		return w.Code, has
+	}
+	routes := []struct{ method, path string }{{http.MethodGet, "/agent/config"}, {http.MethodPost, "/agent/report"}}
+
+	for _, rt := range routes {
+		if code, has := call(rt.method, rt.path, "gate-active"); !has || code >= 300 {
+			t.Errorf("%s %s for an active agent: %d, policy %v; want the policy", rt.method, rt.path, code, has)
+		}
+		for _, id := range []string{"gate-pending", "gate-suspended", "gate-unknown"} {
+			if code, has := call(rt.method, rt.path, id); has {
+				t.Errorf("%s %s for %s answered %d with the policy", rt.method, rt.path, id, code)
+			}
+		}
+	}
+
+	// The predicate itself: no database, no agent, an agent of another
+	// organization, an agent that is not active.
+	if (&AgentAPIHandler{logger: zap.NewNop()}).policyForActiveAgent(ctx, "gate-active") != nil {
+		t.Error("no database gave a policy")
+	}
+	for _, c := range []struct {
+		ctx context.Context
+		id  string
+	}{
+		{ctx, ""},
+		{bg, "gate-active"},
+		{orgctx.With(bg, orgctx.Org{ID: "00000000-0000-0000-0000-0000000000ff"}), "gate-active"},
+		{ctx, "gate-suspended"},
+	} {
+		if h.policyForActiveAgent(c.ctx, c.id) != nil {
+			t.Errorf("policyForActiveAgent(%q) in org %q gave a policy", c.id, orgIDFrom(c.ctx))
+		}
+	}
+
+	// A policy that cannot be read is withheld from the active agent too.
+	if _, err := db.Pool.Exec(bg, `ALTER TABLE org_network_policy RENAME TO org_network_policy_gone`); err != nil {
+		t.Fatalf("break the policy table: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Pool.Exec(bg, `ALTER TABLE org_network_policy_gone RENAME TO org_network_policy`)
+	})
+	for _, rt := range routes {
+		if code, has := call(rt.method, rt.path, "gate-active"); has || code >= 300 {
+			t.Errorf("%s %s with an unreadable policy: %d, policy %v; want the answer without it", rt.method, rt.path, code, has)
+		}
 	}
 }

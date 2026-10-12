@@ -1331,7 +1331,8 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 		"compliance_score":    complianceScore,
 		"enforcement_actions": enforcementActions,
 	}
-	if p := h.agentNetworkPolicy(c.Request.Context()); p != nil {
+	// The same gate as /agent/config: only an active agent gets it.
+	if p := h.policyForActiveAgent(c.Request.Context(), agentID); p != nil {
 		resp["org_network_policy"] = p
 	}
 	c.JSON(http.StatusAccepted, resp)
@@ -1591,19 +1592,42 @@ type agentConfigResponse struct {
 	OrgNetworkPolicy *agentNetworkPolicy `json:"org_network_policy,omitempty"`
 }
 
-// writeAgentConfig answers /agent/config with cfg and the organization's
-// tunnel policy. A suspended device is told nothing about the tunnel: it has
-// no overlay access to tunnel to.
-func (h *AgentAPIHandler) writeAgentConfig(c *gin.Context, cfg agentConfigResponse) {
-	if cfg.EnforcementPolicy != "block" {
-		cfg.OrgNetworkPolicy = h.agentNetworkPolicy(c.Request.Context())
-	}
+// writeActiveAgentConfig answers /agent/config for an agent HandleConfig read
+// as active, with the organization's tunnel policy when policyForActiveAgent
+// grants it.
+func (h *AgentAPIHandler) writeActiveAgentConfig(c *gin.Context, agentID string, cfg agentConfigResponse) {
+	cfg.OrgNetworkPolicy = h.policyForActiveAgent(c.Request.Context(), agentID)
 	c.JSON(http.StatusOK, cfg)
 }
 
-// agentNetworkPolicy is the caller's organization's tunnel policy, or nil
-// when there is no database or it cannot be read (logged).
-func (h *AgentAPIHandler) agentNetworkPolicy(ctx context.Context) *agentNetworkPolicy {
+// policyForActiveAgent is the one gate on handing a device the tunnel
+// policy, shared by /agent/config and the /agent/report answer. The policy
+// carries the organization's corporate ranges, internal topology, so it goes
+// only to an agent whose enrolment is active right now, read from its own
+// row in its own organization: never to a pending, suspended or revoked one,
+// one the server cannot find, or when the read fails (nil, and the agent
+// keeps what it last had).
+func (h *AgentAPIHandler) policyForActiveAgent(ctx context.Context, agentID string) *agentNetworkPolicy {
+	if h.db == nil || h.db.Pool == nil || agentID == "" {
+		return nil
+	}
+	orgID := orgIDFrom(ctx)
+	if orgID == "" {
+		return nil
+	}
+	var status string
+	if err := h.db.Pool.QueryRow(ctx,
+		`SELECT status FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
+		agentID, orgID).Scan(&status); err != nil || status != "active" {
+		return nil
+	}
+	return h.orgNetworkPolicy(ctx)
+}
+
+// orgNetworkPolicy is the caller's organization's tunnel policy, or nil when
+// there is no database or it cannot be read (logged). Callers that hand it to
+// a device go through policyForActiveAgent.
+func (h *AgentAPIHandler) orgNetworkPolicy(ctx context.Context) *agentNetworkPolicy {
 	if h.db == nil || h.db.Pool == nil {
 		return nil
 	}
@@ -1847,7 +1871,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	//    caller no longer reaches this: it is answered 401 above. An agent's own
 	//    client treats any error as "use defaults", so nothing breaks for one.)
 	if h.db == nil || h.db.Pool == nil {
-		h.writeAgentConfig(c, defaultAgentConfig())
+		c.JSON(http.StatusOK, defaultAgentConfig())
 		return
 	}
 
@@ -1868,7 +1892,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		// Agent not found or DB error — return defaults.
 		h.logger.Warn("HandleConfig: could not fetch agent status",
 			logsafe.String("agent_id", agentID), zap.Error(err))
-		h.writeAgentConfig(c, defaultAgentConfig())
+		c.JSON(http.StatusOK, defaultAgentConfig())
 		return
 	}
 	agentPlatform := ""
@@ -1898,7 +1922,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			EnrollmentStatus:  status,
 			DeviceTrusted:     trusted,
 		}
-		h.writeAgentConfig(c, cfg)
+		c.JSON(http.StatusOK, cfg)
 		return
 
 	case "pending":
@@ -1911,7 +1935,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			EnrollmentStatus:  status,
 			DeviceTrusted:     trusted,
 		}
-		h.writeAgentConfig(c, cfg)
+		c.JSON(http.StatusOK, cfg)
 		return
 
 	case "active":
@@ -1938,7 +1962,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		if queryErr != nil {
 			h.logger.Warn("HandleConfig: could not query posture_checks",
 				logsafe.String("agent_id", agentID), zap.Error(queryErr))
-			h.writeAgentConfig(c, h.defaultConfigWithSupport(ctx, agentID))
+			h.writeActiveAgentConfig(c, agentID, h.defaultConfigWithSupport(ctx, agentID))
 			return
 		}
 		defer rows.Close()
@@ -1977,7 +2001,7 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		// has a support session (and, for attended support, could never grant
 		// consent). checks stays empty; the rest of the config is the default.
 		if len(checks) == 0 {
-			h.writeAgentConfig(c, h.defaultConfigWithSupport(ctx, agentID))
+			h.writeActiveAgentConfig(c, agentID, h.defaultConfigWithSupport(ctx, agentID))
 			return
 		}
 
@@ -2024,12 +2048,12 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		// windows_app_host, telling it to -Report and POST the catalog JSON back.
 		cfg.WindowsAppDiscovery = h.windowsAppDiscoveryForAgent(ctx, agentID)
 
-		h.writeAgentConfig(c, cfg)
+		h.writeActiveAgentConfig(c, agentID, cfg)
 		return
 
 	default:
 		// Unknown status — return defaults.
-		h.writeAgentConfig(c, defaultAgentConfig())
+		c.JSON(http.StatusOK, defaultAgentConfig())
 	}
 }
 
@@ -2092,7 +2116,7 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 	// The current policy version, to say which devices run it. Unknown when
 	// it cannot be read: every device's state is then "".
 	current := ""
-	if p := h.agentNetworkPolicy(ctx); p != nil {
+	if p := h.orgNetworkPolicy(ctx); p != nil {
 		current = p.Version
 	}
 
