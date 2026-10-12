@@ -40,7 +40,7 @@ fi
 
 # Workflows that build the root module. client-mobile-* build agent/, which
 # pins a different toolchain, so they are out of scope here.
-WORKFLOWS="${CHECK_GO_TOOLCHAIN_FILES:-.github/workflows/ci.yml}"
+WORKFLOWS="${CHECK_GO_TOOLCHAIN_FILES:-.github/workflows/ci.yml .github/workflows/display-equals-enforcement.yml .github/workflows/saml-interop.yml .github/workflows/oidc-conformance.yml .github/workflows/helm.yml}"
 
 FINDINGS=0
 for wf in $WORKFLOWS; do
@@ -88,6 +88,53 @@ for wf in $WORKFLOWS; do
         echo "    $MOD/go.mod pins its own toolchain; without its own setup-go step it is"
         echo "    analysed against whichever Go the root pin installed."
     done < <(grep -n '^[[:space:]]*working-directory: *[a-z]' "$wf")
+
+    # The cache, and the version that keeps it restorable. Three rules, one
+    # incident: restores of setup-go's cache failed with
+    #
+    #     /usr/bin/tar: ../../../go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.9.linux-amd64/...:
+    #         Cannot open: File exists
+    #
+    # on Unit Tests, Race Detector and others (2026-10-10/11). setup-go@v5 reads
+    # the `go` line (1.26.0), its own `go env GOMODCACHE` then downloaded the
+    # pinned toolchain INTO ~/go/pkg/mod, and the restore of an archive already
+    # holding that directory collided with it; when the download itself failed,
+    # setup failed on `go env`. A second actions/cache over the same paths
+    # restored on top again.
+    #
+    #   1. setup-go must be v6 or later: v6 installs the `toolchain` line, so
+    #      nothing is downloaded into the module cache.
+    #   2. No actions/cache step may cover ~/go/pkg/mod or ~/.cache/go-build;
+    #      setup-go's own cache owns them (it is on by default).
+    #   3. v6 exports GOTOOLCHAIN=local, and under GOTOOLCHAIN=local a LATER
+    #      setup-go in the same job reads the `go` line again -- so a second
+    #      setup-go in a job must set `GOTOOLCHAIN: auto` in its env.
+    while IFS= read -r hit; do
+        FINDINGS=$((FINDINGS + 1))
+        echo "$wf:$hit"
+    done < <(awk '
+        function flush(   isgo, iscache) {
+            if (step == "") return
+            isgo = (step ~ /uses:[[:space:]]*actions\/setup-go@/)
+            iscache = (step ~ /uses:[[:space:]]*actions\/cache(\/restore)?@/)
+            if (isgo) {
+                gocount++
+                if (step ~ /setup-go@v[0-5]([^0-9]|$)/ || step ~ /setup-go@[0-9a-f]+[[:space:]]*#[[:space:]]*v[0-5]\./)
+                    print stepline ": setup-go older than v6 installs the go.mod `go` line, not its `toolchain`, and the toolchain is then downloaded into the module cache"
+                if (gocount > 1 && step !~ /GOTOOLCHAIN:[[:space:]]*["\047]?auto/)
+                    print stepline ": a second setup-go in job " job " runs under the GOTOOLCHAIN=local the first exported, so it reads the `go` line; give it env GOTOOLCHAIN: auto"
+            }
+            if (iscache && step ~ /(go\/pkg\/mod|\.cache\/go-build)/)
+                print stepline ": actions/cache over the Go module/build cache duplicates setup-go'"'"'s own cache (restores collide: tar File exists)"
+            step = ""
+        }
+        /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { flush(); job = $1; sub(/:$/, "", job); gocount = 0; next }
+        /^[[:space:]]+-[[:space:]]+(name|uses|run|id|if|with|env|working-directory|shell|timeout-minutes|continue-on-error):/ {
+            flush(); step = $0; stepline = NR; next
+        }
+        step != "" { step = step "\n" $0 }
+        END { flush() }
+    ' "$wf")
 done
 
 if [ "$FINDINGS" -eq 0 ]; then
@@ -97,6 +144,6 @@ fi
 
 echo
 echo "check-go-toolchain-pin: $FINDINGS finding(s)." >&2
-echo "Replace 'go-version: <spec>' with 'go-version-file: <that module>/go.mod'." >&2
+echo "Each finding names its rule; the comments above each check in this script say why." >&2
 [ "$ENFORCE" -eq 1 ] && exit 1
 exit 0
