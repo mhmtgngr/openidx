@@ -21,6 +21,7 @@ const tr: typeof en = {
       end: 'Sonlandır',
       ended: 'Destek oturumu sonlandırıldı',
       endFailed: 'Destek oturumu sonlandırılamadı',
+      watchFailed: 'Destek oturumu izlenmeye başlanamadı',
       watchTitle: '{{technician}} — {{device}}',
       watchDescription: 'Yalnızca görüntüleme: burada yaptığınız hiçbir şey cihaza ulaşmaz.',
     },
@@ -306,6 +307,7 @@ const tr: typeof en = {
       popOutHint: 'Ayrı bir pencerede açın (ikinci ekran için idealdir)',
       endSession: 'Oturumu sonlandır',
       screenLabel: 'Uzak ekran. Klavye ve işaretçi girdisi uzak makineye iletilir.',
+      reconnectRefused: 'Bağlantı koptu ve yeniden açılamadı. Görüntüleyiciyi kapatıp yeniden açın.',
     },
     remoteSupportViewer: {
       controlActiveHint: 'Cihazı siz kontrol ediyorsunuz — bırakmak için tıklayın',
@@ -319,6 +321,7 @@ const tr: typeof en = {
       fullscreenHint: 'Tam ekran (çıkmak için Esc) — piksel hassasiyetinde kontrol için en iyisi',
       endSession: 'Oturumu sonlandır',
       screenLabel: 'Uzak ekran. Klavye ve işaretçi girdisi uzak makineye iletilir.',
+      reconnectRefused: 'Bağlantı koptu ve yeniden açılamadı. Görüntüleyiciyi kapatıp yeniden açın.',
       inputHelp: 'Dokunma = tek basış · sürükleme = kaydırma · Esc = geri · Enter / Backspace / Tab doğrudan iletilir · ok ve sayfa tuşları için cihazda OpenIDX klavyesinin etkin olması gerekir.',
       viewOnlyHelp: 'Yalnızca görüntüleme — bu oturumda girdi devre dışı.',
       typePlaceholder: 'Yazın ve odaklanmış alana göndermek için Enter\'a basın…',
@@ -4903,6 +4906,14 @@ const tr: typeof en = {
       },
       openViewer: 'Görüntüleyiciyi aç',
       downloadRecording: 'Kaydı indir ({{size}})',
+      playRecording: 'Kaydı oynat',
+      player: {
+        title: '{{id}} oturumunun kaydı',
+        description: 'Saklanan kayıttan oynatılıyor. İndir, bir kopyasını saklar.',
+        loading: 'Kayıt yükleniyor…',
+        failed: 'Kayıt yüklenemedi',
+        download: 'İndir',
+      },
       confirmRelease: {
         title: 'Bu kaydın yasal beklemesi kaldırılsın mı?',
         description:
