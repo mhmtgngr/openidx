@@ -71,12 +71,30 @@ type Status struct {
 	// Services are the names of the overlay services the tunneler intercepts
 	// for this device, sorted. Never nil, so it is sent as [] and not null.
 	Services []string `json:"services"`
+
+	// The organization's tunnel policy as this device applied it. The
+	// supervisor leaves these empty; the agent fills them from the policy it
+	// last received (agent/internal/agent/tunnel.go), and they are omitted
+	// until a server has sent one.
+	//
+	// Mode is "split" (only the overlay services are intercepted) or
+	// "full". PolicyVersion is the version applied. PolicyGaps names what
+	// the policy asks for that this device cannot enforce ("full_tunnel",
+	// "block_direct"). LastError is why the tunnel, or applying the policy,
+	// last failed.
+	Mode          string   `json:"mode,omitempty"`
+	PolicyVersion string   `json:"policy_version,omitempty"`
+	PolicyGaps    []string `json:"policy_gaps,omitempty"`
+	LastError     string   `json:"last_error,omitempty"`
 }
 
 // clone returns a copy whose slices and pointers the caller may keep.
 func (s Status) clone() Status {
 	out := s
 	out.Services = append([]string{}, s.Services...)
+	if s.PolicyGaps != nil {
+		out.PolicyGaps = append([]string{}, s.PolicyGaps...)
+	}
 	if s.LastSeen != nil {
 		t := *s.LastSeen
 		out.LastSeen = &t

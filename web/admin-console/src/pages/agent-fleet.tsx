@@ -28,7 +28,7 @@ import {
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 import { AgentChecksSection } from '../components/agent-checks-section'
-import { TunnelStatusBadge, type TunnelStatus } from '../components/tunnel-status-badge'
+import { TunnelPolicyBadge, TunnelStatusBadge, type TunnelStatus } from '../components/tunnel-status-badge'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -53,6 +53,9 @@ interface AgentRecord {
   form_factor?: string
   tunnel_status?: TunnelStatus | null
   tunnel_last_seen?: string | null
+  tunnel_policy_version?: string | null
+  tunnel_policy_applied_at?: string | null
+  tunnel_policy_state?: string | null
 }
 
 interface QrPayloadResponse {
@@ -273,7 +276,14 @@ export function AgentFleetPage() {
                       <ComplianceBadge status={agent.compliance_status} score={agent.compliance_score} lastReportAt={agent.last_seen_at} />
                     </TableCell>
                     <TableCell>
-                      <TunnelStatusBadge status={agent.tunnel_status} lastSeen={agent.tunnel_last_seen} />
+                      <div className="flex flex-wrap items-center gap-1">
+                        <TunnelStatusBadge status={agent.tunnel_status} lastSeen={agent.tunnel_last_seen} />
+                        <TunnelPolicyBadge
+                          state={agent.tunnel_policy_state}
+                          version={agent.tunnel_policy_version}
+                          appliedAt={agent.tunnel_policy_applied_at}
+                        />
+                      </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {agent.last_seen_at ? new Date(agent.last_seen_at).toLocaleString() : '—'}

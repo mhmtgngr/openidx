@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/agent/internal/tunnel"
 )
 
 // tunnelServer answers /agent/config with configBody and /agent/report with
@@ -124,4 +127,126 @@ func TestTheTrayAgentSupervisesNoTunnel(t *testing.T) {
 	cancel()
 	_ = a.Run(ctx)
 	assert.Nil(t, a.TunnelStatus(), "a RemoteSupportOnly agent must not start a tunneler")
+}
+
+// fakeBlock records what the agent asks of the direct-access block.
+type fakeBlock struct {
+	mu      sync.Mutex
+	scripts []string
+	fail    error
+}
+
+func (f *fakeBlock) run(s string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	f.scripts = append(f.scripts, s)
+	return nil
+}
+
+func (f *fakeBlock) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.scripts)
+}
+
+func (f *fakeBlock) last() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.scripts) == 0 {
+		return ""
+	}
+	return f.scripts[len(f.scripts)-1]
+}
+
+func reportedTunnel(t *testing.T, srv *tunnelServer) map[string]json.RawMessage {
+	t.Helper()
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	var payload map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(srv.lastReport, &payload))
+	var ts map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(payload["tunnel_status"], &ts))
+	return ts
+}
+
+func TestAVersionedPolicyIsReportedAppliedWithItsGaps(t *testing.T) {
+	srv := &tunnelServer{
+		configBody: `{"checks":[],"org_network_policy":{"always_on":true,"split_tunnel":false,` +
+			`"block_direct_corporate_cidrs":true,"corporate_cidrs":["10.0.0.0/8"],"version":"0123456789abcdef"}}`,
+		reportBody: `{}`}
+	a := newTunnelAgent(t, srv, nil)
+	unsupported := errors.New("no firewall hook here")
+	a.directBlock.Store(tunnel.NewDirectBlockFunc(func(string) error { t.Error("loaded a block where unsupported"); return nil },
+		func() error { return unsupported }))
+	require.NoError(t, a.RunOnce(context.Background()))
+
+	ts := reportedTunnel(t, srv)
+	assert.JSONEq(t, `"split"`, string(ts["mode"]), "the bundled tunneler always runs split")
+	assert.JSONEq(t, `"0123456789abcdef"`, string(ts["policy_version"]), "gaps do not hold the version back")
+	assert.JSONEq(t, `["full_tunnel","block_direct"]`, string(ts["policy_gaps"]))
+	assert.True(t, a.tun.Load().Enabled())
+}
+
+func TestTheBlockIsLoadedAndRemovedAsThePolicySays(t *testing.T) {
+	srv := &tunnelServer{
+		configBody: `{"checks":[],"org_network_policy":{"block_direct_corporate_cidrs":true,` +
+			`"corporate_cidrs":["10.0.0.0/8","192.168.1.0/24"],"version":"aaaaaaaaaaaaaaaa"}}`,
+		reportBody: `{}`}
+	a := newTunnelAgent(t, srv, nil)
+	fb := &fakeBlock{}
+	a.directBlock.Store(tunnel.NewDirectBlockFunc(fb.run, func() error { return nil }))
+	require.NoError(t, a.RunOnce(context.Background()))
+	assert.Contains(t, fb.last(), "elements = { 10.0.0.0/8, 192.168.1.0/24 }")
+	ts := reportedTunnel(t, srv)
+	assert.JSONEq(t, `"aaaaaaaaaaaaaaaa"`, string(ts["policy_version"]))
+	assert.NotContains(t, ts, "policy_gaps")
+
+	// The same version again loads nothing.
+	n := fb.count()
+	require.NoError(t, a.SyncConfig(context.Background()))
+	assert.Equal(t, n, fb.count())
+
+	// The policy turns the block off: the table is removed.
+	srv.mu.Lock()
+	srv.configBody = `{"checks":[],"org_network_policy":{"block_direct_corporate_cidrs":false,"version":"bbbbbbbbbbbbbbbb"}}`
+	srv.mu.Unlock()
+	require.NoError(t, a.SyncConfig(context.Background()))
+	assert.NotContains(t, fb.last(), "chain output")
+	assert.Contains(t, fb.last(), "delete table inet openidx_direct")
+}
+
+func TestAFailedBlockHoldsTheVersionBackAndSaysWhy(t *testing.T) {
+	srv := &tunnelServer{
+		configBody: `{"checks":[],"org_network_policy":{"block_direct_corporate_cidrs":true,` +
+			`"corporate_cidrs":["10.0.0.0/8"],"version":"cccccccccccccccc"}}`,
+		reportBody: `{}`}
+	a := newTunnelAgent(t, srv, nil)
+	fb := &fakeBlock{fail: errors.New("netlink: Operation not permitted")}
+	a.directBlock.Store(tunnel.NewDirectBlockFunc(fb.run, func() error { return nil }))
+	require.NoError(t, a.RunOnce(context.Background()))
+	ts := reportedTunnel(t, srv)
+	assert.NotContains(t, ts, "policy_version", "a policy that failed to apply is not reported applied")
+	assert.Contains(t, string(ts["last_error"]), "Operation not permitted")
+
+	// The next delivery of the same version tries again.
+	fb.mu.Lock()
+	fb.fail = nil
+	fb.mu.Unlock()
+	require.NoError(t, a.RunOnce(context.Background()))
+	ts = reportedTunnel(t, srv)
+	assert.JSONEq(t, `"cccccccccccccccc"`, string(ts["policy_version"]))
+	assert.NotContains(t, ts, "last_error")
+}
+
+func TestAPolicyFromAnOlderServerAddsNothingToTheReport(t *testing.T) {
+	srv := &tunnelServer{configBody: `{"checks":[],"org_network_policy":{"always_on":false}}`, reportBody: `{}`}
+	a := newTunnelAgent(t, srv, nil)
+	require.NoError(t, a.RunOnce(context.Background()))
+	ts := reportedTunnel(t, srv)
+	for _, k := range []string{"mode", "policy_version", "policy_gaps", "last_error"} {
+		assert.NotContains(t, ts, k)
+	}
 }
