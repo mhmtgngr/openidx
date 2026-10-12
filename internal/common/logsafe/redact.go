@@ -61,6 +61,7 @@ var SensitiveWords = map[string]bool{
 	"credentials": true, "bearer": true, "authorization": true,
 	"code": true, "otp": true, "pin": true, "ssn": true,
 	"assertion": true, "signature": true, "sig": true,
+	"ticket": true, // a one-shot bearer, e.g. the sponsor watch ticket in ?ticket=
 }
 
 var defaultSensitiveSet = func() map[string]bool {
