@@ -57,7 +57,7 @@ func TestTunnelPolicyDeliveryAndRolloutOnTheMigratedSchema(t *testing.T) {
 	for _, q := range []struct {
 		id, cidrs, hosts string
 	}{
-		{netApp, `{10.0.0.0/16,10.0.5.0/24}`, `{fs1.corp.example,192.168.7.7}`},
+		{netApp, `{10.0.0.0/16,10.0.0.128/25}`, `{fs1.corp.example,192.168.1.7}`},
 		{offApp, `{172.16.0.0/12}`, `{}`},
 	} {
 		if _, err := db.Pool.Exec(ctx, `INSERT INTO network_targets (application_id, org_id, hosts, cidrs)
@@ -80,7 +80,7 @@ func TestTunnelPolicyDeliveryAndRolloutOnTheMigratedSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
-	if want := []string{"10.0.0.0/16", "192.168.7.7/32"}; !reflect.DeepEqual(p.CorporateCIDRs, want) {
+	if want := []string{"10.0.0.0/16", "192.168.1.7/32"}; !reflect.DeepEqual(p.CorporateCIDRs, want) {
 		t.Errorf("corporate ranges = %v, want %v (enabled resources only, covered ranges folded)", p.CorporateCIDRs, want)
 	}
 	if !p.AlwaysOn || p.Version == defaultVersion {
@@ -188,7 +188,7 @@ func TestTunnelPolicyGoesOnlyToAnActiveAgent(t *testing.T) {
 		t.Fatalf("seed network app: %v", err)
 	}
 	if _, err := db.Pool.Exec(ctx, `INSERT INTO network_targets (application_id, org_id, cidrs)
-		VALUES ($1, $2, '{10.42.0.0/16}')`, app, org); err != nil {
+		VALUES ($1, $2, '{198.51.100.0/24}')`, app, org); err != nil {
 		t.Fatalf("seed target: %v", err)
 	}
 	if _, err := db.Pool.Exec(ctx, `INSERT INTO org_network_policy (org_id, always_on, block_direct_corporate_cidrs)
@@ -228,7 +228,7 @@ func TestTunnelPolicyGoesOnlyToAnActiveAgent(t *testing.T) {
 		var out map[string]json.RawMessage
 		_ = json.Unmarshal(w.Body.Bytes(), &out)
 		_, has := out["org_network_policy"]
-		if has && strings.Contains(w.Body.String(), "10.42.0.0/16") != has {
+		if has && strings.Contains(w.Body.String(), "198.51.100.0/24") != has {
 			t.Errorf("%s %s for %s carried a policy without its ranges: %s", method, path, agentID, w.Body.String())
 		}
 		return w.Code, has

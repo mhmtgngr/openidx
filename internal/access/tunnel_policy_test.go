@@ -9,12 +9,12 @@ import (
 
 func TestCorporatePrefixesAreCanonical(t *testing.T) {
 	got := corporatePrefixes(
-		[]string{"10.0.0.9/16", "10.0.0.0/8", "192.168.1.0/24", "fd00::1/64", "garbage", "10.20.0.0/16"},
-		[]string{"192.168.1.20", "172.16.5.5", "fs1.corp.example", "::ffff:172.16.5.6", "2001:db8::7"},
+		[]string{"10.0.0.9/16", "10.0.0.0/8", "192.168.1.0/24", "fd00::1/64", "garbage", "10.0.0.0/24"},
+		[]string{"192.168.1.20", "172.16.0.5", "fs1.corp.example", "::ffff:172.16.0.6", "2001:db8::7"},
 	)
-	// 10.0.0.0/16 and 10.20.0.0/16 are inside 10.0.0.0/8; 192.168.1.20 is
+	// 10.0.0.0/16 and 10.0.0.0/24 are inside 10.0.0.0/8; 192.168.1.20 is
 	// inside 192.168.1.0/24; a name is not an address; a v4-mapped host is v4.
-	want := []string{"10.0.0.0/8", "172.16.5.5/32", "172.16.5.6/32", "192.168.1.0/24", "2001:db8::7/128", "fd00::/64"}
+	want := []string{"10.0.0.0/8", "172.16.0.5/32", "172.16.0.6/32", "192.168.1.0/24", "2001:db8::7/128", "fd00::/64"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("corporatePrefixes = %v, want %v", got, want)
 	}

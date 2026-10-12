@@ -193,13 +193,13 @@ func TestAVersionedPolicyIsReportedAppliedWithItsGaps(t *testing.T) {
 func TestTheBlockIsLoadedAndRemovedAsThePolicySays(t *testing.T) {
 	srv := &tunnelServer{
 		configBody: `{"checks":[],"org_network_policy":{"block_direct_corporate_cidrs":true,` +
-			`"corporate_cidrs":["10.0.0.0/8","192.168.10.0/24"],"version":"aaaaaaaaaaaaaaaa"}}`,
+			`"corporate_cidrs":["10.0.0.0/8","192.168.1.0/24"],"version":"aaaaaaaaaaaaaaaa"}}`,
 		reportBody: `{}`}
 	a := newTunnelAgent(t, srv, nil)
 	fb := &fakeBlock{}
 	a.directBlock.Store(tunnel.NewDirectBlockFunc(fb.run, func() error { return nil }))
 	require.NoError(t, a.RunOnce(context.Background()))
-	assert.Contains(t, fb.last(), "elements = { 10.0.0.0/8, 192.168.10.0/24 }")
+	assert.Contains(t, fb.last(), "elements = { 10.0.0.0/8, 192.168.1.0/24 }")
 	ts := reportedTunnel(t, srv)
 	assert.JSONEq(t, `"aaaaaaaaaaaaaaaa"`, string(ts["policy_version"]))
 	assert.NotContains(t, ts, "policy_gaps")

@@ -175,7 +175,7 @@ posture report:
   "always_on": true,
   "split_tunnel": true,
   "block_direct_corporate_cidrs": true,
-  "corporate_cidrs": ["10.0.0.0/16", "192.168.7.7/32"],
+  "corporate_cidrs": ["10.0.0.0/16", "192.168.1.7/32"],
   "version": "3f1c0a9e5b7d2c44"
 }
 ```

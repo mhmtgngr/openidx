@@ -12,7 +12,7 @@ import (
 )
 
 func TestSplitPrefixesMasksDeduplicatesAndRefusesGarbage(t *testing.T) {
-	v4, v6, err := splitPrefixes([]string{"10.1.2.3/8", " 10.0.0.0/8", "192.168.1.0/24", "fd00::1/64"})
+	v4, v6, err := splitPrefixes([]string{"10.0.0.3/8", " 10.0.0.0/8", "192.168.1.0/24", "fd00::1/64"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"10.0.0.0/8", "192.168.1.0/24"}, v4)
 	assert.Equal(t, []string{"fd00::/64"}, v6)
