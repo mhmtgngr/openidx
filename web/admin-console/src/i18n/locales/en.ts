@@ -7263,15 +7263,6 @@ const en = {
           serviceDisableFailed: 'Failed to disable BrowZer on service',
         },
       },
-      tempAccess: {
-        historyTitle: 'Temporary access links (retired)',
-        retired: 'Temporary access links no longer open sessions and cannot be created. A vendor reaches what an engagement covers, with their own account: External users → Engagements. The links issued before are listed here until their history is exported.',
-        colName: 'Name',
-        colTarget: 'Target',
-        colUsage: 'Usage',
-        colIssued: 'Issued',
-        uses: '{{used}} uses',
-      },
       // The explain dialog's body — the summary, every hop title, detail, fix
       // and technical line — is composed by the backend, so only the dialog's
       // own chrome is translated here.
@@ -7561,7 +7552,6 @@ const en = {
         partJit: '{{n}} JIT grants',
         partPrivSessions: '{{n}} privileged sessions',
         partPamGrants: '{{n}} PAM connection grants',
-        partTempLinks: '{{n}} temporary access links',
         partNetwork: '{{n}} network sessions',
       },
     },

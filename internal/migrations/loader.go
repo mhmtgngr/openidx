@@ -1672,5 +1672,12 @@ func allMigrations() []*Migration {
 			UpSQL:       remoteSupportExternalUp,
 			DownSQL:     remoteSupportExternalDown,
 		},
+		{
+			Version:     236,
+			Name:        "temp_access_tables_drop",
+			Description: "Drop temp_access_usage and temp_access_links (with their org policies, indexes and grants). D2 (v1.44.0) retired the anonymous temporary access link -- none is issued or redeems, GET /temp-access/:token answers 410 without reading anything -- and kept the two tables as read-only history until an operator exported them; this release removes the admin list/get/revoke/usage routes, the console history section, and the kill switch's, lifecycle sweep's and JIT expiry sweep's writes to them. The rows are not copied anywhere: export the two tables before upgrading. Down recreates both tables empty in their 235 shape (org_id, pam_entry_id, FORCE'd org policies without the app.bypass_rls clause, grants to openidx_app).",
+			UpSQL:       tempAccessTablesDropUp,
+			DownSQL:     tempAccessTablesDropDown,
+		},
 	}
 }

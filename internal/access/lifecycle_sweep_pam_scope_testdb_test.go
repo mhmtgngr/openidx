@@ -83,9 +83,6 @@ func TestLifecycleSweepEndsThePamEntrySurface(t *testing.T) {
 			VALUES ($1::uuid, $2::uuid, $3::uuid, 'approved', NOW() + INTERVAL '1 hour')`, org, entryID, u)
 		exec("lease", `INSERT INTO pam_active_checkouts (org_id, entry_id, principal_id, action, status, expires_at)
 			VALUES ($1::uuid, $2::uuid, $3::uuid, 'connect', 'active', NOW() + INTERVAL '15 minutes')`, org, entryID, u)
-		exec("temp link", `INSERT INTO temp_access_links (org_id, token, name, protocol, target_host, target_port, created_by, expires_at, status, pam_entry_id)
-			VALUES ($1::uuid, $2, $3, 'ssh', 'target.example.test', 22, $4::uuid, NOW() + INTERVAL '1 day', 'active', $5::uuid)`,
-			org, "tok-"+suffix+"-"+u[:8], "link-"+suffix, u, entryID)
 		exec("brokered session", `INSERT INTO brokered_sessions (org_id, user_id, target_type, target, principal, status, expires_at)
 			VALUES ($1::uuid, $2::uuid, 'ssh', 'target.example.test', 'root', 'active', NOW() + INTERVAL '10 minutes')`, org, u)
 	}
@@ -116,12 +113,11 @@ func TestLifecycleSweepEndsThePamEntrySurface(t *testing.T) {
 		}
 		return n
 	}
-	live := func(u string) (grants, approvals, leases, sessions, links, brokered int) {
+	live := func(u string) (grants, approvals, leases, sessions, brokered int) {
 		grants = count(`SELECT COUNT(*) FROM pam_entry_grants WHERE org_id=$1 AND principal_type='user' AND principal_id=$2 AND (expires_at IS NULL OR expires_at > NOW())`, org, u)
 		approvals = count(`SELECT COUNT(*) FROM pam_entry_access_requests WHERE org_id=$1 AND requester_id=$2::uuid AND status IN ('pending','approved')`, org, u)
 		leases = count(`SELECT COUNT(*) FROM pam_active_checkouts WHERE org_id=$1 AND principal_id=$2::uuid AND status='active'`, org, u)
 		sessions = count(`SELECT COUNT(*) FROM pam_entry_sessions WHERE org_id=$1 AND user_id=$2::uuid AND status='active'`, org, u)
-		links = count(`SELECT COUNT(*) FROM temp_access_links WHERE org_id=$1 AND created_by=$2::uuid AND status='active'`, org, u)
 		brokered = count(`SELECT COUNT(*) FROM brokered_sessions WHERE org_id=$1 AND user_id=$2::uuid AND status='active'`, org, u)
 		return
 	}
@@ -139,13 +135,13 @@ func TestLifecycleSweepEndsThePamEntrySurface(t *testing.T) {
 		t.Error("the enabled user lost the entry")
 	}
 	for _, u := range []string{disabled, gone} {
-		g, a, l, _, k, b := live(u)
-		if g != 0 || a != 0 || l != 0 || k != 0 || b != 0 {
-			t.Errorf("user %s still holds grants=%d approvals=%d leases=%d links=%d brokered=%d", u, g, a, l, k, b)
+		g, a, l, _, b := live(u)
+		if g != 0 || a != 0 || l != 0 || b != 0 {
+			t.Errorf("user %s still holds grants=%d approvals=%d leases=%d brokered=%d", u, g, a, l, b)
 		}
 	}
-	if g, a, l, s, k, b := live(enabled); g != 1 || a != 1 || l != 1 || s != 1 || k != 1 || b != 1 {
-		t.Errorf("the enabled user's rows were touched: grants=%d approvals=%d leases=%d sessions=%d links=%d brokered=%d", g, a, l, s, k, b)
+	if g, a, l, s, b := live(enabled); g != 1 || a != 1 || l != 1 || s != 1 || b != 1 {
+		t.Errorf("the enabled user's rows were touched: grants=%d approvals=%d leases=%d sessions=%d brokered=%d", g, a, l, s, b)
 	}
 	if n := count(`SELECT COUNT(*) FROM pam_entry_grants WHERE org_id=$1 AND principal_type='group' AND principal_id=$2 AND (expires_at IS NULL OR expires_at > NOW())`, org, groupID); n != 1 {
 		t.Errorf("the group's grant must survive, got %d", n)

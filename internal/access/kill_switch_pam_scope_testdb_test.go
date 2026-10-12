@@ -20,7 +20,7 @@ import (
 // The PAM entry half of the kill switch, on the migrated schema and through
 // the route as it is mounted. Before this the emergency control left a user
 // holding every PAM connection grant, launch approval, exclusive lease, live
-// entry session, issued vendor link and brokered SSH or cloud session they
+// entry session and brokered SSH or cloud session they
 // had, and reported nothing about any of them.
 //
 // Both halves: the target user's rows end and pamEntryAllowed refuses them,
@@ -101,9 +101,6 @@ func TestKillSwitchEndsThePamEntrySurface(t *testing.T) {
 		// A session the broker still serves: it names its connection.
 		exec("live entry session", `INSERT INTO pam_entry_sessions (org_id, entry_id, user_id, protocol, guac_connection_id, status)
 			VALUES ($1::uuid, $2::uuid, $3::uuid, 'ssh', $4, 'active')`, org, entryID, u, "conn-"+suffix+"-"+u[:8])
-		exec("temp link", `INSERT INTO temp_access_links (org_id, token, name, protocol, target_host, target_port, created_by, expires_at, status, pam_entry_id)
-			VALUES ($1::uuid, $2, $3, 'ssh', 'target.example.test', 22, $4::uuid, NOW() + INTERVAL '1 day', 'active', $5::uuid)`,
-			org, "tok-"+suffix+"-"+u[:8], "link-"+suffix, u, entryID)
 		exec("brokered session", `INSERT INTO brokered_sessions (org_id, user_id, target_type, target, principal, status, expires_at)
 			VALUES ($1::uuid, $2::uuid, 'ssh', 'target.example.test', 'root', 'active', NOW() + INTERVAL '10 minutes')`, org, u)
 	}
@@ -171,10 +168,6 @@ func TestKillSwitchEndsThePamEntrySurface(t *testing.T) {
 		return count("entry sessions", `SELECT COUNT(*) FROM pam_entry_sessions
 			WHERE org_id = $1 AND user_id = $2::uuid AND status = 'active'`, org, u)
 	}
-	activeLinks := func(u string) int {
-		return count("temp links", `SELECT COUNT(*) FROM temp_access_links
-			WHERE org_id = $1 AND created_by = $2::uuid AND status = 'active'`, org, u)
-	}
 	liveBrokered := func(u string) int {
 		return count("brokered sessions", `SELECT COUNT(*) FROM brokered_sessions
 			WHERE org_id = $1 AND user_id = $2::uuid AND status = 'active'`, org, u)
@@ -200,9 +193,6 @@ func TestKillSwitchEndsThePamEntrySurface(t *testing.T) {
 	// Only the session with no broker connection can be closed honestly.
 	if res.PamEntrySessionsEnded != 1 {
 		t.Errorf("pam_entry_sessions_ended: want 1 (the one with no broker connection), got %d", res.PamEntrySessionsEnded)
-	}
-	if res.TempAccessLinksRevoked != 1 {
-		t.Errorf("pam_temp_links_revoked: want 1, got %d", res.TempAccessLinksRevoked)
 	}
 	if res.BrokeredSessionsEnded != 1 {
 		t.Errorf("pam_brokered_sessions_ended: want 1, got %d", res.BrokeredSessionsEnded)
@@ -257,12 +247,6 @@ func TestKillSwitchEndsThePamEntrySurface(t *testing.T) {
 	if n := liveEntrySessions(bystander); n != 1 {
 		t.Errorf("bystander's entry session must survive, got %d", n)
 	}
-	if n := activeLinks(target); n != 0 {
-		t.Errorf("target's temp link is still active (%d)", n)
-	}
-	if n := activeLinks(bystander); n != 1 {
-		t.Errorf("bystander's temp link must survive, got %d", n)
-	}
 	if n := liveBrokered(target); n != 0 {
 		t.Errorf("target's brokered session is still active (%d)", n)
 	}
@@ -273,7 +257,7 @@ func TestKillSwitchEndsThePamEntrySurface(t *testing.T) {
 	// Idempotent: nothing left to end, and nothing of the bystander's touched.
 	again := press(target)
 	if again.PamEntryGrantsExpired != 0 || again.PamEntryApprovalsRevoked != 0 || again.PamEntryLeasesReleased != 0 ||
-		again.PamEntrySessionsEnded != 0 || again.TempAccessLinksRevoked != 0 || again.BrokeredSessionsEnded != 0 {
+		again.PamEntrySessionsEnded != 0 || again.BrokeredSessionsEnded != 0 {
 		t.Errorf("second press is not a no-op: %+v", again)
 	}
 	if !allowed(bystander) {

@@ -151,7 +151,6 @@ interface KillSwitchResult {
   pam_entry_approvals_revoked: number
   pam_entry_leases_released: number
   pam_entry_sessions_ended: number
-  pam_temp_links_revoked: number
   pam_brokered_sessions_ended: number
   ziti_edge_sessions_terminated: number
   ziti_api_sessions_terminated: number
@@ -254,7 +253,6 @@ export function UserAccess360Page() {
           n: res.pam_privileged_sessions_terminated + res.pam_entry_sessions_ended + res.pam_brokered_sessions_ended,
         }),
         t('pages.userAccess360.kill.partPamGrants', { n: res.pam_entry_grants_expired }),
-        t('pages.userAccess360.kill.partTempLinks', { n: res.pam_temp_links_revoked }),
         t('pages.userAccess360.kill.partNetwork', {
           n: res.ziti_edge_sessions_terminated + res.ziti_api_sessions_terminated,
         }),

@@ -26,7 +26,6 @@ run  e2e/identity-provider-templates.spec.ts
 run  e2e/jit-access.spec.ts
 run  e2e/quick-create-service.spec.ts
 run  e2e/sms-settings.spec.ts
-run  e2e/temp-access.spec.ts
 run  e2e/users.spec.ts
 run  e2e/ziti-discovery.spec.ts
 

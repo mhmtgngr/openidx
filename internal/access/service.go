@@ -988,14 +988,6 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/app-hosts/:entryId/agent", svc.requireAdminRole(), svc.handleWindowsAppHostLinkAgent)
 		api.DELETE("/pam/app-hosts/:entryId/agent", svc.requireAdminRole(), svc.handleWindowsAppHostUnlinkAgent)
 
-		// Temporary access links are retired (D2): none is issued and none
-		// redeems. Their history stays readable, and revocable, by admins
-		// until the table is exported and dropped.
-		api.GET("/temp-access", adminOnly, svc.handleListTempAccess)
-		api.GET("/temp-access/:id", adminOnly, svc.handleGetTempAccess)
-		api.DELETE("/temp-access/:id", adminOnly, svc.handleRevokeTempAccess)
-		api.GET("/temp-access/:id/usage", adminOnly, svc.handleGetTempAccessUsage)
-
 		// Quick service creation (route + Ziti + BrowZer in one call): a route
 		// create, gated like POST /routes.
 		api.POST("/services/quick-create", adminOnly, svc.handleQuickCreate)
@@ -1042,7 +1034,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// admin management routes — registering an internal app and publishing
 		// it as a proxy route exposes infrastructure — so they carry the shared
 		// `adminOnly` gate like every sibling management surface (ziti/*,
-		// guacamole credentials, temp-access). Without it any authenticated
+		// guacamole credentials). Without it any authenticated
 		// user could register/discover/publish/delete apps.
 		api.GET("/apps", adminOnly, svc.handleListApps)
 		api.POST("/apps", adminOnly, svc.handleRegisterApp)
