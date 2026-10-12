@@ -1,0 +1,92 @@
+{{- /*
+Remote support, routed so that one session always reaches one pod.
+
+The relay broker keeps a session's pairing (the device and the technician),
+its sponsor watchers and the broker-side recorder in the memory of the
+access-service process that accepted it (RemoteSupportHandler in
+internal/access/remote_support_api.go). The Deployment runs 2+ replicas and
+may autoscale, so plain round-robin puts the device's WebSocket on one pod and
+the technician's on another, where they wait for each other until the session
+times out.
+
+This Ingress carries only the remote-support paths and hashes them on the
+session id taken from the path (a named regex capture, which nginx exposes as
+the variable the hash reads). The device's, the staff technician's and the
+vendor's WebSockets, the sponsor's watch socket, the end call and the
+recording uploads of one session therefore land on the same pod. Paths without
+a session id (list, start) hash on an empty value and all go to one pod; they
+only touch the database.
+
+Constraints, also in values.yaml (accessService.remoteSupport):
+  - ingress-nginx only (use-regex, upstream-hash-by). With another controller,
+    disable this and give those paths affinity there, or run one replica.
+  - use-regex applies to every path of the same host, on every Ingress. The
+    API Ingress's Prefix and Exact paths keep their meaning under it.
+  - upstream-hash-by belongs to the upstream (the access-service Service). Any
+    other Ingress that sends traffic to that Service must carry the same hash,
+    or the controller picks one of the two.
+  - a pod that goes away takes its sessions with it; consistent hashing only
+    keeps the other pods' sessions where they are.
+*/}}
+{{- $rs := default dict .Values.accessService.remoteSupport }}
+{{- $sticky := default dict $rs.stickyIngress }}
+{{- if and .Values.ingress.enabled .Values.accessService.enabled $sticky.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "openidx.fullname" . }}-remote-support
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: access-service
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_support_session"
+    {{- with $sticky.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.edge.originVerify.header }}
+    # Origin cloaking, same refusal as the API Ingress (templates/ingress.yaml).
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      if ($http_{{ .Values.edge.originVerify.header | lower | replace "-" "_" }} != "{{ required "edge.originVerify.value is required when edge.originVerify.header is set" .Values.edge.originVerify.value }}") {
+        return 403;
+      }
+    {{- end }}
+spec:
+  {{- with (default .Values.ingress.className $sticky.className) }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- range .Values.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          # One session: /api/v1/access/remote-support/sessions/<id>/...,
+          # .../agent/remote-support/sessions/<id>/..., .../my/remote-support/
+          # sessions/<id>/... and .../remote-support/sponsored/sessions/<id>/...
+          - path: /api/v1/access/(?:agent/|my/)?remote-support/(?:sponsored/)?sessions/(?<remote_support_session>[^/]+)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-access-service
+                port:
+                  name: http
+          # Lists and starts (no session yet).
+          - path: /api/v1/access/(?:agent/|my/)?remote-support/
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-access-service
+                port:
+                  name: http
+    {{- end }}
+{{- end }}

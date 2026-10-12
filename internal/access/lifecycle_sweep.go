@@ -121,10 +121,10 @@ func (s *Service) runLifecycleEnforcement(ctx context.Context) {
 	}
 
 	// The PAM entry surface of disabled/deleted users: their own connection
-	// grants, launch approvals, exclusive leases, issued temporary access
-	// links and brokered-session ledger rows. The same five writes the kill
-	// switch and deprovisionUser make, so a user disabled by SCIM, a directory
-	// sync or a lifecycle policy loses them within one tick too.
+	// grants, launch approvals, exclusive leases, brokered-session ledger rows
+	// and moderations. The same writes the kill switch and deprovisionUser
+	// make, so a user disabled by SCIM, a directory sync or a lifecycle policy
+	// loses them within one tick too.
 	if pam, pamErrs := pamgrant.EndForDisabledUsers(ctx, s.db.Pool); len(pamErrs) > 0 {
 		for _, err := range pamErrs {
 			s.logger.Warn("lifecycle sweep: ending the PAM entry surface of disabled users failed", zap.Error(err))

@@ -39,7 +39,6 @@ func TestRevokeExpiredJITAccess_RevokesApplication(t *testing.T) {
 			id UUID PRIMARY KEY, event_type VARCHAR(50), category VARCHAR(50), action VARCHAR(100),
 			outcome VARCHAR(20), actor_id UUID, actor_ip VARCHAR(45), target_id UUID,
 			target_type VARCHAR(50), details JSONB, created_at TIMESTAMPTZ, org_id UUID);
-		CREATE TABLE temp_access_links (status VARCHAR(20), expires_at TIMESTAMPTZ);
 	`); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
