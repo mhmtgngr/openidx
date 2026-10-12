@@ -1387,8 +1387,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - package: internal/access
+          # internal/access is four entries, not one. As one job it ran 858 s
+          # of tests (almost all sequential, container-backed DB tests) and
+          # was the longest leg of this matrix at ~18 minutes. Each entry
+          # passes its `run:` regex to `go test -run`; together they must
+          # match every top-level Test/Example/Fuzz function exactly once,
+          # which tools/testmatrix checks against the tree (testmatrix job).
+          # Split by the letter after "Test", balanced on measured runtime:
+          # TestA* alone was 245 s and TestThe* 146 s. The last shard is the
+          # catch-all for names that start with anything else.
+          - package: internal/access (1/4)
             paths: ./internal/access/...
+            run: '^Test(A[A-Za-m]|[B-D])'
+          - package: internal/access (2/4)
+            paths: ./internal/access/...
+            run: '^Test(A([^A-Za-m]|$)|[E-L])'
+          - package: internal/access (3/4)
+            paths: ./internal/access/...
+            run: '^Test[M-S]'
+          - package: internal/access (4/4)
+            paths: ./internal/access/...
+            run: '^Test([T-Z]|[^A-Z]|$)|^Example|^Fuzz'
           - package: internal/admin
             paths: ./internal/admin/...
           - package: internal/apikeys
@@ -1525,10 +1544,14 @@ jobs:
         run: |
           slug='${{ matrix.package }}'
           slug="${slug%/}"
-          echo "slug=${slug//\//_}" >> "$GITHUB_OUTPUT"
+          # Sharded entries are labelled "pkg (1/4)": spaces and parentheses
+          # cannot go unquoted into -coverprofile or into an artifact name.
+          slug="$(printf '%s' "$slug" | tr -c 'A-Za-z0-9_+.-' '_')"
+          echo "slug=${slug}" >> "$GITHUB_OUTPUT"
 
       - name: Run tests with coverage
         env:
+          RUN_FILTER: ${{ matrix.run }}
           DATABASE_URL: postgres://openidx:test_secret@localhost:5432/openidx_test?sslmode=disable
           REDIS_URL: redis://localhost:6379
         run: |
@@ -1557,7 +1580,10 @@ jobs:
           #
           # matrix.flags is empty for every entry but `tools`, which passes
           # -short; the reason is written out beside that entry above.
-          go test -v -race -timeout 30m ${{ matrix.flags }} -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ${{ matrix.paths }}
+          #
+          # RUN_FILTER is a sharded entry's `run:` regex (empty otherwise; see
+          # the internal/access entries above).
+          go test -v -race -timeout 30m ${{ matrix.flags }} ${RUN_FILTER:+-run "$RUN_FILTER"} -coverprofile=coverage_${{ steps.cov.outputs.slug }}.out -covermode=atomic ${{ matrix.paths }}
 
       # Upload whatever coverage was produced even when the tests failed, so a
       # red run still yields a coverage artifact to inspect.
