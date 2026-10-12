@@ -37,10 +37,12 @@ import (
 var directConnAllowed = map[string]string{
 	"internal/credentials/postgres_rotator.go": "rotates credentials ON ANOTHER DATABASE: it connects to the server whose password is being changed, as that server's admin, and runs ALTER ROLE. There is no tenant in that connection because there is no application table in it",
 
-	"cmd/openidx/commands/migrate.go": "the CLI's half of the same migration path: schema DDL, no tenant context exists yet",
-	"cmd/openidx/commands/seed.go":    "development seeding. It writes the tenants themselves, so there is no org to scope to at the moment it runs; it is not built into any service image",
-	"cmd/openidx/commands/cell.go":    "the tenant-directory placement tool. org_cells is org-scoped and FORCE-belted, and this is the one caller that is legitimately cross-tenant: it takes app.bypass_rls INSIDE a transaction, and cell_place_testdb_test.go measures that the policy refuses the same write without it",
-	"cmd/rekey/main.go":               "re-encrypts every tenant's encrypted columns under a new KEK, which is cross-tenant by definition. It takes app.bypass_rls and now CHECKS that it took: without the bypass this binary would read zero rows and report a successful rekey of nothing",
+	"cmd/openidx/commands/migrate.go":         "the CLI's half of the same migration path: schema DDL, no tenant context exists yet",
+	"cmd/openidx/commands/seed.go":            "development seeding. It writes the tenants themselves, so there is no org to scope to at the moment it runs; it is not built into any service image",
+	"cmd/openidx/commands/cell.go":            "the tenant-directory placement tool. org_cells is org-scoped and FORCE-belted, and this is the one caller that is legitimately cross-tenant: it takes app.bypass_rls INSIDE a transaction, and cell_place_testdb_test.go measures that the policy refuses the same write without it",
+	"internal/common/testsupport/postgres.go": "test-only helper: connects to the test server as its admin to CREATE and DROP a scratch DATABASE. Server-level DDL with no application table in the connection, and the package is imported only by _test.go files",
+
+	"cmd/rekey/main.go": "re-encrypts every tenant's encrypted columns under a new KEK, which is cross-tenant by definition. It takes app.bypass_rls and now CHECKS that it took: without the bypass this binary would read zero rows and report a successful rekey of nothing",
 }
 
 const rawKindDirectConn = "direct-conn"
