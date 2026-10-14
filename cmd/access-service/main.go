@@ -592,6 +592,17 @@ func main() {
 				// no live manager is present, so it simply rides across swaps.
 				reconciler.Start(orgctx.WithBypassRLS(context.Background()))
 				accessService.SetZitiReconciler(reconciler)
+				// Network-resource objects that outlived their service (a pass
+				// that failed between config and service create, a prune whose
+				// config deletes failed) are invisible to the reconciler's own
+				// service-driven prune. One replica per interval lists them by
+				// object; observe (ZITI_ORPHAN_SWEEP default) only reports.
+				var orphanLeader *goredis.Client
+				if redis != nil {
+					orphanLeader = redis.Client
+				}
+				reconciler.StartNetworkOrphanSweep(orgctx.WithBypassRLS(context.Background()),
+					orphanLeader, access.NetworkOrphanSweepConfigFromEnv())
 				// The admin-console one-click toggle must defer to the reconciler too:
 				// only write proxy_routes flags, never imperatively provision Ziti.
 				featureManager.SetReconcilerEnabled(true)

@@ -386,6 +386,9 @@ Archival, not here: they are per organization.
 | `ZITI_IDENTITY_DIR` | path | `/ziti` | Where enrolled identities are written. |
 | `ZITI_INSECURE_SKIP_VERIFY` | bool | `false` | Never in production. |
 | `ZITI_PER_ORG_ATTRIBUTES` | bool | `false` | Scope overlay attributes per organization. |
+| `ZITI_ORPHAN_SWEEP` | string | `observe` | `off`, `observe` or `enforce` for the network-resource orphan sweep (runs with the reconciler, one replica every 15 minutes). It lists the controller's configs, services, service policies and service-edge-router policies and picks out only the ones the network reconciler writes for an application (`openidx-net-<application uuid>` and its `-intercept`/`-host` configs of the matching type, its `openidx-dial-`/`openidx-bind-`/`openidx-serp-` policies, the service only with the `openidx-managed` attribute). One whose application no longer owns a network service (row deleted, disabled, not kind `network`, or no network target) is an orphan. `observe` logs each one (`ziti orphan sweep: would delete ...`) and counts it in `openidx_ziti_network_orphans_total`; `enforce` deletes them, policies first, and writes a `ziti_network_orphan_deleted` audit event per object. Nothing without that name shape is ever touched, and a failed or incomplete controller listing or database read deletes nothing. An unrecognised value reads as `observe`. |
+| `ZITI_ORPHAN_SWEEP_GRACE_MINUTES` | int | `30` | An application with any object younger than this is left for a later run, so a reconcile pass creating it on another replica is never raced. Minimum `5`. |
+| `ZITI_ORPHAN_SWEEP_MAX_DELETES` | int | `20` | Most objects one `enforce` run deletes; the rest wait for the next run and are counted as `over_cap`. Maximum `500`. |
 | `APISIX_ADMIN_URL` | string | `http://localhost:9180` | APISIX admin API. |
 | `APISIX_ADMIN_KEY` | string | - | APISIX admin key. |
 | `APISIX_EDGE_ENABLED` | bool | `false` | Reconcile edge routes into APISIX. |
