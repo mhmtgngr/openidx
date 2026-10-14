@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.46.0] - 2026-10-14
+
+### Added
+- **Orphaned network-resource objects on the Ziti controller are found and,
+  when enabled, removed.** A periodic sweep (one replica every 15 minutes)
+  lists the configs, services and policies the network reconciler writes for
+  an application and compares them with the database. Ones whose application
+  no longer owns a network service, such as configs left by a reconcile that
+  failed before creating the service or by a prune whose config deletes
+  failed, are reported by default (`ZITI_ORPHAN_SWEEP=observe`) and deleted
+  under `ZITI_ORPHAN_SWEEP=enforce`, policies first, with an audit event per
+  object. Objects younger than `ZITI_ORPHAN_SWEEP_GRACE_MINUTES` (30) are
+  left alone, one run deletes at most `ZITI_ORPHAN_SWEEP_MAX_DELETES` (20),
+  and nothing outside the reconciler's own naming is ever touched. Counted in
+  `openidx_ziti_network_orphans_total`.
+
+### Security
+- **The Linux agent now runs only the tunneler it shipped with.** The deb and rpm
+  packages bake the SHA-256 of their bundled `ziti-edge-tunnel` into the agent at
+  build time, one pin per architecture, as the Windows MSI already did. The agent
+  hashes the held binary before it starts it and refuses any other file, reporting
+  the tunnel as `degraded` with a pin error. A build that bundles the tunneler but
+  cannot pin it now fails.
+
 ## [1.45.0] - 2026-10-14
 
 ### Added
@@ -12147,7 +12171,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.45.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.46.0...HEAD
+[1.46.0]: https://github.com/mhmtgngr/openidx/compare/v1.45.0...v1.46.0
 [1.45.0]: https://github.com/mhmtgngr/openidx/compare/v1.44.0...v1.45.0
 [1.44.0]: https://github.com/mhmtgngr/openidx/compare/v1.43.0...v1.44.0
 [1.43.0]: https://github.com/mhmtgngr/openidx/compare/v1.42.0...v1.43.0
