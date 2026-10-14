@@ -125,11 +125,23 @@ The agent runs the tunneler with LocalSystem or root privileges, so:
   that open file (`/proc/self/fd/N`), so swapping the path afterwards changes
   nothing. On Windows the tunneler and `wintun.dll` are held open without
   write or delete sharing, so neither can be changed, deleted or renamed while
-  held, and each handle's final path must be the path that was checked. The
-  Windows release build also pins the bundled `ziti-edge-tunnel.exe` by
-  SHA-256 (`PinnedBinarySHA256`); the held file is hashed when opened and
-  before every start, and a mismatch is refused. The Linux packages are not
-  pinned yet (one build serves both architectures).
+  held, and each handle's final path must be the path that was checked.
+- **What runs is the build's own tunneler.** A release build pins the bundled
+  tunneler by SHA-256 (`PinnedBinarySHA256`, set with `-ldflags -X`): the
+  Windows job pins `ziti-edge-tunnel.exe`, and `make package-linux` (via
+  `build-all`) hashes `ziti-edge-tunnel-linux-<arch>` and pins each Linux agent
+  build to the tunneler of its own architecture, so the amd64 and arm64
+  packages each refuse the other's binary. The Linux build fails if a tunneler
+  cannot be hashed or the pin is missing from the built agent (`go version -m`),
+  so no package that carries the tunneler is built unpinned. The held file is
+  hashed when opened and again before every start; a mismatch, or a file that
+  changed after its check, is refused and the tunnel reports `degraded` with a
+  detail naming the pin. This applies to any binary the agent runs, including a
+  `binary_path` override, so a pinned build runs only the tunneler it shipped
+  with. A development build (no pin) keeps the ownership, permission and
+  held-file checks. In `external` mode systemd starts the tunneler, not the
+  agent, so the pin is not applied there; the packaged unit runs the file the
+  package manager installed.
 - **The server cannot choose a binary or an argument.** `org_network_policy`
   turns the tunnel on or off and gives the ranges the direct-access block
   covers (parsed as IP prefixes before they reach nft; anything else refuses
