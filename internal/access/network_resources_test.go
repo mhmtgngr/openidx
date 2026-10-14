@@ -209,6 +209,10 @@ type fakeNetCtrl struct {
 	routers  []interface{} // edge routers the controller lists
 	// failPolicyWrites makes service-policy creates and updates fail.
 	failPolicyWrites bool
+	// failDeletes makes DELETEs of the named collection fail (orphan sweep).
+	failDeletes map[string]bool
+	// now stamps createdAt on every object created; nil means time.Now.
+	now func() time.Time
 }
 
 func newFakeNetCtrl() *fakeNetCtrl {
@@ -219,6 +223,13 @@ func newFakeNetCtrl() *fakeNetCtrl {
 }
 
 func (f *fakeNetCtrl) id(prefix string) string { f.next++; return fmt.Sprintf("%s-%d", prefix, f.next) }
+
+func (f *fakeNetCtrl) stamp() string {
+	if f.now != nil {
+		return f.now().UTC().Format(time.RFC3339)
+	}
+	return time.Now().UTC().Format(time.RFC3339)
+}
 
 func netFilterName(r *http.Request) string {
 	fv := r.URL.Query().Get("filter")
@@ -252,6 +263,8 @@ func (f *fakeNetCtrl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": v})
 	}
+	// A list reply carries meta.pagination, as the controller's does, so
+	// the paging helpers (listAllPaged) accept it as complete.
 	listByName := func(m map[string]map[string]interface{}) {
 		name := netFilterName(r)
 		out := []interface{}{}
@@ -260,11 +273,18 @@ func (f *fakeNetCtrl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				out = append(out, v)
 			}
 		}
-		reply(http.StatusOK, out)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": out,
+			"meta": map[string]interface{}{"pagination": map[string]interface{}{"limit": len(out), "offset": 0, "totalCount": len(out)}}})
 	}
 	const base = "/edge/management/v1/"
 	path := strings.TrimPrefix(r.URL.Path, base)
 	coll, id, _ := strings.Cut(path, "/")
+	if r.Method == http.MethodDelete && f.failDeletes[coll] {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"CONFLICT"}}`))
+		return
+	}
 	if f.failPolicyWrites && coll == "service-policies" && (r.Method == http.MethodPost || r.Method == http.MethodPut) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":{"code":"UNHANDLED"}}`))
@@ -275,7 +295,7 @@ func (f *fakeNetCtrl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		listByName(f.configs)
 	case coll == "configs" && r.Method == http.MethodPost:
 		nid := f.id("cfg")
-		f.configs[nid] = map[string]interface{}{"id": nid, "name": in["name"], "data": in["data"], "configTypeId": in["configTypeId"]}
+		f.configs[nid] = map[string]interface{}{"id": nid, "name": in["name"], "data": in["data"], "configTypeId": in["configTypeId"], "createdAt": f.stamp()}
 		reply(http.StatusCreated, map[string]string{"id": nid})
 	case coll == "configs" && r.Method == http.MethodPatch:
 		f.configs[id]["data"] = in["data"]
@@ -311,7 +331,7 @@ func (f *fakeNetCtrl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case coll == "services" && r.Method == http.MethodPost:
 		nid := f.id("svc")
 		f.services[nid] = map[string]interface{}{"id": nid, "name": in["name"], "roleAttributes": in["roleAttributes"],
-			"configs": in["configs"], "encryptionRequired": in["encryptionRequired"]}
+			"configs": in["configs"], "encryptionRequired": in["encryptionRequired"], "createdAt": f.stamp()}
 		reply(http.StatusCreated, map[string]string{"id": nid})
 	case coll == "services" && r.Method == http.MethodGet:
 		reply(http.StatusOK, f.services[id])
@@ -328,16 +348,24 @@ func (f *fakeNetCtrl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case coll == "service-policies" && r.Method == http.MethodPost:
 		nid := f.id("sp")
 		in["id"] = nid
+		in["createdAt"] = f.stamp()
 		f.policies[nid] = in
 		reply(http.StatusCreated, map[string]string{"id": nid})
 	case coll == "service-policies" && r.Method == http.MethodPut:
 		in["id"] = id
+		if old, ok := f.policies[id]; ok {
+			in["createdAt"] = old["createdAt"]
+		}
 		f.policies[id] = in
 		reply(http.StatusOK, map[string]string{})
 	case coll == "service-policies" && r.Method == http.MethodDelete:
 		delete(f.policies, id)
 		reply(http.StatusOK, map[string]string{})
 	case coll == "service-edge-router-policies" && r.Method == http.MethodGet:
+		if netFilterName(r) == "" {
+			listByName(f.serps)
+			return
+		}
 		out := []interface{}{}
 		if p, ok := f.serps[netFilterName(r)]; ok {
 			out = append(out, p)
@@ -350,6 +378,7 @@ func (f *fakeNetCtrl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		in["id"] = f.id("serp")
+		in["createdAt"] = f.stamp()
 		f.serps[name] = in
 		reply(http.StatusCreated, map[string]interface{}{"id": in["id"]})
 	case coll == "service-edge-router-policies" && r.Method == http.MethodDelete:

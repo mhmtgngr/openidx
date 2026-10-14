@@ -198,6 +198,14 @@ type ZitiReconciler struct {
 	// loadNetwork overrides how network resources are loaded (tests); nil
 	// means loadDesiredNetworkServices.
 	loadNetwork func(context.Context) ([]DesiredNetworkService, error)
+
+	// loadNetworkRefs overrides how the orphan sweep reads which applications
+	// still own their network objects (tests); nil means
+	// loadNetworkOrphanRefs.
+	loadNetworkRefs func(context.Context, []string) (map[string]networkAppRef, error)
+	// auditOrphan overrides how the orphan sweep records a deletion (tests);
+	// nil means auditNetworkOrphanDeletion.
+	auditOrphan func(context.Context, networkOrphanObject, networkAppRef)
 }
 
 // mirrorRefreshPeriod is the minimum gap between two mirror-refresh passes.
