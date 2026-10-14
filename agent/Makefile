@@ -16,6 +16,22 @@ LDFLAGS    := -s -w \
 
 OUT_DIR    := dist
 
+# ZITI_TUNNEL_DIR, when set, names a directory holding verified OpenZiti
+# tunneler binaries ziti-edge-tunnel-linux-amd64 and -arm64 (the workflow's
+# "Fetch the OpenZiti tunneler" step); the packages then carry the tunneler and
+# openidx-tunnel.service (packaging/nfpm-tunnel.contents.yaml). It is outside
+# dist/ because build-all starts by deleting dist/. Unset = no tunneler, as
+# before. See docs/AGENT-TUNNEL.md.
+#
+# It also PINS each Linux agent build to the tunneler of its own architecture:
+# build-all hashes ziti-edge-tunnel-linux-<arch> and bakes that SHA-256 into
+# openidx-agent-linux-<arch> (PIN_VAR, as the Windows job does for the MSI), so
+# the agent refuses to run any other tunneler binary. The build fails if a
+# binary cannot be hashed or the pin is not in the result -- a package carrying
+# the tunneler is never built unpinned. Unset = no pin (a development build).
+ZITI_TUNNEL_DIR ?=
+PIN_VAR    := $(MODULE)/internal/tunnel.PinnedBinarySHA256
+
 .PHONY: build test clean build-all build-screenshare package-linux
 
 ## build: compile the agent for the current platform
@@ -42,8 +58,23 @@ clean:
 build-all: clean
 	@mkdir -p $(OUT_DIR)
 
-	GOOS=linux   GOARCH=amd64  go build -ldflags "$(LDFLAGS)" -o $(OUT_DIR)/$(BINARY)-linux-amd64   $(CMD_PKG)
-	GOOS=linux   GOARCH=arm64  go build -ldflags "$(LDFLAGS)" -o $(OUT_DIR)/$(BINARY)-linux-arm64   $(CMD_PKG)
+	@set -e; for arch in amd64 arm64; do \
+		pin=""; \
+		if [ -n "$(ZITI_TUNNEL_DIR)" ]; then \
+			pin=$$(sha256sum "$(ZITI_TUNNEL_DIR)/ziti-edge-tunnel-linux-$$arch" | cut -d' ' -f1); \
+			if ! printf '%s' "$$pin" | grep -Eq '^[0-9a-f]{64}$$'; then \
+				echo "cannot hash $(ZITI_TUNNEL_DIR)/ziti-edge-tunnel-linux-$$arch to pin it" >&2; exit 1; \
+			fi; \
+			echo "linux/$$arch: pinning the bundled tunneler to $$pin"; \
+		fi; \
+		GOOS=linux GOARCH=$$arch go build \
+			-ldflags "$(LDFLAGS) -X '$(PIN_VAR)=$$pin'" \
+			-o $(OUT_DIR)/$(BINARY)-linux-$$arch $(CMD_PKG); \
+		if [ -n "$$pin" ]; then \
+			go version -m $(OUT_DIR)/$(BINARY)-linux-$$arch | grep -q "$(PIN_VAR)=$$pin" || \
+				{ echo "$(BINARY)-linux-$$arch does not carry the tunneler pin" >&2; exit 1; }; \
+		fi; \
+	done
 	GOOS=darwin  GOARCH=amd64  go build -ldflags "$(LDFLAGS)" -o $(OUT_DIR)/$(BINARY)-darwin-amd64  $(CMD_PKG)
 	GOOS=darwin  GOARCH=arm64  go build -ldflags "$(LDFLAGS)" -o $(OUT_DIR)/$(BINARY)-darwin-arm64  $(CMD_PKG)
 	GOOS=windows GOARCH=amd64  go build -ldflags "$(LDFLAGS)" -o $(OUT_DIR)/$(BINARY)-windows-amd64.exe $(CMD_PKG)
@@ -54,15 +85,6 @@ build-all: clean
 ## package-linux: build .deb and .rpm for linux amd64+arm64 (requires nfpm)
 ## See https://nfpm.goreleaser.com. macOS .pkg and Windows .msi are built in CI
 ## on their native runners (pkgbuild / WiX); see packaging/DEEPLINK.md.
-##
-## ZITI_TUNNEL_DIR, when set, names a directory holding verified OpenZiti
-## tunneler binaries ziti-edge-tunnel-linux-amd64 and -arm64 (the workflow's
-## "Fetch the OpenZiti tunneler" step); the packages then carry the tunneler and
-## openidx-tunnel.service (packaging/nfpm-tunnel.contents.yaml). It is outside
-## dist/ because build-all starts by deleting dist/. Unset = no tunneler, as
-## before. See docs/AGENT-TUNNEL.md.
-ZITI_TUNNEL_DIR ?=
-
 package-linux: build-all
 	@command -v nfpm >/dev/null || { echo "nfpm not installed: https://nfpm.goreleaser.com"; exit 1; }
 	@mkdir -p $(OUT_DIR)/pkg

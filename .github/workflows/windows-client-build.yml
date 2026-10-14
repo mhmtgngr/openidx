@@ -217,6 +217,9 @@ jobs:
           echo "ZITI_TUNNEL_DIR=$dir" >> "$GITHUB_ENV"
           echo "Bundling ziti-edge-tunnel $ZITI_TUNNEL_VERSION (verified)"
 
+      # With ZITI_TUNNEL_DIR set, build-all also pins each Linux agent build to
+      # the SHA-256 of its own architecture's tunneler (PinnedBinarySHA256, as
+      # the MSI job does for Windows) and fails if the pin is not in the binary.
       - name: Build packages
         working-directory: agent
         env:
