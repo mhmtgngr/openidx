@@ -2142,7 +2142,15 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		// has a support session (and, for attended support, could never grant
 		// consent). checks stays empty; the rest of the config is the default.
 		if len(checks) == 0 {
-			h.writeActiveAgentConfig(c, agentID, h.defaultConfigWithSupport(ctx, agentID))
+			// The device's own state travels with the defaults too. It did
+			// not: an active device with no configured checks -- every fresh
+			// install until an administrator authors some -- was handed a
+			// config with no enrollment_status, which the engine's
+			// DeviceState() read as "cannot check with the server".
+			cfg := h.defaultConfigWithSupport(ctx, agentID)
+			cfg.EnrollmentStatus = status
+			cfg.DeviceTrusted = trusted
+			h.writeActiveAgentConfig(c, agentID, cfg)
 			return
 		}
 
