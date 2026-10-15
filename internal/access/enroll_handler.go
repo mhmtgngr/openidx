@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -14,7 +15,14 @@ import (
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/revocation"
 )
+
+// darkEnrollJWTLifetime bounds the one-time enrolment JWT the door mints for a
+// session. The client that asked for it enrols with it at once, so fifteen
+// minutes covers a slow network and nothing else: a session token that lives
+// an hour must not turn into an overlay credential that lives a week.
+const darkEnrollJWTLifetime = 15 * time.Minute
 
 // darkEnrollRequest is the body of POST /api/v1/access/enroll.
 type darkEnrollRequest struct {
@@ -44,6 +52,15 @@ func (s *Service) handleEnroll(c *gin.Context) {
 
 	subject, method, err := s.resolveEnrollSubject(c, &req)
 	if err != nil {
+		var refusal enrollRefusal
+		if errors.As(err, &refusal) {
+			s.logAuditEvent(c, "access.enroll_denied", refusal.subject, "ziti_identity", map[string]interface{}{
+				"reason":  refusal.code,
+				"outcome": "denied",
+			})
+			c.JSON(refusal.status, gin.H{"error": refusal.msg, "code": refusal.code})
+			return
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
@@ -73,6 +90,66 @@ type enrollError struct{ msg string }
 
 func (e enrollError) Error() string { return e.msg }
 
+// enrollRefusal is a refusal of a bearer the door did verify: the token is
+// real, and what it lacks is named. It carries the status and code the handler
+// answers with, and the subject for the audit record.
+type enrollRefusal struct {
+	status  int
+	code    string
+	msg     string
+	subject string
+}
+
+func (e enrollRefusal) Error() string { return e.msg }
+
+// claimsScopeAllows reports whether a verified token's scope claim, the
+// space-delimited string the token endpoint mints, grants want. The door
+// verifies its bearer itself rather than behind middleware.Auth, so it reads
+// the claim rather than the "scope" value the middleware would have set.
+func claimsScopeAllows(claims map[string]interface{}, want string) bool {
+	scope, _ := claims["scope"].(string)
+	for _, s := range strings.Fields(scope) {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// refuseRevokedBearer holds a verified bearer to the user's revocation cutoff
+// and the per-token blacklist, as /oauth/userinfo and /oauth/introspect do.
+// The kill switch, a device revoke and a leaver's disable all write that
+// cutoff, and until this check a token any of them had cut could still buy an
+// overlay identity here. It fails closed: a revocation store that cannot
+// answer refuses the enrolment, because "unknown" must not read as "not
+// revoked" at the one door that stays public when the platform goes dark.
+// Without a revocation store configured at all (a service built without
+// Redis), the check is skipped and said so in the log.
+func (s *Service) refuseRevokedBearer(ctx context.Context, token, subject string, claims map[string]interface{}) error {
+	if s.redis == nil {
+		s.logger.Warn("enrolment door: no revocation store is configured, so the bearer's revocation state was not checked")
+		return nil
+	}
+	var issued revocation.IssuedAt
+	if iat, ok := claims["iat"].(float64); ok {
+		issued.Seconds = int64(iat)
+	}
+	if us, ok := claims[revocation.GrantedAtClaim].(float64); ok && us > 0 {
+		issued.GrantedMicros = int64(us)
+	}
+	revoked, err := revocation.IsAccessTokenRevoked(ctx, s.redis.RevocationDB(), token, subject, issued)
+	if err != nil {
+		s.logger.Error("enrolment door: the bearer's revocation state could not be checked; refusing", zap.Error(err))
+		return enrollRefusal{status: http.StatusServiceUnavailable, code: "revocation_unavailable",
+			msg: "the token's revocation state could not be checked", subject: subject}
+	}
+	if revoked {
+		return enrollRefusal{status: http.StatusUnauthorized, code: "token_revoked",
+			msg: "the token has been revoked", subject: subject}
+	}
+	return nil
+}
+
 // resolveEnrollSubject determines whose Ziti identity to mint, from (in order) a
 // verified bearer session, an enrollment token, or a passkey. Returns the
 // subject id (a user_id for the session path, or an enrollment-token-derived
@@ -88,6 +165,20 @@ func (s *Service) resolveEnrollSubject(c *gin.Context, req *darkEnrollRequest) (
 		if claims, verr := middleware.VerifyBearerToken(s.oauthJWKSURL, token); verr == nil {
 			if _, oerr := middleware.CheckTokenOrg(c, claims); oerr == nil {
 				if sub, _ := claims["sub"].(string); sub != "" {
+					// The token must have been issued for device enrolment,
+					// the rule /agent/enroll/oauth applies: a console
+					// session token carries openid/profile/email and nothing
+					// more, and accepting it here let anything holding one
+					// -- the console keeps it in the browser's storage --
+					// mint an overlay identity for the user that outlives
+					// the token by days.
+					if !claimsScopeAllows(claims, enrollScope) {
+						return "", "", enrollRefusal{status: http.StatusForbidden, code: "insufficient_scope",
+							msg: "enrolling a device needs a token issued with the " + enrollScope + " scope", subject: sub}
+					}
+					if rerr := s.refuseRevokedBearer(c.Request.Context(), token, sub, claims); rerr != nil {
+						return "", "", rerr
+					}
 					return sub, "session", nil
 				}
 			}
@@ -185,7 +276,7 @@ func (s *Service) mintZitiEnrollmentJWT(ctx context.Context, subject string) (jw
 	// is missing, expired, OR carries a stale (internal-only) controller address.
 	jwt, err = zm.GetIdentityEnrollmentJWT(ctx, zitiID)
 	if err != nil || jwt == "" || enrollmentJWTExpired(jwt) || enrollmentJWTAddressStale(jwt, publicAddr) {
-		fresh, rerr := zm.ReEnrollIdentity(ctx, zitiID)
+		fresh, rerr := zm.ReEnrollIdentityFor(ctx, zitiID, darkEnrollJWTLifetime)
 		if rerr != nil {
 			// If we have no usable token at all, surface the refresh error;
 			// otherwise fall through with whatever non-empty (but possibly
