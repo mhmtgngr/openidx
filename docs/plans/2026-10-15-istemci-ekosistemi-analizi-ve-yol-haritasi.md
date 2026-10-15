@@ -595,25 +595,30 @@ hiçbir şey; geçici çözüm Ziti Desktop Edge, politikasız.
 
 Büyüklük: S = bir gün, M = bir hafta, L = iki ila dört hafta, XL = daha uzun.
 
+**Takip:** Her faz GitHub'da izlenir. Faz 0 ve sonrası için üst issue
+[#1172](https://github.com/mhmtgngr/openidx/issues/1172) ("M4: Client ecosystem"); Faz 0'ın
+her satırı onun bir alt issue'sudur ve aşağıdaki tabloda bağlantılıdır. Bir satır
+bittiğinde PR'ı hem issue'yu kapatır hem bu tabloya "kapandı: tarih" yazar.
+
 ### 9.1 Faz 0: Gönderilen doğru olsun (2026-10-20 → 2026-11-07)
 
 Hepsi *düzeltme*; M1 ile uyumlu.
 
-| ID | İş | Çözdüğü | Bitti kanıtı | Büyüklük | Kim |
-|---|---|---|---|---|---|
-| F0-1 | Yeniden kayıtta sahiplik: aynı `enrolled_by` kullanıcı ya da operatör token'ı, ya da mevcut cihaz anahtarıyla imzalı istek; aksi hâlde yeni satır. Cihaz anahtarı yalnız imzalı istekle değişir | G1 | Red testi: başka kullanıcının parmak iziyle kayıt → 409, `agent.enroll_denied` | S | AI yazar, sahip inceler |
-| F0-2 | Tier-0 kapı: `agent.enroll` kapsamı, iptal kesme noktası, taze ikinci faktör, 15 dakikalık JWT | G5 | İki yönlü test; denetim olayı | S | AI, sahip inceler |
-| F0-3 | Tek `RevokeDevice`: Agent Fleet, Access 360 ve kill switch aynı fonksiyonu çağırır; kill switch'e "cihazları karantinaya al" | G7, M4 | Test: Fleet iptali → token ailesi iptal, bilinen cihaz güvensiz, Ziti oturumları kesik | M | AI, sahip inceler |
-| F0-4 | Uzaktan destek varsayılanları: kuruluş politikasında onay zorunlu (varsayılan açık), "onaysız" ayrı izin + gerekçe + taze ikinci faktör; kayıt broker'da ve zorunlu; üretimde kayıt anahtarı yoksa başlatma | G3 | Görünen = uygulanan satırı; red testleri | M | AI, sahip inceler |
-| F0-5 | Windows'ta `ziti-identity.json` ve `ziti-enrollment.jwt` için DACL; JWT kullanıldıktan sonra silinir | G2 | Windows runner testi | S-M | Karar K2 sonra AI |
-| F0-6 | **Sözleşme testi** CI'da: sunucu + sahte ajan: enroll → config → report (eski ve yeni biçim) → tunnel_status → revoke → 403 | M2 | `ci.yml`'de `agent-contract` işi yeşil | M | AI |
-| F0-7 | `api/agent-v1.yaml`: mevcut ajan rotalarının OpenAPI şeması; sunucu ve ajan tiplerinin şemayla uyumunu doğrulayan test | M2, M5 | Guard yeşil; CONTRIBUTING'de sürüm kuralı | M | AI |
-| F0-8 | Belge diyeti (Ek B'nin tamamı) ve belge sitesine "Clients" bölümü (`AGENT-TUNNEL.md`, `windows/mfa-without-a-phone.md`, `mobile/push-mfa-delivery.md`) | M8, K10 | Bağlantılar yeşil; `docs.yml` yeşil | S | AI |
-| F0-9 | Telefon küçükleri: Notifications ekranını bağla ya da kaldır; okundu gövdesi; `zitiDial` yanıtı; push gelmiyorsa ekranda nedeni; kilit için fail-closed seçeneği | K4 (kısmen), G10 (kısmen) | Widget testleri | S | AI |
-| F0-10 | Yerel sınır küçükleri: Unix soketinde eş kimlik kontrolü, `XDG_RUNTIME_DIR` zorunlu, Ziti köprüsü yalnız açan sürece, `insecure_skip_verify` `ConfigTrusted`'a, `created_by` token'dan, istek boyutu sınırı, tek uyum özeti | G13, M3 | Testler | S | AI |
-| F0-11 | İmzalama yalnız tag ve dispatch'te, `environment: release-signing` ile; manifeste `expires` | G8 | Workflow + guard; PR derlemesi imzasız | S | AI; sahip environment'ı açar |
-| F0-12 | Filo alarmları compose ve Helm kural dosyalarına; `openidx_agents_by_state`, `openidx_tunnel_policy_gaps` metrikleri; boşluklu cihaz "applied" sayılmaz | N8, N9 | `promtool` testi; rozet testi | S | AI |
-| F0-13 | Dondurma işlemleri (#966): Kotlin ajanının ve masaüstü kabuğunun test kaynağı olmayan CI işleri kaldırılır; README matrisi "Experimental, on hold"; Agent Fleet'teki AE QR, APK yokken açıklama gösterir | M1, K7 | Matris güncel; CI dakikaları düşer | S | AI |
+| ID | Issue | İş | Çözdüğü | Bitti kanıtı | Büyüklük | Kim |
+|---|---|---|---|---|---|---|
+| F0-1 | [#1173](https://github.com/mhmtgngr/openidx/issues/1173) | Yeniden kayıtta sahiplik: aynı `enrolled_by` kullanıcı ya da operatör token'ı, ya da mevcut cihaz anahtarıyla imzalı istek; aksi hâlde yeni satır. Cihaz anahtarı yalnız imzalı istekle değişir | G1 | Red testi: başka kullanıcının parmak iziyle kayıt → 409, `agent.enroll_denied` | S | AI yazar, sahip inceler |
+| F0-2 | [#1174](https://github.com/mhmtgngr/openidx/issues/1174) | Tier-0 kapı: `agent.enroll` kapsamı, iptal kesme noktası, taze ikinci faktör, 15 dakikalık JWT | G5 | İki yönlü test; denetim olayı | S | AI, sahip inceler |
+| F0-3 | [#1175](https://github.com/mhmtgngr/openidx/issues/1175) | Tek `RevokeDevice`: Agent Fleet, Access 360 ve kill switch aynı fonksiyonu çağırır; kill switch'e "cihazları karantinaya al" | G7, M4 | Test: Fleet iptali → token ailesi iptal, bilinen cihaz güvensiz, Ziti oturumları kesik | M | AI, sahip inceler |
+| F0-4 | [#1176](https://github.com/mhmtgngr/openidx/issues/1176) | Uzaktan destek varsayılanları: kuruluş politikasında onay zorunlu (varsayılan açık), "onaysız" ayrı izin + gerekçe + taze ikinci faktör; kayıt broker'da ve zorunlu; üretimde kayıt anahtarı yoksa başlatma | G3 | Görünen = uygulanan satırı; red testleri | M | AI, sahip inceler |
+| F0-5 | [#1177](https://github.com/mhmtgngr/openidx/issues/1177) | Windows'ta `ziti-identity.json` ve `ziti-enrollment.jwt` için DACL; JWT kullanıldıktan sonra silinir | G2 | Windows runner testi | S-M | Karar K2 sonra AI |
+| F0-6 | [#1178](https://github.com/mhmtgngr/openidx/issues/1178) | **Sözleşme testi** CI'da: sunucu + sahte ajan: enroll → config → report (eski ve yeni biçim) → tunnel_status → revoke → 403 | M2 | `ci.yml`'de `agent-contract` işi yeşil | M | AI |
+| F0-7 | [#1179](https://github.com/mhmtgngr/openidx/issues/1179) | `api/agent-v1.yaml`: mevcut ajan rotalarının OpenAPI şeması; sunucu ve ajan tiplerinin şemayla uyumunu doğrulayan test | M2, M5 | Guard yeşil; CONTRIBUTING'de sürüm kuralı | M | AI |
+| F0-8 | [#1180](https://github.com/mhmtgngr/openidx/issues/1180) | Belge diyeti (Ek B'nin tamamı) ve belge sitesine "Clients" bölümü (`AGENT-TUNNEL.md`, `windows/mfa-without-a-phone.md`, `mobile/push-mfa-delivery.md`) | M8, K10 | Bağlantılar yeşil; `docs.yml` yeşil | S | AI |
+| F0-9 | [#1181](https://github.com/mhmtgngr/openidx/issues/1181) | Telefon küçükleri: Notifications ekranını bağla ya da kaldır; okundu gövdesi; `zitiDial` yanıtı; push gelmiyorsa ekranda nedeni; kilit için fail-closed seçeneği | K4 (kısmen), G10 (kısmen) | Widget testleri | S | AI |
+| F0-10 | [#1182](https://github.com/mhmtgngr/openidx/issues/1182) | Yerel sınır küçükleri: Unix soketinde eş kimlik kontrolü, `XDG_RUNTIME_DIR` zorunlu, Ziti köprüsü yalnız açan sürece, `insecure_skip_verify` `ConfigTrusted`'a, `created_by` token'dan, istek boyutu sınırı, tek uyum özeti | G13, M3 | Testler | S | AI |
+| F0-11 | [#1183](https://github.com/mhmtgngr/openidx/issues/1183) | İmzalama yalnız tag ve dispatch'te, `environment: release-signing` ile; manifeste `expires` | G8 | Workflow + guard; PR derlemesi imzasız | S | AI; sahip environment'ı açar |
+| F0-12 | [#1184](https://github.com/mhmtgngr/openidx/issues/1184) | Filo alarmları compose ve Helm kural dosyalarına; `openidx_agents_by_state`, `openidx_tunnel_policy_gaps` metrikleri; boşluklu cihaz "applied" sayılmaz | N8, N9 | `promtool` testi; rozet testi | S | AI |
+| F0-13 | [#1185](https://github.com/mhmtgngr/openidx/issues/1185) | Dondurma işlemleri (#966): Kotlin ajanının ve masaüstü kabuğunun test kaynağı olmayan CI işleri kaldırılır; README matrisi "Experimental, on hold"; Agent Fleet'teki AE QR, APK yokken açıklama gösterir | M1, K7 | Matris güncel; CI dakikaları düşer | S | AI |
 
 **Çıkış kriteri:** G1, G2, G3, G5, G7 kapalı ve her biri bir red testiyle
 kanıtlı; `agent-contract` işi yeşil; Ek B'de açık madde yok; alarmlar yüklü.
