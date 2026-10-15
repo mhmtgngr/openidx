@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
@@ -37,6 +38,13 @@ type AgentAPIHandler struct {
 	conf          *config.Config
 	playIntegrity *PlayIntegrityVerifier
 	redis         *redis.Client
+	// revocationRedis is the revocation store (RedisClient.RevocationDB),
+	// which a device revoke publishes session markers to; nil when none.
+	revocationRedis *redis.Client
+	// zitiResolver finds the controller as it is connected now. The manager
+	// the handler was built with may be nil, since the controller is wired
+	// at runtime; a revoke must reach the one that is there when it runs.
+	zitiResolver func() *ZitiManager
 }
 
 // NewAgentAPIHandler constructs an AgentAPIHandler. conf is the access-service
@@ -79,6 +87,26 @@ func (h *AgentAPIHandler) SetPlayIntegrityVerifier(v *PlayIntegrityVerifier) {
 // agent-enrollment time (FastPass convergence). Optional — when nil, enrollment
 // still succeeds; the response simply omits the push-enroll ticket and the
 // device registers as a push approver via the normal (separate) QR flow.
+// SetRevocationRedis installs the revocation store a device revoke publishes
+// its session markers to.
+func (h *AgentAPIHandler) SetRevocationRedis(c *redis.Client) { h.revocationRedis = c }
+
+// SetZitiResolver installs the function that finds the controller as it is
+// connected now (Service.ziti).
+func (h *AgentAPIHandler) SetZitiResolver(f func() *ZitiManager) { h.zitiResolver = f }
+
+// zitiManager returns the controller the handler should use right now: the
+// resolver's, when one is installed and has one, else the manager the handler
+// was built with.
+func (h *AgentAPIHandler) zitiManager() *ZitiManager {
+	if h.zitiResolver != nil {
+		if zm := h.zitiResolver(); zm != nil {
+			return zm
+		}
+	}
+	return h.zm
+}
+
 func (h *AgentAPIHandler) SetRedis(c *redis.Client) {
 	h.redis = c
 }
@@ -2369,8 +2397,15 @@ func (h *AgentAPIHandler) HandleAgentPosture(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// HandleRevokeAgent sets an agent's status to 'revoked' and optionally removes
-// its Ziti identity.
+// HandleRevokeAgent revokes a device from Agent Fleet. DELETE /agents/:id
+//
+// It is the same revoke Access 360's device revoke and the kill switch's
+// revoke_devices option perform (deviceRevoker): live circuits severed, the
+// Device identity deleted, the row revoked, the known device untrusted, and
+// the refresh-token families and sessions bound to the device revoked. It used
+// to set the status and delete the identity and stop there, so a device
+// revoked from this page kept its tokens and its trusted known device while
+// one revoked from the user's page lost them.
 func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 	agentID := c.Param("agent_id")
 	if agentID == "" {
@@ -2386,49 +2421,59 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 			return
 		}
 
-		// Fetch the Ziti identity ID before revoking so we can remove it.
-		var zitiIdentityID string
-		_ = h.db.Pool.QueryRow(ctx,
-			`SELECT COALESCE(ziti_identity_id, '') FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
-			agentID, org.ID,
-		).Scan(&zitiIdentityID)
-
-		tag, err := h.db.Pool.Exec(ctx,
-			`UPDATE enrolled_agents SET status = 'revoked' WHERE agent_id = $1 AND org_id = $2`,
-			agentID, org.ID,
-		)
+		// Another tenant's device is not found, not revoked (v197).
+		var zitiIdentityID, knownDeviceID, owner string
+		err = h.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(ziti_identity_id, ''), COALESCE(known_device_id::text, ''),
+			       COALESCE(enrolled_by_user_id::text, '')
+			  FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
+			agentID, org.ID).Scan(&zitiIdentityID, &knownDeviceID, &owner)
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return
+		}
 		if err != nil {
-			h.logger.Error("HandleRevokeAgent: failed to update status",
+			h.logger.Error("HandleRevokeAgent: failed to read the agent",
 				logsafe.String("agent_id", agentID), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke agent"})
 			return
 		}
-		// Another tenant's device is not found, not revoked (v197).
-		if tag.RowsAffected() == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+
+		res := h.deviceRevoker().revoke(ctx, org.ID, agentID, zitiIdentityID, knownDeviceID)
+		if !res.AgentRevoked {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke agent", "warnings": res.Warnings})
 			return
 		}
-
-		// Remove Ziti identity if available.
-		if h.zm != nil && zitiIdentityID != "" {
-			if delErr := h.zm.DeleteIdentity(ctx, zitiIdentityID); delErr != nil {
-				h.logger.Warn("HandleRevokeAgent: failed to delete Ziti identity",
-					logsafe.String("agent_id", agentID),
-					zap.String("ziti_identity_id", zitiIdentityID),
-					zap.Error(delErr))
+		// Recompute the owner's #device-trusted overlay attribute right away,
+		// as the user's page does: if this was their last trusted device,
+		// dial policies keyed on device trust must stop matching now.
+		if zm := h.zitiManager(); zm != nil && owner != "" {
+			if err := zm.SyncDeviceTrustForUser(ctx, owner); err != nil {
+				h.logger.Warn("HandleRevokeAgent: device-trust attribute resync failed",
+					logsafe.String("user_id", owner), zap.Error(err))
 			}
 		}
-	} else if h.zm != nil {
+
+		detail := fmt.Sprintf("admin action; ziti_identity_deleted=%t ziti_sessions_terminated=%d "+
+			"refresh_tokens_revoked=%d sessions_revoked=%d known_device_untrusted=%t warnings=%d",
+			res.ZitiIdentityDeleted, res.ZitiEdgeSessions+res.ZitiAPISessions,
+			res.RefreshTokensRevoked, res.OAuthSessionsRevoked, res.KnownDeviceUntrusted, len(res.Warnings))
+		h.logger.Info("Agent revoked", logsafe.String("agent_id", agentID))
+		h.logAuditEvent("agent.revoked", agentID, "success", detail)
+		h.logAuditEventToDB(ctx, "agent.revoked", agentID, "success", detail)
+		c.JSON(http.StatusOK, gin.H{"status": "revoked", "agent_id": agentID, "revoke": res})
+		return
+	}
+
+	if h.zm != nil {
 		// No DB but ZitiManager present — best-effort removal using agentID as identity name.
 		if delErr := h.zm.DeleteIdentity(context.Background(), agentID); delErr != nil {
 			h.logger.Warn("HandleRevokeAgent: failed to delete Ziti identity (no db)",
 				logsafe.String("agent_id", agentID), zap.Error(delErr))
 		}
 	}
-
 	h.logger.Info("Agent revoked", logsafe.String("agent_id", agentID))
 	h.logAuditEvent("agent.revoked", agentID, "success", "admin action")
-	h.logAuditEventToDB(c.Request.Context(), "agent.revoked", agentID, "success", "admin action")
 	c.JSON(http.StatusOK, gin.H{"status": "revoked", "agent_id": agentID})
 }
 
