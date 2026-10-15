@@ -8240,6 +8240,8 @@ const en = {
         apk: 'APK',
         downloadApk: 'Download APK ({{checksum}})',
         noChecksum: 'no checksum',
+        apkOnHold:
+          'No Android agent APK is published on this server: the Kotlin Android agent is on hold (see ROADMAP.md, “On hold”), so a device cannot be provisioned from this QR until an APK is published.',
         copyJson: 'Copy JSON',
         done: 'Done',
       },

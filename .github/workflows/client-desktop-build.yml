@@ -1,24 +1,18 @@
 name: client-desktop-build
 
+# FROZEN per ROADMAP.md "On hold" (issue #1185): the Flutter desktop shell under
+# client/ is not distributed and is deleted once the Go tray agent covers macOS
+# and Linux. This workflow only keeps the frozen code building, on demand: it no
+# longer runs on every push and pull request across three operating systems,
+# and the placeholder step that was to bundle the agent sidecar is gone with
+# the plan it stood in for.
+#
 # Verifies the Flutter desktop client (client/) against the Flutter SDK:
 # materializes the SDK-generated platform runners, then analyzes, tests, and
 # builds on macOS, Linux, and Windows. The runner directories (macos/, linux/,
 # windows/) are intentionally not committed — they are generated here.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "client/**"
-      - ".github/workflows/client-desktop-build.yml"
-      - "scripts/ci-prime-cocoapods.sh"
-      - "scripts/ci-retry.sh"
-  pull_request:
-    paths:
-      - "client/**"
-      - ".github/workflows/client-desktop-build.yml"
-      - "scripts/ci-prime-cocoapods.sh"
-      - "scripts/ci-retry.sh"
   workflow_dispatch:
 
 concurrency:
@@ -87,19 +81,6 @@ jobs:
 
       - name: Test
         run: flutter test
-
-      # Placeholder: bundle the openidx-agent sidecar binary into the app
-      # payload here (download the Phase 0 release artifact for this OS/arch and
-      # copy it next to the built executable, or into the app's bin/ directory,
-      # so the supervisor can spawn it). Left as a no-op for the scaffold.
-      - name: Bundle openidx-agent sidecar (placeholder)
-        # Block scalar, not a plain one: `run: echo "TODO: ...` is invalid YAML
-        # (a plain scalar may not contain ": "), and GitHub answered by failing
-        # the whole workflow before it scheduled a single job -- a run with no
-        # jobs, named after the file, red on every push since #814. Nothing was
-        # building the desktop client and the red check said nothing about why.
-        run: |
-          echo "TODO: fetch + stage openidx-agent sidecar for ${{ matrix.platform }}"
 
       # `flutter build macos` shells out to CocoaPods, which reaches
       # cdn.cocoapods.org before a line is compiled. Creating that spec source

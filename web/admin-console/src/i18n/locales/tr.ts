@@ -8149,6 +8149,8 @@ const tr: typeof en = {
         apk: 'APK',
         downloadApk: 'APK indir ({{checksum}})',
         noChecksum: 'sağlama toplamı yok',
+        apkOnHold:
+          'Bu sunucuda yayımlanmış bir Android ajan APK’sı yok: Kotlin Android ajanı askıya alındı (bkz. ROADMAP.md, “On hold”); bir APK yayımlanana kadar bu QR ile cihaz kurulumu yapılamaz.',
         copyJson: 'JSON’u kopyala',
         done: 'Bitti',
       },

@@ -44,9 +44,11 @@ not as a multi-connector integration project.
 > context yields zero rows — and a merge-blocking CI linter (`tools/orgscope`)
 > fails the build on any tenant-table query missing an `org_id` predicate. See
 > [docs/SECURITY-TENANCY.md](./docs/SECURITY-TENANCY.md) for the trust boundary.
-> One gap is open: the application's own database role can switch the
-> row-level-security bypass on, so one SQL injection could lift the boundary
-> ([#964](https://github.com/mhmtgngr/openidx/issues/964)).
+> Since v1.42 the row-level-security bypass that background work needs is a
+> separate database role (`DATABASE_BYPASS_URL`), which the application's own
+> role cannot switch on; what remains of
+> [#964](https://github.com/mhmtgngr/openidx/issues/964) is the migrator's
+> role and the CI test selection.
 
 ### Why OpenIDX?
 
@@ -134,14 +136,14 @@ checked against the code, the tests and the docs on `main` on 2026-09-24.
 |---|---|---|---|
 | Windows endpoint agent | Beta | Its tests run in CI, also on a Windows runner. It is signed with the project's self-signed certificate, which Windows trusts only where you distribute it. | [agent/packaging/wix/README.md](agent/packaging/wix/README.md) |
 | Mobile app (Flutter, Android and iOS) | Beta | Its tests run in CI. It cannot be published yet: the app ID is a placeholder, the released APK is debug-signed and the iOS build is unsigned. | [#966] |
-| Desktop app (Flutter shell) | Experimental | The step that bundles the agent into it is not done. | [#966] |
-| Android device-owner agent (Kotlin): enrollment, kiosk, remote support | Experimental | It has no tests and duplicates the Flutter app. On hold. | [ROADMAP.md](ROADMAP.md#on-hold), [#966] |
+| Desktop app (Flutter shell) | Experimental, on hold | It is not distributed and the step that bundles the agent into it is not done; it is deleted once the Go tray covers macOS and Linux. Its CI runs only on demand. | [ROADMAP.md](ROADMAP.md#on-hold), [#966], [#1185] |
+| Android device-owner agent (Kotlin): enrollment, kiosk, remote support | Experimental, on hold | It has no tests and duplicates the Flutter app; it is deleted in April 2027 unless a customer needs Android Enterprise device-owner mode. Its CI only checks that it still compiles, and no APK is published. | [ROADMAP.md](ROADMAP.md#on-hold), [#966], [#1185] |
 
 ### Platform
 
 | Feature | Level | Why | Evidence |
 |---|---|---|---|
-| Multi-tenancy | Beta (GA candidate) | FORCE row-level security on every tenant table, tested in CI with a role that cannot bypass it. The bypass is a setting the application's role can change ([#964]). | [SECURITY-TENANCY.md](docs/SECURITY-TENANCY.md), [#964] |
+| Multi-tenancy | Beta (GA candidate) | FORCE row-level security on every tenant table, tested in CI with a role that cannot bypass it. Since v1.42 the bypass is a separate role (`DATABASE_BYPASS_URL`), not a setting the application's role can change; the migrator and the CI test selection remain ([#964]). | [SECURITY-TENANCY.md](docs/SECURITY-TENANCY.md), [#964] |
 | Audit trail and SIEM forwarding | Beta | Each tenant's events are HMAC-chained, and an edited or deleted row breaks the chain; tested. Elasticsearch search is optional. | [`audit_chain_test.go`](test/integration/audit_chain_test.go) |
 | Compliance reports: SOC 2, ISO 27001, GDPR | Beta | Computed from the product's own data, tested against the migrated schema. They are evidence for an audit, not a certification. | [COMPLIANCE-CONTROL-MAPPING.md](docs/COMPLIANCE-CONTROL-MAPPING.md) |
 | API keys and service accounts | Beta | Keys are stored as hashes, expire and can be revoked; tested. With OPA authorization on, a key is refused ([#980]). | [`apikeys_test.go`](internal/apikeys/apikeys_test.go) |
@@ -181,6 +183,7 @@ checked against the code, the tests and the docs on `main` on 2026-09-24.
 [#965]: https://github.com/mhmtgngr/openidx/issues/965
 [#966]: https://github.com/mhmtgngr/openidx/issues/966
 [#980]: https://github.com/mhmtgngr/openidx/issues/980
+[#1185]: https://github.com/mhmtgngr/openidx/issues/1185
 
 ## Quick Start
 
