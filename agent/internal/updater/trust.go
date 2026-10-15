@@ -45,6 +45,16 @@ import (
 // verifies nothing and therefore refuses everything. A caller that forgets it
 // installs nothing; a caller that forgets a default would have installed
 // anything.
+//
+// THE MANIFEST EXPIRES. The signature proves who wrote the manifest, not that
+// it is still the newest. Without an expiry, a copy of any manifest the
+// publisher ever signed is as good as the latest one, so whoever could serve
+// a copy once (a stale mirror, a proxy, a captured response) could serve it
+// forever, and the fleet would never learn that a newer release exists. Each
+// manifest therefore says when it expires, the signature covers that, and
+// this agent refuses an expired one. The cost is that updates stop when the
+// channel is not renewed within the lifetime, which is the safe direction,
+// and the error says so in as many words.
 
 //go:embed release-publisher.cer
 var releasePublisherDER []byte
@@ -145,7 +155,37 @@ func (t Trust) Describe() string {
 	return fmt.Sprintf("%s (%s)", src, strings.Join(subjects, "; "))
 }
 
-// signingInput is the exact byte string a publisher signs.
+// signingInput is the byte string behind signature: the first canonical form,
+// covering version, url and sha256, with no expiry. Agents built before
+// manifests expired verify only this one, so the release still produces it
+// (manifest_producer_test.go holds it to that). This agent does not accept it
+// on its own: see Verify.
+func signingInput(m *Manifest) ([]byte, error) {
+	return canonicalForm(signingDomain, [][2]string{
+		{"version", m.Version},
+		{"url", m.URL},
+		{"sha256", m.SHA256},
+	})
+}
+
+// signingInputV2 is the byte string behind signature_v2, the one this agent
+// verifies: the fields above and expires, behind the v2 domain line.
+//
+// Every field of Manifest except the two signatures appears here.
+// TestTheSignatureCoversEveryManifestField enumerates the struct by reflection
+// and fails if a field is ever added without being covered, because a field
+// outside the signature is a field an attacker can choose.
+func signingInputV2(m *Manifest) ([]byte, error) {
+	return canonicalForm(signingDomainV2, [][2]string{
+		{"version", m.Version},
+		{"url", m.URL},
+		{"sha256", m.SHA256},
+		{"expires", m.Expires},
+	})
+}
+
+// canonicalForm is the exact byte string a publisher signs: the domain line,
+// then one name=value line per field, each LF-terminated.
 //
 // A canonical form built from the manifest's fields, NOT the JSON bytes: JSON
 // has no single serialization, and the producer (PowerShell, via
@@ -155,19 +195,9 @@ func (t Trust) Describe() string {
 //
 // The first line is a domain separator, so a signature made by this key for
 // anything else — now or later — cannot be replayed as a manifest.
-//
-// Every field of Manifest except Signature itself appears here.
-// TestTheSignatureCoversEveryManifestField enumerates the struct by reflection
-// and fails if a field is ever added without being covered, because a field
-// outside the signature is a field an attacker can choose.
-func signingInput(m *Manifest) ([]byte, error) {
-	fields := [][2]string{
-		{"version", m.Version},
-		{"url", m.URL},
-		{"sha256", m.SHA256},
-	}
+func canonicalForm(domain string, fields [][2]string) ([]byte, error) {
 	var b strings.Builder
-	b.WriteString(signingDomain)
+	b.WriteString(domain)
 	b.WriteByte('\n')
 	for _, f := range fields {
 		// A newline inside a value would let one field's content pose as
@@ -183,43 +213,99 @@ func signingInput(m *Manifest) ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
-// signingDomain separates this signature's meaning from every other use of the
-// same key. Changing it invalidates every existing manifest, so it is versioned.
-const signingDomain = "openidx-agent-update-manifest/v1"
+// signingDomain and signingDomainV2 separate each signature's meaning from
+// every other use of the same key, and from each other: a signature over the
+// v1 form cannot be presented as one over the v2 form, whatever the fields.
+// Changing a domain invalidates every existing manifest, so each is versioned.
+const (
+	signingDomain   = "openidx-agent-update-manifest/v1"
+	signingDomainV2 = "openidx-agent-update-manifest/v2"
+)
 
-// Verify checks the manifest's signature against the trusted publisher.
+// manifestLife bounds how far ahead a manifest may expire. The release signs
+// for 90 days (windows-client-build.yml); a manifest "valid" for years is one
+// that was never meant to expire, and this agent refuses it as it refuses one
+// with no expiry at all.
+const manifestLife = 366 * 24 * time.Hour
+
+// manifestExpiry reads expires: present, RFC 3339, after now, and no further
+// ahead than manifestLife. The time it returns is for the caller's message.
+func manifestExpiry(expires string, now time.Time) (time.Time, error) {
+	s := strings.TrimSpace(expires)
+	if s == "" {
+		return time.Time{}, errors.New("the manifest has no expires. A manifest that never expires can be " +
+			"served for as long as anyone keeps a copy, hiding every later release from this agent; " +
+			"the release signs each manifest for 90 days, and an operator channel must do the same")
+	}
+	exp, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("the manifest's expires %q is not an RFC 3339 time (2027-01-13T10:00:00Z): %w", s, err)
+	}
+	if !exp.After(now) {
+		return exp, fmt.Errorf("the manifest expired at %s and it is now %s: the release channel has not been "+
+			"renewed within its lifetime, or this machine's clock is wrong. No update is installed from an "+
+			"expired manifest, because a copy of an old one could otherwise hide every later release",
+			exp.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))
+	}
+	if exp.After(now.Add(manifestLife)) {
+		return exp, fmt.Errorf("the manifest's expires %s is more than a year ahead; a manifest that is valid "+
+			"for that long was never meant to expire, and the release signs for 90 days",
+			exp.UTC().Format(time.RFC3339))
+	}
+	return exp, nil
+}
+
+// Verify checks the manifest's signature_v2 against the trusted publisher and
+// that the manifest has not expired.
 //
-// Refuses, naming the reason, when: the Trust is empty; the manifest carries no
-// signature; the signature is not base64; the publisher's validity window does
-// not contain now; or no trusted key verifies it.
+// Refuses, naming the reason, when: the Trust is empty; the manifest carries
+// no signature_v2 (a manifest with signature alone is one from before
+// manifests expired, or one with its v2 stripped off, and either could be
+// served forever); the signature is not base64; the publisher's validity
+// window does not contain now; no trusted key verifies it; or expires is
+// missing, malformed, past, or more than manifestLife ahead.
 //
-// The validity window is enforced deliberately. A pinned self-signed key has no
-// revocation path, so its expiry is the only thing that bounds the damage of a
-// compromise discovered late, and it forces the rotation that would otherwise
-// never be scheduled. The cost of enforcing it is that updates stop, which is
-// the safe direction, and the error says so in as many words.
+// The expiry is checked after the signature, so that "expired" is said only
+// of a manifest the publisher really signed: that message sends an operator
+// to the release channel, the other to wherever the manifest came from.
+//
+// The publisher's validity window is enforced deliberately. A pinned
+// self-signed key has no revocation path, so its expiry is the only thing that
+// bounds the damage of a compromise discovered late, and it forces the
+// rotation that would otherwise never be scheduled. The cost of enforcing it
+// is that updates stop, which is the safe direction, and the error says so in
+// as many words.
 func Verify(m *Manifest, trust Trust) error {
 	if trust.Empty() {
 		return fmt.Errorf("no trusted update publisher is configured, so this agent will not " +
 			"install anything: the manifest names the artifact AND the digest that matches it, " +
 			"so without a signature there is nothing to check the manifest itself against")
 	}
-	sig := strings.TrimSpace(m.Signature)
+	sig := strings.TrimSpace(m.SignatureV2)
 	if sig == "" {
-		return fmt.Errorf("the manifest carries no signature. Expected one from %s. An unsigned "+
+		if strings.TrimSpace(m.Signature) != "" {
+			return fmt.Errorf("the manifest carries only signature, the signature agents verified before "+
+				"manifests expired, and no signature_v2. Expected signature_v2 from %s over a manifest "+
+				"with an expiry; a manifest without one could be served forever and hide every later "+
+				"release. Publish it with the current release workflow", trust.Describe())
+		}
+		return fmt.Errorf("the manifest carries no signature. Expected signature_v2 from %s. An unsigned "+
 			"manifest is an instruction to run an installer as SYSTEM from whoever served it",
 			trust.Describe())
 	}
 	raw, err := base64.StdEncoding.DecodeString(sig)
 	if err != nil {
-		return fmt.Errorf("the manifest's signature is not base64: %w", err)
+		return fmt.Errorf("the manifest's signature_v2 is not base64: %w", err)
 	}
-	input, err := signingInput(m)
+	input, err := signingInputV2(m)
 	if err != nil {
 		return err
 	}
 	if err := trust.verifyAny(input, raw); err != nil {
 		return fmt.Errorf("the manifest is not signed by %s: %w", trust.Describe(), err)
+	}
+	if _, err := manifestExpiry(m.Expires, time.Now()); err != nil {
+		return err
 	}
 	return nil
 }
@@ -234,8 +320,9 @@ func Verify(m *Manifest, trust Trust) error {
 // than with a second trust anchor that has rules of its own.
 //
 // The caller owns the meaning of input. It must begin with a domain line of
-// its own, different from signingDomain, so that a signature made for one
-// purpose can never be accepted as a signature for another.
+// its own, different from signingDomain and signingDomainV2, so that a
+// signature made for one purpose can never be accepted as a signature for
+// another.
 func (t Trust) VerifySignature(input []byte, sigB64 string) error {
 	if t.Empty() {
 		return fmt.Errorf("no trusted publisher is configured, so no signature can be accepted")

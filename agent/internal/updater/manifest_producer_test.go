@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The manifest this package refuses to accept without a digest — and now
@@ -54,7 +55,7 @@ func generatorStep(t *testing.T) string {
 func TestTheReleaseManifestCarriesEverythingFetchRequires(t *testing.T) {
 	step := generatorStep(t)
 
-	for _, field := range []string{"version", "url", "sha256", "signature"} {
+	for _, field := range []string{"version", "url", "sha256", "expires", "signature", "signature_v2"} {
 		// The generator builds the object as `@{ version = ...; url = ...; ... }`.
 		if !regexp.MustCompile(`\b` + field + `\s*=`).MatchString(step) {
 			t.Errorf("the release manifest generator does not set %q. Fetch rejects a "+
@@ -136,40 +137,56 @@ func TestTheReleaseRefusesToPublishAnUnsignedManifest(t *testing.T) {
 func TestTheProducersCanonicalFormIsTheOneTheAgentVerifies(t *testing.T) {
 	step := generatorStep(t)
 
-	block := regexp.MustCompile(`(?s)\$lines\s*=\s*@\((.*?)\)`).FindStringSubmatch(step)
-	if block == nil {
-		t.Fatal("the generator no longer builds the signing input as `$lines = @( ... )`. " +
-			"This test cannot read it, and nothing else compares the two languages' canonical forms.")
-	}
-	quoted := regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(block[1], -1)
-	if len(quoted) == 0 {
-		t.Fatal("the generator's $lines array holds no quoted strings")
-	}
-
 	const (
-		ver = "1.34.0"
-		url = "https://github.com/mhmtgngr/openidx/releases/download/agent-v1.34.0/OpenIDX-1.34.0.msi"
+		ver     = "1.34.0"
+		url     = "https://github.com/mhmtgngr/openidx/releases/download/agent-v1.34.0/OpenIDX-1.34.0.msi"
+		expires = "2027-01-13T10:00:00Z"
 	)
 	sha := strings.Repeat("ab", 32)
-	repl := strings.NewReplacer("$ver", ver, "$url", url, "$sha", sha)
+	repl := strings.NewReplacer("$ver", ver, "$url", url, "$sha", sha, "$expires", expires)
+	m := &Manifest{Version: ver, URL: url, SHA256: sha, Expires: expires}
 
-	lines := make([]string, 0, len(quoted))
-	for _, q := range quoted {
-		lines = append(lines, repl.Replace(q[1]))
+	// producerForm reads the generator's `$<name> = @( ... )` array and
+	// substitutes its variables: `($lines -join "`n") + "`n"`, LF-joined
+	// with one trailing newline.
+	producerForm := func(name string) string {
+		t.Helper()
+		block := regexp.MustCompile(`(?s)\$` + name + `\s*=\s*@\((.*?)\)`).FindStringSubmatch(step)
+		if block == nil {
+			t.Fatalf("the generator no longer builds the signing input as `$%s = @( ... )`. "+
+				"This test cannot read it, and nothing else compares the two languages' canonical forms.", name)
+		}
+		quoted := regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(block[1], -1)
+		if len(quoted) == 0 {
+			t.Fatalf("the generator's $%s array holds no quoted strings", name)
+		}
+		lines := make([]string, 0, len(quoted))
+		for _, q := range quoted {
+			lines = append(lines, repl.Replace(q[1]))
+		}
+		return strings.Join(lines, "\n") + "\n"
 	}
-	// `($lines -join "`n") + "`n"` — LF-joined with one trailing newline.
-	producer := strings.Join(lines, "\n") + "\n"
 
-	want, err := signingInput(&Manifest{Version: ver, URL: url, SHA256: sha})
-	if err != nil {
-		t.Fatalf("signingInput: %v", err)
-	}
-	if producer != string(want) {
-		t.Errorf("the release signs a different message from the one the agent verifies.\n"+
-			"  release  (%d bytes): %q\n"+
-			"  agent    (%d bytes): %q\n"+
-			"Every manifest published this way would be refused by every agent.",
-			len(producer), producer, len(want), string(want))
+	// Two forms: $lines is the v1 input (signature, verified by agents built
+	// before manifests expired) and $lines2 the v2 input (signature_v2, the
+	// one this agent verifies). Both must match, because a fleet updates one
+	// device at a time and both kinds of agent read the same file.
+	for _, tc := range []struct {
+		array string
+		input func(*Manifest) ([]byte, error)
+	}{{"lines", signingInput}, {"lines2", signingInputV2}} {
+		producer := producerForm(tc.array)
+		want, err := tc.input(m)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.array, err)
+		}
+		if producer != string(want) {
+			t.Errorf("the release signs ($%s) a different message from the one the agent verifies.\n"+
+				"  release  (%d bytes): %q\n"+
+				"  agent    (%d bytes): %q\n"+
+				"Every manifest published this way would be refused by every agent.",
+				tc.array, len(producer), producer, len(want), string(want))
+		}
 	}
 
 	// And the join must be LF with a trailing newline, which the comparison
@@ -177,6 +194,42 @@ func TestTheProducersCanonicalFormIsTheOneTheAgentVerifies(t *testing.T) {
 	if !strings.Contains(step, "-join \"`n\"") {
 		t.Error("the generator does not join the signing input with LF; CRLF would change every byte " +
 			"after the first line")
+	}
+}
+
+// TestTheReleaseManifestExpiresNinetyDaysOut. The agent refuses a manifest
+// with no expiry, one already past it, and one more than manifestLife ahead,
+// so the generator has to write one the agent will parse (RFC 3339, UTC,
+// whole seconds, independent of the runner's culture) and a lifetime inside
+// that bound. 90 days is the figure agent/packaging/wix/README.md documents:
+// long enough that an agent release every quarter keeps the channel alive,
+// short enough that a captured manifest cannot hide a release for a year.
+func TestTheReleaseManifestExpiresNinetyDaysOut(t *testing.T) {
+	step := generatorStep(t)
+
+	if !regexp.MustCompile(`\$lifetimeDays\s*=\s*90\b`).MatchString(step) {
+		t.Error("the generator does not set `$lifetimeDays = 90`; the README promises 90 days, and a " +
+			"longer lifetime keeps a captured manifest useful for longer")
+	}
+	if !strings.Contains(step, "UtcNow.AddDays($lifetimeDays)") {
+		t.Error("the generator does not compute expires as UtcNow plus the lifetime")
+	}
+	const format = "yyyy-MM-dd'T'HH:mm:ss'Z'"
+	if !strings.Contains(step, format) {
+		t.Errorf("the generator does not format expires as %s; the agent parses RFC 3339 and nothing else", format)
+	}
+	if !strings.Contains(step, "InvariantCulture") {
+		t.Error("the generator formats expires without InvariantCulture; .NET's ':' is the culture's time " +
+			"separator, so a runner with another culture would write a time the agent cannot parse")
+	}
+
+	// What that format produces is what manifestExpiry reads, and the
+	// lifetime is inside the verifier's bound.
+	if _, err := manifestExpiry("2027-01-13T10:00:00Z", time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Errorf("manifestExpiry refuses a time in the generator's format: %v", err)
+	}
+	if 90*24*time.Hour > manifestLife {
+		t.Errorf("the release signs for 90 days but the agent accepts at most %s ahead; every manifest would be refused", manifestLife)
 	}
 }
 

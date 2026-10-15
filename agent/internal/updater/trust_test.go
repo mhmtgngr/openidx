@@ -108,11 +108,34 @@ func (p *testPublisher) pemCert() string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: p.cert.Raw}))
 }
 
-// signedManifest returns a manifest this publisher has signed.
+// signV2 produces signature_v2: the same algorithm over signingInputV2.
+func (p *testPublisher) signV2(t *testing.T, m *Manifest) string {
+	t.Helper()
+	input, err := signingInputV2(m)
+	if err != nil {
+		t.Fatalf("signingInputV2: %v", err)
+	}
+	sum := sha256.Sum256(input)
+	sig, err := rsa.SignPKCS1v15(rand.Reader, p.key, crypto.SHA256, sum[:])
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(sig)
+}
+
+// expiresIn is an expires value d from now, in the form the release writes:
+// RFC 3339, UTC, whole seconds.
+func expiresIn(d time.Duration) string {
+	return time.Now().Add(d).UTC().Truncate(time.Second).Format(time.RFC3339)
+}
+
+// signedManifest returns a manifest this publisher has signed both ways, as
+// the release does, expiring in 30 days.
 func (p *testPublisher) signedManifest(t *testing.T, version, url, sha string) *Manifest {
 	t.Helper()
-	m := &Manifest{Version: version, URL: url, SHA256: sha}
+	m := &Manifest{Version: version, URL: url, SHA256: sha, Expires: expiresIn(30 * 24 * time.Hour)}
 	m.Signature = p.sign(t, m)
+	m.SignatureV2 = p.signV2(t, m)
 	return m
 }
 
@@ -179,19 +202,22 @@ func TestTheReleaseTrustIsUsable(t *testing.T) {
 //
 // A field that is NOT an input is a field an attacker can set freely on a
 // manifest that still verifies. If this fails after you added one, add it to
-// signingInput and bump signingDomain.
+// signingInputV2 and bump signingDomainV2. (signingInput, the v1 form, stays
+// as it is: agents built before manifests expired verify it, and a field
+// added to it would break every one of them.)
 func TestTheSignatureCoversEveryManifestField(t *testing.T) {
-	base := &Manifest{Version: "1.0.0", URL: "https://example.com/a.msi", SHA256: strings.Repeat("a", 64)}
-	baseline, err := signingInput(base)
+	base := &Manifest{Version: "1.0.0", URL: "https://example.com/a.msi", SHA256: strings.Repeat("a", 64),
+		Expires: "2027-01-13T10:00:00Z"}
+	baseline, err := signingInputV2(base)
 	if err != nil {
-		t.Fatalf("signingInput: %v", err)
+		t.Fatalf("signingInputV2: %v", err)
 	}
 
 	typ := reflect.TypeOf(*base)
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
-		if f.Name == "Signature" {
-			continue // the signature cannot sign itself
+		if f.Name == "Signature" || f.Name == "SignatureV2" {
+			continue // a signature cannot sign itself
 		}
 		if f.Type.Kind() != reflect.String {
 			t.Fatalf("Manifest.%s is %s; this test only knows how to mutate strings. Teach it, "+
@@ -199,13 +225,13 @@ func TestTheSignatureCoversEveryManifestField(t *testing.T) {
 		}
 		mutated := *base
 		reflect.ValueOf(&mutated).Elem().Field(i).SetString("attacker-chosen")
-		got, err := signingInput(&mutated)
+		got, err := signingInputV2(&mutated)
 		if err != nil {
-			t.Fatalf("signingInput(%s mutated): %v", f.Name, err)
+			t.Fatalf("signingInputV2(%s mutated): %v", f.Name, err)
 		}
 		if string(got) == string(baseline) {
 			t.Errorf("Manifest.%s (json %q) is outside the signature: a manifest can carry any value "+
-				"for it and still verify. Add it to signingInput and bump signingDomain.",
+				"for it and still verify. Add it to signingInputV2 and bump signingDomainV2.",
 				f.Name, f.Tag.Get("json"))
 		}
 	}
@@ -222,6 +248,9 @@ func TestSigningInputRefusesALineBreak(t *testing.T) {
 		if _, err := signingInput(&Manifest{Version: injected, URL: "https://x/a", SHA256: strings.Repeat("a", 64)}); err == nil {
 			t.Errorf("signingInput accepted a version containing a line break: %q", injected)
 		}
+		if _, err := signingInputV2(&Manifest{Version: "1.0.0", URL: "https://x/a", SHA256: strings.Repeat("a", 64), Expires: injected}); err == nil {
+			t.Errorf("signingInputV2 accepted an expires containing a line break: %q", injected)
+		}
 	}
 }
 
@@ -236,9 +265,25 @@ func TestTheSigningDomainSeparatesThisFromEverythingElseTheKeySigns(t *testing.T
 	if !strings.HasPrefix(string(in), signingDomain+"\n") {
 		t.Errorf("the signed bytes do not begin with the domain separator %q:\n%s", signingDomain, in)
 	}
-	if !strings.Contains(signingDomain, "/v") {
-		t.Errorf("the signing domain %q carries no version; changing the canonical form later would "+
-			"silently accept old signatures over new meanings", signingDomain)
+	in2, err := signingInputV2(&Manifest{Version: "1.0.0", URL: "https://x/a", SHA256: strings.Repeat("a", 64), Expires: "2027-01-13T10:00:00Z"})
+	if err != nil {
+		t.Fatalf("signingInputV2: %v", err)
+	}
+	if !strings.HasPrefix(string(in2), signingDomainV2+"\n") {
+		t.Errorf("the v2 signed bytes do not begin with the domain separator %q:\n%s", signingDomainV2, in2)
+	}
+	for _, d := range []string{signingDomain, signingDomainV2} {
+		if !strings.Contains(d, "/v") {
+			t.Errorf("the signing domain %q carries no version; changing the canonical form later would "+
+				"silently accept old signatures over new meanings", d)
+		}
+	}
+	// The two forms must not be interchangeable: a v1 signature covers no
+	// expiry, so presenting one as a v2 signature would be the way to make a
+	// manifest that never expires.
+	if signingDomain == signingDomainV2 {
+		t.Error("the v1 and v2 signing domains are the same string, so a signature over the form " +
+			"without an expiry could be presented as one over the form with it")
 	}
 }
 
@@ -256,6 +301,17 @@ func TestVerifyAcceptsOnlyThePublishersSignature(t *testing.T) {
 		}
 	})
 
+	// signature (v1) is produced for agents built before manifests expired;
+	// this agent verifies signature_v2 and asks nothing of v1. An operator
+	// channel that serves only v2 is therefore accepted.
+	t.Run("the v1 signature is not needed", func(t *testing.T) {
+		m := *good
+		m.Signature = ""
+		if err := Verify(&m, pub.trust()); err != nil {
+			t.Fatalf("Verify rejected a manifest carrying signature_v2 but no signature: %v", err)
+		}
+	})
+
 	// Each of these is a manifest an attacker would want to serve.
 	for _, tc := range []struct {
 		name   string
@@ -264,18 +320,33 @@ func TestVerifyAcceptsOnlyThePublishersSignature(t *testing.T) {
 	}{
 		{
 			name:   "no signature at all",
-			mutate: func(m *Manifest) { m.Signature = "" },
-			reason: "the shape every manifest had before this change",
+			mutate: func(m *Manifest) { m.Signature, m.SignatureV2 = "", "" },
+			reason: "the shape every manifest had before it was signed",
 		},
 		{
-			name:   "signature is not base64",
-			mutate: func(m *Manifest) { m.Signature = "not base64 !!" },
+			name:   "only the signature agents verified before manifests expired",
+			mutate: func(m *Manifest) { m.SignatureV2 = "" },
+			reason: "a manifest from before the expiry, or one with its signature_v2 stripped off; either could be served forever",
+		},
+		{
+			name:   "signature_v2 is not base64",
+			mutate: func(m *Manifest) { m.SignatureV2 = "not base64 !!" },
 			reason: "malformed rather than wrong",
 		},
 		{
-			name:   "signature is empty base64",
-			mutate: func(m *Manifest) { m.Signature = base64.StdEncoding.EncodeToString(nil) },
+			name:   "signature_v2 is empty base64",
+			mutate: func(m *Manifest) { m.SignatureV2 = base64.StdEncoding.EncodeToString(nil) },
 			reason: "decodes fine, verifies nothing",
+		},
+		{
+			name:   "the expiry is pushed out after signing",
+			mutate: func(m *Manifest) { m.Expires = expiresIn(300 * 24 * time.Hour) },
+			reason: "keep a captured manifest alive past its lifetime",
+		},
+		{
+			name:   "the expiry is removed after signing",
+			mutate: func(m *Manifest) { m.Expires = "" },
+			reason: "the same, by taking the field away",
 		},
 		{
 			name:   "the url is swapped after signing",
@@ -334,6 +405,46 @@ func TestAZeroTrustInstallsNothing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no trusted update publisher") {
 		t.Errorf("the refusal does not name the missing publisher: %v", err)
+	}
+}
+
+// TestVerifyRefusesAManifestPastItsExpiry: the publisher really signed each
+// of these, and only the ones still inside their lifetime are accepted.
+// Without this, a copy of any manifest the publisher ever signed would be as
+// good as the newest one for as long as anyone kept it.
+func TestVerifyRefusesAManifestPastItsExpiry(t *testing.T) {
+	pub := publisher(t)
+	signed := func(expires string) *Manifest {
+		m := &Manifest{Version: "1.2.0", URL: "https://example.com/a.msi", SHA256: strings.Repeat("a", 64), Expires: expires}
+		m.Signature = pub.sign(t, m)
+		m.SignatureV2 = pub.signV2(t, m)
+		return m
+	}
+	if err := Verify(signed(expiresIn(time.Hour)), pub.trust()); err != nil {
+		t.Fatalf("a signed manifest an hour from its expiry was refused: %v", err)
+	}
+	if err := Verify(signed(expiresIn(90*24*time.Hour)), pub.trust()); err != nil {
+		t.Fatalf("a signed manifest with the release's 90-day lifetime was refused: %v", err)
+	}
+	for _, tc := range []struct {
+		name, expires, want string
+	}{
+		{"expired a minute ago", expiresIn(-time.Minute), "expired"},
+		{"no expiry, signed that way", "", "no expires"},
+		{"an expiry that is not a time", "next Tuesday", "not an RFC 3339 time"},
+		{"an expiry two years out", expiresIn(2 * 365 * 24 * time.Hour), "more than a year ahead"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Verify(signed(tc.expires), pub.trust())
+			if err == nil {
+				t.Fatalf("Verify accepted a manifest with %s; a manifest that is good for longer than its "+
+					"lifetime is one that hides every later release", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not say %q, so an operator cannot tell a stale channel from a bad "+
+					"signature: %v", tc.want, err)
+			}
+		})
 	}
 }
 
