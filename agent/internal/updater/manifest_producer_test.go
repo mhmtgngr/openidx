@@ -194,3 +194,41 @@ func TestTheDocumentedManifestURLIsHTTPS(t *testing.T) {
 		}
 	}
 }
+
+// The release key reaches the build job only for a release build, and a
+// signed build passes through the release-signing environment.
+//
+// The job-level env that hands the signing steps the PFX used to name the
+// secret unconditionally, so a same-repository pull request was built and
+// Authenticode-signed with the release key by whatever the pull request put in
+// the workflow's path. The expression now hands the secret over only on an
+// agent-v* tag or a dispatch with release=true, and a release-gate job
+// declaring the release-signing environment stands in front of build-msi so
+// the environment's protection rules hold every signed build.
+func TestTheReleaseKeyReachesOnlyAReleaseBuild(t *testing.T) {
+	b, err := os.ReadFile(manifestWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	release := `(startsWith(github.ref, 'refs/tags/agent-v') || inputs.release == true)`
+	for _, secret := range []string{"WINDOWS_CERT_PFX_BASE64", "WINDOWS_CERT_PASSWORD"} {
+		want := secret + ": ${{ " + release + " && secrets." + secret + " || '' }}"
+		if !strings.Contains(src, want) {
+			t.Errorf("%s is not gated on a release build; the job env must read\n  %s", secret, want)
+		}
+		if regexp.MustCompile(secret + `: \$\{\{ secrets\.` + secret + ` \}\}`).MatchString(src) {
+			t.Errorf("%s is handed to every build unconditionally somewhere in the workflow", secret)
+		}
+	}
+	gate := regexp.MustCompile(`(?s)\n  release-gate:\n.*?environment: release-signing\n`)
+	if !gate.MatchString(src) {
+		t.Error("no release-gate job declaring the release-signing environment")
+	}
+	if !strings.Contains(src, "needs: [smoke-crosscompile, linux-packages, release-gate]") {
+		t.Error("build-msi does not wait for release-gate")
+	}
+	if !strings.Contains(src, "needs.release-gate.result == 'success' || needs.release-gate.result == 'skipped'") {
+		t.Error("build-msi must run when the gate is skipped (a push or a pull request) and only then or on a passed gate")
+	}
+}

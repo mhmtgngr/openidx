@@ -246,18 +246,49 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The gate a signed build passes through. It runs only for a release (an
+  # agent-v* tag, or a dispatch with release=true) and declares the
+  # release-signing environment, so whatever protection rules that environment
+  # carries -- a required reviewer, a wait timer -- hold every build that will
+  # be signed with the release key, and nothing else. A push or a pull request
+  # skips it and builds unsigned; build-msi below runs either way. The
+  # environment is created by its first use; the maintainer adds its reviewers
+  # in the repository settings (#1183).
+  release-gate:
+    name: release signing approval
+    if: ${{ startsWith(github.ref, 'refs/tags/agent-v') || inputs.release == true }}
+    runs-on: ubuntu-latest
+    environment: release-signing
+    steps:
+      - name: Approved
+        run: echo "release signing approved for $GITHUB_REF by the release-signing environment"
+
   # Real artifact: build the .exe natively + package the MSI (WiX).
   build-msi:
     name: build .exe + MSI
     runs-on: windows-latest
-    needs: [smoke-crosscompile, linux-packages]
+    needs: [smoke-crosscompile, linux-packages, release-gate]
+    # release-gate is skipped on a push or a pull request, and a skipped need
+    # would skip this job too without the condition; a gate that failed or was
+    # cancelled (a reviewer said no) still stops the build.
+    if: >-
+      ${{ !cancelled()
+          && needs.smoke-crosscompile.result == 'success'
+          && needs.linux-packages.result == 'success'
+          && (needs.release-gate.result == 'success' || needs.release-gate.result == 'skipped') }}
     permissions:
       contents: write # create the release + upload assets on a tag
     # Job-level env so the signing steps' `if:` can read whether a cert secret
     # is configured (step-level env isn't visible to that step's own `if`).
+    #
+    # The release key reaches the job only for a release build. It used to be
+    # in every run's environment, so a same-repository pull request was built
+    # and Authenticode-signed with the release key by whatever that pull
+    # request put in the workflow's path; a build that is not a release now
+    # sees no certificate, and so its signing steps do not run.
     env:
-      WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
-      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      WINDOWS_CERT_PFX_BASE64: ${{ (startsWith(github.ref, 'refs/tags/agent-v') || inputs.release == true) && secrets.WINDOWS_CERT_PFX_BASE64 || '' }}
+      WINDOWS_CERT_PASSWORD: ${{ (startsWith(github.ref, 'refs/tags/agent-v') || inputs.release == true) && secrets.WINDOWS_CERT_PASSWORD || '' }}
       # The agent's release channel: a release that never moves, whose assets
       # each agent release replaces. Not releases/latest/download/…, which is
       # where every default used to point: GitHub's "latest" is the newest
