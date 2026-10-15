@@ -222,7 +222,56 @@ When adding a new feature, include tests that cover:
 2. Implement the handler method on the Service struct
 3. Add business logic in the service layer
 4. Add tests
-5. Update the OpenAPI spec in `api/openapi/`
+5. Update the OpenAPI spec in `api/openapi/`. A route an agent calls also goes
+   in the agent contract, `api/agent-v1.yaml` (see
+   [Changing the agent API](#changing-the-agent-api))
+
+## Changing the agent API
+
+The routes the endpoint agents call (enrolment, `/agent/config`,
+`/agent/report`, the device key, remote-support consent, the Windows-app
+discovery report and the overlay enrolment door) have a written contract:
+`api/agent-v1.yaml`, OpenAPI 3.0, with every field spelled as the Go JSON tag
+spells it. `internal/access/agent_api_contract_test.go` holds the file and the
+Go types to each other: every JSON tag a request or response type declares
+must be a property of the schema named for it, and every schema property must
+be a Go JSON tag, so a field renamed on one side only fails
+`go test ./internal/access -run TestAgentAPIContract`. Answers built as a
+`gin.H` literal are read out of the handler's source the same way. Five
+server/client mismatches in three weeks (posture `check_type` vs `type`, the
+`tunnel_status` shape, the push-approval fields, the mobile `zitiDial`
+decoding, the notification mark-read body) are why it exists.
+
+The compatibility rule, also stated in the contract's `info.description`:
+
+- An agent must work against a server up to two minor versions newer than
+  itself (N-2). The server never requires a field or a shape an agent two
+  minor versions older does not send, and never stops sending one such an
+  agent reads.
+- When a wire shape changes, the server keeps accepting the previous shape
+  for one release after the change, so a fleet whose agents update after its
+  server keeps working.
+
+To change a wire shape:
+
+1. Add the new shape beside the old one in the Go type and the handler, and
+   keep reading the old one. Where the two can disagree, say in a comment
+   which wins (`normalizeCheckResult` and `agentTunnelService.UnmarshalJSON`
+   in `internal/access/` are the pattern).
+2. Keep accepting the old shape for one release. Dropping it in the same
+   release as the new one breaks every agent that has not updated yet.
+3. In `api/agent-v1.yaml`, add the new shape and mark the old one
+   `deprecated: true`, with a note saying which release stops accepting it.
+   A schema that admits both shapes is written as a `oneOf` of the two.
+4. Update the contract test: a new Go type gets a line in
+   `agentContractSchemas`; an answer built as a `gin.H` gets its handler
+   named in `agentContractLiterals`. Then run
+   `go test ./internal/access -run TestAgentAPIContract -count=1`.
+5. Move the agents (`agent/`, `agent-android/`, `client/`) to the new shape in
+   a release of their own, and remove the old shape from the server, the
+   contract and the test one release after that.
+6. Say so in a changelog fragment: `### Changed` for the new shape,
+   `### Deprecated` for the old one.
 
 ## Reporting Issues
 
