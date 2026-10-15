@@ -102,8 +102,10 @@ including the full `/pam/*` surface in `access-service.yaml`
 Design docs, plans, audits and reviews. Read them for the *why*; verify
 any *what* against the code before relying on it.
 
-- **Plans & designs**: [plans/](./plans/) (the convergence rollout plan
-  and the third-party access and temporary privilege framework live here), [access-model-redesign.md](./access-model-redesign.md),
+- **Plans & designs**: [plans/](./plans/) (the convergence rollout plan,
+  the third-party access and temporary privilege framework, and the
+  [client ecosystem analysis and roadmap](./plans/2026-10-15-istemci-ekosistemi-analizi-ve-yol-haritasi.md)
+  (in Turkish; proposed as [ADR 0003](./adr/0003-client-ecosystem-one-engine-three-shells.md)) live here), [access-model-redesign.md](./access-model-redesign.md),
   [access-and-login-convergence-design.md](./access-and-login-convergence-design.md),
   [architecture/](./architecture/) (per-topic design notes and reviews),
   [v2-multitenancy-design.md](./v2-multitenancy-design.md) (the June 2026
