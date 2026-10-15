@@ -134,15 +134,16 @@ was tightened:
   confirmed it — kill-switch warnings surface partial failures.
 
 **Tightened in this pass:**
-- **Device-trust approval → overlay, ≤30s**: approving a device trust request
-  (manual or auto) now marks the user's Ziti identity attributes stale, so
-  the `#device-trusted` attribute lands on the next 30s sync tick instead of
-  the previous ≤5-minute window — and it no longer depends on the admin using
-  the console page that happened to trigger the sync client-side.
-- **Device revoke → overlay, immediate**: revoking a device recomputes the
-  user's `#device-trusted` attribute in the same request, so dial policies
-  keyed on device trust stop matching as soon as the last trusted device is
-  gone.
+- **Device trust is the device's own (v1.42)**: `#device-trusted` sits on the
+  device's Ziti identity (`dev-<agent_id>`), never on the user's, and comes
+  from that agent's posture compliance when
+  `POSTURE_DEVICE_TRUST_GATE=enforce` (`internal/access/device_identity.go`);
+  IAM device-trust approval does not grant it. A posture report re-syncs the
+  identity in the same request, so the attribute lands or leaves at once, and
+  a device whose posture fails also loses its live circuits.
+- **Device revoke → overlay, immediate**: revoking a device deletes its
+  identity and severs its circuits in the same request, so dial policies
+  keyed on device trust stop matching for that device at once.
 - **Control-plane continuity**: every one of these sync paths rides the
   management-API failover pool above, so a single controller failure no
   longer stalls IAM/PAM enforcement into the overlay.

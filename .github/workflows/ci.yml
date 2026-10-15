@@ -755,6 +755,24 @@ jobs:
               || { echo "::error::$want did not run and pass — it was renamed, removed, or skipped"; exit 1; }
           done
 
+      # The agent's whole conversation with the server, against the real
+      # schema: enrol a keyed desktop and a keyless Android device with the
+      # bodies kept in api/agent-v1/examples, poll the config, post a signed
+      # posture report (an unsigned one from the keyed device is refused), read
+      # the fleet list an operator sees, revoke the device, and watch every
+      # route answer 403 agent_revoked. Five server/client mismatches reached
+      # releases because each side was tested against its own idea of the
+      # other; this is the one place both sides meet.
+      - name: An agent enrols, reports, is listed and is revoked, with the bodies the contract publishes
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:test_secret@127.0.0.1:5433/openidx_rls?sslmode=disable
+        run: |
+          set -euo pipefail
+          out=$(go test ./internal/access/ -run 'TestAgentContractFlow' -count=1 -v 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          grep -q -- "--- PASS: TestAgentContractFlow " <<<"$out" \
+            || { echo "::error::TestAgentContractFlow did not run and pass — it was renamed, removed, or skipped"; exit 1; }
+
       # Signing key kid names its cell (plan 4.4, code half). Against the real
       # oauth_signing_keys table from the registered v79 DDL: a store serving
       # cell eu-1 generates and rotates kids under eu-1-key-, a single-cell

@@ -107,3 +107,47 @@ func TestTunnelPolicyState(t *testing.T) {
 		}
 	}
 }
+
+// A device that applied the current policy with gaps is not "applied": the
+// state the console reads says so, on the record as it is written out, and
+// an "applied" without gaps, a pending device with gaps and a device without
+// a tunnel status are left as they are.
+func TestPolicyStateWithGapsIsWhatTheConsoleReads(t *testing.T) {
+	gaps := &agentTunnelStatus{State: "up", PolicyGaps: []string{"block_direct"}}
+	none := &agentTunnelStatus{State: "up"}
+	for _, c := range []struct {
+		state  string
+		status *agentTunnelStatus
+		want   string
+	}{
+		{"applied", gaps, "applied_with_gaps"},
+		{"applied", none, "applied"},
+		{"applied", nil, "applied"},
+		{"pending", gaps, "pending"},
+		{"", gaps, ""},
+		{"applied_with_gaps", gaps, "applied_with_gaps"},
+	} {
+		if got := policyStateWithGaps(c.state, c.status); got != c.want {
+			t.Errorf("policyStateWithGaps(%q, %+v) = %q, want %q", c.state, c.status, got, c.want)
+		}
+	}
+
+	// The record on the wire, built as HandleListAgents builds it: the
+	// version comparison, then the gaps.
+	v := "0123456789abcdef"
+	for _, c := range []struct {
+		status *agentTunnelStatus
+		want   string
+	}{{gaps, "applied_with_gaps"}, {none, "applied"}} {
+		rec := agentRecord{AgentID: "a1", TunnelPolicyVersion: &v, TunnelStatus: c.status}
+		rec.TunnelPolicyState = policyStateWithGaps(
+			tunnelPolicyState(rec.TunnelPolicyVersion, rec.TunnelStatus != nil, v), rec.TunnelStatus)
+		out, err := json.Marshal([]agentRecord{rec})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(out), `"tunnel_policy_state":"`+c.want+`"`) {
+			t.Errorf("with gaps %v the wire field is not %q: %s", c.status.PolicyGaps, c.want, out)
+		}
+	}
+}

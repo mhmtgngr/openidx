@@ -6602,7 +6602,7 @@ const tr: typeof en = {
           'Paketle gelen tünelleyici yalnızca ağ kaynaklarını yakalar; cihazlar bölünmüş tünelde kalır ve tam tüneli uygulanamadı olarak bildirir.',
         blockDirectScope:
           'Ajanın root olarak çalıştığı Linux cihazlarda ajan tarafından uygulanır (nftables). Windows ve macOS cihazları bunu uygulanamadı olarak bildirir.',
-        rollout: '{{applied}} cihazda uygulandı · {{pending}} cihazda bekliyor · {{unreported}} cihaz tünel bildirmiyor',
+        rollout: '{{applied}} cihazda uygulandı · {{applied_with_gaps}} cihazda boşluklu uygulandı · {{pending}} cihazda bekliyor · {{unreported}} cihaz tünel bildirmiyor',
         version: 'Politika sürümü {{version}}',
         saved: 'Ağ politikası kaydedildi',
         saveFailed: 'Ağ politikası kaydedilemedi',
@@ -7499,6 +7499,8 @@ const tr: typeof en = {
         reasonPlaceholder: 'Bu kullanıcının erişimi neden kesiliyor?',
         disableAccount:
           'Ayrıca <1>hesabı devre dışı bırak</1> ve Ziti kimliğini sil (tam kaldırma, yeni oturum açmayı engeller)',
+        revokeDevices:
+          'Ayrıca <1>kullanıcının cihazlarını iptal et</1>: kayıtlı her ajanın erişimi kesilir, Ziti kimliği silinir ve cihaz güveni geri alınır (cihazlar yeniden kaydolmalıdır)',
         severing: 'Kesiliyor…',
         severAll: 'Tüm Erişimi Kes',
         executed: 'Acil kesme uygulandı',
@@ -7512,6 +7514,7 @@ const tr: typeof en = {
         partPrivSessions: '{{n}} ayrıcalıklı oturum',
         partPamGrants: '{{n}} PAM bağlantı yetkisi',
         partNetwork: '{{n}} ağ oturumu',
+        partDevices: '{{n}} cihaz',
       },
     },
     oauthPlayground: {
@@ -8105,9 +8108,12 @@ const tr: typeof en = {
       tunnelLastError: 'Son hata: {{error}}',
       policyStates: {
         applied: 'Politika uygulandı',
+        applied_with_gaps: 'Politika uygulandı, boşluklu',
         pending: 'Politika bekliyor',
       },
       policyAppliedDetail: '{{when}} tarihinden beri politika sürümü {{version}} çalışıyor',
+      policyAppliedWithGapsDetail:
+        '{{when}} tarihinden beri politika sürümü {{version}} çalışıyor; bir bölümü bu cihazda uygulanamıyor (tünel rozetine bakın)',
       policyPendingDetail: 'Politika sürümü {{version}} bildiriyor; güncel politika bir sonraki raporda ulaşır',
       unknownPlatform: 'bilinmiyor',
       empty: 'Geçerli filtrelerle eşleşen ajan yok.',
@@ -8149,6 +8155,8 @@ const tr: typeof en = {
         apk: 'APK',
         downloadApk: 'APK indir ({{checksum}})',
         noChecksum: 'sağlama toplamı yok',
+        apkOnHold:
+          'Bu sunucuda yayımlanmış bir Android ajan APK’sı yok: Kotlin Android ajanı askıya alındı (bkz. ROADMAP.md, “On hold”); bir APK yayımlanana kadar bu QR ile cihaz kurulumu yapılamaz.',
         copyJson: 'JSON’u kopyala',
         done: 'Bitti',
       },

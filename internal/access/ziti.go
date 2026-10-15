@@ -1417,9 +1417,18 @@ func (zm *ZitiManager) GetIdentityEnrollmentJWT(ctx context.Context, zitiID stri
 //
 // Callers should persist the returned JWT.
 func (zm *ZitiManager) ReEnrollIdentity(ctx context.Context, zitiID string) (string, error) {
+	return zm.ReEnrollIdentityFor(ctx, zitiID, 7*24*time.Hour)
+}
+
+// ReEnrollIdentityFor is ReEnrollIdentity with the life a refreshed pending
+// enrollment gets. The enrolment door mints for a client that enrols at once
+// and passes darkEnrollJWTLifetime; the week is for a token an operator hands
+// over by hand. An already-enrolled identity's re-enrol token keeps the
+// controller's own expiry either way.
+func (zm *ZitiManager) ReEnrollIdentityFor(ctx context.Context, zitiID string, ttl time.Duration) (string, error) {
 	// Prefer refreshing a pending OTT enrollment when one exists.
 	if enrID := zm.pendingOTTEnrollmentID(ctx, zitiID); enrID != "" {
-		expiry := time.Now().Add(7 * 24 * time.Hour).UTC().Format("2006-01-02T15:04:05.000Z")
+		expiry := time.Now().Add(ttl).UTC().Format("2006-01-02T15:04:05.000Z")
 		body, _ := json.Marshal(map[string]interface{}{"expiresAt": expiry})
 		_, statusCode, err := zm.mgmtRequest("POST",
 			fmt.Sprintf("/edge/management/v1/enrollments/%s/refresh", enrID), body)

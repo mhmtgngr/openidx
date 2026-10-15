@@ -115,8 +115,9 @@ Two ways to release, and they publish the same thing:
 The workflow builds and signs the MSI and publishes a GitHub Release
 `agent-v<version>` with:
 - `OpenIDX-<version>.msi`
-- `latest.json` — `{ "version", "url", "sha256", "signature" }` the self-updater
-  polls.
+- `latest.json` — `{ "version", "url", "sha256", "expires", "signature",
+  "signature_v2" }` the self-updater polls. It expires 90 days after the
+  release (below).
 - `install-openidx-agent.ps1` — the one-command installer, stamped with the
   release's MSI and channel URLs and the `AGENT_DEFAULT_SERVER_URL` /
   `AGENT_DEFAULT_SERVER_IP` repository variables. It is never stamped with an
@@ -169,6 +170,41 @@ Consequences worth knowing before you tag:
   the manifest with your own key and setting `update_trusted_cert` in the
   agent's `agent.json` to that certificate in PEM. It *replaces* the pinned
   OpenIDX publisher, so such an agent accepts your releases and only yours.
+
+### The manifest expires
+The signature says who wrote `latest.json`, not that it is still the newest.
+Without an expiry, a copy of any manifest ever signed is as good as the latest
+one, so whoever could serve a copy once (a stale mirror, a proxy, a captured
+response) could serve it forever and the fleet would never learn that a newer
+release exists. So each manifest carries `expires` (RFC 3339, UTC), set by the
+release to **90 days** after it is built, and the agent refuses an expired one.
+
+The manifest carries two signatures over two canonical forms, LF-joined with
+one trailing newline, made with the same key:
+
+```
+openidx-agent-update-manifest/v1      openidx-agent-update-manifest/v2
+version=<version>                     version=<version>
+url=<url>                             url=<url>
+sha256=<sha256>                       sha256=<sha256>
+                                      expires=<expires>
+→ "signature"                         → "signature_v2"
+```
+
+- Agents built before the expiry verify `signature` and ignore the rest, so
+  they keep updating from a manifest that carries both.
+- Agents from the expiry on verify `signature_v2` and require `expires`: a
+  manifest with `signature` alone, with no `expires`, past its `expires`, or
+  with an `expires` more than a year ahead is refused, and the agent's log
+  says which.
+- **A channel must be renewed within 90 days.** Every agent release renews
+  `agent-latest`. If none ships in time, every agent's next check refuses the
+  manifest and logs that it expired; nothing is installed and nothing breaks,
+  which is the safe direction, until the next release. Shipping any agent
+  release (even a version bump) renews it.
+- **Publishing your own builds** means producing both signatures and
+  `expires` the same way; `TestTheProducersCanonicalFormIsTheOneTheAgentVerifies`
+  in `agent/internal/updater` shows the forms byte for byte.
 
 ## winget
 `packaging/winget/` holds the three-file manifest (version + installer + en-US

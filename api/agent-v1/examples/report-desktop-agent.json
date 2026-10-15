@@ -1,0 +1,39 @@
+{
+  "agent_id": "<the agent's own id; the test fills it>",
+  "device_id": "<the agent's device id; the test fills it>",
+  "results": [
+    {
+      "check_type": "disk_encryption",
+      "severity": "critical",
+      "result": {
+        "status": "pass",
+        "score": 1,
+        "message": "BitLocker is on for C:",
+        "details": {"volume": "C:", "method": "manage-bde"}
+      },
+      "ran_at": "2026-10-15T12:00:00Z"
+    },
+    {
+      "check_type": "firewall",
+      "severity": "high",
+      "result": {
+        "status": "fail",
+        "score": 0,
+        "message": "the Public profile is off",
+        "remediation": "Turn Windows Defender Firewall on for every profile."
+      },
+      "ran_at": "2026-10-15T12:00:00Z"
+    }
+  ],
+  "reported_at": "2026-10-15T12:00:01Z",
+  "tunnel_status": {
+    "state": "connected",
+    "version": "v1.18.7",
+    "last_seen": "2026-10-15T12:00:00Z",
+    "services": ["erp-web", "rdp-finance"],
+    "mode": "split",
+    "policy_version": "3f1c0a9e5b7d2c44",
+    "policy_gaps": ["block_direct"],
+    "last_error": ""
+  }
+}

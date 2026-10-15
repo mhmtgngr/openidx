@@ -113,6 +113,21 @@ export function AgentFleetPage() {
     queryFn: () => api.get<AgentRecord[]>('/api/v1/access/agents'),
   })
 
+  // The Kotlin Android agent is on hold (ROADMAP.md "On hold", #1185) and no
+  // release publishes its APK, so on a stock install /agent/apk-info answers
+  // 503 "APK not yet published" while /agent/qr still hands out a payload whose
+  // download location is a 404. Asked when the dialog opens, so the notice is
+  // on screen before anyone scans that QR.
+  const { error: apkInfoError } = useQuery({
+    queryKey: ['agent-apk-info'],
+    queryFn: () =>
+      api.get<{ package: string; sha256: string; url: string }>('/api/v1/access/agent/apk-info'),
+    enabled: qrOpen,
+    retry: false,
+  })
+  const apkOnHold =
+    (apkInfoError as { response?: { status?: number } } | null)?.response?.status === 503
+
   const generateQrMutation = useMutation({
     mutationFn: () =>
       api.post<QrPayloadResponse>('/api/v1/access/agent/qr', {
@@ -339,6 +354,11 @@ export function AgentFleetPage() {
           <DialogHeader>
             <DialogTitle>{t('pages.agentFleet.qr.title')}</DialogTitle>
           </DialogHeader>
+          {apkOnHold && (
+            <p role="status" className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
+              {t('pages.agentFleet.qr.apkOnHold')}
+            </p>
+          )}
           {!qrData ? (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">{t('pages.agentFleet.qr.intro')}</p>
@@ -393,21 +413,23 @@ export function AgentFleetPage() {
                   <div className="text-muted-foreground">{t('pages.agentFleet.qr.expires')}</div>
                   <div>{new Date(qrData.expires_at).toLocaleString()}</div>
                 </div>
-                <div className="col-span-2">
-                  <div className="text-muted-foreground">{t('pages.agentFleet.qr.apk')}</div>
-                  <a
-                    href={qrData.apk_url}
-                    className="inline-flex items-center gap-1 text-primary hover:underline"
-                    download
-                  >
-                    <Download className="h-4 w-4" />{' '}
-                    {t('pages.agentFleet.qr.downloadApk', {
-                      checksum: qrData.apk_checksum
-                        ? qrData.apk_checksum.slice(0, 12) + '…'
-                        : t('pages.agentFleet.qr.noChecksum'),
-                    })}
-                  </a>
-                </div>
+                {!apkOnHold && (
+                  <div className="col-span-2">
+                    <div className="text-muted-foreground">{t('pages.agentFleet.qr.apk')}</div>
+                    <a
+                      href={qrData.apk_url}
+                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                      download
+                    >
+                      <Download className="h-4 w-4" />{' '}
+                      {t('pages.agentFleet.qr.downloadApk', {
+                        checksum: qrData.apk_checksum
+                          ? qrData.apk_checksum.slice(0, 12) + '…'
+                          : t('pages.agentFleet.qr.noChecksum'),
+                      })}
+                    </a>
+                  </div>
+                )}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => copyToClipboard(qrData.qr_payload_json)}>

@@ -143,29 +143,42 @@ func loadAgentNetworkPolicy(ctx context.Context, db *database.PostgresDB, orgID 
 
 // tunnelPolicyDevices counts the organization's active devices by whether
 // they run the current policy: applied (the version they last reported is
-// current), pending (they report a tunnel status, with another version or
-// none), and unreported (no tunnel status at all: an agent older than the
-// tunnel, or one that has not reported since).
+// current, and they report no gap), applied_with_gaps (the version is
+// current, and a part of it the device cannot enforce is in its
+// tunnel_status.policy_gaps), pending (they report a tunnel status, with
+// another version or none), and unreported (no tunnel status at all: an agent
+// older than the tunnel, or one that has not reported since). A device with
+// gaps is never counted as applied: what the card says is what is enforced.
 type tunnelPolicyDevices struct {
-	Applied    int `json:"applied"`
-	Pending    int `json:"pending"`
-	Unreported int `json:"unreported"`
+	Applied         int `json:"applied"`
+	AppliedWithGaps int `json:"applied_with_gaps"`
+	Pending         int `json:"pending"`
+	Unreported      int `json:"unreported"`
 }
 
 func countTunnelPolicyDevices(ctx context.Context, db *database.PostgresDB, orgID, version string) (tunnelPolicyDevices, error) {
 	var d tunnelPolicyDevices
+	// The gaps list is read through CASE so a value that is not an array (the
+	// server never writes one) reads as no gaps rather than an error.
 	err := db.Pool.QueryRow(ctx,
-		`SELECT count(*) FILTER (WHERE tunnel_status IS NOT NULL AND tunnel_policy_version = $2),
+		`SELECT count(*) FILTER (WHERE tunnel_status IS NOT NULL AND tunnel_policy_version = $2 AND NOT has_gaps),
+		        count(*) FILTER (WHERE tunnel_status IS NOT NULL AND tunnel_policy_version = $2 AND has_gaps),
 		        count(*) FILTER (WHERE tunnel_status IS NOT NULL AND tunnel_policy_version IS DISTINCT FROM $2),
 		        count(*) FILTER (WHERE tunnel_status IS NULL)
-		   FROM enrolled_agents WHERE org_id = $1 AND status = 'active'`, orgID, version).
-		Scan(&d.Applied, &d.Pending, &d.Unreported)
+		   FROM (SELECT tunnel_status, tunnel_policy_version,
+		                COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(tunnel_status->'policy_gaps') = 'array'
+		                                                 THEN tunnel_status->'policy_gaps' END), 0) > 0 AS has_gaps
+		           FROM enrolled_agents WHERE org_id = $1 AND status = 'active') devices`, orgID, version).
+		Scan(&d.Applied, &d.AppliedWithGaps, &d.Pending, &d.Unreported)
 	return d, err
 }
 
-// tunnelPolicyState is one device's standing against the current version, for
-// the Agent Fleet page: "applied", "pending", or "" when the device reports
-// no tunnel status (or the current version is not known).
+// tunnelPolicyState is one device's standing against the current version, by
+// the version it reported: "applied", "pending", or "" when the device
+// reports no tunnel status (or the current version is not known). It is the
+// version comparison only; HandleListAgents folds in the gaps the device
+// reports (policyStateWithGaps), so the Agent Fleet page never reads
+// "applied" for a device with gaps.
 func tunnelPolicyState(reported *string, hasStatus bool, current string) string {
 	if !hasStatus || current == "" {
 		return ""
@@ -174,4 +187,16 @@ func tunnelPolicyState(reported *string, hasStatus bool, current string) string 
 		return "applied"
 	}
 	return "pending"
+}
+
+// policyStateWithGaps is the tunnel_policy_state the console reads: a device
+// that applied the current version but reports a part of it as not enforced
+// on its platform (tunnel_status.policy_gaps) is "applied_with_gaps", never
+// "applied". The other states pass through: a pending device's gaps are
+// those of the policy it still runs.
+func policyStateWithGaps(state string, status *agentTunnelStatus) string {
+	if state == "applied" && status != nil && len(status.PolicyGaps) > 0 {
+		return "applied_with_gaps"
+	}
+	return state
 }

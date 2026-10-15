@@ -52,7 +52,7 @@ Two consequences worth saying out loud:
 
 | Path | Who presents what | Starts as |
 |---|---|---|
-| `POST /agent/enroll` with an **admin/MDM token** (`agent_enrollment_tokens`: expiry, revocable, single-use unless `reusable`) | an installer, MDM, or a user pasting a token / scanning a QR | pending admin approval — unless the token came from an **enrollment session** created in an MFA-verified console session, in which case `DEVICE_AUTOTRUST_MODE` may auto-trust |
+| `POST /agent/enroll` with an **admin/MDM token** (`agent_enrollment_tokens`: expiry, revocable, single-use unless `reusable`) | an installer, MDM, or a user pasting a token / scanning a QR | `active` but not trusted — unless the token came from an **enrollment session** created in an MFA-verified console session, in which case `DEVICE_AUTOTRUST_MODE` may auto-trust |
 | `POST /agent/enroll/oauth` with a **bearer carrying `agent.enroll`** | a signed-in user enrolling their own device from a native enrolment client | same auto-trust decision as the session path (was: always pending — the handler passed a literal `trusted=false`; and any console session token was accepted — fixed with v184) |
 | `POST /api/v1/access/enroll` (Tier-0 dark front door) | session, or admin token | trades entitlement for a one-time Ziti JWT; audited; the only public route when the platform goes dark |
 
@@ -78,9 +78,20 @@ Two consequences worth saying out loud:
 
 ### The policy
 
-- **Anyone may enroll their own device** (OAuth path) and it lands **pending**.
-  Self-service without the wait needs the console-issued enrollment session
-  (MFA-verified) *and* `DEVICE_AUTOTRUST_MODE=enforce`, optionally
+- **Enrolling again takes the device's existing row only on proof.** The
+  fingerprint an enrolment names is the client's own claim, so a row is reused
+  only when the request is signed with the key the device already holds (the
+  desktop agent signs its re-enrolment as the agent it was), or, for a row
+  with no key, when an operator token or the row's own user enrols it.
+  Otherwise the device becomes a new agent without the fingerprint, the row is
+  left as it was, and the attempt is audited as `agent.enroll_denied`
+  (`reenrolmentRefusal` in `internal/access/agent_api.go`).
+- **Anyone may enroll their own device** (OAuth path). Every enrolment is
+  written `active` (`issueAgentCredentials` in `internal/access/agent_api.go`;
+  nothing writes `pending` any more), and the auto-trust decision settles only
+  whether the device is also *trusted*. Trust without an administrator needs
+  the console-issued enrollment session (MFA-verified) *and*
+  `DEVICE_AUTOTRUST_MODE=enforce`, optionally
   `DEVICE_AUTOTRUST_REQUIRE_POSTURE=true` so trust always implies a compliant
   report. Fleet/MDM enrollment uses reusable admin tokens.
 - **The OAuth path gets the same auto-trust decision as the session path** —

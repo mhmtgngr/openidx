@@ -413,6 +413,7 @@ Alerts, grouped by what to do:
 | `OpenIDXPoolerClientsWaiting`, `OpenIDXPoolerNoRedundancy` | the pooler's pool is saturated, or one replica is left | raise `pgcat.poolSize` within `max_connections`, or restore the second replica |
 | `ZitiControllerQuorumAtRisk`, `ZitiRouterNoRedundancy` | the overlay's Raft majority or its only data path is one loss away | the controller wants three; the router wants two |
 | `OpenIDXEdgeCidrSyncFailed` | the edge provider's address ranges stopped syncing; trusted hops are going stale | check the CronJob; the last good list is still in force |
+| `OpenIDXAgentTunnelDown`, `OpenIDXTunnelDialFailures` | devices report in with their OpenZiti tunnel down for 15m, or the fleet's tunnelers fail dials at a sustained rate | the Agent Fleet page's Tunnel column names the devices; the rules' `runbook_url` is the troubleshooting section of `docs/AGENT-TUNNEL.md` |
 | `CircuitBreakerOpen`, `HighRequestsInFlight`, `HighRequestLatency`, `HighErrorRate` | a dependency is failing or the admission controller is shedding | find the dependency; ADMIN sheds first by design |
 
 ---

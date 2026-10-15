@@ -22,6 +22,10 @@ on:
       # re-runs when the chart or the two Dockerfiles change.
       - 'deployments/docker/Dockerfile.identity-service'
       - 'deployments/docker/Dockerfile.oauth-service'
+      # promtool checks the Compose stacks' and the monitoring bundle's alert
+      # rules beside the chart's.
+      - 'deployments/docker/prometheus/alert_rules.yml'
+      - 'deployments/monitoring/alerts.yml'
   pull_request:
     branches: [main]
     paths:
@@ -43,6 +47,10 @@ on:
       # re-runs when the chart or the two Dockerfiles change.
       - 'deployments/docker/Dockerfile.identity-service'
       - 'deployments/docker/Dockerfile.oauth-service'
+      # promtool checks the Compose stacks' and the monitoring bundle's alert
+      # rules beside the chart's.
+      - 'deployments/docker/prometheus/alert_rules.yml'
+      - 'deployments/monitoring/alerts.yml'
   workflow_dispatch:
 
 permissions:
@@ -117,6 +125,17 @@ jobs:
           /tmp/k8sha/kubeconform -v && /tmp/k8sha/promtool --version
       - name: Chaos drill, static half (global-scale plan line 22)
         run: bash scripts/k8s-chaos-drill.sh --static
+
+      # The drill checks the chart's rules. The Compose stacks load
+      # deployments/docker/prometheus/alert_rules.yml and the monitoring
+      # bundle deployments/monitoring/alerts.yml; a rule with a typo in its
+      # PromQL is accepted by Prometheus's config load and then never fires,
+      # so they are checked the same way, here, where promtool already is.
+      - name: Alert rules of the Compose stacks and the monitoring bundle (promtool)
+        run: |
+          /tmp/k8sha/promtool check rules \
+            deployments/docker/prometheus/alert_rules.yml \
+            deployments/monitoring/alerts.yml
 
       # The bundled PostgreSQL/Redis passwords are `required` (an empty one
       # rendered a DSN that could not authenticate), so a render has to supply

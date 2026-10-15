@@ -100,6 +100,23 @@ describe('AgentFleetPage', () => {
     ).toBeInTheDocument()
   })
 
+  it('explains that the Android agent is on hold when no APK is published', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      // What a stock install answers while deployments/android/ holds no APK.
+      if (url.includes('/agent/apk-info')) {
+        return Promise.reject({ response: { status: 503, data: { error: 'APK not yet published' } } })
+      }
+      return routeFleet([activeAgent])(url) as ReturnType<typeof api.get>
+    })
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    await user.click(
+      await screen.findByRole('button', { name: /generate android enrollment qr/i }),
+    )
+    expect(await screen.findByRole('status')).toHaveTextContent(/Kotlin Android agent is on hold/i)
+    expect(api.get).toHaveBeenCalledWith('/api/v1/access/agent/apk-info')
+  })
+
   it('shows the four summary cards (total / active / pending / non-compliant)', async () => {
     render(<AgentFleetPage />, { wrapper: createWrapper() })
     await screen.findByText('Agent Fleet')

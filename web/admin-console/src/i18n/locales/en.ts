@@ -6645,7 +6645,7 @@ const en = {
           'The bundled tunneler intercepts only network resources, so devices keep running split and report the full tunnel as not enforced.',
         blockDirectScope:
           'Enforced by the agent on Linux devices where it runs as root (nftables). Windows and macOS devices report it as not enforced.',
-        rollout: 'Applied on {{applied}} devices · pending on {{pending}} · {{unreported}} not reporting a tunnel',
+        rollout: 'Applied on {{applied}} devices · applied with gaps on {{applied_with_gaps}} · pending on {{pending}} · {{unreported}} not reporting a tunnel',
         version: 'Policy version {{version}}',
         saved: 'Network policy saved',
         saveFailed: 'Could not save the network policy',
@@ -7557,6 +7557,8 @@ const en = {
         reasonPlaceholder: "Why is this user's access being severed?",
         disableAccount:
           'Also <1>disable the account</1> and delete the Ziti identity (full deprovision, blocks new logins)',
+        revokeDevices:
+          "Also <1>revoke the user's devices</1>: every enrolled agent is cut off, its Ziti identity deleted and its device trust withdrawn (the devices must enrol again)",
         severing: 'Severing…',
         severAll: 'Sever All Access',
         executed: 'Kill switch executed',
@@ -7570,6 +7572,7 @@ const en = {
         partPrivSessions: '{{n}} privileged sessions',
         partPamGrants: '{{n}} PAM connection grants',
         partNetwork: '{{n}} network sessions',
+        partDevices: '{{n}} devices',
       },
     },
     // OAuth Playground. The protocol's own parameter names (code_verifier,
@@ -8194,9 +8197,12 @@ const en = {
       tunnelLastError: 'Last error: {{error}}',
       policyStates: {
         applied: 'Policy applied',
+        applied_with_gaps: 'Policy applied, with gaps',
         pending: 'Policy pending',
       },
       policyAppliedDetail: 'Runs policy version {{version}} since {{when}}',
+      policyAppliedWithGapsDetail:
+        'Runs policy version {{version}} since {{when}}; a part of it is not enforced on this device (see the tunnel badge)',
       policyPendingDetail: 'Reports policy version {{version}}; the current policy reaches it at its next report',
       unknownPlatform: 'unknown',
       empty: 'No agents match the current filters.',
@@ -8240,6 +8246,8 @@ const en = {
         apk: 'APK',
         downloadApk: 'Download APK ({{checksum}})',
         noChecksum: 'no checksum',
+        apkOnHold:
+          'No Android agent APK is published on this server: the Kotlin Android agent is on hold (see ROADMAP.md, “On hold”), so a device cannot be provisioned from this QR until an APK is published.',
         copyJson: 'Copy JSON',
         done: 'Done',
       },

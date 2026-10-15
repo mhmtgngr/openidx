@@ -14,7 +14,7 @@ want one.
 | Piece | Where | State |
 | --- | --- | --- |
 | Client token | `client/lib/mobile/push_token_service.dart` | Mints `ntfy:<stable-per-install-id>` and stores it in the platform keystore |
-| Client delivery | the per-user ntfy topic | Subscribed by the app; see [NTFY_PUSH_NOTIFICATIONS.md](../NTFY_PUSH_NOTIFICATIONS.md) |
+| Client delivery | the per-user ntfy topic | Polled by the app while it is in the foreground; see [NTFY_PUSH_NOTIFICATIONS.md](../NTFY_PUSH_NOTIFICATIONS.md) |
 | Server publish | `internal/identity/pushmfa.go` (`publishChallengeToNtfy`) | Every challenge is published to the user's topic |
 | Server provider send | `internal/identity/pushmfa_providers.go` | Real FCM HTTP v1 + APNs token-auth senders, **skipped** for `ntfy:`-prefixed device tokens |
 | Auto-registration | `EngineActions.enroll` / the OAuth login handler | The enrolled phone becomes an approver with no extra step (FastPass) |
@@ -76,8 +76,12 @@ entirely on the client, and it is a deliberate fork rather than a flag:
    `agent_id` and `platform` of `android`/`ios`.
 2. `device_token` is `ntfy:<32 hex chars>` on a stock build. A provider token
    means step 3 above was applied.
-3. Trigger a login that requires MFA. The phone gets a tappable number-match
-   prompt that deep-links into the approve screen; approving completes the login.
+3. Trigger a login that requires MFA with the app open. The app shows no
+   notification: it polls the topic in the foreground and opens the
+   number-match approve screen itself (`client/lib/mobile/ntfy_inbox.dart`);
+   typing the number the sign-in screen shows completes the login. An app that
+   was closed catches the challenge up when it is opened, as long as the
+   challenge (about a minute) has not expired.
 4. Because the device is a FastPass-linked approver, push is offered **first**
    among the user's factors.
 

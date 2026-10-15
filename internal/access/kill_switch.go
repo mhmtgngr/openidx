@@ -17,7 +17,10 @@
 //
 // With disable_user=true the account is also disabled and the user's Ziti
 // identity is deleted immediately (the 30s deprovision sweep would otherwise
-// pick it up on the next tick).
+// pick it up on the next tick). With revoke_devices=true every device the user
+// enrolled is revoked too, through the one device revoke every page uses
+// (device_revoke.go); without it the devices keep their identities, with
+// their live circuits severed, so a device may be re-assigned.
 //
 // Every step is best-effort and idempotent: one pillar failing must not stop
 // the others from being severed. The response reports exactly what happened.
@@ -86,13 +89,27 @@ type KillSwitchResult struct {
 	// ModerationsEnded counts the moderations the user asked for or
 	// moderates. A session one admitted ends with it, on the next lifecycle
 	// tick.
-	ModerationsEnded     int64     `json:"pam_moderations_ended"`
-	ZitiEdgeSessions     int       `json:"ziti_edge_sessions_terminated"`
-	ZitiAPISessions      int       `json:"ziti_api_sessions_terminated"`
-	ZitiIdentityDeleted  bool      `json:"ziti_identity_deleted"`
-	ZitiControllerOnline bool      `json:"ziti_controller_online"`
-	Warnings             []string  `json:"warnings,omitempty"`
-	ExecutedAt           time.Time `json:"executed_at"`
+	ModerationsEnded     int64 `json:"pam_moderations_ended"`
+	ZitiEdgeSessions     int   `json:"ziti_edge_sessions_terminated"`
+	ZitiAPISessions      int   `json:"ziti_api_sessions_terminated"`
+	ZitiIdentityDeleted  bool  `json:"ziti_identity_deleted"`
+	ZitiControllerOnline bool  `json:"ziti_controller_online"`
+	// DevicesRevoked counts the user's enrolled devices revoked under
+	// revoke_devices, each through deviceRevoker; their warnings are folded
+	// into Warnings with the agent id in front.
+	DevicesRevoked int       `json:"devices_revoked"`
+	Warnings       []string  `json:"warnings,omitempty"`
+	ExecutedAt     time.Time `json:"executed_at"`
+}
+
+// killSwitchOptions are the kill switch's switches.
+type killSwitchOptions struct {
+	// DisableUser disables the account and deletes the user's own overlay
+	// identity at once.
+	DisableUser bool
+	// RevokeDevices revokes every device the user enrolled, as Agent Fleet
+	// and the user's page do, instead of only severing their circuits.
+	RevokeDevices bool
 }
 
 // handleUserKillSwitch severs one user's live access across IAM, PAM and Ziti.
@@ -110,10 +127,11 @@ func (s *Service) handleUserKillSwitch(c *gin.Context) {
 	userID := c.Param("id")
 
 	var req struct {
-		Reason      string `json:"reason"`
-		DisableUser bool   `json:"disable_user"`
+		Reason        string `json:"reason"`
+		DisableUser   bool   `json:"disable_user"`
+		RevokeDevices bool   `json:"revoke_devices"`
 	}
-	_ = c.ShouldBindJSON(&req) // both fields optional
+	_ = c.ShouldBindJSON(&req) // every field optional
 
 	username, _, err := s.verifyOrgUser(ctx, org.ID, userID)
 	if err != nil {
@@ -128,7 +146,8 @@ func (s *Service) handleUserKillSwitch(c *gin.Context) {
 		return
 	}
 
-	result := s.executeKillSwitch(ctx, org.ID, userID, username, actorIDStr, req.Reason, req.DisableUser)
+	result := s.executeKillSwitchWith(ctx, org.ID, userID, username, actorIDStr, req.Reason,
+		killSwitchOptions{DisableUser: req.DisableUser, RevokeDevices: req.RevokeDevices})
 
 	// Cross-pillar audit: one unified event carrying the full severance
 	// summary, visible in the same stream as the ziti/guacamole activity it
@@ -155,14 +174,16 @@ func (s *Service) handleUserKillSwitch(c *gin.Context) {
 			"ziti_edge_sessions_terminated":  result.ZitiEdgeSessions,
 			"ziti_api_sessions_terminated":   result.ZitiAPISessions,
 			"ziti_identity_deleted":          result.ZitiIdentityDeleted,
+			"devices_revoked":                result.DevicesRevoked,
 		}
 		if err := s.auditService.RecordEvent(ctx, "openidx", "user.kill_switch", "", userID, c.ClientIP(), details); err != nil {
 			s.logger.Warn("kill-switch: unified audit write failed", zap.Error(err))
 		}
 	}
 	s.logAuditEvent(c, "user_kill_switch", userID, "user", map[string]interface{}{
-		"reason":       req.Reason,
-		"disable_user": req.DisableUser,
+		"reason":         req.Reason,
+		"disable_user":   req.DisableUser,
+		"revoke_devices": req.RevokeDevices,
 	})
 
 	c.JSON(http.StatusOK, result)
@@ -171,6 +192,12 @@ func (s *Service) handleUserKillSwitch(c *gin.Context) {
 // executeKillSwitch runs the three-pillar severance. Each step is best-effort:
 // failures are collected as warnings, never abort the remaining pillars.
 func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username, actorID, reason string, disableUser bool) *KillSwitchResult {
+	return s.executeKillSwitchWith(ctx, orgID, userID, username, actorID, reason, killSwitchOptions{DisableUser: disableUser})
+}
+
+// executeKillSwitchWith is executeKillSwitch with every option.
+func (s *Service) executeKillSwitchWith(ctx context.Context, orgID, userID, username, actorID, reason string, opts killSwitchOptions) *KillSwitchResult {
+	disableUser := opts.DisableUser
 	res := &KillSwitchResult{
 		UserID:     userID,
 		Username:   username,
@@ -345,6 +372,44 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 	// The live entry sessions need the broker, so they stay here.
 	res.PamEntrySessionsEnded = s.endUserPamEntrySessions(ctx, orgID, userID, sessionEndKillSwitch, actorID, warn)
 
+	// ---- Devices: revoke them whole when asked ----
+	//
+	// Each goes through the one device revoke (device_revoke.go), so a device
+	// the kill switch revokes is exactly as revoked as one Agent Fleet
+	// revokes: circuits severed, identity deleted, row revoked, known device
+	// untrusted, bound tokens and sessions revoked. Without the option the
+	// devices keep their identities and only their circuits are severed below.
+	if opts.RevokeDevices {
+		type device struct{ agentID, zitiID, knownDeviceID string }
+		var devices []device
+		rows, err := s.db.Pool.Query(ctx, `
+			SELECT agent_id, COALESCE(ziti_identity_id, ''), COALESCE(known_device_id::text, '')
+			  FROM enrolled_agents
+			 WHERE enrolled_by_user_id = $1 AND org_id = $2 AND status <> 'revoked'`,
+			userID, orgID)
+		if err != nil {
+			warn("list_devices", err)
+		} else {
+			for rows.Next() {
+				var d device
+				if err := rows.Scan(&d.agentID, &d.zitiID, &d.knownDeviceID); err == nil && d.agentID != "" {
+					devices = append(devices, d)
+				}
+			}
+			rows.Close()
+		}
+		revoker := s.deviceRevoker()
+		for _, d := range devices {
+			dr := revoker.revoke(ctx, orgID, d.agentID, d.zitiID, d.knownDeviceID)
+			if dr.AgentRevoked {
+				res.DevicesRevoked++
+			}
+			for _, w := range dr.Warnings {
+				res.Warnings = append(res.Warnings, "device "+d.agentID+": "+w)
+			}
+		}
+	}
+
 	// ---- Ziti: sever live circuits on the controller ----
 	zm := s.ziti()
 	res.ZitiControllerOnline = zm != nil
@@ -410,6 +475,8 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 		zap.String("actor_id", logsafe.Clean(actorID)),
 		zap.String("reason", logsafe.Clean(reason)),
 		zap.Bool("disable_user", disableUser),
+		zap.Bool("revoke_devices", opts.RevokeDevices),
+		zap.Int("devices_revoked", res.DevicesRevoked),
 		zap.Int64("sessions_revoked", res.SessionsRevoked),
 		zap.Int64("checkouts_revoked", res.CheckoutsRevoked),
 		zap.Int("guac_sessions_killed", res.GuacSessionsKilled),

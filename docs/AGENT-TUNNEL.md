@@ -224,9 +224,9 @@ reports it back once applied.
   per-application exemption for the tunneler, and macOS a pf anchor; until
   then those devices report the gap `block_direct`.
 
-The Agent Fleet page shows **Policy applied** or **Policy pending** beside each
-device's tunnel state, and the Network policy card counts the devices that run
-the current version.
+The Agent Fleet page shows **Policy applied**, **Policy applied, with gaps** or
+**Policy pending** beside each device's tunnel state, and the Network policy
+card counts the devices that run the current version, with and without gaps.
 
 ## What the server and the tray see
 
@@ -261,6 +261,16 @@ the reason the tunnel is degraded or not installed). The server stores
 `last_seen` is when the tunneler last answered (`null` if it never has).
 `services` are the services the identity may dial, sorted. An agent that
 supervises no tunnel (one older than this feature) sends no `tunnel_status`.
+
+`GET /api/v1/access/agents` returns each device's `tunnel_policy_state`:
+`applied` when the reported `policy_version` is the current one and
+`policy_gaps` is empty, `applied_with_gaps` when the version is current but the
+device reports a gap, `pending` otherwise (and `""` for a device that reports
+no tunnel status); a device with gaps is never `applied`, and
+`GET /api/v1/access/network-policy` counts `applied_with_gaps` devices apart
+from `applied`. Across the fleet, `openidx_tunnel_policy_gaps{gap}` counts the
+active devices reporting each gap and `openidx_agents_by_state{state}` the
+enrolled agents per status.
 
 On Windows the tray shows **Network: Connected · N services**, **Degraded**,
 **Off** or **Not installed**. Its submenu lists the intercepted services, and,

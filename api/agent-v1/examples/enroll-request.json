@@ -1,0 +1,12 @@
+{
+  "token": "<enrollment token; also sent as Authorization: Bearer>",
+  "hostname": "PC-CONTRACT",
+  "os": "windows",
+  "arch": "amd64",
+  "platform": "windows/amd64",
+  "device_fingerprint": "win:contract-fingerprint",
+  "device_key": {
+    "public_key": "<device public key, base64 PKIX DER; the test fills it>",
+    "kind": "tpm"
+  }
+}

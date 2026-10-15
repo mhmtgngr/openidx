@@ -1,0 +1,1403 @@
+openapi: 3.0.3
+info:
+  title: OpenIDX Agent API
+  description: |
+    The routes the OpenIDX endpoint agents call on the access service: the Go
+    desktop agent (`agent/`), the Android agent (`agent-android/`) and the
+    native client (`client/`). Every field here is spelled exactly as the Go
+    JSON tag in `internal/access` spells it, and
+    `internal/access/agent_api_contract_test.go` holds this file to the Go
+    types in both directions: a field renamed on one side only fails
+    `go test ./internal/access -run TestAgentAPIContract`. Schemas carry an
+    `x-openidx-go-type` naming the Go type they are checked against;
+    operations carry an `x-openidx-handler` naming the handler that serves
+    them, as the service specs under `api/openapi/` do.
+
+    ## Compatibility rule
+
+    * An agent must work against a server up to two minor versions newer than
+      itself (N-2). A server therefore never requires a field or a shape that
+      an agent two minor versions older does not send, and never stops sending
+      a field such an agent reads.
+    * When a wire shape changes, the new shape is added beside the old one and
+      the server keeps accepting the old shape for one release after the
+      change. The old shape stays in this file, marked `deprecated: true`,
+      with a note saying which release stops accepting it. Removing the old
+      shape in the same release as the new one would break every agent that
+      had not updated yet.
+
+    ## Authentication
+
+    Three credentials appear on this surface:
+
+    * `Authorization: Bearer <enrollment token>` on `POST /agent/enroll`, the
+      token an operator minted (or the enrollment-session code, which may
+      instead travel in the body's `code`).
+    * `Authorization: Bearer <access token>` carrying the `agent.enroll` scope
+      on `POST /agent/enroll/oauth` and `POST /enroll`.
+    * The agent credential enrolment issued, on everything else: `X-Agent-ID`
+      and `X-Auth-Token`. `/agent/config`, `/agent/report` and
+      `/agent/device-key` also accept the token as `Authorization: Bearer
+      <auth_token>` (the Go agent sends that spelling); the remote-support
+      and Windows-app routes read `X-Auth-Token` only. A wrong credential is
+      401; a correct credential for an agent an administrator revoked is 403
+      with code `agent_revoked` on every route, which is how a client tells
+      "revoked" from "unreachable".
+
+    ## Device-key signature
+
+    A device that holds a device key (an ECDSA P-256 key the operating system
+    will not export) signs its posture reports, its key registration and its
+    re-enrolment. The signature travels in `X-Agent-Key-Timestamp` (Unix
+    seconds; accepted within five minutes of the server's clock either way)
+    and `X-Agent-Key-Signature` (standard base64 of an ASN.1 DER ECDSA
+    signature over the SHA-256 of the signing input). The signing input is
+    the byte string
+
+        openidx-agent-request/v1\n<METHOD>\n<path>\n<agent id>\n<timestamp>\n<hex sha256 of the exact body bytes>\n
+
+    where `<path>` is the request path without query string. Once the server
+    holds a key for a device, a report without a valid signature is refused
+    (401 `device_signature_required` or `device_signature_invalid`).
+
+    ## Errors
+
+    Every error answer is a JSON object with `error`. Refusals a client acts on
+    also carry `code` (`agent_revoked`, `device_signature_required`,
+    `device_signature_invalid`, `device_key_invalid`, `device_key_conflict`,
+    `insufficient_scope`, `token_revoked`, `revocation_unavailable`). One
+    answer differs: the 403 of `POST /agent/enroll/oauth` puts
+    `insufficient_scope` in `error` and the sentence in `error_description`.
+  version: 1.46.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8007
+    description: Local development
+
+tags:
+  - name: Agent Enrollment
+    description: Enrolling a device and binding its device key
+  - name: Agent Posture
+    description: The configuration an agent runs and the report it sends back
+  - name: Remote Support
+    description: The device side of an attended remote-support session
+  - name: Windows Apps
+    description: Windows application discovery from an agent on an app host
+  - name: Overlay Enrollment
+    description: The dark-platform door that mints an OpenZiti enrolment JWT
+
+paths:
+  /api/v1/access/agent/enroll:
+    post:
+      tags: [Agent Enrollment]
+      summary: Enrol a device with an enrollment token
+      description: >-
+        Trades an enrollment token for the agent credential. The token comes
+        from `Authorization: Bearer`, or from the body's `code` when the device
+        enrols from a deep link or short code. Unknown, revoked, expired and
+        already-spent tokens are refused 401, and a single-use token is spent
+        before anything is minted, so two devices presenting the same token
+        cannot both enrol. A device that names a `device_fingerprint` already
+        enrolled in the token's organization is re-enrolled as the same agent
+        with a new token when the request is signed with the key that agent
+        holds (see `X-Agent-ID`), when the row holds no key and an operator or
+        MDM token admitted the enrolment, or when the row holds no key and the
+        enrolling user is the one who enrolled it; otherwise it is enrolled as
+        a new agent and the existing row is left as it was. A fingerprint that
+        names an agent an administrator revoked is refused 403 `agent_revoked`,
+        and the single-use token presented for it stays spent. The `device_key`
+        the body names is recorded (`device_key_bound` in the answer) and an
+        enrolment that names none clears any key left from before.
+      operationId: agentEnroll
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleEnroll
+      security:
+        - enrollmentToken: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/ReenrolmentAgentID'
+        - $ref: '#/components/parameters/AgentKeyTimestamp'
+        - $ref: '#/components/parameters/AgentKeySignature'
+      requestBody:
+        description: Device information. Optional; a bare request with the bearer header enrols too.
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrollRequest'
+      responses:
+        '200':
+          description: >-
+            The device is enrolled. `push_enroll_token`, `push_enroll_path` and
+            `push_enroll_expires_in` are present only when the token came from
+            an enrollment session (the wizard, a short code, a QR code) and the
+            server has Redis; `ziti_jwt` and `ziti_service` only when the device
+            has an overlay identity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollResponse'
+        '400':
+          description: The body could not be read (it is limited to 64 KiB).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: >-
+            No token (`enrollment token required`); a token the server does not
+            know, that was revoked, that has expired or that was already used
+            (`error` names which); or a re-enrolment signature that does not
+            verify against the key the server holds for `X-Agent-ID`
+            (`device_signature_invalid`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/AgentRevoked'
+        '500':
+          description: The device key named by `X-Agent-ID` could not be read.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: >-
+            The token could not be redeemed because the database did not answer
+            (nothing was minted and the token was not spent), or the service has
+            no database and is not running in development.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/agent/enroll/oauth:
+    post:
+      tags: [Agent Enrollment]
+      summary: Enrol a device for the signed-in user
+      description: >-
+        Enrols a device on behalf of the user whose access token the request
+        carries. The token must have been issued with the `agent.enroll` scope
+        (the seeded native enrolment clients have it; a console session token
+        does not). The agent inherits the user for governance, the device is
+        mirrored into the user's known devices, and the session's refresh
+        tokens are bound to the agent so revoking the device revokes them. The
+        same fingerprint rules as `POST /agent/enroll` apply, with the user as
+        the enroller. As of this version this path does not record the body's
+        `device_key`; a device enrolled here binds its key afterwards through
+        `POST /agent/device-key`.
+      operationId: agentEnrollOAuth
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleEnrollOAuth
+      security:
+        - oauthBearer: []
+      parameters:
+        - $ref: '#/components/parameters/ReenrolmentAgentID'
+        - $ref: '#/components/parameters/AgentKeyTimestamp'
+        - $ref: '#/components/parameters/AgentKeySignature'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrollRequest'
+      responses:
+        '200':
+          description: The device is enrolled. The push-enrolment fields are never present on this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollResponse'
+        '400':
+          description: The body could not be read.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: >-
+            The access token is missing, invalid or carries no subject, or the
+            re-enrolment signature does not verify (`device_signature_invalid`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: >-
+            The token lacks the `agent.enroll` scope (`error` is
+            `insufficient_scope`, `error_description` says so), or the device
+            fingerprint names an agent an administrator revoked (code
+            `agent_revoked`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: The device key named by `X-Agent-ID` could not be read.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/agent/config:
+    get:
+      tags: [Agent Posture]
+      summary: The device's configuration
+      description: >-
+        The posture checks the device should run, how often to report, the
+        enforcement policy, the device's own enrolment state, and what else the
+        server wants from it right now: a kiosk policy, an in-flight
+        remote-support session to join, a Windows-app discovery job, the
+        organization's tunnel policy. What is sent depends on the agent's
+        status. A `pending` agent gets `os_version` only, hourly; a `suspended`
+        agent gets no checks, a 24h interval and the `block` policy; an `active`
+        agent gets every enabled check for its platform and, while a
+        remote-support session is in flight, a 5s interval. When the server
+        cannot find the agent it answers the built-in defaults, with no
+        `enrollment_status`: a client must read that as unknown, not active.
+      operationId: agentConfig
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleConfig
+      security:
+        - agentID: []
+          agentToken: []
+      responses:
+        '200':
+          description: The configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConfig'
+        '401':
+          $ref: '#/components/responses/AgentUnauthorized'
+        '403':
+          $ref: '#/components/responses/AgentRevoked'
+
+  /api/v1/access/agent/report:
+    post:
+      tags: [Agent Posture]
+      summary: Post a posture report
+      description: >-
+        The outcome of each posture check and, from an agent that supervises a
+        tunneler, the tunnel's state. The authenticated `X-Agent-ID` is the
+        subject; a body `agent_id` that names another agent is refused 400.
+        When the device holds a device key the report must carry
+        `X-Agent-Key-Timestamp` and `X-Agent-Key-Signature` over the exact body
+        bytes. Each result is scored by severity into a compliance score and
+        status (`compliant`, `grace_period`, `non_compliant`, `unknown`); a
+        `play_integrity` result is verified server-side and its token is never
+        stored. The answer carries the organization's tunnel policy when the
+        agent is active, so a policy change reaches a device at its next report
+        as well as at its next config sync.
+      operationId: agentReport
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleReport
+      security:
+        - agentID: []
+          agentToken: []
+      parameters:
+        - $ref: '#/components/parameters/AgentKeyTimestamp'
+        - $ref: '#/components/parameters/AgentKeySignature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentReport'
+      responses:
+        '202':
+          description: The report was accepted and recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponse'
+        '400':
+          description: >-
+            The body could not be read (it is limited to 4 MiB) or parsed, or
+            its `agent_id` is not the authenticated agent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: >-
+            The agent credential is missing or wrong; or the device holds a key
+            and the report carries no signature (`device_signature_required`),
+            or one that does not verify, is not base64, or whose timestamp is
+            not a number or is outside the five-minute window
+            (`device_signature_invalid`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/AgentRevoked'
+        '500':
+          description: The device's key could not be read; the report is refused rather than accepted unsigned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/agent/device-key:
+    post:
+      tags: [Agent Enrollment]
+      summary: Register the device key
+      description: >-
+        An enrolled agent with no key on record offers the public half of its
+        device key, in a request signed with that same key, so the server
+        stores a key the caller proves it holds. The same key again is a no-op
+        (200); a different key is refused (409), because replacing a device's
+        key is what enrolment is for. Once a key is bound, the device's
+        reports must carry its signature.
+      operationId: agentRegisterDeviceKey
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleRegisterDeviceKey
+      security:
+        - agentID: []
+          agentToken: []
+      parameters:
+        - $ref: '#/components/parameters/AgentKeyTimestamp'
+        - $ref: '#/components/parameters/AgentKeySignature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceKey'
+      responses:
+        '200':
+          description: This key is already the device's key; nothing changed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceKeyResponse'
+        '201':
+          description: The key is now bound to the device.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceKeyResponse'
+        '400':
+          description: >-
+            The body could not be read or parsed, or the key is not an ECDSA
+            P-256 public key in base64 PKIX DER of a known kind
+            (`device_key_invalid`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: >-
+            The agent credential is missing or wrong, or the request is not
+            signed with the key it offers (`device_signature_invalid`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/AgentRevoked'
+        '409':
+          description: The device already holds a different key (`device_key_conflict`); enrol it again to replace it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: The device could not be read, or the key could not be stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/agent/remote-support/sessions/{id}/ws:
+    parameters:
+      - $ref: '#/components/parameters/SessionID'
+    get:
+      tags: [Remote Support]
+      summary: Join a remote-support session's signalling channel
+      description: >-
+        A WebSocket upgrade. The device dials this path, which `/agent/config`
+        hands it as `remote_support.ws_path`, to exchange signalling with the
+        administrator's viewer (and, with `transport: relay`, to stream frames
+        through the broker). `X-Agent-ID` must be the agent the session
+        targets. The token is read from `X-Auth-Token` only.
+      operationId: agentRemoteSupportWS
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleAgentWS
+      security:
+        - agentID: []
+          agentToken: []
+      responses:
+        '101':
+          description: Switching Protocols; the connection is now the signalling channel.
+        '401':
+          description: >-
+            `X-Agent-ID` is not the session's agent, `X-Auth-Token` is missing
+            (`agent credentials invalid`), or the token is wrong
+            (`auth token mismatch`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/AgentRevoked'
+        '404':
+          $ref: '#/components/responses/SessionNotFound'
+
+  /api/v1/access/agent/remote-support/sessions/{id}/consent:
+    parameters:
+      - $ref: '#/components/parameters/SessionID'
+    post:
+      tags: [Remote Support]
+      summary: Grant or deny consent to a remote-support session
+      description: >-
+        Attended support: the person at the device allows or refuses the
+        session before the administrator can view or control it.
+        `/agent/config` hands the device this path as
+        `remote_support.consent_path` while `consent_required` is true. A
+        denial ends the session at once; a grant lets it proceed. The token is
+        read from `X-Auth-Token` only.
+      operationId: agentRemoteSupportConsent
+      x-openidx-handler: internal/access.(*RemoteSupportHandler).HandleAgentConsent
+      security:
+        - agentID: []
+          agentToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentDecision'
+      responses:
+        '200':
+          description: The decision is recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentResponse'
+        '400':
+          description: The body is not JSON, or `decision` is neither `grant` nor `deny`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: >-
+            `X-Agent-ID` is not the session's agent, or the credential is
+            missing or wrong (`agent credentials invalid`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/AgentRevoked'
+        '404':
+          $ref: '#/components/responses/SessionNotFound'
+        '500':
+          description: >-
+            The decision could not be recorded. After a failed denial the
+            session may still be active; the answer says to end it from the
+            console.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/agent/windows-apps/report:
+    post:
+      tags: [Windows Apps]
+      summary: Post a Windows-app discovery report
+      description: >-
+        An agent bound to a Windows app host posts the JSON that
+        `Prepare-OpenIDXAppHost.ps1 -Report` emits, on the cadence
+        `/agent/config` sets in `windows_app_discovery`. The host and its
+        organization are resolved from the agent's binding, so an agent not
+        bound to a host is refused 412 rather than silently dropped. The token
+        is read from `X-Auth-Token` only.
+      operationId: agentWindowsAppReport
+      x-openidx-handler: internal/access.(*Service).handleAgentWindowsAppReport
+      security:
+        - agentID: []
+          agentToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WindowsAppDiscoveryReport'
+      responses:
+        '200':
+          description: The report was imported.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WindowsAppDiscoveryResponse'
+        '400':
+          description: The body is not a discovery report (`invalid discovery JSON`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/AgentUnauthorized'
+        '403':
+          $ref: '#/components/responses/AgentRevoked'
+        '412':
+          description: This agent is not linked to a Windows app host.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/access/enroll:
+    post:
+      tags: [Overlay Enrollment]
+      summary: Mint an OpenZiti enrolment JWT
+      description: >-
+        The Tier-0 "dark platform" door: the one access-service route that
+        stays public when the platform goes dark. It trades an entitlement for
+        a one-time OpenZiti enrolment JWT (fifteen-minute life) so a native
+        client can join the overlay and reach everything else. The entitlement
+        is, in order, a verified access token carrying the `agent.enroll` scope
+        that has not been revoked, or an enrollment token in the body; a
+        `passkey` is not yet verifiable here and is refused. The route is
+        rate-limited to 20 requests per minute per address and every issuance
+        is audited.
+      operationId: overlayEnroll
+      x-openidx-handler: internal/access.(*Service).handleEnroll
+      security:
+        - oauthBearer: []
+        - {}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OverlayEnrollRequest'
+      responses:
+        '200':
+          description: The enrolment JWT and the identity it enrols.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OverlayEnrollResponse'
+        '401':
+          description: >-
+            No entitlement (`entitlement required (session, enrollment_token,
+            or passkey)`), an invalid enrollment token, a passkey (not yet
+            supported), or a verified bearer the kill switch, a device revoke
+            or a leaver's disable has cut (code `token_revoked`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: The bearer verifies but lacks the `agent.enroll` scope (code `insufficient_scope`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: The per-address budget (20 per minute) is spent; `Retry-After` says when it resets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: >-
+            The JWT could not be minted (the overlay is not configured, or the
+            controller did not answer). The body is the platform's internal
+            error shape rather than an agent ErrorResponse.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternalErrorResponse'
+        '503':
+          description: The bearer's revocation state could not be checked (code `revocation_unavailable`); the door fails closed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    enrollmentToken:
+      type: http
+      scheme: bearer
+      description: An enrollment token an operator minted, or an enrollment-session code.
+    oauthBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: An OpenIDX access token issued with the `agent.enroll` scope.
+    agentID:
+      type: apiKey
+      in: header
+      name: X-Agent-ID
+      description: The `agent_id` enrolment issued. Always paired with the agent token.
+    agentToken:
+      type: apiKey
+      in: header
+      name: X-Auth-Token
+      description: >-
+        The `auth_token` enrolment issued. `/agent/config`, `/agent/report` and
+        `/agent/device-key` also read it from `Authorization: Bearer`.
+
+  parameters:
+    SessionID:
+      name: id
+      in: path
+      required: true
+      description: The remote-support session id, as `/agent/config` gave it in `remote_support.session_id`.
+      schema:
+        type: string
+    ReenrolmentAgentID:
+      name: X-Agent-ID
+      in: header
+      required: false
+      description: >-
+        Re-enrolment proof. A device that already holds a device key names the
+        agent it was and signs the enrolment with that key (the timestamp and
+        signature headers a report carries). The enrolment then takes that
+        agent's row again. Without it, or when the named agent holds no key,
+        the enrolment stands on whatever admitted it; a signature that does not
+        verify is refused 401 `device_signature_invalid`. A server that predates
+        the proof ignores these headers.
+      schema:
+        type: string
+    AgentKeyTimestamp:
+      name: X-Agent-Key-Timestamp
+      in: header
+      required: false
+      description: Unix seconds at which the request was signed, within five minutes of the server's clock either way. Required whenever the device holds a key.
+      schema:
+        type: string
+        example: '1760500000'
+    AgentKeySignature:
+      name: X-Agent-Key-Signature
+      in: header
+      required: false
+      description: Standard base64 of the ASN.1 DER ECDSA P-256 signature over the SHA-256 of the signing input (see the description at the top). Required whenever the device holds a key.
+      schema:
+        type: string
+
+  responses:
+    AgentUnauthorized:
+      description: The agent credential is missing or wrong (`invalid agent credentials`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    AgentRevoked:
+      description: >-
+        The credential is correct and an administrator revoked this agent; code
+        `agent_revoked`. Retrying never helps: the device must be shown that it
+        was revoked, and nothing in the admin API reinstates it. On the
+        enrolment routes it means the device fingerprint names a revoked agent.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    SessionNotFound:
+      description: No remote-support session has this id (`session not found`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    # ---------------------------------------------------------------- enrolment
+    EnrollRequest:
+      type: object
+      x-openidx-go-type: enrollRequest
+      description: >-
+        What a device says about itself when it enrols. Every field is
+        optional; unknown `platform`, `form_factor` and `management_mode`
+        values are stored as unknown or left unset rather than refused.
+      properties:
+        token:
+          type: string
+          deprecated: true
+          description: >-
+            Not read. The server takes the enrollment token from
+            `Authorization: Bearer`, then from `code`. The Go agent still sends
+            it beside the header; it is kept here so that stays documented.
+        code:
+          type: string
+          description: >-
+            The enrollment-session code (short code, QR, deep link), used as the
+            bearer token when the `Authorization` header is absent.
+        hostname:
+          type: string
+        os:
+          type: string
+          description: The operating system (`windows`, `linux`, `darwin`, `android`, ...). Read as the platform when `platform` is unknown.
+        arch:
+          type: string
+        platform:
+          type: string
+          description: Normalised to `linux`, `macos` (also from `darwin`), `windows`, `android`, `ios` or `unknown`.
+        form_factor:
+          type: string
+          enum: [desktop, laptop, phone, tablet, kiosk, server]
+        management_mode:
+          type: string
+          enum: [device_owner, profile_owner, unmanaged]
+          description: The Android management posture.
+        device_fingerprint:
+          type: string
+          description: >-
+            A stable per-machine identifier (the Windows MachineGuid, else a
+            hostname-derived value). One physical machine stays one agent per
+            organization when it re-enrols with the same fingerprint, under the
+            ownership rules the operation describes.
+        device_key:
+          $ref: '#/components/schemas/DeviceKey'
+
+    DeviceKey:
+      type: object
+      x-openidx-go-type: deviceKeyRequest
+      description: The public half of the device key, as enrolment and `POST /agent/device-key` carry it.
+      required: [public_key, kind]
+      properties:
+        public_key:
+          type: string
+          description: Standard base64 of the PKIX DER encoding of an ECDSA P-256 public key.
+        kind:
+          type: string
+          enum: [tpm, software, file]
+          description: Where the private half lives.
+
+    EnrollCredentials:
+      type: object
+      x-openidx-go-type: enrollResponse
+      description: The credential every enrolment path issues.
+      required: [agent_id, device_id, auth_token]
+      properties:
+        agent_id:
+          type: string
+          description: The agent's id (`agent-` and eight hex characters); sent as `X-Agent-ID` from now on.
+        device_id:
+          type: string
+          description: The device's id (`device-` and eight hex characters).
+        auth_token:
+          type: string
+          description: The agent credential; sent as `X-Auth-Token` from now on. Shown once; the server keeps only its hash.
+
+    EnrollResponse:
+      description: >-
+        The answer to both enrolment routes: the credential plus what
+        `writeEnrollResponse` adds. Property names are checked against the
+        keys the handlers write, since the answer is built as a `gin.H`.
+      x-openidx-go-type: gin.H in writeEnrollResponse, mintPushEnrollExtra and HandleEnroll
+      allOf:
+        - $ref: '#/components/schemas/EnrollCredentials'
+        - type: object
+          required: [status, enrollment_method, enrolled_at]
+          properties:
+            status:
+              type: string
+              enum: [active]
+              description: The agent's status after enrolment. Always `active` as of this version.
+            enrollment_method:
+              type: string
+              enum: [token, session, oauth]
+              description: What admitted the device; `session` when the token came from an enrollment session.
+            enrolled_at:
+              type: string
+              format: date-time
+            ziti_jwt:
+              type: string
+              description: >-
+                A one-time OpenZiti enrolment JWT for the device's overlay
+                identity, present when the identity was just created or its
+                enrolment is still pending.
+            ziti_service:
+              type: string
+              description: >-
+                The overlay service fronting this API (`openidx-access`),
+                present whenever the device has an overlay identity. A device
+                that holds it may route config, report and consent over the
+                overlay instead of the public endpoint.
+            device_key_bound:
+              type: boolean
+              description: True when the server stored the `device_key` this enrolment sent; the device's reports must carry its signature from now on.
+            push_enroll_token:
+              type: string
+              description: A single-use ticket that lets this device register as a push-MFA approver in one step.
+            push_enroll_path:
+              type: string
+              description: Where to POST the ticket with the device's push token (`/api/v1/identity/mfa/push/enroll/complete`).
+            push_enroll_expires_in:
+              type: integer
+              description: The ticket's lifetime in seconds (300).
+
+    # ------------------------------------------------------------ configuration
+    AgentConfig:
+      type: object
+      x-openidx-go-type: agentConfigResponse
+      required: [checks, report_interval, device_trusted]
+      properties:
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentCheck'
+        report_interval:
+          type: string
+          description: >-
+            How often to sync and report, as a Go duration (`30s` for an active
+            agent, `5s` while a remote-support session is in flight, `1h`
+            pending, `24h` suspended).
+        enforcement_policy:
+          type: string
+          enum: [monitor, enforce, block]
+        enrollment_status:
+          type: string
+          enum: [pending, active, suspended]
+          description: >-
+            What the server allows this device to do. Absent when the server
+            served the defaults because it could not resolve the agent; a
+            client treats that as unknown, not active. Revoked is not a value
+            here: it is the 403.
+        device_trusted:
+          type: boolean
+          description: >-
+            The device-trust flag on the linked known device, which the
+            overlay's `device-trusted` attribute follows. False for a device
+            with no linked known device.
+        kiosk_policy:
+          $ref: '#/components/schemas/KioskPolicy'
+        remote_support:
+          $ref: '#/components/schemas/RemoteSupportInfo'
+        windows_app_discovery:
+          $ref: '#/components/schemas/WindowsAppDiscoveryJob'
+        org_network_policy:
+          $ref: '#/components/schemas/AgentNetworkPolicy'
+
+    AgentCheck:
+      type: object
+      x-openidx-go-type: agentCheck
+      description: >-
+        One posture check to run. The two shipped agents read different keys:
+        the Android agent reads `name` and `check_type`, the Go agent reads
+        `type` and `params`, so the server sends `check_type` and `type` with
+        the same value. A check the server builds from a stored row carries all
+        of them; the built-in defaults carry `name`, `enabled` and `type`.
+      required: [name, enabled]
+      properties:
+        name:
+          type: string
+          description: The check type, again.
+        enabled:
+          type: boolean
+        check_type:
+          type: string
+          description: The check type (`os_version`, `disk_encryption`, `process_running`, `play_integrity`, ...), as the Android agent reads it.
+        type:
+          type: string
+          description: The same value as `check_type`, as the Go agent reads it.
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        params:
+          type: object
+          additionalProperties: true
+          description: >-
+            The check's stored parameters, passed through unchanged (for
+            example `os_version`'s `min_version`). Sent only when they are a
+            non-empty JSON object.
+
+    KioskPolicy:
+      type: object
+      x-openidx-go-type: kioskPolicyRow
+      description: The kiosk policy assigned to an Android device, present only when one is enabled for the agent or a tag it carries.
+      required: [id, name, description, mode, allowed_packages, lock_task_features, branding, has_exit_pin, enabled, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        mode:
+          type: string
+          enum: [single_app, multi_app, off]
+        allowed_packages:
+          type: array
+          items:
+            type: string
+        primary_activity:
+          type: string
+        lock_task_features:
+          type: array
+          items:
+            type: string
+        branding:
+          type: object
+          additionalProperties: true
+        has_exit_pin:
+          type: boolean
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RemoteSupportInfo:
+      type: object
+      x-openidx-go-type: agentRemoteSupportInfo
+      description: An in-flight remote-support session targeting this device, and how to join it.
+      required: [session_id, mode, ws_path, recording, consent_required]
+      properties:
+        session_id:
+          type: string
+        mode:
+          type: string
+          enum: [view, interactive]
+        ws_path:
+          type: string
+          description: The signalling WebSocket path (`/api/v1/access/agent/remote-support/sessions/{id}/ws`).
+        ice_servers:
+          description: The ICE server list for WebRTC, as the session stored it.
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        recording:
+          type: boolean
+          description: True when the session is recorded; the device upgrades its consent banner accordingly.
+        consent_required:
+          type: boolean
+          description: True when the person at the device must allow the session before the administrator can view or control.
+        consent_status:
+          type: string
+          enum: [pending, granted, denied]
+        consent_path:
+          type: string
+          description: Where to POST the consent decision (`/api/v1/access/agent/remote-support/sessions/{id}/consent`).
+        ziti_service:
+          type: string
+          description: When present, the overlay service to dial for signalling instead of the public endpoint; the device opens the same `ws_path` over it.
+        transport:
+          type: string
+          enum: [webrtc, relay]
+          description: The media path; `webrtc` is the default when absent.
+
+    WindowsAppDiscoveryJob:
+      type: object
+      x-openidx-go-type: windowsAppDiscoveryJob
+      description: Present only for an agent bound to a Windows app host.
+      required: [enabled, report_path, interval]
+      properties:
+        enabled:
+          type: boolean
+        report_path:
+          type: string
+          description: Where to POST the discovery report (`/api/v1/access/agent/windows-apps/report`).
+        interval:
+          type: string
+          description: How often to report, as a Go duration (`1h`).
+
+    AgentNetworkPolicy:
+      type: object
+      x-openidx-go-type: agentNetworkPolicy
+      description: >-
+        The organization's tunnel policy, as a device receives it in
+        `/agent/config` and in the answer to `/agent/report`. Sent only to an
+        agent whose enrolment is active; absent when it cannot be read, and
+        the device keeps the last policy it had.
+      required: [always_on, split_tunnel, block_direct_corporate_cidrs, corporate_cidrs, version]
+      properties:
+        always_on:
+          type: boolean
+        split_tunnel:
+          type: boolean
+        block_direct_corporate_cidrs:
+          type: boolean
+        corporate_cidrs:
+          type: array
+          items:
+            type: string
+          description: The ranges "block direct" refuses outside the tunnel; sent only while the block is on, at most 1024 of them.
+        version:
+          type: string
+          description: >-
+            Sixteen hex characters digesting the fields above. The device
+            echoes the version it applied in `tunnel_status.policy_version`.
+
+    # ------------------------------------------------------------------- report
+    AgentReport:
+      type: object
+      x-openidx-go-type: agentReport
+      description: >-
+        The posture report. A `reported_at` the Go agent sends beside these
+        fields is not read by the server.
+      required: [results]
+      properties:
+        agent_id:
+          type: string
+          description: Must equal the authenticated `X-Agent-ID` when present.
+        device_id:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/CheckResult'
+        tunnel_status:
+          $ref: '#/components/schemas/TunnelStatus'
+
+    CheckResult:
+      x-openidx-go-type: checkResult
+      description: >-
+        One posture check's outcome, in either of the two shapes the shipped
+        agents have sent. When both the nested `result.status` and a flat
+        `status` are present, the nested one wins; a result with no status in
+        either place stays empty rather than becoming a pass.
+      oneOf:
+        - $ref: '#/components/schemas/CheckResultNested'
+        - $ref: '#/components/schemas/CheckResultFlat'
+
+    CheckResultNested:
+      type: object
+      description: >-
+        The current shape: the outcome nested under `result`. Both shipped agents send it.
+      required: [check_type, result]
+      properties:
+        check_type:
+          type: string
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+          description: Weights the score and decides the enforcement action; an unknown severity weighs 1.
+        result:
+          $ref: '#/components/schemas/CheckResultDetail'
+        ran_at:
+          type: string
+          format: date-time
+
+    CheckResultFlat:
+      type: object
+      deprecated: true
+      description: >-
+        The legacy shape the Go agent sent before it nested the outcome: the
+        outcome fields flat beside `check_type`. Still accepted; it is folded
+        into `result` on arrival.
+      required: [check_type, status]
+      properties:
+        check_type:
+          type: string
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        ran_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          description: The outcome; see `CheckResultDetail.status`.
+        score:
+          type: number
+        message:
+          type: string
+        remediation:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    CheckResultDetail:
+      type: object
+      x-openidx-go-type: checkResultDetail
+      required: [status, score]
+      properties:
+        status:
+          type: string
+          description: >-
+            `pass`, `fail`, `warn` or `error` (the Go agent's vocabulary). Only `fail` drives enforcement (with
+            severity `critical` it revokes, `high` opens a grace period,
+            `medium` alerts); `pass` is what the proxy's posture enforcement
+            reads as passed.
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: The check's score in [0, 1]; the weighted mean over the report is the device's compliance score.
+        details:
+          type: object
+          additionalProperties: true
+          description: Free-form evidence. For `play_integrity`, carries `token`, which the server verifies and never stores.
+        message:
+          type: string
+        remediation:
+          type: string
+
+    TunnelStatus:
+      type: object
+      x-openidx-go-type: agentTunnelStatus
+      description: >-
+        The OpenZiti tunneler as the agent sees it. Omitted by an agent that
+        supervises none, so the server can tell "no tunnel support" from
+        "off". Stored on the agent and shown on the Devices page; the dial
+        failures since the previous report feed
+        `openidx_tunnel_dial_failures_total`.
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [connected, degraded, off, not_installed, up, down, starting, stopped, unknown]
+          description: >-
+            `connected`, `degraded`, `off` and `not_installed` are what the Go
+            agent sends; the server stores `connected` as `up` and `degraded`
+            as `down`. `up`, `down`, `starting`, `stopped` and `unknown` are the
+            server's stored vocabulary and are still accepted on the wire
+            (legacy). Anything else is stored as `unknown`. `off` is a device
+            whose tunnel is not enabled and is not counted as down.
+        version:
+          type: string
+          nullable: true
+          description: The tunneler's own version; empty when unknown.
+        last_seen:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the tunneler last answered (RFC 3339); null or absent when it never has.
+        services:
+          type: array
+          description: The overlay services the tunneler intercepts for this device.
+          items:
+            oneOf:
+              - type: string
+                description: The service name, as the Go agent sends it.
+              - $ref: '#/components/schemas/TunnelService'
+        dial_failures:
+          type: integer
+          minimum: 0
+          description: Failed dials since the previous report, beside the per-service counts; an agent may report either.
+        mode:
+          type: string
+          enum: [split, full]
+          description: How the device routes; absent from an agent that does not say.
+        policy_version:
+          type: string
+          description: The `org_network_policy.version` the device applied.
+        policy_gaps:
+          type: array
+          items:
+            type: string
+            enum: [full_tunnel, block_direct]
+          description: The parts of the policy the device cannot enforce on its platform.
+        last_error:
+          type: string
+          description: Why the tunnel, or applying the policy, last failed; stored up to 512 characters.
+
+    TunnelService:
+      type: object
+      x-openidx-go-type: agentTunnelService
+      deprecated: true
+      description: >-
+        The object form of a tunnel service, from before the agent and the
+        server agreed on bare names. Still accepted.
+      required: [name]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+        dial_failures:
+          type: integer
+          minimum: 0
+
+    ReportResponse:
+      type: object
+      x-openidx-go-type: gin.H in HandleReport
+      required: [status, compliance_score, enforcement_actions]
+      properties:
+        status:
+          type: string
+          enum: [accepted]
+        compliance_score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: The severity-weighted mean of the results' scores.
+        enforcement_actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnforcementAction'
+        org_network_policy:
+          $ref: '#/components/schemas/AgentNetworkPolicy'
+
+    EnforcementAction:
+      type: object
+      x-openidx-go-type: actionEntry (declared inside HandleReport)
+      required: [check_type, action]
+      properties:
+        check_type:
+          type: string
+        action:
+          type: string
+          enum: [none, revoke, grace, alert]
+          description: What a `fail` at the check's severity does; `none` for anything that is not a `fail`.
+
+    # --------------------------------------------------------------- device key
+    DeviceKeyResponse:
+      type: object
+      x-openidx-go-type: gin.H in HandleRegisterDeviceKey
+      required: [device_key_bound]
+      properties:
+        device_key_bound:
+          type: boolean
+          description: True on both 200 (already this key) and 201 (bound now).
+        kind:
+          type: string
+          enum: [tpm, software, file]
+          description: Present on 201 only.
+
+    # ----------------------------------------------------------- remote support
+    ConsentDecision:
+      type: object
+      x-openidx-go-type: consentDecisionRequest
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [grant, deny]
+
+    ConsentResponse:
+      type: object
+      x-openidx-go-type: gin.H in HandleAgentConsent
+      required: [consent_status]
+      properties:
+        consent_status:
+          type: string
+          enum: [granted, denied]
+        status:
+          type: string
+          enum: [ended]
+          description: Present after a denial, which ends the session.
+
+    # -------------------------------------------------------------- windows apps
+    WindowsAppDiscoveryReport:
+      type: object
+      x-openidx-go-type: discoveryReport
+      description: The JSON `Prepare-OpenIDXAppHost.ps1 -Report` emits.
+      required: [host, apps]
+      properties:
+        host:
+          $ref: '#/components/schemas/WindowsAppDiscoveryHost'
+        apps:
+          type: array
+          items:
+            $ref: '#/components/schemas/WindowsAppDiscoveryApp'
+
+    WindowsAppDiscoveryHost:
+      type: object
+      x-openidx-go-type: discoveryReport.Host
+      properties:
+        os_edition:
+          type: string
+        nla_enabled:
+          type: boolean
+          nullable: true
+        allow_unlisted_remote_programs:
+          type: boolean
+          nullable: true
+        allowlist_enforced:
+          type: boolean
+          nullable: true
+
+    WindowsAppDiscoveryApp:
+      type: object
+      x-openidx-go-type: discoveryApp
+      required: [alias, name]
+      properties:
+        alias:
+          type: string
+          description: The RemoteApp alias; a leading `||` is stripped. An app without one is skipped.
+        name:
+          type: string
+          description: The display name. An app without one is skipped.
+        path:
+          type: string
+        args:
+          type: string
+          description: Dropped when it looks like it carries a secret.
+        working_dir:
+          type: string
+        icon_b64:
+          type: string
+          description: Standard base64 of a PNG icon; ignored when it is not a PNG or is too large.
+        source:
+          type: string
+          enum: [tsapp, app_paths, start_menu, appx]
+          description: Where the app was found; `tsapp` (the host's RemoteApp allow list) marks it published and launchable.
+
+    WindowsAppDiscoveryResponse:
+      type: object
+      x-openidx-go-type: gin.H in handleAgentWindowsAppReport
+      required: [apps_created, apps_updated]
+      properties:
+        apps_created:
+          type: integer
+        apps_updated:
+          type: integer
+
+    # --------------------------------------------------------- overlay enrolment
+    OverlayEnrollRequest:
+      type: object
+      x-openidx-go-type: darkEnrollRequest
+      description: Optional; a request with only a bearer header enrols the token's user.
+      properties:
+        enrollment_token:
+          type: string
+          description: An operator- or MDM-issued enrollment token. Used when no valid bearer is present.
+        passkey:
+          type: object
+          additionalProperties: true
+          description: A platform-authenticator assertion. Not yet verifiable here; a request that carries one and nothing else is refused 401.
+
+    OverlayEnrollResponse:
+      type: object
+      x-openidx-go-type: gin.H in handleEnroll
+      required: [ziti_enrollment_jwt, identity_name]
+      properties:
+        ziti_enrollment_jwt:
+          type: string
+          description: A one-time OpenZiti enrolment JWT, good for fifteen minutes.
+        identity_name:
+          type: string
+          description: The overlay identity it enrols (the user id for the session path, `enroll-` and the token id for a token without a user).
+
+    # ------------------------------------------------------------------- errors
+    ErrorResponse:
+      type: object
+      x-openidx-go-type: gin.H error answers of the handlers above
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: What went wrong, as a sentence; on the 403 of `POST /agent/enroll/oauth`, the code `insufficient_scope`.
+        code:
+          type: string
+          description: >-
+            A machine-readable refusal, when the client should act on it:
+            `agent_revoked`, `device_signature_required`,
+            `device_signature_invalid`, `device_key_invalid`,
+            `device_key_conflict`, `insufficient_scope`, `token_revoked`,
+            `revocation_unavailable`.
+        error_description:
+          type: string
+          description: A longer explanation, on the two refusals that carry one (`agent_revoked` at enrolment, `insufficient_scope` on the OAuth path).
+
+    InternalErrorResponse:
+      type: object
+      description: The platform's shared internal-error shape (`internal/common/errors`), answered by `POST /enroll` when the JWT cannot be minted.
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        message:
+          type: string

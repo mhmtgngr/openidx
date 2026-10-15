@@ -1,9 +1,18 @@
 name: Android CI
 
+# FROZEN per ROADMAP.md "On hold" (issue #1185): the Kotlin Android agent under
+# agent-android/ duplicates the Flutter app and has no tests, so it is on hold
+# and is deleted in April 2027 unless a customer needs Android Enterprise
+# device-owner mode. This workflow only keeps the frozen code compiling. It runs
+# on demand and on changes under agent-android/, and it no longer carries a
+# unit-test job: the modules have no test sources, and a test job that passes
+# with nothing to run is not a test job.
+#
 # Path-filtered: this workflow does the heavy lifting (~5-10 min including
 # SDK download + Gradle resolution) so we keep it scoped to the Android
 # project. Changes elsewhere in the repo don't trigger it.
 on:
+  workflow_dispatch:
   push:
     branches: [main, dev]
     paths:
@@ -105,40 +114,3 @@ jobs:
           path: agent-android/app/build/reports/lint-results-debug.html
           if-no-files-found: ignore
           retention-days: 14
-
-  unit-tests:
-    name: JVM unit tests (core + posture)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # Run in parallel with the heavier build job — unit tests don't need
-    # the Android SDK and finish fast.
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: >-
-            platforms;android-${{ env.ANDROID_COMPILE_SDK }}
-            build-tools;${{ env.ANDROID_BUILD_TOOLS }}
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: ${{ env.GRADLE_VERSION }}
-
-      # `|| true` is gone. It was added during Phase 1 bootstrap because neither
-      # module had tests yet — but Gradle's `test` task on a module with no test
-      # sources succeeds on its own (NO-SOURCE), so the swallow was never
-      # protecting against that. What it DID swallow was every real failure: a
-      # test that starts failing the day one is written, a broken test
-      # configuration, an unresolvable dependency. A test job that cannot go red
-      # is not a test job.
-      - name: Run unit tests
-        run: gradle :core:test :posture-android:test --no-daemon

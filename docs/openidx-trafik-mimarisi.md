@@ -151,7 +151,7 @@ Yeni bir servis tanımlandığında ağ geçidi onu **hemen** üstlenmeyebiliyor
 | Ortam | Durum |
 |---|---|
 | AWS | Terraform modülleri mevcut (ağ, veritabanı, önbellek, overlay) |
-| Azure | **Modül yok** — eklenmesi gereken parça |
+| Azure | Terraform modülü mevcut (`deployments/terraform/azure/`: AKS, bölge yedekli Postgres, çoğaltmalı Redis) |
 | Kubernetes | Ingress seviyesinde geçiş; tek uygulamayı taşımak da geri almak da tek kural |
 
 **Yatay ölçek için ön koşul hazır:** oturum durumu paylaşılan önbellekte tutuluyor (Sentinel yapılandırması mevcut), yani ikinci düğüm eklemek durum kaybı yaratmaz.
@@ -166,7 +166,7 @@ Yeni bir servis tanımlandığında ağ geçidi onu **hemen** üstlenmeyebiliyor
 |---|---|---|
 | Yük dengeleyici olabilir mi? | **Evet** — ağırlıklı çoklu arka uç, sağlık kontrolü, yapışkanlık | Canlı kanıtlandı (0 kayıp devre dışı bırakma) |
 | Cloudflare gibi olabilir mi? | **Kısmen ve bilinçli olarak.** Kimlik-farkında uygulama kenarı evet; CDN/anycast **hayır** | Kapsam kararı, §1-K3 |
-| Azure'da koşar mı? | **Evet**, ama Azure modülü yazılmalı | AWS hazır, Azure eksik |
+| Azure'da koşar mı? | **Evet** — AWS yığınını aynalayan Terraform modülü (`deployments/terraform/azure/`) | AWS ve Azure hazır |
 | İç sistemler kapatılabilir mi? | **Evet** — gelen port açmadan | Canlı kanıtlandı |
 | Uygulamalar nasıl entegre olur? | **Değişmeden.** Kod yok, ajan yok; tek soru "nerede çalışıyor" | Canlı kanıtlandı |
 
@@ -174,7 +174,6 @@ Yeni bir servis tanımlandığında ağ geçidi onu **hemen** üstlenmeyebiliyor
 
 ## 7. Sıradaki adımlar
 
-1. **Azure Terraform modülü** (tek eksik bulut parçası)
-2. **Çok düğümlü uzlaştırıcı güvenliği** — çakışma testi ve koruma
-3. **Otomatik sertifika yenileme** (bugün elle)
-4. Havuz yönetimi için yönetim arayüzü ekranı
+1. **Çok düğümlü uzlaştırıcı güvenliği** — çakışma testi ve koruma
+2. **Otomatik sertifika yenileme** (bugün elle)
+3. Havuz yönetimi için yönetim arayüzü ekranı

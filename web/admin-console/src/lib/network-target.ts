@@ -33,8 +33,12 @@ export interface NetworkPolicy {
   updated_at?: string
   /** The version devices receive; read-only. */
   version?: string
-  /** Active devices by whether they report applying that version; read-only. */
-  devices?: { applied: number; pending: number; unreported: number }
+  /**
+   * Active devices by whether they report applying that version; read-only.
+   * applied_with_gaps are on the current version with a part of it they
+   * cannot enforce (and are not counted as applied).
+   */
+  devices?: { applied: number; applied_with_gaps?: number; pending: number; unreported: number }
 }
 
 /** The editable form of a target: lists as text, one entry per line or comma. */

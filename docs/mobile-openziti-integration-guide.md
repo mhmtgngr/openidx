@@ -7,6 +7,13 @@
 > contract, endpoint, payload and sequence below is still current and is why
 > this document is kept; the `mobile/src/...` file references are historical
 > and point at code that is no longer in the tree.
+>
+> **Status:** this guide was written for that deleted app and designs an
+> app-wide overlay (the SDK's seamless mode, §3.1). What ships today is
+> narrower: the Flutter app reaches a dark service only through a per-service
+> loopback bridge that the Go engine opens on `127.0.0.1`
+> (`agent/internal/ziti/dialer.go`), and there is no device-wide tunnel on
+> mobile.
 
 **Audience:** the developer building the native Android (Kotlin / Jetpack Compose)
 OpenIDX app. This is the concrete plan to add **OpenZiti** so the app reaches

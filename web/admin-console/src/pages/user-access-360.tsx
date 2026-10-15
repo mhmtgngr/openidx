@@ -156,6 +156,8 @@ interface KillSwitchResult {
   ziti_api_sessions_terminated: number
   ziti_identity_deleted: boolean
   ziti_controller_online: boolean
+  /** Enrolled agents revoked, when revoke_devices was asked for. */
+  devices_revoked?: number
   warnings?: string[]
 }
 
@@ -199,6 +201,10 @@ export function UserAccess360Page() {
   const [killOpen, setKillOpen] = useState(false)
   const [reason, setReason] = useState('')
   const [disableUser, setDisableUser] = useState(false)
+  // revoke_devices: the kill switch severs what is live; the user's enrolled
+  // devices keep their credentials unless this is ticked, in which case each
+  // one goes through the same revoke as the Devices tab's Revoke button.
+  const [revokeDevices, setRevokeDevices] = useState(false)
 
   const { data: map, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['user-access-map', id],
@@ -240,7 +246,7 @@ export function UserAccess360Page() {
   })
 
   const killMutation = useMutation({
-    mutationFn: (body: { reason: string; disable_user: boolean }) =>
+    mutationFn: (body: { reason: string; disable_user: boolean; revoke_devices: boolean }) =>
       api.post<KillSwitchResult>(`/api/v1/access/users/${id}/kill-switch`, body),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['user-access-map', id] })
@@ -257,6 +263,9 @@ export function UserAccess360Page() {
           n: res.ziti_edge_sessions_terminated + res.ziti_api_sessions_terminated,
         }),
       ]
+      if (revokeDevices) {
+        parts.push(t('pages.userAccess360.kill.partDevices', { n: res.devices_revoked ?? 0 }))
+      }
       const detail = parts.join(', ')
       toast({
         title: res.user_disabled
@@ -269,6 +278,7 @@ export function UserAccess360Page() {
       setKillOpen(false)
       setReason('')
       setDisableUser(false)
+      setRevokeDevices(false)
     },
     onError: () => toast({ title: t('pages.userAccess360.kill.failed'), variant: 'destructive' }),
   })
@@ -790,11 +800,20 @@ export function UserAccess360Page() {
                 />
               </span>
             </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox checked={revokeDevices} onCheckedChange={v => setRevokeDevices(v === true)} />
+              <span>
+                <Trans
+                  i18nKey="pages.userAccess360.kill.revokeDevices"
+                  components={[<span key="0" className="font-medium" />]}
+                />
+              </span>
+            </label>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setKillOpen(false)}>{t('common.cancel')}</Button>
             <Button variant="destructive" disabled={killMutation.isPending}
-              onClick={() => killMutation.mutate({ reason, disable_user: disableUser })}>
+              onClick={() => killMutation.mutate({ reason, disable_user: disableUser, revoke_devices: revokeDevices })}>
               <Zap className="mr-2 h-4 w-4" />
               {killMutation.isPending
                 ? t('pages.userAccess360.kill.severing')

@@ -56,12 +56,15 @@ export function TunnelStatusBadge({ status, lastSeen }: { status?: TunnelStatus 
   )
 }
 
+const POLICY_STATES = ['applied', 'applied_with_gaps', 'pending'] as const
+
 /**
  * TunnelPolicyBadge says whether a device runs the organization's current
  * tunnel policy (tunnel_policy_state from GET /api/v1/access/agents): applied,
- * or pending until its agent next reports. Nothing for a device that reports
- * no tunnel status. A device that applied the policy with gaps is still
- * applied; the gaps are on the tunnel badge.
+ * applied with gaps (the current version, with a part of it the device cannot
+ * enforce, named on the tunnel badge), or pending until its agent next
+ * reports. Nothing for a device that reports no tunnel status. A device with
+ * gaps is never shown as applied: what the page says is what is enforced.
  */
 export function TunnelPolicyBadge({
   state,
@@ -73,19 +76,20 @@ export function TunnelPolicyBadge({
   appliedAt?: string | null
 }) {
   const { t } = useTranslation()
-  if (state !== 'applied' && state !== 'pending') return null
+  if (!state || !(POLICY_STATES as readonly string[]).includes(state)) return null
   const title =
-    state === 'applied'
-      ? t('pages.agentFleet.policyAppliedDetail', {
+    state === 'pending'
+      ? t('pages.agentFleet.policyPendingDetail', { version: version || '—' })
+      : t(state === 'applied' ? 'pages.agentFleet.policyAppliedDetail' : 'pages.agentFleet.policyAppliedWithGapsDetail', {
           version: version || '—',
           when: appliedAt ? new Date(appliedAt).toLocaleString() : '—',
         })
-      : t('pages.agentFleet.policyPendingDetail', { version: version || '—' })
   return (
     <Badge
       variant={state === 'applied' ? 'outline' : 'warning'}
       title={title}
       data-testid="tunnel-policy"
+      data-state={state}
       className="whitespace-nowrap"
     >
       {t(`pages.agentFleet.policyStates.${state}`)}

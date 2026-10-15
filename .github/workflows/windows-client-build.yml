@@ -246,18 +246,49 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The gate a signed build passes through. It runs only for a release (an
+  # agent-v* tag, or a dispatch with release=true) and declares the
+  # release-signing environment, so whatever protection rules that environment
+  # carries -- a required reviewer, a wait timer -- hold every build that will
+  # be signed with the release key, and nothing else. A push or a pull request
+  # skips it and builds unsigned; build-msi below runs either way. The
+  # environment is created by its first use; the maintainer adds its reviewers
+  # in the repository settings (#1183).
+  release-gate:
+    name: release signing approval
+    if: ${{ startsWith(github.ref, 'refs/tags/agent-v') || inputs.release == true }}
+    runs-on: ubuntu-latest
+    environment: release-signing
+    steps:
+      - name: Approved
+        run: echo "release signing approved for $GITHUB_REF by the release-signing environment"
+
   # Real artifact: build the .exe natively + package the MSI (WiX).
   build-msi:
     name: build .exe + MSI
     runs-on: windows-latest
-    needs: [smoke-crosscompile, linux-packages]
+    needs: [smoke-crosscompile, linux-packages, release-gate]
+    # release-gate is skipped on a push or a pull request, and a skipped need
+    # would skip this job too without the condition; a gate that failed or was
+    # cancelled (a reviewer said no) still stops the build.
+    if: >-
+      ${{ !cancelled()
+          && needs.smoke-crosscompile.result == 'success'
+          && needs.linux-packages.result == 'success'
+          && (needs.release-gate.result == 'success' || needs.release-gate.result == 'skipped') }}
     permissions:
       contents: write # create the release + upload assets on a tag
     # Job-level env so the signing steps' `if:` can read whether a cert secret
     # is configured (step-level env isn't visible to that step's own `if`).
+    #
+    # The release key reaches the job only for a release build. It used to be
+    # in every run's environment, so a same-repository pull request was built
+    # and Authenticode-signed with the release key by whatever that pull
+    # request put in the workflow's path; a build that is not a release now
+    # sees no certificate, and so its signing steps do not run.
     env:
-      WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
-      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      WINDOWS_CERT_PFX_BASE64: ${{ (startsWith(github.ref, 'refs/tags/agent-v') || inputs.release == true) && secrets.WINDOWS_CERT_PFX_BASE64 || '' }}
+      WINDOWS_CERT_PASSWORD: ${{ (startsWith(github.ref, 'refs/tags/agent-v') || inputs.release == true) && secrets.WINDOWS_CERT_PASSWORD || '' }}
       # The agent's release channel: a release that never moves, whose assets
       # each agent release replaces. Not releases/latest/download/…, which is
       # where every default used to point: GitHub's "latest" is the newest
@@ -796,16 +827,38 @@ jobs:
           $sha = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLower()
           $url = "https://github.com/$($env:GH_REPOSITORY)/releases/download/$($env:GH_REF_NAME)/OpenIDX-$ver.msi"
 
-          # Canonical signing input — must match signingInput() byte for byte,
-          # LF line endings, one trailing newline.
+          # The manifest expires. An agent refuses it after this, so a copy
+          # kept by a stale mirror or a proxy cannot hide later releases for
+          # longer. Every agent release renews the channel; one left alone for
+          # longer than this stops updating (the safe direction) until a
+          # release ships. RFC 3339, UTC, whole seconds, culture-independent:
+          # TestTheReleaseManifestExpiresNinetyDaysOut pins all of it.
+          $lifetimeDays = 90
+          $expires = [DateTime]::UtcNow.AddDays($lifetimeDays).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [System.Globalization.CultureInfo]::InvariantCulture)
+
+          # Two canonical signing inputs, each matching the agent byte for
+          # byte (signingInput and signingInputV2), LF line endings, one
+          # trailing newline. v1 carries no expiry and is what agents built
+          # before manifests expired verify; v2 covers the expiry and is what
+          # current agents verify. A fleet updates one device at a time, so
+          # both kinds read this file.
           $lines = @(
             "openidx-agent-update-manifest/v1",
             "version=$ver",
             "url=$url",
             "sha256=$sha"
           )
+          $lines2 = @(
+            "openidx-agent-update-manifest/v2",
+            "version=$ver",
+            "url=$url",
+            "sha256=$sha",
+            "expires=$expires"
+          )
           $canonical = ($lines -join "`n") + "`n"
+          $canonical2 = ($lines2 -join "`n") + "`n"
           $bytes = [Text.Encoding]::UTF8.GetBytes($canonical)
+          $bytes2 = [Text.Encoding]::UTF8.GetBytes($canonical2)
 
           # EphemeralKeySet keeps the private key out of the runner's key store.
           # It is not supported for every PFX, so fall back to the default flags
@@ -824,7 +877,11 @@ jobs:
           $sig = $rsa.SignData($bytes,
             [System.Security.Cryptography.HashAlgorithmName]::SHA256,
             [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+          $sig2 = $rsa.SignData($bytes2,
+            [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+            [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
           $b64 = [Convert]::ToBase64String($sig)
+          $b64v2 = [Convert]::ToBase64String($sig2)
 
           # Verify what was just produced, with the public half only, before it
           # is published: a signature nobody checks here is one every endpoint
@@ -834,13 +891,16 @@ jobs:
           $ok = $pubRsa.VerifyData($bytes, $sig,
             [System.Security.Cryptography.HashAlgorithmName]::SHA256,
             [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
-          if (-not $ok) {
+          $ok2 = $pubRsa.VerifyData($bytes2, $sig2,
+            [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+            [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+          if (-not ($ok -and $ok2)) {
             throw "the manifest signature does not verify against agent/packaging/openidx-codesign.cer. " +
                   "The WINDOWS_CERT_PFX_BASE64 secret holds a different key from the certificate the " +
                   "agent pins, so every agent would refuse this release."
           }
 
-          $manifest = [ordered]@{ version = $ver; url = $url; sha256 = $sha; signature = $b64 }
+          $manifest = [ordered]@{ version = $ver; url = $url; sha256 = $sha; expires = $expires; signature = $b64; signature_v2 = $b64v2 }
           $manifest | ConvertTo-Json | Set-Content -Path dist/latest.json -Encoding utf8
           Get-Content dist/latest.json
 

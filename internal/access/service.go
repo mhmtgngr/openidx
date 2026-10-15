@@ -1085,13 +1085,18 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// operator tier of the console's Agent Fleet page, and a user's own
 		// enrollment stays open.
 		agentHandler := NewAgentAPIHandler(svc.logger, svc.db, svc.ziti(), svc.config)
-		// openidx_tunnel_agents_down, for the tunnel-down alert.
-		RegisterTunnelDownGauge(svc.db, svc.logger)
+		// openidx_tunnel_agents_down, openidx_agents_by_state and
+		// openidx_tunnel_policy_gaps, for the fleet alerts.
+		RegisterFleetGauges(svc.db, svc.logger)
 		// Redis lets enrollment mint a push-enrollment ticket so a freshly-enrolled
 		// device self-registers as a push-MFA approver in one step (FastPass).
 		if svc.redis != nil {
 			agentHandler.SetRedis(svc.redis.Client)
+			agentHandler.SetRevocationRedis(svc.redis.RevocationDB())
 		}
+		// A fleet revoke is the same revoke as the user's page and the kill
+		// switch (device_revoke.go); the controller is resolved when it runs.
+		agentHandler.SetZitiResolver(svc.ziti)
 		agentHandler.RegisterAgentAdminRoutes(api, operatorTier)
 		agentHandler.StartGracePeriodEnforcer(context.Background(), 5*time.Minute)
 		svc.agentHandler = agentHandler

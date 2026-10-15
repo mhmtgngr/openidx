@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
@@ -37,6 +38,13 @@ type AgentAPIHandler struct {
 	conf          *config.Config
 	playIntegrity *PlayIntegrityVerifier
 	redis         *redis.Client
+	// revocationRedis is the revocation store (RedisClient.RevocationDB),
+	// which a device revoke publishes session markers to; nil when none.
+	revocationRedis *redis.Client
+	// zitiResolver finds the controller as it is connected now. The manager
+	// the handler was built with may be nil, since the controller is wired
+	// at runtime; a revoke must reach the one that is there when it runs.
+	zitiResolver func() *ZitiManager
 }
 
 // NewAgentAPIHandler constructs an AgentAPIHandler. conf is the access-service
@@ -79,6 +87,26 @@ func (h *AgentAPIHandler) SetPlayIntegrityVerifier(v *PlayIntegrityVerifier) {
 // agent-enrollment time (FastPass convergence). Optional — when nil, enrollment
 // still succeeds; the response simply omits the push-enroll ticket and the
 // device registers as a push approver via the normal (separate) QR flow.
+// SetRevocationRedis installs the revocation store a device revoke publishes
+// its session markers to.
+func (h *AgentAPIHandler) SetRevocationRedis(c *redis.Client) { h.revocationRedis = c }
+
+// SetZitiResolver installs the function that finds the controller as it is
+// connected now (Service.ziti).
+func (h *AgentAPIHandler) SetZitiResolver(f func() *ZitiManager) { h.zitiResolver = f }
+
+// zitiManager returns the controller the handler should use right now: the
+// resolver's, when one is installed and has one, else the manager the handler
+// was built with.
+func (h *AgentAPIHandler) zitiManager() *ZitiManager {
+	if h.zitiResolver != nil {
+		if zm := h.zitiResolver(); zm != nil {
+			return zm
+		}
+	}
+	return h.zm
+}
+
 func (h *AgentAPIHandler) SetRedis(c *redis.Client) {
 	h.redis = c
 }
@@ -205,6 +233,12 @@ type enrollRequest struct {
 	// be exported (agent_device_key.go). Recorded at enrolment; an enrolment
 	// without one clears any key left from before.
 	DeviceKey *deviceKeyRequest `json:"device_key,omitempty"`
+
+	// signedAgentID is the agent whose device key signed this request, set by
+	// the handler from enrolmentProof and never from the body (it is not
+	// exported, so no JSON field reaches it). An enrolment that names that
+	// agent's fingerprint may take its row; see reenrolmentRefusal.
+	signedAgentID string
 }
 
 // enrollResponse is returned by HandleEnroll on success.
@@ -319,14 +353,20 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 	managementMode := normalizeManagementMode(req.ManagementMode)
 	isDeviceOwner := managementMode == "device_owner"
 
-	metadata, _ := json.Marshal(map[string]string{
+	meta := map[string]string{
 		"hostname":        req.Hostname,
 		"os":              req.OS,
 		"arch":            req.Arch,
 		"platform":        platform,
 		"form_factor":     formFactor,
 		"management_mode": managementMode,
-	})
+	}
+	metadata, _ := json.Marshal(meta)
+
+	// fingerprintConflict names the reason the fingerprint's existing row was
+	// not taken (reenrolmentRefusal). The device is then enrolled as a new
+	// agent with no fingerprint, and the existing row is left as it was.
+	fingerprintConflict := ""
 
 	if h.db != nil && h.db.Pool != nil {
 		// Stable-identity path: if this device has enrolled before (same
@@ -347,16 +387,44 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 		// re-enrolment is the only thing that lifts it; nothing writes pending
 		// any more, and a re-enrolled pending row gets no more than a fresh
 		// enrolment with the same token would.
+		//
+		// The fingerprint is the client's own claim, and until this check any
+		// enrolment the organization admitted -- a wizard code any user can
+		// make for themselves included -- took the row it named: rotated its
+		// token (so the real agent stopped working), set it active (lifting a
+		// suspension) and replaced or dropped its device key. The row is now
+		// taken only on proof (reenrolmentRefusal); otherwise the device is
+		// enrolled as a new agent, the row is left alone, and the attempt is
+		// audited against the agent it named.
 		if fp := strings.TrimSpace(req.DeviceFingerprint); fp != "" {
-			var existingAgentID, existingDeviceID, existingStatus string
+			var existingAgentID, existingDeviceID, existingStatus, existingOwner string
+			var existingHasKey bool
 			err := h.db.Pool.QueryRow(ctx, `
-                SELECT agent_id, device_id, status FROM enrolled_agents
-                WHERE device_fingerprint = $1 AND org_id = $2
-            `, fp, orgID).Scan(&existingAgentID, &existingDeviceID, &existingStatus)
+                SELECT agent_id, device_id, status,
+                       COALESCE(enrolled_by_user_id::text, ''),
+                       COALESCE(device_public_key, '') <> ''
+                  FROM enrolled_agents
+                 WHERE device_fingerprint = $1 AND org_id = $2
+            `, fp, orgID).Scan(&existingAgentID, &existingDeviceID, &existingStatus, &existingOwner, &existingHasKey)
 			if err == nil && existingStatus == agentStatusRevoked {
 				return issuedAgentCredentials{}, revokedAgentError{agentID: existingAgentID}
 			}
-			if err == nil && existingAgentID != "" {
+			if reason := reenrolmentRefusal(existingAgentID, existingOwner, existingHasKey,
+				method, enrolledByUserID, req.signedAgentID); err == nil && existingAgentID != "" && reason != "" {
+				detail := fmt.Sprintf("re-enrolment by fingerprint refused: %s (method=%s", reason, method)
+				if enrolledByUserID != "" {
+					detail += " user=" + logsafe.Clean(enrolledByUserID)
+				}
+				detail += "); the device was enrolled as a new agent"
+				h.logger.Warn("re-enrolment by fingerprint refused; enrolling the device as a new agent",
+					logsafe.String("existing_agent_id", existingAgentID),
+					zap.String("reason", reason), zap.String("method", method))
+				h.logAuditEvent("agent.enroll_denied", existingAgentID, "denied", detail)
+				h.logAuditEventToDB(ctx, "agent.enroll_denied", existingAgentID, "denied", detail)
+				fingerprintConflict = reason
+				meta["fingerprint_conflict"] = reason
+				metadata, _ = json.Marshal(meta)
+			} else if err == nil && existingAgentID != "" {
 				// The status test is repeated in the UPDATE so that a revoke
 				// landing between the read above and this write is not undone.
 				tag, upErr := h.db.Pool.Exec(ctx, `
@@ -405,7 +473,11 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 			userIDArg = enrolledByUserID
 		}
 		var fpArg interface{}
-		if fp := strings.TrimSpace(req.DeviceFingerprint); fp != "" {
+		if fp := strings.TrimSpace(req.DeviceFingerprint); fp != "" && fingerprintConflict == "" {
+			// A conflicting enrolment is written without the fingerprint: the
+			// fingerprint is one row per tenant, and that row is the other
+			// agent's. Such a device re-enrols as a new row each time until an
+			// operator token or its own user enrols it.
 			fpArg = fp
 		}
 		_, err := h.db.Pool.Exec(ctx, `
@@ -435,6 +507,45 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 
 	h.ensureAgentZitiIdentity(ctx, agentID, &result)
 	return result, nil
+}
+
+// reenrolmentRefusal decides whether an enrolment that names an existing
+// agent's fingerprint may take that agent's row. It returns "" when it may,
+// else the reason it may not, which is audited and recorded on the new row.
+//
+// The row is taken when:
+//   - the request is signed with the key the row is bound to (signedAgentID
+//     names the row's agent; enrolmentProof verified the signature), which is
+//     the device itself speaking, whoever admitted the enrolment; or
+//   - the row holds no key and an operator or MDM token admitted the
+//     enrolment (method "token": the operator's say-so is the fleet's); or
+//   - the row holds no key and the person enrolling is the person who
+//     enrolled it (the wizard-code and OAuth paths name their user).
+//
+// A row that holds a key is taken by its signature and nothing else: the
+// principle since v1.41 is that a device with a key speaks for itself with it,
+// and a fleet token that leaked (one did, agent-v0.3.0) must not be enough to
+// rotate a keyed device's credential. A device whose key was lost, or that
+// another user of a shared machine enrols, becomes a new agent; the old row
+// stays for an operator to revoke.
+func reenrolmentRefusal(existingAgentID, existingOwner string, existingHasKey bool,
+	method, enrollingUser, signedAgentID string) string {
+	if existingAgentID == "" {
+		return ""
+	}
+	if signedAgentID != "" && signedAgentID == existingAgentID {
+		return ""
+	}
+	if existingHasKey {
+		return "device_key_required"
+	}
+	if method == "token" {
+		return ""
+	}
+	if enrollingUser != "" && enrollingUser == existingOwner {
+		return ""
+	}
+	return "fingerprint_not_owned"
 }
 
 // refuseRevokedReenrolment answers an enrolment whose device fingerprint names
@@ -604,9 +715,18 @@ func agentZitiOverlayEnabled() bool {
 // optionally creates a Ziti identity, and returns enrollment credentials.
 // When the DB is unavailable, it falls back to accepting any non-empty token (dev mode).
 func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
-	// Parse optional device info + enrollment-session code from the body first.
+	// Read the body whole: a device that already holds a key signs the exact
+	// bytes it sent (enrolmentProof), and the optional device info and the
+	// enrollment-session code are parsed from those same bytes.
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxEnrollBytes))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read body"})
+		return
+	}
 	var enrollReq enrollRequest
-	c.ShouldBindJSON(&enrollReq)
+	if len(body) > 0 {
+		_ = json.Unmarshal(body, &enrollReq)
+	}
 
 	// The bearer token may arrive in the Authorization header (classic/MDM) or as
 	// the `code` field (unified deep-link / short-code onboarding).
@@ -650,6 +770,15 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 		// The token's tenant is the device's tenant (v197). From here on every
 		// fleet query in this request is scoped to it; nothing below bypasses.
 		ctx = orgctx.With(ctx, orgctx.Org{ID: tok.OrgID})
+
+		// A device that already holds a key may prove it is the agent whose
+		// fingerprint it names; issueAgentCredentials takes that agent's row
+		// only on such proof, for its own user, or for an operator token.
+		signedAgentID, ok := h.enrolmentProof(c, ctx, body)
+		if !ok {
+			return
+		}
+		enrollReq.signedAgentID = signedAgentID
 
 		// Correlate to a unified enrollment session (short code / QR / deep-link).
 		// A session ties this token to the user who created it from an MFA-verified
@@ -846,8 +975,20 @@ func (h *AgentAPIHandler) HandleEnrollOAuth(c *gin.Context) {
 		return
 	}
 
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxEnrollBytes))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read body"})
+		return
+	}
 	var enrollReq enrollRequest
-	_ = c.ShouldBindJSON(&enrollReq)
+	if len(body) > 0 {
+		_ = json.Unmarshal(body, &enrollReq)
+	}
+	signedAgentID, ok := h.enrolmentProof(c, c.Request.Context(), body)
+	if !ok {
+		return
+	}
+	enrollReq.signedAgentID = signedAgentID
 
 	org, _ := orgctx.From(c.Request.Context())
 	// Same auto-trust decision the enrollment-session path makes: MFA-verified
@@ -2001,7 +2142,15 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		// has a support session (and, for attended support, could never grant
 		// consent). checks stays empty; the rest of the config is the default.
 		if len(checks) == 0 {
-			h.writeActiveAgentConfig(c, agentID, h.defaultConfigWithSupport(ctx, agentID))
+			// The device's own state travels with the defaults too. It did
+			// not: an active device with no configured checks -- every fresh
+			// install until an administrator authors some -- was handed a
+			// config with no enrollment_status, which the engine's
+			// DeviceState() read as "cannot check with the server".
+			cfg := h.defaultConfigWithSupport(ctx, agentID)
+			cfg.EnrollmentStatus = status
+			cfg.DeviceTrusted = trusted
+			h.writeActiveAgentConfig(c, agentID, cfg)
 			return
 		}
 
@@ -2057,7 +2206,9 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	}
 }
 
-// agentRecord holds the fields returned by HandleListAgents.
+// agentRecord holds the fields returned by HandleListAgents. Its
+// tunnel_policy_state is "applied", "applied_with_gaps", "pending" or "" (no
+// tunnel status reported); see tunnelPolicyState and policyStateWithGaps.
 type agentRecord struct {
 	AgentID          string     `json:"agent_id"`
 	DeviceID         string     `json:"device_id"`
@@ -2148,7 +2299,12 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 				rec.TunnelStatus = &ts
 			}
 		}
-		rec.TunnelPolicyState = tunnelPolicyState(rec.TunnelPolicyVersion, rec.TunnelStatus != nil, current)
+		// The version comparison, then the gaps the device reports: a device
+		// on the current version with a part of it unenforced is
+		// "applied_with_gaps", never "applied" (what the page says is what
+		// is enforced).
+		rec.TunnelPolicyState = policyStateWithGaps(
+			tunnelPolicyState(rec.TunnelPolicyVersion, rec.TunnelStatus != nil, current), rec.TunnelStatus)
 		agents = append(agents, rec)
 	}
 	if rows.Err() != nil {
@@ -2256,8 +2412,15 @@ func (h *AgentAPIHandler) HandleAgentPosture(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// HandleRevokeAgent sets an agent's status to 'revoked' and optionally removes
-// its Ziti identity.
+// HandleRevokeAgent revokes a device from Agent Fleet. DELETE /agents/:id
+//
+// It is the same revoke Access 360's device revoke and the kill switch's
+// revoke_devices option perform (deviceRevoker): live circuits severed, the
+// Device identity deleted, the row revoked, the known device untrusted, and
+// the refresh-token families and sessions bound to the device revoked. It used
+// to set the status and delete the identity and stop there, so a device
+// revoked from this page kept its tokens and its trusted known device while
+// one revoked from the user's page lost them.
 func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 	agentID := c.Param("agent_id")
 	if agentID == "" {
@@ -2273,49 +2436,59 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 			return
 		}
 
-		// Fetch the Ziti identity ID before revoking so we can remove it.
-		var zitiIdentityID string
-		_ = h.db.Pool.QueryRow(ctx,
-			`SELECT COALESCE(ziti_identity_id, '') FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
-			agentID, org.ID,
-		).Scan(&zitiIdentityID)
-
-		tag, err := h.db.Pool.Exec(ctx,
-			`UPDATE enrolled_agents SET status = 'revoked' WHERE agent_id = $1 AND org_id = $2`,
-			agentID, org.ID,
-		)
+		// Another tenant's device is not found, not revoked (v197).
+		var zitiIdentityID, knownDeviceID, owner string
+		err = h.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(ziti_identity_id, ''), COALESCE(known_device_id::text, ''),
+			       COALESCE(enrolled_by_user_id::text, '')
+			  FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
+			agentID, org.ID).Scan(&zitiIdentityID, &knownDeviceID, &owner)
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return
+		}
 		if err != nil {
-			h.logger.Error("HandleRevokeAgent: failed to update status",
+			h.logger.Error("HandleRevokeAgent: failed to read the agent",
 				logsafe.String("agent_id", agentID), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke agent"})
 			return
 		}
-		// Another tenant's device is not found, not revoked (v197).
-		if tag.RowsAffected() == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+
+		res := h.deviceRevoker().revoke(ctx, org.ID, agentID, zitiIdentityID, knownDeviceID)
+		if !res.AgentRevoked {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke agent", "warnings": res.Warnings})
 			return
 		}
-
-		// Remove Ziti identity if available.
-		if h.zm != nil && zitiIdentityID != "" {
-			if delErr := h.zm.DeleteIdentity(ctx, zitiIdentityID); delErr != nil {
-				h.logger.Warn("HandleRevokeAgent: failed to delete Ziti identity",
-					logsafe.String("agent_id", agentID),
-					zap.String("ziti_identity_id", zitiIdentityID),
-					zap.Error(delErr))
+		// Recompute the owner's #device-trusted overlay attribute right away,
+		// as the user's page does: if this was their last trusted device,
+		// dial policies keyed on device trust must stop matching now.
+		if zm := h.zitiManager(); zm != nil && owner != "" {
+			if err := zm.SyncDeviceTrustForUser(ctx, owner); err != nil {
+				h.logger.Warn("HandleRevokeAgent: device-trust attribute resync failed",
+					logsafe.String("user_id", owner), zap.Error(err))
 			}
 		}
-	} else if h.zm != nil {
+
+		detail := fmt.Sprintf("admin action; ziti_identity_deleted=%t ziti_sessions_terminated=%d "+
+			"refresh_tokens_revoked=%d sessions_revoked=%d known_device_untrusted=%t warnings=%d",
+			res.ZitiIdentityDeleted, res.ZitiEdgeSessions+res.ZitiAPISessions,
+			res.RefreshTokensRevoked, res.OAuthSessionsRevoked, res.KnownDeviceUntrusted, len(res.Warnings))
+		h.logger.Info("Agent revoked", logsafe.String("agent_id", agentID))
+		h.logAuditEvent("agent.revoked", agentID, "success", detail)
+		h.logAuditEventToDB(ctx, "agent.revoked", agentID, "success", detail)
+		c.JSON(http.StatusOK, gin.H{"status": "revoked", "agent_id": agentID, "revoke": res})
+		return
+	}
+
+	if h.zm != nil {
 		// No DB but ZitiManager present — best-effort removal using agentID as identity name.
 		if delErr := h.zm.DeleteIdentity(context.Background(), agentID); delErr != nil {
 			h.logger.Warn("HandleRevokeAgent: failed to delete Ziti identity (no db)",
 				logsafe.String("agent_id", agentID), zap.Error(delErr))
 		}
 	}
-
 	h.logger.Info("Agent revoked", logsafe.String("agent_id", agentID))
 	h.logAuditEvent("agent.revoked", agentID, "success", "admin action")
-	h.logAuditEventToDB(c.Request.Context(), "agent.revoked", agentID, "success", "admin action")
 	c.JSON(http.StatusOK, gin.H{"status": "revoked", "agent_id": agentID})
 }
 

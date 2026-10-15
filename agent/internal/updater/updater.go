@@ -67,18 +67,30 @@ var DefaultManifestURL string
 
 // Manifest describes the latest published release.
 //
-// Every field but Signature is covered by Signature (see signingInput); adding
-// one without covering it fails TestTheSignatureCoversEveryManifestField,
-// because a field outside the signature is a field an attacker can choose.
+// Every field but the two signatures is covered by SignatureV2 (see
+// signingInputV2); adding one without covering it fails
+// TestTheSignatureCoversEveryManifestField, because a field outside the
+// signature is a field an attacker can choose.
 type Manifest struct {
 	Version string `json:"version"`
 	URL     string `json:"url"`
 	SHA256  string `json:"sha256"`
-	// Signature is base64 RSASSA-PKCS1-v1_5 over SHA-256 of signingInput,
-	// made by the pinned release publisher. Verified by Verify, which Fetch
+	// Expires is when this manifest stops being accepted: RFC 3339, UTC,
+	// whole seconds (2027-01-13T10:00:00Z). The release signs for 90 days.
+	// A manifest with no expiry is good for as long as anyone keeps a copy,
+	// so whoever could serve one once could serve it forever and this agent
+	// would never learn that a newer release exists. See Verify.
+	Expires string `json:"expires"`
+	// Signature is base64 RSASSA-PKCS1-v1_5 over SHA-256 of signingInput
+	// (version, url, sha256; no expiry), made by the pinned release
+	// publisher. Agents built before the expiry verify only this one, so the
+	// release still produces it. This agent does not accept it on its own.
+	Signature string `json:"signature"`
+	// SignatureV2 is the same signature over signingInputV2, which covers
+	// every field above, Expires included. Verified by Verify, which Fetch
 	// calls before returning; there is no path that returns an unverified
 	// manifest.
-	Signature string `json:"signature"`
+	SignatureV2 string `json:"signature_v2"`
 }
 
 // requireSecureURL rejects a URL this package must not fetch from.

@@ -63,6 +63,28 @@ describe('TunnelPolicyBadge', () => {
     expect(screen.getByTestId('tunnel-policy')).toHaveTextContent('Policy pending')
   })
 
+  it('never calls a policy applied with gaps "applied"', () => {
+    render(<TunnelPolicyBadge state="applied_with_gaps" version="0123456789abcdef" appliedAt="2026-10-10T08:00:00Z" />)
+    const badge = screen.getByTestId('tunnel-policy')
+    expect(badge).toHaveTextContent('Policy applied, with gaps')
+    expect(badge).toHaveAttribute('data-state', 'applied_with_gaps')
+    expect(badge.getAttribute('title')).toContain('0123456789abcdef')
+    expect(badge.getAttribute('title')).toContain('not enforced on this device')
+  })
+
+  it('keeps a policy applied without gaps plain', () => {
+    render(<TunnelPolicyBadge state="applied" version="0123456789abcdef" appliedAt="2026-10-10T08:00:00Z" />)
+    const badge = screen.getByTestId('tunnel-policy')
+    expect(badge).toHaveTextContent(/^Policy applied$/)
+    expect(badge).toHaveAttribute('data-state', 'applied')
+    expect(badge.getAttribute('title')).not.toContain('not enforced')
+  })
+
+  it('shows nothing for a state it does not know', () => {
+    const { container } = render(<TunnelPolicyBadge state="exploded" />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
   it('shows nothing for a device that reports no tunnel', () => {
     const { container } = render(<TunnelPolicyBadge state="" />)
     expect(container).toBeEmptyDOMElement()

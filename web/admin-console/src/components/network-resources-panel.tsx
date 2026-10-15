@@ -157,7 +157,12 @@ export function NetworkPolicyCard() {
             )}
             {data?.devices && (
               <div className="border-t pt-3 text-xs text-muted-foreground" data-testid="np-rollout">
-                <p>{t('pages.networkResources.policy.rollout', data.devices)}</p>
+                <p>
+                  {t('pages.networkResources.policy.rollout', {
+                    ...data.devices,
+                    applied_with_gaps: data.devices.applied_with_gaps ?? 0,
+                  })}
+                </p>
                 {data.version && (
                   <p className="font-mono">{t('pages.networkResources.policy.version', { version: data.version })}</p>
                 )}

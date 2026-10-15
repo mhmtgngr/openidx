@@ -230,18 +230,32 @@ func TestReenrolmentDoesNotBringARevokedDeviceBack(t *testing.T) {
 		const fp = "win:still-active"
 		first := enrolled(t, byToken("fleet-token", fp))
 		again := enrolled(t, byToken("fleet-token", fp))
-		viaOAuth := enrolled(t, byOAuth(fp))
-		if again.AgentID != first.AgentID || viaOAuth.AgentID != first.AgentID {
-			t.Errorf("re-enrolment changed the agent: %q, %q, %q", first.AgentID, again.AgentID, viaOAuth.AgentID)
+		if again.AgentID != first.AgentID {
+			t.Errorf("re-enrolment by the operator's token changed the agent: %q -> %q", first.AgentID, again.AgentID)
 		}
-		if viaOAuth.Status != "active" {
-			t.Errorf("re-enrolled status %q, want active", viaOAuth.Status)
+		if again.Status != "active" {
+			t.Errorf("re-enrolled status %q, want active", again.Status)
 		}
-		if code := config(viaOAuth); code != http.StatusOK {
+		if code := config(again); code != http.StatusOK {
 			t.Errorf("the newest credential answered %d on /agent/config, want 200", code)
 		}
 		if code := config(first); code != http.StatusUnauthorized {
 			t.Errorf("a rotated-out credential answered %d on /agent/config, want 401", code)
+		}
+		// A user enrolling by OAuth is not the operator whose token enrolled
+		// the device, and the row holds no key the device could sign with, so
+		// the user's enrolment is a new agent and the operator's row is left as
+		// it is (reenrolmentRefusal): naming a machine's fingerprint is not
+		// owning it.
+		viaOAuth := enrolled(t, byOAuth(fp))
+		if viaOAuth.AgentID == first.AgentID {
+			t.Errorf("a user's OAuth enrolment took the operator-enrolled agent %q", first.AgentID)
+		}
+		if code := config(viaOAuth); code != http.StatusOK {
+			t.Errorf("the user's own credential answered %d on /agent/config, want 200", code)
+		}
+		if code := config(again); code != http.StatusOK {
+			t.Errorf("the operator-enrolled credential answered %d after a user's enrolment, want 200", code)
 		}
 	})
 

@@ -1,0 +1,29 @@
+{
+  "agent_id": "<the agent's own id; the test fills it>",
+  "results": [
+    {
+      "check_type": "screen_lock",
+      "severity": "high",
+      "status": "pass",
+      "score": 1,
+      "message": "a screen lock is set",
+      "details": {"timeout_seconds": 30}
+    },
+    {
+      "check_type": "developer_options",
+      "severity": "medium",
+      "status": "fail",
+      "score": 0,
+      "message": "developer options are on",
+      "remediation": "Turn developer options off in Settings."
+    }
+  ],
+  "tunnel_status": {
+    "state": "up",
+    "version": "0.30.0",
+    "services": [
+      {"name": "erp-web", "status": "up"},
+      {"name": "rdp-finance", "status": "down", "dial_failures": 2}
+    ]
+  }
+}

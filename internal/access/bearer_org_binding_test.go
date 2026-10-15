@@ -182,14 +182,16 @@ func TestEnrollBindsASessionToItsOrganization(t *testing.T) {
 		return s.resolveEnrollSubject(c, &darkEnrollRequest{})
 	}
 
-	if sub, method, err := resolve(bearerOrgA, bearerFor(t, bearerOrgA)); err != nil || sub != bearerSubject || method != "session" {
+	// The door also wants the agent.enroll scope (enroll_handler_test.go);
+	// these tokens carry it so that the organization binding is what decides.
+	if sub, method, err := resolve(bearerOrgA, enrolBearer(t, bearerOrgA, enrollScope, time.Now())); err != nil || sub != bearerSubject || method != "session" {
 		t.Errorf("org A's session enrolling in org A: subject %q, method %q, error %v; want %q by session",
 			sub, method, err, bearerSubject)
 	}
-	if sub, method, err := resolve(bearerOrgB, bearerFor(t, bearerOrgA)); err == nil {
+	if sub, method, err := resolve(bearerOrgB, enrolBearer(t, bearerOrgA, enrollScope, time.Now())); err == nil {
 		t.Errorf("org A's session enrolled a device in org B for %q by %s", sub, method)
 	}
-	if sub, method, err := resolve(bearerOrgA, bearerFor(t, "")); err == nil {
+	if sub, method, err := resolve(bearerOrgA, enrolBearer(t, "", enrollScope, time.Now())); err == nil {
 		t.Errorf("a token naming no organization enrolled a device for %q by %s", sub, method)
 	}
 }

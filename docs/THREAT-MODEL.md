@@ -107,7 +107,7 @@ UI shows must be the access the enforcement points grant
 | A2 | OAuth tokens & sessions (access ≤1 h, refresh long-lived) | Signed JWTs client-side; session + revocation state in Redis/PG | Impersonation until expiry/revocation |
 | A3 | Privileged credentials & SSH CA private key | `vault_secrets` (envelope-encrypted, §4.6) | Direct compromise of customer servers |
 | A4 | Session recordings (screen/terminal) | Filesystem or S3, per-chunk AEAD | Disclosure of everything privileged users saw/typed |
-| A5 | Audit trail | PostgreSQL (`unified_audit_events`, HMAC chain) + Elasticsearch | Undetectable abuse; failed audits |
+| A5 | Audit trail | PostgreSQL: `audit_events`, HMAC-chained by the sealer in `internal/audit/chain.go` (`unified_audit_events` is not chained), plus Elasticsearch | Undetectable abuse; failed audits |
 | A6 | Tenant separation itself | PostgreSQL RLS policies | Cross-org data breach — the worst case for a shared install |
 | A7 | Ziti PKI, service/dial policies | Ziti controller | Network access to every dark service |
 | A8 | Platform secrets: JWT signing key, vault/recording KEKs, DB and APISIX admin credentials | Operator's secret store / env / OpenBao | Platform-wide forgery or decryption |
@@ -269,10 +269,19 @@ disk. S3 backend inherits the same framing.
 
 Enrollment is QR + OAuth; Android adds **Play Integrity** verification
 (`internal/access/play_integrity.go`) and posture checks feed policy. Remote
-support (WebRTC) sessions are recorded under §4.7's crypto, with retention
-and legal hold. TURN credentials are minted short-lived
-(`internal/access/turn_credentials.go`). A stolen device holds only its own
-Ziti identity: policies limit what it can dial, and the kill switch severs it.
+support recording depends on who is helping: a staff session is recorded
+only when the operator opts in (`record`), captured in the operator's
+browser and uploaded to the broker (`internal/access/remote_support_api.go`);
+a vendor session is always recorded by the broker itself, from the relay
+frames (`internal/access/remote_support_external.go`). Both go to the
+recording store, encrypted under §4.7's keyring when one is configured, with
+retention and legal hold. TURN credentials are minted short-lived
+(`internal/access/turn_credentials.go`). Since v1.42 a device's Ziti
+identity carries its user's groups and assigned applications and, from the
+device's own posture compliance, `#device-trusted`
+(`internal/access/device_identity.go`): a stolen device can dial what its
+user is assigned, within its policies and its own trust, until a revoke or
+the kill switch severs it.
 An administrator's revoke of an agent stands: the agent's credential is
 refused on every agent route, and an enrolment that names the revoked
 agent's device fingerprint, by enrollment token or by OAuth, is refused too
@@ -320,7 +329,7 @@ Honesty section — what the platform does **not** absorb for you:
 | R3 | guacd handles decrypted RDP/VNC/SSH inside its segment | Network-isolate guacd; only the access service may reach it; never expose it publicly |
 | R4 | `ACCESS_ASSIGNMENT_ENFORCE` is on for a fresh install, but an install from before [#956](https://github.com/mhmtgngr/openidx/issues/956) keeps its own value, which defaults off | Run the rollout (assignment report → assign → enforce) — `docs/plans/2026-08-30-access-and-login-convergence.md` |
 | R5 | Redis compromise exposes session/challenge state and could suppress revocation markers | Run Redis with auth + TLS, private network only; watch the revocation-warning path |
-| R6 | RLS is the tenant wall; a DB superuser can disable it, and so can SQL running as the application role, by setting `app.bypass_rls` ([#964](https://github.com/mhmtgngr/openidx/issues/964)) | Restrict superuser access, encrypt DB storage and backups, alert on policy changes |
+| R6 | RLS is the tenant wall, and a DB superuser can disable it. Since v1.42 the bypass that background work needs is a separate role (`openidx_bypass`, `BYPASSRLS`, reached through `DATABASE_BYPASS_URL`; `internal/common/database/bypass.go`), so SQL running as the application role can no longer switch it on; what remains of [#964](https://github.com/mhmtgngr/openidx/issues/964) is the migrator's role and the CI test selection | Set `DATABASE_BYPASS_URL` to the bypass role (production refuses to start without it), restrict superuser access, encrypt DB storage and backups, alert on policy changes |
 | R7 | On a single box, the local DB dumps are not encrypted and live on the same VM as the database. The off-box copy is encrypted with age, but only once an operator configures a target and recipients (`deployments/scripts/pg-backup.sh`); the Helm backup CronJob encrypts with `BACKUP_ENCRYPTION_KEY` | Configure the off-box copy, keep the age identity off the box, and use storage that the box cannot delete from; encrypt the local disk; drill restores (`pg-restore-verify.sh --from-offbox`, `make dr-game-day`) |
 | R8 | JWT signing key age is not tracked in code | Rotate ≤ 90 days per operational control §5.2 |
 | R9 | Some requests to administrator-configured URLs are not behind the outbound guard (§4.11): external identity providers, OIDC back-channel logout, SAML single logout, EDR connectors, BambooHR. Most are blind (the answer is not shown), and internal identity providers and service providers are common | Restrict the services' egress to what they need; treat those settings as an administrator's trust |

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
@@ -51,6 +52,8 @@ const (
 	agentSignatureWindow = 5 * time.Minute
 	// maxAgentReportBytes bounds a report body read whole for its signature.
 	maxAgentReportBytes = 4 << 20
+	// maxEnrollBytes bounds an enrolment body read whole for its signature.
+	maxEnrollBytes = 64 << 10
 )
 
 // Header names, as the agent sends them.
@@ -278,4 +281,48 @@ func (h *AgentAPIHandler) requireDeviceSignature(c *gin.Context, agentID string,
 	h.logAuditEventToDB(ctx, "agent.report_refused", agentID, "denied", err.Error())
 	c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error(), "code": code})
 	return false
+}
+
+// enrolmentProof reads the device-key signature a re-enrolment may carry.
+//
+// A device that already holds a key signs its enrolment as the agent it was
+// (X-Agent-ID, with the timestamp and signature headers a report carries), and
+// that signature is what lets the enrolment take that agent's row again
+// (reenrolmentRefusal). It returns the agent id the signature proves and true;
+// "" and true when the request carries no signature, names an agent this
+// tenant does not have, or names one that holds no key -- the enrolment then
+// stands on whatever admitted it, as before; and false, having answered 401
+// and audited the refusal, when the signature does not verify against the key
+// the server holds for that agent. ctx carries the tenant the enrolment was
+// admitted into; the key lookup is within it.
+func (h *AgentAPIHandler) enrolmentProof(c *gin.Context, ctx context.Context, body []byte) (string, bool) {
+	agentID := strings.TrimSpace(c.GetHeader("X-Agent-ID"))
+	ts, sig := strings.TrimSpace(c.GetHeader(headerAgentKeyTimestamp)), strings.TrimSpace(c.GetHeader(headerAgentKeySignature))
+	if agentID == "" || (ts == "" && sig == "") {
+		return "", true
+	}
+	if h.db == nil || h.db.Pool == nil {
+		return "", true
+	}
+	pub, err := h.agentDeviceKey(ctx, agentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", true
+	}
+	if err != nil {
+		h.logger.Error("device key lookup failed; refusing the enrolment",
+			logsafe.String("agent_id", agentID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read the device"})
+		return "", false
+	}
+	if pub == nil {
+		return "", true
+	}
+	if err := verifyAgentRequestSignature(pub, c.Request.Method, c.Request.URL.Path, agentID, body, ts, sig, time.Now()); err != nil {
+		detail := "re-enrolment signature refused: " + err.Error()
+		h.logAuditEvent("agent.enroll_denied", agentID, "denied", detail)
+		h.logAuditEventToDB(ctx, "agent.enroll_denied", agentID, "denied", detail)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error(), "code": "device_signature_invalid"})
+		return "", false
+	}
+	return agentID, true
 }
