@@ -146,18 +146,35 @@ describe('NetworkResourcesPanel', () => {
       if (url.endsWith('/network-policy')) {
         return Promise.resolve({
           always_on: true, split_tunnel: false, block_direct_corporate_cidrs: true,
-          version: '0123456789abcdef', devices: { applied: 3, pending: 1, unreported: 2 },
+          version: '0123456789abcdef', devices: { applied: 3, applied_with_gaps: 2, pending: 1, unreported: 2 },
         })
       }
       return Promise.resolve([])
     })
     render(<NetworkResourcesPanel />, { wrapper: wrapper() })
     expect(await screen.findByTestId('np-rollout')).toHaveTextContent(
-      'Applied on 3 devices · pending on 1 · 2 not reporting a tunnel',
+      'Applied on 3 devices · applied with gaps on 2 · pending on 1 · 2 not reporting a tunnel',
     )
     expect(screen.getByTestId('np-rollout')).toHaveTextContent('0123456789abcdef')
     expect(screen.getByTestId('np-full-tunnel-gap')).toBeInTheDocument()
     expect(screen.getByTestId('np-block-scope')).toHaveTextContent('Linux')
+  })
+
+  it('counts no device as applied with gaps when the server does not say', async () => {
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url.endsWith('/network-resources')) return Promise.resolve({ resources: [resource], total: 1 })
+      if (url.endsWith('/network-policy')) {
+        return Promise.resolve({
+          always_on: false, split_tunnel: true, block_direct_corporate_cidrs: false,
+          version: '0123456789abcdef', devices: { applied: 3, pending: 0, unreported: 0 },
+        })
+      }
+      return Promise.resolve([])
+    })
+    render(<NetworkResourcesPanel />, { wrapper: wrapper() })
+    expect(await screen.findByTestId('np-rollout')).toHaveTextContent(
+      'Applied on 3 devices · applied with gaps on 0 · pending on 0 · 0 not reporting a tunnel',
+    )
   })
 
   it('changes the network policy one switch at a time', async () => {

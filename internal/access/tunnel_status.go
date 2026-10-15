@@ -25,8 +25,10 @@ import (
 // enrolled_agents (tunnel_status, and tunnel_last_seen: the server's clock at
 // the last report that said "up", never the device's), shows it on the
 // Devices page, counts the dial failures for Prometheus, and exposes how many
-// devices are reporting in with their tunnel down, for the alert in
-// deployments/monitoring/alerts.yml.
+// devices are reporting in with their tunnel down, the agents per status and
+// the policy gaps the fleet reports (RegisterFleetGauges), for the alerts in
+// deployments/monitoring/alerts.yml and the rule files the Compose stacks and
+// the Helm chart load.
 //
 // The report also says how the device applied the organization's tunnel
 // policy (tunnel_policy.go): the policy version it acted on, the mode it runs
@@ -241,51 +243,198 @@ func (h *AgentAPIHandler) recordTunnelStatus(ctx context.Context, agentID string
 // still reporting before the device counts as "tunnel down".
 const tunnelDownWindow = 15 * time.Minute
 
-var registerTunnelGauge sync.Once
+// gaugeRefresh is how often the fleet gauges re-count: a scrape within the
+// window is answered from the previous count.
+const gaugeRefresh = 30 * time.Second
 
-// RegisterTunnelDownGauge exposes openidx_tunnel_agents_down: the number of
-// active devices whose agent reported in during the last 15 minutes while
-// their tunnel was not up, or not seen up for 15 minutes. A device that is
-// switched off reports nothing and is not counted, and neither is one whose
-// tunnel is not enabled (state "off"). The count is read at most
-// every 30 seconds. Registered once per process.
-func RegisterTunnelDownGauge(db *database.PostgresDB, logger *zap.Logger) {
+// scrapeCache runs a count at most once per gaugeRefresh and keeps the
+// previous result when a count fails, so a scrape never waits on a slow
+// database and a failing one shows the last figures it had rather than zero.
+type scrapeCache[T any] struct {
+	mu   sync.Mutex
+	at   time.Time
+	last T
+}
+
+// get answers from the cache while it is fresh; otherwise it runs count with
+// a 5-second deadline. A failed count is handed to failed and the previous
+// value kept (and tried again at the next scrape).
+func (c *scrapeCache[T]) get(count func(context.Context) (T, error), failed func(error)) T {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if time.Since(c.at) < gaugeRefresh {
+		return c.last
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	v, err := count(ctx)
+	if err != nil {
+		failed(err)
+		return c.last
+	}
+	c.last, c.at = v, time.Now()
+	return v
+}
+
+// countTunnelDown is openidx_tunnel_agents_down: the active devices whose
+// agent reported in during the last tunnelDownWindow while their tunnel was
+// not up, or not seen up for that long.
+func countTunnelDown(ctx context.Context, db *database.PostgresDB) (float64, error) {
+	var n int
+	err := db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
+		//orgscope:ignore install-wide metric: one count across every organization's devices, no row leaves the query
+		`
+		SELECT count(*) FROM enrolled_agents
+		 WHERE status = 'active' AND tunnel_status IS NOT NULL
+		   AND tunnel_status->>'state' <> 'off'
+		   AND last_seen_at > NOW() - $1::interval
+		   AND (tunnel_status->>'state' <> 'up'
+		        OR tunnel_last_seen IS NULL OR tunnel_last_seen < NOW() - $1::interval)`,
+		tunnelDownWindow.String()).Scan(&n)
+	return float64(n), err
+}
+
+// agentStates is the vocabulary of enrolled_agents.status, and the label
+// values of openidx_agents_by_state. Every value is always a series (zero
+// when no agent has it); a status outside the vocabulary is not counted, so
+// the labels never carry free text.
+var agentStates = []string{"active", "pending", "suspended", "revoked"}
+
+// policyGapNames is tunnelPolicyGaps as a list, the label values of
+// openidx_tunnel_policy_gaps.
+var policyGapNames = []string{"full_tunnel", "block_direct"}
+
+// fleetCounts is one reading of the fleet: agents per status, and active
+// devices per policy gap their last tunnel status reports.
+type fleetCounts struct {
+	byState map[string]float64
+	gaps    map[string]float64
+}
+
+// fleetCollector exposes openidx_agents_by_state and
+// openidx_tunnel_policy_gaps, read together at most every gaugeRefresh, on
+// the same terms as openidx_tunnel_agents_down.
+type fleetCollector struct {
+	db      *database.PostgresDB
+	logger  *zap.Logger
+	byState *prometheus.Desc
+	gaps    *prometheus.Desc
+	cache   scrapeCache[fleetCounts]
+}
+
+func newFleetCollector(db *database.PostgresDB, logger *zap.Logger) *fleetCollector {
+	return &fleetCollector{
+		db:     db,
+		logger: logger,
+		byState: prometheus.NewDesc("openidx_agents_by_state",
+			"Enrolled agents by status (active, pending, suspended, revoked), across the installation.",
+			[]string{"state"}, nil),
+		gaps: prometheus.NewDesc("openidx_tunnel_policy_gaps",
+			"Active devices whose last tunnel status reports this part of the tunnel policy as not enforced on the device (full_tunnel, block_direct).",
+			[]string{"gap"}, nil),
+	}
+}
+
+func (f *fleetCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- f.byState
+	ch <- f.gaps
+}
+
+func (f *fleetCollector) Collect(ch chan<- prometheus.Metric) {
+	counts := f.cache.get(f.count, func(err error) {
+		f.logger.Debug("fleet gauges: count failed", zap.Error(err))
+	})
+	for _, s := range agentStates {
+		ch <- prometheus.MustNewConstMetric(f.byState, prometheus.GaugeValue, counts.byState[s], s)
+	}
+	for _, g := range policyGapNames {
+		ch <- prometheus.MustNewConstMetric(f.gaps, prometheus.GaugeValue, counts.gaps[g], g)
+	}
+}
+
+// count reads the fleet: every organization's agents, as two counts that
+// leave no row. A device is counted once per gap it reports, whatever the
+// stored list repeats; a gap name outside the vocabulary is read and dropped.
+func (f *fleetCollector) count(ctx context.Context) (fleetCounts, error) {
+	c := fleetCounts{byState: map[string]float64{}, gaps: map[string]float64{}}
+	ctx = orgctx.WithBypassRLS(ctx)
+	rows, err := f.db.Pool.Query(ctx,
+		//orgscope:ignore install-wide metric: agents per status across every organization, no row leaves the query
+		`SELECT status, count(*) FROM enrolled_agents GROUP BY status`)
+	if err != nil {
+		return c, err
+	}
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			rows.Close()
+			return c, err
+		}
+		c.byState[status] = float64(n)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return c, err
+	}
+	rows, err = f.db.Pool.Query(ctx,
+		//orgscope:ignore install-wide metric: active devices per reported policy gap across every organization, no row leaves the query
+		`SELECT gap, count(DISTINCT agent_id)
+		   FROM enrolled_agents,
+		        jsonb_array_elements_text(CASE WHEN jsonb_typeof(tunnel_status->'policy_gaps') = 'array'
+		                                       THEN tunnel_status->'policy_gaps' ELSE '[]'::jsonb END) AS gap
+		  WHERE status = 'active'
+		  GROUP BY gap`)
+	if err != nil {
+		return c, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var gap string
+		var n int
+		if err := rows.Scan(&gap, &n); err != nil {
+			return c, err
+		}
+		if tunnelPolicyGaps[gap] {
+			c.gaps[gap] = float64(n)
+		}
+	}
+	return c, rows.Err()
+}
+
+var registerFleetGauges sync.Once
+
+// RegisterFleetGauges exposes the fleet's gauges, install-wide (every
+// organization's devices, one figure each) and each read at most every 30
+// seconds, for the alerts in deployments/monitoring/alerts.yml and the rule
+// files the Compose stacks and the Helm chart load:
+//
+//   - openidx_tunnel_agents_down: active devices whose agent reported in
+//     during the last 15 minutes while their tunnel was not up, or not seen up
+//     for 15 minutes. A device that is switched off reports nothing and is not
+//     counted, and neither is one whose tunnel is not enabled (state "off").
+//   - openidx_agents_by_state{state}: enrolled agents per status.
+//   - openidx_tunnel_policy_gaps{gap}: active devices whose last tunnel status
+//     reports that part of the tunnel policy as not enforced on the device.
+//
+// Registered once per process.
+func RegisterFleetGauges(db *database.PostgresDB, logger *zap.Logger) {
 	if db == nil || db.Pool == nil {
 		return
 	}
-	registerTunnelGauge.Do(func() {
-		var mu sync.Mutex
-		var last float64
-		var at time.Time
+	registerFleetGauges.Do(func() {
+		var down scrapeCache[float64]
 		promauto.NewGaugeFunc(prometheus.GaugeOpts{
 			Namespace: "openidx",
 			Name:      "tunnel_agents_down",
 			Help:      "Active devices whose agent is reporting in but whose tunneler is not up (or not seen up for 15 minutes).",
 		}, func() float64 {
-			mu.Lock()
-			defer mu.Unlock()
-			if time.Since(at) < 30*time.Second {
-				return last
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			var n int
-			err := db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
-				//orgscope:ignore install-wide metric: one count across every organization's devices, no row leaves the query
-				`
-				SELECT count(*) FROM enrolled_agents
-				 WHERE status = 'active' AND tunnel_status IS NOT NULL
-				   AND tunnel_status->>'state' <> 'off'
-				   AND last_seen_at > NOW() - $1::interval
-				   AND (tunnel_status->>'state' <> 'up'
-				        OR tunnel_last_seen IS NULL OR tunnel_last_seen < NOW() - $1::interval)`,
-				tunnelDownWindow.String()).Scan(&n)
-			if err != nil {
+			return down.get(func(ctx context.Context) (float64, error) {
+				return countTunnelDown(ctx, db)
+			}, func(err error) {
 				logger.Debug("tunnel down gauge: count failed", zap.Error(err))
-				return last
-			}
-			last, at = float64(n), time.Now()
-			return last
+			})
 		})
+		prometheus.MustRegister(newFleetCollector(db, logger))
 	})
 }

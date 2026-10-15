@@ -6645,7 +6645,7 @@ const en = {
           'The bundled tunneler intercepts only network resources, so devices keep running split and report the full tunnel as not enforced.',
         blockDirectScope:
           'Enforced by the agent on Linux devices where it runs as root (nftables). Windows and macOS devices report it as not enforced.',
-        rollout: 'Applied on {{applied}} devices · pending on {{pending}} · {{unreported}} not reporting a tunnel',
+        rollout: 'Applied on {{applied}} devices · applied with gaps on {{applied_with_gaps}} · pending on {{pending}} · {{unreported}} not reporting a tunnel',
         version: 'Policy version {{version}}',
         saved: 'Network policy saved',
         saveFailed: 'Could not save the network policy',
@@ -8194,9 +8194,12 @@ const en = {
       tunnelLastError: 'Last error: {{error}}',
       policyStates: {
         applied: 'Policy applied',
+        applied_with_gaps: 'Policy applied, with gaps',
         pending: 'Policy pending',
       },
       policyAppliedDetail: 'Runs policy version {{version}} since {{when}}',
+      policyAppliedWithGapsDetail:
+        'Runs policy version {{version}} since {{when}}; a part of it is not enforced on this device (see the tunnel badge)',
       policyPendingDetail: 'Reports policy version {{version}}; the current policy reaches it at its next report',
       unknownPlatform: 'unknown',
       empty: 'No agents match the current filters.',

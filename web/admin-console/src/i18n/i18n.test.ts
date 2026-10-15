@@ -537,7 +537,7 @@ describe('i18n', () => {
       // ...the tunnel-policy gaps an agent reports, and whether it applied
       // the current policy.
       ...['full_tunnel', 'block_direct'].map((k) => `pages.agentFleet.tunnelGapNames.${k}`),
-      ...['applied', 'pending'].map((k) => `pages.agentFleet.policyStates.${k}`),
+      ...['applied', 'applied_with_gaps', 'pending'].map((k) => `pages.agentFleet.policyStates.${k}`),
       // network-resources-panel: the draft errors and the policy toggles.
       ...['needName', 'needAddress', 'badPort', 'needProtocol'].map(
         (k) => `pages.networkResources.errors.${k}`,

@@ -2206,7 +2206,9 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	}
 }
 
-// agentRecord holds the fields returned by HandleListAgents.
+// agentRecord holds the fields returned by HandleListAgents. Its
+// tunnel_policy_state is "applied", "applied_with_gaps", "pending" or "" (no
+// tunnel status reported); see tunnelPolicyState and policyStateWithGaps.
 type agentRecord struct {
 	AgentID          string     `json:"agent_id"`
 	DeviceID         string     `json:"device_id"`
@@ -2297,7 +2299,12 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 				rec.TunnelStatus = &ts
 			}
 		}
-		rec.TunnelPolicyState = tunnelPolicyState(rec.TunnelPolicyVersion, rec.TunnelStatus != nil, current)
+		// The version comparison, then the gaps the device reports: a device
+		// on the current version with a part of it unenforced is
+		// "applied_with_gaps", never "applied" (what the page says is what
+		// is enforced).
+		rec.TunnelPolicyState = policyStateWithGaps(
+			tunnelPolicyState(rec.TunnelPolicyVersion, rec.TunnelStatus != nil, current), rec.TunnelStatus)
 		agents = append(agents, rec)
 	}
 	if rows.Err() != nil {

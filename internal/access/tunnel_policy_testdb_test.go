@@ -20,7 +20,9 @@ import (
 // The tunnel policy a device receives and the one it reports applying, on the
 // migrated schema: the defaults, the corporate ranges once the block is on,
 // the version moving with them, the applied version stored by a report, and
-// the applied/pending counts and per-device state the console reads.
+// the applied / applied-with-gaps / pending counts and per-device state the
+// console reads. A report with policy_gaps lands as applied_with_gaps, and
+// the next one without them as applied.
 func TestTunnelPolicyDeliveryAndRolloutOnTheMigratedSchema(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	if db == nil {
@@ -88,11 +90,12 @@ func TestTunnelPolicyDeliveryAndRolloutOnTheMigratedSchema(t *testing.T) {
 	}
 	current := p.Version
 
-	// Three devices: one applied the current version, one an old one, one
-	// reports no tunnel at all.
-	for _, id := range []string{"agent-now", "agent-old", "agent-none"} {
+	// Four devices: one applied the current version, one applied it with a
+	// gap (through the report route, as the Go agent sends it), one an old
+	// version, one reports no tunnel at all.
+	for _, id := range []string{"agent-now", "agent-gaps", "agent-old", "agent-none"} {
 		if _, err := db.Pool.Exec(ctx, `INSERT INTO enrolled_agents (agent_id, device_id, auth_token_hash, status, org_id)
-			VALUES ($1, $1, 'x', 'active', $2)`, id, org); err != nil {
+			VALUES ($1, $1, $2, 'active', $3)`, id, sha256Hex("secret-"+id), org); err != nil {
 			t.Fatalf("seed agent: %v", err)
 		}
 	}
@@ -100,6 +103,25 @@ func TestTunnelPolicyDeliveryAndRolloutOnTheMigratedSchema(t *testing.T) {
 	h.recordTunnelStatus(ctx, "agent-now", &agentTunnelStatus{State: "connected", Mode: "split", PolicyVersion: current})
 	h.recordTunnelStatus(ctx, "agent-old", &agentTunnelStatus{State: "degraded", PolicyVersion: defaultVersion,
 		PolicyGaps: []string{"block_direct"}, LastError: "nft: not installed"})
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/agent/report", h.HandleReport)
+	// report is agent-gaps's posture report, with the tunnel status given.
+	report := func(tunnelStatus string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/agent/report",
+			strings.NewReader(`{"agent_id":"agent-gaps","results":[],"tunnel_status":`+tunnelStatus+`}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Agent-ID", "agent-gaps")
+		req.Header.Set("X-Auth-Token", "secret-agent-gaps")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code >= 300 {
+			t.Fatalf("report answered %d: %s", w.Code, w.Body.String())
+		}
+	}
+	report(`{"state":"connected","mode":"split","policy_version":"` + current + `","policy_gaps":["block_direct"]}`)
 
 	var stored *string
 	var appliedAtSet bool
@@ -112,47 +134,71 @@ func TestTunnelPolicyDeliveryAndRolloutOnTheMigratedSchema(t *testing.T) {
 	}
 
 	d, err := countTunnelPolicyDevices(ctx, db, org, current)
-	if err != nil || d != (tunnelPolicyDevices{Applied: 1, Pending: 1, Unreported: 1}) {
+	if err != nil || d != (tunnelPolicyDevices{Applied: 1, AppliedWithGaps: 1, Pending: 1, Unreported: 1}) {
 		t.Errorf("devices = %+v, %v", d, err)
 	}
 
 	// The console's two reads: the policy with its rollout, and the fleet.
-	gin.SetMode(gin.TestMode)
-	svc := &Service{db: db, config: &config.Config{}, logger: zap.NewNop()}
-	r := gin.New()
-	r.Use(func(c *gin.Context) {
+	console := gin.New()
+	console.Use(func(c *gin.Context) {
 		c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: org}))
 		c.Next()
 	})
-	r.GET("/network-policy", svc.handleGetNetworkPolicy)
-	r.GET("/agents", h.HandleListAgents)
+	svc := &Service{db: db, config: &config.Config{}, logger: zap.NewNop()}
+	console.GET("/network-policy", svc.handleGetNetworkPolicy)
+	console.GET("/agents", h.HandleListAgents)
+	// rollout is the network-policy answer's device counts, and states the
+	// fleet list's tunnel_policy_state per device.
+	rollout := func() (string, tunnelPolicyDevices) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		console.ServeHTTP(w, httptest.NewRequest("GET", "/network-policy", nil))
+		var pol networkPolicyView
+		if err := json.Unmarshal(w.Body.Bytes(), &pol); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("network-policy answered %d: %s", w.Code, w.Body.String())
+		}
+		if pol.Devices == nil {
+			t.Fatalf("network-policy carries no device counts: %s", w.Body.String())
+		}
+		return pol.Version, *pol.Devices
+	}
+	states := func() (map[string]string, []agentRecord) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		console.ServeHTTP(w, httptest.NewRequest("GET", "/agents", nil))
+		var agents []agentRecord
+		if err := json.Unmarshal(w.Body.Bytes(), &agents); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("agents answered %d: %s", w.Code, w.Body.String())
+		}
+		state := map[string]string{}
+		for _, a := range agents {
+			state[a.AgentID] = a.TunnelPolicyState
+		}
+		return state, agents
+	}
 
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/network-policy", nil))
-	var pol networkPolicyView
-	if err := json.Unmarshal(w.Body.Bytes(), &pol); err != nil || w.Code != http.StatusOK {
-		t.Fatalf("network-policy answered %d: %s", w.Code, w.Body.String())
+	if version, dev := rollout(); version != current ||
+		dev != (tunnelPolicyDevices{Applied: 1, AppliedWithGaps: 1, Pending: 1, Unreported: 1}) {
+		t.Errorf("network-policy version %s devices %+v", version, dev)
 	}
-	if pol.Version != current || pol.Devices == nil || pol.Devices.Applied != 1 || pol.Devices.Pending != 1 {
-		t.Errorf("network-policy = %+v", pol)
-	}
-
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/agents", nil))
-	var agents []agentRecord
-	if err := json.Unmarshal(w.Body.Bytes(), &agents); err != nil || w.Code != http.StatusOK {
-		t.Fatalf("agents answered %d: %s", w.Code, w.Body.String())
-	}
-	state := map[string]string{}
+	state, agents := states()
 	for _, a := range agents {
-		state[a.AgentID] = a.TunnelPolicyState
 		if a.AgentID == "agent-old" && (a.TunnelStatus == nil || a.TunnelStatus.State != "down" ||
 			a.TunnelStatus.LastError != "nft: not installed" || len(a.TunnelStatus.PolicyGaps) != 1) {
 			t.Errorf("agent-old's tunnel status = %+v", a.TunnelStatus)
 		}
 	}
-	if want := map[string]string{"agent-now": "applied", "agent-old": "pending", "agent-none": ""}; !reflect.DeepEqual(state, want) {
+	if want := map[string]string{"agent-now": "applied", "agent-gaps": "applied_with_gaps", "agent-old": "pending", "agent-none": ""}; !reflect.DeepEqual(state, want) {
 		t.Errorf("policy states = %v, want %v", state, want)
+	}
+
+	// The device's next report has no gap: it is applied, nothing more.
+	report(`{"state":"connected","mode":"split","policy_version":"` + current + `"}`)
+	if _, dev := rollout(); dev != (tunnelPolicyDevices{Applied: 2, Pending: 1, Unreported: 1}) {
+		t.Errorf("after the report without gaps, devices = %+v", dev)
+	}
+	if state, _ := states(); state["agent-gaps"] != "applied" {
+		t.Errorf("after the report without gaps, agent-gaps is %q, want applied", state["agent-gaps"])
 	}
 
 	// A report without a version clears the applied version.

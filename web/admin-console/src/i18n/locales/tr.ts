@@ -6602,7 +6602,7 @@ const tr: typeof en = {
           'Paketle gelen tünelleyici yalnızca ağ kaynaklarını yakalar; cihazlar bölünmüş tünelde kalır ve tam tüneli uygulanamadı olarak bildirir.',
         blockDirectScope:
           'Ajanın root olarak çalıştığı Linux cihazlarda ajan tarafından uygulanır (nftables). Windows ve macOS cihazları bunu uygulanamadı olarak bildirir.',
-        rollout: '{{applied}} cihazda uygulandı · {{pending}} cihazda bekliyor · {{unreported}} cihaz tünel bildirmiyor',
+        rollout: '{{applied}} cihazda uygulandı · {{applied_with_gaps}} cihazda boşluklu uygulandı · {{pending}} cihazda bekliyor · {{unreported}} cihaz tünel bildirmiyor',
         version: 'Politika sürümü {{version}}',
         saved: 'Ağ politikası kaydedildi',
         saveFailed: 'Ağ politikası kaydedilemedi',
@@ -8105,9 +8105,12 @@ const tr: typeof en = {
       tunnelLastError: 'Son hata: {{error}}',
       policyStates: {
         applied: 'Politika uygulandı',
+        applied_with_gaps: 'Politika uygulandı, boşluklu',
         pending: 'Politika bekliyor',
       },
       policyAppliedDetail: '{{when}} tarihinden beri politika sürümü {{version}} çalışıyor',
+      policyAppliedWithGapsDetail:
+        '{{when}} tarihinden beri politika sürümü {{version}} çalışıyor; bir bölümü bu cihazda uygulanamıyor (tünel rozetine bakın)',
       policyPendingDetail: 'Politika sürümü {{version}} bildiriyor; güncel politika bir sonraki raporda ulaşır',
       unknownPlatform: 'bilinmiyor',
       empty: 'Geçerli filtrelerle eşleşen ajan yok.',
