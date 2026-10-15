@@ -171,19 +171,47 @@ func TestADeviceWithAKeySpeaksOnlyWithIt(t *testing.T) {
 		t.Fatalf("the key's kind is recorded for administrators: %q", kind)
 	}
 
-	// --- a different key for a keyed device is refused; re-enrolling clears it
+	// --- a different key for a keyed device is refused
 	priv4, pub4 := newTestDeviceKey(t)
 	reg4, _ := json.Marshal(deviceKeyRequest{PublicKey: pub4, Kind: "file"})
 	if w := call(regPath, id2, tok2, reg4, priv4, id2); w.Code != http.StatusConflict {
 		t.Fatalf("a second, different key: %d %s", w.Code, w.Body.String())
 	}
+
+	// --- re-enrolling unsigned does not take a keyed row, and does not clear
+	// its key. The fingerprint is the client's claim; a row bound to a key is
+	// taken only by a request signed with that key (reenrolmentRefusal), so an
+	// unsigned enrolment that names it, even one an operator token admitted,
+	// becomes a new agent, and the keyed device is still held to its key.
 	enrolBody, _ = json.Marshal(map[string]any{"hostname": "pc-2", "platform": "windows/amd64", "device_fingerprint": "win:bbbb"})
 	w = call("/api/v1/access/agent/enroll", "", "enroll-without-key", enrolBody, nil, "")
 	enrolled = read(w)
+	if enrolled.AgentID == id2 || enrolled.AgentID == "" {
+		t.Fatalf("an unsigned re-enrolment took the keyed row (%q vs %q): %s", enrolled.AgentID, id2, w.Body.String())
+	}
+	if w := call(reportPath, id2, tok2, report, nil, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("the keyed device is no longer held to its key after a stranger's enrolment: %d %s", w.Code, w.Body.String())
+	}
+	if w := call(reportPath, enrolled.AgentID, enrolled.AuthToken, report, nil, ""); w.Code != http.StatusAccepted {
+		t.Fatalf("the new, keyless agent reports on its token: %d %s", w.Code, w.Body.String())
+	}
+
+	// --- the device itself, signing as the agent it is, re-enrols without a
+	// key and so drops the binding: that is the device's own choice to make.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/access/agent/enroll", bytes.NewReader(enrolBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer enroll-without-key")
+	req.Header.Set("X-Agent-ID", id2)
+	ts, sig := signAgentRequest(t, priv2, http.MethodPost, "/api/v1/access/agent/enroll", id2, time.Now(), enrolBody)
+	req.Header.Set(headerAgentKeyTimestamp, ts)
+	req.Header.Set(headerAgentKeySignature, sig)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	enrolled = read(w)
 	if enrolled.AgentID != id2 {
-		t.Fatalf("re-enrolment by fingerprint keeps the agent id: %s vs %s", enrolled.AgentID, id2)
+		t.Fatalf("a re-enrolment signed with the device key keeps the agent id: %q vs %q: %s", enrolled.AgentID, id2, w.Body.String())
 	}
 	if w := call(reportPath, id2, enrolled.AuthToken, report, nil, ""); w.Code != http.StatusAccepted {
-		t.Fatalf("an enrolment without a key clears the binding: %d %s", w.Code, w.Body.String())
+		t.Fatalf("a signed enrolment without a key clears the binding: %d %s", w.Code, w.Body.String())
 	}
 }
