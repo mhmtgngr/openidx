@@ -262,7 +262,50 @@ describe('UserAccess360Page', () => {
     await user.click(screen.getByRole('button', { name: /sever all access/i }))
     expect(api.post).toHaveBeenCalledWith(
       '/api/v1/access/users/u-1/kill-switch',
-      expect.objectContaining({ disable_user: false }),
+      expect.objectContaining({ disable_user: false, revoke_devices: false }),
     )
+  })
+
+  // The kill switch severs what is live; the user's enrolled devices keep
+  // their credentials unless the operator asks. Ticked, the request says so
+  // and the toast counts the devices the server revoked.
+  it('revokes the user\'s devices from the kill switch only when asked', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.post).mockResolvedValueOnce({
+      user_id: 'u-1',
+      username: 'alice',
+      user_disabled: false,
+      iam_sessions_revoked: 1,
+      iam_api_keys_revoked: 0,
+      pam_checkouts_revoked: 0,
+      pam_vault_grants_expired: 0,
+      pam_jit_grants_revoked: 0,
+      pam_privileged_sessions_terminated: 0,
+      pam_entry_grants_expired: 0,
+      pam_entry_approvals_revoked: 0,
+      pam_entry_leases_released: 0,
+      pam_entry_sessions_ended: 0,
+      pam_brokered_sessions_ended: 0,
+      ziti_edge_sessions_terminated: 0,
+      ziti_api_sessions_terminated: 0,
+      ziti_identity_deleted: false,
+      ziti_controller_online: true,
+      devices_revoked: 2,
+    })
+    renderPage()
+    expect(await screen.findByRole('heading', { name: 'alice' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /kill switch/i }))
+    await user.click(await screen.findByLabelText(/revoke the user's devices/i))
+    await user.click(screen.getByRole('button', { name: /sever all access/i }))
+
+    expect(api.post).toHaveBeenCalledWith(
+      '/api/v1/access/users/u-1/kill-switch',
+      expect.objectContaining({ revoke_devices: true }),
+    )
+    await vi.waitFor(() => {
+      const described = toastSpy.mock.calls.map(c => String(c[0]?.description ?? '')).join(' | ')
+      expect(described).toMatch(/2 devices/)
+    })
   })
 })

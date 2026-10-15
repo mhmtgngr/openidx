@@ -7557,6 +7557,8 @@ const en = {
         reasonPlaceholder: "Why is this user's access being severed?",
         disableAccount:
           'Also <1>disable the account</1> and delete the Ziti identity (full deprovision, blocks new logins)',
+        revokeDevices:
+          "Also <1>revoke the user's devices</1>: every enrolled agent is cut off, its Ziti identity deleted and its device trust withdrawn (the devices must enrol again)",
         severing: 'Severing…',
         severAll: 'Sever All Access',
         executed: 'Kill switch executed',
@@ -7570,6 +7572,7 @@ const en = {
         partPrivSessions: '{{n}} privileged sessions',
         partPamGrants: '{{n}} PAM connection grants',
         partNetwork: '{{n}} network sessions',
+        partDevices: '{{n}} devices',
       },
     },
     // OAuth Playground. The protocol's own parameter names (code_verifier,

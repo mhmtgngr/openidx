@@ -7499,6 +7499,8 @@ const tr: typeof en = {
         reasonPlaceholder: 'Bu kullanıcının erişimi neden kesiliyor?',
         disableAccount:
           'Ayrıca <1>hesabı devre dışı bırak</1> ve Ziti kimliğini sil (tam kaldırma, yeni oturum açmayı engeller)',
+        revokeDevices:
+          'Ayrıca <1>kullanıcının cihazlarını iptal et</1>: kayıtlı her ajanın erişimi kesilir, Ziti kimliği silinir ve cihaz güveni geri alınır (cihazlar yeniden kaydolmalıdır)',
         severing: 'Kesiliyor…',
         severAll: 'Tüm Erişimi Kes',
         executed: 'Acil kesme uygulandı',
@@ -7512,6 +7514,7 @@ const tr: typeof en = {
         partPrivSessions: '{{n}} ayrıcalıklı oturum',
         partPamGrants: '{{n}} PAM bağlantı yetkisi',
         partNetwork: '{{n}} ağ oturumu',
+        partDevices: '{{n}} cihaz',
       },
     },
     oauthPlayground: {
