@@ -58,7 +58,7 @@ TrustedUserCAKeys /etc/ssh/openidx_ca.pub
 
 | Flag | Env | Default |
 |------|-----|---------|
-| `--server` | `OPENIDX_SERVER` | `https://openidx.tdv.org` |
+| `--server` | `OPENIDX_SERVER` | none — required, e.g. `https://openidx.example.com` |
 | `--token`  | `OPENIDX_TOKEN`  | (required) |
 | `--insecure` | | `false` (dev only — skips TLS verify) |
 

@@ -45,20 +45,19 @@ every user's topic; subscribers re-fetch push-config.
 
 ## Mobile app subscription
 
-The OpenIDX mobile app subscribes automatically
-(the client's notification subscriber, mounted in the authenticated
-app group): it fetches push-config with its session token, opens a WebSocket
-to `{base}/{topic}/ws`, and shows each message as a local notification
-(expo-notifications) — tapping opens the in-app notification list.
+The Flutter app (`client/lib/mobile/ntfy_inbox.dart`) fetches push-config
+with its session token, then polls the topic anonymously with a separate
+HTTP client, so the OpenIDX bearer never reaches the ntfy server:
+`GET {base_url}/{topic}/json?poll=1&since=…` every 3 seconds while the app
+is in the foreground. The first poll after start or resume asks for the last
+2 minutes, which catches a challenge sent while the app was away; a push
+challenge expires in about a minute, so nothing older could be approved.
 
-- **Foreground-only by design**: the socket closes in the background (RN
-  freezes sockets there) and reconnects on return with ntfy's `since=`
-  parameter, so messages that arrived while away are caught up and shown.
-  True closed-app delivery would require the vendor push services this
-  integration deliberately avoids; the in-app list remains the source of
-  truth.
-- No-ops cleanly when push-config reports `enabled:false` (server without
-  ntfy) and on web builds.
+- Only `message` events whose click link is `openidx://approve/<id>` count,
+  and each new challenge opens the approve screen once. The app shows no OS
+  notification and does not listen in the background.
+- Does nothing when push-config reports `enabled:false` (a server without
+  ntfy) or while the app is signed out.
 
 ## Security notes
 

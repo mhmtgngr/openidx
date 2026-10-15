@@ -155,6 +155,10 @@ nav:
           - HR-Driven Joiner/Mover/Leaver (JML): guides/HR_DRIVEN_JML.md
       - Devices:
           - EDR/MDM Device Posture Ingestion: guides/EDR_MDM_POSTURE.md
+      - Clients:
+          - The agent's network tunnel (OpenZiti ziti-edge-tunnel): guides/AGENT-TUNNEL.md
+          - MFA on Windows without a phone: guides/windows/mfa-without-a-phone.md
+          - Push-MFA delivery on the native client: guides/mobile/push-mfa-delivery.md
       - Operations:
           - OpenIDX Disaster Recovery Runbook: guides/disaster-recovery.md
           - Releasing OpenIDX: guides/RELEASING.md

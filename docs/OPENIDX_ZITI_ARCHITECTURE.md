@@ -519,8 +519,11 @@ enrolled and (for Tier 2) device-trusted, or you will lock yourself out.
 - Enroll each admin via native tunneler or BrowZer. The public enroll door is
   `POST /api/v1/access/enroll` (Tier 0, rate-limited, audited) — it exchanges a
   valid session/token for a Ziti enrollment JWT.
-- Confirm device-trust: `GET /api/v1/access/my-devices` must show the device as
-  trusted (this is what grants `#device-trusted` → Tier-2 dial).
+- Confirm device trust: since v1.42 `#device-trusted` is carried by the device's
+  own Ziti identity and comes from the agent's posture compliance under
+  `POSTURE_DEVICE_TRUST_GATE=enforce` (`internal/access/device_identity.go`),
+  not from IAM device trust, so the agent must report a compliant posture
+  before the Tier-2 dial works.
 - Register the console dark app: `bash scripts/register-console-dark-app.sh`
   (idempotent; the reconciler converges `openidx-console` + its BrowZer route).
 

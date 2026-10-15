@@ -42,7 +42,7 @@ Add to the app bundle's `Info.plist`:
   </dict>
 </array>
 ```
-(Built in CI on the macOS runner with `pkgbuild`.)
+(macOS is not packaged yet: no workflow builds the agent for it.)
 
 ## Manual fallback
 Every platform keeps a manual path: `openidx-agent enroll --code <code> --server <url>`,
