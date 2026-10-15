@@ -1,11 +1,16 @@
 package enrollment
 
 import (
+	"crypto/ecdsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/agent/internal/agent"
+	"github.com/openidx/openidx/agent/internal/devicekey"
 	"github.com/openidx/openidx/agent/internal/updater"
 )
 
@@ -184,4 +190,63 @@ func TestEnrollRecordsTheReleaseChannel(t *testing.T) {
 	result, err = Enroll(logger, server.URL, "enrollment-token", dir)
 	require.NoError(t, err)
 	assert.Equal(t, "https://mirror.example.test/latest.json", result.AgentConfig.UpdateManifestURL)
+}
+
+// A device that enrolled before, and holds its device key, enrols again
+// signing as the agent it was, so the server can give it its own row back. A
+// first enrolment, with no previous agent.json, sends no signature.
+func TestAReenrolmentSignsWithTheDeviceKey(t *testing.T) {
+	type seen struct {
+		agentID, ts, sig string
+		body             []byte
+	}
+	var got seen
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.agentID = r.Header.Get("X-Agent-ID")
+		got.ts = r.Header.Get("X-Agent-Key-Timestamp")
+		got.sig = r.Header.Get("X-Agent-Key-Signature")
+		got.body, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"agent_id":"agent-old","device_id":"device-old","auth_token":"tok2","device_key_bound":true}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	if _, err := Enroll(zap.NewNop(), server.URL, "first-token", dir); err != nil {
+		t.Fatal(err)
+	}
+	if got.agentID != "" || got.sig != "" {
+		t.Fatalf("a first enrolment signed as %q (signature %q)", got.agentID, got.sig)
+	}
+
+	got = seen{}
+	if _, err := Enroll(zap.NewNop(), server.URL, "second-token", dir); err != nil {
+		t.Fatal(err)
+	}
+	if got.agentID != "agent-old" {
+		t.Fatalf("the re-enrolment named %q, want the previous agent-old", got.agentID)
+	}
+	if got.ts == "" || got.sig == "" {
+		t.Fatal("the re-enrolment carries no signature")
+	}
+	key, err := devicekey.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer key.Close()
+	ts, err := strconv.ParseInt(got.ts, 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := devicekey.RequestSigningInput(http.MethodPost, "/api/v1/access/agent/enroll", "agent-old", ts, got.body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(input)
+	sig, err := base64.StdEncoding.DecodeString(got.sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ecdsa.VerifyASN1(key.Public(), digest[:], sig) {
+		t.Error("the re-enrolment's signature does not verify against the device key")
+	}
 }

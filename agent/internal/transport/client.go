@@ -49,7 +49,8 @@ type Client struct {
 	authToken  string
 	agentID    string
 	httpClient *http.Client
-	// signer signs posture reports with the device key, when there is one.
+	// signer signs posture reports, and a re-enrolment when agentID is set,
+	// with the device key, when there is one.
 	signer RequestSigner
 	// enrollKey is the device key's public half and kind, sent with the
 	// enrolment so the server binds the device to it from the start.
@@ -103,6 +104,17 @@ func (c *Client) Enroll(token string) (*EnrollResponse, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	if c.signer != nil && c.agentID != "" {
+		// A device enrolling again, with the key it already holds, signs as
+		// the agent it was. The server takes that agent's row again only on
+		// this proof, for the device's own user, or for an operator token;
+		// without it a device with a key becomes a new agent. A server that
+		// predates the proof ignores the headers.
+		req.Header.Set("X-Agent-ID", c.agentID)
+		if err := sign(req, c.signer, body); err != nil {
+			return nil, err
+		}
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

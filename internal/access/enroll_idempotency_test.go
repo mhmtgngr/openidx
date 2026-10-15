@@ -34,7 +34,10 @@ var enrolledAgentsSchema = []string{
 		management_mode TEXT,
 		known_device_id UUID,
 		device_fingerprint TEXT,
-		org_id UUID NOT NULL
+		org_id UUID NOT NULL,
+		device_public_key TEXT,
+		device_key_kind VARCHAR(16),
+		device_key_bound_at TIMESTAMPTZ
 	)`,
 	// v197: the stable-identity key is per-tenant.
 	`CREATE UNIQUE INDEX IF NOT EXISTS enrolled_agents_org_device_fingerprint_key

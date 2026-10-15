@@ -78,6 +78,14 @@ Two consequences worth saying out loud:
 
 ### The policy
 
+- **Enrolling again takes the device's existing row only on proof.** The
+  fingerprint an enrolment names is the client's own claim, so a row is reused
+  only when the request is signed with the key the device already holds (the
+  desktop agent signs its re-enrolment as the agent it was), or, for a row
+  with no key, when an operator token or the row's own user enrols it.
+  Otherwise the device becomes a new agent without the fingerprint, the row is
+  left as it was, and the attempt is audited as `agent.enroll_denied`
+  (`reenrolmentRefusal` in `internal/access/agent_api.go`).
 - **Anyone may enroll their own device** (OAuth path) and it lands **pending**.
   Self-service without the wait needs the console-issued enrollment session
   (MFA-verified) *and* `DEVICE_AUTOTRUST_MODE=enforce`, optionally

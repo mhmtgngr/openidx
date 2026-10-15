@@ -153,3 +153,51 @@ func TestRegisterDeviceKey(t *testing.T) {
 		t.Fatal("a registration without the key to sign it is refused locally")
 	}
 }
+
+// A device enrolling again, with a key it already holds, signs the enrolment
+// as the agent it was: the server takes that agent's row only on this proof.
+// A first enrolment (no agent id yet) sends no signature even with a signer.
+func TestAReenrolmentIsSignedAsTheAgentTheDeviceAlreadyIs(t *testing.T) {
+	type seen struct {
+		agentID, ts, sig string
+		body             []byte
+	}
+	var got seen
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.agentID = r.Header.Get("X-Agent-ID")
+		got.ts = r.Header.Get(headerKeyTimestamp)
+		got.sig = r.Header.Get(headerKeySignature)
+		got.body, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"agent_id":"agent-old","device_id":"device-old","auth_token":"tok"}`))
+	}))
+	defer srv.Close()
+
+	signer := newRecordingSigner(t)
+	c := NewClient(srv.URL, "", "agent-old")
+	c.SetSigner(signer)
+	if _, err := c.Enroll("enroll-token"); err != nil {
+		t.Fatal(err)
+	}
+	if got.agentID != "agent-old" {
+		t.Fatalf("the re-enrolment named %q as the agent, want agent-old", got.agentID)
+	}
+	if got.ts == "" || got.sig == "" {
+		t.Fatal("the re-enrolment carries no signature")
+	}
+	if signer.path != "/api/v1/access/agent/enroll" || signer.method != http.MethodPost {
+		t.Errorf("signed %s %s, want POST /api/v1/access/agent/enroll", signer.method, signer.path)
+	}
+	if !signer.verifies(t, http.MethodPost, "/api/v1/access/agent/enroll", got.body, got.sig) {
+		t.Error("the signature does not verify over the bytes the server received")
+	}
+
+	got = seen{}
+	first := NewClient(srv.URL, "", "")
+	first.SetSigner(signer)
+	if _, err := first.Enroll("enroll-token"); err != nil {
+		t.Fatal(err)
+	}
+	if got.agentID != "" || got.sig != "" {
+		t.Errorf("a first enrolment signed as %q (signature %q); it has no agent to sign as", got.agentID, got.sig)
+	}
+}

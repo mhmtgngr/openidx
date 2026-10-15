@@ -54,12 +54,25 @@ func EnrollWithManifest(logger *zap.Logger, serverURL, token, configDir, manifes
 	// server binds the device to it from the start. Without a key (a process
 	// that may not make a machine key, a machine with no key store) the
 	// enrolment goes ahead and the service offers the key later.
-	client := transport.NewClient(serverURL, "", "")
+	//
+	// A device enrolling again signs the enrolment with that key as the agent
+	// it already is (the agent id in the previous agent.json). The server
+	// takes the device's existing row only on that proof, for the device's own
+	// user, or for an operator token; a device that holds a key and does not
+	// sign becomes a new agent.
+	prevAgentID := ""
+	if prev, err := agent.LoadConfig(configDir); err == nil {
+		prevAgentID = prev.AgentID
+	}
+	client := transport.NewClient(serverURL, "", prevAgentID)
 	if key, keyErr := openEnrollDeviceKey(configDir); keyErr == nil {
+		defer key.Close()
 		if pub, encErr := devicekey.PublicKeyBase64(key); encErr == nil {
 			client.SetEnrollmentDeviceKey(pub, key.Kind())
 		}
-		key.Close()
+		if prevAgentID != "" {
+			client.SetSigner(devicekey.Signer{Key: key, AgentID: prevAgentID})
+		}
 	} else {
 		logger.Warn("enrolling without a device key; the service will offer one later", zap.Error(keyErr))
 	}
