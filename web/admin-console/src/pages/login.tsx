@@ -102,6 +102,33 @@ interface AuthResult {
   error_description?: string
 }
 
+// POST_LOGIN_PATH_KEY holds where the console goes once a sign-in that this
+// page completed lands back on it, instead of /dashboard. The grace-period
+// notice sets it when the user picks "Set up now". It is a path on this
+// origin and nothing else: a value that is not one is ignored.
+const POST_LOGIN_PATH_KEY = 'openidx_post_login_path'
+
+function takePostLoginPath(): string | null {
+  try {
+    const p = sessionStorage.getItem(POST_LOGIN_PATH_KEY)
+    sessionStorage.removeItem(POST_LOGIN_PATH_KEY)
+    return p && p.startsWith('/') && !p.startsWith('//') ? p : null
+  } catch {
+    return null
+  }
+}
+
+// isConsoleRedirect reports whether a completed sign-in returns to this
+// console (same origin) rather than to another application, which is the
+// only case where the console can take the user on to their profile.
+function isConsoleRedirect(url: string): boolean {
+  try {
+    return new URL(url, window.location.href).origin === window.location.origin
+  } catch {
+    return false
+  }
+}
+
 export function LoginPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -366,7 +393,7 @@ export function LoginPage() {
   useEffect(() => {
     const pendingOIDC = loginSession || sessionStorage.getItem('oidc_login_session')
     if (isAuthenticated && !pendingOIDC) {
-      navigate('/dashboard', { replace: true })
+      navigate(takePostLoginPath() ?? '/dashboard', { replace: true })
     }
   }, [isAuthenticated, navigate, loginSession])
 
@@ -1118,8 +1145,22 @@ export function LoginPage() {
     }
   }
 
-  // The policy notice, before the redirect that completes the sign-in.
+  // The policy notice, before the redirect that completes the sign-in. When
+  // the sign-in returns to this console, "Set up now" carries the user on to
+  // the MFA section of their profile once it lands; another application's
+  // redirect has nowhere here to carry them, so it gets Continue alone.
   if (pendingRedirect) {
+    const toConsole = isConsoleRedirect(pendingRedirect.url)
+    const continueSignIn = (setUp: boolean) => {
+      if (setUp) {
+        try {
+          sessionStorage.setItem(POST_LOGIN_PATH_KEY, '/profile#mfa')
+        } catch {
+          // sessionStorage may be unavailable; the user lands on the dashboard.
+        }
+      }
+      completeOIDCRedirect(pendingRedirect.url)
+    }
     return (
       <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50">
         <div className="absolute top-4 right-4">
@@ -1138,9 +1179,21 @@ export function LoginPage() {
           <CardContent className="space-y-4">
             <p className="text-sm">{enrollmentNotice(pendingRedirect.due)}</p>
             <p className="text-sm text-muted-foreground">{t('login.enrollmentDue.where')}</p>
-            <Button type="button" className="w-full" onClick={() => completeOIDCRedirect(pendingRedirect.url)}>
-              {t('login.enrollmentDue.continue')}
-            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row-reverse">
+              {toConsole && (
+                <Button type="button" className="w-full sm:flex-1" onClick={() => continueSignIn(true)}>
+                  {t('login.enrollmentDue.setUpNow')}
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant={toConsole ? 'outline' : 'default'}
+                className="w-full sm:flex-1"
+                onClick={() => continueSignIn(false)}
+              >
+                {t('login.enrollmentDue.continue')}
+              </Button>
+            </div>
           </CardContent>
 
           <AuthCardFooter />

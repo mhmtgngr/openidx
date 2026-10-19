@@ -115,6 +115,34 @@ describe('UserProfilePage', () => {
     expect(container).toBeInTheDocument()
   })
 
+  // The sign-in page's "Set up now" lands on /profile#mfa: the Security tab
+  // opens on the MFA card, which is scrolled to and marked.
+  it('opens on the MFA section when the address ends in #mfa', async () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/profile#mfa']}>
+          <UserProfilePage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(await screen.findByRole('tab', { name: /security/i })).toHaveAttribute('data-state', 'active')
+    const card = document.getElementById('mfa')
+    expect(card).not.toBeNull()
+    expect(card).toHaveTextContent(/requires a second sign-in method/i)
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
+    expect(document.activeElement).toBe(card)
+  })
+
+  it('opens on the profile tab without the hash (control)', async () => {
+    render(<UserProfilePage />, { wrapper: createWrapper() })
+    expect(await screen.findByRole('tab', { name: /profile/i, selected: true })).toBeInTheDocument()
+    expect(screen.queryByText(/requires a second sign-in method/i)).not.toBeInTheDocument()
+  })
+
   // The identity service refuses a change to the account's second factors, or
   // its address, until the request carries proof from the account holder
   // (internal/identity/factor_proof.go). The page asks for it and sends it.

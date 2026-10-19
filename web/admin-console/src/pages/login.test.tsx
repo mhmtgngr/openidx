@@ -510,6 +510,29 @@ describe('LoginPage', () => {
       expect(mockLocation.href).toBe('https://app.example.com/callback?code=xyz')
     })
 
+    it('offers no "Set up now" when the sign-in returns to another application', async () => {
+      jsonOnce({ redirect_url: 'https://app.example.com/callback?code=xyz', mfa_enrollment_due: due })
+      await signIn()
+      await screen.findByText(/add a sign-in method/i)
+      expect(screen.queryByRole('button', { name: /set up now/i })).not.toBeInTheDocument()
+    })
+
+    it('"Set up now" finishes a console sign-in and asks for the profile\'s MFA section next', async () => {
+      Object.assign(mockLocation, { origin: 'http://localhost:5173' })
+      try {
+        jsonOnce({ redirect_url: 'http://localhost:5173/login?code=abc', mfa_enrollment_due: due })
+        const user = await signIn()
+        await screen.findByText(/add a sign-in method/i)
+        expect(screen.getByRole('button', { name: /^continue$/i })).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: /set up now/i }))
+        expect(mockLocation.href).toBe('http://localhost:5173/login?code=abc')
+        expect(sessionStorage.getItem('openidx_post_login_path')).toBe('/profile#mfa')
+        expect(sessionStorage.getItem('oidc_login_session')).toBeNull()
+      } finally {
+        delete (mockLocation as { origin?: string }).origin
+      }
+    })
+
     // Push was the only factor and the phone is gone: the challenge offers the
     // bypass code beside it, and the page says why.
     it('says the phone has not been seen and names the fallbacks', async () => {

@@ -681,6 +681,7 @@ const en = {
         'Your organization requires {{methods}} to sign in, and the time to add one has passed. You can sign in with a bypass code from an administrator; add one of these methods now, before the code runs out.',
       where: 'You can add it from your account\'s security settings once you are signed in.',
       continue: 'Continue',
+      setUpNow: 'Set up now',
     },
     pushUnseen: {
       seen: 'Your phone has not been seen since {{when}}, so you can also sign in another way: {{fallbacks}}.',
@@ -1529,6 +1530,7 @@ const en = {
       mfa: {
         title: 'Multi-Factor Authentication',
         hint: 'Add an extra layer of security to your account',
+        setupPrompt: 'Your organization requires a second sign-in method. Add one below.',
         totpTitle: 'Authenticator App',
         totpDesc: 'Use an authenticator app to generate verification codes',
         enabled: 'Enabled',

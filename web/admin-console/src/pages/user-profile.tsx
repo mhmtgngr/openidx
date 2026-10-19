@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
@@ -80,6 +81,19 @@ interface UserConsent {
 }
 
 export function UserProfilePage() {
+  // /profile#mfa is where the sign-in page's "Set up now" lands a user whose
+  // MFA policy grace period is running: open the Security tab and bring the
+  // MFA card into view, marked, so the next step is the obvious one.
+  const location = useLocation()
+  const focusMFA = location.hash === '#mfa'
+  const [tab, setTab] = useState(focusMFA ? 'security' : 'profile')
+  // A later navigation to #mfa while the page is mounted switches the tab too.
+  const [prevFocusMFA, setPrevFocusMFA] = useState(focusMFA)
+  if (focusMFA !== prevFocusMFA) {
+    setPrevFocusMFA(focusMFA)
+    if (focusMFA) setTab('security')
+  }
+  const mfaCardRef = useRef<HTMLDivElement>(null)
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [email, setEmail] = useState('')
@@ -454,6 +468,13 @@ export function UserProfilePage() {
     },
   })
 
+  useEffect(() => {
+    if (!focusMFA || !profile || tab !== 'security') return
+    const el = mfaCardRef.current
+    el?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+    el?.focus({ preventScroll: true })
+  }, [focusMFA, profile, tab])
+
   if (isLoading) {
     return (
       <div className="flex h-96 items-center justify-center">
@@ -484,7 +505,7 @@ export function UserProfilePage() {
         </div>
       </div>
 
-      <Tabs defaultValue="profile" className="space-y-4">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="profile" className="flex items-center gap-2">
             <User className="h-4 w-4" />
@@ -577,9 +598,20 @@ export function UserProfilePage() {
         </TabsContent>
 
         <TabsContent value="security" className="space-y-4">
-          <Card>
+          <Card
+            id="mfa"
+            ref={mfaCardRef}
+            tabIndex={-1}
+            aria-describedby={focusMFA ? 'mfa-setup-prompt' : undefined}
+            className={focusMFA ? 'scroll-mt-4 ring-2 ring-primary ring-offset-2 outline-hidden' : undefined}
+          >
             <CardHeader>
               <CardTitle>{t('pages.profile.mfa.title')}</CardTitle>
+              {focusMFA && (
+                <p id="mfa-setup-prompt" className="text-sm font-medium text-primary">
+                  {t('pages.profile.mfa.setupPrompt')}
+                </p>
+              )}
               <CardDescription>{t('pages.profile.mfa.hint')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">

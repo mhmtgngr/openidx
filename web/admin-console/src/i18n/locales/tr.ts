@@ -674,6 +674,7 @@ const tr: typeof en = {
         'Kuruluşunuz oturum açmak için {{methods}} yöntemlerinden birini zorunlu kılıyor ve birini eklemek için tanınan süre doldu. Yöneticinin verdiği atlama koduyla oturum açabilirsiniz; kodun süresi dolmadan bu yöntemlerden birini hemen ekleyin.',
       where: 'Oturum açtıktan sonra hesabınızın güvenlik ayarlarından ekleyebilirsiniz.',
       continue: 'Devam',
+      setUpNow: 'Şimdi kur',
     },
     pushUnseen: {
       seen: 'Telefonunuz {{when}} tarihinden beri görülmedi, bu yüzden başka bir yolla da oturum açabilirsiniz: {{fallbacks}}.',
@@ -1518,6 +1519,7 @@ const tr: typeof en = {
       mfa: {
         title: 'Çok Faktörlü Kimlik Doğrulama',
         hint: 'Hesabınıza ek bir güvenlik katmanı ekleyin',
+        setupPrompt: 'Kuruluşunuz ikinci bir oturum açma yöntemi zorunlu kılıyor. Aşağıdan birini ekleyin.',
         totpTitle: 'Kimlik Doğrulayıcı Uygulama',
         totpDesc: 'Doğrulama kodları üretmek için bir kimlik doğrulayıcı uygulama kullanın',
         enabled: 'Etkin',
