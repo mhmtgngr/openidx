@@ -317,6 +317,11 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 	if s.refuseClosedTarget(c, org.ID, caller, entryID) {
 		return
 	}
+	// A live, compliant device behind the person (PAM_DEVICE_GATE), asked
+	// before anything below can spend an approval or touch a credential.
+	if s.refuseNoLiveDevice(c, org.ID, caller, entryID) {
+		return
+	}
 
 	// Does this launch stay on the overlay? Asked before the approval gate, so
 	// a refusal does not spend an approval, before the website short-circuit,

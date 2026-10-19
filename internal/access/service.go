@@ -1087,13 +1087,23 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		agentHandler := NewAgentAPIHandler(svc.logger, svc.db, svc.ziti(), svc.config)
 		// openidx_tunnel_agents_down, for the tunnel-down alert.
 		RegisterTunnelDownGauge(svc.db, svc.logger)
+		// openidx_agents_recent / openidx_agents_silent, for the silent-fleet alert.
+		if svc.config != nil {
+			RegisterAgentSilentGauges(svc.db, svc.config.AgentLiveness(), svc.logger)
+		}
 		// Redis lets enrollment mint a push-enrollment ticket so a freshly-enrolled
 		// device self-registers as a push-MFA approver in one step (FastPass).
 		if svc.redis != nil {
 			agentHandler.SetRedis(svc.redis.Client)
 		}
+		agentHandler.SetDeviceRevoker(func(ctx context.Context, orgID, agentID, zitiIdentityID, knownDeviceID string) {
+			svc.executeDeviceRevoke(ctx, orgID, agentID, zitiIdentityID, knownDeviceID)
+		})
 		agentHandler.RegisterAgentAdminRoutes(api, operatorTier)
-		agentHandler.StartGracePeriodEnforcer(context.Background(), 5*time.Minute)
+		// Every minute: the same loop takes trust from devices whose agent
+		// stopped reporting (AGENT_LIVENESS_TIMEOUT), and a minute is the
+		// slack that adds to the timeout.
+		agentHandler.StartGracePeriodEnforcer(context.Background(), time.Minute)
 		svc.agentHandler = agentHandler
 
 		// Server-side Play Integrity verification (Phase 1+ Android client).

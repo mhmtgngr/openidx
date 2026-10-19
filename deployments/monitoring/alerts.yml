@@ -94,6 +94,19 @@ groups:
           summary: "{{ $value }} device(s) report in with their tunnel down"
           description: "{{ $value }} active device(s) have reported in during the last 15m while their OpenZiti tunneler was not up for 15m. The Agent Fleet page shows which (Tunnel column); check the tunneler service on the device and its enrolment."
 
+      - alert: OpenIDXAgentsMostlySilent
+        # More than half of the devices seen in the last day have stopped
+        # reporting for longer than AGENT_LIVENESS_TIMEOUT, so they are no
+        # longer trusted and lose what requires a trusted device. Laptops
+        # closing one by one never get here; the agents failing to reach the
+        # server (edge, certificate, access-service) does.
+        expr: openidx_agents_silent >= 3 and openidx_agents_silent > 0.5 * openidx_agents_recent
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} device(s) stopped reporting; most of the fleet is silent"
+          description: "Over half of the devices that reported in during the last 24h have not reported within AGENT_LIVENESS_TIMEOUT and are no longer trusted. Check that agents can reach /api/v1/access/agent/report (edge, TLS, access-service health); the Agent Fleet page shows each device's last report."
+
       - alert: OpenIDXTunnelDialFailures
         # Dial failures the tunnelers report, summed across the fleet. A
         # sustained rate means a network resource's service is unreachable

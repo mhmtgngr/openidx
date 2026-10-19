@@ -56,3 +56,21 @@ export function complianceTooltip(
     ? i18n.t('compliance.noReportSince', { date: lastReportAt })
     : i18n.t('compliance.neverReported')
 }
+
+/**
+ * Minutes since the agent's last report when the server says it is no longer
+ * live (AGENT_LIVENESS_TIMEOUT), else null. A device that is not live is not
+ * trusted, whatever its last compliance said, so the console shows it.
+ * `live` is absent when the rule is off; nothing is shown then.
+ */
+export function agentSilentMinutes(
+  live: boolean | undefined | null,
+  lastReportAt: string | undefined | null,
+  now: number = Date.now(),
+): number | null {
+  if (live !== false) return null
+  if (!lastReportAt) return -1
+  const t = Date.parse(lastReportAt)
+  if (!Number.isFinite(t)) return -1
+  return Math.max(0, Math.floor((now - t) / 60000))
+}

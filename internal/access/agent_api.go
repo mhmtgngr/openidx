@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
@@ -37,6 +38,15 @@ type AgentAPIHandler struct {
 	conf          *config.Config
 	playIntegrity *PlayIntegrityVerifier
 	redis         *redis.Client
+	// revokeDevice, when set, is the full cross-pillar device revoke the
+	// user-devices page runs (Service.executeDeviceRevoke), so a revoke from
+	// Agent Fleet cuts as much as one from the user's page.
+	revokeDevice func(ctx context.Context, orgID, agentID, zitiIdentityID, knownDeviceID string)
+}
+
+// SetDeviceRevoker wires the full device revoke into HandleRevokeAgent.
+func (h *AgentAPIHandler) SetDeviceRevoker(f func(ctx context.Context, orgID, agentID, zitiIdentityID, knownDeviceID string)) {
+	h.revokeDevice = f
 }
 
 // NewAgentAPIHandler constructs an AgentAPIHandler. conf is the access-service
@@ -1760,6 +1770,7 @@ func (h *AgentAPIHandler) StartGracePeriodEnforcer(ctx context.Context, interval
 				return
 			case <-ticker.C:
 				h.enforceExpiredGracePeriods(ctx)
+				h.sweepSilentDevices(ctx)
 			}
 		}
 	}()
@@ -2080,6 +2091,11 @@ type agentRecord struct {
 	TunnelPolicyVersion   *string    `json:"tunnel_policy_version"`
 	TunnelPolicyAppliedAt *time.Time `json:"tunnel_policy_applied_at"`
 	TunnelPolicyState     string     `json:"tunnel_policy_state"`
+	// LastReportAt is the agent's last report; Live says whether that falls
+	// within AGENT_LIVENESS_TIMEOUT, so the device can count as trusted. Live
+	// is absent when the rule is off.
+	LastReportAt *time.Time `json:"last_report_at"`
+	Live         *bool      `json:"live,omitempty"`
 }
 
 // HandleListAgents returns a JSON array of all enrolled agents (operator tier).
@@ -2101,7 +2117,8 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 		SELECT agent_id, device_id,
 		       COALESCE(metadata->>'hostname',''), COALESCE(platform, metadata->>'platform',''),
 		       status, compliance_status, compliance_score, last_seen_at, enrolled_at,
-		       tunnel_status, tunnel_last_seen, tunnel_policy_version, tunnel_policy_applied_at
+		       tunnel_status, tunnel_last_seen, tunnel_policy_version, tunnel_policy_applied_at,
+		       last_report_at
 		FROM enrolled_agents
 		WHERE org_id = $1
 		ORDER BY last_seen_at DESC NULLS LAST, enrolled_at DESC
@@ -2119,6 +2136,12 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 	if p := h.orgNetworkPolicy(ctx); p != nil {
 		current = p.Version
 	}
+
+	var timeout time.Duration
+	if cfg := h.cfg(); cfg != nil {
+		timeout = cfg.AgentLiveness()
+	}
+	now := time.Now()
 
 	agents := []agentRecord{}
 	for rows.Next() {
@@ -2138,6 +2161,7 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 			&rec.TunnelLastSeen,
 			&rec.TunnelPolicyVersion,
 			&rec.TunnelPolicyAppliedAt,
+			&rec.LastReportAt,
 		); scanErr != nil {
 			h.logger.Warn("HandleListAgents: failed to scan row", zap.Error(scanErr))
 			continue
@@ -2149,6 +2173,10 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 			}
 		}
 		rec.TunnelPolicyState = tunnelPolicyState(rec.TunnelPolicyVersion, rec.TunnelStatus != nil, current)
+		if timeout > 0 {
+			live := rec.LastReportAt != nil && now.Sub(*rec.LastReportAt) <= timeout
+			rec.Live = &live
+		}
 		agents = append(agents, rec)
 	}
 	if rows.Err() != nil {
@@ -2274,11 +2302,33 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 		}
 
 		// Fetch the Ziti identity ID before revoking so we can remove it.
-		var zitiIdentityID string
-		_ = h.db.Pool.QueryRow(ctx,
-			`SELECT COALESCE(ziti_identity_id, '') FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
+		var zitiIdentityID, knownDeviceID string
+		lookupErr := h.db.Pool.QueryRow(ctx,
+			`SELECT COALESCE(ziti_identity_id, ''), COALESCE(known_device_id::text, '') FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
 			agentID, org.ID,
-		).Scan(&zitiIdentityID)
+		).Scan(&zitiIdentityID, &knownDeviceID)
+
+		// The full revoke: sessions terminated, identity deleted, the known
+		// device untrusted and the device's tokens revoked. It used to stop
+		// at the status and the identity, so the device's refresh tokens
+		// kept minting and its browser trust stayed.
+		if h.revokeDevice != nil {
+			if errors.Is(lookupErr, pgx.ErrNoRows) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+				return
+			}
+			if lookupErr != nil {
+				h.logger.Error("HandleRevokeAgent: failed to read agent", logsafe.String("agent_id", agentID), zap.Error(lookupErr))
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke agent"})
+				return
+			}
+			h.revokeDevice(ctx, org.ID, agentID, zitiIdentityID, knownDeviceID)
+			h.logger.Info("Agent revoked", logsafe.String("agent_id", agentID))
+			h.logAuditEvent("agent.revoked", agentID, "success", "admin action")
+			h.logAuditEventToDB(ctx, "agent.revoked", agentID, "success", "admin action")
+			c.JSON(http.StatusOK, gin.H{"status": "revoked", "agent_id": agentID})
+			return
+		}
 
 		tag, err := h.db.Pool.Exec(ctx,
 			`UPDATE enrolled_agents SET status = 'revoked' WHERE agent_id = $1 AND org_id = $2`,

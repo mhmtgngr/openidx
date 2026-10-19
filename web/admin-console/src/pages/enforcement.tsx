@@ -113,6 +113,36 @@ export function EnforcementPage() {
             </CardContent>
           </Card>
 
+          {data.device_gates && data.device_gates.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('pages.enforcement.deviceGates.title')}</CardTitle>
+                <CardDescription>
+                  {data.agent_liveness_timeout === '0s'
+                    ? t('pages.enforcement.deviceGates.livenessOff')
+                    : t('pages.enforcement.deviceGates.hint', { timeout: data.agent_liveness_timeout ?? '10m0s' })}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('pages.enforcement.columns.control')}</TableHead>
+                      <TableHead>{t('pages.enforcement.columns.mode')}</TableHead>
+                      <TableHead>{t('pages.enforcement.columns.meaning')}</TableHead>
+                      <TableHead className="text-right">{t('pages.enforcement.columns.wouldDeny')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.device_gates.map((g) => (
+                      <GateRow key={g.name} gate={g} />
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
           {!data.fully_enforcing && (
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0">

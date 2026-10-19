@@ -445,6 +445,9 @@ const en = {
   compliance: {
     noReportSince: 'No compliance report since {{date}}; the score is unknown, not zero.',
     neverReported: 'This agent has never reported posture, so the score is unknown, not zero.',
+    offline: 'Offline · {{minutes}} min',
+    offlineNever: 'Offline · never reported',
+    offlineHint: 'The agent has not reported within the liveness timeout, so this device is not trusted until it reports again.',
   },
   // Shared error state for failed data fetches. `resource` is passed in
   // already localized by the calling page.
@@ -678,6 +681,7 @@ const en = {
         'Your organization requires {{methods}} to sign in, and the time to add one has passed. You can sign in with a bypass code from an administrator; add one of these methods now, before the code runs out.',
       where: 'You can add it from your account\'s security settings once you are signed in.',
       continue: 'Continue',
+      setUpNow: 'Set up now',
     },
     pushUnseen: {
       seen: 'Your phone has not been seen since {{when}}, so you can also sign in another way: {{fallbacks}}.',
@@ -1526,6 +1530,7 @@ const en = {
       mfa: {
         title: 'Multi-Factor Authentication',
         hint: 'Add an extra layer of security to your account',
+        setupPrompt: 'Your organization requires a second sign-in method. Add one below.',
         totpTitle: 'Authenticator App',
         totpDesc: 'Use an authenticator app to generate verification codes',
         enabled: 'Enabled',
@@ -3550,6 +3555,17 @@ const en = {
         table: {
           username: 'Username',
           email: 'Email',
+          actions: 'Actions',
+        },
+        reset: {
+          button: 'Reset MFA',
+          ariaLabel: 'Reset MFA for {{name}}',
+          selfHint: 'Change your own MFA from your profile',
+          title: 'Reset MFA',
+          description:
+            'Remove every second factor {{name}} has: authenticator app, security keys, push devices, SMS, email codes, phone call and unused backup codes. They sign in with their password and set MFA up again, within the grace period of the MFA policy that applies to them.',
+          confirm: 'Reset MFA',
+          done: 'MFA reset for {{name}}: {{count}} factor(s) removed',
         },
       },
       dialog: {
@@ -6316,7 +6332,9 @@ const en = {
         sessionTimeout: 'Session Timeout (minutes)',
         maxFailedLogins: 'Max Failed Logins',
         lockoutDuration: 'Lockout Duration (minutes)',
-        requireMfa: 'Require MFA for all users',
+        mfaPolicyNote:
+          'MFA is enforced with MFA policies: who is asked for a second factor at sign-in, which methods count, and how long a user has to add one.',
+        mfaPolicyLink: 'Manage MFA policies',
       },
       sessionPolicies: {
         title: 'Session Policies',
@@ -9887,6 +9905,11 @@ const en = {
       copy: 'Copy',
       copied: 'Settings copied',
       copyFailed: 'Could not copy',
+      deviceGates: {
+        title: 'Live device',
+        hint: 'A device counts as trusted only while its agent reports within {{timeout}}. These controls ask for such a device on single sign-on to applications that require a trusted device, and on every privileged session. Production does not require them; turn them on once your people have the agent.',
+        livenessOff: 'The liveness rule is off (AGENT_LIVENESS_TIMEOUT=0): a device stays trusted on its last report.',
+      },
       banner: {
         title: '{{count}} authorization control(s) are not enforcing',
         window: 'observe window until {{until}} ({{days}} day(s) left)',

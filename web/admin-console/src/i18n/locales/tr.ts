@@ -442,6 +442,9 @@ const tr: typeof en = {
   compliance: {
     noReportSince: '{{date}} tarihinden beri uyumluluk raporu yok; puan sıfır değil, bilinmiyor.',
     neverReported: 'Bu ajan hiç durum raporu göndermedi; puan sıfır değil, bilinmiyor.',
+    offline: 'Çevrimdışı · {{minutes}} dk',
+    offlineNever: 'Çevrimdışı · hiç rapor vermedi',
+    offlineHint: 'Ajan canlılık süresi içinde rapor vermedi; bu cihaz yeniden rapor verene kadar güvenilir sayılmıyor.',
   },
   queryError: {
     sessionExpired: 'Oturumunuzun süresi doldu. Lütfen tekrar giriş yapın.',
@@ -671,6 +674,7 @@ const tr: typeof en = {
         'Kuruluşunuz oturum açmak için {{methods}} yöntemlerinden birini zorunlu kılıyor ve birini eklemek için tanınan süre doldu. Yöneticinin verdiği atlama koduyla oturum açabilirsiniz; kodun süresi dolmadan bu yöntemlerden birini hemen ekleyin.',
       where: 'Oturum açtıktan sonra hesabınızın güvenlik ayarlarından ekleyebilirsiniz.',
       continue: 'Devam',
+      setUpNow: 'Şimdi kur',
     },
     pushUnseen: {
       seen: 'Telefonunuz {{when}} tarihinden beri görülmedi, bu yüzden başka bir yolla da oturum açabilirsiniz: {{fallbacks}}.',
@@ -1515,6 +1519,7 @@ const tr: typeof en = {
       mfa: {
         title: 'Çok Faktörlü Kimlik Doğrulama',
         hint: 'Hesabınıza ek bir güvenlik katmanı ekleyin',
+        setupPrompt: 'Kuruluşunuz ikinci bir oturum açma yöntemi zorunlu kılıyor. Aşağıdan birini ekleyin.',
         totpTitle: 'Kimlik Doğrulayıcı Uygulama',
         totpDesc: 'Doğrulama kodları üretmek için bir kimlik doğrulayıcı uygulama kullanın',
         enabled: 'Etkin',
@@ -3541,6 +3546,17 @@ const tr: typeof en = {
         table: {
           username: 'Kullanıcı Adı',
           email: 'E-posta',
+          actions: 'İşlemler',
+        },
+        reset: {
+          button: 'MFA\'yı sıfırla',
+          ariaLabel: '{{name}} için MFA\'yı sıfırla',
+          selfHint: 'Kendi MFA ayarlarınızı profilinizden değiştirin',
+          title: 'MFA\'yı sıfırla',
+          description:
+            '{{name}} kullanıcısının tüm ikinci faktörleri kaldırılır: doğrulayıcı uygulama, güvenlik anahtarları, anlık bildirim cihazları, SMS, e-posta kodları, telefon araması ve kullanılmamış yedek kodlar. Kullanıcı parolasıyla giriş yapar ve kendisine uygulanan MFA politikasının ek süresi içinde MFA\'yı yeniden kurar.',
+          confirm: 'MFA\'yı sıfırla',
+          done: '{{name}} için MFA sıfırlandı: {{count}} faktör kaldırıldı',
         },
       },
       dialog: {
@@ -6281,7 +6297,9 @@ const tr: typeof en = {
         sessionTimeout: 'Oturum Zaman Aşımı (dakika)',
         maxFailedLogins: 'Azami Başarısız Giriş',
         lockoutDuration: 'Kilitleme Süresi (dakika)',
-        requireMfa: 'Tüm kullanıcılar için MFA zorunlu',
+        mfaPolicyNote:
+          'MFA, MFA politikalarıyla uygulanır: girişte kimden ikinci faktör istendiği, hangi yöntemlerin geçerli olduğu ve kullanıcının birini eklemek için ne kadar süresi olduğu.',
+        mfaPolicyLink: 'MFA politikalarını yönet',
       },
       sessionPolicies: {
         title: 'Oturum Politikaları',
@@ -9623,6 +9641,11 @@ const tr: typeof en = {
       copy: 'Kopyala',
       copied: 'Ayarlar kopyalandı',
       copyFailed: 'Kopyalanamadı',
+      deviceGates: {
+        title: 'Canlı cihaz',
+        hint: 'Bir cihaz yalnızca ajanı {{timeout}} içinde rapor verdikçe güvenilir sayılır. Bu kontroller, güvenilir cihaz isteyen uygulamalara tek oturum açmada ve her ayrıcalıklı oturumda böyle bir cihaz arar. Production bunları zorunlu tutmaz; kullanıcılarınız ajanı kurduktan sonra açın.',
+        livenessOff: 'Canlılık kuralı kapalı (AGENT_LIVENESS_TIMEOUT=0): cihaz son raporuna göre güvenilir kalır.',
+      },
       banner: {
         title: '{{count}} yetkilendirme denetimi uygulanmıyor',
         window: 'gözlem penceresi {{until}} tarihine kadar ({{days}} gün kaldı)',

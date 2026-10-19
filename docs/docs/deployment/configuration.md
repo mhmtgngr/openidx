@@ -464,6 +464,19 @@ gh release download "$TAG" --repo <owner>/<repo> \
 export AGENT_DOWNLOADS_DIR=/var/lib/openidx/downloads
 ```
 
+Several installers for one platform may sit side by side (an older release
+left behind, an MSI and an EXE, a deb and an rpm). The manifest advertises one:
+the highest version parsed from the filename (`OpenIDX-0.5.0.msi`,
+`openidx-agent_0.5.0_amd64.deb`, `openidx-agent-v1.46.0-….apk`); at the same
+version Windows prefers `.msi` over `.exe`, macOS `.pkg` over `.dmg`, and Linux
+the x86-64 `.deb`, then the x86-64 `.rpm`, then the ARM packages. Every file
+stays downloadable by its own name.
+
+Use an absolute path outside the source checkout. The default is relative to
+the service's working directory, and on a host that runs the services from a
+repo checkout that directory is untracked and is emptied by `git clean -fdx` or
+a re-clone.
+
 The `agent-v*` release publishes the Windows MSI plus `.deb` and `.rpm` for
 amd64 and arm64. There is no macOS or iOS client to download; the wizard says
 so rather than sending users to ask for one.

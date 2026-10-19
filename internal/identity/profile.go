@@ -289,6 +289,7 @@ var routePlanes = map[string]servicePlane{
 	"DELETE /users/:id/sign-in-methods/:method":                      planeAdmin,
 	"DELETE /users/:id/sign-in-methods/:method/:credential_id":       planeAdmin,
 	"POST /users/:id/sign-in-methods/:method/:credential_id/disable": planeAdmin,
+	"POST /users/:id/mfa/reset":                                      planeAdmin,
 	"POST /mfa/bypass-codes/verify":                                  planeIssue,
 	"GET /mfa/bypass-codes/audit":                                    planeAdmin,
 	"POST /passwordless/magic-link":                                  planeIssue,

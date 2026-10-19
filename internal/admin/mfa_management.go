@@ -87,11 +87,10 @@ func (s *Service) handleMFAEnrollmentStats(c *gin.Context) {
 		return
 	}
 
-	// The replica, not the primary: nothing on this screen writes an enrolment,
-	// so the tile is never read straight after a write. See offloadedHandlers in
-	// replica_offload_test.go, which pins that fact against the console.
+	// The primary: Reset MFA on this screen removes an enrolment and refetches
+	// this tile straight after, so a replica could show the factor still there.
 	var stats MFAEnrollmentStats
-	err = s.db.Reader().QueryRow(c.Request.Context(),
+	err = s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT
 			COUNT(*) AS total_users,
 			COUNT(*) FILTER (WHERE totp_enabled OR sms_enabled OR email_otp_enabled OR push_enabled OR webauthn_enabled) AS any_mfa,
@@ -462,19 +461,16 @@ func (s *Service) handleListUserMFAStatus(c *gin.Context) {
 		return
 	}
 
-	// The replica: this table is the tenant's enrolment state, and the MFA
-	// screen writes POLICIES. Its three mutations all invalidate
-	// ['mfa-policies'] and nothing invalidates ['mfa-user-status'], so no
-	// mutation on this screen -- or any other -- refetches this table.
-	// offloadedHandlers records the evidence and the guard.
+	// The primary: Reset MFA refetches this table after it removes a user's
+	// factors, which makes it a read-after-write.
 	var total int
-	err = s.db.Reader().QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to count user MFA records", err))
 		return
 	}
 
-	rows, err := s.db.Reader().Query(ctx,
+	rows, err := s.db.Pool.Query(ctx,
 		`SELECT u.id::text, u.username, COALESCE(u.email, ''),`+mfaStatusColumns+`,
 		        (SELECT COUNT(*) FROM mfa_backup_codes b WHERE b.user_id = u.id AND b.org_id = $1 AND NOT b.used) AS backup_codes_remaining
 		 FROM users u

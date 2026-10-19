@@ -290,7 +290,8 @@ func TestMFATOTPFlow(t *testing.T) {
 		assert.True(t, ok, "setup should return a QR code URL")
 		assert.NotEmpty(t, qrCodeURL)
 		assert.Contains(t, qrCodeURL, "otpauth://totp/")
-		assert.Contains(t, qrCodeURL, "OpenIDX")
+		// The issuer is the organization's display name (OpenIDX only when it has none).
+		assert.Contains(t, qrCodeURL, "issuer=")
 	})
 
 	t.Run("TOTP enable with valid code succeeds", func(t *testing.T) {

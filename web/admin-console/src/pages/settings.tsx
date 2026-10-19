@@ -526,15 +526,14 @@ export function SettingsPage() {
                       />
                     </div>
                   </div>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={formData.security.require_mfa}
-                      onChange={(e) => updateSecurity('require_mfa', e.target.checked)}
-                      className="rounded"
-                    />
-                    <span className="text-sm font-medium">{t('pages.settings.session.requireMfa')}</span>
-                  </label>
+                  {/* security.require_mfa was a checkbox here that sign-in never read;
+                      MFA is required by the MFA policies, so point there instead. */}
+                  <div className="bg-muted border border-border rounded-md p-3 text-sm">
+                    {t('pages.settings.session.mfaPolicyNote')}{' '}
+                    <Link to="/mfa-management" className="text-primary hover:underline">
+                      {t('pages.settings.session.mfaPolicyLink')}
+                    </Link>
+                  </div>
                 </CardContent>
               </Card>
 

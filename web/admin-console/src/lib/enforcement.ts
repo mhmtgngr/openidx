@@ -22,6 +22,10 @@ export interface EnforcementPosture {
   window_status?: string
   gates: EnforcementGate[]
   env_lines: string[]
+  // Live-device controls on the browser paths; production does not require
+  // them, so they never count toward fully_enforcing. Absent on older servers.
+  device_gates?: EnforcementGate[]
+  agent_liveness_timeout?: string
 }
 
 export function useEnforcementPosture(enabled = true) {

@@ -60,5 +60,11 @@ export APISIX_BOOTSTRAPPER_NODE=127.0.0.1:8445
 # rendered at all while this is empty.
 export APISIX_FORWARD_AUTH_URI=http://127.0.0.1:8007/api/v1/access/auth/decide
 
+# --- Agent installers -------------------------------------------------------
+# Served at /downloads/<file> and listed by /downloads/agent-manifest.json for
+# the Add-a-device wizard. Keep them OUTSIDE the repo checkout: the default
+# (deployments/downloads, relative to the cd above) is an untracked directory
+# in the checkout that a `git clean` or re-clone silently empties.
+export AGENT_DOWNLOADS_DIR=/home/cmit/oidx-runtime/downloads   # adapt path
 mkdir -p /tmp/oidx-logs
 exec /home/cmit/oidx-runtime/bin/oidx-access-service > /tmp/oidx-logs/access.log 2>&1

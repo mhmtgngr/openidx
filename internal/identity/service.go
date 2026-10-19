@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -2423,7 +2424,7 @@ func (s *Service) GenerateTOTPSecret(ctx context.Context, userID string) (*TOTPE
 
 	// Generate TOTP key
 	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "OpenIDX",
+		Issuer:      s.totpIssuer(ctx),
 		AccountName: user.GetEmail(),
 		SecretSize:  32,
 	})
@@ -2440,6 +2441,50 @@ func (s *Service) GenerateTOTPSecret(ctx context.Context, userID string) (*TOTPE
 		QRCodeURL: qrURL,
 		ManualKey: key.Secret(),
 	}, nil
+}
+
+// defaultTOTPIssuer labels an authenticator entry when the organization has
+// no usable name.
+const defaultTOTPIssuer = "OpenIDX"
+
+// totpIssuer is the issuer an authenticator app shows above the code: the
+// organization's name, so a user with accounts at two organizations on the
+// same install can tell the entries apart, else defaultTOTPIssuer. A lookup
+// failure falls back rather than failing the enrollment.
+func (s *Service) totpIssuer(ctx context.Context) string {
+	org, err := orgctx.From(ctx)
+	if err != nil || org.ID == "" || s.db == nil || s.db.Pool == nil {
+		return defaultTOTPIssuer
+	}
+	var name string
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT name FROM organizations WHERE id = $1`, org.ID).Scan(&name); err != nil {
+		s.logger.Debug("TOTP issuer falls back: organization name not read", zap.Error(err))
+		return defaultTOTPIssuer
+	}
+	return sanitizeTOTPIssuer(name)
+}
+
+// sanitizeTOTPIssuer makes an organization name safe as an otpauth issuer.
+// The key URI's label is "issuer:account", and authenticators split it on the
+// first colon, so a colon in the issuer would move part of the name into the
+// account; it becomes a hyphen. Control characters go, surrounding space is
+// trimmed, and an empty result is defaultTOTPIssuer.
+func sanitizeTOTPIssuer(name string) string {
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r == ':':
+			return '-'
+		case unicode.IsControl(r):
+			return -1
+		}
+		return r
+	}, name)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return defaultTOTPIssuer
+	}
+	return name
 }
 
 // totpPeriod is the length of one TOTP time step, in seconds, for every
@@ -4312,6 +4357,8 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.DELETE("/users/:id/sign-in-methods/:method", svc.handleAdminRemoveSignInMethod)
 		identity.DELETE("/users/:id/sign-in-methods/:method/:credential_id", svc.handleAdminRemoveSignInCredential)
 		identity.POST("/users/:id/sign-in-methods/:method/:credential_id/disable", svc.handleAdminDisableSignInCredential)
+		// Reset a user's second factors (Admin): all, or the named ones.
+		identity.POST("/users/:id/mfa/reset", svc.adminStepUp(), svc.handleAdminResetMFA)
 		identity.POST("/mfa/bypass-codes/verify", svc.handleVerifyBypassCode)
 		identity.GET("/mfa/bypass-codes/audit", svc.handleGetBypassAuditLog)
 

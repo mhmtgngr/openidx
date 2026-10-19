@@ -30,7 +30,7 @@ func TestMFASetupFlow(t *testing.T) {
 
 		qrURL, _ := body["qrCodeUrl"].(string)
 		assert.Contains(t, qrURL, "otpauth://totp/", "QR URL should be an otpauth URI")
-		assert.Contains(t, qrURL, "OpenIDX", "QR URL should contain issuer name")
+		assert.Contains(t, qrURL, "issuer=", "QR URL should name an issuer (the organization)")
 	})
 
 	t.Run("enable with invalid code is rejected", func(t *testing.T) {

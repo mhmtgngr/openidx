@@ -6827,7 +6827,7 @@ paths:
     get:
       tags: [System Health]
       summary: Enforcement posture
-      description: Which authorization controls are open, what each would have refused in the last week, and the days left in a declared observe window.
+      description: Which authorization controls are open, what each would have refused in the last week, and the days left in a declared observe window. device_gates lists the live-device controls (SSO_DEVICE_GATE, PAM_DEVICE_GATE), which production does not require, and agent_liveness_timeout how long a device may go without reporting and stay trusted.
       operationId: securityPosture
       x-openidx-handler: internal/admin.(*Service).handleSecurityPosture
       responses:

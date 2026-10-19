@@ -109,6 +109,31 @@ func (c *Config) ProductionGateStatuses() []GateStatus {
 	return out
 }
 
+// DeviceGateStatuses describes the two controls that ask for a live device
+// on the browser paths (SSO_DEVICE_GATE, PAM_DEVICE_GATE). Production does not
+// require them: a staged rollout turns them on after the fleet has agents,
+// which can take longer than the observe window. They are listed beside the
+// required ones so the console shows their mode and would-deny counts.
+func (c *Config) DeviceGateStatuses() []GateStatus {
+	meanings := map[string]string{}
+	for _, line := range c.ReportModeGates() {
+		if name, rest, ok := strings.Cut(line, "="); ok {
+			if _, meaning, ok := strings.Cut(rest, " — "); ok {
+				meanings[name] = meaning
+			}
+		}
+	}
+	out := []GateStatus{
+		{Name: "SSO_DEVICE_GATE", Mode: triMode(c.SSODeviceGate), ObserveAction: "access.device.would_deny"},
+		{Name: "PAM_DEVICE_GATE", Mode: triMode(c.PAMDeviceGate), ObserveAction: "pam.device.would_deny"},
+	}
+	for i := range out {
+		out[i].Enforcing = out[i].Mode == "enforce"
+		out[i].Meaning = meanings[out[i].Name]
+	}
+	return out
+}
+
 // OpenProductionGates returns the required controls that are not enforcing,
 // each as the line ReportModeGates gives it.
 func (c *Config) OpenProductionGates() []string {

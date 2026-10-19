@@ -62,6 +62,24 @@ describe('EnforcementPage', () => {
     expect(api.get).toHaveBeenCalledWith('/api/v1/security-posture')
   })
 
+  it('lists the live-device controls apart from the required ones, with the liveness timeout', async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      ...POSTURE,
+      agent_liveness_timeout: '10m0s',
+      device_gates: [
+        { name: 'SSO_DEVICE_GATE', mode: 'observe', enforcing: false, meaning: 'single sign-on never checks for a live agent', observe_action: 'access.device.would_deny', would_deny_7d: 3 },
+        { name: 'PAM_DEVICE_GATE', mode: 'off', enforcing: false, observe_action: 'pam.device.would_deny', would_deny_7d: 0 },
+      ],
+    })
+    wrap(<EnforcementPage />)
+    expect(await screen.findByText('SSO_DEVICE_GATE')).toBeInTheDocument()
+    expect(screen.getByTestId('mode-SSO_DEVICE_GATE')).toHaveTextContent('observe')
+    expect(screen.getByTestId('mode-PAM_DEVICE_GATE')).toHaveTextContent('off')
+    expect(screen.getByText(/reports within 10m0s/)).toBeInTheDocument()
+    // Not required by production: they do not join the env lines.
+    expect(screen.getByTestId('env-lines').textContent).not.toContain('SSO_DEVICE_GATE')
+  })
+
   it('shows the exact settings that close the open controls', async () => {
     vi.mocked(api.get).mockResolvedValue(POSTURE)
     wrap(<EnforcementPage />)

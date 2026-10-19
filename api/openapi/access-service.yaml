@@ -4100,7 +4100,9 @@ paths:
         last reported applying), tunnel_policy_applied_at (when that changed)
         and tunnel_policy_state: applied when it is the organization's current
         version, pending when it is not, empty when the device reports no
-        tunnel status.
+        tunnel status. last_report_at is the agent's last report and live
+        whether it falls within AGENT_LIVENESS_TIMEOUT (a device that is not
+        live is not trusted); live is omitted when that rule is off.
       operationId: handleListAgents
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleListAgents
       responses:

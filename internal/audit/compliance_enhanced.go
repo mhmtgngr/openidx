@@ -716,14 +716,36 @@ func (s *Service) evaluateA5Policies(ctx context.Context, startDate, endDate tim
 		assessment.Evidence = append(assessment.Evidence, "Security settings configured in system_settings")
 		assessment.Evidence = append(assessment.Evidence,
 			fmt.Sprintf("Password policy configured: %+v", settings.Security.PasswordPolicy))
-		assessment.Evidence = append(assessment.Evidence,
-			fmt.Sprintf("MFA requirement: %v", settings.Security.RequireMFA))
 	} else {
 		score -= 40
 		assessment.Findings = append(assessment.Findings,
 			"No security policy configuration found in system_settings")
 		assessment.Remediation = append(assessment.Remediation,
 			"Define and configure information security policies in system settings")
+	}
+
+	// Whether MFA is required comes from the MFA policies sign-in enforces
+	// (internal/oauth/mfa_policy.go): an enabled policy that names at least
+	// one method. This used to report system_settings.security.require_mfa,
+	// a console checkbox nothing at sign-in reads, so the report could say
+	// "MFA requirement: true" on an install that asked nobody for a second
+	// factor. The setting is still shown, labelled for what it is.
+	var mfaPolicies int
+	q.scan("enforcing MFA policies", &mfaPolicies, `
+		SELECT COUNT(*) FROM mfa_policies
+		 WHERE org_id = $1 AND COALESCE(enabled, false)
+		   AND CASE WHEN jsonb_typeof(required_methods) = 'array'
+		            THEN jsonb_array_length(required_methods) > 0 ELSE false END`, q.org())
+	if mfaPolicies > 0 {
+		assessment.Evidence = append(assessment.Evidence,
+			fmt.Sprintf("MFA requirement: enforced by %d enabled MFA policy(ies) with required methods", mfaPolicies))
+	} else {
+		assessment.Evidence = append(assessment.Evidence,
+			"MFA requirement: no enabled MFA policy requires a method")
+	}
+	if settingsErr == nil && settings.Security.RequireMFA {
+		assessment.Evidence = append(assessment.Evidence,
+			"Legacy security.require_mfa setting is on; sign-in does not read it, MFA policies decide")
 	}
 
 	// Check for authentication settings.
