@@ -12,7 +12,6 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
-	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // A DEVICE WHOSE AGENT STOPPED REPORTING LOSES ITS TRUST ONCE, AND SAYS SO ONCE.
@@ -70,14 +69,10 @@ func TestLivenessSweepOffDoesNothing(t *testing.T) {
 // carries the real schema, whose ziti_identities other objects depend on.
 func livenessScratch(t *testing.T) (string, *pgxpool.Pool) {
 	t.Helper()
-	dsn, ok := testsupport.ScratchDatabase(t)
-	if !ok {
-		t.Skip("TEST_POSTGRES_DSN not set; skipping the liveness sweep tests")
-	}
-	pool, err := pgxpool.New(context.Background(), dsn)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
-	return dsn, pool
+	db, cleanup := setupTestDB(t)
+	t.Cleanup(cleanup)
+	pool := db.Pool.Raw()
+	return pool.Config().ConnString(), pool
 }
 
 func seedLivenessAgents(t *testing.T, pool *pgxpool.Pool) {

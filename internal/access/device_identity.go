@@ -110,7 +110,7 @@ func (zm *ZitiManager) agentIsLive(agentID string, lastReport *time.Time, now ti
 	live := lastReport != nil && now.Sub(*lastReport) <= timeout
 	if !live {
 		zm.logger.Debug("device identity: agent not live, device not trusted",
-			zap.String("agent_id", agentID), zap.Duration("timeout", timeout))
+			logsafe.String("agent_id", agentID), zap.Duration("timeout", timeout))
 	}
 	return live
 }

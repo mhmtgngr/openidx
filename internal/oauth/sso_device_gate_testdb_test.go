@@ -14,7 +14,6 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
-	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 const (
@@ -71,14 +70,10 @@ func TestSSODeviceGate(t *testing.T) {
 
 func ssoGateScratch(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn, ok := testsupport.ScratchDatabase(t)
-	if !ok {
-		t.Skip("TEST_POSTGRES_DSN not set; skipping the SSO device gate test")
-	}
-	pool, err := pgxpool.New(context.Background(), dsn)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
-	_, err = pool.Exec(context.Background(), `
+	db, cleanup := ssfSetupTestDB(t)
+	t.Cleanup(cleanup)
+	pool := db.Pool.Raw()
+	_, err := pool.Exec(context.Background(), `
 		CREATE TABLE applications (id uuid primary key, name text, kind text, enabled boolean, org_id uuid);
 		CREATE TABLE resource_conditions (application_id uuid primary key, require_device_trust boolean,
 			max_risk_score int, allowed_countries text[], require_step_up boolean, legacy_roles text[]);

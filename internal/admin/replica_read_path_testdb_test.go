@@ -170,52 +170,6 @@ func TestTheOffloadedHandlersAnswerOverAReadOnlyReplica(t *testing.T) {
 		}
 	})
 
-	t.Run("enrolment stats come back from the replica, tenant-scoped", func(t *testing.T) {
-		w := call(orgA, s.handleMFAEnrollmentStats)
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-		var got MFAEnrollmentStats
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-		assert.Equal(t, 2, got.TotalUsers, "org B's user must not be counted")
-		assert.Equal(t, 1, got.AnyMFA)
-		assert.Equal(t, 1, got.TOTPCount)
-		assert.Equal(t, 0, got.WebAuthnCount, "org B's webauthn credential must not be counted")
-	})
-
-	t.Run("the user MFA table comes back from the replica, tenant-scoped", func(t *testing.T) {
-		w := call(orgA, s.handleListUserMFAStatus)
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-		var got struct {
-			Data  []UserMFAStatus `json:"data"`
-			Total int             `json:"total"`
-		}
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-		assert.Equal(t, 2, got.Total, "org B's user must not be counted")
-		require.Len(t, got.Data, 2)
-		for _, u := range got.Data {
-			assert.NotEqual(t, "intruder", u.Username, "org B's user leaked through the replica read")
-		}
-		// The correlated subquery is the interesting half, and it has to be read
-		// on BOTH rows. It carries its own org_id AND its own correlation to the
-		// user, and a mutation that drops the correlation leaves ada's count
-		// unchanged at 2 -- it is the row that holds all of this tenant's unused
-		// codes. Only grace can tell the two apart: she holds none, and a
-		// subquery that has stopped correlating hands her ada's two. Asserting
-		// on ada alone let that mutation through, which is a fact about the
-		// assertion rather than about the query.
-		byName := map[string]UserMFAStatus{}
-		for _, u := range got.Data {
-			byName[u.Username] = u
-		}
-		require.Contains(t, byName, "ada")
-		require.Contains(t, byName, "grace")
-		assert.Equal(t, 2, byName["ada"].BackupCodesRemaining, "ada holds two unused codes and one used one")
-		assert.Equal(t, 0, byName["grace"].BackupCodesRemaining, "grace holds none; a count of 2 here is ada's, reached through a subquery that no longer correlates")
-		assert.True(t, byName["ada"].TOTPEnabled)
-		assert.False(t, byName["grace"].TOTPEnabled)
-	})
-
 	t.Run("notification stats come back from the replica, tenant-scoped", func(t *testing.T) {
 		w := call(orgA, s.handleNotificationStats)
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())

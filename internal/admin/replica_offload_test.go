@@ -86,7 +86,7 @@ var stayOnPrimary = map[string]string{
 	// The criterion is semantic, not structural: it is about what the SCREEN
 	// does, and no shape of the Go source can decide it. What is genuinely left
 	// -- handlers over historical aggregates nobody has just written, like
-	// ispm GetPostureTrends or mfa_management MFAEnrollmentStats -- has to be
+	// ispm GetPostureTrends -- has to be
 	// decided one screen at a time, against the console.
 	//
 	// That is where this comment used to stop, with "more machinery would not
@@ -112,7 +112,7 @@ var stayOnPrimary = map[string]string{
 	"federation.go":              "social providers and federation rules: a provider saved and not visible on the refetch reads as a failed save, and the operator saves it twice",
 	"ibdr.go":                    "backup and restore records: a restore reads the record it is about to act on, which must be the one just written",
 	"ispm.go":                    "posture findings and rules: dismiss and remediate write, then the list refetches. The trend chart is the exception and has moved on its own, as offloadedHandlers records",
-	"mfa_management.go":          "MFA policy CRUD. The policy decides whether a factor is required, so it belongs with the security-critical reads this package already keeps on the primary (see settings_repository.go). The enrolment-stats tile is the exception and has moved on its own, as offloadedHandlers records",
+	"mfa_management.go":          "MFA policy CRUD. The policy decides whether a factor is required, so it belongs with the security-critical reads this package already keeps on the primary (see settings_repository.go). The enrolment tile and table stay with it too: Reset MFA on this screen removes a factor and refetches both",
 	"notification_management.go": "routing rules and broadcasts: send reads the broadcast it is about to deliver and counts its recipients, and delete reads the status it gates on. Sending a superseded body, or sending twice, is not a stale tile",
 	"privacy.go":                 "DSAR and consent records: a consent read that lags is a consent decision applied after it was withdrawn",
 	"service.go":                 "the package's main surface, 49 reads across every admin resource, nearly all of them CRUD read-after-write. It moves query by query when its turn comes, not as a file",
@@ -341,30 +341,6 @@ var offloadedHandlers = []offloadedHandler{
 			"after a scan at all -- a second of replication lag is invisible next to a staleness that already " +
 			"lasts until the page is remounted. If a later change makes the scan refresh the chart, " +
 			"TestOffloadedHandlerKeysAreNeverInvalidated fails and this decision is made again",
-	},
-	{
-		file:     "mfa_management.go",
-		fn:       "handleMFAEnrollmentStats",
-		route:    "/api/v1/mfa/enrollment-stats",
-		queryKey: "mfa-enrollment-stats",
-		reason: "how many users have each factor enrolled, counted across the tenant. The MFA screen writes " +
-			"POLICIES, never enrolments -- an enrolment is written by the user themselves in the self-service " +
-			"flow, in another service, minutes to days earlier -- so the three mutations on this screen all " +
-			"invalidate ['mfa-policies'] and none can move this tile. The one admin-plane write that does touch " +
-			"mfa_* tables is the DSAR erasure in privacy.go, on a different screen with different keys",
-	},
-	{
-		file:     "mfa_management.go",
-		fn:       "handleListUserMFAStatus",
-		route:    "/api/v1/mfa/user-status",
-		queryKey: "mfa-user-status",
-		reason: "the per-user enrolment table on the same screen as the tile above, and it stands or falls " +
-			"with the same fact: this screen's only three mutations are policy create, update and delete, and " +
-			"all three invalidate ['mfa-policies']. Nothing in the console invalidates ['mfa-user-status'], so " +
-			"the table is not refetched after any admin action -- an enrolment appears in it when the page is " +
-			"next mounted, whether it is read from the primary or the replica. The key is paginated " +
-			"(['mfa-user-status', page]), and TanStack invalidates by prefix, so the declared prefix is exactly " +
-			"what would have to be invalidated for this to become a read-after-write",
 	},
 	{
 		file:     "notification_management.go",

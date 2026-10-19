@@ -7,14 +7,12 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
-	"github.com/openidx/openidx/internal/common/testsupport"
 )
 
 // PAM_DEVICE_GATE: an internal user's privileged launch needs a live,
@@ -23,14 +21,10 @@ func TestPAMDeviceGate(t *testing.T) {
 	const org = "00000000-0000-0000-0000-0000000000a1"
 	const live = "00000000-0000-0000-0000-0000000000c1"
 	const idle = "00000000-0000-0000-0000-0000000000c2"
-	dsn, ok := testsupport.ScratchDatabase(t)
-	if !ok {
-		t.Skip("TEST_POSTGRES_DSN not set; skipping the PAM device gate test")
-	}
-	pool, err := pgxpool.New(context.Background(), dsn)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
-	_, err = pool.Exec(context.Background(), `
+	db, cleanup := setupTestDB(t)
+	t.Cleanup(cleanup)
+	pool := db.Pool.Raw()
+	_, err := pool.Exec(context.Background(), `
 		CREATE TABLE enrolled_agents (agent_id text primary key, org_id uuid, enrolled_by_user_id uuid,
 			status text, compliance_status text, last_report_at timestamptz);
 		INSERT INTO enrolled_agents VALUES ('a-live', '`+org+`', '`+live+`', 'active', 'compliant', NOW() - interval '1 minute');
