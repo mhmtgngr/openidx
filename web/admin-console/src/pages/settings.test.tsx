@@ -81,6 +81,27 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('button', { name: /save/i })).toBeDisabled()
   })
 
+  // security.require_mfa was a checkbox nothing at sign-in read. The tab now
+  // says where MFA is actually required, and offers no switch that does nothing.
+  it('points to the MFA policies instead of a Require MFA switch', async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      ...mockSettings,
+      security: {
+        password_policy: {
+          min_length: 12, require_uppercase: true, require_lowercase: true,
+          require_numbers: true, require_special: true, max_age: 90, history: 5,
+        },
+        session_timeout: 30, max_failed_logins: 5, lockout_duration: 15, require_mfa: true,
+      },
+    })
+    render(<SettingsPage />, { wrapper: createWrapper() })
+
+    fireEvent.click(await screen.findByRole('button', { name: /^security$/i }))
+    expect(await screen.findByText(/MFA is enforced with MFA policies/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /manage mfa policies/i })).toHaveAttribute('href', '/mfa-management')
+    expect(screen.queryByRole('checkbox', { name: /require mfa/i })).toBeNull()
+  })
+
   it('has save button', async () => {
     const wrapper = createWrapper()
 

@@ -6332,7 +6332,9 @@ const en = {
         sessionTimeout: 'Session Timeout (minutes)',
         maxFailedLogins: 'Max Failed Logins',
         lockoutDuration: 'Lockout Duration (minutes)',
-        requireMfa: 'Require MFA for all users',
+        mfaPolicyNote:
+          'MFA is enforced with MFA policies: who is asked for a second factor at sign-in, which methods count, and how long a user has to add one.',
+        mfaPolicyLink: 'Manage MFA policies',
       },
       sessionPolicies: {
         title: 'Session Policies',

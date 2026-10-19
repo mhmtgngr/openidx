@@ -6297,7 +6297,9 @@ const tr: typeof en = {
         sessionTimeout: 'Oturum Zaman Aşımı (dakika)',
         maxFailedLogins: 'Azami Başarısız Giriş',
         lockoutDuration: 'Kilitleme Süresi (dakika)',
-        requireMfa: 'Tüm kullanıcılar için MFA zorunlu',
+        mfaPolicyNote:
+          'MFA, MFA politikalarıyla uygulanır: girişte kimden ikinci faktör istendiği, hangi yöntemlerin geçerli olduğu ve kullanıcının birini eklemek için ne kadar süresi olduğu.',
+        mfaPolicyLink: 'MFA politikalarını yönet',
       },
       sessionPolicies: {
         title: 'Oturum Politikaları',

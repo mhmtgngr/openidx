@@ -222,6 +222,34 @@ func TestComplianceControlsAgainstTheRealSchema(t *testing.T) {
 		}
 	})
 
+	// "MFA required" is what sign-in enforces: an enabled MFA policy naming a
+	// method. A disabled policy, or one that names nothing, requires nothing.
+	t.Run("the MFA requirement comes from the enforced MFA policies", func(t *testing.T) {
+		mfaEvidence := func() string {
+			t.Helper()
+			a, err := svc.evaluateA5Policies(ctx, from, to)
+			if err != nil {
+				t.Fatalf("A.5 policies: %v", err)
+			}
+			for _, e := range a.Evidence {
+				if contains(e, "MFA requirement:") {
+					return e
+				}
+			}
+			t.Fatalf("A.5 evidence carries no MFA requirement line: %v", a.Evidence)
+			return ""
+		}
+		exec(`INSERT INTO mfa_policies (name, enabled, required_methods, org_id) VALUES
+		      ('off', false, '["totp"]', $1), ('empty', true, '[]', $1), ('null', true, NULL, $1)`, org)
+		if e := mfaEvidence(); !contains(e, "no enabled MFA policy requires a method") {
+			t.Errorf("with no enforcing policy the evidence reads %q", e)
+		}
+		exec(`INSERT INTO mfa_policies (name, enabled, required_methods, org_id) VALUES ('admins', true, '["totp","webauthn"]', $1)`, org)
+		if e := mfaEvidence(); !contains(e, "enforced by 1 enabled MFA policy") {
+			t.Errorf("with one enforcing policy the evidence reads %q", e)
+		}
+	})
+
 	// The whole document, end to end, against a migrated schema.
 	//
 	// Every section above is a gatherer tested on its own. This drives the three
