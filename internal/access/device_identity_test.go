@@ -3,6 +3,11 @@ package access
 import (
 	"reflect"
 	"testing"
+	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/config"
 )
 
 // A device identity carries its own markers and its user's reach, never the
@@ -73,5 +78,31 @@ func TestUserIdentityNeverCarriesDeviceTrust(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("assembleAttributes dropped the flag it was given")
+	}
+}
+
+// A device is live while its agent reported within AGENT_LIVENESS_TIMEOUT; one
+// that never reported is not; with the rule off every device is.
+func TestAgentIsLiveFollowsTheLastReport(t *testing.T) {
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	at := func(ago time.Duration) *time.Time { v := now.Add(-ago); return &v }
+	zm := &ZitiManager{cfg: &config.Config{AgentLivenessTimeout: "10m"}, logger: zap.NewNop()}
+	for _, tc := range []struct {
+		name string
+		last *time.Time
+		want bool
+	}{
+		{"reported a minute ago", at(time.Minute), true},
+		{"reported exactly at the timeout", at(10 * time.Minute), true},
+		{"silent for twenty minutes", at(20 * time.Minute), false},
+		{"never reported", nil, false},
+	} {
+		if got := zm.agentIsLive("a", tc.last, now); got != tc.want {
+			t.Errorf("%s: live = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	off := &ZitiManager{cfg: &config.Config{AgentLivenessTimeout: "0"}, logger: zap.NewNop()}
+	if !off.agentIsLive("a", nil, now) {
+		t.Error("with the rule off a device that never reported must still count as live")
 	}
 }

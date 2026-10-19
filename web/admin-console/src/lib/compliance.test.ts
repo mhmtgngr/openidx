@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  agentSilentMinutes,
   complianceTooltip,
   formatCompliancePercent,
   hasComplianceMeasurement,
@@ -50,5 +51,19 @@ describe('compliance score rendering', () => {
   it('treats status case-insensitively', () => {
     expect(hasComplianceMeasurement('UNKNOWN')).toBe(false)
     expect(hasComplianceMeasurement('compliant')).toBe(true)
+  })
+})
+
+describe('agentSilentMinutes', () => {
+  const now = Date.parse('2026-10-19T12:00:00Z')
+  it('shows nothing for a live agent or when the rule is off', () => {
+    expect(agentSilentMinutes(true, '2026-10-19T11:59:00Z', now)).toBeNull()
+    expect(agentSilentMinutes(undefined, '2026-10-19T10:00:00Z', now)).toBeNull()
+  })
+  it('counts minutes since the last report for a silent agent', () => {
+    expect(agentSilentMinutes(false, '2026-10-19T11:37:30Z', now)).toBe(22)
+  })
+  it('says never when a silent agent has no report', () => {
+    expect(agentSilentMinutes(false, null, now)).toBe(-1)
   })
 })

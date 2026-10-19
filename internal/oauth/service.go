@@ -2722,6 +2722,11 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string, 
 	if !s.abacGateAllows(c, userID, clientID, appID) {
 		return false
 	}
+	// Like ABAC, a device requirement is the resource's and applies whether
+	// or not the application opts into assignment (sso_device_gate.go).
+	if !s.ssoDeviceGateAllows(c, userID, clientID, appID, org.ID) {
+		return false
+	}
 
 	if !requiresAssignment {
 		// Skip the Allowed() query entirely: authorizeAssignmentDecision would

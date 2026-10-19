@@ -60,15 +60,18 @@ func deviceAttributesFrom(agentID, userID string, userAttrs []string, trusted bo
 
 type deviceIdentityRow struct {
 	agentID, zitiID, userID, orgID, compliance, status string
+	// lastReport is when the agent last reported, nil if it never has.
+	lastReport *time.Time
 }
 
 func (zm *ZitiManager) loadDeviceIdentityRow(ctx context.Context, agentID string) (deviceIdentityRow, error) {
 	var r deviceIdentityRow
 	err := zm.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), `
 		SELECT agent_id, COALESCE(ziti_identity_id,''), COALESCE(enrolled_by_user_id::text,''),
-		       COALESCE(org_id::text,''), COALESCE(compliance_status,''), COALESCE(status,'')
+		       COALESCE(org_id::text,''), COALESCE(compliance_status,''), COALESCE(status,''),
+		       last_report_at
 		  FROM enrolled_agents WHERE agent_id = $1`, agentID).Scan(
-		&r.agentID, &r.zitiID, &r.userID, &r.orgID, &r.compliance, &r.status)
+		&r.agentID, &r.zitiID, &r.userID, &r.orgID, &r.compliance, &r.status, &r.lastReport)
 	return r, err
 }
 
@@ -90,6 +93,28 @@ func (zm *ZitiManager) deviceTrustFromCompliance(agentID, compliance string) boo
 	return false
 }
 
+// agentIsLive applies AGENT_LIVENESS_TIMEOUT: a device whose agent has not
+// reported within the timeout is not trusted, whatever its last report said.
+// Trust used to follow the last report however old it was, so a compliant
+// laptop that was switched off, or whose agent was stopped, kept
+// #device-trusted indefinitely and the poller kept re-asserting it. With the
+// rule off (timeout 0) every device counts as live.
+func (zm *ZitiManager) agentIsLive(agentID string, lastReport *time.Time, now time.Time) bool {
+	var timeout time.Duration
+	if zm.cfg != nil {
+		timeout = zm.cfg.AgentLiveness()
+	}
+	if timeout <= 0 {
+		return true
+	}
+	live := lastReport != nil && now.Sub(*lastReport) <= timeout
+	if !live {
+		zm.logger.Debug("device identity: agent not live, device not trusted",
+			zap.String("agent_id", agentID), zap.Duration("timeout", timeout))
+	}
+	return live
+}
+
 // DeviceAttributes is what the agent's identity should carry now.
 func (zm *ZitiManager) DeviceAttributes(ctx context.Context, agentID string) ([]string, error) {
 	r, err := zm.loadDeviceIdentityRow(ctx, agentID)
@@ -97,7 +122,11 @@ func (zm *ZitiManager) DeviceAttributes(ctx context.Context, agentID string) ([]
 		return nil, fmt.Errorf("device identity: load agent %s: %w", agentID, err)
 	}
 	var userAttrs []string
-	if r.userID != "" {
+	// A device that is not active (suspended by grace expiry or a kill
+	// switch, pending approval) carries its own markers and nothing of its
+	// user's: no groups, no applications, no trust. It can still be reached
+	// for remote support by #openidx-agent.
+	if r.userID != "" && r.status == "active" {
 		if ua, uerr := zm.buildUserAttributes(orgctx.WithBypassRLS(ctx), r.userID); uerr == nil {
 			userAttrs = ua
 		} else {
@@ -105,7 +134,8 @@ func (zm *ZitiManager) DeviceAttributes(ctx context.Context, agentID string) ([]
 				zap.String("agent_id", agentID), zap.Error(uerr))
 		}
 	}
-	trusted := r.status == "active" && zm.deviceTrustFromCompliance(agentID, r.compliance)
+	trusted := r.status == "active" && zm.agentIsLive(agentID, r.lastReport, time.Now()) &&
+		zm.deviceTrustFromCompliance(agentID, r.compliance)
 	return deviceAttributesFrom(agentID, r.userID, userAttrs, trusted), nil
 }
 

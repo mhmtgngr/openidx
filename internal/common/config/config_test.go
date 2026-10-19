@@ -1534,6 +1534,8 @@ func TestReportModeGatesNamesEveryOpenControl(t *testing.T) {
 		PAMSessionRiskGate:      "enforce",
 		PostureDeviceTrustGate:  "enforce",
 		PAMRequireZTNA:          "enforce",
+		SSODeviceGate:           "enforce",
+		PAMDeviceGate:           "enforce",
 		AccessAPIRequireAuth:    true,
 		AdminAPIRequireAuth:     true,
 		// A literal Config carries no loader default, and a zero quota IS an
@@ -1617,4 +1619,34 @@ func TestAnEmptyAccessProxyDomainStaysEmpty(t *testing.T) {
 			t.Errorf("ACCESS_PROXY_DOMAIN=access.example.com loaded as %q", got)
 		}
 	})
+}
+
+// AGENT_LIVENESS_TIMEOUT: empty takes the default, 0 turns the rule off, and a
+// value that is not a duration refuses startup instead of disabling the rule.
+func TestAgentLivenessTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		raw     string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"", 10 * time.Minute, false},
+		{"0", 0, false},
+		{"0s", 0, false},
+		{"3m", 3 * time.Minute, false},
+		{" 90s ", 90 * time.Second, false},
+		{"ten minutes", 0, true},
+		{"-1m", 0, true},
+	} {
+		got, err := parseAgentLivenessTimeout(tc.raw)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%q: err = %v, wantErr %v", tc.raw, err, tc.wantErr)
+			continue
+		}
+		if !tc.wantErr && got != tc.want {
+			t.Errorf("%q: got %v, want %v", tc.raw, got, tc.want)
+		}
+	}
+	if (&Config{AgentLivenessTimeout: "0"}).ReportModeGates() == nil {
+		t.Error("a disabled liveness rule must be reported")
+	}
 }

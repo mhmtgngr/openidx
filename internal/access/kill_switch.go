@@ -86,10 +86,13 @@ type KillSwitchResult struct {
 	// ModerationsEnded counts the moderations the user asked for or
 	// moderates. A session one admitted ends with it, on the next lifecycle
 	// tick.
-	ModerationsEnded     int64     `json:"pam_moderations_ended"`
-	ZitiEdgeSessions     int       `json:"ziti_edge_sessions_terminated"`
-	ZitiAPISessions      int       `json:"ziti_api_sessions_terminated"`
-	ZitiIdentityDeleted  bool      `json:"ziti_identity_deleted"`
+	ModerationsEnded    int64 `json:"pam_moderations_ended"`
+	ZitiEdgeSessions    int   `json:"ziti_edge_sessions_terminated"`
+	ZitiAPISessions     int   `json:"ziti_api_sessions_terminated"`
+	ZitiIdentityDeleted bool  `json:"ziti_identity_deleted"`
+	// DevicesSuspended is how many of the user's active agents a disabling
+	// kill switch suspended.
+	DevicesSuspended     int       `json:"devices_suspended"`
 	ZitiControllerOnline bool      `json:"ziti_controller_online"`
 	Warnings             []string  `json:"warnings,omitempty"`
 	ExecutedAt           time.Time `json:"executed_at"`
@@ -387,7 +390,13 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 		// Disabling the account = full network deprovision, immediately rather
 		// than on the next 30s sweep tick. Device identities are left in place
 		// (their sessions are severed above): a device may be re-assigned, and
-		// the posture/agent lifecycle owns its teardown.
+		// the posture/agent lifecycle owns its teardown. Its agents are
+		// suspended, though, and their identities re-synced: a suspended
+		// device carries no trust and none of the user's access, so it cannot
+		// dial straight back in while the identity waits for that lifecycle.
+		if disableUser {
+			res.DevicesSuspended = s.suspendUserDevices(ctx, zm, orgID, userID, warn)
+		}
 		if disableUser && userZitiID != "" {
 			if err := zm.DeleteIdentity(ctx, userZitiID); err != nil {
 				warn("delete_ziti_identity", err)
@@ -669,4 +678,41 @@ func (zm *ZitiManager) terminateSessionsAt(ctx context.Context, collection, iden
 		}
 	}
 	return terminated
+}
+
+// suspendUserDevices suspends every active agent the user enrolled, untrusts
+// its known device and re-syncs its identity, which then carries the device's
+// own markers and nothing of the user's (DeviceAttributes). Returns how many.
+func (s *Service) suspendUserDevices(ctx context.Context, zm *ZitiManager, orgID, userID string, warn func(string, error)) int {
+	rows, err := s.db.Pool.Query(ctx, `
+		UPDATE enrolled_agents SET status = 'suspended'
+		 WHERE enrolled_by_user_id = $1 AND org_id = $2 AND status = 'active'
+		RETURNING agent_id, COALESCE(known_device_id::text, '')`, userID, orgID)
+	if err != nil {
+		warn("suspend_devices", err)
+		return 0
+	}
+	type dev struct{ agentID, knownDeviceID string }
+	var devs []dev
+	for rows.Next() {
+		var d dev
+		if rows.Scan(&d.agentID, &d.knownDeviceID) == nil {
+			devs = append(devs, d)
+		}
+	}
+	rows.Close()
+	for _, d := range devs {
+		if d.knownDeviceID != "" {
+			if _, err := s.db.Pool.Exec(ctx,
+				`UPDATE known_devices SET trusted = false WHERE id = $1 AND org_id = $2`, d.knownDeviceID, orgID); err != nil {
+				warn("untrust_known_device", err)
+			}
+		}
+		if zm != nil {
+			if err := zm.SyncDeviceIdentity(ctx, d.agentID); err != nil {
+				warn("sync_device_identity", err)
+			}
+		}
+	}
+	return len(devs)
 }

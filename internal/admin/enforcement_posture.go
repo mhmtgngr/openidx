@@ -37,6 +37,12 @@ type EnforcementPosture struct {
 	ObserveDaysLeft int               `json:"observe_days_left,omitempty"`
 	WindowStatus    string            `json:"window_status,omitempty"`
 	Gates           []EnforcementGate `json:"gates"`
+	// DeviceGates are the live-device controls on the browser paths; not
+	// required by production, so they do not count toward FullyEnforcing.
+	DeviceGates []EnforcementGate `json:"device_gates"`
+	// AgentLivenessTimeout is how long a device may go without reporting and
+	// stay trusted ("0s": the rule is off).
+	AgentLivenessTimeout string `json:"agent_liveness_timeout"`
 	// EnvLines are the exact settings that would make this install fully
 	// enforcing, ready to paste into the service environment.
 	EnvLines []string `json:"env_lines"`
@@ -69,6 +75,12 @@ func (s *Service) handleSecurityPosture(c *gin.Context) {
 		}
 		posture.Gates = append(posture.Gates, gate)
 	}
+	for _, g := range s.config.DeviceGateStatuses() {
+		gate := EnforcementGate{GateStatus: g}
+		gate.WouldDeny7d = s.countWouldDeny(ctx, g.ObserveAction, now.Add(-wouldDenyWindow))
+		posture.DeviceGates = append(posture.DeviceGates, gate)
+	}
+	posture.AgentLivenessTimeout = s.config.AgentLiveness().String()
 	c.JSON(http.StatusOK, posture)
 }
 

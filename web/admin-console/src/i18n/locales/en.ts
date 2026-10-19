@@ -445,6 +445,9 @@ const en = {
   compliance: {
     noReportSince: 'No compliance report since {{date}}; the score is unknown, not zero.',
     neverReported: 'This agent has never reported posture, so the score is unknown, not zero.',
+    offline: 'Offline · {{minutes}} min',
+    offlineNever: 'Offline · never reported',
+    offlineHint: 'The agent has not reported within the liveness timeout, so this device is not trusted until it reports again.',
   },
   // Shared error state for failed data fetches. `resource` is passed in
   // already localized by the calling page.
@@ -9887,6 +9890,11 @@ const en = {
       copy: 'Copy',
       copied: 'Settings copied',
       copyFailed: 'Could not copy',
+      deviceGates: {
+        title: 'Live device',
+        hint: 'A device counts as trusted only while its agent reports within {{timeout}}. These controls ask for such a device on single sign-on to applications that require a trusted device, and on every privileged session. Production does not require them; turn them on once your people have the agent.',
+        livenessOff: 'The liveness rule is off (AGENT_LIVENESS_TIMEOUT=0): a device stays trusted on its last report.',
+      },
       banner: {
         title: '{{count}} authorization control(s) are not enforcing',
         window: 'observe window until {{until}} ({{days}} day(s) left)',

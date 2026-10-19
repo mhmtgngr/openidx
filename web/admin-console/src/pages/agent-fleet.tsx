@@ -6,7 +6,7 @@ import {
   ShieldCheck, Trash2, QrCode, Copy, MoreHorizontal, Download,
 } from 'lucide-react'
 import { QRCodeCanvas } from 'qrcode.react'
-import { complianceTooltip, formatCompliancePercent } from '../lib/compliance'
+import { agentSilentMinutes, complianceTooltip, formatCompliancePercent } from '../lib/compliance'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -56,6 +56,8 @@ interface AgentRecord {
   tunnel_policy_version?: string | null
   tunnel_policy_applied_at?: string | null
   tunnel_policy_state?: string | null
+  last_report_at?: string | null
+  live?: boolean
 }
 
 interface QrPayloadResponse {
@@ -273,7 +275,10 @@ export function AgentFleetPage() {
                       <StatusBadge status={agent.status} />
                     </TableCell>
                     <TableCell>
-                      <ComplianceBadge status={agent.compliance_status} score={agent.compliance_score} lastReportAt={agent.last_seen_at} />
+                      <div className="flex flex-wrap items-center gap-1">
+                        <ComplianceBadge status={agent.compliance_status} score={agent.compliance_score} lastReportAt={agent.last_seen_at} />
+                        <OfflineBadge live={agent.live} lastReportAt={agent.last_report_at} />
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-1">
@@ -554,6 +559,19 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <Badge variant={variant as any}>
       {t(`pages.agentFleet.statuses.${status}`, { defaultValue: prettifyStatus(status) })}
+    </Badge>
+  )
+}
+
+// OfflineBadge marks a device whose agent has stopped reporting for longer
+// than the server's liveness timeout: it is not trusted until it reports.
+function OfflineBadge({ live, lastReportAt }: { live?: boolean; lastReportAt?: string | null }) {
+  const { t } = useTranslation()
+  const minutes = agentSilentMinutes(live, lastReportAt)
+  if (minutes === null) return null
+  return (
+    <Badge variant="destructive" title={t('compliance.offlineHint')}>
+      {minutes < 0 ? t('compliance.offlineNever') : t('compliance.offline', { minutes })}
     </Badge>
   )
 }

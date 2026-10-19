@@ -442,6 +442,9 @@ const tr: typeof en = {
   compliance: {
     noReportSince: '{{date}} tarihinden beri uyumluluk raporu yok; puan sıfır değil, bilinmiyor.',
     neverReported: 'Bu ajan hiç durum raporu göndermedi; puan sıfır değil, bilinmiyor.',
+    offline: 'Çevrimdışı · {{minutes}} dk',
+    offlineNever: 'Çevrimdışı · hiç rapor vermedi',
+    offlineHint: 'Ajan canlılık süresi içinde rapor vermedi; bu cihaz yeniden rapor verene kadar güvenilir sayılmıyor.',
   },
   queryError: {
     sessionExpired: 'Oturumunuzun süresi doldu. Lütfen tekrar giriş yapın.',
@@ -9623,6 +9626,11 @@ const tr: typeof en = {
       copy: 'Kopyala',
       copied: 'Ayarlar kopyalandı',
       copyFailed: 'Kopyalanamadı',
+      deviceGates: {
+        title: 'Canlı cihaz',
+        hint: 'Bir cihaz yalnızca ajanı {{timeout}} içinde rapor verdikçe güvenilir sayılır. Bu kontroller, güvenilir cihaz isteyen uygulamalara tek oturum açmada ve her ayrıcalıklı oturumda böyle bir cihaz arar. Production bunları zorunlu tutmaz; kullanıcılarınız ajanı kurduktan sonra açın.',
+        livenessOff: 'Canlılık kuralı kapalı (AGENT_LIVENESS_TIMEOUT=0): cihaz son raporuna göre güvenilir kalır.',
+      },
       banner: {
         title: '{{count}} yetkilendirme denetimi uygulanmıyor',
         window: 'gözlem penceresi {{until}} tarihine kadar ({{days}} gün kaldı)',

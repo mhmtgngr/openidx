@@ -344,6 +344,26 @@ type Config struct {
 	//   "enforce" — actually add/remove `device-trusted` per posture.
 	PostureDeviceTrustGate string `mapstructure:"posture_device_trust_gate"`
 
+	// AgentLivenessTimeout (AGENT_LIVENESS_TIMEOUT, a Go duration) is how long
+	// an enrolled agent may go without reporting before its device stops
+	// counting as trusted. Trust followed the last report however old it was,
+	// so a compliant laptop that was switched off, or whose agent was stopped,
+	// kept #device-trusted indefinitely. Default 10m (the agent reports every
+	// 30s); "0" turns the rule off and restores the old behaviour.
+	AgentLivenessTimeout string `mapstructure:"agent_liveness_timeout"`
+
+	// SSODeviceGate (SSO_DEVICE_GATE, off|observe|enforce) makes an OAuth/OIDC
+	// sign-in to an application whose resource conditions require a trusted
+	// device also require the user to have a live, compliant, trusted agent.
+	// The check is per user, not per browser: it proves the person has a
+	// device checking in now, not that this browser runs on it.
+	SSODeviceGate string `mapstructure:"sso_device_gate"`
+
+	// PAMDeviceGate (PAM_DEVICE_GATE, off|observe|enforce) is the same rule
+	// for every privileged session an internal user launches. External users
+	// (vendors) work with nothing installed and are bounded by engagements.
+	PAMDeviceGate string `mapstructure:"pam_device_gate"`
+
 	// DeviceAutotrustMode governs risk-based device auto-trust for the unified
 	// enrollment flow. When a device enrolls via an enrollment session created
 	// from an MFA-verified console session (server-verified, never agent-
@@ -1162,6 +1182,9 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("dark_mode_tier1", false)
 	v.SetDefault("dark_mode_tier2", false)
 	v.SetDefault("posture_device_trust_gate", "off")
+	v.SetDefault("agent_liveness_timeout", "10m")
+	v.SetDefault("sso_device_gate", "off")
+	v.SetDefault("pam_device_gate", "off")
 	v.SetDefault("device_autotrust_mode", "off")
 	v.SetDefault("device_autotrust_known_orgs", "")
 	v.SetDefault("device_autotrust_require_posture", false)
@@ -1462,6 +1485,9 @@ func bindEnvVars(v *viper.Viper) {
 		"dark_mode_tier1":                     "DARK_MODE_TIER1",
 		"dark_mode_tier2":                     "DARK_MODE_TIER2",
 		"posture_device_trust_gate":           "POSTURE_DEVICE_TRUST_GATE",
+		"agent_liveness_timeout":              "AGENT_LIVENESS_TIMEOUT",
+		"sso_device_gate":                     "SSO_DEVICE_GATE",
+		"pam_device_gate":                     "PAM_DEVICE_GATE",
 		"device_autotrust_mode":               "DEVICE_AUTOTRUST_MODE",
 		"device_autotrust_known_orgs":         "DEVICE_AUTOTRUST_KNOWN_ORGS",
 		"device_autotrust_require_posture":    "DEVICE_AUTOTRUST_REQUIRE_POSTURE",
@@ -1709,7 +1735,45 @@ func validate(cfg *Config) error {
 	if cfg.Port < 1 || cfg.Port > 65535 {
 		return fmt.Errorf("port must be between 1 and 65535")
 	}
-	return validateTriStateSettings(cfg)
+	if err := validateTriStateSettings(cfg); err != nil {
+		return err
+	}
+	if _, err := parseAgentLivenessTimeout(cfg.AgentLivenessTimeout); err != nil {
+		return err
+	}
+	return nil
+}
+
+// parseAgentLivenessTimeout reads AGENT_LIVENESS_TIMEOUT. Empty means the
+// default; "0" (or any zero duration) turns the rule off. A negative value or
+// one that is not a duration refuses startup, so a typo cannot quietly
+// disable the rule.
+func parseAgentLivenessTimeout(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultAgentLivenessTimeout, nil
+	}
+	if raw == "0" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("AGENT_LIVENESS_TIMEOUT=%q: want a duration such as 10m, or 0 to turn the rule off", raw)
+	}
+	return d, nil
+}
+
+// defaultAgentLivenessTimeout is twenty missed 30-second reports.
+const defaultAgentLivenessTimeout = 10 * time.Minute
+
+// AgentLiveness is how long an agent may go without reporting and still
+// count as live; 0 means the rule is off.
+func (c *Config) AgentLiveness() time.Duration {
+	d, err := parseAgentLivenessTimeout(c.AgentLivenessTimeout)
+	if err != nil {
+		return defaultAgentLivenessTimeout
+	}
+	return d
 }
 
 // triStateSettings lists every off|observe|enforce switch. The gates' own
@@ -1731,6 +1795,8 @@ var triStateSettings = []struct {
 	{"PAM_SESSION_RISK_GATE", func(c *Config) string { return c.PAMSessionRiskGate }},
 	{"PAM_REQUIRE_ZTNA", func(c *Config) string { return c.PAMRequireZTNA }},
 	{"POSTURE_DEVICE_TRUST_GATE", func(c *Config) string { return c.PostureDeviceTrustGate }},
+	{"SSO_DEVICE_GATE", func(c *Config) string { return c.SSODeviceGate }},
+	{"PAM_DEVICE_GATE", func(c *Config) string { return c.PAMDeviceGate }},
 	{"DEVICE_AUTOTRUST_MODE", func(c *Config) string { return c.DeviceAutotrustMode }},
 	{"RATELIMIT_COST_MODE", func(c *Config) string { return c.RateLimitCostMode }},
 }
@@ -2244,6 +2310,15 @@ func (c *Config) ReportModeGates() []string {
 	}
 	if !strings.EqualFold(strings.TrimSpace(c.PostureDeviceTrustGate), "enforce") {
 		open = append(open, "POSTURE_DEVICE_TRUST_GATE="+valueOrOff(c.PostureDeviceTrustGate)+" — device posture never changes overlay reach")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.SSODeviceGate), "enforce") {
+		open = append(open, "SSO_DEVICE_GATE="+valueOrOff(c.SSODeviceGate)+" — single sign-on to an application that requires a trusted device never checks for a live agent")
+	}
+	if !strings.EqualFold(strings.TrimSpace(c.PAMDeviceGate), "enforce") {
+		open = append(open, "PAM_DEVICE_GATE="+valueOrOff(c.PAMDeviceGate)+" — a privileged session starts whether or not the person has a live agent")
+	}
+	if c.AgentLiveness() == 0 {
+		open = append(open, "AGENT_LIVENESS_TIMEOUT=0 — a device that stops reporting stays trusted on its last report")
 	}
 	if !strings.EqualFold(strings.TrimSpace(c.PAMRequireZTNA), "enforce") {
 		open = append(open, "PAM_REQUIRE_ZTNA="+valueOrOff(c.PAMRequireZTNA)+" — a privileged session may still dial its target directly, off the overlay")

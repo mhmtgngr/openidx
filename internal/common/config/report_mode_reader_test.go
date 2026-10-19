@@ -79,6 +79,8 @@ func TestStartupReportsTheCountEvenWhenFullyEnforcing(t *testing.T) {
 		PAMSessionRiskGate:      "enforce",
 		PostureDeviceTrustGate:  "enforce",
 		PAMRequireZTNA:          "enforce",
+		SSODeviceGate:           "enforce",
+		PAMDeviceGate:           "enforce",
 		AccessAPIRequireAuth:    true,
 		AdminAPIRequireAuth:     true,
 		// A zero quota is an open gate; a fully-enforcing install names one.
