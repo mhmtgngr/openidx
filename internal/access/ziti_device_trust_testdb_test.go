@@ -112,12 +112,31 @@ func TestPostureDecidesWhoDialsTheAdminPlane(t *testing.T) {
 	t.Run("a compliant report makes the device trusted and opens the admin plane", func(t *testing.T) {
 		// HandleReport writes the compliance before it calls this; the device
 		// identity's trust is read from the row, never from the argument.
-		if _, err := db.Pool.Exec(ctx, `UPDATE enrolled_agents SET compliance_status = 'compliant' WHERE agent_id = $1`, agentID); err != nil {
+		// It writes last_report_at in the same statement.
+		if _, err := db.Pool.Exec(ctx, `UPDATE enrolled_agents SET compliance_status = 'compliant', last_report_at = NOW() WHERE agent_id = $1`, agentID); err != nil {
 			t.Fatal(err)
 		}
 		agents.applyPostureDeviceTrust(ctx, agentID, "compliant")
 		if !canDial("openidx-admin-api") {
 			t.Fatalf("a compliant device must dial the admin API; attributes %v", ids.get(zitiID))
+		}
+	})
+	t.Run("a compliant device that stops reporting loses the trust", func(t *testing.T) {
+		if _, err := db.Pool.Exec(ctx, `UPDATE enrolled_agents SET last_report_at = NOW() - interval '1 hour' WHERE agent_id = $1`, agentID); err != nil {
+			t.Fatal(err)
+		}
+		if err := zm.SyncDeviceIdentity(ctx, agentID); err != nil {
+			t.Fatal(err)
+		}
+		if canDial("openidx-admin-api") {
+			t.Fatalf("a device silent past AGENT_LIVENESS_TIMEOUT kept the admin plane; attributes %v", ids.get(zitiID))
+		}
+		if _, err := db.Pool.Exec(ctx, `UPDATE enrolled_agents SET last_report_at = NOW() WHERE agent_id = $1`, agentID); err != nil {
+			t.Fatal(err)
+		}
+		agents.applyPostureDeviceTrust(ctx, agentID, "compliant")
+		if !canDial("openidx-admin-api") {
+			t.Fatal("the next compliant report must restore the trust")
 		}
 	})
 	t.Run("a failing report takes the trust away and closes it again", func(t *testing.T) {

@@ -184,6 +184,7 @@
     "POST /risk/policies",
     "POST /roles",
     "POST /users",
+    "POST /users/:id/mfa/reset",
     "POST /users/:id/offboard",
     "POST /users/:id/reset-password",
     "POST /users/:id/roles",
