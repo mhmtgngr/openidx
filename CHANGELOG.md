@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.47.0] - 2026-10-19
+
+### Added
+- **Reset a user's MFA from MFA Management.** The User MFA Status table has a
+  Reset MFA action that, after a confirmation in the page, removes every second
+  factor the user has (authenticator app, security keys, push devices, SMS,
+  email codes, phone call and unused backup codes) in one step. The user signs
+  in with their password and sets MFA up again under their MFA policy. Behind
+  it is `POST /api/v1/identity/users/{id}/mfa/reset`, which takes an optional
+  `factors` list, is limited to administrators and to users in their own
+  organization, refuses the caller's own account (that goes through the
+  profile), is gated by `STEPUP_GATE` like other admin writes, and is audited
+  as `mfa.admin_reset`.
+- **A device that stops reporting stops being trusted.** `AGENT_LIVENESS_TIMEOUT` (default `10m`; `0` turns it off) bounds how long an agent may go without reporting and keep `#device-trusted`. A sweep on the grace-period ticker (now every minute) takes the attribute away and severs the device's live circuits; the device stays active, so its next compliant report restores trust. Audit event `agent.stale`.
+- **Single sign-on and privileged sessions can ask for a live device.** `SSO_DEVICE_GATE` (off|observe|enforce) refuses an OIDC sign-in to an application whose resource conditions require a trusted device unless the person has an active, compliant agent reporting within the timeout. `PAM_DEVICE_GATE` does the same for every privileged session an internal user launches; vendors are not held to it. Observe mode records `access.device.would_deny` / `pam.device.would_deny`, counted on Security → Enforcement under **Live device**.
+- **Agent Fleet shows offline devices.** The agent list carries `last_report_at` and `live`; a device past the timeout shows **Offline · N min**.
+- **Silent-fleet alert.** `openidx_agents_silent` and `openidx_agents_recent` gauges and the `OpenIDXAgentsMostlySilent` alert (over half of the devices seen in the last day silent for 30 minutes).
+- **"Set up now" on the MFA grace-period notice.** When an MFA policy gives a
+  user time to add a sign-in method and the sign-in returns to the console, the
+  notice offers Set up now beside Continue. It finishes the sign-in and opens
+  the profile's Security tab on the MFA section, scrolled to and marked.
+  `/profile#mfa` opens the same view directly.
+
+### Changed
+- **Suspended devices carry none of their user's access.** A device identity whose agent is not active (grace expiry, a disabling kill switch, pending) keeps only its own markers: no groups, applications or trust.
+- **Authenticator apps show your organization's name.** A new TOTP enrollment
+  labels the entry with the organization's name instead of "OpenIDX", so people
+  with accounts in two organizations can tell the codes apart. A colon in the
+  name becomes a hyphen; an organization with no name still shows "OpenIDX".
+  Existing authenticator entries keep their old label.
+
+### Fixed
+- **The Add-a-device download button offers the newest installer.** When the
+  agent downloads directory holds several installers for one platform, the
+  manifest now advertises the highest version parsed from the filename instead
+  of whichever file the directory listed first. At the same version Windows
+  prefers the MSI, macOS the pkg, and Linux the x86-64 deb, then the x86-64
+  rpm, then the ARM packages.
+- **A disabling kill switch left the user's devices able to dial back in.** It now suspends the user's agents, untrusts their known devices and re-syncs their identities (`devices_suspended` in the result).
+- **Revoking an agent from Agent Fleet cut less than revoking it from the user's page.** Both now run the same revoke: sessions terminated, identity deleted, known device untrusted, the device's refresh tokens and sessions revoked.
+- **The "Require MFA for all users" switch did nothing.** Settings > Security
+  wrote `security.require_mfa`, which sign-in never read. The switch is gone;
+  in its place the tab says MFA is enforced with MFA policies and links to MFA
+  Management. The ISO 27001 report's A.5 evidence now states the MFA
+  requirement from the enabled MFA policies that name at least one method,
+  and mentions the old setting only as a legacy value sign-in ignores.
+
+### Documentation
+- **Keep agent installers outside the repo checkout.** The access-service
+  wrapper template sets `AGENT_DOWNLOADS_DIR` to a runtime directory, and the
+  configuration reference explains why the relative default is fragile.
+
+### Upgrade notes
+- `AGENT_LIVENESS_TIMEOUT` defaults to `10m`. Under `POSTURE_DEVICE_TRUST_GATE=enforce`, a device switched off for more than ten minutes loses `#device-trusted` until it reports again. Set `AGENT_LIVENESS_TIMEOUT=0` to keep the old behaviour.
+
 ## [1.46.0] - 2026-10-14
 
 ### Added
@@ -12171,7 +12226,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.46.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.47.0...HEAD
+[1.47.0]: https://github.com/mhmtgngr/openidx/compare/v1.46.0...v1.47.0
 [1.46.0]: https://github.com/mhmtgngr/openidx/compare/v1.45.0...v1.46.0
 [1.45.0]: https://github.com/mhmtgngr/openidx/compare/v1.44.0...v1.45.0
 [1.44.0]: https://github.com/mhmtgngr/openidx/compare/v1.43.0...v1.44.0
