@@ -4357,6 +4357,8 @@ func RegisterRoutesForProfile(router *gin.Engine, svc *Service, profile Profile,
 		identity.DELETE("/users/:id/sign-in-methods/:method", svc.handleAdminRemoveSignInMethod)
 		identity.DELETE("/users/:id/sign-in-methods/:method/:credential_id", svc.handleAdminRemoveSignInCredential)
 		identity.POST("/users/:id/sign-in-methods/:method/:credential_id/disable", svc.handleAdminDisableSignInCredential)
+		// Reset a user's second factors (Admin): all, or the named ones.
+		identity.POST("/users/:id/mfa/reset", svc.adminStepUp(), svc.handleAdminResetMFA)
 		identity.POST("/mfa/bypass-codes/verify", svc.handleVerifyBypassCode)
 		identity.GET("/mfa/bypass-codes/audit", svc.handleGetBypassAuditLog)
 

@@ -4951,6 +4951,63 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/identity/users/{id}/mfa/reset:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    post:
+      tags: [Users]
+      summary: Reset a user's MFA (admin)
+      description: >-
+        Removes the named second factors of a user in the caller's
+        organization, or every factor when `factors` is empty or omitted, in
+        one transaction: TOTP, security keys, push devices, SMS, email codes,
+        phone-call enrolment and unused backup codes. The user signs in with
+        their password and enrolls again. An administrator cannot reset their
+        own MFA here (403); that goes through the profile. Gated by
+        STEPUP_GATE like every admin write. Audited as mfa.admin_reset.
+      operationId: resetUserMFA
+      x-openidx-handler: internal/identity.(*Service).handleAdminResetMFA
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                factors:
+                  type: array
+                  items:
+                    type: string
+                    enum: [totp, webauthn, push, sms, email, phone, backup_codes]
+      responses:
+        '200':
+          description: The factors reset and how many credentials of each were removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  factors:
+                    type: array
+                    items:
+                      type: string
+                  removed:
+                    type: object
+                    additionalProperties:
+                      type: integer
+                  total_removed:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /api/v1/identity/users/{id}/set-password:
     parameters:
       - $ref: '#/components/parameters/IdPath'

@@ -3544,6 +3544,17 @@ const tr: typeof en = {
         table: {
           username: 'Kullanıcı Adı',
           email: 'E-posta',
+          actions: 'İşlemler',
+        },
+        reset: {
+          button: 'MFA\'yı sıfırla',
+          ariaLabel: '{{name}} için MFA\'yı sıfırla',
+          selfHint: 'Kendi MFA ayarlarınızı profilinizden değiştirin',
+          title: 'MFA\'yı sıfırla',
+          description:
+            '{{name}} kullanıcısının tüm ikinci faktörleri kaldırılır: doğrulayıcı uygulama, güvenlik anahtarları, anlık bildirim cihazları, SMS, e-posta kodları, telefon araması ve kullanılmamış yedek kodlar. Kullanıcı parolasıyla giriş yapar ve kendisine uygulanan MFA politikasının ek süresi içinde MFA\'yı yeniden kurar.',
+          confirm: 'MFA\'yı sıfırla',
+          done: '{{name}} için MFA sıfırlandı: {{count}} faktör kaldırıldı',
         },
       },
       dialog: {

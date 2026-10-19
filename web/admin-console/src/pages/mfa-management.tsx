@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Shield, Key, Smartphone, Mail, Fingerprint, Plus, Edit2, Trash2, CheckCircle2, XCircle, Users } from 'lucide-react'
+import { Shield, Key, Smartphone, Mail, Fingerprint, Plus, Edit2, Trash2, CheckCircle2, XCircle, Users, RotateCcw } from 'lucide-react'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -16,6 +16,7 @@ import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 import { ConfirmAction } from '../components/confirm-action'
 import { api } from '../lib/api'
+import { useAuth } from '../lib/auth'
 import { useToast } from '../hooks/use-toast'
 
 interface EnrollmentStats {
@@ -94,6 +95,7 @@ export default function MFAManagement() {
   }
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const { user: me } = useAuth()
 
   // Policy dialog state
   const [policyDialogOpen, setPolicyDialogOpen] = useState(false)
@@ -182,6 +184,26 @@ export default function MFAManagement() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mfa-policies'] })
       toast({ title: t('common.success'), description: t('pages.mfaManagement.toasts.deleted') })
+    },
+    onError: (error: Error) => {
+      toast({ variant: 'destructive', title: t('common.error'), description: error.message })
+    },
+  })
+
+  // An administrator's reset of another user's second factors. Every factor
+  // goes: the help-desk case is a lost or replaced phone, and a half-reset
+  // account is the failure the endpoint exists to prevent. Your own factors
+  // change from your profile, which asks for your password.
+  const resetMFAMutation = useMutation({
+    mutationFn: (u: UserMFAStatus) =>
+      api.post<{ total_removed: number }>(`/api/v1/identity/users/${encodeURIComponent(u.user_id)}/mfa/reset`, {}),
+    onSuccess: (res, u) => {
+      queryClient.invalidateQueries({ queryKey: ['mfa-user-status'] })
+      queryClient.invalidateQueries({ queryKey: ['mfa-enrollment-stats'] })
+      toast({
+        title: t('common.success'),
+        description: t('pages.mfaManagement.users.reset.done', { name: u.username, count: res?.total_removed ?? 0 }),
+      })
     },
     onError: (error: Error) => {
       toast({ variant: 'destructive', title: t('common.error'), description: error.message })
@@ -539,6 +561,7 @@ export default function MFAManagement() {
                           <TableHead className="text-center">{methodLabels.email}</TableHead>
                           <TableHead className="text-center">{methodLabels.push}</TableHead>
                           <TableHead className="text-center">{methodLabels.webauthn}</TableHead>
+                          <TableHead className="text-right">{t('pages.mfaManagement.users.table.actions')}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -579,6 +602,33 @@ export default function MFAManagement() {
                                 <CheckCircle2 className="h-5 w-5 text-green-500 mx-auto" />
                               ) : (
                                 <XCircle className="h-5 w-5 text-muted-foreground mx-auto" />
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {me?.id === user.user_id ? (
+                                <span className="text-xs text-muted-foreground">
+                                  {t('pages.mfaManagement.users.reset.selfHint')}
+                                </span>
+                              ) : (
+                                <ConfirmAction
+                                  title={t('pages.mfaManagement.users.reset.title')}
+                                  description={t('pages.mfaManagement.users.reset.description', { name: user.username })}
+                                  destructive
+                                  confirmLabel={t('pages.mfaManagement.users.reset.confirm')}
+                                  onConfirm={() => resetMFAMutation.mutateAsync(user).catch(() => undefined)}
+                                >
+                                  {(open) => (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={open}
+                                      aria-label={t('pages.mfaManagement.users.reset.ariaLabel', { name: user.username })}
+                                    >
+                                      <RotateCcw className="mr-1 h-4 w-4" />
+                                      {t('pages.mfaManagement.users.reset.button')}
+                                    </Button>
+                                  )}
+                                </ConfirmAction>
                               )}
                             </TableCell>
                           </TableRow>

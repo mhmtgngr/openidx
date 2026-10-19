@@ -17,6 +17,10 @@ vi.mock('../hooks/use-toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
 }))
 
+vi.mock('../lib/auth', () => ({
+  useAuth: () => ({ user: { id: 'admin-1' } }),
+}))
+
 import MFAManagementPage from './mfa-management'
 import { api } from '../lib/api'
 
@@ -295,6 +299,58 @@ describe('MFAManagementPage', () => {
       const dialog = await screen.findByRole('dialog')
       await user.click(within(dialog).getByRole('checkbox', { name: 'WebAuthn' }))
       expect(within(dialog).getByText(/starts every user's grace period again/i)).toBeInTheDocument()
+    })
+  })
+
+  describe('resetting a user\'s MFA', () => {
+    const me = { ...userMFA, user_id: 'admin-1', username: 'root-admin', email: 'root@example.com' }
+
+    beforeEach(() => {
+      vi.mocked(api.get).mockImplementation((url: string) => {
+        if (url.includes('/user-status')) {
+          return Promise.resolve({ users: [userMFA, me], total: 2, page: 1, page_size: 20 }) as ReturnType<typeof api.get>
+        }
+        return routeGet(url) as ReturnType<typeof api.get>
+      })
+      vi.mocked(api.post).mockResolvedValue({ total_removed: 3 })
+    })
+
+    it('asks in the page before resetting, then posts to the reset endpoint', async () => {
+      const user = userEvent.setup()
+      render(<MFAManagementPage />, { wrapper: createWrapper() })
+      await screen.findByText('MFA Management')
+      await user.click(screen.getByRole('tab', { name: /user mfa status/i }))
+
+      await user.click(await screen.findByRole('button', { name: /reset mfa for alice/i }))
+      const dialog = await screen.findByRole('alertdialog')
+      expect(within(dialog).getByText(/remove every second factor alice has/i)).toBeInTheDocument()
+      expect(api.post).not.toHaveBeenCalled()
+
+      await user.click(within(dialog).getByRole('button', { name: /^reset mfa$/i }))
+      expect(api.post).toHaveBeenCalledWith('/api/v1/identity/users/u-1/mfa/reset', {})
+    })
+
+    it('cancelling the confirmation resets nothing', async () => {
+      const user = userEvent.setup()
+      render(<MFAManagementPage />, { wrapper: createWrapper() })
+      await screen.findByText('MFA Management')
+      await user.click(screen.getByRole('tab', { name: /user mfa status/i }))
+
+      await user.click(await screen.findByRole('button', { name: /reset mfa for alice/i }))
+      const dialog = await screen.findByRole('alertdialog')
+      await user.click(within(dialog).getByRole('button', { name: /cancel/i }))
+      expect(api.post).not.toHaveBeenCalled()
+    })
+
+    it('offers no reset on your own row', async () => {
+      const user = userEvent.setup()
+      render(<MFAManagementPage />, { wrapper: createWrapper() })
+      await screen.findByText('MFA Management')
+      await user.click(screen.getByRole('tab', { name: /user mfa status/i }))
+
+      expect(await screen.findByText('root-admin')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /reset mfa for root-admin/i })).not.toBeInTheDocument()
+      expect(screen.getByText(/change your own mfa from your profile/i)).toBeInTheDocument()
     })
   })
 })

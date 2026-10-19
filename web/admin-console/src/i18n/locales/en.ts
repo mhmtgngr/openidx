@@ -3553,6 +3553,17 @@ const en = {
         table: {
           username: 'Username',
           email: 'Email',
+          actions: 'Actions',
+        },
+        reset: {
+          button: 'Reset MFA',
+          ariaLabel: 'Reset MFA for {{name}}',
+          selfHint: 'Change your own MFA from your profile',
+          title: 'Reset MFA',
+          description:
+            'Remove every second factor {{name}} has: authenticator app, security keys, push devices, SMS, email codes, phone call and unused backup codes. They sign in with their password and set MFA up again, within the grace period of the MFA policy that applies to them.',
+          confirm: 'Reset MFA',
+          done: 'MFA reset for {{name}}: {{count}} factor(s) removed',
         },
       },
       dialog: {
