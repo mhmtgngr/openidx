@@ -619,6 +619,7 @@ const tr: typeof en = {
     errors: {
       authFailed: 'Kimlik doğrulama başarısız oldu. Lütfen tekrar deneyin.',
       loginFailed: 'Oturum açma başarısız oldu. Lütfen tekrar deneyin.',
+      sessionExpired: 'Bu oturum açma isteğinin süresi doldu. Geldiğiniz uygulamaya dönüp yeniden oturum açın.',
       network: 'Sunucuya bağlanılamıyor. Lütfen tekrar deneyin.',
       otpSendFailed: 'Doğrulama kodu gönderilemedi.',
       otpSendNetwork: 'Doğrulama kodu gönderilemedi. Lütfen tekrar deneyin.',
