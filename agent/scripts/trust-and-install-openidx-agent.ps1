@@ -169,7 +169,9 @@ $win = $manifest.windows
 if (-not $win -or -not $win.filename -or -not $win.sha256) {
   throw "The server offers no Windows installer (agent-manifest.json has no 'windows' entry)."
 }
-if ($win.filename -notmatch '^[A-Za-z0-9._-]+\.msi$') {
+# [regex]::IsMatch, not -match: Windows PowerShell 5.1's case-insensitive
+# -match rejects 'OpenIDX-0.5.0.msi' against this class.
+if (-not [regex]::IsMatch([string]$win.filename, '^[A-Za-z0-9._-]+\.msi$')) {
   throw "The server named an unexpected installer file: '$($win.filename)'."
 }
 Write-Ok "$($win.filename)"
