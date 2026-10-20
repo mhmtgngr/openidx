@@ -41,10 +41,25 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   // against the SAME session (previously every call 401'd with "missing
   // authorization header"). The engine refreshes the token transparently.
   final engine = ref.watch(engineClientProvider);
+  // A request that still answers 401 after the engine handed over its freshest
+  // token means the server ended the session (revoked, signed out elsewhere).
+  // Sign out locally so the status poll shows the sign-in screen; without this
+  // the screens showed "401 invalid token" and a Retry that could never work.
+  // Several requests can fail at once, so only the first one signs out.
+  var signingOut = false;
   final client = ApiClient(
     baseUrl: ref.watch(backendBaseUrlProvider),
     tokens: ref.watch(tokenStoreProvider),
     engineTokenGetter: engine.accessToken,
+    onAuthLost: () {
+      if (signingOut) return;
+      signingOut = true;
+      ref
+          .read(engineActionsProvider)
+          .logout()
+          .catchError((Object _) {})
+          .whenComplete(() => signingOut = false);
+    },
   );
   ref.onDispose(() {});
   return client;
