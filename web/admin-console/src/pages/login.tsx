@@ -571,6 +571,29 @@ export function LoginPage() {
     await submitCredentials()
   }
 
+  // restartExpiredSignIn answers a login_session the server no longer holds.
+  // The id lives in sessionStorage, so leaving it there made every reload
+  // resubmit the same dead id and fail the same way. A pkce_code_verifier in
+  // this tab means the console itself started the sign-in, and a fresh
+  // /oauth/authorize is all it needs. Any other client (the mobile app, an
+  // SSO application) owns its own authorize request, which this page cannot
+  // rebuild, so it is told to start again from there.
+  const restartExpiredSignIn = () => {
+    let consoleSignIn = false
+    try {
+      sessionStorage.removeItem('oidc_login_session')
+      consoleSignIn = sessionStorage.getItem('pkce_code_verifier') !== null
+    } catch {
+      // sessionStorage may be unavailable (private mode); non-fatal.
+    }
+    setLoginSession(null)
+    if (consoleSignIn) {
+      login()
+      return
+    }
+    setError(t('login.errors.sessionExpired'))
+  }
+
   // submitCredentials is the credentials POST, with or without a solved
   // challenge. The challenge path re-sends the SAME credentials the person
   // already typed rather than asking them to type them again: the gate refused
@@ -598,6 +621,10 @@ export function LoginPage() {
       const data = await response.json()
 
       if (!response.ok) {
+        if (data.error === 'login_session_expired') {
+          restartExpiredSignIn()
+          return
+        }
         // A refusal carrying a site key is the one failure the person can do
         // something about. Without a key the server is telling us it cannot
         // check an answer either, so the message says to wait and no widget
