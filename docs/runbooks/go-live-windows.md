@@ -17,19 +17,43 @@ agent.
 | | |
 | --- | --- |
 | Second factor | Any TOTP app: Google Authenticator, Microsoft Authenticator (TOTP mode), or the OpenIDX app. Or Windows Hello / a security key (passkey). The QR code is on **Profile → Security**. |
-| Device | The Windows agent MSI (`OpenIDX-<version>.msi`) from **My Devices → Add a device**, then the enrolment code the same page shows. |
+| Device | Until the MSI is signed with a public certificate: `trust-and-install-openidx-agent.ps1` (see wave 0, step 2), run once as Administrator. Then, on the same PC, **My Devices → Add a device → Open in app**, which hands the enrolment code to the agent. |
 
 ## Wave 0: before anyone signs in
 
-1. Installers are served: place the MSI (and deb/rpm, if any) in
-   `AGENT_DOWNLOADS_DIR` (on the reference box `~/oidx-runtime/downloads`;
-   see `deployments/apisix-edge/README.md`). `GET /downloads/agent-manifest.json`
-   must list `windows`.
-2. Code signing: the MSI is signed with the project's own certificate. Either
-   sign releases with a public code-signing certificate, or have each person
-   import `openidx-codesign.cer` into Trusted Publishers and Trusted Root
-   first (`install-openidx-agent.ps1` from the agent release does both, then
-   installs). Keep the signing key off the application server.
+1. Installers are served: place the MSI from the agent release (check its
+   SHA-256 against the release's `latest.json`) in `AGENT_DOWNLOADS_DIR` (on
+   the reference box `~/oidx-runtime/downloads`; the access service gets the
+   variable from a systemd drop-in, since `run-access.sh` builds its own
+   environment; see `deployments/apisix-edge/README.md`).
+   `GET /downloads/agent-manifest.json` must list `windows`.
+2. Code signing: the MSI is signed with the project's own certificate
+   ("OpenIDX Code Signing"), so a machine that has never seen it shows
+   "Unknown publisher" and SmartScreen warns. Either:
+   - sign releases with a public OV/EV code-signing certificate (no script
+     needed; the clean answer), or
+   - put `agent/scripts/trust-and-install-openidx-agent.ps1` next to the MSI
+     in `AGENT_DOWNLOADS_DIR`, and have each person download it from
+     `https://<host>/downloads/trust-and-install-openidx-agent.ps1` and run, in
+     an Administrator PowerShell:
+
+     ```
+     powershell -ExecutionPolicy Bypass -File .\trust-and-install-openidx-agent.ps1 -Server https://<host>
+     ```
+
+     It trusts the embedded certificate (pinned by SHA-256; it refuses one
+     that is not CA:FALSE and code-signing only) in LocalMachine Root and
+     TrustedPublisher, downloads the MSI the server's manifest names, refuses
+     it unless the SHA-256 matches and the Authenticode signature is valid and
+     made by that certificate, and installs it. `-Token` also enrolls;
+     `-TrustOnly` and `-RemoveTrust` do only the certificate.
+
+   Not `install-openidx-agent.ps1` from the agent release: it imports no
+   certificate, and it writes the release's built-in server IP into the
+   machine's hosts file for the Ziti controller and router names.
+
+   Whoever holds the signing key can sign software these machines then run
+   without a warning, so keep the key off the application server.
 3. Users and groups are in (directory sync or by hand); applications are
    assigned to groups.
 4. MFA policy (**MFA Management → Policies**): `required_methods = [totp, webauthn]`,
