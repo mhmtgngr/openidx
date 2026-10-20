@@ -112,3 +112,65 @@ func TestALegacySessionWithoutAClientIsStillMobile(t *testing.T) {
 		t.Fatalf("revocation presented client_id %q, want %s", got, sso.MobileClientID)
 	}
 }
+
+// A refresh the server refuses (invalid_grant: the session was revoked) ends
+// the session: AccessToken clears it and answers "not signed in", so the app
+// shows sign-in. It used to return the stale token, every API call retried the
+// refresh, the token endpoint rate-limited the phone, and the app showed
+// "401 invalid token" with a Retry button that could never work.
+func TestARejectedRefreshEndsTheSession(t *testing.T) {
+	refreshes := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshes++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	e := newTestEngine(t, &fakeBackend{})
+	e.serverURL = srv.URL
+	saveSession(t, e.configDir, &sso.Tokens{
+		AccessToken: "at-old", RefreshToken: "rt-revoked",
+		ExpiresAt: time.Now().Add(-time.Minute).Unix(),
+	})
+
+	if at, err := e.AccessToken(); err != errNotAuthenticated || at != "" {
+		t.Fatalf("AccessToken = %q, %v; want \"\", errNotAuthenticated", at, err)
+	}
+	if stored, _ := authstore.Load(e.configDir); stored != nil && stored.AccessToken != "" {
+		t.Fatalf("the rejected session must be cleared, still stored: %+v", stored)
+	}
+	// The next call does not go back to the token endpoint.
+	if _, err := e.AccessToken(); err != errNotAuthenticated {
+		t.Fatalf("second AccessToken: %v, want errNotAuthenticated", err)
+	}
+	if refreshes != 1 {
+		t.Fatalf("token endpoint called %d times, want 1", refreshes)
+	}
+}
+
+// A refresh that fails for any other reason (rate limit, outage) says nothing
+// about the session: the stored token stays and is returned.
+func TestARefreshThatCannotBeAnsweredKeepsTheSession(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate limit exceeded"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	e := newTestEngine(t, &fakeBackend{})
+	e.serverURL = srv.URL
+	saveSession(t, e.configDir, &sso.Tokens{
+		AccessToken: "at-old", RefreshToken: "rt-ok",
+		ExpiresAt: time.Now().Add(-time.Minute).Unix(),
+	})
+
+	at, err := e.AccessToken()
+	if err != nil || at != "at-old" {
+		t.Fatalf("AccessToken = %q, %v; want the stored at-old", at, err)
+	}
+	if stored, _ := authstore.Load(e.configDir); stored == nil || stored.RefreshToken != "rt-ok" {
+		t.Fatalf("the session must be kept: %+v", stored)
+	}
+}

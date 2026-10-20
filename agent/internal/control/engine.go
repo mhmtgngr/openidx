@@ -709,9 +709,10 @@ func (e *Engine) closeAll() {
 // If a token is cached and unexpired it is returned as-is. If it is expired (or
 // about to be) and a refresh token exists, AccessToken transparently refreshes
 // via /oauth/token, persists the new tokens, and returns the fresh access
-// token. If the refresh fails, the stale access token is returned with no error
-// so the caller still sends a Bearer header — the server will 401 and the UI's
-// auth-lost handling takes over. Errors only when not signed in at all.
+// token. If the server rejects the refresh (invalid_grant), the session is
+// cleared and errNotAuthenticated returned, so the app goes back to sign-in.
+// Any other refresh failure returns the stale access token with no error, so
+// the caller still sends a Bearer header. Errors when not signed in at all.
 func (e *Engine) AccessToken() (string, error) {
 	if e.serverURL == "" {
 		return "", fmt.Errorf("no server configured: enroll first")
@@ -761,8 +762,22 @@ func (e *Engine) AccessToken() (string, error) {
 			}
 			return fresh.AccessToken, nil
 		}
-		// Refresh failed — fall through and return the (stale) access token; let
-		// the server 401 and the UI handle re-auth.
+		// The server refused the grant itself (invalid_grant: the session was
+		// revoked, or the refresh token expired or was rotated away). That
+		// session is gone for good. Keeping it meant every API call retried
+		// the refresh, the token endpoint rate-limited the phone, and the app
+		// showed "401 invalid token" instead of the sign-in screen. Forget it:
+		// Status then reports logged_in=false and the app asks for sign-in.
+		var te *sso.TokenError
+		if errors.As(rerr, &te) && te.Rejected() {
+			e.logger.Warn("refresh token rejected; session cleared, sign-in required", zap.Error(rerr))
+			if cerr := authstore.Clear(e.configDir); cerr != nil {
+				e.logger.Warn("failed to clear the rejected session", zap.Error(cerr))
+			}
+			return "", errNotAuthenticated
+		}
+		// Anything else (network, 5xx, 429) says nothing about the token: return
+		// the stored one and let the next call try again.
 		e.logger.Warn("token refresh failed; returning stored token", zap.Error(rerr))
 	}
 
