@@ -15,7 +15,13 @@ class SettingsScreen extends ConsumerWidget {
   Future<void> _signOut(BuildContext context, WidgetRef ref) async {
     try {
       await ref.read(engineActionsProvider).logout();
-      if (context.mounted) Navigator.of(context).pop();
+      // On desktop Settings is a pushed page: close it. On a phone it is a tab
+      // of the root screen, and popping it popped the app's only route -- the
+      // navigator was left empty and the screen went black after sign-out. The
+      // status poll swaps the root screen for sign-in by itself.
+      if (context.mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
     } on Object catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)

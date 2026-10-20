@@ -8,3 +8,6 @@
   rate limit or outage still keeps it), and the app signs out locally when a
   request is still refused with the freshest token, so the sign-in screen
   appears.
+- **Signing out on a phone no longer leaves a black screen.** Settings is a tab
+  there, not a pushed page, and Sign out popped the app's only route; it now
+  closes Settings only where it was pushed (desktop).
