@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.47.1] - 2026-10-20
+
+### Added
+- **Hand-install script for the Windows agent.** `agent/scripts/trust-and-install-openidx-agent.ps1`
+  trusts the project's code-signing certificate (embedded, pinned by SHA-256,
+  refused unless CA:FALSE and code-signing only), downloads the MSI the
+  server's agent manifest names, refuses it unless its SHA-256 and
+  Authenticode signer both match, and installs it; `-Token`, `-TrustOnly` and
+  `-RemoveTrust` cover the other cases. `scripts/check-trust-script.sh` fails
+  CI when the certificate changes and the script's copy does not.
+
+### Fixed
+- **A phone whose session was revoked now asks you to sign in again.** When the
+  server refused the stored refresh token (`invalid_grant`, e.g. after a sign-out
+  or session revoke elsewhere), the mobile engine kept the dead session: every
+  API call retried the refresh until `/oauth/token` rate-limited the phone, and
+  the screens showed "ApiException(401): invalid token" with a Retry that could
+  never work. The engine now clears a session whose refresh is rejected (a
+  rate limit or outage still keeps it), and the app signs out locally when a
+  request is still refused with the freshest token, so the sign-in screen
+  appears.
+- **Signing out on a phone no longer leaves a black screen.** Settings is a tab
+  there, not a pushed page, and Sign out popped the app's only route; it now
+  closes Settings only where it was pushed (desktop).
+- **Go-live runbook.** `docs/runbooks/go-live-windows.md` said the release's
+  `install-openidx-agent.ps1` imports the code-signing certificate; it does
+  not, and it writes the release's server IP into the hosts file. The runbook
+  now points at the new script, and enrolment at Add a device → Open in app.
+
 ## [1.47.0] - 2026-10-19
 
 ### Added
@@ -12226,7 +12255,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.47.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.47.1...HEAD
+[1.47.1]: https://github.com/mhmtgngr/openidx/compare/v1.47.0...v1.47.1
 [1.47.0]: https://github.com/mhmtgngr/openidx/compare/v1.46.0...v1.47.0
 [1.46.0]: https://github.com/mhmtgngr/openidx/compare/v1.45.0...v1.46.0
 [1.45.0]: https://github.com/mhmtgngr/openidx/compare/v1.44.0...v1.45.0
