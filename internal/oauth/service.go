@@ -2283,9 +2283,12 @@ func (s *Service) handleLogin(c *gin.Context) {
 	}
 
 	// Get OAuth parameters from Redis
+	// The refusal has its own code so the login page can tell it apart from a
+	// malformed request: the page keeps login_session in sessionStorage, and
+	// with nothing to act on it resubmitted the dead id on every reload.
 	paramsJSON, err := s.redis.Client.Get(c.Request.Context(), "login_session:"+req.LoginSession).Result()
 	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid or expired login session"})
+		c.JSON(400, gin.H{"error": "login_session_expired", "error_description": "invalid or expired login session"})
 		return
 	}
 

@@ -626,6 +626,7 @@ const en = {
     errors: {
       authFailed: 'Authentication failed. Please try again.',
       loginFailed: 'Login failed. Please try again.',
+      sessionExpired: 'This sign-in has expired. Go back to the app you came from and sign in again.',
       network: 'Unable to connect to the server. Please try again.',
       otpSendFailed: 'Failed to send verification code.',
       otpSendNetwork: 'Unable to send verification code. Please try again.',

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { LoginPage } from './login'
 
@@ -69,5 +70,43 @@ describe('LoginPage login_session (pending OIDC) handling', () => {
     authState.isAuthenticated = true
     renderPage()
     expect(navigateSpy).toHaveBeenCalledWith('/dashboard', { replace: true })
+  })
+
+  // The server answers login_session_expired once the pending authorization is
+  // gone. The stored id must go with it, or every reload resubmits it.
+  describe('an expired login_session', () => {
+    const refuse = () =>
+      vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+        ok: false,
+        json: () => Promise.resolve({ error: 'login_session_expired', error_description: 'invalid or expired login session' }),
+      } as Response)))
+
+    const submit = async () => {
+      const user = userEvent.setup()
+      renderPage()
+      await user.type(screen.getByLabelText(/username or email/i), 'u')
+      await user.type(screen.getByLabelText(/^password$/i), 'p')
+      await user.click(screen.getByRole('button', { name: /sign in$/i }))
+    }
+
+    it('restarts the console sign-in with a fresh authorize request', async () => {
+      refuse()
+      sessionStorage.setItem('oidc_login_session', 'dead')
+      sessionStorage.setItem('pkce_code_verifier', 'v')
+      await submit()
+      expect(authState.login).toHaveBeenCalledTimes(1)
+      expect(sessionStorage.getItem('oidc_login_session')).toBeNull()
+      vi.unstubAllGlobals()
+    })
+
+    it('sends another client back to where its sign-in began', async () => {
+      refuse()
+      sessionStorage.setItem('oidc_login_session', 'dead')
+      await submit()
+      expect(authState.login).not.toHaveBeenCalled()
+      expect(sessionStorage.getItem('oidc_login_session')).toBeNull()
+      expect(await screen.findByText(/go back to the app you came from/i)).toBeTruthy()
+      vi.unstubAllGlobals()
+    })
   })
 })
