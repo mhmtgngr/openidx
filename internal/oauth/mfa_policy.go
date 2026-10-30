@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -62,6 +63,11 @@ type mfaEvaluation struct {
 	// login response carries it so the sign-in page can say the phone has not
 	// been seen and point at the fallbacks offered beside it.
 	PushUnseen *mfaPushUnseen
+	// Undecidable means the policy that governs this sign-in could not be
+	// evaluated (a group-scoped policy whose memberships could not be read).
+	// The sign-in is refused: nothing weaker than the policy is acceptable,
+	// and which policy applies is not known. Nothing is written.
+	Undecidable bool
 	// Challenge is the final answer: this login must be completed with a second
 	// factor before an authorization code may be issued.
 	Challenge   bool
@@ -98,6 +104,9 @@ func holdExternalToStrongFactors(user *identity.User, ev mfaEvaluation) mfaEvalu
 		return ev
 	}
 	ev.External = true
+	if ev.Undecidable {
+		return ev
+	}
 	methods := []string{}
 	strong := 0
 	for _, m := range ev.Methods {
@@ -252,8 +261,22 @@ func (s *Service) evaluateMFAPolicies(
 	// behaviour instead of locking someone out. It is asked on every login,
 	// with or without an enrolled factor, because a policy that requires
 	// particular methods has something to say to a user who has none.
+	//
+	// The exception is a policy scoped to groups whose memberships could not
+	// be read (identity.ErrMFAPolicyUndecidable). "No policy matched" would
+	// waive it for exactly its members; choosing it would put everyone under
+	// its methods and start their grace periods for the length of an outage;
+	// and asking for any enrolled factor would still be less than the policy
+	// asks of its members. So the sign-in is refused until the policy can be
+	// evaluated, and nothing is written.
 	var policy *identity.MFAPolicy
-	if required, matched, err := s.identityService.IsMFARequired(ctx, user.ID, clientIP); err != nil {
+	if required, matched, err := s.identityService.IsMFARequired(ctx, user.ID, clientIP); errors.Is(err, identity.ErrMFAPolicyUndecidable) {
+		s.logger.Error("MFA policy conditions could not be evaluated; refusing the sign-in", zap.Error(err))
+		ev.Undecidable = true
+		ev.Challenge = false
+		ev.SkipMFA = false
+		return ev
+	} else if err != nil {
 		s.logger.Warn("MFA policy evaluation failed, treating as not required", zap.Error(err))
 	} else if required {
 		policy = matched

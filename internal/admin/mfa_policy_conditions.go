@@ -27,11 +27,15 @@ var errMFAPolicyInvalid = errors.New("MFA policy setting invalid")
 //     and signs in as before meanwhile. After it, sign-in is refused unless
 //     they have a bypass code.
 //
-// Conditions are still refused (#990): this API used to accept
-// factor_enrolled, min_risk_score and client_ids, which no code reads, and
-// refused groups, ip_ranges, time_windows and attributes, which the evaluator
-// reads. An update may clear them, or send back the value already stored, so
-// that a policy created before #991 can still be edited.
+// Of the conditions, only groups is accepted: a list of group names, and the
+// policy then applies only to a member of one of them (evaluateMFAPolicy in
+// internal/identity matches the names of the user's groups). It is what lets
+// an organization bring units under a policy one at a time. The rest are
+// still refused (#990): factor_enrolled, min_risk_score and client_ids, which
+// no code reads, and ip_ranges, time_windows and attributes, which the
+// evaluator reads but the console cannot show. An update may clear them, or
+// send back the value already stored, so that a policy created before #991
+// can still be edited.
 
 // mfaPolicyMethods are the methods a policy can require: the primary factors
 // the login offers (evaluateMFA). Backup and bypass codes are recovery, not a
@@ -148,12 +152,14 @@ func sameMethodSet(a, b []string) bool {
 	return reflect.DeepEqual(as, bs)
 }
 
-// checkMFAConditions accepts only an empty set of conditions.
+// checkMFAConditions accepts no conditions, or a groups condition alone: a
+// non-empty list of distinct, non-empty group names. An empty list would
+// apply the policy to nobody, which is what disabling it is for.
 func checkMFAConditions(raw json.RawMessage) error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
-	var conds map[string]any
+	var conds map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &conds); err != nil {
 		return fmt.Errorf("%w: conditions must be a JSON object: %v", errMFAPolicyNotEnforced, err)
 	}
@@ -162,11 +168,34 @@ func checkMFAConditions(raw json.RawMessage) error {
 	}
 	keys := make([]string, 0, len(conds))
 	for key := range conds {
-		keys = append(keys, key)
+		if key != "groups" {
+			keys = append(keys, key)
+		}
 	}
-	sort.Strings(keys)
-	return fmt.Errorf("%w: conditions are not enforced (%s), so a policy cannot have any yet; "+
-		"it applies to every user who signs in with a password", errMFAPolicyNotEnforced, strings.Join(keys, ", "))
+	if len(keys) > 0 {
+		sort.Strings(keys)
+		return fmt.Errorf("%w: conditions other than groups are not enforced (%s), so a policy cannot have them; "+
+			"without conditions it applies to every user who signs in with a password", errMFAPolicyNotEnforced, strings.Join(keys, ", "))
+	}
+	var groups []string
+	if err := json.Unmarshal(conds["groups"], &groups); err != nil {
+		return fmt.Errorf("%w: conditions.groups must be a list of group names", errMFAPolicyInvalid)
+	}
+	if len(groups) == 0 {
+		return fmt.Errorf("%w: conditions.groups is empty, so the policy would apply to nobody; "+
+			"list at least one group, or remove the condition to apply it to everyone", errMFAPolicyInvalid)
+	}
+	seen := map[string]bool{}
+	for _, g := range groups {
+		if strings.TrimSpace(g) == "" {
+			return fmt.Errorf("%w: conditions.groups lists an empty group name", errMFAPolicyInvalid)
+		}
+		if seen[g] {
+			return fmt.Errorf("%w: conditions.groups lists %q twice", errMFAPolicyInvalid, g)
+		}
+		seen[g] = true
+	}
+	return nil
 }
 
 // isEmptyJSON reports whether raw is absent, null, {} or [].

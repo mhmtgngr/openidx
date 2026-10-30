@@ -94,6 +94,9 @@ func (s *Service) externalSignInNeedsMore(c *gin.Context, userID string, oauthPa
 	}
 
 	switch {
+	case ev.Undecidable:
+		// See mfaEvaluation.Undecidable: refused, not downgraded.
+		return refuse(externalErrUnavailable)
 	case ev.Challenge:
 		if oauthParams == nil {
 			return refuse("mfa_required")
