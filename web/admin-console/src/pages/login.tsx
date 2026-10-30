@@ -66,6 +66,7 @@ const linkErrors: Record<string, string> = {
   high_risk_login: 'login.errors.linkRefusedRisk',
   invalid_magic_link: 'login.errors.linkInvalid',
   session_expired: 'login.errors.linkSessionExpired',
+  temporarily_unavailable: 'login.errors.linkUnavailable',
 }
 
 // The factor names this page knows how to render and to start. A sign-in through
