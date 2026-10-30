@@ -51,8 +51,44 @@ const zitiIdentity = {
   attributes: ['engineering', 'on-call'],
 }
 
+// The person's agents as /api/v1/access/my-devices correlates them. `live` is
+// the server's liveness verdict; `last_report_at` is what the badge counts
+// from.
+const silentAgent = {
+  source: 'linked',
+  iam: { name: 'Field Laptop', trusted: true, device_type: 'laptop' },
+  ziti: {
+    agent_id: 'agent-1',
+    status: 'active',
+    platform: 'windows',
+    compliance_status: 'compliant',
+    compliance_score: 100,
+    posture: [],
+    last_report_at: new Date(Date.now() - 42 * 60_000).toISOString(),
+    live: false,
+  },
+}
+const liveAgent = {
+  source: 'ziti',
+  ziti: {
+    agent_id: 'agent-2',
+    status: 'active',
+    platform: 'android',
+    compliance_status: 'compliant',
+    compliance_score: 100,
+    posture: [],
+    last_report_at: new Date().toISOString(),
+    live: true,
+  },
+}
+
+// The agents card renders only when the correlation answers; the older
+// cases below were written without it and count texts it would repeat.
+let correlatedAgents: unknown[] = []
+
 function routeGet(url: string) {
   if (url.includes('/ziti/sync/my-identity')) return Promise.resolve(zitiIdentity)
+  if (url.includes('/access/my-devices')) return Promise.resolve({ devices: correlatedAgents })
   if (url.includes('/portal/devices')) {
     return Promise.resolve({ devices: [trustedDevice, personalPhone] })
   }
@@ -72,6 +108,7 @@ describe('MyDevicesPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     document.body.innerHTML = ''
+    correlatedAgents = []
     vi.mocked(api.get).mockImplementation((url: string) => routeGet(url) as ReturnType<typeof api.get>)
   })
 
@@ -114,5 +151,18 @@ describe('MyDevicesPage', () => {
     // label ("Trusted Devices") — allow multiple.
     expect(screen.getAllByText('Trusted').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Untrusted').length).toBeGreaterThan(0)
+  })
+
+  // A compliant device whose agent has gone quiet is not trusted
+  // (AGENT_LIVENESS_TIMEOUT). The fleet page told the administrator; the
+  // person whose laptop it is saw "compliant" and a closed door.
+  it('marks an agent that stopped reporting as offline, and a live one not', async () => {
+    correlatedAgents = [silentAgent, liveAgent]
+    render(<MyDevicesPage />, { wrapper: createWrapper() })
+
+    const offline = await screen.findByText(/offline · 42 min/i)
+    expect(offline.closest('[title]')).toHaveAttribute('title', expect.stringMatching(/not trusted until it reports again/i))
+    expect(screen.getAllByText(/offline ·/i)).toHaveLength(1)
+    expect(screen.getByText('agent-2')).toBeInTheDocument()
   })
 })

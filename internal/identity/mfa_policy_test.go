@@ -118,6 +118,49 @@ func TestIsMFARequired(t *testing.T) {
 		}
 	})
 
+	// A groups condition scopes a policy to members of the named groups: the
+	// admin API accepts it (internal/admin/mfa_policy_conditions.go), and the
+	// evaluator matches the names of the user's groups. Everything else in
+	// this test matched because factor_enrolled is not read; this is the one
+	// condition that is.
+	t.Run("a policy scoped to groups applies only to their members", func(t *testing.T) {
+		if _, err := db.Pool.Exec(ctx, `DELETE FROM mfa_policies WHERE org_id = $1`, org); err != nil {
+			t.Fatalf("clear policies: %v", err)
+		}
+		for _, stmt := range []string{
+			`CREATE TABLE IF NOT EXISTS groups (id UUID PRIMARY KEY, name VARCHAR(255) NOT NULL, description TEXT,
+				parent_id UUID, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				org_id UUID NOT NULL)`,
+			`CREATE TABLE IF NOT EXISTS group_memberships (group_id UUID NOT NULL, user_id UUID NOT NULL,
+				joined_at TIMESTAMPTZ DEFAULT NOW(), org_id UUID NOT NULL, expires_at TIMESTAMPTZ, PRIMARY KEY (user_id, group_id))`,
+			`INSERT INTO groups (id, name, org_id) VALUES ('33333333-0000-0000-0000-0000000000d1', 'Finance', '` + org + `')`,
+			`INSERT INTO mfa_policies (name, enabled, priority, conditions, required_methods, org_id)
+				VALUES ('finance', true, 1, '{"groups":["Finance"]}', '["totp"]', '` + org + `')`,
+		} {
+			if _, err := db.Pool.Exec(ctx, stmt); err != nil {
+				t.Fatalf("seed: %v\n%s", err, stmt)
+			}
+		}
+		required, _, err := svc.IsMFARequired(ctx, user, "1.2.3.4")
+		if err != nil {
+			t.Fatalf("IsMFARequired: %v", err)
+		}
+		if required {
+			t.Fatal("a user outside the policy's groups was challenged by it")
+		}
+		if _, err := db.Pool.Exec(ctx, `INSERT INTO group_memberships (group_id, user_id, org_id)
+			VALUES ('33333333-0000-0000-0000-0000000000d1', $1, $2)`, user, org); err != nil {
+			t.Fatalf("join group: %v", err)
+		}
+		required, policy, err := svc.IsMFARequired(ctx, user, "1.2.3.4")
+		if err != nil {
+			t.Fatalf("IsMFARequired: %v", err)
+		}
+		if !required || policy == nil || policy.Name != "finance" {
+			t.Fatalf("got (%v, %+v), want the finance policy once the user is a member", required, policy)
+		}
+	})
+
 	t.Run("another org's policy does not apply", func(t *testing.T) {
 		otherCtx := orgctx.With(context.Background(), orgctx.Org{ID: "00000000-0000-0000-0000-0000000000d9"})
 		required, _, err := svc.IsMFARequired(otherCtx, user, "1.2.3.4")

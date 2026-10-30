@@ -63,6 +63,27 @@ type DeviceZiti struct {
 	ComplianceScore  float64                `json:"compliance_score"`
 	Posture          []DevicePostureSummary `json:"posture"`
 	LastSeenAt       *time.Time             `json:"last_seen_at,omitempty"`
+	// LastReportAt is the agent's last posture report, and Live whether it
+	// falls within AGENT_LIVENESS_TIMEOUT: a device that is not live is not
+	// trusted, whatever its last compliance said, so the person's own devices
+	// page can say so (the Agent Fleet page already does). Live is absent
+	// when the rule is off.
+	LastReportAt *time.Time `json:"last_report_at,omitempty"`
+	Live         *bool      `json:"live,omitempty"`
+}
+
+// markLive fills DeviceZiti.Live from the liveness timeout, the same rule
+// HandleListAgents applies for the fleet page.
+func (s *Service) markLive(z *DeviceZiti, now time.Time) {
+	if s.config == nil {
+		return
+	}
+	timeout := s.config.AgentLiveness()
+	if timeout <= 0 {
+		return
+	}
+	live := z.LastReportAt != nil && now.Sub(*z.LastReportAt) <= timeout
+	z.Live = &live
 }
 
 // UserDeviceEntry is one physical device correlated across pillars. Source is
@@ -151,6 +172,7 @@ func (s *Service) handleMyDevices(c *gin.Context) {
 // device. Agent-side rows are enriched with their latest posture summary.
 func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) ([]UserDeviceEntry, error) {
 	entries := []UserDeviceEntry{}
+	now := time.Now()
 
 	// IAM known devices, LEFT JOINed to their linked agent (v80 link).
 	rows, err := s.db.Pool.Query(ctx,
@@ -159,7 +181,7 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 		        ea.agent_id, COALESCE(ea.ziti_identity_id,''), COALESCE(ea.status,''),
 		        COALESCE(ea.platform,''), COALESCE(ea.management_mode,''),
 		        COALESCE(ea.compliance_status,'unknown'), COALESCE(ea.compliance_score,0),
-		        ea.last_seen_at
+		        ea.last_seen_at, ea.last_report_at
 		   FROM known_devices kd
 		   LEFT JOIN enrolled_agents ea ON ea.known_device_id = kd.id
 		  WHERE kd.user_id = $1 AND kd.org_id = $2
@@ -173,12 +195,12 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 		var iam DeviceIAM
 		var agentID, zitiID, agentStatus, platform, mgmtMode, compStatus *string
 		var compScore *float64
-		var agentLastSeen *time.Time
+		var agentLastSeen, agentLastReport *time.Time
 		if err := rows.Scan(
 			&iam.KnownDeviceID, &iam.Fingerprint, &iam.Name, &iam.DeviceType,
 			&iam.IPAddress, &iam.Trusted, &iam.LastSeenAt,
 			&agentID, &zitiID, &agentStatus, &platform, &mgmtMode,
-			&compStatus, &compScore, &agentLastSeen,
+			&compStatus, &compScore, &agentLastSeen, &agentLastReport,
 		); err != nil {
 			rows.Close()
 			return nil, err
@@ -197,7 +219,9 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 				ComplianceScore:  derefFloat(compScore),
 				Posture:          []DevicePostureSummary{},
 				LastSeenAt:       agentLastSeen,
+				LastReportAt:     agentLastReport,
 			}
+			s.markLive(z, now)
 			entry.Ziti = z
 			agentIDs = append(agentIDs, *agentID)
 			agentEntry[*agentID] = z
@@ -213,7 +237,7 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 	aRows, err := s.db.Pool.Query(ctx,
 		`SELECT agent_id, COALESCE(ziti_identity_id,''), COALESCE(status,''),
 		        COALESCE(platform,''), COALESCE(management_mode,''),
-		        COALESCE(compliance_status,'unknown'), COALESCE(compliance_score,0), last_seen_at
+		        COALESCE(compliance_status,'unknown'), COALESCE(compliance_score,0), last_seen_at, last_report_at
 		   FROM enrolled_agents
 		  WHERE enrolled_by_user_id = $1 AND org_id = $2 AND known_device_id IS NULL
 		  ORDER BY enrolled_at DESC`, userID, orgID)
@@ -223,10 +247,11 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 	for aRows.Next() {
 		z := &DeviceZiti{Posture: []DevicePostureSummary{}}
 		if err := aRows.Scan(&z.AgentID, &z.ZitiIdentityID, &z.Status, &z.Platform,
-			&z.ManagementMode, &z.ComplianceStatus, &z.ComplianceScore, &z.LastSeenAt); err != nil {
+			&z.ManagementMode, &z.ComplianceStatus, &z.ComplianceScore, &z.LastSeenAt, &z.LastReportAt); err != nil {
 			aRows.Close()
 			return nil, err
 		}
+		s.markLive(z, now)
 		entries = append(entries, UserDeviceEntry{Source: "ziti", Ziti: z})
 		agentIDs = append(agentIDs, z.AgentID)
 		agentEntry[z.AgentID] = z

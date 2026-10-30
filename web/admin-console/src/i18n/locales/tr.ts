@@ -3515,7 +3515,9 @@ const tr: typeof en = {
           'Bir politika etkinken, parolayla giriş yapan her kullanıcıya uygulanır. Zorunlu yöntem seçilmemişse, ikinci faktör kaydı olan kullanıcıdan bu faktör istenir ve kayıtlı herhangi bir faktör yeterlidir. Zorunlu yöntemler seçilmişse yalnızca onlar yeterlidir ve bunlardan hiçbiri olmayan kullanıcıya birini eklemesi için ek süre tanınır. Öncelik numarası en düşük etkin politika karar verir.',
         notEnforcedBadge: 'kayıtlı koşullar uygulanmıyor',
         notEnforcedBody:
-          'Bu politika gruplar veya istemci kimlikleri gibi koşullarla kaydedilmiş. Koşullar uygulanmıyor: politika parolayla giriş yapan her kullanıcıya uygulanır.',
+          'Bu politika, gruplar dışında istemci kimlikleri gibi koşullarla kaydedilmiş. Bu koşullar uygulanmıyor: grupları dışında politika parolayla giriş yapan her kullanıcıya uygulanır.',
+        groupsBadge: 'Gruplar: {{names}}',
+        groupsBody: 'Politika yalnızca bu grupların üyelerine uygulanır.',
         anyFactor: 'Kayıtlı herhangi bir faktör',
         graceHours: '{{n}} sa',
         noGrace: 'Yok',
@@ -3562,7 +3564,13 @@ const tr: typeof en = {
       },
       dialog: {
         whatItDoes:
-          'Politika, parolayla giriş yapan her kullanıcıya uygulanır. Gruplar gibi koşullar henüz desteklenmiyor.',
+          'Politika, parolayla giriş yapan her kullanıcıya ya da yalnızca seçtiğiniz grupların üyelerine uygulanır.',
+        groups: 'Uygulanacağı gruplar',
+        groupsHelp:
+          'Hiçbiri seçili değilse politika herkese uygulanır. Seçim yapılırsa yalnızca seçili bir grubun üyeleri kapsama girer; birimler bu şekilde teker teker alınır.',
+        groupsFilter: 'Grup ara…',
+        groupsNone: 'Eşleşen grup yok.',
+        groupsLoadFailed: 'Gruplar yüklenemedi; politika herkese uygulanır.',
         requiredMethods: 'Zorunlu yöntemler',
         anyFactorHelp:
           'Hiçbiri seçili değil: ikinci faktör kaydı olan kullanıcıdan bu faktör istenir ve kayıtlı herhangi bir faktör politikayı karşılar. Faktörü olmayan kullanıcıdan istenmez.',
@@ -9703,6 +9711,17 @@ const tr: typeof en = {
       showQr: 'Taramayı mı tercih edersiniz? QR göster',
       scanHint: 'Bunu OpenIDX uygulamasının içinden tarayın.',
       waiting: 'Bu cihazın bağlanması bekleniyor…',
+      trust: {
+        download: 'Kurulum betiğini indirin:',
+        downloadButton: 'Betiği indir',
+        run: 'Kaydettiğiniz klasörde Yönetici olarak PowerShell açın ve şunu çalıştırın:',
+        command: 'Kurulum komutu',
+        copy: 'Komutu kopyala',
+        whatItDoes:
+          'Betik bu bilgisayarda OpenIDX imza sertifikasına güvenir, kurulum dosyasını indirir, imzasını denetler ve kurar. Başka bir şey gerekmez.',
+        thenConnect: 'Sonra aşağıdaki 3. adımla devam edin.',
+        msiOnly: 'Sertifikaya zaten güveniyor musunuz? <0>Yalnızca MSI dosyasını</0> indirin.',
+      },
     },
     resetPassword: {
       title: 'Yeni bir parola belirleyin',

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { complianceTooltip, formatCompliancePercent } from '../lib/compliance'
+import { agentSilentMinutes, complianceTooltip, formatCompliancePercent } from '../lib/compliance'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -79,7 +79,23 @@ interface CorrelatedDevice {
     compliance_status: string
     compliance_score: number
     posture: DevicePostureSummary[]
+    last_report_at?: string | null
+    live?: boolean
   }
+}
+
+// OfflineBadge marks an agent that has stopped reporting for longer than the
+// server's liveness timeout: the device is not trusted until it reports again,
+// and the person should see that here rather than find out at a closed door.
+function OfflineBadge({ live, lastReportAt }: { live?: boolean; lastReportAt?: string | null }) {
+  const { t } = useTranslation()
+  const minutes = agentSilentMinutes(live, lastReportAt)
+  if (minutes === null) return null
+  return (
+    <Badge variant="destructive" className="text-xs" title={t('compliance.offlineHint')}>
+      {minutes < 0 ? t('compliance.offlineNever') : t('compliance.offline', { minutes })}
+    </Badge>
+  )
 }
 
 export function MyDevicesPage() {
@@ -326,6 +342,7 @@ export function MyDevicesPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium truncate">{d.iam?.name || z.agent_id}</span>
                       {z.platform && <Badge variant="secondary" className="text-xs">{z.platform}</Badge>}
+                      <OfflineBadge live={z.live} lastReportAt={z.last_report_at} />
                       <Badge variant="outline" className={`text-xs ${compliant
                         ? 'bg-green-50 text-green-700 border-green-200'
                         : z.compliance_status === 'non_compliant'

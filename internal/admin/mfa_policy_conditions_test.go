@@ -19,9 +19,10 @@ import (
 )
 
 // A new MFA policy may require methods, with a grace period to add one, and
-// the login enforces both (evaluateMFA). What it cannot enforce as written is
-// refused: a method it does not know, a grace period on a policy with no
-// method to add, and conditions, which nothing enforces yet (#990).
+// the login enforces both (evaluateMFA), and it may be scoped to groups by
+// name. What it cannot enforce as written is refused: a method it does not
+// know, a grace period on a policy with no method to add, and every other
+// condition, which nothing enforces yet (#990).
 func TestNewMFAPolicyRules(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -37,6 +38,10 @@ func TestNewMFAPolicyRules(t *testing.T) {
 		{"methods and a grace period", ``, `["totp","webauthn"]`, 72, nil},
 		{"the longest grace period", ``, `["totp"]`, maxMFAGraceHours, nil},
 		{"every method", ``, `["totp","webauthn","push","sms","email"]`, 0, nil},
+		// Groups scope the policy to their members; the evaluator matches
+		// the names of the user's groups.
+		{"one group", `{"groups":["Finance"]}`, `["totp"]`, 168, nil},
+		{"several groups", `{"groups":["Finance","IT"]}`, ``, 0, nil},
 
 		{"a grace period with no method to add", ``, ``, 24, errMFAPolicyInvalid},
 		{"a grace period over 30 days", ``, `["totp"]`, maxMFAGraceHours + 1, errMFAPolicyInvalid},
@@ -55,9 +60,14 @@ func TestNewMFAPolicyRules(t *testing.T) {
 		{"client_ids", `{"client_ids":["admin-console"]}`, ``, 0, errMFAPolicyNotEnforced},
 		// Read by the evaluator and refused before #990 too: the console cannot
 		// show them, and a condition it cannot show narrows who is challenged.
-		{"groups", `{"groups":["Admins"]}`, ``, 0, errMFAPolicyNotEnforced},
 		{"ip_ranges", `{"ip_ranges":["10.0.0.0/8"]}`, ``, 0, errMFAPolicyNotEnforced},
+		{"groups beside another condition", `{"groups":["Admins"],"ip_ranges":["10.0.0.0/8"]}`, ``, 0, errMFAPolicyNotEnforced},
 		{"conditions that are not an object", `[1,2,3]`, ``, 0, errMFAPolicyNotEnforced},
+		// A groups condition the evaluator could not match as written.
+		{"no groups", `{"groups":[]}`, ``, 0, errMFAPolicyInvalid},
+		{"groups that are not a list", `{"groups":"Finance"}`, ``, 0, errMFAPolicyInvalid},
+		{"an empty group name", `{"groups":["Finance",""]}`, ``, 0, errMFAPolicyInvalid},
+		{"a group listed twice", `{"groups":["Finance","Finance"]}`, ``, 0, errMFAPolicyInvalid},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -110,6 +120,9 @@ func TestMFAPolicyUpdateRules(t *testing.T) {
 		{"an unknown method", nil, raw(`["webauthn","password"]`), nil, errMFAPolicyInvalid, false},
 		{"a grace period over 30 days", nil, nil, hours(maxMFAGraceHours + 1), errMFAPolicyInvalid, false},
 		{"a new condition", raw(`{"client_ids":["b"]}`), nil, nil, errMFAPolicyNotEnforced, false},
+		// Scoping a policy to groups changes who it applies to, not what they
+		// must add, so the running grace periods stay.
+		{"scoped to groups", raw(`{"groups":["Finance"]}`), nil, nil, nil, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -284,7 +297,8 @@ func TestMFAPolicyHandlersEnforceTheRules(t *testing.T) {
 			`{"required_methods":["totp","password"]}`,
 			`{"required_methods":[]}`, // the 96-hour grace period would be left with no method
 			`{"grace_period_hours":721}`,
-			`{"conditions":{"groups":["Admins"]}}`,
+			`{"conditions":{"ip_ranges":["10.0.0.0/8"]}}`,
+			`{"conditions":{"groups":[]}}`,
 		} {
 			if code, resp := call(http.MethodPut, path, body); code != http.StatusBadRequest {
 				t.Fatalf("%s: want 400, got %d %s", body, code, resp)
@@ -295,6 +309,22 @@ func TestMFAPolicyHandlersEnforceTheRules(t *testing.T) {
 		}
 		if n := graceRows(); n != 1 {
 			t.Fatalf("a refused update touched the grace periods: %d rows", n)
+		}
+	})
+
+	t.Run("scoping the policy to groups is stored and keeps the grace periods", func(t *testing.T) {
+		if code, body := call(http.MethodPut, path, `{"conditions":{"groups":["Finance","IT"]}}`); code != http.StatusOK {
+			t.Fatalf("update: %d %s", code, body)
+		}
+		var conds string
+		if err := db.Pool.QueryRow(ctx, `SELECT conditions::text FROM mfa_policies WHERE id = $1::uuid`, created.ID).Scan(&conds); err != nil {
+			t.Fatalf("read conditions: %v", err)
+		}
+		if !strings.Contains(conds, `"Finance"`) || !strings.Contains(conds, `"IT"`) {
+			t.Fatalf("stored conditions %s, want the two groups", conds)
+		}
+		if n := graceRows(); n != 1 {
+			t.Fatalf("%d grace rows after scoping to groups, want the running one kept", n)
 		}
 	})
 

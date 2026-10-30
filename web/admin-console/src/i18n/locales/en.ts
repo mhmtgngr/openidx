@@ -3524,7 +3524,9 @@ const en = {
           'While a policy is enabled, it applies to every user who signs in with a password. With no required methods, a user who has a second factor enrolled is asked for it, and any enrolled factor satisfies it. With required methods, only those do, and a user who has none of them gets the grace period to add one. The enabled policy with the lowest priority number decides.',
         notEnforcedBadge: 'stored conditions not enforced',
         notEnforcedBody:
-          'This policy was saved with conditions, such as groups or client IDs. They are not enforced: the policy applies to every user who signs in with a password.',
+          'This policy was saved with conditions other than groups, such as client IDs. They are not enforced: apart from its groups, the policy applies to every user who signs in with a password.',
+        groupsBadge: 'Groups: {{names}}',
+        groupsBody: 'The policy applies only to members of these groups.',
         anyFactor: 'Any enrolled factor',
         graceHours: '{{n}} h',
         noGrace: 'None',
@@ -3571,7 +3573,13 @@ const en = {
       },
       dialog: {
         whatItDoes:
-          'A policy applies to every user who signs in with a password. Conditions, such as groups, are not supported yet.',
+          'A policy applies to every user who signs in with a password, or only to members of the groups you pick.',
+        groups: 'Applies to groups',
+        groupsHelp:
+          'None selected: the policy applies to everyone. Otherwise only members of a selected group are under it, which is how units are brought in one at a time.',
+        groupsFilter: 'Find a group…',
+        groupsNone: 'No groups match.',
+        groupsLoadFailed: 'Groups could not be loaded; the policy will apply to everyone.',
         requiredMethods: 'Required methods',
         anyFactorHelp:
           'None checked: a user who has a second factor enrolled is asked for it, and any enrolled factor satisfies the policy. A user with no factor is not asked.',
@@ -9968,6 +9976,17 @@ const en = {
       showQr: 'Prefer to scan? Show QR',
       scanHint: 'Scan this from inside the OpenIDX app.',
       waiting: 'Waiting for this device to connect…',
+      trust: {
+        download: 'Download the install script:',
+        downloadButton: 'Download the script',
+        run: 'Open an Administrator PowerShell in the folder you saved it to and run:',
+        command: 'Install command',
+        copy: 'Copy the command',
+        whatItDoes:
+          'The script trusts the OpenIDX signing certificate on this PC, downloads the installer, checks its signature and installs it. Nothing else is needed.',
+        thenConnect: 'Then continue with step 3 below.',
+        msiOnly: 'Already trust the certificate? <0>Download the MSI</0> on its own.',
+      },
     },
     // Password reset (the link from the email). Server-composed strings — the
     // API's own error and each password-policy violation — render as sent.

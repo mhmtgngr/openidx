@@ -52,6 +52,19 @@ interface EnrollSession {
 interface AgentManifestEntry {
   url: string
   version?: string
+  /**
+   * Windows only. Set when the deployment serves the trust-and-install script
+   * beside the MSI: the MSI is signed with the project's own certificate, so a
+   * machine that has never seen it warns about an unknown publisher, and the
+   * script is the way past that (it trusts the certificate, checks the MSI
+   * against the manifest and runs msiexec).
+   */
+  trust_script?: string
+}
+
+/** The one command a Windows user runs, in an Administrator PowerShell. */
+function trustInstallCommand(server: string): string {
+  return `powershell -ExecutionPolicy Bypass -File .\\trust-and-install-openidx-agent.ps1 -Server ${server}`
 }
 
 export function AddDevicePage() {
@@ -154,7 +167,13 @@ export function AddDevicePage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
-          {installer ? (
+          {installer?.trust_script && os === 'windows' ? (
+            <WindowsTrustInstall
+              scriptUrl={installer.trust_script}
+              msiUrl={installer.url}
+              onCopy={(text) => copy(text, t('pages.addDevice.trust.command'))}
+            />
+          ) : installer ? (
             <Button asChild size="sm">
               <a href={installer.url}>
                 {t('pages.addDevice.download', {
@@ -257,5 +276,63 @@ export function AddDevicePage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+/**
+ * The Windows path while the MSI carries the project's own signature: download
+ * the script, run the one command as Administrator, then connect below. The
+ * bare MSI stays reachable for a machine that already trusts the certificate.
+ */
+function WindowsTrustInstall({
+  scriptUrl,
+  msiUrl,
+  onCopy,
+}: {
+  scriptUrl: string
+  msiUrl: string
+  onCopy: (text: string) => void
+}) {
+  const { t } = useTranslation()
+  const command = trustInstallCommand(window.location.origin)
+  return (
+    <ol className="w-full list-decimal space-y-3 pl-5 text-sm">
+      <li>
+        <div className="flex flex-wrap items-center gap-2">
+          <span>{t('pages.addDevice.trust.download')}</span>
+          <Button asChild size="sm" variant="outline">
+            <a href={scriptUrl} download>
+              {t('pages.addDevice.trust.downloadButton')}
+            </a>
+          </Button>
+        </div>
+      </li>
+      <li>
+        <p>{t('pages.addDevice.trust.run')}</p>
+        <div className="mt-1 flex items-start gap-2">
+          <code className="flex-1 overflow-x-auto rounded bg-muted px-2 py-1.5 font-mono text-xs select-all">
+            {command}
+          </code>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => onCopy(command)}
+            aria-label={t('pages.addDevice.trust.copy')}
+            title={t('pages.addDevice.trust.copy')}
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">{t('pages.addDevice.trust.whatItDoes')}</p>
+      </li>
+      <li>{t('pages.addDevice.trust.thenConnect')}</li>
+      <li className="list-none -ml-5 text-xs text-muted-foreground">
+        <Trans
+          i18nKey="pages.addDevice.trust.msiOnly"
+          components={[<a key="0" href={msiUrl} className="underline" />]}
+        />
+      </li>
+    </ol>
   )
 }
