@@ -3097,11 +3097,15 @@ func (s *Service) checkUserInGroups(ctx context.Context, userID string, groups i
 		return false
 	}
 
-	// Get user's group memberships
+	// Get user's group memberships. When they cannot be read, the policy
+	// applies: a group-scoped policy is a requirement its members must meet,
+	// and a lookup failure must not turn into a sign-in without the second
+	// factor. The user who is not a member is asked once more than needed;
+	// the member who is skipped would be let through.
 	userGroups, err := s.getUserGroups(ctx, userID)
 	if err != nil {
-		s.logger.Warn("Failed to get user groups for MFA policy", zap.Error(err))
-		return false
+		s.logger.Warn("Failed to get user groups for MFA policy; applying it", zap.Error(err))
+		return true
 	}
 
 	// Convert to string slice for comparison
@@ -3275,6 +3279,12 @@ func (s *Service) getUserGroups(ctx context.Context, userID string) ([]Group, er
 			return nil, err
 		}
 		groups = append(groups, dbGroup.ToGroup())
+	}
+	// pgx reports a failed query here, not from Query: without this check a
+	// lookup that failed read as "no groups", and every caller that narrows
+	// on membership widened instead.
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return groups, nil

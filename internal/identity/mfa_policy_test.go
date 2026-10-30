@@ -159,6 +159,19 @@ func TestIsMFARequired(t *testing.T) {
 		if !required || policy == nil || policy.Name != "finance" {
 			t.Fatalf("got (%v, %+v), want the finance policy once the user is a member", required, policy)
 		}
+
+		// Memberships that cannot be read: the policy applies rather than
+		// standing aside, so a lookup failure never waives the second factor.
+		if _, err := db.Pool.Exec(ctx, `DROP TABLE group_memberships`); err != nil {
+			t.Fatalf("drop memberships: %v", err)
+		}
+		required, policy, err = svc.IsMFARequired(ctx, user, "1.2.3.4")
+		if err != nil {
+			t.Fatalf("IsMFARequired: %v", err)
+		}
+		if !required || policy == nil || policy.Name != "finance" {
+			t.Fatalf("got (%v, %+v), want the policy applied when membership cannot be read", required, policy)
+		}
 	})
 
 	t.Run("another org's policy does not apply", func(t *testing.T) {
