@@ -2,6 +2,7 @@ package identity
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"go.uber.org/zap"
@@ -160,17 +161,22 @@ func TestIsMFARequired(t *testing.T) {
 			t.Fatalf("got (%v, %+v), want the finance policy once the user is a member", required, policy)
 		}
 
-		// Memberships that cannot be read: the policy applies rather than
-		// standing aside, so a lookup failure never waives the second factor.
+		// Memberships that cannot be read decide nothing: the evaluator says
+		// so instead of answering "not a member" (a waiver for members) or
+		// falling through to a lower policy (the wrong one for them).
+		if _, err := db.Pool.Exec(ctx, `INSERT INTO mfa_policies (name, enabled, priority, conditions, org_id)
+			VALUES ('everyone', true, 9, '{}', $1)`, org); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
 		if _, err := db.Pool.Exec(ctx, `DROP TABLE group_memberships`); err != nil {
 			t.Fatalf("drop memberships: %v", err)
 		}
 		required, policy, err = svc.IsMFARequired(ctx, user, "1.2.3.4")
-		if err != nil {
-			t.Fatalf("IsMFARequired: %v", err)
+		if !errors.Is(err, ErrMFAPolicyUndecidable) {
+			t.Fatalf("got (%v, %+v, %v), want ErrMFAPolicyUndecidable when membership cannot be read", required, policy, err)
 		}
-		if !required || policy == nil || policy.Name != "finance" {
-			t.Fatalf("got (%v, %+v), want the policy applied when membership cannot be read", required, policy)
+		if required || policy != nil {
+			t.Fatalf("got (%v, %+v) with the error, want no policy chosen", required, policy)
 		}
 	})
 

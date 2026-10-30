@@ -2996,6 +2996,12 @@ func (s *Service) GetPushDevices(ctx context.Context, userID string) ([]PushMFAD
 // policy an administrator sees first is the one that decides. Since a policy
 // can require particular methods, which policy matched is observable, and it
 // has to be the one the console puts first.
+// ErrMFAPolicyUndecidable is returned when a policy's conditions could not be
+// evaluated because the data they depend on could not be read (group
+// memberships). The caller must neither waive the policy nor guess which
+// applies.
+var ErrMFAPolicyUndecidable = errors.New("MFA policy conditions could not be evaluated")
+
 func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP string) (bool, *MFAPolicy, error) {
 	s.logger.Debug("Checking MFA requirements", zap.String("user_id", userID), zap.String("client_ip", clientIP))
 
@@ -3036,6 +3042,12 @@ func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP str
 	// Evaluate each policy in the order the console lists them
 	for _, policy := range policies {
 		required, err := s.evaluateMFAPolicy(ctx, userID, clientIP, &policy)
+		if errors.Is(err, ErrMFAPolicyUndecidable) {
+			// Falling through to the next policy would pick the wrong one
+			// for a member; the caller decides what an undecided policy
+			// means for this sign-in.
+			return false, nil, err
+		}
 		if err != nil {
 			s.logger.Warn("Failed to evaluate MFA policy", zap.String("policy_id", policy.ID), zap.Error(err))
 			continue
@@ -3060,7 +3072,11 @@ func (s *Service) evaluateMFAPolicy(ctx context.Context, userID, clientIP string
 
 	// Check group membership conditions
 	if groups, exists := conditions["groups"]; exists {
-		if !s.checkUserInGroups(ctx, userID, groups) {
+		member, err := s.checkUserInGroups(ctx, userID, groups)
+		if err != nil {
+			return false, err
+		}
+		if !member {
 			return false, nil
 		}
 	}
@@ -3091,21 +3107,19 @@ func (s *Service) evaluateMFAPolicy(ctx context.Context, userID, clientIP string
 }
 
 // checkUserInGroups checks if user belongs to any of the specified groups
-func (s *Service) checkUserInGroups(ctx context.Context, userID string, groups interface{}) bool {
+func (s *Service) checkUserInGroups(ctx context.Context, userID string, groups interface{}) (bool, error) {
 	groupList, ok := groups.([]interface{})
 	if !ok {
-		return false
+		return false, nil
 	}
 
-	// Get user's group memberships. When they cannot be read, the policy
-	// applies: a group-scoped policy is a requirement its members must meet,
-	// and a lookup failure must not turn into a sign-in without the second
-	// factor. The user who is not a member is asked once more than needed;
-	// the member who is skipped would be let through.
+	// Memberships that cannot be read decide nothing: not "not a member",
+	// which would let a member past a policy scoped to them, and not "a
+	// member", which would put everyone under that policy's methods and
+	// grace bookkeeping for the length of an outage. The caller is told.
 	userGroups, err := s.getUserGroups(ctx, userID)
 	if err != nil {
-		s.logger.Warn("Failed to get user groups for MFA policy; applying it", zap.Error(err))
-		return true
+		return false, fmt.Errorf("%w: %v", ErrMFAPolicyUndecidable, err)
 	}
 
 	// Convert to string slice for comparison
@@ -3123,12 +3137,12 @@ func (s *Service) checkUserInGroups(ctx context.Context, userID string, groups i
 
 		for _, userGroup := range userGroupNames {
 			if userGroup == groupName {
-				return true
+				return true, nil
 			}
 		}
 	}
 
-	return false
+	return false, nil
 }
 
 // checkIPInRanges checks if IP address falls within any specified ranges

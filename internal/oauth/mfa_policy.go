@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -252,8 +253,20 @@ func (s *Service) evaluateMFAPolicies(
 	// behaviour instead of locking someone out. It is asked on every login,
 	// with or without an enrolled factor, because a policy that requires
 	// particular methods has something to say to a user who has none.
+	//
+	// The exception is a policy scoped to groups whose memberships could not
+	// be read (identity.ErrMFAPolicyUndecidable). "No policy matched" would
+	// waive it for exactly its members, and choosing it would put everyone
+	// under its methods and start their grace periods for the length of an
+	// outage. So no policy is chosen, and the user is challenged for any
+	// enrolled factor, as the plainest policy would: nothing is waived and
+	// nothing is written.
 	var policy *identity.MFAPolicy
-	if required, matched, err := s.identityService.IsMFARequired(ctx, user.ID, clientIP); err != nil {
+	undecided := false
+	if required, matched, err := s.identityService.IsMFARequired(ctx, user.ID, clientIP); errors.Is(err, identity.ErrMFAPolicyUndecidable) {
+		undecided = true
+		s.logger.Warn("MFA policy conditions could not be evaluated; challenging any enrolled factor", zap.Error(err))
+	} else if err != nil {
 		s.logger.Warn("MFA policy evaluation failed, treating as not required", zap.Error(err))
 	} else if required {
 		policy = matched
@@ -264,7 +277,7 @@ func (s *Service) evaluateMFAPolicies(
 		// Any enrolled factor satisfies the policy. It counts only for a user
 		// who has one, and a remembered browser stands in for it, exactly as
 		// for the risk engine's own verdict.
-		ev.PolicyRequired = policy != nil && ev.Enabled && !ev.SkipMFA
+		ev.PolicyRequired = (policy != nil || undecided) && ev.Enabled && !ev.SkipMFA
 		ev.Challenge = challengeRequired(ev.Enabled, ev.SkipMFA, ev.RequireMFA, totpEnabled, ev.PolicyRequired)
 		return ev
 	}

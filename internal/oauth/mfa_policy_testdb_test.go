@@ -106,4 +106,39 @@ func TestMFAPolicyRaisesTheLoginChallenge(t *testing.T) {
 			t.Fatalf("a policy must not demand a factor the user does not have: %+v", ev)
 		}
 	})
+
+	// A policy scoped to a group the user is not in falls through to the
+	// next; one whose memberships cannot be read decides nothing: the user
+	// with a factor is challenged for it, no policy's methods or grace period
+	// are applied, and the user without one is not locked out.
+	t.Run("a group-scoped policy whose memberships cannot be read waives nothing and chooses nothing", func(t *testing.T) {
+		setPolicy(true)
+		if _, err := db.Pool.Exec(ctx, `
+			INSERT INTO mfa_policies (name, description, enabled, priority, conditions, required_methods, grace_period_hours, org_id)
+			VALUES ($1, '', true, 1, '{"groups":["Finance"]}', '["totp"]', 168, $2::uuid)`,
+			"finance-"+suffix, org); err != nil {
+			t.Fatalf("seed group policy: %v", err)
+		}
+		ev := decide(withFactor)
+		if !ev.Challenge || !ev.PolicyRequired || len(ev.RequiredMethods) != 0 {
+			t.Fatalf("a non-member must fall through to the policy for everyone: %+v", ev)
+		}
+
+		if _, err := db.Pool.Exec(ctx, `ALTER TABLE group_memberships RENAME TO group_memberships_unreadable`); err != nil {
+			t.Fatalf("break memberships: %v", err)
+		}
+		t.Cleanup(func() {
+			db.Pool.Exec(ctx, `ALTER TABLE group_memberships_unreadable RENAME TO group_memberships`) //nolint:errcheck
+		})
+		ev = decide(withFactor)
+		if !ev.Challenge || !ev.PolicyRequired {
+			t.Fatalf("an unreadable membership must not waive the second factor: %+v", ev)
+		}
+		if len(ev.RequiredMethods) != 0 || ev.EnrollmentDue != nil || ev.GraceBegan {
+			t.Fatalf("an unreadable membership must not apply the group policy's methods or grace period: %+v", ev)
+		}
+		if ev := decide(noFactor); ev.Challenge || ev.EnrollmentRequired {
+			t.Fatalf("an unreadable membership must not lock out a user with no factor: %+v", ev)
+		}
+	})
 }
