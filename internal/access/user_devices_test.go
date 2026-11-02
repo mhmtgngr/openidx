@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -30,7 +31,7 @@ var deviceSchema = []string{
 		org_id UUID NOT NULL, ziti_identity_id VARCHAR(255), status VARCHAR(20) DEFAULT 'active',
 		platform VARCHAR(32), management_mode VARCHAR(32),
 		compliance_status VARCHAR(20) DEFAULT 'unknown', compliance_score FLOAT DEFAULT 0,
-		last_seen_at TIMESTAMPTZ, enrolled_at TIMESTAMPTZ DEFAULT NOW(),
+		last_seen_at TIMESTAMPTZ, last_report_at TIMESTAMPTZ, enrolled_at TIMESTAMPTZ DEFAULT NOW(),
 		enrolled_by_user_id UUID, known_device_id UUID)`,
 	`CREATE TABLE IF NOT EXISTS agent_posture_results (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, agent_id VARCHAR(64),
@@ -65,11 +66,12 @@ func TestUserDeviceCorrelation(t *testing.T) {
 		`INSERT INTO users (id, org_id, username, email) VALUES ('` + devUser + `','` + devOrg + `','dana','dana@x.io')`,
 		// A device seen by BOTH pillars: known_device linked to an agent.
 		`INSERT INTO known_devices (id, user_id, org_id, fingerprint, name, device_type, trusted) VALUES ('` + linkedKD + `','` + devUser + `','` + devOrg + `','agent:device-1','Dana Laptop','agent',true)`,
-		`INSERT INTO enrolled_agents (org_id, agent_id, ziti_identity_id, status, platform, management_mode, compliance_status, compliance_score, enrolled_by_user_id, known_device_id) VALUES ('` + devOrg + `','agent-linked','zid-linked','active','linux','device_owner','non_compliant',55,'` + devUser + `','` + linkedKD + `')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, ziti_identity_id, status, platform, management_mode, compliance_status, compliance_score, enrolled_by_user_id, known_device_id, last_report_at) VALUES ('` + devOrg + `','agent-linked','zid-linked','active','linux','device_owner','non_compliant',55,'` + devUser + `','` + linkedKD + `', NOW())`,
 		// A browser device seen by IAM only (no agent).
 		`INSERT INTO known_devices (id, user_id, org_id, fingerprint, name, device_type, trusted) VALUES ('` + iamKD + `','` + devUser + `','` + devOrg + `','browserhash','Dana Browser','desktop',false)`,
 		// An agent with no linked known_device (token-enrolled / legacy).
-		`INSERT INTO enrolled_agents (org_id, agent_id, ziti_identity_id, status, platform, compliance_status, compliance_score, enrolled_by_user_id, known_device_id) VALUES ('` + devOrg + `','agent-ziti','zid-ziti','active','android','compliant',95,'` + devUser + `',NULL)`,
+		// Its agent last reported an hour ago: compliant, but not live.
+		`INSERT INTO enrolled_agents (org_id, agent_id, ziti_identity_id, status, platform, compliance_status, compliance_score, enrolled_by_user_id, known_device_id, last_report_at) VALUES ('` + devOrg + `','agent-ziti','zid-ziti','active','android','compliant',95,'` + devUser + `',NULL, NOW() - interval '1 hour')`,
 		// Posture for the linked agent: one failing check.
 		`INSERT INTO agent_posture_results (org_id, agent_id, check_type, status, severity) VALUES ('` + devOrg + `','agent-linked','disk_encryption','fail','high')`,
 		`INSERT INTO agent_posture_results (org_id, agent_id, check_type, status, severity) VALUES ('` + devOrg + `','agent-linked','os_version','pass','low')`,
@@ -80,7 +82,7 @@ func TestUserDeviceCorrelation(t *testing.T) {
 		}
 	}
 
-	s := &Service{db: db, logger: zap.NewNop()}
+	s := &Service{db: db, logger: zap.NewNop(), config: &config.Config{AgentLivenessTimeout: "10m"}}
 	devices, err := s.collectUserDevices(ctx, devOrg, devUser)
 	if err != nil {
 		t.Fatalf("collectUserDevices: %v", err)
@@ -114,6 +116,10 @@ func TestUserDeviceCorrelation(t *testing.T) {
 	if len(linked.Ziti.Posture) != 2 {
 		t.Errorf("want 2 posture rows on linked agent, got %+v", linked.Ziti.Posture)
 	}
+	// Reported just now: live under the 10-minute rule.
+	if linked.Ziti.LastReportAt == nil || linked.Ziti.Live == nil || !*linked.Ziti.Live {
+		t.Errorf("linked agent should be live: last_report_at=%v live=%v", linked.Ziti.LastReportAt, linked.Ziti.Live)
+	}
 
 	// IAM-only device: no Ziti side.
 	if iamOnly.IAM == nil || iamOnly.Ziti != nil {
@@ -122,6 +128,10 @@ func TestUserDeviceCorrelation(t *testing.T) {
 	// Ziti-only device: no IAM side, compliant.
 	if zitiOnly.Ziti == nil || zitiOnly.IAM != nil || zitiOnly.Ziti.ComplianceStatus != "compliant" {
 		t.Errorf("ziti-only device wrong: %+v", zitiOnly)
+	}
+	// Compliant an hour ago is not trusted now: the page must be able to say so.
+	if zitiOnly.Ziti.Live == nil || *zitiOnly.Ziti.Live {
+		t.Errorf("ziti-only agent (last report 1h ago) should not be live: %v", zitiOnly.Ziti.Live)
 	}
 }
 

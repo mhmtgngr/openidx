@@ -50,7 +50,7 @@ function mockApi({
   status,
   statusFails = false,
 }: {
-  manifest?: Record<string, { url: string }>
+  manifest?: Record<string, { url: string; trust_script?: string }>
   status?: { status: string; agent_id: string; device_trusted: boolean }
   statusFails?: boolean
 } = {}) {
@@ -87,6 +87,34 @@ describe('AddDevicePage', () => {
     await user.click(screen.getByRole('button', { name: /^linux$/i }))
     expect(screen.queryByRole('link', { name: /download for/i })).not.toBeInTheDocument()
     expect(screen.getByText(/installer for linux is provided by your administrator/i)).toBeInTheDocument()
+  })
+
+  // Until the MSI is signed with a public certificate, a Windows machine
+  // installs it through the trust script. When the server serves the script,
+  // the wizard shows that path, with the command spelled out for this server,
+  // instead of a download that ends in an "Unknown publisher" warning.
+  it('walks a Windows user through the trust script when the server serves it', async () => {
+    mockApi({
+      manifest: {
+        windows: {
+          url: '/downloads/OpenIDX-0.5.0.msi',
+          trust_script: '/downloads/trust-and-install-openidx-agent.ps1',
+        },
+      },
+    })
+    render(<AddDevicePage />, { wrapper: wrapper() })
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+
+    await user.click(await screen.findByRole('button', { name: /^windows$/i }))
+    const script = await screen.findByRole('link', { name: /download the script/i })
+    expect(script).toHaveAttribute('href', '/downloads/trust-and-install-openidx-agent.ps1')
+    expect(screen.getByText(/administrator powershell/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(`powershell -ExecutionPolicy Bypass -File .\\trust-and-install-openidx-agent.ps1 -Server ${window.location.origin}`),
+    ).toBeInTheDocument()
+    // The bare MSI is still reachable, as the smaller print.
+    expect(screen.getByRole('link', { name: /msi/i })).toHaveAttribute('href', '/downloads/OpenIDX-0.5.0.msi')
+    expect(screen.queryByRole('link', { name: /download for windows/i })).not.toBeInTheDocument()
   })
 
   it('says outright that iOS and macOS have no client, rather than sending the user to an administrator', async () => {

@@ -53,6 +53,30 @@ func TestAgentManifestAndDownload(t *testing.T) {
 	if m["windows"]["url"] != "/downloads/openidx-agent.msi" {
 		t.Errorf("windows url = %q", m["windows"]["url"])
 	}
+	// No trust script staged: the wizard must not point at one.
+	if v, ok := m["windows"]["trust_script"]; ok {
+		t.Errorf("trust_script advertised with no script staged: %q", v)
+	}
+
+	// With the script beside the MSI, the Windows entry names it.
+	if err := os.WriteFile(filepath.Join(dir, windowsTrustScript), []byte("# ps1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "file", Value: "agent-manifest.json"}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/downloads/agent-manifest.json", nil)
+	h.HandleAgentDownload(c)
+	m = nil
+	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
+		t.Fatalf("manifest json: %v", err)
+	}
+	if m["windows"]["trust_script"] != "/downloads/"+windowsTrustScript {
+		t.Errorf("windows trust_script = %q", m["windows"]["trust_script"])
+	}
+	if _, ok := m["linux"]["trust_script"]; ok {
+		t.Errorf("trust_script is a Windows-only field, found on linux")
+	}
 
 	// A real file downloads.
 	w = httptest.NewRecorder()

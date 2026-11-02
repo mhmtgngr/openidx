@@ -106,4 +106,46 @@ func TestMFAPolicyRaisesTheLoginChallenge(t *testing.T) {
 			t.Fatalf("a policy must not demand a factor the user does not have: %+v", ev)
 		}
 	})
+
+	// A policy scoped to a group the user is not in falls through to the
+	// next; one whose memberships cannot be read decides nothing, and the
+	// sign-in is refused rather than downgraded: no policy's methods or grace
+	// period are applied, and nothing is written.
+	t.Run("a group-scoped policy whose memberships cannot be read refuses the sign-in", func(t *testing.T) {
+		setPolicy(true)
+		if _, err := db.Pool.Exec(ctx, `
+			INSERT INTO mfa_policies (name, description, enabled, priority, conditions, required_methods, grace_period_hours, org_id)
+			VALUES ($1, '', true, 1, '{"groups":["Finance"]}', '["totp"]', 168, $2::uuid)`,
+			"finance-"+suffix, org); err != nil {
+			t.Fatalf("seed group policy: %v", err)
+		}
+		ev := decide(withFactor)
+		if !ev.Challenge || !ev.PolicyRequired || len(ev.RequiredMethods) != 0 {
+			t.Fatalf("a non-member must fall through to the policy for everyone: %+v", ev)
+		}
+
+		if _, err := db.Pool.Exec(ctx, `ALTER TABLE group_memberships RENAME TO group_memberships_unreadable`); err != nil {
+			t.Fatalf("break memberships: %v", err)
+		}
+		t.Cleanup(func() {
+			db.Pool.Exec(ctx, `ALTER TABLE group_memberships_unreadable RENAME TO group_memberships`) //nolint:errcheck
+		})
+		for _, u := range []*identity.User{withFactor, noFactor} {
+			ev = decide(u)
+			if !ev.Undecidable || ev.Challenge || ev.PolicyRequired {
+				t.Fatalf("an unreadable membership must refuse %s, not challenge or waive: %+v", u.UserName, ev)
+			}
+			if len(ev.RequiredMethods) != 0 || ev.EnrollmentDue != nil || ev.GraceBegan || ev.EnrollmentRequired {
+				t.Fatalf("an unreadable membership must not apply any policy's methods or grace period: %+v", ev)
+			}
+		}
+		var graceRows int
+		if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM mfa_policy_grace WHERE user_id IN ($1::uuid, $2::uuid)`,
+			withFactor.ID, noFactor.ID).Scan(&graceRows); err != nil {
+			t.Fatalf("count grace rows: %v", err)
+		}
+		if graceRows != 0 {
+			t.Fatalf("%d grace rows written while the policy was undecidable, want 0", graceRows)
+		}
+	})
 }

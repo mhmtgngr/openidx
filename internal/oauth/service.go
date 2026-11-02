@@ -2450,6 +2450,18 @@ func (s *Service) handleLogin(c *gin.Context) {
 	// which was deleted precisely so the two could never disagree about
 	// whether a second factor is required. See mfa_policy.go.
 	ev := s.evaluateMFA(c.Request.Context(), user, clientIP, userAgent, fingerprint, location, deviceTrusted, riskScore, riskFactors)
+	if ev.Undecidable {
+		// The policy that governs this sign-in could not be evaluated; see
+		// mfaEvaluation.Undecidable. Refused, not downgraded.
+		s.logAuditEvent(c.Request.Context(), "authentication", "security", "login", "failure",
+			user.ID, clientIP, user.ID, "user", map[string]interface{}{"reason": "mfa_policy_undecidable"})
+		c.Header("Retry-After", "30")
+		c.JSON(503, gin.H{
+			"error":             "temporarily_unavailable",
+			"error_description": "The sign-in policy could not be evaluated. Try again in a moment.",
+		})
+		return
+	}
 	if ev.GraceBegan {
 		s.auditMFAGrace(c.Request.Context(), user.ID, clientIP, "mfa_grace_started", "success", ev)
 	}

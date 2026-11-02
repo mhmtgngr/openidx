@@ -35,7 +35,7 @@ interface MFAPolicy {
   description: string
   enabled: boolean
   priority: number
-  conditions: Record<string, unknown>
+  conditions: Record<string, unknown> & { groups?: string[] }
   required_methods: string[]
   grace_period_hours: number
   created_at: string
@@ -58,7 +58,9 @@ interface UserMFAStatus {
 // enrolled factor satisfies it. With required methods, only those do; a user
 // who has none of them gets the grace period, from their first sign-in under
 // the policy, to add one, and is refused after it unless they have a bypass
-// code. Conditions are not enforced, so the form does not offer them (#990).
+// code. Of the conditions, groups is enforced: the policy then applies only to
+// members of the named groups. The others are not, so the form offers only
+// groups (#990).
 const emptyPolicy: Partial<MFAPolicy> = {
   name: '',
   description: '',
@@ -74,10 +76,34 @@ const policyMethods = ['totp', 'webauthn', 'push', 'sms', 'email']
 // The API's bound on the grace period: 30 days.
 const maxGraceHours = 720
 
+// policyGroups is the groups a policy is scoped to; empty means everyone.
+function policyGroups(p: Pick<MFAPolicy, 'conditions'>): string[] {
+  const groups = p.conditions?.groups
+  return Array.isArray(groups) ? groups.filter((g): g is string => typeof g === 'string') : []
+}
+
 // storesUnenforcedConditions reports a policy written before #990 that still
-// stores conditions, which nothing enforces, so the table can say so.
+// stores conditions other than groups, which nothing enforces, so the table
+// can say so.
 function storesUnenforcedConditions(p: Pick<MFAPolicy, 'conditions'>): boolean {
-  return Object.keys(p.conditions ?? {}).length > 0
+  return Object.keys(p.conditions ?? {}).some((k) => k !== 'groups')
+}
+
+interface GroupOption {
+  id: string
+  name: string
+}
+
+// The groups endpoint answers a bare array, or wraps it in data; either way a
+// group's name is displayName, or name on older rows.
+function asGroupOptions(v: unknown): GroupOption[] {
+  const list = Array.isArray(v) ? v : Array.isArray((v as { data?: unknown })?.data) ? (v as { data: unknown[] }).data : []
+  return list
+    .map((g) => {
+      const r = g as { id?: unknown; displayName?: unknown; name?: unknown }
+      return { id: String(r.id ?? ''), name: String(r.displayName ?? r.name ?? '') }
+    })
+    .filter((g) => g.name !== '')
 }
 
 function sameMethods(a: string[] = [], b: string[] = []): boolean {
@@ -101,6 +127,7 @@ export default function MFAManagement() {
   const [policyDialogOpen, setPolicyDialogOpen] = useState(false)
   const [selectedPolicy, setSelectedPolicy] = useState<MFAPolicy | null>(null)
   const [formData, setFormData] = useState<Partial<MFAPolicy>>(emptyPolicy)
+  const [groupFilter, setGroupFilter] = useState('')
 
 
   // Pagination state for policies and users
@@ -139,6 +166,19 @@ export default function MFAManagement() {
 
   const policies = policiesData?.policies || []
   const policiesTotalPages = Math.ceil((policiesData?.total || 0) / pageSize)
+
+  // Groups a policy can be scoped to; loaded while the dialog is open.
+  const { data: groupsData, isError: groupsFailed } = useQuery({
+    queryKey: ['mfa-policy-groups'],
+    queryFn: () => api.get<unknown>('/api/v1/identity/groups'),
+    enabled: policyDialogOpen,
+    staleTime: 60_000,
+  })
+  const groupOptions = asGroupOptions(groupsData)
+  const selectedGroups = formData.conditions?.groups ?? []
+  const visibleGroups = groupOptions.filter((g) =>
+    g.name.toLowerCase().includes(groupFilter.trim().toLowerCase()),
+  )
 
   // Fetch user MFA status
   const { data: usersData, isLoading: usersLoading, isError: usersIsError, error: usersError } = useQuery({
@@ -213,13 +253,16 @@ export default function MFAManagement() {
   const openCreatePolicy = () => {
     setSelectedPolicy(null)
     setFormData(emptyPolicy)
+    setGroupFilter('')
     setPolicyDialogOpen(true)
   }
 
   const openEditPolicy = (policy: MFAPolicy) => {
     setSelectedPolicy(policy)
-    // Only what the form edits is sent back, so stored conditions, which
-    // nothing enforces, are left as they are rather than re-submitted.
+    // Only what the form edits is sent back. Groups are edited; any other
+    // stored condition, which nothing enforces, is left as it is rather than
+    // re-submitted.
+    const groups = policyGroups(policy)
     setFormData({
       name: policy.name,
       description: policy.description,
@@ -227,8 +270,18 @@ export default function MFAManagement() {
       priority: policy.priority,
       required_methods: [...(policy.required_methods ?? [])],
       grace_period_hours: policy.grace_period_hours ?? 0,
+      ...(groups.length > 0 ? { conditions: { groups } } : {}),
     })
+    setGroupFilter('')
     setPolicyDialogOpen(true)
+  }
+
+  const toggleGroup = (name: string, checked: boolean) => {
+    const next = checked
+      ? [...selectedGroups.filter((g) => g !== name), name]
+      : selectedGroups.filter((g) => g !== name)
+    const { conditions: _dropped, ...rest } = formData
+    setFormData(next.length > 0 ? { ...rest, conditions: { groups: next } } : rest)
   }
 
   // A grace period is the time to add a required method, so a policy with none
@@ -254,7 +307,13 @@ export default function MFAManagement() {
 
   const handleSavePolicy = () => {
     if (selectedPolicy) {
-      updatePolicyMutation.mutate({ id: selectedPolicy.id, data: formData })
+      // Groups removed from a policy that had them: send an empty object, or
+      // the stored ones would stay.
+      const data =
+        selectedGroups.length === 0 && policyGroups(selectedPolicy).length > 0
+          ? { ...formData, conditions: {} }
+          : formData
+      updatePolicyMutation.mutate({ id: selectedPolicy.id, data })
     } else {
       createPolicyMutation.mutate(formData)
     }
@@ -422,6 +481,15 @@ export default function MFAManagement() {
                           <TableRow key={policy.id}>
                             <TableCell className="font-medium">
                               {policy.name}
+                              {policyGroups(policy).length > 0 && (
+                                <Badge
+                                  variant="secondary"
+                                  className="ml-2 text-xs"
+                                  title={t('pages.mfaManagement.policies.groupsBody')}
+                                >
+                                  {t('pages.mfaManagement.policies.groupsBadge', { names: policyGroups(policy).join(', ') })}
+                                </Badge>
+                              )}
                               {storesUnenforcedConditions(policy) && (
                                 <Badge
                                   variant="outline"
@@ -703,6 +771,36 @@ export default function MFAManagement() {
                 onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
               />
             </div>
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">{t('pages.mfaManagement.dialog.groups')}</legend>
+              <Input
+                aria-label={t('pages.mfaManagement.dialog.groupsFilter')}
+                placeholder={t('pages.mfaManagement.dialog.groupsFilter')}
+                value={groupFilter}
+                onChange={(e) => setGroupFilter(e.target.value)}
+              />
+              <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-2">
+                {groupsFailed ? (
+                  <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.dialog.groupsLoadFailed')}</p>
+                ) : visibleGroups.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.dialog.groupsNone')}</p>
+                ) : (
+                  visibleGroups.map((g) => (
+                    <div key={g.id} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`mfa-policy-group-${g.id}`}
+                        checked={selectedGroups.includes(g.name)}
+                        onCheckedChange={(checked) => toggleGroup(g.name, checked === true)}
+                      />
+                      <label htmlFor={`mfa-policy-group-${g.id}`} className="text-sm">
+                        {g.name}
+                      </label>
+                    </div>
+                  ))
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.dialog.groupsHelp')}</p>
+            </fieldset>
             <fieldset className="space-y-2">
               <legend className="text-sm font-medium">{t('pages.mfaManagement.dialog.requiredMethods')}</legend>
               <div className="grid grid-cols-2 gap-3 pt-1">

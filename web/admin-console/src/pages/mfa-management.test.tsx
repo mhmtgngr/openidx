@@ -58,7 +58,13 @@ const userMFA = {
   webauthn_enabled: true,
 }
 
+const groups = [
+  { id: 'g-1', displayName: 'Finance' },
+  { id: 'g-2', displayName: 'IT' },
+]
+
 function routeGet(url: string) {
+  if (url.includes('/identity/groups')) return Promise.resolve(groups)
   if (url.includes('/enrollment-stats')) return Promise.resolve(stats)
   if (url.includes('/policies')) return Promise.resolve({ policies: [policy], total: 1, page: 1, page_size: 20 })
   // The user-status endpoint lives at /api/v1/mfa/user-status — not /users.
@@ -148,8 +154,9 @@ describe('MFAManagementPage', () => {
   })
 
   // What a policy enforces at password sign-in: required methods, with a grace
-  // period to add one, or any enrolled factor when none is required. Conditions
-  // are not enforced, so the form does not offer them (#990).
+  // period to add one, or any enrolled factor when none is required; scoped
+  // to groups, or to everyone. Other conditions are not enforced, so the form
+  // does not offer them (#990).
   describe('what a policy enforces', () => {
     const plain = {
       ...policy,
@@ -244,6 +251,47 @@ describe('MFAManagementPage', () => {
         required_methods: [],
         grace_period_hours: 0,
       })
+    })
+
+    it('scopes a policy to the groups picked, and sends nothing when none is', async () => {
+      const user = userEvent.setup()
+      const dialog = await openCreate(user)
+      await user.type(within(dialog).getByLabelText(/find a group/i), 'fin')
+      expect(within(dialog).queryByRole('checkbox', { name: 'IT' })).not.toBeInTheDocument()
+      await user.click(within(dialog).getByRole('checkbox', { name: 'Finance' }))
+      await user.click(within(dialog).getByRole('button', { name: /^create policy$/i }))
+      expect(api.post).toHaveBeenCalledWith('/api/v1/mfa/policies', {
+        name: 'Strong sign-in',
+        description: '',
+        enabled: true,
+        priority: 100,
+        required_methods: [],
+        grace_period_hours: 0,
+        conditions: { groups: ['Finance'] },
+      })
+    })
+
+    it('shows the groups a policy is scoped to, and does not call them unenforced', async () => {
+      const user = userEvent.setup()
+      withPolicies([{ ...plain, id: 'pol-3', name: 'Finance only', conditions: { groups: ['Finance', 'IT'] } }])
+      await openPoliciesTab(user)
+      const row = (await screen.findByText('Finance only')).closest('tr')
+      expect(row).toHaveTextContent('Groups: Finance, IT')
+      expect(row).not.toHaveTextContent('stored conditions not enforced')
+    })
+
+    it('clears the groups of an edited policy by sending empty conditions', async () => {
+      const user = userEvent.setup()
+      withPolicies([{ ...plain, id: 'pol-3', name: 'Finance only', conditions: { groups: ['Finance'] } }])
+      await openPoliciesTab(user)
+      const row = (await screen.findByText('Finance only')).closest('tr') as HTMLElement
+      await user.click(within(row).getAllByRole('button')[0])
+      const dialog = await screen.findByRole('dialog')
+      const finance = await within(dialog).findByRole('checkbox', { name: 'Finance' })
+      expect(finance).toBeChecked()
+      await user.click(finance)
+      await user.click(within(dialog).getByRole('button', { name: /^update policy$/i }))
+      expect(api.put).toHaveBeenCalledWith('/api/v1/mfa/policies/pol-3', expect.objectContaining({ conditions: {} }))
     })
 
     it('unchecking the last method clears the grace period', async () => {

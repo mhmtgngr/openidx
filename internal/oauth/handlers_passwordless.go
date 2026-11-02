@@ -657,6 +657,9 @@ func (s *Service) magicLinkNeedsMore(c *gin.Context, userID, clientIP, userAgent
 	}
 	reason := ""
 	switch {
+	case ev.Undecidable:
+		// See mfaEvaluation.Undecidable: refused, not downgraded.
+		reason = "temporarily_unavailable"
 	case ev.EnrollmentRequired:
 		reason = "mfa_enrollment_required"
 	case ev.Challenge:

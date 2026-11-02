@@ -130,7 +130,10 @@ Then, in the console (Ziti Network → Network Resources):
 ## 4. Pilot
 
 Pick a pilot group of a few people from different teams, with GlobalProtect
-still installed.
+still installed. Before the first device, make sure the controller and the
+edge router advertise names the devices resolve from corporate DNS
+(`docs/runbooks/go-live-windows.md`, wave 0, step 0); a router that
+advertises a `*.localtest.me` name is reachable from nowhere but its own host.
 
 1. Install the OpenIDX agent on their devices and enrol them. The agent runs
    the OpenZiti tunneler; the Agent Fleet page's **Tunnel** column shows each
@@ -168,8 +171,11 @@ Move groups across in waves, largest last:
    retire the gateway's access routes. The agent enforces the block on Linux
    devices where it runs as root; Windows and macOS devices report it as not
    enforced (`docs/AGENT-TUNNEL.md`, "The organization's network policy"), so
-   block direct access for them at the network if it matters. The Network policy card shows how
-   many devices run the current policy.
+   block direct access for them at the network if it matters: on the Palo
+   Alto, a security rule from the user zones to the corporate ranges that
+   permits only the hosts of the OpenIDX edge routers (the overlay's exit),
+   with the former GlobalProtect rules below it disabled. The Network policy
+   card shows how many devices run the current policy.
 
 Keep the GlobalProtect gateway and its configuration for at least one month
 after the last wave.

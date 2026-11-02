@@ -41,6 +41,10 @@ func osForInstaller(name string) string {
 // downloadNameRe rejects anything but a bare filename (no path traversal).
 var downloadNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
+// windowsTrustScript is the name the trust-and-install script is served
+// under when an operator places it beside the MSI (go-live-windows.md).
+const windowsTrustScript = "trust-and-install-openidx-agent.ps1"
+
 // HandleAgentDownload backs GET /downloads/:file (public, no auth — like the
 // legacy APK route it replaces). It dispatches the manifest, the Android APK,
 // and per-OS installers from the downloads dir. Using one param route avoids a
@@ -161,6 +165,15 @@ func (h *AgentAPIHandler) handleAgentManifest(c *gin.Context) {
 	for osKey, name := range best {
 		sum, _ := sha256File(filepath.Join(dir, name))
 		out[osKey] = gin.H{"url": "/downloads/" + name, "filename": name, "sha256": sum}
+	}
+	// Until the MSI is signed with a public certificate, a Windows machine
+	// installs it through the trust script (agent/scripts/), which trusts the
+	// project's signing certificate, checks the MSI against this manifest and
+	// runs msiexec. The wizard shows that path when the script is served.
+	if win, ok := out["windows"]; ok {
+		if fi, err := os.Stat(filepath.Join(dir, windowsTrustScript)); err == nil && !fi.IsDir() {
+			win["trust_script"] = "/downloads/" + windowsTrustScript
+		}
 	}
 	// The Android APK historically lives at its own path; surface it if present
 	// and not already provided by the downloads dir.
