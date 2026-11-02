@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.48.0] - 2026-11-02
+
+### Added
+- **MFA policies can be scoped to groups.** A policy's conditions may name
+  groups; it then applies only to their members (matched by group name), so an
+  organization can bring units under a second-factor requirement one at a
+  time. The console's policy form offers the groups; the table shows which
+  groups a policy covers. Other conditions are still refused.
+- **Add a device shows the Windows trust-and-install path.** When the server
+  serves `trust-and-install-openidx-agent.ps1` beside the MSI, the agent
+  manifest's `windows` entry carries `trust_script`, and the wizard walks the
+  user through downloading it and running the one command for this server,
+  instead of a bare MSI download that ends in an "Unknown publisher" warning.
+- **My Devices shows an offline agent.** The person's own devices page marks an
+  agent that has stopped reporting within `AGENT_LIVENESS_TIMEOUT` as Offline,
+  the way Agent Fleet already does, so "compliant but not trusted" is visible
+  to the person it affects. `GET /api/v1/access/my-devices` now returns
+  `last_report_at` and `live` per agent.
+- **Rollout docs.** The Windows go-live runbook gains the DNS prerequisite
+  (controller and router names in corporate DNS, no hosts entries), a section
+  on running beside the VPN, the Windows posture checks to create, and the
+  group-scoped MFA step; the GlobalProtect guide names the firewall rule that
+  replaces block-direct on Windows; a Turkish end-user guide
+  (`docs/kullanici-rehberi-tr.md`) covers sign-in, MFA, the agent and access.
+
+### Fixed
+- **An expired sign-in no longer survives a reload.** The login page kept the
+  pending sign-in's id in the tab and resubmitted it on every reload, so once
+  it had expired the page answered "invalid or expired login session" forever.
+  `POST /oauth/login` now refuses it with `login_session_expired`, and the page
+  drops the id: a console sign-in starts over by itself, and a sign-in that
+  began in another app says to go back there and start again.
+
+### Security
+- **Dependency updates (2026-10-30 advisories).** Go toolchain 1.26.10
+  (GO-2026-6809, crypto/x509), go-jose v4.1.6 in the server and the agent
+  (CVE-2026-116587), DOMPurify 3.4.17 via swagger-ui-react
+  (GHSA-cg2g-xh64-v4q7, GHSA-mrv2-3pqr-j5jr), follow-redirects 1.16.2 via
+  axios (CVE-2026-111755), Vite 8.3.5 (GHSA-9jrq-w75r-8gcw and the other
+  8.2.x dev-server advisories), zod 4.6.7 via eslint-plugin-react-hooks
+  (GHSA-mrhx-c7xc-m3w5) and certifi 2026.10.18 in the conformance suite's
+  pins (GHSA-6q48-6c7w-9gw2).
+
 ## [1.47.1] - 2026-10-20
 
 ### Added
@@ -12255,7 +12298,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.47.1...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.48.0...HEAD
+[1.48.0]: https://github.com/mhmtgngr/openidx/compare/v1.47.1...v1.48.0
 [1.47.1]: https://github.com/mhmtgngr/openidx/compare/v1.47.0...v1.47.1
 [1.47.0]: https://github.com/mhmtgngr/openidx/compare/v1.46.0...v1.47.0
 [1.46.0]: https://github.com/mhmtgngr/openidx/compare/v1.45.0...v1.46.0
