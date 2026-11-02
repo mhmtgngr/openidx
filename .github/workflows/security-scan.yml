@@ -129,7 +129,7 @@ jobs:
       # what it found in the log.
       - name: Run Trivy vulnerability scanner (SARIF for the Security tab)
         if: steps.pull.outputs.available == 'true'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:main
           format: 'sarif'
@@ -142,7 +142,7 @@ jobs:
 
       - name: Run Trivy vulnerability scanner (the gate)
         if: steps.pull.outputs.available == 'true'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:main
           format: 'table'
@@ -243,7 +243,7 @@ jobs:
       # real failure.
       - name: Run Trivy filesystem scan (SARIF for the Security tab)
         if: always()
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -257,7 +257,7 @@ jobs:
 
       - name: Run Trivy filesystem scan (the gate)
         if: always()
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -343,7 +343,7 @@ jobs:
       # fixing one and discovering the next.
       - name: Run Trivy on package files (SARIF for the Security tab)
         if: always()
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: './web/admin-console'
@@ -357,7 +357,7 @@ jobs:
 
       - name: Run Trivy on package files (the gate)
         if: always()
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: './web/admin-console'
