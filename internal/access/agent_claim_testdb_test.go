@@ -173,4 +173,55 @@ func TestReenrolmentClaimsAnOwnerlessDeviceAndOnlyThat(t *testing.T) {
 			t.Errorf("owner after re-enrolments is %q, want alice (%s)", got, alice)
 		}
 	})
+
+	t.Run("the fleet names each device's owner and flags an unclaimed or refused one", func(t *testing.T) {
+		unclaimed := enrolled(t, byToken("win:fleet-unclaimed"))
+		owned := enrolled(t, byOAuth(alice, "win:fleet-owned"))
+		if _, err := db.Pool.Exec(ctx,
+			`UPDATE enrolled_agents SET auth_fail_count = 4, auth_failed_at = NOW() WHERE agent_id = $1`,
+			unclaimed.AgentID); err != nil {
+			t.Fatalf("mark refused: %v", err)
+		}
+
+		caller = alice
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/access/agents", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("list answered %d: %s", w.Code, w.Body.String())
+		}
+		var list []struct {
+			AgentID           string `json:"agent_id"`
+			OwnerUserID       string `json:"owner_user_id"`
+			OwnerUsername     string `json:"owner_username"`
+			CredentialRefused bool   `json:"credential_refused"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+			t.Fatalf("list is not JSON: %v", err)
+		}
+		seen := 0
+		for _, a := range list {
+			switch a.AgentID {
+			case unclaimed.AgentID:
+				seen++
+				if a.OwnerUserID != "" || a.OwnerUsername != "" {
+					t.Errorf("a token-enrolled device lists owner %q/%q, want none", a.OwnerUserID, a.OwnerUsername)
+				}
+				if !a.CredentialRefused {
+					t.Errorf("a device refused 4 times running is not flagged credential_refused")
+				}
+			case owned.AgentID:
+				seen++
+				if a.OwnerUserID != alice || a.OwnerUsername != "claim-alice" {
+					t.Errorf("owned device lists owner %q/%q, want %s/claim-alice", a.OwnerUserID, a.OwnerUsername, alice)
+				}
+				if a.CredentialRefused {
+					t.Errorf("a healthy device is flagged credential_refused")
+				}
+			}
+		}
+		if seen != 2 {
+			t.Fatalf("found %d of the 2 devices in the fleet list", seen)
+		}
+	})
 }

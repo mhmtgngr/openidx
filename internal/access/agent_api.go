@@ -2175,6 +2175,19 @@ type agentRecord struct {
 	// is absent when the rule is off.
 	LastReportAt *time.Time `json:"last_report_at"`
 	Live         *bool      `json:"live,omitempty"`
+	// OwnerUserID and OwnerUsername name the person the device belongs to:
+	// the one who enrolled it from their own session, or claimed it by
+	// enrolling it again. Both are empty for a device enrolled with a fleet
+	// token and never claimed ("unclaimed" in the console).
+	OwnerUserID   string `json:"owner_user_id"`
+	OwnerUsername string `json:"owner_username"`
+	// CredentialRefused is true while the device's last requests were refused
+	// 401 (its token no longer matches the row) and none has been accepted
+	// since; CredentialRefusedAt is the latest refusal. Such a device is not
+	// offline: it is reaching the server and being turned away, and enrolling
+	// it again fixes it.
+	CredentialRefused   bool       `json:"credential_refused"`
+	CredentialRefusedAt *time.Time `json:"credential_refused_at"`
 }
 
 // HandleListAgents returns a JSON array of all enrolled agents (operator tier).
@@ -2191,16 +2204,21 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
-	// This organization's fleet, not the installation's (v197).
+	// This organization's fleet, not the installation's (v197). The owner is
+	// joined within the same tenant: a user row of another organization is
+	// never named here, whatever an enrolment once wrote.
 	rows, err := h.db.Pool.Query(ctx, `
-		SELECT agent_id, device_id,
-		       COALESCE(metadata->>'hostname',''), COALESCE(platform, metadata->>'platform',''),
-		       status, compliance_status, compliance_score, last_seen_at, enrolled_at,
-		       tunnel_status, tunnel_last_seen, tunnel_policy_version, tunnel_policy_applied_at,
-		       last_report_at
-		FROM enrolled_agents
-		WHERE org_id = $1
-		ORDER BY last_seen_at DESC NULLS LAST, enrolled_at DESC
+		SELECT ea.agent_id, ea.device_id,
+		       COALESCE(ea.metadata->>'hostname',''), COALESCE(ea.platform, ea.metadata->>'platform',''),
+		       ea.status, ea.compliance_status, ea.compliance_score, ea.last_seen_at, ea.enrolled_at,
+		       ea.tunnel_status, ea.tunnel_last_seen, ea.tunnel_policy_version, ea.tunnel_policy_applied_at,
+		       ea.last_report_at,
+		       COALESCE(u.id::text, ''), COALESCE(u.username, ''),
+		       ea.auth_fail_count, ea.auth_failed_at
+		FROM enrolled_agents ea
+		LEFT JOIN users u ON u.id = ea.enrolled_by_user_id AND u.org_id = ea.org_id
+		WHERE ea.org_id = $1
+		ORDER BY ea.last_seen_at DESC NULLS LAST, ea.enrolled_at DESC
 	`, org.ID)
 	if err != nil {
 		h.logger.Error("HandleListAgents: failed to query enrolled_agents", zap.Error(err))
@@ -2226,6 +2244,7 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 	for rows.Next() {
 		var rec agentRecord
 		var tunnelRaw []byte
+		var authFailCount int
 		if scanErr := rows.Scan(
 			&rec.AgentID,
 			&rec.DeviceID,
@@ -2241,6 +2260,10 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 			&rec.TunnelPolicyVersion,
 			&rec.TunnelPolicyAppliedAt,
 			&rec.LastReportAt,
+			&rec.OwnerUserID,
+			&rec.OwnerUsername,
+			&authFailCount,
+			&rec.CredentialRefusedAt,
 		); scanErr != nil {
 			h.logger.Warn("HandleListAgents: failed to scan row", zap.Error(scanErr))
 			continue
@@ -2252,6 +2275,7 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 			}
 		}
 		rec.TunnelPolicyState = tunnelPolicyState(rec.TunnelPolicyVersion, rec.TunnelStatus != nil, current)
+		rec.CredentialRefused = credentialRefused(authFailCount, rec.Status)
 		if timeout > 0 {
 			live := rec.LastReportAt != nil && now.Sub(*rec.LastReportAt) <= timeout
 			rec.Live = &live

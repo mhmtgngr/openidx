@@ -235,3 +235,17 @@ func (h *AgentAPIHandler) clearAgentAuthFailures(ctx context.Context, agentID st
 		//orgscope:ignore the caller just proved the credential for this globally-unique agent_id; the row is its own
 		`UPDATE enrolled_agents SET auth_fail_count = 0 WHERE agent_id = $1 AND auth_fail_count <> 0`, agentID)
 }
+
+// credentialRefusedThreshold is how many refusals in a row the console needs
+// before it calls a device's credential refused rather than offline. Lower
+// than the audit's threshold: the console only describes the row, and a
+// device refused twice running is already not reporting.
+const credentialRefusedThreshold = 2
+
+// credentialRefused reports whether a device should be shown as one whose
+// credential the server refuses: a run of refusals with no accepted request
+// since, on a device that is not revoked (a revoked device is shown as
+// revoked).
+func credentialRefused(authFailCount int, status string) bool {
+	return authFailCount >= credentialRefusedThreshold && status != agentStatusRevoked
+}
