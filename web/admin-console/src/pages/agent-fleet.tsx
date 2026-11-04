@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
   Search, Smartphone, Tablet, Monitor, Server, CheckCircle, AlertTriangle,
-  ShieldCheck, Trash2, QrCode, Copy, MoreHorizontal, Download,
+  ShieldCheck, Trash2, QrCode, Copy, MoreHorizontal, Download, UserX,
 } from 'lucide-react'
 import { QRCodeCanvas } from 'qrcode.react'
 import { agentSilentMinutes, complianceTooltip, formatCompliancePercent } from '../lib/compliance'
@@ -58,6 +58,14 @@ interface AgentRecord {
   tunnel_policy_state?: string | null
   last_report_at?: string | null
   live?: boolean
+  // The person the device belongs to; empty for a device enrolled with a
+  // fleet token that nobody has claimed by enrolling it again.
+  owner_user_id?: string
+  owner_username?: string
+  // The server refuses the credential this device's agent holds: it is
+  // reaching the server and being turned away, not offline.
+  credential_refused?: boolean
+  credential_refused_at?: string | null
 }
 
 interface QrPayloadResponse {
@@ -97,6 +105,7 @@ export function AgentFleetPage() {
   const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [platformFilter, setPlatformFilter] = useState<string>('all')
+  const [ownerFilter, setOwnerFilter] = useState<'all' | 'unclaimed' | 'refused'>('all')
   const [confirmRevoke, setConfirmRevoke] = useState<AgentRecord | null>(null)
   const [qrOpen, setQrOpen] = useState(false)
   const [qrData, setQrData] = useState<QrPayloadResponse | null>(null)
@@ -159,9 +168,14 @@ export function AgentFleetPage() {
     const matchesSearch =
       a.agent_id.toLowerCase().includes(q) ||
       a.device_id.toLowerCase().includes(q) ||
-      (a.hostname?.toLowerCase().includes(q) ?? false)
+      (a.hostname?.toLowerCase().includes(q) ?? false) ||
+      (a.owner_username?.toLowerCase().includes(q) ?? false)
     const matchesPlatform = platformFilter === 'all' || a.platform === platformFilter
-    return matchesSearch && matchesPlatform
+    const matchesOwner =
+      ownerFilter === 'all' ||
+      (ownerFilter === 'unclaimed' && isUnclaimed(a)) ||
+      (ownerFilter === 'refused' && !!a.credential_refused)
+    return matchesSearch && matchesPlatform && matchesOwner
   })
 
   const counts = {
@@ -169,6 +183,7 @@ export function AgentFleetPage() {
     active: agents.filter((a) => a.status === 'active').length,
     pending: agents.filter((a) => a.status === 'pending').length,
     nonCompliant: agents.filter((a) => a.compliance_status === 'non_compliant').length,
+    attention: agents.filter((a) => isUnclaimed(a) || a.credential_refused).length,
   }
 
   function openQrDialog() {
@@ -196,11 +211,12 @@ export function AgentFleetPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <SummaryCard label={t('pages.agentFleet.summary.total')} value={counts.total} icon={<Smartphone className="h-5 w-5" />} />
         <SummaryCard label={t('pages.agentFleet.summary.active')} value={counts.active} icon={<CheckCircle className="h-5 w-5 text-green-600" />} />
         <SummaryCard label={t('pages.agentFleet.summary.pending')} value={counts.pending} icon={<AlertTriangle className="h-5 w-5 text-amber-600" />} />
         <SummaryCard label={t('pages.agentFleet.summary.nonCompliant')} value={counts.nonCompliant} icon={<ShieldCheck className="h-5 w-5 text-red-600" />} />
+        <SummaryCard label={t('pages.agentFleet.summary.attention')} value={counts.attention} icon={<UserX className="h-5 w-5 text-amber-600" />} />
       </div>
 
       <Card>
@@ -220,6 +236,16 @@ export function AgentFleetPage() {
               <option value="windows">Windows</option>
               <option value="android">Android</option>
               <option value="ios">iOS</option>
+            </select>
+            <select
+              aria-label={t('pages.agentFleet.ownerFilterLabel')}
+              value={ownerFilter}
+              onChange={(e) => setOwnerFilter(e.target.value as 'all' | 'unclaimed' | 'refused')}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="all">{t('pages.agentFleet.ownerFilterAll')}</option>
+              <option value="unclaimed">{t('pages.agentFleet.ownerFilterUnclaimed')}</option>
+              <option value="refused">{t('pages.agentFleet.ownerFilterRefused')}</option>
             </select>
             <div className="relative">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -242,6 +268,7 @@ export function AgentFleetPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>{t('pages.agentFleet.colAgent')}</TableHead>
+                  <TableHead>{t('pages.agentFleet.colOwner')}</TableHead>
                   <TableHead>{t('pages.agentFleet.colPlatform')}</TableHead>
                   <TableHead>{t('pages.agentFleet.colStatus')}</TableHead>
                   <TableHead>{t('pages.agentFleet.colCompliance')}</TableHead>
@@ -265,6 +292,9 @@ export function AgentFleetPage() {
                       </div>
                     </TableCell>
                     <TableCell>
+                      <OwnerCell agent={agent} />
+                    </TableCell>
+                    <TableCell>
                       <Badge variant="outline">
                         {agent.platform
                           ? `${agent.platform}${agent.form_factor ? ` · ${agent.form_factor}` : ''}`
@@ -277,7 +307,11 @@ export function AgentFleetPage() {
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-1">
                         <ComplianceBadge status={agent.compliance_status} score={agent.compliance_score} lastReportAt={agent.last_seen_at} />
-                        <OfflineBadge live={agent.live} lastReportAt={agent.last_report_at} />
+                        {agent.credential_refused ? (
+                          <CredentialRefusedBadge at={agent.credential_refused_at} />
+                        ) : (
+                          <OfflineBadge live={agent.live} lastReportAt={agent.last_report_at} />
+                        )}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -559,6 +593,45 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <Badge variant={variant as any}>
       {t(`pages.agentFleet.statuses.${status}`, { defaultValue: prettifyStatus(status) })}
+    </Badge>
+  )
+}
+
+// isUnclaimed is a device nobody owns: enrolled with a fleet token and never
+// enrolled again from a person's session. A revoked one is not listed as
+// unclaimed; there is nothing left to claim.
+function isUnclaimed(a: AgentRecord): boolean {
+  return !a.owner_user_id && a.status !== 'revoked'
+}
+
+// OwnerCell names the device's owner, or says nobody has claimed it and how
+// that changes: the person using it enrolls it again from My Devices.
+function OwnerCell({ agent }: { agent: AgentRecord }) {
+  const { t } = useTranslation()
+  if (agent.owner_username) {
+    return <span className="text-sm">{agent.owner_username}</span>
+  }
+  if (!isUnclaimed(agent)) return <span className="text-muted-foreground">—</span>
+  return (
+    <Badge variant="warning" title={t('pages.agentFleet.unclaimedHint')}>
+      {t('pages.agentFleet.unclaimed')}
+    </Badge>
+  )
+}
+
+// CredentialRefusedBadge marks a device whose agent's credential the server
+// refuses. It replaces "Offline": the device is reaching the server and being
+// turned away, and enrolling it again fixes it.
+function CredentialRefusedBadge({ at }: { at?: string | null }) {
+  const { t } = useTranslation()
+  return (
+    <Badge
+      variant="destructive"
+      title={t('pages.agentFleet.credentialRefusedHint', {
+        when: at ? new Date(at).toLocaleString() : '—',
+      })}
+    >
+      {t('pages.agentFleet.credentialRefused')}
     </Badge>
   )
 }

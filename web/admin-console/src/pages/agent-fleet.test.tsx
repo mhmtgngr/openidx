@@ -154,6 +154,54 @@ describe('AgentFleetPage', () => {
     expect(screen.queryByText('agt-001')).not.toBeInTheDocument()
   })
 
+  // A device enrolled with a fleet token belongs to no one until its user
+  // enrols it again; one whose credential is refused is reaching the server
+  // and being turned away. Neither is "offline", and the administrator needs
+  // to find both.
+  it('names the owner, flags an unclaimed device and a refused credential, and filters to them', async () => {
+    const user = userEvent.setup()
+    const owned = { ...activeAgent, owner_user_id: 'u-1', owner_username: 'mehmet' }
+    const unclaimed = { ...nonCompliantAgent, live: false, last_report_at: null }
+    const refused = {
+      ...pendingAgent,
+      agent_id: 'agt-004',
+      status: 'active',
+      owner_user_id: 'u-2',
+      owner_username: 'ayse',
+      credential_refused: true,
+      credential_refused_at: '2026-11-04T08:16:52Z',
+      live: false,
+      last_report_at: '2026-09-08T06:55:21Z',
+    }
+    vi.mocked(api.get).mockImplementation(routeFleet([owned, unclaimed, refused]))
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+
+    expect(await screen.findByText('mehmet')).toBeInTheDocument()
+    const unclaimedBadge = screen.getByText('Unclaimed', { selector: 'div,span' })
+    expect(unclaimedBadge.closest('[title]')).toHaveAttribute('title', expect.stringMatching(/fleet token/i))
+
+    const refusedBadge = screen.getByText(/credential refused · enroll again/i)
+    expect(refusedBadge.closest('[title]')).toHaveAttribute('title', expect.stringMatching(/not offline/i))
+    // The refused device is not also called offline.
+    expect(screen.getAllByText(/^offline ·/i)).toHaveLength(1)
+
+    expect(screen.getByText('Unclaimed or refused')).toBeInTheDocument()
+
+    await user.selectOptions(screen.getByLabelText(/filter by owner/i), 'unclaimed')
+    expect(screen.getByText('agt-003')).toBeInTheDocument()
+    expect(screen.queryByText('agt-001')).not.toBeInTheDocument()
+    expect(screen.queryByText('agt-004')).not.toBeInTheDocument()
+
+    await user.selectOptions(screen.getByLabelText(/filter by owner/i), 'refused')
+    expect(screen.getByText('agt-004')).toBeInTheDocument()
+    expect(screen.queryByText('agt-003')).not.toBeInTheDocument()
+
+    await user.selectOptions(screen.getByLabelText(/filter by owner/i), 'all')
+    await user.type(screen.getByPlaceholderText(/search hostname/i), 'ayse')
+    expect(screen.getByText('agt-004')).toBeInTheDocument()
+    expect(screen.queryByText('agt-001')).not.toBeInTheDocument()
+  })
+
   it('opens the posture & tier dialog and shows tier + checks', async () => {
     const user = userEvent.setup()
     // Route the posture endpoint; the agents list uses the default array mock.

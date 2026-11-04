@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+const mockNavigate = vi.fn()
+vi.mock('react-router-dom', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router-dom')>()
+  return { ...actual, useNavigate: () => mockNavigate }
+})
 
 vi.mock('../lib/api', () => ({
   api: {
@@ -164,5 +171,21 @@ describe('MyDevicesPage', () => {
     expect(offline.closest('[title]')).toHaveAttribute('title', expect.stringMatching(/not trusted until it reports again/i))
     expect(screen.getAllByText(/offline ·/i)).toHaveLength(1)
     expect(screen.getByText('agent-2')).toBeInTheDocument()
+  })
+
+  // A device whose credential the server refuses is reaching the server and
+  // being turned away. "Offline" would send the person looking at their
+  // network; the page says what fixes it and takes them there.
+  it('says a refused device needs enrolling again, not that it is offline, and offers the fix', async () => {
+    const user = userEvent.setup()
+    correlatedAgents = [{ ...silentAgent, ziti: { ...silentAgent.ziti, credential_refused: true } }]
+    render(<MyDevicesPage />, { wrapper: createWrapper() })
+
+    const badge = await screen.findByText(/not accepted · enroll again/i)
+    expect(badge.closest('[title]')).toHaveAttribute('title', expect.stringMatching(/nothing was revoked/i))
+    expect(screen.queryByText(/offline ·/i)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^enroll again$/i }))
+    expect(mockNavigate).toHaveBeenCalledWith('/add-device')
   })
 })
