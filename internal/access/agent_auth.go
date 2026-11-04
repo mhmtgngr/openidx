@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -231,9 +232,13 @@ func (h *AgentAPIHandler) clearAgentAuthFailures(ctx context.Context, agentID st
 	if agentID == "" || h.db == nil || h.db.Pool == nil {
 		return
 	}
-	_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+	if _, err := h.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore the caller just proved the credential for this globally-unique agent_id; the row is its own
-		`UPDATE enrolled_agents SET auth_fail_count = 0 WHERE agent_id = $1 AND auth_fail_count <> 0`, agentID)
+		`UPDATE enrolled_agents SET auth_fail_count = 0 WHERE agent_id = $1 AND auth_fail_count <> 0`, agentID); err != nil {
+		// The request is authenticated and proceeds; the cost is a count
+		// that reads high until the next accepted request resets it.
+		h.logger.Warn("could not reset the agent's refusal count", zap.String("agent_id", agentID), zap.Error(err))
+	}
 }
 
 // credentialRefusedThreshold is how many refusals in a row the console needs
