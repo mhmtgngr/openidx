@@ -80,6 +80,15 @@ Kurulum için bilgisayarda **yönetici** yetkisi gerekir.
 
 Kurulum bir kez yapılır. Ajan arka planda çalışır ve kendini günceller.
 
+**Kurulum ile cihazı sahiplenmek ayrı şeylerdir.** BT ajanı sizin yerinize,
+oturum açmadan kurduysa (örneğin toplu kurulumla), cihaz OpenIDX'e kayıtlıdır
+ama henüz *size* ait değildir: **My Devices** sayfanızda görünmez ve ağ
+kaynaklarına erişiminiz bu cihazın güvenliğinden yararlanamaz. Cihazı
+sahiplenmek için yukarıdaki 4. adımı o bilgisayarda bir kez yapın: OpenIDX'e
+giriş yapın (ikinci doğrulamayla), **My Devices → Add a device → Generate
+connect code → Open in app**. Ajanı yeniden kurmanız gerekmez; cihaz aynı
+kimlikle sizin olur.
+
 ## 4. Uygulamalara ve ağa erişim
 
 - **Web uygulamaları:** My Apps & Network'te uygulamanın kartına tıklayın.
@@ -96,7 +105,9 @@ ajan bir süredir rapor vermemiştir (bilgisayar kapalıydı, uykudaydı ya da
 ajan durmuş); ajan tekrar rapor verince erişim kendiliğinden geri gelir.
 **Non-compliant** yazıyorsa hangi kontrolün başarısız olduğu yanında yazar
 (örneğin güvenlik duvarı kapalı); düzeltince bir sonraki raporla erişim
-döner.
+döner. **Not accepted · enroll again** yazıyorsa cihaz sunucuya ulaşıyor ama
+sunucu kimliğini artık tanımıyor; hiçbir şey iptal edilmedi, cihazı yeniden
+kaydetmeniz yeterli (aşağıdaki tabloya bakın).
 
 ## 5. Sorun olursa
 
@@ -108,4 +119,7 @@ döner.
 | Telefon kayıp / değişti | BT'ye yazın: ikinci doğrulamanızı sıfırlar ya da geçiş kodu verir. |
 | "Device connected" hiç gelmedi | Betiği yönetici PowerShell'de mi çalıştırdınız? Görev çubuğunda OpenIDX simgesi var mı? Yoksa betiği yeniden çalıştırın. |
 | My Devices'ta Offline | Bilgisayar açık ve internete bağlıysa birkaç dakika bekleyin; geçmezse BT'ye cihaz adınızı yazın. |
+| My Devices'ta **Not accepted · enroll again**, ya da görev çubuğundaki OpenIDX menüsü "device: NOT ACCEPTED" diyor | O bilgisayarda OpenIDX menüsünden **Enroll this device again**'i seçin (ya da My Devices'ta **Enroll again** düğmesi), giriş yapın ve **Open in app**'e tıklayın. Yeniden başlatma gerekmez; birkaç dakika içinde cihaz yeniden rapor verir. |
+| Bilgisayarım My Devices'ta hiç görünmüyor | Ajan sizin yerinize kurulmuş olabilir. O bilgisayarda **Add a device → Open in app** ile sahiplenin (3. bölümün sonu). |
+| "This device is enrolled to another person" | Bilgisayar başka birine kayıtlı. BT'ye yazın; sizin olduğunu doğrulayıp kaydı taşır. |
 | Bir adrese ulaşamıyorum | VPN'i bağlayıp deneyin; çalışıyorsa adres henüz taşınmamıştır, BT'ye bildirin. |
