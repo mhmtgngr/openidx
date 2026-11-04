@@ -32,7 +32,8 @@ var deviceSchema = []string{
 		platform VARCHAR(32), management_mode VARCHAR(32),
 		compliance_status VARCHAR(20) DEFAULT 'unknown', compliance_score FLOAT DEFAULT 0,
 		last_seen_at TIMESTAMPTZ, last_report_at TIMESTAMPTZ, enrolled_at TIMESTAMPTZ DEFAULT NOW(),
-		enrolled_by_user_id UUID, known_device_id UUID)`,
+		enrolled_by_user_id UUID, known_device_id UUID,
+		auth_failed_at TIMESTAMPTZ, auth_fail_count INTEGER NOT NULL DEFAULT 0)`,
 	`CREATE TABLE IF NOT EXISTS agent_posture_results (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID, agent_id VARCHAR(64),
 		check_type VARCHAR(64), status VARCHAR(10), severity VARCHAR(10),
@@ -71,7 +72,7 @@ func TestUserDeviceCorrelation(t *testing.T) {
 		`INSERT INTO known_devices (id, user_id, org_id, fingerprint, name, device_type, trusted) VALUES ('` + iamKD + `','` + devUser + `','` + devOrg + `','browserhash','Dana Browser','desktop',false)`,
 		// An agent with no linked known_device (token-enrolled / legacy).
 		// Its agent last reported an hour ago: compliant, but not live.
-		`INSERT INTO enrolled_agents (org_id, agent_id, ziti_identity_id, status, platform, compliance_status, compliance_score, enrolled_by_user_id, known_device_id, last_report_at) VALUES ('` + devOrg + `','agent-ziti','zid-ziti','active','android','compliant',95,'` + devUser + `',NULL, NOW() - interval '1 hour')`,
+		`INSERT INTO enrolled_agents (org_id, agent_id, ziti_identity_id, status, platform, compliance_status, compliance_score, enrolled_by_user_id, known_device_id, last_report_at, auth_fail_count) VALUES ('` + devOrg + `','agent-ziti','zid-ziti','active','android','compliant',95,'` + devUser + `',NULL, NOW() - interval '1 hour', 3)`,
 		// Posture for the linked agent: one failing check.
 		`INSERT INTO agent_posture_results (org_id, agent_id, check_type, status, severity) VALUES ('` + devOrg + `','agent-linked','disk_encryption','fail','high')`,
 		`INSERT INTO agent_posture_results (org_id, agent_id, check_type, status, severity) VALUES ('` + devOrg + `','agent-linked','os_version','pass','low')`,
@@ -120,6 +121,9 @@ func TestUserDeviceCorrelation(t *testing.T) {
 	if linked.Ziti.LastReportAt == nil || linked.Ziti.Live == nil || !*linked.Ziti.Live {
 		t.Errorf("linked agent should be live: last_report_at=%v live=%v", linked.Ziti.LastReportAt, linked.Ziti.Live)
 	}
+	if linked.Ziti.CredentialRefused {
+		t.Errorf("the linked agent has no refusals and must not read as refused")
+	}
 
 	// IAM-only device: no Ziti side.
 	if iamOnly.IAM == nil || iamOnly.Ziti != nil {
@@ -132,6 +136,11 @@ func TestUserDeviceCorrelation(t *testing.T) {
 	// Compliant an hour ago is not trusted now: the page must be able to say so.
 	if zitiOnly.Ziti.Live == nil || *zitiOnly.Ziti.Live {
 		t.Errorf("ziti-only agent (last report 1h ago) should not be live: %v", zitiOnly.Ziti.Live)
+	}
+	// Its last requests were refused: the page says "enroll again", not just
+	// "offline".
+	if !zitiOnly.Ziti.CredentialRefused {
+		t.Errorf("ziti-only agent with 3 refusals in a row should read as credential refused")
 	}
 }
 

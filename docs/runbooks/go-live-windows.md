@@ -118,12 +118,27 @@ Mark network resources and privileged targets' applications
 `require_device_trust` (resource conditions). Each pilot user enrols a factor,
 installs the agent and enrols the device.
 
+**Enrolling a machine and claiming it are two steps.** Installing with
+`-Token` (a fleet token) enrols the *machine*: it reports posture, but it
+belongs to no one. Agent Fleet shows it as **Unclaimed**; it is in nobody's
+My Devices, and its posture does not reach the person's network access,
+because device trust follows the person who enrolled the device. The person
+claims it by signing in on that PC (with MFA) and choosing **My Devices →
+Add a device → Open in app**: the agent enrols again under the same agent id,
+and the device becomes theirs. Do this for every token-installed device
+before wave 2. A person cannot claim a device someone else owns (the
+enrolment is refused 409 and audited as `agent.enroll_denied`); moving one is
+an administrator's change. Installing without `-Token` and enrolling from
+Add a device does both steps at once.
+
 Watch, daily:
 
 - **Security → Enforcement**: would-deny counts, including **Live device**.
-- **Agent Fleet**: compliance, tunnel, **Offline** badges.
+- **Agent Fleet**: compliance, tunnel, **Offline** badges, and the
+  **Unclaimed or refused** card (filter the list by owner to see which).
 - Alerts `OpenIDXAgentsMostlySilent`, `OpenIDXAgentTunnelDown`.
-- Audit: `agent.stale`, `access.device.would_deny`, `pam.device.would_deny`.
+- Audit: `agent.stale`, `access.device.would_deny`, `pam.device.would_deny`,
+  `agent.auth_failed_persistent`.
 
 Proof to collect before wave 2: stop the agent service on one pilot laptop;
 within about 11 minutes it shows Offline, loses `#device-trusted`, its overlay
@@ -162,6 +177,9 @@ Close the observe window (enforce-rollout.md step 3).
 | Lost phone / authenticator | **MFA Management → users → Reset MFA** on their row; they enrol again from Profile. |
 | Grace period over, no factor | Issue a bypass code (**MFA Bypass Codes** page), then they enrol. |
 | Laptop off for a while | Nothing: the next report restores trust. Meanwhile **My Devices** shows the device as Offline, so the person can see why. |
+| **Credential refused · enroll again** (Agent Fleet) / **Not accepted** (My Devices, tray) | The device reaches the server but its agent's credential no longer matches (it was enrolled again elsewhere, or its record was replaced). Nothing was revoked. On that PC: the tray's **Enroll this device again**, or My Devices → **Enroll again**, then **Open in app**. The running service picks the new credential up on its next cycle; no reboot. The audit has one `agent.auth_failed_persistent` record per run of refusals. |
+| Device shows **Unclaimed** | Enrolled with a fleet token and never claimed. Its user signs in on it and does **Add a device → Open in app**. |
+| "This device is enrolled to another person" (409) | The device already belongs to someone else in the organization. Revoke it there first if it has really changed hands, then enrol it again. |
 | Device non-compliant | Agent Fleet → the device's posture shows the failing check. |
 | Device lost or stolen | Revoke it (user's devices page or Agent Fleet): sessions, identity and tokens go. |
 | Person leaves | Kill switch with disable: sessions, tokens and devices are cut. |

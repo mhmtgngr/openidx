@@ -43,6 +43,16 @@ type EnrollResponse struct {
 // improve it.
 var ErrAgentRevoked = errors.New("this device has been revoked")
 
+// ErrAgentAuthInvalid is returned when the server does not accept this
+// device's credential: 401 on /agent/config or /agent/report. The agent row
+// is not revoked; the token the device holds no longer matches it (it was
+// re-issued to another enrolment of the same device, or the row was
+// replaced). Unlike a network failure, retrying never fixes it; unlike a
+// revoke, the person at the device can fix it by enrolling again. One 401 can
+// be a passing fault, so the agent treats it as a state only after several in
+// a row (agent.authFailThreshold).
+var ErrAgentAuthInvalid = errors.New("the server does not accept this device's credential")
+
 // Client is an HTTP client for communicating with the OpenIDX access API.
 type Client struct {
 	baseURL    string
@@ -153,6 +163,9 @@ func (c *Client) ReportResultsResponse(data []byte) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("report request: %w", ErrAgentAuthInvalid)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("report request failed with status %d", resp.StatusCode)
 	}
@@ -183,6 +196,9 @@ func (c *Client) GetConfig() ([]byte, error) {
 
 	if resp.StatusCode == http.StatusForbidden {
 		return nil, ErrAgentRevoked
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, ErrAgentAuthInvalid
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("config request failed with status %d", resp.StatusCode)

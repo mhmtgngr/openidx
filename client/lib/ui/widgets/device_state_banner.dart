@@ -133,6 +133,19 @@ class DeviceStateBanner extends StatelessWidget {
           background: scheme.errorContainer,
           foreground: scheme.onErrorContainer,
         );
+      case 'credential_invalid':
+        // The server answered and refused this device's credential. Not
+        // revoked, and not a network problem: enrolling again fixes it.
+        return _BannerView(
+          icon: Icons.key_off,
+          title: 'This device needs to be enrolled again',
+          detail:
+              'The server no longer accepts this device\'s credential, so it is not reporting and has no device trust.',
+          next:
+              'Sign in to the console, open My Devices → Add a device, and enrol this device with the new code.',
+          background: scheme.errorContainer,
+          foreground: scheme.onErrorContainer,
+        );
       default:
         // "unknown": the server could not be asked. Never render this as a
         // refusal — the device may be perfectly fine and simply offline.

@@ -18,6 +18,8 @@ func composeStatus(signedIn, serverKnown bool, st *ipc.Status) string {
 	switch {
 	case st != nil && st.Revoked:
 		return signPart + " · device: REVOKED by an administrator"
+	case needsReEnrollment(st):
+		return signPart + " · device: NOT ACCEPTED · enroll it again"
 	case st != nil && st.Enrolled:
 		dev := "device: enrolled"
 		if st.ZitiEnrolled {

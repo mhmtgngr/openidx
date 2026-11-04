@@ -78,6 +78,24 @@ void main() {
     expect(find.textContaining('sign-in have both ended'), findsOneWidget);
   });
 
+  testWidgets('a refused credential says to enrol again, not that it was revoked',
+      (tester) async {
+    await _pump(
+      tester,
+      const DeviceState(
+        enrolled: true,
+        state: 'credential_invalid',
+        deviceTrusted: false,
+        serverReachable: true,
+      ),
+    );
+
+    expect(find.text('This device needs to be enrolled again'), findsOneWidget);
+    expect(find.textContaining('Add a device'), findsOneWidget);
+    expect(find.textContaining('revoked'), findsNothing);
+    expect(find.text('Cannot check with the server'), findsNothing);
+  });
+
   testWidgets('an unreachable server is not rendered as a refusal',
       (tester) async {
     await _pump(

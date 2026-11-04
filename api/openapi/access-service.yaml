@@ -3711,6 +3711,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >-
+            The token came from a person's enrolment session and the device
+            fingerprint names a device another person in the organization owns
+            (`agent_owned_by_another_user`); nothing is minted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/ServerError'
 
@@ -3724,6 +3733,9 @@ paths:
         enrolled in the caller's organization is re-enrolled under the same
         agent with a new token, unless an administrator revoked that agent:
         then the answer is 403 with code agent_revoked and nothing is minted.
+        A device nobody owns (enrolled with a fleet token) becomes the
+        caller's; a device another person owns is refused 409 with code
+        agent_owned_by_another_user.
       operationId: handleEnrollOAuth
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleEnrollOAuth
       requestBody:
@@ -3750,6 +3762,14 @@ paths:
             The token lacks the agent.enroll scope (`insufficient_scope`), or the
             device fingerprint names an agent an administrator revoked
             (`agent_revoked`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >-
+            The device fingerprint names a device another person in the
+            organization owns (`agent_owned_by_another_user`); nothing is minted
           content:
             application/json:
               schema:
@@ -4103,6 +4123,11 @@ paths:
         tunnel status. last_report_at is the agent's last report and live
         whether it falls within AGENT_LIVENESS_TIMEOUT (a device that is not
         live is not trusted); live is omitted when that rule is off.
+        owner_user_id and owner_username name the person the device belongs
+        to (empty for a device enrolled with a fleet token and never claimed).
+        credential_refused is true while the server refuses the device's
+        agent credential (two or more 401s in a row, none accepted since, not
+        revoked), with credential_refused_at the latest refusal.
       operationId: handleListAgents
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleListAgents
       responses:

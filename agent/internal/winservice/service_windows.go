@@ -34,7 +34,7 @@ func (h *handler) statusProvider() ipc.Status {
 			zitiUp = true
 		}
 	}
-	var rsActive, rsControlled, revoked bool
+	var rsActive, rsControlled, revoked, authInvalid bool
 	var posture *agent.PostureSummary
 	var tun *tunnel.Status
 	var tunDetail string
@@ -42,6 +42,7 @@ func (h *handler) statusProvider() ipc.Status {
 	if h.agent != nil {
 		rsActive, rsControlled = h.agent.RemoteSupportState()
 		revoked = h.agent.Revoked()
+		authInvalid = h.agent.AuthInvalid()
 		posture = h.agent.LastPosture()
 		tun = h.agent.TunnelStatus()
 		tunDetail = h.agent.TunnelDetail()
@@ -54,6 +55,7 @@ func (h *handler) statusProvider() ipc.Status {
 		ServerURL:               cfg.ServerURL,
 		ZitiEnrolled:            zitiUp,
 		Revoked:                 revoked,
+		AuthInvalid:             authInvalid,
 		RemoteSupportActive:     rsActive,
 		RemoteSupportControlled: rsControlled,
 		Tunnel:                  tun,

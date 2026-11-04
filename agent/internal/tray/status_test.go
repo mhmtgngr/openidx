@@ -19,6 +19,8 @@ func TestComposeStatus(t *testing.T) {
 		{"enrolled, signed out", false, true, &ipc.Status{Enrolled: true}, "Not signed in · device: enrolled"},
 		{"enrolled with ziti, signed in", true, true, &ipc.Status{Enrolled: true, ZitiEnrolled: true}, "Signed in · device: enrolled · ziti"},
 		{"revoked", true, true, &ipc.Status{Enrolled: true, Revoked: true}, "Signed in · device: REVOKED by an administrator"},
+		{"credential refused", false, true, &ipc.Status{Enrolled: true, AuthInvalid: true}, "Not signed in · device: NOT ACCEPTED · enroll it again"},
+		{"revoked wins over a refused credential", true, true, &ipc.Status{Enrolled: true, Revoked: true, AuthInvalid: true}, "Signed in · device: REVOKED by an administrator"},
 		{"server known, service not answering", true, true, nil, "Signed in · device: unknown"},
 		{"enrolled, a critical check fails", true, true, &ipc.Status{Enrolled: true, ComplianceStatus: "non_compliant",
 			Issues: []ipc.PostureIssue{{Check: "disk_encryption", Severity: "critical", Status: "fail"}}},

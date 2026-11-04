@@ -33,6 +33,10 @@ type Status struct {
 	// Revoked is true once the server has refused this device as revoked by
 	// an administrator. The tray shows it and offers no connections.
 	Revoked bool `json:"revoked,omitempty"`
+	// AuthInvalid is true once the server has refused this device's credential
+	// (401) on several syncs in a row. Not revoked: enrolling the device again
+	// fixes it, and the tray says how.
+	AuthInvalid bool `json:"auth_invalid,omitempty"`
 	// ComplianceStatus is the device's own reading of its latest posture
 	// cycle: non_compliant (a critical check failed), at_risk (a high one
 	// did), compliant, or unknown. Empty before the first cycle.

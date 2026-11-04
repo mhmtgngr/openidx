@@ -70,6 +70,10 @@ type DeviceZiti struct {
 	// when the rule is off.
 	LastReportAt *time.Time `json:"last_report_at,omitempty"`
 	Live         *bool      `json:"live,omitempty"`
+	// CredentialRefused is true while the server refuses the credential the
+	// device's agent holds (credentialRefused): not offline, but turned away,
+	// and enrolling the device again fixes it.
+	CredentialRefused bool `json:"credential_refused,omitempty"`
 }
 
 // markLive fills DeviceZiti.Live from the liveness timeout, the same rule
@@ -181,7 +185,7 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 		        ea.agent_id, COALESCE(ea.ziti_identity_id,''), COALESCE(ea.status,''),
 		        COALESCE(ea.platform,''), COALESCE(ea.management_mode,''),
 		        COALESCE(ea.compliance_status,'unknown'), COALESCE(ea.compliance_score,0),
-		        ea.last_seen_at, ea.last_report_at
+		        ea.last_seen_at, ea.last_report_at, COALESCE(ea.auth_fail_count, 0)
 		   FROM known_devices kd
 		   LEFT JOIN enrolled_agents ea ON ea.known_device_id = kd.id
 		  WHERE kd.user_id = $1 AND kd.org_id = $2
@@ -196,11 +200,12 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 		var agentID, zitiID, agentStatus, platform, mgmtMode, compStatus *string
 		var compScore *float64
 		var agentLastSeen, agentLastReport *time.Time
+		var authFails int
 		if err := rows.Scan(
 			&iam.KnownDeviceID, &iam.Fingerprint, &iam.Name, &iam.DeviceType,
 			&iam.IPAddress, &iam.Trusted, &iam.LastSeenAt,
 			&agentID, &zitiID, &agentStatus, &platform, &mgmtMode,
-			&compStatus, &compScore, &agentLastSeen, &agentLastReport,
+			&compStatus, &compScore, &agentLastSeen, &agentLastReport, &authFails,
 		); err != nil {
 			rows.Close()
 			return nil, err
@@ -221,6 +226,7 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 				LastSeenAt:       agentLastSeen,
 				LastReportAt:     agentLastReport,
 			}
+			z.CredentialRefused = credentialRefused(authFails, z.Status)
 			s.markLive(z, now)
 			entry.Ziti = z
 			agentIDs = append(agentIDs, *agentID)
@@ -237,7 +243,8 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 	aRows, err := s.db.Pool.Query(ctx,
 		`SELECT agent_id, COALESCE(ziti_identity_id,''), COALESCE(status,''),
 		        COALESCE(platform,''), COALESCE(management_mode,''),
-		        COALESCE(compliance_status,'unknown'), COALESCE(compliance_score,0), last_seen_at, last_report_at
+		        COALESCE(compliance_status,'unknown'), COALESCE(compliance_score,0), last_seen_at, last_report_at,
+		        auth_fail_count
 		   FROM enrolled_agents
 		  WHERE enrolled_by_user_id = $1 AND org_id = $2 AND known_device_id IS NULL
 		  ORDER BY enrolled_at DESC`, userID, orgID)
@@ -246,11 +253,13 @@ func (s *Service) collectUserDevices(ctx context.Context, orgID, userID string) 
 	}
 	for aRows.Next() {
 		z := &DeviceZiti{Posture: []DevicePostureSummary{}}
+		var authFails int
 		if err := aRows.Scan(&z.AgentID, &z.ZitiIdentityID, &z.Status, &z.Platform,
-			&z.ManagementMode, &z.ComplianceStatus, &z.ComplianceScore, &z.LastSeenAt, &z.LastReportAt); err != nil {
+			&z.ManagementMode, &z.ComplianceStatus, &z.ComplianceScore, &z.LastSeenAt, &z.LastReportAt, &authFails); err != nil {
 			aRows.Close()
 			return nil, err
 		}
+		z.CredentialRefused = credentialRefused(authFails, z.Status)
 		s.markLive(z, now)
 		entries = append(entries, UserDeviceEntry{Source: "ziti", Ziti: z})
 		agentIDs = append(agentIDs, z.AgentID)

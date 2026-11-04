@@ -81,6 +81,7 @@ interface CorrelatedDevice {
     posture: DevicePostureSummary[]
     last_report_at?: string | null
     live?: boolean
+    credential_refused?: boolean
   }
 }
 
@@ -342,7 +343,13 @@ export function MyDevicesPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium truncate">{d.iam?.name || z.agent_id}</span>
                       {z.platform && <Badge variant="secondary" className="text-xs">{z.platform}</Badge>}
-                      <OfflineBadge live={z.live} lastReportAt={z.last_report_at} />
+                      {z.credential_refused ? (
+                        <Badge variant="destructive" className="text-xs" title={t('pages.myDevices.agents.credentialRefusedHint')}>
+                          {t('pages.myDevices.agents.credentialRefused')}
+                        </Badge>
+                      ) : (
+                        <OfflineBadge live={z.live} lastReportAt={z.last_report_at} />
+                      )}
                       <Badge variant="outline" className={`text-xs ${compliant
                         ? 'bg-green-50 text-green-700 border-green-200'
                         : z.compliance_status === 'non_compliant'
@@ -357,6 +364,14 @@ export function MyDevicesPage() {
                         </Badge>
                       )}
                     </div>
+                    {z.credential_refused && (
+                      <div className="flex flex-wrap items-center gap-2 text-sm">
+                        <span className="text-muted-foreground">{t('pages.myDevices.agents.credentialRefusedFix')}</span>
+                        <Button size="sm" variant="outline" onClick={() => navigate('/add-device')}>
+                          {t('pages.myDevices.agents.enrollAgain')}
+                        </Button>
+                      </div>
+                    )}
                     {failing.length > 0 && (
                       <div className="flex flex-wrap gap-1">
                         {failing.map((p, j) => (
