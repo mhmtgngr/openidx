@@ -68,6 +68,15 @@ type Agent struct {
 	// (a re-enrolled device, after the service restarts with its new token).
 	revoked atomic.Bool
 
+	// authFails counts the config syncs in a row the server answered 401: it
+	// does not accept the credential this device holds. authInvalid is set once
+	// that count reaches authFailThreshold. Unlike a revoke, the device can fix
+	// it itself by enrolling again; unlike an unreachable server, retrying
+	// never will. A device left in this state used to report into the void for
+	// months while its tray said "enrolled".
+	authFails   atomic.Int32
+	authInvalid atomic.Bool
+
 	// RemoteSupportOnly makes RunOnce poll the server's config, so a pending
 	// remote-support session is noticed and answered, and do nothing else: no
 	// posture check runs and no report is posted. The Windows TRAY sets it.
@@ -223,6 +232,12 @@ func (a *Agent) LoadPlugins() {
 // and logs a warning.
 func (a *Agent) SyncConfig(ctx context.Context) error {
 	data, err := a.client.GetConfig()
+	if errors.Is(err, transport.ErrAgentAuthInvalid) && a.reloadIfReenrolled() {
+		// The device was enrolled again while this process ran (a code or
+		// link enrolment: the service is already running, so nothing restarts
+		// it). Ask again with the credential that enrolment wrote.
+		data, err = a.client.GetConfig()
+	}
 	if err != nil {
 		def := DefaultServerConfig()
 		a.serverCfg = &def
@@ -236,11 +251,25 @@ func (a *Agent) SyncConfig(ctx context.Context) error {
 			}
 			return fmt.Errorf("fetching server config: %w", err)
 		}
+		if errors.Is(err, transport.ErrAgentAuthInvalid) {
+			// One 401 may be a passing fault (a restore, a racing re-enrol);
+			// several in a row are a state, said once.
+			if n := a.authFails.Add(1); n >= authFailThreshold && !a.authInvalid.Swap(true) {
+				a.logger.Error("the server no longer accepts this device's credential; "+
+					"posture reporting stops until the device is enrolled again "+
+					"(My Devices -> Add a device)", zap.Int32("refusals_in_a_row", n))
+			}
+			return fmt.Errorf("fetching server config: %w", err)
+		}
 		a.logger.Warn("failed to fetch server config, using defaults", zap.Error(err))
 		return fmt.Errorf("fetching server config: %w", err)
 	}
 	if a.revoked.Swap(false) {
 		a.logger.Info("the server accepts this device again; posture reporting resumes")
+	}
+	a.authFails.Store(0)
+	if a.authInvalid.Swap(false) {
+		a.logger.Info("the server accepts this device's credential again; posture reporting resumes")
 	}
 
 	var cfg ServerConfig
@@ -371,8 +400,9 @@ func (a *Agent) RunOnce(ctx context.Context) error {
 		// session to processRemoteSupportConsent. Posture is the service's.
 		return nil
 	}
-	if a.revoked.Load() {
-		// A report from a revoked device is refused with the same 403; running
+	if a.revoked.Load() || a.authInvalid.Load() {
+		// A report from a revoked device is refused with the same 403, and one
+		// from a device whose credential is refused with the same 401; running
 		// the checks for it is wasted work and a second error line per cycle.
 		return nil
 	}
@@ -430,6 +460,54 @@ func (a *Agent) RunOnce(ctx context.Context) error {
 // pipe, so the person at the device is told rather than left with a menu that
 // looks signed in and connections that never open.
 func (a *Agent) Revoked() bool { return a.revoked.Load() }
+
+// authFailThreshold is how many config syncs in a row must be refused 401
+// before the device calls its credential invalid. At the default hourly
+// interval that is a few hours, which rides out a server restore or a racing
+// re-enrolment and still tells the person the same day.
+const authFailThreshold = 3
+
+// AuthInvalid reports whether the server has refused this device's credential
+// on authFailThreshold config syncs in a row. The service passes it to the
+// tray, which tells the person to enroll the device again.
+func (a *Agent) AuthInvalid() bool { return a.authInvalid.Load() }
+
+// reloadIfReenrolled re-reads agent.json and, when it now holds a different
+// credential than this process started with, switches to it. It reports
+// whether it switched.
+//
+// The running service read agent.json once. An enrolment made while it runs,
+// from a code or a link (the way a person fixes a refused credential), writes
+// a new token to the file, and "openidx-agent enroll" only starts a service
+// that is stopped. Without this the service kept presenting the old token, was
+// refused, and the device stayed broken until a reboot. It runs only after a
+// 401, so a healthy device never re-reads the file.
+//
+// The service sets DisableRemoteSupport, so no other goroutine of it uses the
+// client; SyncConfig, the only caller, runs on the agent's own loop. Any other
+// process (the tray, a foreground "run") may have a remote-support stream on
+// the client, so it never swaps it; restarting it picks the new file up.
+func (a *Agent) reloadIfReenrolled() bool {
+	if !a.DisableRemoteSupport {
+		return false
+	}
+	cfg, err := LoadConfig(a.configDir)
+	if err != nil || cfg == nil || cfg.AgentID == "" || cfg.AuthToken == "" {
+		return false
+	}
+	if cfg.AuthToken == a.config.AuthToken && cfg.AgentID == a.config.AgentID {
+		return false
+	}
+	a.config = cfg
+	a.client = transport.NewTransport(cfg.ServerURL, cfg.AuthToken, cfg.AgentID,
+		cfg.ZitiIdentityFile, cfg.ZitiServiceName, a.logger)
+	if a.deviceKey != nil {
+		transport.SetSigner(a.client, devicekey.Signer{Key: a.deviceKey, AgentID: cfg.AgentID})
+	}
+	a.logger.Info("agent.json holds a new enrolment; using its credential",
+		zap.String("agent_id", cfg.AgentID))
+	return true
+}
 
 // Run executes an initial RunOnce cycle and then repeats on the interval
 // specified by serverCfg.ReportInterval. It blocks until ctx is cancelled.

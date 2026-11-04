@@ -34,8 +34,9 @@ type deviceStatePayload struct {
 	// Enrolled is local truth: is there an agent identity on this device at all.
 	Enrolled bool `json:"enrolled"`
 	// State is the server's word: pending, active, suspended, revoked — or
-	// "not_enrolled" when there is nothing to ask about, and "unknown" when the
-	// server could not be reached.
+	// "not_enrolled" when there is nothing to ask about, "credential_invalid"
+	// when the server refuses the credential this device holds (enroll again),
+	// and "unknown" when the server could not be reached.
 	State string `json:"state"`
 	// DeviceTrusted is the IAM device-trust flag the overlay's #device-trusted
 	// attribute follows. False whenever State is not known to be active.
@@ -92,6 +93,17 @@ func (e *Engine) DeviceState() (string, error) {
 				Enrolled:        true,
 				State:           "revoked",
 				ServerReachable: true,
+				CheckedAt:       now,
+			})
+		}
+		if errors.Is(err, transport.ErrAgentAuthInvalid) {
+			// The server answered and does not accept this credential. Not a
+			// network problem: the user has to enroll this device again.
+			return toJSON(deviceStatePayload{
+				Enrolled:        true,
+				State:           "credential_invalid",
+				ServerReachable: true,
+				Error:           err.Error(),
 				CheckedAt:       now,
 			})
 		}

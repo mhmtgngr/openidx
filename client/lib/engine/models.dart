@@ -93,6 +93,9 @@ class DeviceState {
 
   /// True when an administrator has taken this device off the fleet.
   bool get revoked => state == 'revoked';
+
+  /// True when the server refuses this device's credential: enrol it again.
+  bool get credentialInvalid => state == 'credential_invalid';
 }
 
 /// `GET /status`

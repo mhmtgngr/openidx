@@ -34,12 +34,15 @@ type app struct {
 	srvMu     sync.RWMutex
 	consent   *consentGate
 
-	mBanner    *systray.MenuItem
-	mStatus    *systray.MenuItem
-	mSignIn    *systray.MenuItem
-	mSignOut   *systray.MenuItem
-	mConnRoot  *systray.MenuItem
-	mHello     *systray.MenuItem
+	mBanner   *systray.MenuItem
+	mStatus   *systray.MenuItem
+	mSignIn   *systray.MenuItem
+	mSignOut  *systray.MenuItem
+	mConnRoot *systray.MenuItem
+	mHello    *systray.MenuItem
+	// mReEnroll opens Add a device when the server refuses this device's
+	// credential; hidden otherwise.
+	mReEnroll  *systray.MenuItem
 	mAutostart *systray.MenuItem
 	mHealth    *systray.MenuItem
 	mNetwork   *systray.MenuItem
@@ -110,6 +113,9 @@ func (a *app) onReady() {
 
 	a.mStatus = systray.AddMenuItem("Not signed in", "")
 	a.mStatus.Disable()
+	a.mReEnroll = systray.AddMenuItem("Enroll this device again",
+		"The server no longer accepts this device's credential; enroll it again from the console")
+	a.mReEnroll.Hide()
 	systray.AddSeparator()
 	a.mSignIn = systray.AddMenuItem("Sign in", "Sign in to OpenIDX")
 	a.mSignOut = systray.AddMenuItem("Sign out", "Sign out")
@@ -294,6 +300,14 @@ func (a *app) updateHealth(st *ipc.Status) {
 	a.mu.Unlock()
 	if becameBlocked(prev, st) {
 		go a.tell(launchRefusal(st))
+	}
+	if needsReEnrollment(st) {
+		a.mReEnroll.Show()
+	} else {
+		a.mReEnroll.Hide()
+	}
+	if becameAuthInvalid(prev, st) {
+		go a.tell(reEnrollMessage)
 	}
 }
 
@@ -492,6 +506,8 @@ func (a *app) loop(mQuit *systray.MenuItem) {
 			a.signOut()
 		case <-a.mHello.ClickedCh:
 			go a.setUpHello()
+		case <-a.mReEnroll.ClickedCh:
+			go a.reEnroll()
 		case <-mQuit.ClickedCh:
 			systray.Quit()
 			return
@@ -571,6 +587,23 @@ func (a *app) setUpHello() {
 }
 
 func (a *app) signIn() { a.signInWith(sso.LoginOptions{}) }
+
+// reEnroll opens the console's Add a device page. The browser signs the
+// person in (with MFA) if it has no session; "Open in app" there hands a
+// fresh code to this agent, whose enrolment replaces the refused credential
+// and makes the device that person's. The service picks the new credential
+// up on its next sync, without a restart.
+func (a *app) reEnroll() {
+	url := addDeviceURL(a.server())
+	if url == "" {
+		a.tell(notEnrolledMessage)
+		return
+	}
+	if err := sso.OpenURL(url); err != nil {
+		a.logger.Warn("tray: could not open the Add a device page", zap.Error(err))
+		a.tell("The browser could not be opened.\n\nOpen this page yourself:\n" + url)
+	}
+}
 
 func (a *app) signInWith(opts sso.LoginOptions) {
 	if a.server() == "" {
