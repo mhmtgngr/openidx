@@ -160,9 +160,11 @@ func (h *AgentAPIHandler) requireEnrolledAgent(c *gin.Context) (string, bool) {
 		h.logAuditEvent("agent.auth_failed", agentID, "denied", "invalid agent credentials")
 		h.logAuditEventToDB(c.Request.Context(), "agent.auth_failed", agentID, "denied",
 			"invalid agent credentials")
+		h.recordAgentAuthFailure(c.Request.Context(), agentID)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid agent credentials"})
 		return "", false
 	}
+	h.clearAgentAuthFailures(c.Request.Context(), agentID)
 	if orgID != "" {
 		c.Request = c.Request.WithContext(orgctx.With(c.Request.Context(), orgctx.Org{ID: orgID}))
 	}
@@ -178,4 +180,58 @@ func orgIDFrom(ctx context.Context) string {
 		return ""
 	}
 	return org.ID
+}
+
+// authFailPersistentThreshold is the run of refused requests after which the
+// refusal is a state worth one record of its own. A running agent asks for its
+// config and posts a report each cycle, so this is a few cycles: it rides out a
+// racing re-enrolment and still names the device the same day.
+const authFailPersistentThreshold = 6
+
+// recordAgentAuthFailure counts a refused request against the row the caller
+// named, and writes agent.auth_failed_persistent once, when the run of refusals
+// first reaches authFailPersistentThreshold.
+//
+// Each refusal was already audited as agent.auth_failed, hourly, forever; a
+// device whose credential had drifted was a stream of identical records nobody
+// read, and nothing on the row said so. Only an agent_id that names a row is
+// counted, under the row's own tenant: a probe with an invented id writes
+// nothing here. Best-effort: the 401 is the answer whatever happens below.
+func (h *AgentAPIHandler) recordAgentAuthFailure(ctx context.Context, agentID string) {
+	if agentID == "" || h.db == nil || h.db.Pool == nil {
+		return
+	}
+	var orgID string
+	var count int
+	//orgscope:ignore keyed by the globally-unique agent_id before any tenant is resolvable, as verifyEnrolledAgent; the row's own org_id is returned and scopes the audit record
+	err := h.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx), `
+		UPDATE enrolled_agents
+		   SET auth_failed_at = NOW(), auth_fail_count = auth_fail_count + 1
+		 WHERE agent_id = $1 AND status <> $2
+		RETURNING org_id::text, auth_fail_count`, agentID, agentStatusRevoked).Scan(&orgID, &count)
+	if err != nil {
+		return // no such agent, or a revoked one (answered 403 elsewhere)
+	}
+	if count != authFailPersistentThreshold {
+		return
+	}
+	actx := ctx
+	if orgID != "" {
+		actx = orgctx.With(ctx, orgctx.Org{ID: orgID})
+	}
+	detail := "the server has refused this device's credential on consecutive requests; " +
+		"it is not reporting and has no device trust until it is enrolled again"
+	h.logAuditEvent("agent.auth_failed_persistent", agentID, "denied", detail)
+	h.logAuditEventToDB(actx, "agent.auth_failed_persistent", agentID, "denied", detail)
+}
+
+// clearAgentAuthFailures ends a run of refusals once the agent's credential is
+// accepted again. The predicate keeps it a no-op write for a healthy device.
+func (h *AgentAPIHandler) clearAgentAuthFailures(ctx context.Context, agentID string) {
+	if agentID == "" || h.db == nil || h.db.Pool == nil {
+		return
+	}
+	_, _ = h.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+		//orgscope:ignore the caller just proved the credential for this globally-unique agent_id; the row is its own
+		`UPDATE enrolled_agents SET auth_fail_count = 0 WHERE agent_id = $1 AND auth_fail_count <> 0`, agentID)
 }

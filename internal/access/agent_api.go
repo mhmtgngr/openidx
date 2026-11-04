@@ -290,6 +290,19 @@ func (e revokedAgentError) Error() string {
 	return "agent " + e.agentID + " has been revoked; enrolment does not reinstate it"
 }
 
+// ownedAgentError is issueAgentCredentials' refusal to re-enrol, from one
+// person's session, a device that another person owns. The fingerprint is
+// the client's own claim, so accepting it would let any signed-in user of the
+// organization take a colleague's machine over: its credential, its posture,
+// its device trust. A fleet-token enrolment names no person and may still
+// re-enrol it (the owner stays); moving a device to someone else is an
+// administrator's change.
+type ownedAgentError struct{ agentID string }
+
+func (e ownedAgentError) Error() string {
+	return "agent " + e.agentID + " belongs to another user; enrolment does not move it"
+}
+
 // issueAgentCredentials performs the credential-minting half of enrollment
 // shared by every enrollment path:
 //
@@ -358,17 +371,32 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 		// any more, and a re-enrolled pending row gets no more than a fresh
 		// enrolment with the same token would.
 		if fp := strings.TrimSpace(req.DeviceFingerprint); fp != "" {
-			var existingAgentID, existingDeviceID, existingStatus string
+			var existingAgentID, existingDeviceID, existingStatus, existingOwner string
 			err := h.db.Pool.QueryRow(ctx, `
-                SELECT agent_id, device_id, status FROM enrolled_agents
+                SELECT agent_id, device_id, status, COALESCE(enrolled_by_user_id::text, '')
+                  FROM enrolled_agents
                 WHERE device_fingerprint = $1 AND org_id = $2
-            `, fp, orgID).Scan(&existingAgentID, &existingDeviceID, &existingStatus)
+            `, fp, orgID).Scan(&existingAgentID, &existingDeviceID, &existingStatus, &existingOwner)
 			if err == nil && existingStatus == agentStatusRevoked {
 				return issuedAgentCredentials{}, revokedAgentError{agentID: existingAgentID}
 			}
+			if err == nil && enrolledByUserID != "" && existingOwner != "" &&
+				!strings.EqualFold(existingOwner, enrolledByUserID) {
+				return issuedAgentCredentials{}, ownedAgentError{agentID: existingAgentID}
+			}
 			if err == nil && existingAgentID != "" {
-				// The status test is repeated in the UPDATE so that a revoke
-				// landing between the read above and this write is not undone.
+				// A person enrolling the device again from their own session
+				// (an enrolment code, or the OAuth path) claims a device nobody
+				// owns: one enrolled with a fleet token, which names no one. A
+				// device the same person owns stays theirs; one another person
+				// owns was refused above (ownedAgentError).
+				var claimArg interface{}
+				if enrolledByUserID != "" {
+					claimArg = enrolledByUserID
+				}
+				// The status and owner tests are repeated in the UPDATE so that a
+				// revoke or a claim landing between the read above and this write
+				// is not undone.
 				tag, upErr := h.db.Pool.Exec(ctx, `
                     UPDATE enrolled_agents
                        SET auth_token_hash = $2, status = 'active', metadata = $3,
@@ -376,17 +404,22 @@ func (h *AgentAPIHandler) issueAgentCredentials(
                            form_factor = COALESCE(NULLIF($5,''), form_factor),
                            enrollment_method = COALESCE(NULLIF($6,''), enrollment_method),
                            management_mode = COALESCE(NULLIF($7,''), management_mode),
-                           is_device_owner = $8, last_seen_at = NOW()
+                           is_device_owner = $8, last_seen_at = NOW(),
+                           enrolled_by_user_id = COALESCE(enrolled_by_user_id, $11::uuid)
                      WHERE agent_id = $1 AND org_id = $9 AND status <> $10
+                       AND ($11::uuid IS NULL OR enrolled_by_user_id IS NULL OR enrolled_by_user_id = $11::uuid)
                 `, existingAgentID, authTokenHash, metadata,
-					platform, formFactor, method, managementMode, isDeviceOwner, orgID, agentStatusRevoked)
+					platform, formFactor, method, managementMode, isDeviceOwner, orgID, agentStatusRevoked, claimArg)
 				switch {
 				case upErr != nil:
 					h.logger.Error("Failed to refresh existing agent enrollment", zap.Error(upErr))
 				case tag.RowsAffected() == 0:
 					// The row was there a moment ago and nothing deletes agent
-					// rows, so the predicate that stopped matching is the
-					// status: it was revoked in between.
+					// rows, so a predicate stopped matching: it was revoked, or
+					// another person claimed it, in between. Neither is minted.
+					if enrolledByUserID != "" && h.agentOwnedByAnother(ctx, existingAgentID, orgID, enrolledByUserID) {
+						return issuedAgentCredentials{}, ownedAgentError{agentID: existingAgentID}
+					}
 					return issuedAgentCredentials{}, revokedAgentError{agentID: existingAgentID}
 				default:
 					h.logger.Info("Re-enrolled existing device (stable identity)",
@@ -445,6 +478,40 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 
 	h.ensureAgentZitiIdentity(ctx, agentID, &result)
 	return result, nil
+}
+
+// refuseOwnedReenrolment answers an enrolment, made from one person's session,
+// whose device fingerprint names a device another person owns. No credential
+// was minted; a single-use token stays spent. The audit names the device and
+// the person who tried, because a session re-enrolling a colleague's machine
+// is what someone taking it over looks like.
+func (h *AgentAPIHandler) refuseOwnedReenrolment(c *gin.Context, orgID, agentID, detail string) {
+	ctx := c.Request.Context()
+	if orgID != "" {
+		ctx = orgctx.With(ctx, orgctx.Org{ID: orgID})
+	}
+	detail = "device belongs to another user; re-enrolment refused " + detail
+	h.logAuditEvent("agent.enroll_denied", agentID, "denied", detail)
+	h.logAuditEventToDB(ctx, "agent.enroll_denied", agentID, "denied", detail)
+	c.JSON(http.StatusConflict, gin.H{
+		"error": "device belongs to another user",
+		"code":  "agent_owned_by_another_user",
+		"error_description": "this device is enrolled to another person in this organization; " +
+			"an administrator can move it to you",
+	})
+}
+
+// agentOwnedByAnother reports whether agentID now has an owner other than
+// userID, to tell a lost claim race from a revoke after a conditional update
+// matched nothing.
+func (h *AgentAPIHandler) agentOwnedByAnother(ctx context.Context, agentID, orgID, userID string) bool {
+	var owner string
+	if err := h.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(enrolled_by_user_id::text, '') FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
+		agentID, orgID).Scan(&owner); err != nil {
+		return false
+	}
+	return owner != "" && !strings.EqualFold(owner, userID)
 }
 
 // refuseRevokedReenrolment answers an enrolment whose device fingerprint names
@@ -686,6 +753,12 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 			h.refuseRevokedReenrolment(c, tok.OrgID, revoked.agentID, detail)
 			return
 		}
+		var owned ownedAgentError
+		if errors.As(err, &owned) {
+			h.refuseOwnedReenrolment(c, tok.OrgID, owned.agentID,
+				fmt.Sprintf("(method=%s token_id=%s user=%s)", method, tokenID, enrolledBy))
+			return
+		}
 
 		// Track the most recent enrolling agent (single-use tokens only; a
 		// reusable token enrolls many, so this field is left for the last one).
@@ -874,6 +947,12 @@ func (h *AgentAPIHandler) HandleEnrollOAuth(c *gin.Context) {
 		// Refused before the known-device link and the token binding below:
 		// neither may attach a revoked machine to this user.
 		h.refuseRevokedReenrolment(c, org.ID, revoked.agentID,
+			"(method=oauth user="+logsafe.Clean(userID)+")")
+		return
+	}
+	var owned ownedAgentError
+	if errors.As(err, &owned) {
+		h.refuseOwnedReenrolment(c, org.ID, owned.agentID,
 			"(method=oauth user="+logsafe.Clean(userID)+")")
 		return
 	}

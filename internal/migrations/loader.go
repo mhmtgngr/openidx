@@ -1686,5 +1686,12 @@ func allMigrations() []*Migration {
 			UpSQL:       tunnelPolicyAppliedUp,
 			DownSQL:     tunnelPolicyAppliedDown,
 		},
+		{
+			Version:     238,
+			Name:        "agent_auth_failures",
+			Description: "A device whose credential the server refuses. enrolled_agents gains auth_failed_at (the latest 401 on an agent route for that row) and auth_fail_count (refusals since the last accepted request; reset to 0 when one is accepted), so the console can tell a device whose credential is refused from one that is merely offline, and the access service writes one agent.auth_failed_persistent audit record when a run of refusals first reaches its threshold. Columns under the table's existing org policy; down drops them.",
+			UpSQL:       agentAuthFailuresUp,
+			DownSQL:     agentAuthFailuresDown,
+		},
 	}
 }
