@@ -37,8 +37,10 @@ browser and nothing else, which is what third-party access needs
   Passwordstate and 1Password (`mRemoteNGDocumentation/howtos/credvault.rst`).
   It has no OpenIDX connector; writing one would be GPL code.
 - Its command line loads a connections file (`/cons`); it cannot open one
-  named connection from the command line
-  (`mRemoteNGDocumentation/command_line_switches.rst`).
+  named connection from the command line. Its parser
+  (`mRemoteNG/Tools/Cmdline/StartupArgumentsInterpreter.cs`) reads only
+  `cons`/`c`, `reset*` and `noreconnect`, so a launcher can hand it a
+  one-connection file but the person still has to open the connection.
 - Its 1.78.2 notes fix SQL injection, command injection, XXE and path
   traversal in the same release.
 - It already documents fronting a PAM proxy (`howtos/cyberark-psm.rst`): the
@@ -50,6 +52,18 @@ short-lived, principal-scoped certificate from the org CA
 (`internal/access/ssh_ca.go`), and `openidx-connect` uses it. The Windows
 tray launches PAM entries only through the browser
 (`agent/internal/desktoppam`).
+
+**Checked against real software on 2026-11-06** (throwaway database and a
+user-level `sshd` on loopback; nothing live touched):
+
+- A certificate from the real `handleSSHConnect` (one-minute TTL) logged in
+  to a stock OpenSSH server configured only with `TrustedUserCAKeys` set to
+  the org CA: `Accepted certificate ID "openidx:<user>:<login>"`.
+- After the certificate expired, a new login was refused
+  (`Certificate invalid: expired`, `Permission denied (publickey)`), but a
+  session opened before expiry was still running five seconds after it.
+- The managed Windows test PC already has `mstsc.exe` and Windows OpenSSH
+  (`OpenSSH_for_Windows_10.0p2`); mRemoteNG is not installed.
 
 ## Options
 
@@ -86,7 +100,9 @@ Option 3, in this order, and only after M1 (the feature freeze in
    removed after it, never into the file.
 4. **mRemoteNG last, optional.** If installed and chosen, the agent writes a
    one-connection file and starts `mRemoteNG.exe /cons <file>`, with the
-   same credential handling; no mRemoteNG code is distributed.
+   same credential handling; the person opens the connection from the
+   tree, since mRemoteNG has no switch to open it. No mRemoteNG code is
+   distributed.
 5. **Every native launch is a `brokered_sessions` row marked native and
    unrecorded**, visible on Privileged Sessions.
 
