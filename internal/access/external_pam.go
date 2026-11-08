@@ -43,8 +43,17 @@ type pamCaller struct {
 // resolvePamCaller reads the caller's type. When the type cannot be read it
 // answers 500 and reports false: a launch does not go ahead under the looser
 // rules because the stricter ones could not be looked up.
+//
+// A caller with no user id is answered 401. Under SoftAuth (development) an
+// expired or absent token leaves the request anonymous, and the lookup then
+// cast "" to a uuid and answered 500; every PAM decision is about a person,
+// so there is nothing to look up for nobody.
 func (s *Service) resolvePamCaller(c *gin.Context, orgID string) (pamCaller, bool) {
 	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "sign in to use privileged access", "code": "authentication_required"})
+		return pamCaller{}, false
+	}
 	external, err := externalid.IsExternal(c.Request.Context(), s.db.Pool, orgID, userID)
 	if err != nil {
 		s.logger.Error("could not read whether the PAM caller is external", zap.Error(err))
