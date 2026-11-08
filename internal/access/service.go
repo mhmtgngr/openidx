@@ -948,6 +948,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/sponsored/moderation/:id/join", svc.requireFreshMFA("pam.sponsor_moderate"), svc.handlePamSponsorJoinModeration)
 		api.GET("/pam/sessions", svc.requireAdminRole(), svc.handlePamListSessions)
 		api.GET("/pam/sessions/:id/recording", svc.requireAdminRole(), svc.handlePamEntryRecording)
+		api.GET("/pam/sessions/:id/typescript", svc.requireAdminRole(), svc.handlePamEntryTypescript)
 		api.POST("/pam/sessions/:id/end", svc.handlePamEndSession)
 		api.POST("/pam/import/rdm", svc.requireAdminRole(), svc.handlePamImportRDM)
 

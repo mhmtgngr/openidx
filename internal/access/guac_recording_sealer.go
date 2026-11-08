@@ -125,6 +125,11 @@ func (h *RemoteSupportHandler) sealGuacRecordings(ctx context.Context) {
 		if _, statErr := os.Stat(j.path); statErr != nil {
 			continue // recording not on disk (yet) — leave unsealed for a later tick
 		}
+		// An SSH session's text transcript first; the recording's seal is the
+		// claim, stamped only once its companions are ciphertext too.
+		if !h.sealTypescriptCompanions(j.id, j.path) {
+			continue
+		}
 		sum, keyID, sealErr := h.sealOneGuacRecording(j.path)
 		if errors.Is(sealErr, errAlreadySealed) {
 			// Ciphertext with no seal metadata: either another replica sealed
