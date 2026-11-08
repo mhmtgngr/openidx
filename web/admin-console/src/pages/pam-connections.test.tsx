@@ -17,6 +17,7 @@ vi.mock('../lib/api', () => ({
       importRDM: vi.fn(),
       createEntry: vi.fn(),
       updateEntry: vi.fn(),
+      readRdpCertificate: vi.fn(),
       deleteEntry: vi.fn(),
       createFolder: vi.fn(),
       brokerStatus: vi.fn(),
@@ -278,6 +279,81 @@ describe('PamConnectionsPage', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: /require a moderator/i }))
     expect(terminal).not.toBeChecked()
     expect(terminal).toBeDisabled()
+  })
+
+  it('marks an RDP entry whose certificate is not checked, and one that is pinned', async () => {
+    pam.listEntries.mockResolvedValue({
+      entries: [
+        { ...rdpEntry, rdp_cert_mode: 'ignore', allow_copy: true, allow_paste: true, allow_file_transfer: false },
+        { ...gatedEntry, rdp_cert_mode: 'pin', rdp_cert_fingerprints: ['sha256:aa:bb'], allow_copy: true, allow_paste: true, allow_file_transfer: true },
+      ],
+    })
+    renderPage()
+    expect(await screen.findByText('cert not checked')).toBeInTheDocument()
+    expect(screen.getByText('cert pinned')).toBeInTheDocument()
+    expect(screen.getByText('files')).toBeInTheDocument()
+  })
+
+  it('creates an entry that verifies the certificate, keeps the clipboard and has no file transfer', async () => {
+    pam.createEntry.mockResolvedValue({ id: 'e9' })
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /new entry/i }))
+    fireEvent.change(screen.getByPlaceholderText('DC01 – Domain Controller'), { target: { value: 'dc02' } })
+    expect(screen.getByRole('checkbox', { name: /copy out of the session/i })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /paste into the session/i })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /file transfer/i })).not.toBeChecked()
+    // Reading a certificate needs a saved entry to read it for.
+    expect(screen.queryByRole('button', { name: /read the target's certificate/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /create/i }))
+    await waitFor(() => expect(pam.createEntry).toHaveBeenCalled())
+    expect(pam.createEntry.mock.calls[0][0]).toMatchObject({
+      rdp_cert_mode: 'verify', rdp_cert_fingerprints: [], allow_copy: true, allow_paste: true, allow_file_transfer: false,
+    })
+  })
+
+  it('warns on ignore, reads the target certificate and pins it', async () => {
+    const fp = 'sha256:eb:45:51:d6:9b:99:39:35:3d:29:f3:49:1b:39:75:8b:fc:2e:c0:83:5b:69:0b:c3:60:c6:65:cc:88:24:85:1b'
+    pam.listEntries.mockResolvedValue({
+      entries: [{ ...rdpEntry, rdp_cert_mode: 'ignore', rdp_cert_fingerprints: [], allow_copy: true, allow_paste: false, allow_file_transfer: false }],
+    })
+    pam.readRdpCertificate.mockResolvedValue({
+      certificate: {
+        fingerprint: fp, subject: 'CN=dc01', issuer: 'CN=dc01', dns_names: ['dc01'],
+        not_before: '2026-01-01T00:00:00Z', not_after: '2027-01-01T00:00:00Z',
+        self_signed: true, trusted: false, trust_error: 'x509: unknown authority', protocol: 'nla',
+      },
+    })
+    pam.updateEntry.mockResolvedValue({ id: 'e1' })
+    renderPage()
+    fireEvent.click((await screen.findAllByTitle('Edit'))[0])
+    expect(screen.getByRole('alert')).toHaveTextContent(/machine between the broker and the target/i)
+    expect(screen.getByRole('checkbox', { name: /paste into the session/i })).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: /read the target's certificate/i }))
+    await waitFor(() => expect(pam.readRdpCertificate).toHaveBeenCalledWith('e1'))
+    const card = await screen.findByTestId('pam-read-certificate')
+    expect(card).toHaveTextContent(fp)
+    expect(card).toHaveTextContent(/not trusted by this server: self-signed/i)
+    fireEvent.click(within(card).getByRole('button', { name: /pin this certificate/i }))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/sha-256 fingerprints/i)).toHaveValue(fp)
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(pam.updateEntry).toHaveBeenCalled())
+    expect(pam.updateEntry.mock.calls[0][1]).toMatchObject({
+      rdp_cert_mode: 'pin', rdp_cert_fingerprints: [fp], allow_paste: false,
+    })
+  })
+
+  it('leaves the session policy out of an update when the service sends none', async () => {
+    pam.updateEntry.mockResolvedValue({ id: 'e1' })
+    renderPage()
+    fireEvent.click((await screen.findAllByTitle('Edit'))[0])
+    expect(screen.queryByLabelText('Session')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(pam.updateEntry).toHaveBeenCalled())
+    const body = pam.updateEntry.mock.calls[0][1]
+    for (const k of ['rdp_cert_mode', 'rdp_cert_fingerprints', 'allow_copy', 'allow_paste', 'allow_file_transfer']) {
+      expect(body[k]).toBeUndefined()
+    }
   })
 
   it('saves RemoteApp fields into entry settings with the || alias prefix', async () => {
