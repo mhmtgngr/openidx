@@ -31,6 +31,11 @@ func fakeRDPServer(t *testing.T, cert *tls.Certificate) (addr string, afterHands
 	t.Cleanup(func() { ln.Close() })
 	afterHandshake = make(chan int, 1)
 	go func() {
+		// Always answer: a client that refuses the certificate ends the
+		// handshake before the server's side completes, and that too is a
+		// connection on which nothing was sent.
+		sent := 0
+		defer func() { afterHandshake <- sent }()
 		c, err := ln.Accept()
 		if err != nil {
 			return
@@ -49,13 +54,13 @@ func fakeRDPServer(t *testing.T, cert *tls.Certificate) (addr string, afterHands
 		// RDP_NEG_RSP selecting PROTOCOL_SSL
 		_, _ = c.Write([]byte{0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0, 0, 0, 0x12, 0x34, 0x00,
 			0x02, 0x00, 0x08, 0x00, 0x01, 0x00, 0x00, 0x00})
+		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
 		tc := tls.Server(c, &tls.Config{Certificates: []tls.Certificate{*cert}})
 		if err := tc.Handshake(); err != nil {
 			return
 		}
-		_ = tc.SetReadDeadline(time.Now().Add(2 * time.Second))
 		n, _ := io.Copy(io.Discard, tc)
-		afterHandshake <- int(n)
+		sent = int(n)
 	}()
 	return ln.Addr().String(), afterHandshake
 }
@@ -102,6 +107,14 @@ func TestReadRDPCertificate(t *testing.T) {
 	addr, _ = fakeRDPServer(t, nil)
 	if _, err := readRDPCertificate(context.Background(), addr, "rdp.example.test"); err != errRDPNoTLS {
 		t.Errorf("a standard-RDP-only target: %v, want errRDPNoTLS", err)
+	}
+
+	// The handshake verifies for real: the same certificate read for another
+	// hostname is still read, with the reason it is not trusted.
+	addr, _ = fakeRDPServer(t, &cert)
+	got, err = readRDPCertificate(context.Background(), addr, "other.example.test")
+	if err != nil || got.Fingerprint != want || got.Trusted || got.TrustError == "" {
+		t.Errorf("another hostname: %+v, %v", got, err)
 	}
 }
 

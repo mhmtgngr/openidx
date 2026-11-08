@@ -4,8 +4,9 @@
 // its target presents, and an administrator has had no way to get it but to
 // RDP there with another client and copy it out of a warning dialog. This
 // reads it the way guacd would meet it: an X.224 connection request asking
-// for TLS (or NLA, which runs over TLS), then a TLS handshake whose
-// certificate is read and not trusted. Nothing is sent after the handshake:
+// for TLS (or NLA, which runs over TLS), then an ordinary verifying TLS
+// handshake; a certificate that fails verification is still read, for the
+// administrator to see and pin. Nothing is sent after the handshake:
 // no credential, no CredSSP, and the connection is closed.
 //
 // Administrators only, against the entry's own stored target, so it dials
@@ -104,14 +105,24 @@ func readRDPCertificate(ctx context.Context, addr, host string) (*rdpCertificate
 		return nil, errRDPNoTLS
 	}
 
-	// Read, not trust: the point is to show what the target presents, and
-	// nothing is sent over this connection after the handshake.
-	tconn := tls.Client(conn, &tls.Config{InsecureSkipVerify: true, ServerName: host, MinVersion: tls.VersionTLS10}) //nolint:gosec // certificate is read for display, never trusted; nothing is sent after the handshake
+	// The handshake verifies the certificate as any TLS client does, against
+	// this host's trust store and the entry's hostname, so nothing here turns
+	// verification off. A certificate that fails is still what the
+	// administrator needs to see and may pin: Go hands it back on the
+	// verification error. Either way nothing is sent after the handshake.
+	tconn := tls.Client(conn, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+	var certs []*x509.Certificate
+	trustErr := ""
 	if err := tconn.HandshakeContext(ctx); err != nil {
-		return nil, fmt.Errorf("TLS handshake with the target failed: %w", err)
+		var verr *tls.CertificateVerificationError
+		if !errors.As(err, &verr) || len(verr.UnverifiedCertificates) == 0 {
+			return nil, fmt.Errorf("TLS handshake with the target failed: %w", err)
+		}
+		certs, trustErr = verr.UnverifiedCertificates, verr.Err.Error()
+	} else {
+		defer tconn.Close()
+		certs = tconn.ConnectionState().PeerCertificates
 	}
-	defer tconn.Close()
-	certs := tconn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
 		return nil, errors.New("the target presented no certificate")
 	}
@@ -137,15 +148,7 @@ func readRDPCertificate(ctx context.Context, addr, host string) (*rdpCertificate
 	if out.Protocol == "" {
 		out.Protocol = "tls"
 	}
-	inter := x509.NewCertPool()
-	for _, c := range certs[1:] {
-		inter.AddCert(c)
-	}
-	if _, verr := leaf.Verify(x509.VerifyOptions{DNSName: host, Intermediates: inter}); verr != nil {
-		out.TrustError = verr.Error()
-	} else {
-		out.Trusted = true
-	}
+	out.Trusted, out.TrustError = trustErr == "", trustErr
 	return out, nil
 }
 
