@@ -134,6 +134,7 @@ func (s *Service) runLifecycleEnforcement(ctx context.Context) {
 	}
 	s.endPamEntrySessionsOfDisabledUsers(ctx)
 	s.endLapsedPamEntrySessions(ctx)
+	s.reconcileDisconnectedPamSessions(ctx)
 
 	// Live privileged sessions of disabled/deleted users. Rows are marked
 	// terminated only after Guacamole confirms the kill, so a configured-but-

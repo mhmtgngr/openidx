@@ -45,6 +45,7 @@ const (
 	sessionEndTerminalClosed = "closed"           // the browser terminal closed
 	sessionEndRequested      = "ended"            // someone asked for it to end; the event names who
 	sessionEndModeration     = "moderation_ended" // the moderation that admitted it ended
+	sessionEndDisconnected   = "disconnected"     // the broker stopped serving it and nobody ended it (pam_session_disconnect.go)
 )
 
 // publishPamEvent publishes eventType to orgID's webhook subscribers, and
