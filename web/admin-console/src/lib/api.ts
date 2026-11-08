@@ -569,6 +569,8 @@ export const api = {
     updateEntry: (id: string, body: PamEntryInput) =>
       api.put<{ id: string }>(`/api/v1/access/pam/entries/${id}`, body),
     deleteEntry: (id: string) => api.delete<void>(`/api/v1/access/pam/entries/${id}`),
+    readRdpCertificate: (id: string) =>
+      api.post<{ certificate: PamRdpCertificate }>(`/api/v1/access/pam/entries/${id}/rdp-certificate`),
     favorite: (id: string) => api.post<{ favorite: boolean }>(`/api/v1/access/pam/entries/${id}/favorite`),
     unfavorite: (id: string) => api.delete<{ favorite: boolean }>(`/api/v1/access/pam/entries/${id}/favorite`),
     connect: (id: string) => api.post<PamConnectResult>(`/api/v1/access/pam/entries/${id}/connect`),
@@ -783,6 +785,13 @@ export interface PamEntry {
   renderer?: string
   ziti_enabled: boolean
   favorite: boolean
+  // How an RDP session checks the target's certificate, and what crosses a
+  // session besides the screen (v239). Absent on an older service.
+  rdp_cert_mode?: PamRdpCertMode
+  rdp_cert_fingerprints?: string[]
+  allow_copy?: boolean
+  allow_paste?: boolean
+  allow_file_transfer?: boolean
   // The grant actions the caller holds on the entry ('view', 'connect',
   // 'reveal', 'edit'), sent by the entry list. An administrator holds all.
   actions?: string[]
@@ -811,6 +820,28 @@ export interface PamEntryInput {
   require_moderator?: boolean
   record_session?: boolean
   renderer?: string
+  // Left out on update, the server keeps what the entry has.
+  rdp_cert_mode?: PamRdpCertMode
+  rdp_cert_fingerprints?: string[]
+  allow_copy?: boolean
+  allow_paste?: boolean
+  allow_file_transfer?: boolean
+}
+
+export type PamRdpCertMode = 'verify' | 'pin' | 'ignore'
+
+// The certificate an RDP entry's target presents, read for pinning.
+export interface PamRdpCertificate {
+  fingerprint: string
+  subject: string
+  issuer: string
+  dns_names: string[]
+  not_before: string
+  not_after: string
+  self_signed: boolean
+  trusted: boolean
+  trust_error?: string
+  protocol: 'tls' | 'nla'
 }
 
 export interface PamConnectResult {

@@ -264,9 +264,9 @@ func (gc *GuacamoleClient) CreateConnection(name, protocol, hostname string, por
 		if _, ok := params["security"]; !ok {
 			params["security"] = "nla"
 		}
-		if _, ok := params["ignore-cert"]; !ok {
-			params["ignore-cert"] = "true"
-		}
+		// No ignore-cert default: guacd checks the target's certificate
+		// unless told not to, and a PAM entry says how through its
+		// rdp_cert_mode (applyPamSessionPolicy, migration 239).
 	case "vnc":
 		// VNC defaults are fine
 	}

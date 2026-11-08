@@ -22,7 +22,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../components/ui/select'
 import {
-  api, PamEntry, PamEntryType, PamFolder, PamEntryInput, PamConnectResult, PamImportResult,
+  api, PamEntry, PamEntryType, PamFolder, PamEntryInput, PamConnectResult, PamImportResult, PamRdpCertMode, PamRdpCertificate,
 } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { QueryError } from '../components/query-error'
@@ -33,6 +33,7 @@ import { remoteAppArgsLookSecret, remoteAppSecretHint } from '../lib/remote-app'
 import { openPamSessionWindow } from '../lib/pam-session-handoff'
 import { ModerationWaitDialog } from '../components/moderation-wait-dialog'
 import { apiErrorBody } from '../lib/api-error'
+import { parseFingerprints } from '../lib/pam-cert'
 
 // Icon + accent per entry type, so the list reads like RDM's typed tree.
 const typeIcon = (t: string) => {
@@ -76,6 +77,10 @@ const emptyForm: PamEntryInput = {
   hostname: '', port: 0, username: '', domain: '', url: '',
   settings: {}, secret: '', credential_entry_id: '',
   allow_reveal: false, require_approval: false, require_moderator: false, record_session: false,
+  // A new entry checks the RDP certificate, keeps the clipboard and has no
+  // file transfer: the server's defaults, sent so the form shows them.
+  rdp_cert_mode: 'verify', rdp_cert_fingerprints: [],
+  allow_copy: true, allow_paste: true, allow_file_transfer: false,
 }
 
 export function PamConnectionsPage() {
@@ -92,6 +97,9 @@ export function PamConnectionsPage() {
   const [waitingFor, setWaitingFor] = useState<{ id: string; name: string } | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<PamEntryInput>(emptyForm)
+  // The pinned fingerprints as typed; parsed into the form on save.
+  const [pinText, setPinText] = useState('')
+  const [readCert, setReadCert] = useState<PamRdpCertificate | null>(null)
 
   const [showFolderDialog, setShowFolderDialog] = useState(false)
   const [folderName, setFolderName] = useState('')
@@ -185,6 +193,24 @@ export function PamConnectionsPage() {
     queryClient.invalidateQueries({ queryKey: ['pam-folders'] })
   }
 
+  const readCertificate = useMutation({
+    mutationFn: (id: string) => api.pam.readRdpCertificate(id),
+    onSuccess: (r) => setReadCert(r.certificate),
+    onError: (e: Error) => {
+      setReadCert(null)
+      const code = apiErrorBody(e)?.code
+      toast({
+        title: t('pages.pamConnections.toasts.certReadFailed'),
+        description: code === 'rdp_no_tls'
+          ? t('pages.pamConnections.toasts.certNoTLS')
+          : code === 'rdp_certificate_overlay'
+            ? t('pages.pamConnections.toasts.certOverlay')
+            : e.message,
+        variant: 'destructive',
+      })
+    },
+  })
+
   const saveEntry = useMutation({
     mutationFn: () => {
       const body: PamEntryInput = {
@@ -193,6 +219,13 @@ export function PamConnectionsPage() {
         port: form.port ? Number(form.port) : undefined,
         secret: form.secret || undefined,
         credential_entry_id: form.credential_entry_id || undefined,
+      }
+      if (selectedType?.protocol === 'rdp' && form.rdp_cert_mode !== undefined) {
+        body.rdp_cert_fingerprints = parseFingerprints(pinText)
+      } else {
+        // Not an RDP entry: the server keeps 'verify' and no pin.
+        delete body.rdp_cert_mode
+        delete body.rdp_cert_fingerprints
       }
       return editingId ? api.pam.updateEntry(editingId, body) : api.pam.createEntry(body)
     },
@@ -371,6 +404,8 @@ export function PamConnectionsPage() {
   const openCreate = () => {
     setEditingId(null)
     setForm({ ...emptyForm, folder_id: selectedFolder || undefined })
+    setPinText('')
+    setReadCert(null)
     setShowEntryDialog(true)
   }
 
@@ -385,7 +420,15 @@ export function PamConnectionsPage() {
       allow_reveal: entry.allow_reveal, require_approval: entry.require_approval,
       require_moderator: !!entry.require_moderator,
       record_session: entry.record_session, renderer: entry.renderer,
+      // An older service sends none of these; leaving them undefined keeps
+      // them out of the update, so the server keeps what the entry has.
+      rdp_cert_mode: entry.rdp_cert_mode,
+      rdp_cert_fingerprints: entry.rdp_cert_fingerprints,
+      allow_copy: entry.allow_copy, allow_paste: entry.allow_paste,
+      allow_file_transfer: entry.allow_file_transfer,
     })
+    setPinText((entry.rdp_cert_fingerprints || []).join('\n'))
+    setReadCert(null)
     setShowEntryDialog(true)
   }
 
@@ -490,6 +533,27 @@ export function PamConnectionsPage() {
                           <Badge className={kindBadge[entry.kind] || ''}>{entry.entry_type}</Badge>
                           {entry.require_approval && <Badge variant="outline" title={t('pages.pamConnections.badges.requiresApproval')}><Lock className="h-3 w-3" /></Badge>}
                           {entry.record_session && <Badge variant="outline">{t('pages.pamConnections.badges.recording')}</Badge>}
+                          {entry.rdp_cert_mode === 'ignore' && (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-500 text-amber-700 dark:text-amber-400"
+                              title={t('pages.pamConnections.badges.certNotCheckedTitle')}
+                            >
+                              <AlertTriangle className="h-3 w-3 mr-1" />
+                              {t('pages.pamConnections.badges.certNotChecked')}
+                            </Badge>
+                          )}
+                          {entry.rdp_cert_mode === 'pin' && (
+                            <Badge variant="outline" title={t('pages.pamConnections.badges.certPinnedTitle')}>
+                              <ShieldCheck className="h-3 w-3 mr-1" />
+                              {t('pages.pamConnections.badges.certPinned')}
+                            </Badge>
+                          )}
+                          {entry.allow_file_transfer && (
+                            <Badge variant="outline" title={t('pages.pamConnections.badges.fileTransferTitle')}>
+                              {t('pages.pamConnections.badges.fileTransfer')}
+                            </Badge>
+                          )}
                           {typeof entry.settings['remote-app'] === 'string' && entry.settings['remote-app'] !== '' && (
                             <Badge
                               variant="outline"
@@ -816,6 +880,118 @@ export function PamConnectionsPage() {
                 {t('pages.pamConnections.entryDialog.requireModerator')}
               </label>
             </div>
+            {/* The session policy (v239): what crosses the session besides
+                the screen, and for RDP how the target's certificate is
+                checked. Loosening any of it is an administrator's call; the
+                API refuses an editor with session_policy_admin_only. */}
+            {selectedType?.protocol && form.allow_copy !== undefined && (
+              <div className="rounded-md border p-3 space-y-3" aria-label={t('pages.pamConnections.entryDialog.sessionPolicy.title')}>
+                <p className="text-sm font-medium">{t('pages.pamConnections.entryDialog.sessionPolicy.title')}</p>
+                <div className="flex flex-wrap gap-4">
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={!!form.allow_copy} onCheckedChange={(v) => setForm((f) => ({ ...f, allow_copy: !!v }))} />
+                    {t('pages.pamConnections.entryDialog.sessionPolicy.allowCopy')}
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={!!form.allow_paste} onCheckedChange={(v) => setForm((f) => ({ ...f, allow_paste: !!v }))} />
+                    {t('pages.pamConnections.entryDialog.sessionPolicy.allowPaste')}
+                  </label>
+                  <label className="flex items-center gap-2 text-sm" title={t('pages.pamConnections.entryDialog.sessionPolicy.fileTransferHint')}>
+                    <Checkbox checked={!!form.allow_file_transfer} onCheckedChange={(v) => setForm((f) => ({ ...f, allow_file_transfer: !!v }))} />
+                    {t('pages.pamConnections.entryDialog.sessionPolicy.allowFileTransfer')}
+                  </label>
+                </div>
+                {selectedType.protocol === 'rdp' && form.rdp_cert_mode !== undefined && (
+                  <div className="space-y-2">
+                    <label htmlFor="pam-connections-cert-mode" className="text-sm font-medium">
+                      {t('pages.pamConnections.entryDialog.sessionPolicy.certMode')}
+                    </label>
+                    <Select
+                      value={form.rdp_cert_mode}
+                      onValueChange={(v) => setForm((f) => ({ ...f, rdp_cert_mode: v as PamRdpCertMode }))}
+                    >
+                      <SelectTrigger id="pam-connections-cert-mode"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {(['verify', 'pin', 'ignore'] as const).map((m) => (
+                          <SelectItem key={m} value={m}>{t(`pages.pamConnections.entryDialog.sessionPolicy.certModes.${m}`)}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {t(`pages.pamConnections.entryDialog.sessionPolicy.certModeHints.${form.rdp_cert_mode}`)}
+                    </p>
+                    {form.rdp_cert_mode === 'ignore' && (
+                      <p role="alert" className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
+                        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                        {t('pages.pamConnections.entryDialog.sessionPolicy.ignoreWarning')}
+                      </p>
+                    )}
+                    {form.rdp_cert_mode === 'pin' && (
+                      <div className="space-y-2">
+                        <label htmlFor="pam-connections-cert-pins" className="text-sm font-medium">
+                          {t('pages.pamConnections.entryDialog.sessionPolicy.fingerprints')}
+                        </label>
+                        <Textarea
+                          id="pam-connections-cert-pins"
+                          rows={3}
+                          className="font-mono text-xs"
+                          placeholder="sha256:ab:cd:…"
+                          value={pinText}
+                          onChange={(e) => setPinText(e.target.value)}
+                        />
+                      </div>
+                    )}
+                    {editingId && (
+                      <div className="space-y-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={readCertificate.isPending}
+                          onClick={() => readCertificate.mutate(editingId)}
+                        >
+                          <ShieldCheck className="h-4 w-4 mr-1" />
+                          {t('pages.pamConnections.entryDialog.sessionPolicy.readCertificate')}
+                        </Button>
+                        {readCert && (
+                          <div className="rounded border bg-muted/40 p-2 text-xs space-y-1" data-testid="pam-read-certificate">
+                            <p className="font-mono break-all">{readCert.fingerprint}</p>
+                            <p>{t('pages.pamConnections.entryDialog.sessionPolicy.certSubject', { subject: readCert.subject, issuer: readCert.issuer })}</p>
+                            <p>{t('pages.pamConnections.entryDialog.sessionPolicy.certValidity', {
+                              from: new Date(readCert.not_before).toLocaleDateString(),
+                              to: new Date(readCert.not_after).toLocaleDateString(),
+                            })}</p>
+                            <p>
+                              {readCert.trusted
+                                ? t('pages.pamConnections.entryDialog.sessionPolicy.certTrusted')
+                                : t('pages.pamConnections.entryDialog.sessionPolicy.certUntrusted', {
+                                  reason: readCert.self_signed
+                                    ? t('pages.pamConnections.entryDialog.sessionPolicy.selfSigned')
+                                    : (readCert.trust_error || ''),
+                                })}
+                            </p>
+                            {!parseFingerprints(pinText).includes(readCert.fingerprint) && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => {
+                                  setForm((f) => ({ ...f, rdp_cert_mode: 'pin' }))
+                                  setPinText((p) => [...parseFingerprints(p), readCert.fingerprint].join('\n'))
+                                }}
+                              >
+                                {t('pages.pamConnections.entryDialog.sessionPolicy.pinThis')}
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">{t('pages.pamConnections.entryDialog.sessionPolicy.adminNote')}</p>
+              </div>
+            )}
             {/* What policy holds an external (vendor) user's session to on any
                 entry, whatever is ticked above (invariants I5 and I7). Shown
                 locked, so the form does not suggest these are this entry's to

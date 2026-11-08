@@ -428,6 +428,11 @@ func TestAnExternalUsersSessionRunsUnderTheEnforcedControls(t *testing.T) {
 	f := newExternalPamFixture(t)
 	settings := `{"enable-sftp":"true","disable-copy":"false","disable-paste":"false","recording-exclude-output":"true","color-scheme":"gray-black"}`
 	maint := f.entry("maint", "ssh", "ziti", 22, settings)
+	// Since v239 what crosses an internal session is the entry's policy
+	// columns, not its settings (whose enable-sftp is reserved and dropped):
+	// this entry opens file transfer there, and an external session on it
+	// stays closed all the same.
+	f.exec(`UPDATE pam_entries SET allow_file_transfer = true WHERE id = $1`, maint)
 	legacy := f.entry("legacy", "ssh", "direct", 22, `{}`)
 	connect := func(userID, entryID string, roles ...string) (int, map[string]interface{}) {
 		t.Helper()

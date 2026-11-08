@@ -233,6 +233,13 @@ type PamEntry struct {
 	Renderer            string `json:"renderer"`
 	ZitiEnabled         bool   `json:"ziti_enabled"`
 	Favorite            bool   `json:"favorite"`
+	// How an RDP session checks the target's certificate, and what crosses
+	// a session besides the screen (migration 239).
+	RDPCertMode         string   `json:"rdp_cert_mode"`
+	RDPCertFingerprints []string `json:"rdp_cert_fingerprints"`
+	AllowCopy           bool     `json:"allow_copy"`
+	AllowPaste          bool     `json:"allow_paste"`
+	AllowFileTransfer   bool     `json:"allow_file_transfer"`
 	// Actions are the grant actions the caller holds on the entry, set by
 	// the entry list so the console offers only what the API will allow.
 	// An administrator, whom the grant checks do not apply to, holds every
@@ -273,6 +280,147 @@ type pamEntryUpsertReq struct {
 	BreakGlassEnabled   bool   `json:"break_glass_enabled"`
 	RecordSession       bool   `json:"record_session"`
 	Renderer            string `json:"renderer"`
+	// The session policy (migration 239). Pointers, so an update that leaves
+	// one out keeps what the entry has: a client that predates the fields
+	// must not reset a pinned certificate or open the file channel by saving.
+	RDPCertMode         *string   `json:"rdp_cert_mode"`
+	RDPCertFingerprints *[]string `json:"rdp_cert_fingerprints"`
+	AllowCopy           *bool     `json:"allow_copy"`
+	AllowPaste          *bool     `json:"allow_paste"`
+	AllowFileTransfer   *bool     `json:"allow_file_transfer"`
+}
+
+// pamMaxCertFingerprints bounds the pinned certificates on one entry: enough
+// for a rotation (old and new) on every host behind one name.
+const pamMaxCertFingerprints = 8
+
+// resolvePamSessionPolicy merges the request's session policy over cur (the
+// entry's stored policy on update, the defaults on create) and validates it.
+// An RDP mode is meaningful only for an RDP-protocol entry; any other entry
+// keeps 'verify' and no fingerprints, whatever was asked.
+func resolvePamSessionPolicy(req *pamEntryUpsertReq, protocol string, cur pamSessionPolicy) (pamSessionPolicy, error) {
+	pol := cur
+	if req.AllowCopy != nil {
+		pol.AllowCopy = *req.AllowCopy
+	}
+	if req.AllowPaste != nil {
+		pol.AllowPaste = *req.AllowPaste
+	}
+	if req.AllowFileTransfer != nil {
+		pol.AllowFileTransfer = *req.AllowFileTransfer
+	}
+	if protocol != "rdp" {
+		if req.RDPCertMode != nil && *req.RDPCertMode != "" && *req.RDPCertMode != pamRDPCertVerify {
+			return pol, errors.New("rdp_cert_mode applies to RDP entries only")
+		}
+		pol.RDPCertMode, pol.RDPCertFingerprints = pamRDPCertVerify, []string{}
+		return pol, nil
+	}
+	if req.RDPCertMode != nil {
+		switch *req.RDPCertMode {
+		case pamRDPCertVerify, pamRDPCertPin, pamRDPCertIgnore:
+			pol.RDPCertMode = *req.RDPCertMode
+		default:
+			return pol, fmt.Errorf("rdp_cert_mode must be verify, pin or ignore, not %q", *req.RDPCertMode)
+		}
+	}
+	if req.RDPCertFingerprints != nil {
+		if len(*req.RDPCertFingerprints) > pamMaxCertFingerprints {
+			return pol, fmt.Errorf("at most %d certificate fingerprints may be pinned", pamMaxCertFingerprints)
+		}
+		fps := make([]string, 0, len(*req.RDPCertFingerprints))
+		seen := map[string]bool{}
+		for _, raw := range *req.RDPCertFingerprints {
+			if strings.TrimSpace(raw) == "" {
+				continue
+			}
+			fp, ok := normalizePamCertFingerprint(raw)
+			if !ok {
+				return pol, errors.New("a certificate fingerprint is sha256:, sha384: or sha512: followed by the digest as colon-separated hex pairs")
+			}
+			if !seen[fp] {
+				seen[fp] = true
+				fps = append(fps, fp)
+			}
+		}
+		pol.RDPCertFingerprints = fps
+	}
+	if pol.RDPCertFingerprints == nil {
+		pol.RDPCertFingerprints = []string{}
+	}
+	if pol.RDPCertMode == pamRDPCertPin && len(pol.RDPCertFingerprints) == 0 {
+		return pol, errors.New("pinning the certificate needs at least one fingerprint")
+	}
+	return pol, nil
+}
+
+// pamSessionPolicyLoosened reports whether next lets more through than cur:
+// a weaker certificate check, or a channel opened. Changing an entry that way
+// is an administrator's decision, not an editor's.
+func pamSessionPolicyLoosened(cur, next pamSessionPolicy) bool {
+	strength := map[string]int{pamRDPCertIgnore: 0, pamRDPCertVerify: 1, pamRDPCertPin: 1}
+	if strength[next.RDPCertMode] < strength[cur.RDPCertMode] {
+		return true
+	}
+	// A pinned fingerprint the entry did not trust before trusts a certificate
+	// it would have refused, unless it accepted every certificate already.
+	if next.RDPCertMode == pamRDPCertPin && cur.RDPCertMode != pamRDPCertIgnore {
+		had := map[string]bool{}
+		if cur.RDPCertMode == pamRDPCertPin {
+			for _, fp := range cur.RDPCertFingerprints {
+				had[fp] = true
+			}
+		}
+		for _, fp := range next.RDPCertFingerprints {
+			if !had[fp] {
+				return true
+			}
+		}
+	}
+	return (next.AllowCopy && !cur.AllowCopy) || (next.AllowPaste && !cur.AllowPaste) ||
+		(next.AllowFileTransfer && !cur.AllowFileTransfer)
+}
+
+// pamSessionPolicyChanges lists the policy fields that differ, old and new,
+// for the pam.entry_policy_changed audit record. Fingerprints are public
+// (they identify a certificate, they do not unlock anything).
+func pamSessionPolicyChanges(cur, next pamSessionPolicy) map[string]interface{} {
+	ch := map[string]interface{}{}
+	if cur.RDPCertMode != next.RDPCertMode {
+		ch["rdp_cert_mode"] = map[string]string{"from": cur.RDPCertMode, "to": next.RDPCertMode}
+	}
+	if !pamSameStrings(cur.RDPCertFingerprints, next.RDPCertFingerprints) {
+		ch["rdp_cert_fingerprints"] = map[string][]string{"from": cur.RDPCertFingerprints, "to": next.RDPCertFingerprints}
+	}
+	for name, pair := range map[string][2]bool{
+		"allow_copy":          {cur.AllowCopy, next.AllowCopy},
+		"allow_paste":         {cur.AllowPaste, next.AllowPaste},
+		"allow_file_transfer": {cur.AllowFileTransfer, next.AllowFileTransfer},
+	} {
+		if pair[0] != pair[1] {
+			ch[name] = map[string]bool{"from": pair[0], "to": pair[1]}
+		}
+	}
+	return ch
+}
+
+func pamSameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// pamDefaultSessionPolicy is a new entry's policy: the certificate checked,
+// the clipboard open both ways, no file transfer.
+func pamDefaultSessionPolicy() pamSessionPolicy {
+	return pamSessionPolicy{RDPCertMode: pamRDPCertVerify, RDPCertFingerprints: []string{},
+		AllowCopy: true, AllowPaste: true}
 }
 
 // pamNormalizeRenderer clamps a requested renderer to a safe, valid value.
@@ -515,7 +663,8 @@ const pamEntrySelectColumns = `
 	COALESCE(e.renderer,'guacamole'),
 	e.dual_control_required, e.exclusive_checkout, e.break_glass_enabled,
 	e.last_connected_at, e.connect_count, e.created_at, e.updated_at,
-	e.require_moderator`
+	e.require_moderator,
+	e.rdp_cert_mode, e.rdp_cert_fingerprints, e.allow_copy, e.allow_paste, e.allow_file_transfer`
 
 type pamEntryScanner interface {
 	Scan(dest ...any) error
@@ -534,8 +683,12 @@ func scanPamEntry(row pamEntryScanner) (*PamEntry, error) {
 		&e.DualControlRequired, &e.ExclusiveCheckout, &e.BreakGlassEnabled,
 		&e.LastConnectedAt, &e.ConnectCount, &e.CreatedAt, &e.UpdatedAt,
 		&e.RequireModerator,
+		&e.RDPCertMode, &e.RDPCertFingerprints, &e.AllowCopy, &e.AllowPaste, &e.AllowFileTransfer,
 	); err != nil {
 		return nil, err
+	}
+	if e.RDPCertFingerprints == nil {
+		e.RDPCertFingerprints = []string{}
 	}
 	e.ZitiEnabled = e.ReachMode == "ziti"
 	if len(settingsJSON) > 0 {
@@ -650,10 +803,14 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 			&e.DualControlRequired, &e.ExclusiveCheckout, &e.BreakGlassEnabled,
 			&e.LastConnectedAt, &e.ConnectCount, &e.CreatedAt, &e.UpdatedAt,
 			&e.RequireModerator,
+			&e.RDPCertMode, &e.RDPCertFingerprints, &e.AllowCopy, &e.AllowPaste, &e.AllowFileTransfer,
 			&e.Favorite,
 		); err != nil {
 			s.logger.Warn("handlePamListEntries: scan failed", zap.Error(err))
 			continue
+		}
+		if e.RDPCertFingerprints == nil {
+			e.RDPCertFingerprints = []string{}
 		}
 		e.ZitiEnabled = e.ReachMode == "ziti"
 		if len(settingsJSON) > 0 {
@@ -878,6 +1035,12 @@ func (s *Service) handlePamCreateEntry(c *gin.Context) {
 
 	entryID := uuid.New().String()
 
+	policy, err := resolvePamSessionPolicy(&req, typeInfo.Protocol, pamDefaultSessionPolicy())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	if err := s.validateCredentialLink(ctx, org.ID, entryID, req.CredentialEntryID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -908,17 +1071,20 @@ func (s *Service) handlePamCreateEntry(c *gin.Context) {
 		                         hostname, port, username, domain, url, settings,
 		                         vault_secret_id, credential_entry_id,
 		                         allow_reveal, require_approval, record_session, renderer, created_by,
-		                         dual_control_required, exclusive_checkout, break_glass_enabled, require_moderator)
+		                         dual_control_required, exclusive_checkout, break_glass_enabled, require_moderator,
+		                         rdp_cert_mode, rdp_cert_fingerprints, allow_copy, allow_paste, allow_file_transfer)
 		VALUES ($1, $2, NULLIF($3,'')::uuid, $4, $5, NULLIF($6,''), $7,
 		        NULLIF($8,''), NULLIF($9,0), NULLIF($10,''), NULLIF($11,''), NULLIF($12,''), $13,
 		        NULLIF($14,'')::uuid, NULLIF($15,'')::uuid,
 		        $16, $17, $18, $19, NULLIF($20,'')::uuid,
-		        $21, $22, $23, COALESCE($24::boolean, false))`,
+		        $21, $22, $23, COALESCE($24::boolean, false),
+		        $25, $26, $27, $28, $29)`,
 		entryID, org.ID, req.FolderID, req.Name, req.EntryType, req.Description, req.Tags,
 		req.Hostname, pamDefaultPort(req.EntryType, req.Port), req.Username, req.Domain, req.URL, settingsJSON,
 		vaultSecretID, req.CredentialEntryID,
 		req.AllowReveal, req.RequireApproval, req.RecordSession, pamNormalizeRenderer(req.Renderer, req.EntryType), userID,
-		req.DualControlRequired, req.ExclusiveCheckout, req.BreakGlassEnabled, req.RequireModerator)
+		req.DualControlRequired, req.ExclusiveCheckout, req.BreakGlassEnabled, req.RequireModerator,
+		policy.RDPCertMode, policy.RDPCertFingerprints, policy.AllowCopy, policy.AllowPaste, policy.AllowFileTransfer)
 	if err != nil {
 		if vaultSecretID != "" && s.vaultSvc != nil {
 			if delErr := s.vaultSvc.Delete(ctx, vaultSecretID); delErr != nil {
@@ -934,6 +1100,8 @@ func (s *Service) handlePamCreateEntry(c *gin.Context) {
 	s.logAuditEvent(c, "pam.entry_created", entryID, "pam_entry", map[string]interface{}{
 		"name": req.Name, "entry_type": req.EntryType, "kind": typeInfo.Kind,
 		"has_secret": vaultSecretID != "", "require_moderator": req.RequireModerator != nil && *req.RequireModerator,
+		"rdp_cert_mode": policy.RDPCertMode, "allow_copy": policy.AllowCopy, "allow_paste": policy.AllowPaste,
+		"allow_file_transfer": policy.AllowFileTransfer,
 	})
 	c.JSON(http.StatusCreated, gin.H{"id": entryID})
 }
@@ -973,9 +1141,14 @@ func (s *Service) handlePamUpdateEntry(c *gin.Context) {
 	// The stored entry_type is immutable (it decides the vault secret type and
 	// launch behaviour); reject mismatches instead of silently converting.
 	var currentType, currentSecretID string
+	var curPolicy pamSessionPolicy
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT entry_type, COALESCE(vault_secret_id::text,'') FROM pam_entries WHERE id = $1 AND org_id = $2`,
-		entryID, org.ID).Scan(&currentType, &currentSecretID)
+		`SELECT entry_type, COALESCE(vault_secret_id::text,''),
+		        rdp_cert_mode, rdp_cert_fingerprints, allow_copy, allow_paste, allow_file_transfer
+		   FROM pam_entries WHERE id = $1 AND org_id = $2`,
+		entryID, org.ID).Scan(&currentType, &currentSecretID,
+		&curPolicy.RDPCertMode, &curPolicy.RDPCertFingerprints,
+		&curPolicy.AllowCopy, &curPolicy.AllowPaste, &curPolicy.AllowFileTransfer)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "entry not found"})
@@ -987,6 +1160,22 @@ func (s *Service) handlePamUpdateEntry(c *gin.Context) {
 	}
 	if currentType != req.EntryType {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "entry_type cannot be changed"})
+		return
+	}
+	if curPolicy.RDPCertFingerprints == nil {
+		curPolicy.RDPCertFingerprints = []string{}
+	}
+	policy, err := resolvePamSessionPolicy(&req, typeInfo.Protocol, curPolicy)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// An editor may tighten an entry's session policy; weakening the
+	// certificate check, trusting another certificate or opening a channel is
+	// an administrator's call.
+	if pamSessionPolicyLoosened(curPolicy, policy) && !s.pamCallerIsAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only an administrator can loosen an entry's session policy",
+			"code": "session_policy_admin_only"})
 		return
 	}
 	if err := s.validateCredentialLink(ctx, org.ID, entryID, req.CredentialEntryID); err != nil {
@@ -1036,6 +1225,8 @@ func (s *Service) handlePamUpdateEntry(c *gin.Context) {
 		       renderer = $18,
 		       dual_control_required = $19, exclusive_checkout = $20, break_glass_enabled = $21,
 		       require_moderator = ($23::boolean AND COALESCE($22::boolean, require_moderator)),
+		       rdp_cert_mode = $24, rdp_cert_fingerprints = $25,
+		       allow_copy = $26, allow_paste = $27, allow_file_transfer = $28,
 		       updated_at = NOW()
 		 WHERE id = $16 AND org_id = $17`,
 		req.FolderID, req.Name, req.Description, req.Tags,
@@ -1047,7 +1238,8 @@ func (s *Service) handlePamUpdateEntry(c *gin.Context) {
 		req.DualControlRequired, req.ExclusiveCheckout, req.BreakGlassEnabled,
 		// Left out, the requirement stays; an entry that opens no session
 		// cannot keep one.
-		req.RequireModerator, typeInfo.Protocol != "")
+		req.RequireModerator, typeInfo.Protocol != "",
+		policy.RDPCertMode, policy.RDPCertFingerprints, policy.AllowCopy, policy.AllowPaste, policy.AllowFileTransfer)
 	if err != nil {
 		s.logger.Error("handlePamUpdateEntry: update failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update entry"})
@@ -1061,6 +1253,11 @@ func (s *Service) handlePamUpdateEntry(c *gin.Context) {
 	s.logAuditEvent(c, "pam.entry_updated", entryID, "pam_entry", map[string]interface{}{
 		"name": req.Name, "secret_rotated": req.Secret != "",
 	})
+	if changes := pamSessionPolicyChanges(curPolicy, policy); len(changes) > 0 {
+		changes["name"] = req.Name
+		changes["loosened"] = pamSessionPolicyLoosened(curPolicy, policy)
+		s.logAuditEvent(c, "pam.entry_policy_changed", entryID, "pam_entry", changes)
+	}
 	c.JSON(http.StatusOK, gin.H{"id": entryID})
 }
 

@@ -877,6 +877,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Update allows non-admins holding an `edit` grant (checked in-handler).
 		api.PUT("/pam/entries/:id", svc.handlePamUpdateEntry)
 		api.DELETE("/pam/entries/:id", svc.requireAdminRole(), svc.handlePamDeleteEntry)
+		// Reads the certificate an RDP entry's target presents, for pinning.
+		api.POST("/pam/entries/:id/rdp-certificate", svc.requireAdminRole(), svc.handlePamReadRDPCertificate)
 		api.POST("/pam/entries/:id/favorite", svc.handlePamFavoriteEntry)
 		api.DELETE("/pam/entries/:id/favorite", svc.handlePamUnfavoriteEntry)
 		api.POST("/pam/entries/:id/connect", svc.requireFreshMFA("pam.connect"), svc.handlePamConnect)

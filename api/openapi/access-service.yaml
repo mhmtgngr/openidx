@@ -2231,6 +2231,11 @@ paths:
                 $ref: '#/components/schemas/IdResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          description: >-
+            Not permitted, or `session_policy_admin_only`: an editor who is not an
+            administrator tried to weaken the certificate check, pin a new
+            certificate or open a clipboard or file channel.
         '404':
           $ref: '#/components/responses/NotFound'
     delete:
@@ -2245,6 +2250,48 @@ paths:
           description: Entry deleted
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/pam/entries/{id}/rdp-certificate:
+    post:
+      tags: [PAM Entries]
+      summary: Read an RDP entry's target certificate
+      description: >-
+        Admin only. Negotiates TLS with the entry's stored target the way an RDP
+        client does and reads the certificate without trusting it; nothing is sent
+        after the handshake. For comparing and pinning. Not available for an
+        OpenZiti-reach entry. Audited as pam.entry_certificate_read.
+      operationId: pamReadRdpCertificate
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: The certificate the target presented
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  certificate:
+                    type: object
+                    properties:
+                      fingerprint: {type: string}
+                      subject: {type: string}
+                      issuer: {type: string}
+                      dns_names: {type: array, items: {type: string}}
+                      not_before: {type: string, format: date-time}
+                      not_after: {type: string, format: date-time}
+                      self_signed: {type: boolean}
+                      trusted: {type: boolean, description: "This service's trust store accepts it for the entry's hostname. guacd checks against its own host's store."}
+                      trust_error: {type: string}
+                      protocol: {type: string, enum: [tls, nla]}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: rdp_certificate_overlay, the entry is reached over OpenZiti
+        '502':
+          description: rdp_no_tls (the target offers standard RDP security only) or rdp_certificate_unreadable
 
   /api/v1/access/pam/entries/{id}/favorite:
     post:
@@ -10792,6 +10839,21 @@ components:
         renderer: {type: string, enum: [guacamole, wasm-ssh, novnc, support]}
         ziti_enabled: {type: boolean}
         favorite: {type: boolean}
+        rdp_cert_mode:
+          type: string
+          enum: [verify, pin, ignore]
+          description: >-
+            How an RDP session checks the target's certificate. verify (a new
+            entry's default) and pin also hold the session to a TLS-based
+            security mode, since a standard-RDP-security session checks no
+            certificate. Non-RDP entries are always verify.
+        rdp_cert_fingerprints:
+          type: array
+          items: {type: string, example: "sha256:eb:45:51:d6"}
+          description: Pinned certificate fingerprints, used in pin mode.
+        allow_copy: {type: boolean, description: Clipboard out of the session.}
+        allow_paste: {type: boolean, description: Clipboard into the session.}
+        allow_file_transfer: {type: boolean, description: Drive redirection (RDP) or SFTP (SSH), in a server-chosen directory.}
         actions:
           type: array
           items: {type: string, enum: [view, connect, reveal, edit]}
@@ -10845,6 +10907,20 @@ components:
         renderer:
           type: string
           description: wasm-ssh only for ssh entries; unrecognized values fall back to guacamole
+        rdp_cert_mode:
+          type: string
+          enum: [verify, pin, ignore]
+          description: Omitted on update, the entry keeps its mode. RDP entries only.
+        rdp_cert_fingerprints:
+          type: array
+          maxItems: 8
+          items:
+            type: string
+            pattern: '^(sha256|sha384|sha512):[0-9a-fA-F]{2}(:[0-9a-fA-F]{2})+$'
+          description: Required (at least one) in pin mode. Omitted on update, kept.
+        allow_copy: {type: boolean, description: "Default true. Omitted on update, kept."}
+        allow_paste: {type: boolean, description: "Default true. Omitted on update, kept."}
+        allow_file_transfer: {type: boolean, description: "Default false. Omitted on update, kept."}
 
     PamFavoriteResponse:
       type: object

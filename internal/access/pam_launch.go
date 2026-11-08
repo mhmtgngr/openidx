@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,6 +73,136 @@ var pamReservedGuacParams = map[string]bool{
 	"hostname": true, "port": true,
 	"recording-path": true, "recording-name": true, "recording-include-keys": true,
 	"disable-gfx": true,
+	// How guacd checks an RDP target's certificate is the entry's
+	// rdp_cert_mode (migration 239), applied by applyPamSessionPolicy: a stored
+	// setting must not be able to turn the check off.
+	"ignore-cert": true, "cert-tofu": true, "cert-fingerprints": true,
+	// What crosses the session besides the screen is the entry's allow_copy,
+	// allow_paste and allow_file_transfer. These keys could turn a drive or
+	// SFTP on, point it at any directory guacd can read, and open the
+	// clipboard, from a free-form JSON field nothing reviewed.
+	"disable-copy": true, "disable-paste": true,
+	"enable-drive": true, "drive-name": true, "drive-path": true, "create-drive-path": true,
+	"disable-download": true, "disable-upload": true,
+	"enable-sftp": true, "sftp-hostname": true, "sftp-host-key": true, "sftp-port": true,
+	"sftp-username": true, "sftp-password": true, "sftp-private-key": true, "sftp-passphrase": true,
+	"sftp-public-key": true, "sftp-directory": true, "sftp-root-directory": true,
+	"sftp-server-alive-interval": true, "sftp-disable-download": true, "sftp-disable-upload": true,
+	// guacd writes recordings and typescripts where these say; the recording
+	// is the server's (recording-path above), and a typescript is not offered.
+	"create-recording-path": true, "recording-write-existing": true,
+	"typescript-path": true, "typescript-name": true, "create-typescript-path": true,
+	"typescript-write-existing": true,
+}
+
+// pamSessionPolicy is what an entry allows a session to do besides show its
+// screen, and how its RDP certificate is checked (migration 239).
+type pamSessionPolicy struct {
+	RDPCertMode         string
+	RDPCertFingerprints []string
+	AllowCopy           bool
+	AllowPaste          bool
+	AllowFileTransfer   bool
+}
+
+// Values of pam_entries.rdp_cert_mode.
+const (
+	pamRDPCertVerify = "verify"
+	pamRDPCertPin    = "pin"
+	pamRDPCertIgnore = "ignore"
+)
+
+// applyPamSessionPolicy writes the policy's broker parameters over params.
+// It runs after the settings, the credential and the recording, and before
+// the external-user hardening (which can only close more), so no stored
+// setting can open a channel the entry does not allow or turn off the
+// certificate check.
+//
+// RDP certificate: guacd 1.6.0 checks the target's certificate unless told
+// not to. 'verify' sends nothing, so the check stands; 'pin' sends the
+// fingerprints, and guacd refuses any certificate not among them; 'ignore'
+// sends ignore-cert. A 'pin' with no fingerprint is treated as 'verify',
+// never as 'ignore'.
+//
+// The check is only made on a TLS leg. Against a target that offers only
+// standard RDP security, guacd with security "any" (and with security unset,
+// which is "any") connected and painted with no certificate looked at, so a
+// man in the middle that offers standard RDP security would step around both
+// 'verify' and 'pin'. Those modes therefore keep the entry's security only
+// when it is one of the TLS-based ones and send "nla" otherwise; 'ignore'
+// leaves it as the entry has it.
+//
+// Clipboard and file transfer are written for every protocol whether allowed
+// or not, so a session's parameters always say both.
+func applyPamSessionPolicy(params map[string]string, protocol string, pol pamSessionPolicy) {
+	if protocol == "rdp" {
+		delete(params, "ignore-cert")
+		delete(params, "cert-fingerprints")
+		delete(params, "cert-tofu")
+		switch pol.RDPCertMode {
+		case pamRDPCertIgnore:
+			params["ignore-cert"] = "true"
+		default: // verify, pin, and anything unrecognised
+			if !pamRDPTLSSecurity[params["security"]] {
+				params["security"] = "nla"
+			}
+			if pol.RDPCertMode == pamRDPCertPin {
+				if fps := pamCertFingerprintsParam(pol.RDPCertFingerprints); fps != "" {
+					params["cert-fingerprints"] = fps
+				}
+			}
+		}
+	}
+	params["disable-copy"] = strconv.FormatBool(!pol.AllowCopy)
+	params["disable-paste"] = strconv.FormatBool(!pol.AllowPaste)
+	if pol.AllowFileTransfer {
+		// Drive redirection (RDP) or SFTP (SSH), in guacd's own per-session
+		// directory: the path is never the entry's to choose.
+		switch protocol {
+		case "rdp":
+			params["enable-drive"] = "true"
+			params["drive-name"] = "OpenIDX"
+			params["drive-path"] = "/tmp/guac-drive/${GUAC_USERNAME}"
+			params["create-drive-path"] = "true"
+		case "ssh":
+			params["enable-sftp"] = "true"
+		}
+		return
+	}
+	params["enable-drive"] = "false"
+	params["enable-sftp"] = "false"
+	params["disable-download"] = "true"
+	params["disable-upload"] = "true"
+	params["sftp-disable-download"] = "true"
+	params["sftp-disable-upload"] = "true"
+}
+
+// pamRDPTLSSecurity are the RDP security modes whose leg to the target is
+// TLS, so the certificate check has something to check.
+var pamRDPTLSSecurity = map[string]bool{"nla": true, "nla-ext": true, "tls": true}
+
+// pamCertFingerprintRE is one pinned certificate fingerprint as guacd and
+// xfreerdp's /cert:fingerprint take it: a hash name, a colon, and the digest
+// as colon-separated hex pairs.
+var pamCertFingerprintRE = regexp.MustCompile(`^(sha256|sha384|sha512):[0-9a-f]{2}(:[0-9a-f]{2})+$`)
+
+// normalizePamCertFingerprint lower-cases a fingerprint and checks its form.
+// sha1 and md5 are refused: a pin is only as strong as its hash.
+func normalizePamCertFingerprint(fp string) (string, bool) {
+	fp = strings.ToLower(strings.TrimSpace(fp))
+	return fp, pamCertFingerprintRE.MatchString(fp)
+}
+
+// pamCertFingerprintsParam joins the valid fingerprints for guacd's
+// cert-fingerprints parameter, dropping any that is malformed.
+func pamCertFingerprintsParam(fps []string) string {
+	var ok []string
+	for _, fp := range fps {
+		if n, valid := normalizePamCertFingerprint(fp); valid {
+			ok = append(ok, n)
+		}
+	}
+	return strings.Join(ok, ",")
 }
 
 // forcePamRemoteAppParams applies the server-mandated overrides for RemoteApp
@@ -201,6 +332,9 @@ type pamLaunchEntry struct {
 	// claimPamModeration and never loaded. The session row records it, so
 	// its moderator watches and ends that session and no other.
 	ModerationID string
+	// Policy is how the session checks an RDP certificate and what it lets
+	// cross besides the screen (migration 239).
+	Policy pamSessionPolicy
 }
 
 // pamAdminBypass names the gates an administrator's launch of entry passes
@@ -566,6 +700,7 @@ func (s *Service) launchPamSession(
 
 	params := buildPamGuacParams(secretType, target.Username, target.Domain, cred,
 		settings, entry.RecordSession, recPath, recName)
+	applyPamSessionPolicy(params, protocol, entry.Policy)
 	if entry.External {
 		hardenExternalGuacParams(params)
 	}
