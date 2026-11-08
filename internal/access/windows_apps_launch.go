@@ -226,8 +226,12 @@ func (s *Service) handleWindowsAppLaunch(c *gin.Context) {
 		"session_id":    res.SessionID,
 		"recorded":      entry.RecordSession,
 	}
+	pol := s.pamPolicyFor(c.Request.Context(), org.ID)
 	if entry.External {
-		body["session_policy"] = externalSessionPolicy(s.pamPolicyFor(c.Request.Context(), getOrgID(c)))
+		body["session_policy"] = externalSessionPolicy(pol)
+	}
+	if wm := s.pamWatermarkFor(c.Request.Context(), org.ID, c.GetString("user_id"), res.SessionID, entry.External, pol); wm != nil {
+		body["watermark"] = wm
 	}
 	c.JSON(http.StatusOK, body)
 }

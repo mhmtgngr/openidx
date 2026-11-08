@@ -47,7 +47,7 @@ export function openPamSessionWindow(res: PamConnectResult, title: string): bool
   try {
     localStorage.setItem(
       HANDOFF_PREFIX + key,
-      JSON.stringify({ url, title, overlay: res.reach_mode === 'ziti' }),
+      JSON.stringify({ url, title, overlay: res.reach_mode === 'ziti', watermark: res.watermark?.text }),
     )
   } catch {
     // Private mode / quota. The window will find no handoff and show its

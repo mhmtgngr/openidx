@@ -10021,6 +10021,8 @@ const en = {
       saved: 'Privileged session policy saved',
       saveFailed: 'Could not save the policy',
       notRecordingWarning: 'Internal users\' sessions are not recorded. New organizations record them by default.',
+      watermarkInternal: 'Watermark internal users\' sessions',
+      watermarkHint: 'Draws the user, the session and the time over the session window, so a screenshot or photo carries a name. A deterrent, not a control. Vendor users\' sessions are always watermarked.',
     },
     addDevice: {
       // The back link is exactly the nav item, so it reuses `nav.items`.

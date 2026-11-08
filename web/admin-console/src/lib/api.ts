@@ -859,6 +859,9 @@ export interface PamConnectResult {
   // an overlay launch the usual cause is a client that is not running, not a
   // temporary fault. Absent on an older service; treated as not-overlay.
   reach_mode?: string
+  // The watermark the server composed for this session (migration 242),
+  // absent when the organization's policy asks for none.
+  watermark?: { text: string }
 }
 
 export interface PamEntryGrant {

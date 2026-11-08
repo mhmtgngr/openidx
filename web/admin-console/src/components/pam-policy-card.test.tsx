@@ -68,7 +68,19 @@ describe('PamPolicyCard', () => {
         require_approval_internal: false,
         record_internal: true,
         launch_approval_window_minutes: 60,
+        watermark_internal: false,
       }),
+    )
+  })
+
+  it('saves the watermark switch', async () => {
+    vi.mocked(api.get).mockResolvedValue(LEGACY)
+    vi.mocked(api.put).mockResolvedValue({ ...LEGACY, watermark_internal: true })
+    wrap(<PamPolicyCard />)
+    fireEvent.click(await screen.findByLabelText(/watermark internal/i))
+    fireEvent.click(screen.getByRole('button', { name: /save policy/i }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/v1/access/pam/policy', expect.objectContaining({ watermark_internal: true })),
     )
   })
 

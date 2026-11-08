@@ -6310,6 +6310,14 @@ paths:
     put:
       tags: [PAM]
       summary: Set the organization's privileged-session policy
+      description: >-
+        Fields include max_session_hours, idle_timeout_minutes,
+        require_approval_internal, record_internal,
+        launch_approval_window_minutes and watermark_internal (draw the user,
+        session and time over internal users' session windows; external users'
+        sessions are always watermarked). A field left out keeps its value only
+        for watermark_internal. A launch answers the server-composed text as
+        `watermark.text` when one is due.
       operationId: setPamPolicy
       x-openidx-handler: internal/access.(*Service).handleSetPamPolicy
       requestBody:
