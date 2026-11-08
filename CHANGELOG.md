@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.50.0] - 2026-11-08
+
+### Added
+- **Read the target's certificate.** In an RDP entry's dialog, *Read the
+  target's certificate* shows the fingerprint, subject, validity and whether
+  the server trusts it, and *Pin this certificate* pins it
+  (`POST /pam/entries/{id}/rdp-certificate`, administrators only, audited as
+  `pam.entry_certificate_read`).
+- **Badges on the connection list.** RDP entries show *cert not checked* or
+  *cert pinned*. Entries that allow file transfer show *files*.
+
+### Fixed
+- **PAM sessions end when the user leaves.** A brokered session whose user
+  closed the tab used to stay "active" in the session ledger for ever. The
+  lifecycle sweep now ends a session the broker has not served for 10 minutes,
+  with reason `disconnected`, audited as `pam.session_ended` and published to
+  webhooks like any other end. A broker that cannot be reached ends nothing.
+
+### Security
+- **PAM RDP sessions check the target's certificate.** The broker used to
+  create every RDP connection with `ignore-cert=true`, so a machine between the
+  broker and the target could read the session and the injected credential.
+  Each RDP entry now has a certificate mode: **Verify** (the default for a new
+  entry), **Pin fingerprint** for a self-signed server, or **Do not check**.
+  Verify and Pin also hold the session to NLA or TLS, because guacd checks no
+  certificate on a standard-RDP-security session.
+- **Clipboard and file transfer are entry policy, not free-form settings.**
+  Each session entry now has *Copy out*, *Paste in* and *File transfer* (drive
+  redirection for RDP, SFTP for SSH, in a directory the server chooses).
+  Settings keys such as `ignore-cert`, `enable-drive`, `drive-path`,
+  `enable-sftp`, `sftp-*`, `disable-copy`, `disable-paste` and `typescript-*`
+  are reserved and no longer reach the broker. Only an administrator can open a
+  channel, weaken the certificate check or pin a new certificate. An editor who
+  tries gets `403 session_policy_admin_only`. Every change is audited as
+  `pam.entry_policy_changed`.
+- **golang.org/x/net 0.62.0.** Fixes CVE-2026-78661, a denial of service in
+  the HTML parser, in the server and the agent. Related golang.org/x modules
+  moved up with it.
+
+### Upgrade notes
+- **Migration 239.** It keeps every existing session behaving as it did:
+  - Existing RDP entries are set to **Do not check**, which is what the broker
+    already did. They show *cert not checked* until an administrator pins or
+    verifies them.
+  - An entry whose settings turned on drive or SFTP keeps file transfer.
+  - An entry whose settings turned off the clipboard keeps it off.
+  - New entries verify the certificate and have no file transfer.
+- **Check targets before switching to Verify or Pin.** A target that offers
+  only standard RDP security refuses sessions in Verify or Pin mode until TLS
+  or NLA is enabled on it. *Read the target's certificate* reports this case.
+- **Migration 240** adds `pam_entry_sessions.broker_last_seen_at`. On the first
+  sweep after the upgrade, old sessions the broker no longer serves are ended.
+
 ## [1.49.0] - 2026-11-04
 
 ### Added
@@ -12350,7 +12403,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.49.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.50.0...HEAD
+[1.50.0]: https://github.com/mhmtgngr/openidx/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/mhmtgngr/openidx/compare/v1.48.0...v1.49.0
 [1.48.0]: https://github.com/mhmtgngr/openidx/compare/v1.47.1...v1.48.0
 [1.47.1]: https://github.com/mhmtgngr/openidx/compare/v1.47.0...v1.47.1
