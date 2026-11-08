@@ -11,6 +11,7 @@ import {
   Eye,
   Lock,
   Unlock,
+  Play,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -38,8 +39,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 import i18n from '../i18n'
-import { api } from '../lib/api'
+import { api, PamEntrySession } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
+import { RecordingPlayer } from '../components/recording-player'
 
 // ──────────────────────────────────────────────────────────────────────────────
 // DTOs — mirror the backend structs exactly
@@ -107,6 +109,7 @@ export function GuacamoleSessionsPage() {
           <TabsTrigger value="requests">{t('pages.guacSessions.tabs.requests')}</TabsTrigger>
           <TabsTrigger value="active">{t('pages.guacSessions.tabs.active')}</TabsTrigger>
           <TabsTrigger value="history">{t('pages.guacSessions.tabs.history')}</TabsTrigger>
+          <TabsTrigger value="pam">{t('pages.guacSessions.tabs.pam')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="requests">
@@ -119,6 +122,10 @@ export function GuacamoleSessionsPage() {
 
         <TabsContent value="history">
           <SessionHistoryTab />
+        </TabsContent>
+
+        <TabsContent value="pam">
+          <PamEntrySessionsTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -494,6 +501,7 @@ function SessionHistoryTab() {
   const { t } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const [playing, setPlaying] = useState<GuacSessionRow | null>(null)
   const [holdTarget, setHoldTarget] = useState<{
     session: GuacSessionRow
     action: 'place' | 'release'
@@ -602,6 +610,12 @@ function SessionHistoryTab() {
                         <Download className="mr-1 h-3 w-3" />
                         {t('pages.guacSessions.history.transcript')}
                       </Button>
+                      {s.recording_available && (
+                        <Button size="sm" variant="outline" onClick={() => setPlaying(s)}>
+                          <Play className="mr-1 h-3 w-3" />
+                          {t('pages.guacSessions.player.watch')}
+                        </Button>
+                      )}
                       {s.recording_available &&
                         (s.on_legal_hold ? (
                           <>
@@ -654,6 +668,14 @@ function SessionHistoryTab() {
         )}
       </CardContent>
     </Card>
+
+    {playing && (
+      <RecordingPlayer
+        url={`/api/v1/access/guacamole/sessions/${playing.id}/recording`}
+        title={t('pages.guacSessions.player.title', { started: new Date(playing.started_at).toLocaleString() })}
+        onClose={() => setPlaying(null)}
+      />
+    )}
 
     {/* Legal-hold reason dialog — replaces the old window.prompt flow so the
         audited reason gets a proper, accessible input */}
@@ -777,4 +799,88 @@ async function downloadTranscript(
       })
     }
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Tab: PAM entry sessions (Connect on an entry, Windows app launches)
+// ──────────────────────────────────────────────────────────────────────────────
+
+function PamEntrySessionsTab() {
+  const { t } = useTranslation()
+  const [playing, setPlaying] = useState<PamEntrySession | null>(null)
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['pam-entry-sessions'],
+    queryFn: () => api.get<{ sessions: PamEntrySession[] }>('/api/v1/access/pam/sessions'),
+  })
+  const sessions: PamEntrySession[] = data?.sessions ?? []
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MonitorPlay className="h-5 w-5" />
+            {t('pages.guacSessions.pam.title')}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="py-12 flex justify-center"><LoadingSpinner /></div>
+          ) : isError ? (
+            <QueryError error={error} resource={t('pages.guacSessions.pam.resourceName')} />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t('pages.guacSessions.pam.table.entry')}</TableHead>
+                  <TableHead>{t('pages.guacSessions.pam.table.protocol')}</TableHead>
+                  <TableHead>{t('pages.guacSessions.history.table.started')}</TableHead>
+                  <TableHead>{t('pages.guacSessions.history.table.ended')}</TableHead>
+                  <TableHead>{t('pages.guacSessions.history.table.status')}</TableHead>
+                  <TableHead>{t('pages.guacSessions.pam.table.recording')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sessions.map((s) => (
+                  <TableRow key={s.id}>
+                    <TableCell className="font-medium">{s.entry_name}</TableCell>
+                    <TableCell>{s.protocol || '—'}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{new Date(s.started_at).toLocaleString()}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{s.ended_at ? new Date(s.ended_at).toLocaleString() : '—'}</TableCell>
+                    <TableCell><Badge variant={s.status === 'active' ? 'default' : 'secondary'}>{s.status}</Badge></TableCell>
+                    <TableCell>
+                      {s.recording_available && s.status !== 'active' ? (
+                        <Button size="sm" variant="outline" onClick={() => setPlaying(s)}>
+                          <Play className="mr-1 h-3 w-3" />
+                          {t('pages.guacSessions.player.watch')}
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          {s.recording_available ? t('pages.guacSessions.pam.stillRecording') : t('pages.guacSessions.pam.notRecorded')}
+                        </span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {sessions.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      {t('pages.guacSessions.pam.empty')}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+      {playing && (
+        <RecordingPlayer
+          url={`/api/v1/access/pam/sessions/${playing.id}/recording`}
+          title={t('pages.guacSessions.player.titleEntry', { entry: playing.entry_name, started: new Date(playing.started_at).toLocaleString() })}
+          onClose={() => setPlaying(null)}
+        />
+      )}
+    </>
+  )
 }

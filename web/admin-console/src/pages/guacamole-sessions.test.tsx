@@ -83,6 +83,18 @@ const sessionRowOnHold = {
 // ──────────────────────────────────────────────────────────────────────────────
 
 function routeGet(url: string) {
+  if (url.includes('/pam/sessions')) {
+    return Promise.resolve({
+      sessions: [
+        { id: 'pes-1', entry_id: 'e1', entry_name: 'DC01', protocol: 'rdp', credential_injected: true,
+          recording_available: true, started_at: '2026-11-08T10:00:00Z', ended_at: '2026-11-08T10:30:00Z', status: 'ended' },
+        { id: 'pes-2', entry_id: 'e2', entry_name: 'jump-ssh', protocol: 'ssh', credential_injected: true,
+          recording_available: true, started_at: '2026-11-08T11:00:00Z', status: 'active' },
+        { id: 'pes-3', entry_id: 'e3', entry_name: 'web01', protocol: 'ssh', credential_injected: false,
+          recording_available: false, started_at: '2026-11-08T09:00:00Z', ended_at: '2026-11-08T09:05:00Z', status: 'ended' },
+      ],
+    })
+  }
   if (url.includes('/session-requests')) {
     return Promise.resolve({ requests: [pendingRequest] })
   }
@@ -383,5 +395,40 @@ describe('GuacamoleSessionsPage', () => {
     const { queryByRole } = within(daveRow)
     expect(queryByRole('button', { name: /place hold/i })).toBeNull()
     expect(queryByRole('button', { name: /release hold/i })).toBeNull()
+  })
+
+  // ── Entry Sessions tab (recording playback) ──────────────────────────────
+
+  it('offers Watch only for an ended entry session with a recording, and plays it from the entry route', async () => {
+    const user = userEvent.setup()
+    render(<GuacamoleSessionsPage />, { wrapper: createWrapper() })
+    await user.click(await screen.findByRole('tab', { name: /entry sessions/i }))
+    const dc = (await screen.findByText('DC01')).closest('tr') as HTMLElement
+    const jump = screen.getByText('jump-ssh').closest('tr') as HTMLElement
+    const web = screen.getByText('web01').closest('tr') as HTMLElement
+    expect(within(jump).queryByRole('button', { name: /watch/i })).toBeNull()
+    expect(within(jump).getByText(/recording, session live/i)).toBeInTheDocument()
+    expect(within(web).queryByRole('button', { name: /watch/i })).toBeNull()
+    expect(within(web).getByText(/not recorded/i)).toBeInTheDocument()
+
+    vi.mocked(api.get).mockImplementation((url: string, ...rest: unknown[]) => {
+      if (url.endsWith('/recording')) return Promise.reject({ response: { status: 410 } }) as ReturnType<typeof api.get>
+      void rest
+      return routeGet(url) as ReturnType<typeof api.get>
+    })
+    await user.click(within(dc).getByRole('button', { name: /watch/i }))
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/v1/access/pam/sessions/pes-1/recording', { responseType: 'blob' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/retention policy/i)
+  })
+
+  it('offers Watch on a route session with a recording, from the route recording endpoint', async () => {
+    const user = userEvent.setup()
+    render(<GuacamoleSessionsPage />, { wrapper: createWrapper() })
+    await user.click(await screen.findByRole('tab', { name: /session history/i }))
+    const watch = await screen.findAllByRole('button', { name: /watch/i })
+    expect(watch.length).toBeGreaterThan(0)
+    await user.click(watch[0])
+    await waitFor(() => expect(vi.mocked(api.get).mock.calls.some(([u]) =>
+      /\/api\/v1\/access\/guacamole\/sessions\/[^/]+\/recording$/.test(String(u)))).toBe(true))
   })
 })
