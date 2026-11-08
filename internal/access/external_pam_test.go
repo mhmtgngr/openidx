@@ -21,14 +21,27 @@ func TestAnExternalSessionsControlsCannotBeOpenedBySettings(t *testing.T) {
 		"color-scheme": "gray-black",
 	}
 
+	// Clipboard and file transfer are the entry's columns since v239, not
+	// its settings: the settings keys are reserved and dropped. Keys that are
+	// not reserved still pass through for an internal session.
 	internal := buildPamGuacParams("password", "deploy", "", []byte("pw"), settings, false, "", "")
 	for k, v := range settings {
+		if pamReservedGuacParams[k] {
+			if _, ok := internal[k]; ok {
+				t.Errorf("reserved setting %s reached the broker", k)
+			}
+			continue
+		}
 		if internal[k] != v.(string) {
 			t.Errorf("an internal session's %s is %q, want the entry's %q", k, internal[k], v)
 		}
 	}
 
+	// An external user's session is closed even on an entry whose policy
+	// opens every channel.
+	open := pamSessionPolicy{RDPCertMode: pamRDPCertVerify, AllowCopy: true, AllowPaste: true, AllowFileTransfer: true}
 	external := buildPamGuacParams("password", "deploy", "", []byte("pw"), settings, true, "/recordings", "pam-e-1")
+	applyPamSessionPolicy(external, "rdp", open)
 	hardenExternalGuacParams(external)
 	for k, want := range map[string]string{
 		"disable-copy": "true", "disable-paste": "true",

@@ -564,13 +564,16 @@ func (s *Service) pamLaunchEntryByID(ctx context.Context, entryID, orgID string)
 		       COALESCE(username,''), COALESCE(domain,''), COALESCE(url,''), settings,
 		       COALESCE(vault_secret_id::text,''), COALESCE(credential_entry_id::text,''),
 		       COALESCE(guacamole_connection_id,''), require_approval, record_session,
-		       reach_mode, COALESCE(ziti_intercept_port,0), require_moderator
+		       reach_mode, COALESCE(ziti_intercept_port,0), require_moderator,
+		       rdp_cert_mode, rdp_cert_fingerprints, allow_copy, allow_paste, allow_file_transfer
 		  FROM pam_entries WHERE id = $1 AND org_id = $2`, entryID, orgID).Scan(
 		&entry.ID, &entry.Name, &entry.EntryType, &entry.Hostname, &entry.Port,
 		&entry.Username, &entry.Domain, &entry.URL, &settingsJSON,
 		&entry.VaultSecretID, &entry.CredentialEntryID,
 		&entry.GuacConnectionID, &entry.RequireApproval, &entry.RecordSession,
 		&entry.ReachMode, &entry.ZitiInterceptPort, &entry.RequireModerator,
+		&entry.Policy.RDPCertMode, &entry.Policy.RDPCertFingerprints,
+		&entry.Policy.AllowCopy, &entry.Policy.AllowPaste, &entry.Policy.AllowFileTransfer,
 	); err != nil {
 		return entry, PamEntryType{}, err
 	}

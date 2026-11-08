@@ -1693,5 +1693,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agentAuthFailuresUp,
 			DownSQL:     agentAuthFailuresDown,
 		},
+		{
+			Version:     239,
+			Name:        "pam_session_channels",
+			Description: "How a privileged RDP session checks the target's certificate, and what crosses the session besides the screen. pam_entries gains rdp_cert_mode ('verify' for a new entry, 'pin' against rdp_cert_fingerprints, or 'ignore'), allow_copy and allow_paste (default true) and allow_file_transfer (drive redirection and SFTP; default false). The broker used to write ignore-cert=true on every RDP connection it created, so every existing RDP-protocol entry is set to 'ignore' (what it already did), and an entry whose settings enabled drive/SFTP or disabled the clipboard keeps that; the launch now reads the columns and the matching settings keys are reserved. Columns under the table's existing org policy; down drops them.",
+			UpSQL:       pamSessionChannelsUp,
+			DownSQL:     pamSessionChannelsDown,
+		},
 	}
 }
