@@ -1281,7 +1281,7 @@ func (s *Service) handlePamListSessions(c *gin.Context) {
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT s.id, s.entry_id, e.name, s.user_id::text, s.protocol,
-		       s.credential_injected, (COALESCE(s.recording_path,'') <> ''),
+		       s.credential_injected, (COALESCE(s.recording_path,'') <> '' AND s.recording_purged_at IS NULL),
 		       s.started_at, s.ended_at, s.status
 		  FROM pam_entry_sessions s
 		  JOIN pam_entries e ON e.id = s.entry_id
