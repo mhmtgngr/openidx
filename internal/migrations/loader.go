@@ -1707,5 +1707,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamEntrySessionBrokerSeenUp,
 			DownSQL:     pamEntrySessionBrokerSeenDown,
 		},
+		{
+			Version:     241,
+			Name:        "pam_entry_recording_seal",
+			Description: "Seal and retention metadata for PAM entry session recordings. guacd records an entry session to pam_entry_sessions.recording_path, but the sealer, the retention purge and the download read only guacamole_sessions, so those recordings stayed plaintext, were never purged and could not be downloaded. pam_entry_sessions gains recording_sealed_at, recording_sha256, recording_key_id and recording_purged_at (the columns guacamole_sessions has) plus a partial index for the unsealed sweep. Route launches, which write both tables for one file, stay with the route path. Nullable columns under the table's existing org policy; down drops them.",
+			UpSQL:       pamEntryRecordingSealUp,
+			DownSQL:     pamEntryRecordingSealDown,
+		},
 	}
 }

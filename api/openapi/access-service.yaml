@@ -2604,6 +2604,32 @@ paths:
                     items:
                       $ref: '#/components/schemas/PamEntrySession'
 
+  /api/v1/access/pam/sessions/{id}/recording:
+    get:
+      tags: [PAM Launch]
+      summary: Download an entry session's recording
+      description: >-
+        Admin only. Streams the guacd recording of a PAM entry session, decrypted
+        on the fly when it has been sealed at rest. Audited as
+        pam.recording_downloaded.
+      operationId: pamGetEntrySessionRecording
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: The recording (guacd protocol dump)
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: recording_purged, removed by the retention policy
+        '503':
+          description: recording_key_unavailable, the recording is sealed and no key is configured
+
   /api/v1/access/pam/sessions/{id}/end:
     post:
       tags: [PAM Launch]
