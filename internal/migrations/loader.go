@@ -1700,5 +1700,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamSessionChannelsUp,
 			DownSQL:     pamSessionChannelsDown,
 		},
+		{
+			Version:     240,
+			Name:        "pam_entry_session_broker_seen",
+			Description: "When the broker last served a PAM entry session. pam_entry_sessions gains broker_last_seen_at, stamped by the lifecycle sweep whenever the session is among the broker's active connections; a session the broker has not served for the grace period is ended with reason 'disconnected'. Before this a user who closed the tab left the row 'active' for ever, so the ledger over-counted live sessions and nothing that waits for an end (recording seal, retention) ran. Nullable column under the table's existing org policy; down drops it.",
+			UpSQL:       pamEntrySessionBrokerSeenUp,
+			DownSQL:     pamEntrySessionBrokerSeenDown,
+		},
 	}
 }
