@@ -106,7 +106,9 @@ jobs:
   # Build the iOS Engine.xcframework with gomobile (macOS runner).
   # ---------------------------------------------------------------------------
   gomobile-ios:
-    runs-on: macos-14
+    # macos-15, like build-ios below: GitHub retired the macos-14 image
+    # ("The configuration 'macos-14-arm64-us-default' is not supported").
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
