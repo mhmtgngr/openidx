@@ -421,6 +421,31 @@ describe('GuacamoleSessionsPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/retention policy/i)
   })
 
+  it('offers a transcript download for an ended, recorded SSH entry session only', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url.includes('/pam/sessions')) {
+        return Promise.resolve({ sessions: [
+          { id: 'pes-s', entry_id: 'e1', entry_name: 'bastion', protocol: 'ssh', credential_injected: true,
+            recording_available: true, started_at: '2026-11-08T10:00:00Z', ended_at: '2026-11-08T10:30:00Z', status: 'ended' },
+          { id: 'pes-r', entry_id: 'e2', entry_name: 'DC01', protocol: 'rdp', credential_injected: true,
+            recording_available: true, started_at: '2026-11-08T10:00:00Z', ended_at: '2026-11-08T10:30:00Z', status: 'ended' },
+        ] }) as ReturnType<typeof api.get>
+      }
+      if (url.endsWith('/typescript')) return Promise.resolve(new Blob(['x'])) as ReturnType<typeof api.get>
+      return routeGet(url) as ReturnType<typeof api.get>
+    })
+    URL.createObjectURL = vi.fn(() => 'blob:x')
+    URL.revokeObjectURL = vi.fn()
+    render(<GuacamoleSessionsPage />, { wrapper: createWrapper() })
+    await user.click(await screen.findByRole('tab', { name: /entry sessions/i }))
+    const ssh = (await screen.findByText('bastion')).closest('tr') as HTMLElement
+    const rdp = screen.getByText('DC01').closest('tr') as HTMLElement
+    expect(within(rdp).queryByRole('button', { name: /transcript/i })).toBeNull()
+    await user.click(within(ssh).getByRole('button', { name: /transcript/i }))
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/v1/access/pam/sessions/pes-s/typescript', { responseType: 'blob' }))
+  })
+
   it('offers Watch on a route session with a recording, from the route recording endpoint', async () => {
     const user = userEvent.setup()
     render(<GuacamoleSessionsPage />, { wrapper: createWrapper() })

@@ -74,6 +74,12 @@ func (h *RemoteSupportHandler) sealPamEntryRecordings(ctx context.Context) {
 		if _, statErr := os.Stat(j.path); statErr != nil {
 			continue // not on disk (yet); a later tick tries again
 		}
+		// The text transcript first: the recording's own seal is the claim
+		// and the announcement, so it is stamped only once its companions are
+		// ciphertext too.
+		if !h.sealTypescriptCompanions(j.id, j.path) {
+			continue
+		}
 		sum, keyID, sealErr := h.sealOneGuacRecording(j.path)
 		if errors.Is(sealErr, errAlreadySealed) {
 			h.logger.Warn("sealPamEntryRecordings: recording is already ciphertext but the row carries no seal metadata; refusing to encrypt it twice",
@@ -194,6 +200,12 @@ func (h *RemoteSupportHandler) removeGuacRecordingFiles(sessionID, path string) 
 		h.logger.Warn("PAM recording purge: remove failed", zap.String("session_id", sessionID), zap.Error(err))
 		return false
 	}
+	for _, companion := range pamTypescriptFiles(path) {
+		if err := os.Remove(companion); err != nil && !os.IsNotExist(err) {
+			h.logger.Warn("PAM recording purge: typescript remove failed", zap.String("session_id", sessionID), zap.Error(err))
+			return false
+		}
+	}
 	if t := path + ".txt"; isUnderRoot(t, root) {
 		if err := os.Remove(t); err != nil && !os.IsNotExist(err) {
 			h.logger.Warn("PAM recording purge: transcript remove failed", zap.String("session_id", sessionID), zap.Error(err))
@@ -266,5 +278,94 @@ func (s *Service) handlePamEntryRecording(c *gin.Context) {
 	}
 	if _, err := io.Copy(c.Writer, src); err != nil {
 		s.logger.Warn("handlePamEntryRecording: copy failed", logsafe.String("session_id", sessionID), zap.Error(err))
+	}
+}
+
+// sealTypescriptCompanions seals an SSH recording's text transcript and its
+// timing file in place, each under its own derived key (the path is the key's
+// session id, as for the recording). A companion that is absent is fine (an
+// RDP session has none); one already sealed is left alone; a failure reports
+// false so the recording is not stamped sealed over a plaintext transcript.
+func (h *RemoteSupportHandler) sealTypescriptCompanions(sessionID, recordingPath string) bool {
+	for _, p := range pamTypescriptFiles(recordingPath) {
+		if !h.guacRecordingPathSafe(p) {
+			return false
+		}
+		if _, err := os.Stat(p); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return false
+		}
+		if _, _, err := h.sealOneGuacRecording(p); err != nil && !errors.Is(err, errAlreadySealed) {
+			h.logger.Warn("sealPamEntryRecordings: typescript seal failed; the recording waits for the next tick",
+				zap.String("session_id", sessionID), zap.Error(err))
+			return false
+		}
+	}
+	return true
+}
+
+// handlePamEntryTypescript — GET /pam/sessions/:id/typescript (admin).
+//
+// Streams an SSH entry session's text transcript (guacd's typescript: what was
+// typed and what the shell printed), decrypted when sealed. 404 when the
+// session has none; 410 once the retention policy removed it. Audited as
+// pam.typescript_downloaded.
+func (s *Service) handlePamEntryTypescript(c *gin.Context) {
+	sessionID := c.Param("id")
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	var path string
+	var sealedAt, purgedAt *time.Time
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(recording_path, ''), recording_sealed_at, recording_purged_at
+		  FROM pam_entry_sessions WHERE id = $1 AND org_id = $2`, sessionID, org.ID).Scan(&path, &sealedAt, &purgedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+			return
+		}
+		s.logger.Error("handlePamEntryTypescript: lookup failed", logsafe.String("session_id", sessionID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up session"})
+		return
+	}
+	if path == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "this session was not recorded"})
+		return
+	}
+	if purgedAt != nil {
+		c.JSON(http.StatusGone, gin.H{"error": "the transcript was removed by the retention policy", "code": "recording_purged"})
+		return
+	}
+	ts := pamTypescriptFiles(path)[0]
+	if root := s.config.GuacamoleRecordingPath; root == "" || !isUnderRoot(ts, root) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "transcript not found"})
+		return
+	}
+	f, err := os.Open(ts)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "this session has no text transcript", "code": "typescript_unavailable"})
+		return
+	}
+	defer f.Close()
+	var src io.Reader = f
+	if sealedAt != nil {
+		if s.guacRecordingRing == nil || !s.guacRecordingRing.Enabled() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "the transcript is sealed and no recording key is configured", "code": "recording_key_unavailable"})
+			return
+		}
+		src = newDecryptingReader(f, s.guacRecordingRing, guacRecordingSessionKey(ts))
+	}
+	s.logAuditEvent(c, "pam.typescript_downloaded", sessionID, "pam_entry_session",
+		map[string]interface{}{"session_id": sessionID, "sealed": sealedAt != nil})
+	c.Header("Content-Disposition", `attachment; filename="openidx-pam-typescript-`+sessionID+`.txt"`)
+	c.Header("Content-Type", "text/plain; charset=utf-8")
+	if _, err := io.Copy(c.Writer, src); err != nil {
+		s.logger.Warn("handlePamEntryTypescript: copy failed", logsafe.String("session_id", sessionID), zap.Error(err))
 	}
 }

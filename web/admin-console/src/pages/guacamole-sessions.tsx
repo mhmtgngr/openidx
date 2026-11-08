@@ -807,6 +807,7 @@ async function downloadTranscript(
 
 function PamEntrySessionsTab() {
   const { t } = useTranslation()
+  const { toast } = useToast()
   const [playing, setPlaying] = useState<PamEntrySession | null>(null)
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['pam-entry-sessions'],
@@ -850,10 +851,18 @@ function PamEntrySessionsTab() {
                     <TableCell><Badge variant={s.status === 'active' ? 'default' : 'secondary'}>{s.status}</Badge></TableCell>
                     <TableCell>
                       {s.recording_available && s.status !== 'active' ? (
-                        <Button size="sm" variant="outline" onClick={() => setPlaying(s)}>
-                          <Play className="mr-1 h-3 w-3" />
-                          {t('pages.guacSessions.player.watch')}
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button size="sm" variant="outline" onClick={() => setPlaying(s)}>
+                            <Play className="mr-1 h-3 w-3" />
+                            {t('pages.guacSessions.player.watch')}
+                          </Button>
+                          {s.protocol === 'ssh' && (
+                            <Button size="sm" variant="outline" onClick={() => downloadPamTypescript(s.id, toast)}>
+                              <Download className="mr-1 h-3 w-3" />
+                              {t('pages.guacSessions.history.transcript')}
+                            </Button>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-xs text-muted-foreground">
                           {s.recording_available ? t('pages.guacSessions.pam.stillRecording') : t('pages.guacSessions.pam.notRecorded')}
@@ -883,4 +892,31 @@ function PamEntrySessionsTab() {
       )}
     </>
   )
+}
+
+// downloadPamTypescript saves an SSH entry session's text transcript
+// (admin-only, audited server-side, decrypted there when sealed).
+async function downloadPamTypescript(
+  sessionId: string,
+  toast: ReturnType<typeof useToast>['toast'],
+) {
+  try {
+    const blob = await api.get<Blob>(`/api/v1/access/pam/sessions/${sessionId}/typescript`, { responseType: 'blob' })
+    const objectUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objectUrl
+    a.download = `typescript-${sessionId}.txt`
+    a.click()
+    URL.revokeObjectURL(objectUrl)
+  } catch (err: unknown) {
+    const status = (err as { response?: { status?: number } })?.response?.status
+    toast({
+      title: status === 404
+        ? i18n.t('pages.guacSessions.history.toasts.transcriptMissing')
+        : status === 410
+          ? i18n.t('pages.guacSessions.player.purged')
+          : i18n.t('pages.guacSessions.history.toasts.transcriptFailed'),
+      variant: 'destructive',
+    })
+  }
 }

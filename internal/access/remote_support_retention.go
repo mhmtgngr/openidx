@@ -667,6 +667,14 @@ func (h *RemoteSupportHandler) purgeGuacRecording(ctx context.Context, sessionID
 			if err := os.RemoveAll(recordingPath); err != nil {
 				return err
 			}
+			// An SSH session's text transcript (pamTypescriptFiles) goes
+			// with the recording; a failure leaves the row unpurged so the
+			// next tick tries again.
+			for _, companion := range pamTypescriptFiles(recordingPath) {
+				if err := os.Remove(companion); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+			}
 			// Also remove the transcript file (recording_path + ".txt") when
 			// it is strictly inside the recordings root. The DB columns
 			// (transcript_path, transcript_generated_at) are left intact so

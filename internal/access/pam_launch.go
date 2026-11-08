@@ -88,11 +88,36 @@ var pamReservedGuacParams = map[string]bool{
 	"sftp-username": true, "sftp-password": true, "sftp-private-key": true, "sftp-passphrase": true,
 	"sftp-public-key": true, "sftp-directory": true, "sftp-root-directory": true,
 	"sftp-server-alive-interval": true, "sftp-disable-download": true, "sftp-disable-upload": true,
-	// guacd writes recordings and typescripts where these say; the recording
-	// is the server's (recording-path above), and a typescript is not offered.
+	// guacd writes recordings and typescripts where these say; both are the
+	// server's (recording-path above, typescript-* from pamTypescriptParams).
 	"create-recording-path": true, "recording-write-existing": true,
 	"typescript-path": true, "typescript-name": true, "create-typescript-path": true,
 	"typescript-write-existing": true,
+}
+
+// pamTypescriptSuffix names an SSH session's text transcript beside its
+// graphical recording: <recording>.typescript, and guacd's own
+// <recording>.typescript.timing. The sealer, the retention purge and the
+// download find the companions from the recording path, so the transcript is
+// sealed, purged and audited exactly when the recording is.
+const pamTypescriptSuffix = ".typescript"
+
+// pamTypescriptFiles is a recording's text-transcript companions.
+func pamTypescriptFiles(recordingFile string) []string {
+	return []string{recordingFile + pamTypescriptSuffix, recordingFile + pamTypescriptSuffix + ".timing"}
+}
+
+// pamTypescriptParams asks guacd for a text transcript of a recorded SSH
+// session: what was typed and what the shell printed, searchable without
+// replaying the screen. A typescript holds whatever crossed the terminal, so
+// it is written only when the session is recorded, into the recording's own
+// directory, and handled as the recording is.
+func pamTypescriptParams(params map[string]string, protocol string, record bool, recordingPath, recordingName string) {
+	if !record || protocol != "ssh" || recordingPath == "" {
+		return
+	}
+	params["typescript-path"] = recordingPath
+	params["typescript-name"] = recordingName + pamTypescriptSuffix
 }
 
 // pamSessionPolicy is what an entry allows a session to do besides show its
@@ -701,6 +726,7 @@ func (s *Service) launchPamSession(
 	params := buildPamGuacParams(secretType, target.Username, target.Domain, cred,
 		settings, entry.RecordSession, recPath, recName)
 	applyPamSessionPolicy(params, protocol, entry.Policy)
+	pamTypescriptParams(params, protocol, entry.RecordSession, recPath, recName)
 	if entry.External {
 		hardenExternalGuacParams(params)
 	}

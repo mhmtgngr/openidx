@@ -2630,6 +2630,32 @@ paths:
         '503':
           description: recording_key_unavailable, the recording is sealed and no key is configured
 
+  /api/v1/access/pam/sessions/{id}/typescript:
+    get:
+      tags: [PAM Launch]
+      summary: Download an SSH entry session's text transcript
+      description: >-
+        Admin only. guacd's typescript of a recorded SSH session (what was typed
+        and what the shell printed), decrypted when sealed. Sealed, purged and
+        retained with the session's recording. Audited as pam.typescript_downloaded.
+      operationId: pamGetEntrySessionTypescript
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: The transcript
+          content:
+            text/plain:
+              schema: {type: string}
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Not recorded, or typescript_unavailable (not an SSH session)
+        '410':
+          description: recording_purged, removed by the retention policy
+        '503':
+          description: recording_key_unavailable
+
   /api/v1/access/pam/sessions/{id}/end:
     post:
       tags: [PAM Launch]

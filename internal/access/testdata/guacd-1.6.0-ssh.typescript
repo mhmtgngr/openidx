@@ -1,0 +1,9 @@
+[BEGIN TYPESCRIPT]
+[H[JWelcome to OpenSSH Server
+[?2004h9155528a19de:~$ echo SECRET-MARKER-42; ls /
+[?2004lSECRET-MARKER-42
+app	       command	 dev	      home	 lib	 mnt	  proc	sbin  tmp	    var
+bin	       config	 docker-mods  init	 lsiopy  opt	  root	srv   usermod.done
+build_version  defaults  etc	      keygen.sh  media	 package  run	sys   usr
+[?2004h9155528a19de:~$ 
+[END TYPESCRIPT]
