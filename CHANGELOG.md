@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.51.0] - 2026-11-09
+
+### Added
+- **Download an entry session's recording.**
+  `GET /pam/sessions/{id}/recording` (administrators only) streams it,
+  decrypting a sealed one, and is audited as `pam.recording_downloaded`. A
+  purged recording answers `410 recording_purged`.
+- **Watch privileged session recordings in the console.** Administrators can
+  play a recorded session in the browser, with play/pause and seek, from
+  **Privileged Sessions**:
+  - **Session History** has a *Watch* button for route sessions.
+  - The new **Entry Sessions** tab lists PAM entry sessions and offers
+    *Watch* once a recorded session has ended.
+  The recording is fetched through the admin-only download routes, so every
+  view is audited, and it is decrypted server-side when sealed. It plays with
+  guacamole-common-js 1.5.0 (Apache-2.0).
+- **Watermark over privileged sessions.** A session window can show the
+  user's name, the session and the time across the screen, so a screenshot or
+  a photo of a privileged session carries a name.
+  - External (vendor) users' sessions always have it.
+  - For internal users, turn on **Watermark internal users' sessions** in the
+    privileged session policy (`watermark_internal`).
+  - The server writes the text from the user record; the browser does not
+    choose it.
+  - It discourages leaks but cannot block them; the recording remains the
+    record. Each policy change is audited in `pam.policy_set`.
+- **Text transcripts of recorded SSH sessions.**
+  - **What is recorded:** A recorded SSH session now also records what was
+    typed and what the shell printed (guacd's typescript), beside its screen
+    recording.
+  - **Handling:** The transcript is sealed at rest, purged on retention and
+    downloadable from the same place as the recording.
+  - **Download:** Administrators download it from **Privileged Sessions →
+    Entry Sessions → Transcript**, or with
+    `GET /pam/sessions/{id}/typescript`. Each download is audited as
+    `pam.typescript_downloaded`.
+  - **Where it is written:** The path is the server's. The `typescript-*`
+    settings stay reserved.
+
+### Fixed
+- **A signed-out caller on the PAM pages gets 401, not 500.** With an expired
+  or missing token under development auth, `/pam/entries`, `/pam/entries/{id}`
+  and `/guacamole/my-connections` answered 500 "failed to check permissions";
+  they now answer 401 `authentication_required`.
+
+### Security
+- **PAM entry session recordings are sealed and retained.** A recording of a
+  session opened from a PAM entry (Connect on an entry, a Windows app launch)
+  used to stay plaintext on disk for ever. The sealer and the retention
+  sweep only covered route sessions. These recordings are now:
+  - encrypted at rest once the session ends, when a recording key is
+    configured, and announced as `pam.recording.sealed`;
+  - removed after the organization's recording retention, audited as
+    `pam.recording_purged`.
+
+### Upgrade notes
+- **Migration 241** adds `recording_sealed_at`, `recording_sha256`,
+  `recording_key_id` and `recording_purged_at` to `pam_entry_sessions`.
+- **Legal holds do not cover entry sessions yet.** The legal-hold table is
+  tied to route sessions only.
+- **Migration 242** adds `org_pam_policy.watermark_internal`, off by default.
+  No organization's sessions change on upgrade.
+
 ## [1.50.0] - 2026-11-08
 
 ### Added
@@ -12403,7 +12466,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.50.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.51.0...HEAD
+[1.51.0]: https://github.com/mhmtgngr/openidx/compare/v1.50.0...v1.51.0
 [1.50.0]: https://github.com/mhmtgngr/openidx/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/mhmtgngr/openidx/compare/v1.48.0...v1.49.0
 [1.48.0]: https://github.com/mhmtgngr/openidx/compare/v1.47.1...v1.48.0
