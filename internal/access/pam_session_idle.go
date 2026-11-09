@@ -170,10 +170,10 @@ type pamIdleRow struct {
 // recording shows no input for longer than their organization's idle
 // timeout, through the broker-honest path the other ends use.
 func (s *Service) endIdlePamEntrySessions(ctx context.Context) {
-	root := s.config.GuacamoleRecordingPath
-	if root == "" {
+	if s.config == nil || s.config.GuacamoleRecordingPath == "" || s.db == nil || s.db.Pool == nil {
 		return
 	}
+	root := s.config.GuacamoleRecordingPath
 	rows, err := s.db.Pool.Query(ctx,
 		//orgscope:ignore install-wide lifecycle reconcile sweep; each session is ended under the org of its own row
 		`SELECT s.id::text, s.org_id::text, COALESCE(s.user_id::text, ''), COALESCE(s.guac_connection_id, ''),
