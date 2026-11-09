@@ -201,8 +201,9 @@ the install's settings say:
   the sponsor is told of the user's request and can join it as the moderator
   (see [Moderated sessions](#moderated-sessions)).
 - **A working day at most.** The lifecycle sweep ends the session after 8
-  hours, whatever grant it rides. An idle timeout is not enforced yet: the
-  broker reports no per-session activity to measure one by.
+  hours, whatever grant it rides. With an idle timeout set in the PAM
+  policy, a session that has had no keyboard, mouse or touch input for
+  that long is ended too (see [Idle timeout](#idle-timeout)).
 - **No credential in their hands.** Reveal and break-glass
   (`external_reveal_forbidden`), SSH certificates
   (`external_ssh_ca_forbidden`) and cloud keys
@@ -214,6 +215,27 @@ will do: approval and recording on, no Reveal, and the overlay enforced. Each
 refusal is audited: `pam.launch_denied`, `pam.reveal_denied`,
 `pam.ssh_cert_denied`, `pam.cloud_jit_denied` and `pam.ztna.denied`, marked
 `external`.
+
+## Idle timeout
+
+Set **Idle timeout (minutes)** in the PAM policy to end sessions nobody is
+using. Every lifecycle tick (about a minute), openidx reads the end of each
+active session's recording, where the broker writes the user's keyboard,
+mouse and touch input with its own timestamps, and ends the session (reason
+`idle_timeout`, audited as `pam.session_ended`) when the last input is older
+than the timeout.
+
+Limits, stated plainly:
+
+- **Recorded sessions only.** A session that is not recorded leaves nothing
+  to measure by and is never ended for idleness. External users' sessions are
+  always recorded; record internal users' sessions in the policy for the
+  timeout to cover them.
+- **Output is not activity.** A command printing to the screen, or a video
+  playing over RDP, does not keep a session alive. Only the user's input does.
+- **When in doubt, keep it.** If a busy screen has pushed the last input out
+  of the part of the recording openidx reads (the last 4 MiB), the session is
+  left alone rather than guessed at.
 
 ## The mental model
 

@@ -9748,7 +9748,7 @@ const tr: typeof en = {
       maxSessionHours: 'En uzun oturum süresi (saat)',
       maxSessionHoursHint: '0 = iç kullanıcılar için sınır yok; dış kullanıcılar hiçbir zaman 8 saati aşamaz.',
       idleTimeoutMinutes: 'Boşta kalma süresi (dakika)',
-      idleTimeoutHint: 'İleriki bir sürüm için saklanır; aracı henüz oturum etkinliğini bildirmediğinden uygulanmaz.',
+      idleTimeoutHint: 'Kaydı alınan bir oturumu, kayıttan okunan klavye, fare veya dokunma girdisi olmadan bu kadar dakika geçince sonlandırır. Kaydı alınmayan oturumlar değerlendirilmez. 0 kapalıdır.',
       requireApprovalInternal: 'İç kullanıcılar için onay iste',
       recordInternal: 'İç kullanıcıların oturumlarını kaydet',
       launchApprovalWindowMinutes: 'Onay süresi (dakika)',

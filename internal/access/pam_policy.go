@@ -35,8 +35,9 @@ type PamPolicy struct {
 	OrgID string `json:"org_id"`
 	// MaxSessionHours caps every session; 0 is no cap for internal users.
 	MaxSessionHours int `json:"max_session_hours"`
-	// IdleTimeoutMinutes is stored for the day the broker reports activity;
-	// nothing enforces it yet, and the console says so.
+	// IdleTimeoutMinutes ends a recorded session whose recording shows no
+	// keyboard, mouse or touch input for this long (pam_session_idle.go); 0
+	// is off. An unrecorded session cannot be judged and is left alone.
 	IdleTimeoutMinutes int `json:"idle_timeout_minutes"`
 	// RequireApprovalInternal asks an approver before an internal user's
 	// session, on every entry, as an external user's always is.
