@@ -10012,7 +10012,7 @@ const en = {
       maxSessionHours: 'Maximum session length (hours)',
       maxSessionHoursHint: '0 = no cap for internal users; external users never exceed 8 hours.',
       idleTimeoutMinutes: 'Idle timeout (minutes)',
-      idleTimeoutHint: 'Stored for a future release; the broker does not yet report session activity, so this is not enforced.',
+      idleTimeoutHint: 'Ends a recorded session after this many minutes without keyboard, mouse or touch input, read from its recording. Unrecorded sessions are not judged. 0 is off.',
       requireApprovalInternal: 'Require approval for internal users',
       recordInternal: 'Record internal users\' sessions',
       launchApprovalWindowMinutes: 'Approval window (minutes)',
