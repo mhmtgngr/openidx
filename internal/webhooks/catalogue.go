@@ -60,6 +60,7 @@ const (
 	EventPamSessionStarted = "pam.session.started"
 	EventPamSessionEnded   = "pam.session.ended"
 	EventPamBreakGlass     = "pam.break_glass"
+	EventPamRiskyCommand   = "pam.session.risky_command"
 )
 
 // EventType is one deliverable event, with the sentence an operator reads when
@@ -105,6 +106,7 @@ var EventCatalogue = []EventType{
 	{EventPamSessionStarted, "privileged_access", "A privileged session started on a PAM entry; says whether the user is external and the session recorded."},
 	{EventPamSessionEnded, "privileged_access", "A privileged session ended, with why: its grant ended, its maximum length, its moderation ended, a sponsor, the kill switch, the user."},
 	{EventPamBreakGlass, "privileged_access", "A break-glass reveal of a PAM entry's credential."},
+	{EventPamRiskyCommand, "privileged_access", "An ended SSH session's transcript has lines matching the organization's risky command patterns; patterns and line numbers, not the text. A warning, nothing was blocked."},
 }
 
 // KnownEventType reports whether t is in the catalogue. Subscriptions are

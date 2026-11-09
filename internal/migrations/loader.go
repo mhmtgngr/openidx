@@ -1721,5 +1721,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamWatermarkUp,
 			DownSQL:     pamWatermarkDown,
 		},
+		{
+			Version:     243,
+			Name:        "pam_risky_commands",
+			Description: "Warnings for risky commands in privileged SSH sessions. org_pam_policy gains risky_command_patterns (TEXT[], default empty): RE2 expressions matched case-insensitively against each line of an ended recorded SSH session's typescript; a match raises an audit event and a webhook, it does not block. pam_entry_sessions gains commands_scanned_at (scanned-once claim) and risky_command_count (NULL when no transcript), with a partial index for the unscanned sweep. Columns under the tables' existing org policies; down drops them.",
+			UpSQL:       pamRiskyCommandsUp,
+			DownSQL:     pamRiskyCommandsDown,
+		},
 	}
 }

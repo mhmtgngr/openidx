@@ -6313,10 +6313,17 @@ paths:
       description: >-
         Fields include max_session_hours, idle_timeout_minutes,
         require_approval_internal, record_internal,
-        launch_approval_window_minutes and watermark_internal (draw the user,
+        launch_approval_window_minutes, watermark_internal (draw the user,
         session and time over internal users' session windows; external users'
-        sessions are always watermarked). A field left out keeps its value only
-        for watermark_internal. A launch answers the server-composed text as
+        sessions are always watermarked) and risky_command_patterns (up to 50
+        RE2 expressions of at most 200 characters, matched case-insensitively
+        against each line of an ended recorded SSH session's transcript; a
+        match raises a pam.risky_command audit event and a
+        pam.session.risky_command webhook, and blocks nothing; an invalid
+        expression is a 400). A field left out keeps its value only for
+        watermark_internal and risky_command_patterns. idle_timeout_minutes
+        ends a recorded session with no keyboard, mouse or touch input for
+        that long. A launch answers the server-composed text as
         `watermark.text` when one is due.
       operationId: setPamPolicy
       x-openidx-handler: internal/access.(*Service).handleSetPamPolicy

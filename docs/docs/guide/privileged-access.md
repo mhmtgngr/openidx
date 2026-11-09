@@ -82,6 +82,9 @@ for the lack of one.
      - `ended` (the user or an administrator ended it);
      - `moderation_ended` (the moderation that admitted it ended).
    - `pam.break_glass`: the entry, the user and their justification.
+   - `pam.session.risky_command`: an ended SSH session's transcript matched
+     the policy's risky command patterns; the patterns and line numbers, not
+     the text (see [Risky command warnings](#risky-command-warnings)).
 9. **Moderate the sessions that need a second person.** An entry with
    `require_moderator` opens a session only while a moderator watches it.
    See [Moderated sessions](#moderated-sessions).
@@ -236,6 +239,33 @@ Limits, stated plainly:
 - **When in doubt, keep it.** If a busy screen has pushed the last input out
   of the part of the recording openidx reads (the last 4 MiB), the session is
   left alone rather than guessed at.
+
+## Risky command warnings
+
+List regular expressions under **Risky command warnings** in the PAM policy,
+one per line (for example `rm\s+-rf\s+/`, `DROP\s+(TABLE|DATABASE)`,
+`sudo\s+su\b`). A couple of minutes after a recorded SSH session ends,
+openidx reads its text transcript, removes the terminal's control sequences
+and applies backspaces, and matches every line, ignoring case. A session with
+matches raises:
+
+- a `pam.risky_command` audit event with the matching lines (at most 20, each
+  cut at 240 characters) and the total count;
+- a `pam.session.risky_command` webhook with the patterns and line numbers
+  only. The transcript's text does not leave openidx through a webhook.
+
+Each session is scanned once. The count is kept on the session.
+
+Limits, stated plainly:
+
+- **It warns; it blocks nothing.** The command already ran. Blocking a
+  command before it runs is a separate piece of work (issue #976).
+- **It reads what the terminal showed.** A command's output can match as
+  well as the command, and a user who wants to hide a command (quoting, an
+  alias, a script, a base64 pipe) can. Treat a warning as a reason to watch
+  the recording, and silence as no proof.
+- **SSH sessions that were recorded, only.** RDP and VNC sessions have no
+  text transcript, and a session that was not recorded has none either.
 
 ## The mental model
 
