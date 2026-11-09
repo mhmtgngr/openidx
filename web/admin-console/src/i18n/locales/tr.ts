@@ -9749,6 +9749,8 @@ const tr: typeof en = {
       maxSessionHoursHint: '0 = iç kullanıcılar için sınır yok; dış kullanıcılar hiçbir zaman 8 saati aşamaz.',
       idleTimeoutMinutes: 'Boşta kalma süresi (dakika)',
       idleTimeoutHint: 'Kaydı alınan bir oturumu, kayıttan okunan klavye, fare veya dokunma girdisi olmadan bu kadar dakika geçince sonlandırır. Kaydı alınmayan oturumlar değerlendirilmez. 0 kapalıdır.',
+      riskyCommands: 'Riskli komut uyarıları',
+      riskyCommandsHint: 'Her satıra bir düzenli ifade; biten bir SSH oturumunun dökümünün her satırına büyük/küçük harf ayırmadan uygulanır. Eşleşme bir pam.risky_command denetim olayı ve webhook üretir. Oturumdan sonra uyarır, hiçbir şeyi engellemez; terminalde görüneni okuduğu için komut çıktısı da eşleşebilir.',
       requireApprovalInternal: 'İç kullanıcılar için onay iste',
       recordInternal: 'İç kullanıcıların oturumlarını kaydet',
       launchApprovalWindowMinutes: 'Onay süresi (dakika)',

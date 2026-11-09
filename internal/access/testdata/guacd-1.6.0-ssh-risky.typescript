@@ -1,0 +1,10 @@
+[BEGIN TYPESCRIPT]
+[H[JWelcome to OpenSSH Server
+[?2004h9149a13b0932:~$ mkdir -p /tmp/x; rm -rf /tmp/x
+[?2004lue
+[?2004h9149a13b0932:~$ echx[K[Ko safe-line
+[?2004l-bash: eco: command not found
+[?2004h9149a13b0932:~$ sudo -n true
+[?2004lsudo: a password is required
+[?2004h9149a13b0932:~$ 
+[END TYPESCRIPT]

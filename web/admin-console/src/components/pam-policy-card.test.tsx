@@ -69,6 +69,7 @@ describe('PamPolicyCard', () => {
         record_internal: true,
         launch_approval_window_minutes: 60,
         watermark_internal: false,
+        risky_command_patterns: [],
       }),
     )
   })
@@ -81,6 +82,22 @@ describe('PamPolicyCard', () => {
     fireEvent.click(screen.getByRole('button', { name: /save policy/i }))
     await waitFor(() =>
       expect(api.put).toHaveBeenCalledWith('/api/v1/access/pam/policy', expect.objectContaining({ watermark_internal: true })),
+    )
+  })
+
+  it('saves risky command patterns one per line, blank lines dropped', async () => {
+    vi.mocked(api.get).mockResolvedValue({ ...LEGACY, risky_command_patterns: ['sudo\\s'] })
+    vi.mocked(api.put).mockResolvedValue(LEGACY)
+    wrap(<PamPolicyCard />)
+    const box = await screen.findByLabelText(/risky command warnings/i)
+    expect(box).toHaveValue('sudo\\s')
+    fireEvent.change(box, { target: { value: 'sudo\\s\n\n  rm\\s+-rf  \n' } })
+    fireEvent.click(screen.getByRole('button', { name: /save policy/i }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith(
+        '/api/v1/access/pam/policy',
+        expect.objectContaining({ risky_command_patterns: ['sudo\\s', 'rm\\s+-rf'] }),
+      ),
     )
   })
 

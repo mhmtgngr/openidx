@@ -8,6 +8,7 @@ import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
 import { Switch } from './ui/switch'
+import { Textarea } from './ui/textarea'
 import { LoadingSpinner } from './ui/loading-spinner'
 import { useToast } from '../hooks/use-toast'
 import { api } from '../lib/api'
@@ -26,6 +27,8 @@ export interface PamPolicy {
   launch_approval_window_minutes: number
   // Absent on a service that predates migration 242.
   watermark_internal?: boolean
+  // Absent on a service that predates migration 243.
+  risky_command_patterns?: string[]
   source: 'policy' | 'default'
   updated_at?: string
   updated_by?: string
@@ -40,6 +43,7 @@ const DEFAULTS: Draft = {
   record_internal: true,
   launch_approval_window_minutes: 60,
   watermark_internal: false,
+  risky_command_patterns: [],
 }
 
 function draftOf(p?: PamPolicy): Draft {
@@ -51,7 +55,18 @@ function draftOf(p?: PamPolicy): Draft {
     launch_approval_window_minutes:
       p?.launch_approval_window_minutes ?? DEFAULTS.launch_approval_window_minutes,
     watermark_internal: p?.watermark_internal ?? DEFAULTS.watermark_internal,
+    risky_command_patterns: Array.isArray(p?.risky_command_patterns)
+      ? p.risky_command_patterns
+      : DEFAULTS.risky_command_patterns,
   }
+}
+
+// The textarea holds one pattern per line; blank lines are dropped.
+function patternsOf(text: string): string[] {
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '')
 }
 
 export function PamPolicyCard() {
@@ -67,12 +82,16 @@ export function PamPolicyCard() {
   const [edited, setEdited] = useState<Draft | null>(null)
   const draft = edited ?? draftOf(data)
   const setDraft = (f: (d: Draft) => Draft) => setEdited(f(draft))
+  // The pattern text as typed (so a trailing newline survives), until saved.
+  const [patternText, setPatternText] = useState<string | null>(null)
+  const patternValue = patternText ?? (draft.risky_command_patterns ?? []).join('\n')
 
   const save = useMutation({
     mutationFn: (d: Draft) => api.put<PamPolicy>('/api/v1/access/pam/policy', d),
     onSuccess: (resp) => {
       qc.setQueryData(['pam-policy'], resp)
       setEdited(null)
+      setPatternText(null)
       toast({ title: t('pages.pamPolicy.saved') })
     },
     onError: (err: unknown) => {
@@ -187,6 +206,22 @@ export function PamPolicyCard() {
                 />
                 <p className="text-xs text-muted-foreground">{t('pages.pamPolicy.idleTimeoutHint')}</p>
               </div>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="pam-risky-commands">{t('pages.pamPolicy.riskyCommands')}</Label>
+              <Textarea
+                id="pam-risky-commands"
+                rows={4}
+                spellCheck={false}
+                className="font-mono text-xs"
+                placeholder={'rm\\s+-rf\\s+/\nDROP\\s+(TABLE|DATABASE)\nsudo\\s+su\\b'}
+                value={patternValue}
+                onChange={(e) => {
+                  setPatternText(e.target.value)
+                  setDraft((d) => ({ ...d, risky_command_patterns: patternsOf(e.target.value) }))
+                }}
+              />
+              <p className="text-xs text-muted-foreground">{t('pages.pamPolicy.riskyCommandsHint')}</p>
             </div>
             <div className="flex justify-end">
               <Button type="submit" size="sm" disabled={save.isPending}>

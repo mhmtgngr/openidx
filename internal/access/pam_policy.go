@@ -51,6 +51,10 @@ type PamPolicy struct {
 	// their identity, the session id and the time (migration 242). An
 	// external user's session is always watermarked.
 	WatermarkInternal bool `json:"watermark_internal"`
+	// RiskyCommandPatterns are matched against the lines of an ended SSH
+	// session's transcript; a match warns, it blocks nothing (migration 243,
+	// pam_risky_commands.go).
+	RiskyCommandPatterns []string `json:"risky_command_patterns"`
 	// Source is "policy" for a stored row and "default" for the defaults.
 	Source    string     `json:"source"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
@@ -64,6 +68,7 @@ func defaultPamPolicy() PamPolicy {
 		RequireApprovalInternal:     false,
 		RecordInternal:              true,
 		LaunchApprovalWindowMinutes: 60,
+		RiskyCommandPatterns:        []string{},
 		Source:                      "default",
 	}
 }
@@ -101,10 +106,10 @@ func (s *Service) pamPolicyFor(ctx context.Context, orgID string) PamPolicy {
 	var updatedAt time.Time
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT max_session_hours, idle_timeout_minutes, require_approval_internal, record_internal,
-		       launch_approval_window_minutes, watermark_internal, updated_at, updated_by::text
+		       launch_approval_window_minutes, watermark_internal, risky_command_patterns, updated_at, updated_by::text
 		  FROM org_pam_policy WHERE org_id = $1::uuid`, orgID).Scan(
 		&pol.MaxSessionHours, &pol.IdleTimeoutMinutes, &pol.RequireApprovalInternal, &pol.RecordInternal,
-		&pol.LaunchApprovalWindowMinutes, &pol.WatermarkInternal, &updatedAt, &updatedBy)
+		&pol.LaunchApprovalWindowMinutes, &pol.WatermarkInternal, &pol.RiskyCommandPatterns, &updatedAt, &updatedBy)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			s.logger.Warn("pam policy: could not read org_pam_policy; using the defaults",
@@ -150,6 +155,9 @@ type setPamPolicyRequest struct {
 	// WatermarkInternal is a pointer so a client that predates it keeps
 	// what the organization has.
 	WatermarkInternal *bool `json:"watermark_internal"`
+	// RiskyCommandPatterns is a pointer for the same reason: left out, the
+	// organization's list stays.
+	RiskyCommandPatterns *[]string `json:"risky_command_patterns"`
 }
 
 func (r setPamPolicyRequest) validate() string {
@@ -160,6 +168,11 @@ func (r setPamPolicyRequest) validate() string {
 		return "idle_timeout_minutes must be between 0 and 1440"
 	case r.LaunchApprovalWindowMinutes < 5 || r.LaunchApprovalWindowMinutes > 1440:
 		return "launch_approval_window_minutes must be between 5 and 1440"
+	}
+	if r.RiskyCommandPatterns != nil {
+		if _, err := compileRiskyCommandPatterns(*r.RiskyCommandPatterns); err != nil {
+			return err.Error()
+		}
 	}
 	return ""
 }
@@ -187,8 +200,9 @@ func (s *Service) handleSetPamPolicy(c *gin.Context) {
 	updatedBy := getUserID(c)
 	_, err := s.db.Pool.Exec(c.Request.Context(), `
 		INSERT INTO org_pam_policy (org_id, max_session_hours, idle_timeout_minutes, require_approval_internal,
-		                            record_internal, launch_approval_window_minutes, watermark_internal, updated_by)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, COALESCE($8::boolean, false), NULLIF($7,'')::uuid)
+		                            record_internal, launch_approval_window_minutes, watermark_internal,
+		                            risky_command_patterns, updated_by)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, COALESCE($8::boolean, false), COALESCE($9::text[], '{}'), NULLIF($7,'')::uuid)
 		ON CONFLICT (org_id) DO UPDATE
 		   SET max_session_hours = EXCLUDED.max_session_hours,
 		       idle_timeout_minutes = EXCLUDED.idle_timeout_minutes,
@@ -196,10 +210,11 @@ func (s *Service) handleSetPamPolicy(c *gin.Context) {
 		       record_internal = EXCLUDED.record_internal,
 		       launch_approval_window_minutes = EXCLUDED.launch_approval_window_minutes,
 		       watermark_internal = COALESCE($8::boolean, org_pam_policy.watermark_internal),
+		       risky_command_patterns = COALESCE($9::text[], org_pam_policy.risky_command_patterns),
 		       updated_at = NOW(),
 		       updated_by = EXCLUDED.updated_by`,
 		orgID, req.MaxSessionHours, req.IdleTimeoutMinutes, req.RequireApprovalInternal,
-		req.RecordInternal, req.LaunchApprovalWindowMinutes, updatedBy, req.WatermarkInternal)
+		req.RecordInternal, req.LaunchApprovalWindowMinutes, updatedBy, req.WatermarkInternal, req.RiskyCommandPatterns)
 	if err != nil {
 		s.logger.Error("pam policy: upsert failed", zap.String("org_id", orgID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "upsert failed"})
@@ -212,6 +227,7 @@ func (s *Service) handleSetPamPolicy(c *gin.Context) {
 		"record_internal":                req.RecordInternal,
 		"launch_approval_window_minutes": req.LaunchApprovalWindowMinutes,
 		"watermark_internal":             req.WatermarkInternal,
+		"risky_command_patterns":         req.RiskyCommandPatterns,
 	})
 	c.JSON(http.StatusOK, s.pamPolicyFor(c.Request.Context(), orgID))
 }

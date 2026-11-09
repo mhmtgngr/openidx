@@ -10013,6 +10013,8 @@ const en = {
       maxSessionHoursHint: '0 = no cap for internal users; external users never exceed 8 hours.',
       idleTimeoutMinutes: 'Idle timeout (minutes)',
       idleTimeoutHint: 'Ends a recorded session after this many minutes without keyboard, mouse or touch input, read from its recording. Unrecorded sessions are not judged. 0 is off.',
+      riskyCommands: 'Risky command warnings',
+      riskyCommandsHint: 'One regular expression per line, matched case-insensitively against each line of an ended SSH session\'s transcript. A match raises a pam.risky_command audit event and a webhook. It warns after the session; it blocks nothing, and it sees what the terminal showed, so output can match too.',
       requireApprovalInternal: 'Require approval for internal users',
       recordInternal: 'Record internal users\' sessions',
       launchApprovalWindowMinutes: 'Approval window (minutes)',
