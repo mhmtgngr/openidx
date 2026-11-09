@@ -104,6 +104,20 @@ step_preflight() {
   local b missing=0
   for b in $BINS; do [ -x "$STAGE/oidx-$b" ] || { echo "missing $STAGE/oidx-$b"; missing=1; }; done
   [ -f "$STAGE/dist/index.html" ] || { echo "missing $STAGE/dist/index.html"; missing=1; }
+  # The console must be a same-origin build. A build made in a checkout with
+  # web/admin-console/.env.local bakes that file's VITE_API_URL into the bundle
+  # as the API client's base URL (`...`,X=Y.create({baseURL:...), and the live
+  # console then calls a development address: it happened twice (v1.50.0 and
+  # the first v1.51.0 stage). A same-origin build has no URL literal there.
+  # Build from a clean worktree.
+  local baked
+  baked=$(grep -ohE 'https?://[^`"'"'"' ]+`,[A-Za-z_$][A-Za-z0-9_$]*=[A-Za-z_$][A-Za-z0-9_$]*\.create\(\{baseURL' \
+    "$STAGE"/dist/assets/*.js 2>/dev/null | sed -E 's/`.*//' | sort -u | head -3 || true)
+  if [ -n "$baked" ]; then
+    echo "the staged console has a fixed API origin baked in (built with .env.local?):"
+    echo "$baked" | sed 's/^/  /'
+    missing=1
+  fi
   [ "$missing" = 0 ] || die "stage incomplete"
   local cur; cur=$(live_schema)
   echo "$cur" > "$STAGE/prev_schema"
