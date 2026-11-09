@@ -82,4 +82,13 @@ describe('openPamSessionWindow', () => {
     expect(opened()).not.toContain('token')
     setItem.mockRestore()
   })
+
+  it('hands the server-composed watermark to the window, and nothing when there is none', () => {
+    openPamSessionWindow(result({ watermark: { text: 'ops · session 1 · now' } }), 'DC01')
+    expect(handoffFor(opened()).value.watermark).toBe('ops · session 1 · now')
+    localStorage.clear()
+    ;(window.open as ReturnType<typeof vi.fn>).mockClear()
+    openPamSessionWindow(result(), 'DC01')
+    expect(handoffFor(opened()).value.watermark).toBeUndefined()
+  })
 })

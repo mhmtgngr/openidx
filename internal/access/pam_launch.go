@@ -567,6 +567,9 @@ func (s *Service) connectPamEntry(c *gin.Context, entryID string, hooks pamConne
 	if entry.External {
 		body["session_policy"] = externalSessionPolicy(pol)
 	}
+	if wm := s.pamWatermarkFor(ctx, org.ID, userID, res.SessionID, entry.External, pol); wm != nil {
+		body["watermark"] = wm
+	}
 	for k, v := range hooks.Response {
 		body[k] = v
 	}

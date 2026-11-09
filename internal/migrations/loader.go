@@ -1714,5 +1714,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamEntryRecordingSealUp,
 			DownSQL:     pamEntryRecordingSealDown,
 		},
+		{
+			Version:     242,
+			Name:        "pam_watermark",
+			Description: "A watermark over privileged sessions. org_pam_policy gains watermark_internal (default false): when true an internal user's session window is overlaid with their identity, the session id and the time; an external user's session is always watermarked. Drawn by the OpenIDX session window over the broker frame, as a deterrent to screenshots and photos, not enforcement. Column under the table's existing org policy; down drops it.",
+			UpSQL:       pamWatermarkUp,
+			DownSQL:     pamWatermarkDown,
+		},
 	}
 }

@@ -9757,6 +9757,8 @@ const tr: typeof en = {
       saved: 'Ayrıcalıklı oturum politikası kaydedildi',
       saveFailed: 'Politika kaydedilemedi',
       notRecordingWarning: 'İç kullanıcıların oturumları kaydedilmiyor. Yeni kuruluşlar varsayılan olarak kaydeder.',
+      watermarkInternal: 'İç kullanıcıların oturumlarına filigran ekle',
+      watermarkHint: 'Oturum penceresinin üzerine kullanıcıyı, oturumu ve zamanı yazar; ekran görüntüsü ya da fotoğraf bir isim taşır. Caydırıcıdır, denetim değildir. Tedarikçi kullanıcıların oturumlarında her zaman filigran vardır.',
     },
     addDevice: {
       title: 'Ağa bir cihaz ekleyin',

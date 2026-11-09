@@ -46,6 +46,10 @@ type PamPolicy struct {
 	// LaunchApprovalWindowMinutes is how long a launch request waits for its
 	// approver before it lapses.
 	LaunchApprovalWindowMinutes int `json:"launch_approval_window_minutes"`
+	// WatermarkInternal overlays an internal user's session window with
+	// their identity, the session id and the time (migration 242). An
+	// external user's session is always watermarked.
+	WatermarkInternal bool `json:"watermark_internal"`
 	// Source is "policy" for a stored row and "default" for the defaults.
 	Source    string     `json:"source"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
@@ -96,10 +100,10 @@ func (s *Service) pamPolicyFor(ctx context.Context, orgID string) PamPolicy {
 	var updatedAt time.Time
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT max_session_hours, idle_timeout_minutes, require_approval_internal, record_internal,
-		       launch_approval_window_minutes, updated_at, updated_by::text
+		       launch_approval_window_minutes, watermark_internal, updated_at, updated_by::text
 		  FROM org_pam_policy WHERE org_id = $1::uuid`, orgID).Scan(
 		&pol.MaxSessionHours, &pol.IdleTimeoutMinutes, &pol.RequireApprovalInternal, &pol.RecordInternal,
-		&pol.LaunchApprovalWindowMinutes, &updatedAt, &updatedBy)
+		&pol.LaunchApprovalWindowMinutes, &pol.WatermarkInternal, &updatedAt, &updatedBy)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			s.logger.Warn("pam policy: could not read org_pam_policy; using the defaults",
@@ -142,6 +146,9 @@ type setPamPolicyRequest struct {
 	RequireApprovalInternal     bool `json:"require_approval_internal"`
 	RecordInternal              bool `json:"record_internal"`
 	LaunchApprovalWindowMinutes int  `json:"launch_approval_window_minutes"`
+	// WatermarkInternal is a pointer so a client that predates it keeps
+	// what the organization has.
+	WatermarkInternal *bool `json:"watermark_internal"`
 }
 
 func (r setPamPolicyRequest) validate() string {
@@ -179,18 +186,19 @@ func (s *Service) handleSetPamPolicy(c *gin.Context) {
 	updatedBy := getUserID(c)
 	_, err := s.db.Pool.Exec(c.Request.Context(), `
 		INSERT INTO org_pam_policy (org_id, max_session_hours, idle_timeout_minutes, require_approval_internal,
-		                            record_internal, launch_approval_window_minutes, updated_by)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, NULLIF($7,'')::uuid)
+		                            record_internal, launch_approval_window_minutes, watermark_internal, updated_by)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, COALESCE($8::boolean, false), NULLIF($7,'')::uuid)
 		ON CONFLICT (org_id) DO UPDATE
 		   SET max_session_hours = EXCLUDED.max_session_hours,
 		       idle_timeout_minutes = EXCLUDED.idle_timeout_minutes,
 		       require_approval_internal = EXCLUDED.require_approval_internal,
 		       record_internal = EXCLUDED.record_internal,
 		       launch_approval_window_minutes = EXCLUDED.launch_approval_window_minutes,
+		       watermark_internal = COALESCE($8::boolean, org_pam_policy.watermark_internal),
 		       updated_at = NOW(),
 		       updated_by = EXCLUDED.updated_by`,
 		orgID, req.MaxSessionHours, req.IdleTimeoutMinutes, req.RequireApprovalInternal,
-		req.RecordInternal, req.LaunchApprovalWindowMinutes, updatedBy)
+		req.RecordInternal, req.LaunchApprovalWindowMinutes, updatedBy, req.WatermarkInternal)
 	if err != nil {
 		s.logger.Error("pam policy: upsert failed", zap.String("org_id", orgID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "upsert failed"})
@@ -202,6 +210,7 @@ func (s *Service) handleSetPamPolicy(c *gin.Context) {
 		"require_approval_internal":      req.RequireApprovalInternal,
 		"record_internal":                req.RecordInternal,
 		"launch_approval_window_minutes": req.LaunchApprovalWindowMinutes,
+		"watermark_internal":             req.WatermarkInternal,
 	})
 	c.JSON(http.StatusOK, s.pamPolicyFor(c.Request.Context(), orgID))
 }

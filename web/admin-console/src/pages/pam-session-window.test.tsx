@@ -130,4 +130,23 @@ describe('PamSessionWindow', () => {
     expect(screen.queryByText(/OpenIDX client/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /set up the client/i })).not.toBeInTheDocument()
   })
+
+  it('draws the server-composed watermark over a live session, out of the way of the pointer', () => {
+    localStorage.setItem('pam-session:kw', JSON.stringify({
+      url: 'https://guac/x', title: 'DC01', watermark: 'ops@example.test · session 1234abcd · 2026-11-08 23:00 UTC',
+    }))
+    renderAt('?k=kw')
+    act(() => { vi.advanceTimersByTime(1100) })
+    const wm = screen.getByTestId('session-watermark')
+    expect(wm).toHaveAttribute('aria-hidden', 'true')
+    expect(wm.className).toMatch(/pointer-events-none/)
+    expect(wm.textContent).toContain('ops@example.test · session 1234abcd')
+  })
+
+  it('draws no watermark when the launch carried none, and none once the session ended', () => {
+    localStorage.setItem('pam-session:kn', JSON.stringify({ url: 'https://guac/x', title: 'DC01' }))
+    renderAt('?k=kn')
+    act(() => { vi.advanceTimersByTime(1100) })
+    expect(screen.queryByTestId('session-watermark')).toBeNull()
+  })
 })

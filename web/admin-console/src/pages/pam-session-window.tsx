@@ -44,6 +44,12 @@ interface Handoff {
    * and every direct launch are: the generic card is right for those.
    */
   overlay?: boolean
+  /**
+   * The text the server composed for the session's watermark (who, which
+   * session, when), or absent when the policy asks for none. Drawn over the
+   * frame as a deterrent to screenshots; never chosen by this page.
+   */
+  watermark?: string
 }
 
 const HANDOFF_PREFIX = 'pam-session:'
@@ -80,6 +86,7 @@ export function consumeHandoff(key: string): Handoff | null {
           typeof parsed.title === 'string'
             ? parsed.title
             : i18n.t('pages.pamSessionWindow.defaultTitle'),
+        watermark: typeof parsed.watermark === 'string' && parsed.watermark ? parsed.watermark : undefined,
       }
     }
   } catch {
@@ -158,6 +165,8 @@ export function PamSessionWindow() {
           />
         )}
 
+        {!showOverlay && handoff.watermark && <SessionWatermark text={handoff.watermark} />}
+
         {showOverlay && (
           <SessionCard
             heading={
@@ -227,6 +236,31 @@ function SessionCard({
             </Button>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A tiled, faint, rotated repetition of `text` over the session frame. It
+ * does not take pointer events, so the session underneath works as before; it
+ * is a deterrent to a screenshot or a photo leaving without a name on it, not
+ * a control (the recording is the record).
+ */
+function SessionWatermark({ text }: { text: string }) {
+  const tiles = Array.from({ length: 24 })
+  return (
+    <div
+      aria-hidden="true"
+      data-testid="session-watermark"
+      className="pointer-events-none select-none absolute inset-0 overflow-hidden z-10"
+    >
+      <div className="absolute -inset-1/4 grid grid-cols-3 gap-y-24 gap-x-16 -rotate-[25deg] opacity-[0.14]">
+        {tiles.map((_, i) => (
+          <span key={i} className="whitespace-nowrap text-sm font-medium text-white mix-blend-difference">
+            {text}
+          </span>
+        ))}
       </div>
     </div>
   )

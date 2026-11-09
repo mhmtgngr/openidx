@@ -24,6 +24,8 @@ export interface PamPolicy {
   require_approval_internal: boolean
   record_internal: boolean
   launch_approval_window_minutes: number
+  // Absent on a service that predates migration 242.
+  watermark_internal?: boolean
   source: 'policy' | 'default'
   updated_at?: string
   updated_by?: string
@@ -37,6 +39,7 @@ const DEFAULTS: Draft = {
   require_approval_internal: false,
   record_internal: true,
   launch_approval_window_minutes: 60,
+  watermark_internal: false,
 }
 
 function draftOf(p?: PamPolicy): Draft {
@@ -47,6 +50,7 @@ function draftOf(p?: PamPolicy): Draft {
     record_internal: p?.record_internal ?? DEFAULTS.record_internal,
     launch_approval_window_minutes:
       p?.launch_approval_window_minutes ?? DEFAULTS.launch_approval_window_minutes,
+    watermark_internal: p?.watermark_internal ?? DEFAULTS.watermark_internal,
   }
 }
 
@@ -133,6 +137,17 @@ export function PamPolicyCard() {
                 id="pam-require-approval"
                 checked={draft.require_approval_internal}
                 onCheckedChange={(v) => setDraft((d) => ({ ...d, require_approval_internal: v }))}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="pam-watermark-internal">{t('pages.pamPolicy.watermarkInternal')}</Label>
+                <p className="text-xs text-muted-foreground">{t('pages.pamPolicy.watermarkHint')}</p>
+              </div>
+              <Switch
+                id="pam-watermark-internal"
+                checked={!!draft.watermark_internal}
+                onCheckedChange={(v) => setDraft((d) => ({ ...d, watermark_internal: v }))}
               />
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
