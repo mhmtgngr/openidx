@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.53.0] - 2026-11-10
+
+### Added
+- **Test a situation before it happens.** The "Why can this person reach
+  that?" panel on Access 360 takes a stated device (trusted or not), country,
+  risk score and fresh second factor, and judges every condition of the
+  application as the proxy would. Without one it answers as before, with
+  those conditions unjudged.
+- **Ask why before a proxied application opens.** A route can require a
+  reason (Proxy Routes → Ask why before opening). After the access decision
+  admits a person, their first page load in a browser session goes to a
+  short form on the application's host; the reason is audited as
+  `proxy.access_justified` before anything is forwarded, and holds for that
+  session for the route's time. API and bearer callers on such a route get
+  403 `justification_required`. Migration 244. The APISIX forward-auth hook
+  now passes the caller's `Accept` header so it can tell a page load from an
+  API call.
+- **Service tokens on proxied web applications.** A route can admit named
+  service accounts (`POST /api/v1/access/routes/{id}/service-accounts`); an
+  active API key of one of them (`Authorization: Bearer oidx_...`) then
+  reaches the application through the built-in proxy and the APISIX
+  forward-auth hook without a person. The application is told
+  `service-account:<id>` with role `service_account` and never receives the
+  key. Routes that need a person (assigned application, reason, trusted
+  device, posture, policies, country fence, risk ceiling, roles or groups)
+  never admit one. Every allow and refusal is audited. Migration 245.
+
+### Security
+- **A bearer token is held to its route's organization.** On a proxied
+  application (the built-in proxy and the APISIX forward-auth hook), an
+  access token presented as `Authorization: Bearer` was accepted on any
+  organization's route, with its roles judged there, and a machine token
+  (client credentials, no user) passed a route that only required a signed-in
+  caller. A bearer is now a session only for a person, and only on routes of
+  the organization the token was issued in; anything else is sent to sign in.
+
 ## [1.52.0] - 2026-11-09
 
 ### Added
@@ -12481,7 +12517,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   endpoints.
 
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.52.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.53.0...HEAD
+[1.53.0]: https://github.com/mhmtgngr/openidx/compare/v1.52.0...v1.53.0
 [1.52.0]: https://github.com/mhmtgngr/openidx/compare/v1.51.0...v1.52.0
 [1.51.0]: https://github.com/mhmtgngr/openidx/compare/v1.50.0...v1.51.0
 [1.50.0]: https://github.com/mhmtgngr/openidx/compare/v1.49.0...v1.50.0
