@@ -136,9 +136,11 @@ func buildEdgeRoute(r edgeRoute, pools map[string]*UpstreamPool, forwardAuthURI 
 	plugins := map[string]interface{}{"proxy-rewrite": stripIdentity}
 	if auth != nil {
 		plugins["forward-auth"] = map[string]interface{}{
-			"uri":             auth.String(),
-			"request_method":  "GET",
-			"request_headers": []string{"Authorization", "Cookie"},
+			"uri":            auth.String(),
+			"request_method": "GET",
+			// Accept tells a browser navigation from an API call, for the
+			// routes that send a person to a page first (route_justification.go).
+			"request_headers": []string{"Authorization", "Cookie", "Accept"},
 			// Each header listed here is taken from decide's answer and
 			// replaces the caller's copy (see writeForwardAuthHeaders).
 			"upstream_headers": []string{

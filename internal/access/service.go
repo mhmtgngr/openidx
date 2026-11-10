@@ -70,6 +70,11 @@ type ProxyRoute struct {
 	GuacamoleConnectionID string            `json:"guacamole_connection_id,omitempty"`
 	LandingPath           string            `json:"landing_path,omitempty"`
 	HostingMode           string            `json:"hosting_mode,omitempty"`
+	// RequireJustification asks a person why before the application opens,
+	// once per proxy session for JustificationTTLMinutes (migration 244,
+	// route_justification.go).
+	RequireJustification    bool `json:"require_justification"`
+	JustificationTTLMinutes int  `json:"justification_ttl_minutes"`
 	// UpstreamPoolID points the route at an upstream pool instead of the single
 	// address in ToURL. Empty means "use to_url", which is what every route did
 	// before pools existed and what one still does when the pool it names has no
@@ -416,6 +421,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		auth.GET("/logout", svc.handleLogout)
 		auth.GET("/session", svc.handleSessionInfo)
 		auth.GET("/idps", svc.handleIDPDiscovery)
+		// Purpose justification (route_justification.go): the form on the
+		// application's host, bound to its proxy session.
+		auth.GET("/justify", svc.handleJustifyForm)
+		auth.POST("/justify", svc.handleJustifySubmit)
 	}
 
 	// Admin API for route management (requires auth)
@@ -453,6 +462,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/routes/bulk", svc.requireAdminRole(), svc.handleBulkRoutes)
 		api.GET("/routes/:id", adminOnly, svc.handleGetRoute)
 		api.PUT("/routes/:id", adminOnly, svc.handleUpdateRoute)
+		api.PUT("/routes/:id/justification", adminOnly, svc.handleSetRouteJustification)
 		api.DELETE("/routes/:id", adminOnly, svc.handleDeleteRoute)
 		api.GET("/sessions", adminOnly, svc.handleListSessions)
 		api.DELETE("/sessions/:id", adminOnly, svc.handleRevokeSession)
@@ -1345,6 +1355,7 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		        COALESCE(landing_path, '/'),
 		        COALESCE(hosting_mode, 'identity'),
 		        COALESCE(upstream_pool_id::text, ''),
+		        COALESCE(require_justification, false), COALESCE(justification_ttl_minutes, 480),
 		        created_at, updated_at,
 		        -- ORDER BY id LIMIT 1 mirrors appForRoute + ziti_reconciler's pick when
 		        -- more than one application links to the same route (Ruling 13: the
@@ -1374,6 +1385,7 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 			&r.RequireDeviceTrust, &allowedCountries,
 			&r.MaxRiskScore, &guacConnID,
 			&r.LandingPath, &r.HostingMode, &r.UpstreamPoolID,
+			&r.RequireJustification, &r.JustificationTTLMinutes,
 			&r.CreatedAt, &r.UpdatedAt,
 			&r.ApplicationID, &r.ApplicationName)
 		if err != nil {
@@ -2487,6 +2499,12 @@ func (s *Service) handleProxy(c *gin.Context) {
 			}
 		}
 
+		// Last, once everything else admitted the person: a route that asks
+		// why sends them to the question before anything is forwarded.
+		if !s.justificationGate(c, route, session, c.Request.URL.RequestURI(), wantsHTML(c)) {
+			return
+		}
+
 		// Update session activity (also slides the idle-timeout window)
 		s.updateSessionActivity(c, session)
 	}
@@ -2561,6 +2579,7 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		        COALESCE(landing_path, '/'),
 		        COALESCE(hosting_mode, 'identity'),
 		        COALESCE(upstream_pool_id::text, ''),
+		        COALESCE(require_justification, false), COALESCE(justification_ttl_minutes, 480),
 		        created_at, updated_at
 		 FROM proxy_routes WHERE id=$1`+orgFilter, args...).Scan(
 		&r.ID, &r.Name, &desc, &r.FromURL, &r.ToURL, &r.PreserveHost,
@@ -2572,6 +2591,7 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		&r.RequireDeviceTrust, &allowedCountries,
 		&r.MaxRiskScore, &guacConnID,
 		&r.LandingPath, &r.HostingMode, &r.UpstreamPoolID,
+		&r.RequireJustification, &r.JustificationTTLMinutes,
 		&r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -3022,6 +3042,7 @@ func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute
 		        COALESCE(reverify_interval, 0), posture_check_ids, inline_policy,
 		        COALESCE(require_device_trust, false), allowed_countries,
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
+		        COALESCE(require_justification, false), COALESCE(justification_ttl_minutes, 480),
 		        created_at, updated_at, org_id::text
 		 FROM proxy_routes WHERE host = proxy_route_host($1) AND enabled = true
 		 LIMIT 1`, host).Scan(
@@ -3033,6 +3054,7 @@ func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute
 		&r.ReverifyInterval, &postureCheckIDs, &inlinePolicy,
 		&r.RequireDeviceTrust, &allowedCountries,
 		&r.MaxRiskScore, &guacConnID,
+		&r.RequireJustification, &r.JustificationTTLMinutes,
 		&r.CreatedAt, &r.UpdatedAt, &r.OrgID)
 	if err != nil {
 		return nil, err

@@ -338,6 +338,7 @@ routes:
         request_headers:
           - "Authorization"
           - "Cookie"
+          - "Accept"
           - "X-Forwarded-For"
           - "X-Real-IP"
         # Each header listed here is taken from the decide answer and

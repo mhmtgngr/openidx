@@ -79,6 +79,15 @@ var publicAccessRoutes = map[string]publicRoute{
 		"lists the identity providers a login page must offer before anyone has logged in"},
 	"GET /access/.auth/session": {refusesWithoutState,
 		"reports the current session; without a cookie there is nothing to report and it answers 401"},
+	// Purpose justification (route_justification.go): on the application's
+	// host, for its proxy session. Without a proxy cookie it answers 401
+	// before reading anything; with one it reads the route its host serves
+	// (404 when that route does not ask) and the session. The form token is
+	// one-use and bound to that session and route.
+	"GET /access/.auth/justify": {refusesWithoutState,
+		"serves the purpose form only for the proxy session of a route that asks; without a cookie it answers 401"},
+	"POST /access/.auth/justify": {refusesWithoutState,
+		"records a reason only with a one-use token bound to the same proxy session and route; without a cookie it answers 401"},
 
 	// --- the agent surface. An agent has no tenant JWT: enrollment hands it a
 	// credential and it presents that. Every one of these refuses before it

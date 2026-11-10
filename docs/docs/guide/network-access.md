@@ -98,6 +98,32 @@ create the other. The table lives in
 (`tools/posturevocab`) fails when it stops matching what the agents
 implement.
 
+## Asking why before an application opens
+
+On a sensitive web application, an administrator can require a reason
+before it opens: Console → **Proxy Routes** → the route's menu → **Ask why
+before opening** (`PUT /api/v1/access/routes/{id}/justification`, audited as
+`proxy_route_justification_set`).
+
+The access decision runs first, unchanged; someone it refuses never sees
+the question. A person it admits is sent, on their first page load in that
+browser session, to a short form on the application's own host. Their
+reason (10 to 500 characters) is written to the audit log as
+`proxy.access_justified` with their name and the route, and only then does
+the application open. The answer holds for that proxy session for the
+route's time (480 minutes by default, 5 to 1440). Another browser session,
+even the same person's, is asked again.
+
+Limits, stated plainly:
+
+- **A reason, not an approval.** Nobody checks the reason before the
+  application opens; it is a record to review later. Approval before access
+  is a separate piece of work.
+- **People in a browser.** An API call, or a token presented as
+  `Authorization: Bearer`, on a route that asks is refused with
+  `justification_required`: there is no browser session to remember the
+  answer on.
+
 ## Going fully dark
 
 The platform can take its own API off the public internet: services bind
