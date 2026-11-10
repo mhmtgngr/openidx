@@ -889,6 +889,89 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/access/routes/{id}/service-accounts:
+    get:
+      tags: [Routes]
+      summary: Service accounts a route admits
+      description: Admin only. The service accounts whose API keys reach this route without a person.
+      operationId: listRouteServiceAccounts
+      x-openidx-handler: internal/access.(*Service).handleListRouteServiceAccounts
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Routes]
+      summary: Admit a service account to a route
+      description: >-
+        Admin only. An active API key (`Authorization: Bearer oidx_...`) of
+        this organization's service account then reaches the route through
+        the proxy and the forward-auth hook; the upstream is told
+        X-Forwarded-User=service-account:<id> and Roles=service_account, and
+        never receives the key. A route that needs a person (an application
+        with assigned people, a reason, a trusted device, posture, policies,
+        a country fence, a risk ceiling, roles or groups) is refused with 409
+        route_needs_a_person. Audited as proxy_route_service_account_admitted.
+      operationId: addRouteServiceAccount
+      x-openidx-handler: internal/access.(*Service).handleAddRouteServiceAccount
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_account_id]
+              properties:
+                service_account_id:
+                  type: string
+      responses:
+        '201':
+          description: Admitted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The route needs a person; a service token could never reach it
+  /api/v1/access/routes/{id}/service-accounts/{sa}:
+    delete:
+      tags: [Routes]
+      summary: Stop admitting a service account to a route
+      description: Admin only. Audited as proxy_route_service_account_removed.
+      operationId: removeRouteServiceAccount
+      x-openidx-handler: internal/access.(*Service).handleRemoveRouteServiceAccount
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - name: sa
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Removed
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   # --- Sessions ---
   /api/v1/access/sessions:
     get:
