@@ -1554,7 +1554,7 @@ jobs:
           test -n "$img" || { echo "could not read the bootstrap image from the chart"; exit 1; }
           echo "bootstrap image: $img"
           bash scripts/ci-retry.sh 3 5 -- docker pull "$img"
-          kind load docker-image "$img" --name openidx-ci
+          bash scripts/kind-load-pulled.sh "$img" openidx-ci
 
       # --wait blocks on every Deployment/StatefulSet becoming Ready and on the
       # post-install migration hook Job succeeding, so a green here already
@@ -1818,7 +1818,7 @@ jobs:
           echo "$imgs"
           for img in $imgs; do
             bash scripts/ci-retry.sh 3 5 -- docker pull "$img"
-            kind load docker-image "$img" --name openidx-cell
+            bash scripts/kind-load-pulled.sh "$img" openidx-cell
           done
 
       # Pass one: the data plane and the hooks, services and pooler at zero
