@@ -203,6 +203,79 @@ paths:
                 items:
                   $ref: '#/components/schemas/IdpSummary'
 
+  /access/.auth/justify:
+    get:
+      tags: [Auth]
+      summary: Ask why before a proxied application opens
+      description: >-
+        On a route with require_justification, the form a signed-in person
+        whom the access decision admitted is sent to before anything is
+        forwarded. Served on the application's own host for the proxy
+        session that asks, with a one-use token bound to that session and
+        route, under a policy admitting only its own style and posting to
+        itself. 404 on a route that does not ask; 401 without a proxy
+        cookie; a redirect to sign in when the cookie names no live session.
+      operationId: getJustifyForm
+      x-openidx-handler: internal/access.(*Service).handleJustifyForm
+      security: []
+      parameters:
+        - name: redirect_url
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The form
+          content:
+            text/html: {}
+        '302':
+          description: The cookie names no live session; sign in first
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Auth]
+      summary: Record why, then open the application
+      description: >-
+        Records the reason (10 to 500 characters) as a proxy.access_justified
+        audit event with the person and the route, then remembers it for the
+        proxy session for the route's justification_ttl_minutes and redirects
+        (303) to redirect_url. A token that is spent, expired or bound to
+        another session is 403; a reason out of bounds re-serves the form
+        (400). Nothing opens if the reason could not be recorded (503).
+      operationId: submitJustification
+      x-openidx-handler: internal/access.(*Service).handleJustifySubmit
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token, reason]
+              properties:
+                token:
+                  type: string
+                reason:
+                  type: string
+                  minLength: 10
+                  maxLength: 500
+                redirect_url:
+                  type: string
+      responses:
+        '303':
+          description: Recorded; on to the application
+        '400':
+          description: The reason is too short or too long; the form again
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          description: The reason could not be recorded
+
   # --- Routes ---
   /api/v1/access/network-resources:
     get:
@@ -769,6 +842,48 @@ paths:
       responses:
         '204':
           description: Route deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/routes/{id}/justification:
+    put:
+      tags: [Routes]
+      summary: Ask why before a proxied application opens
+      description: >-
+        Admin only. Turns purpose justification on or off for one route and
+        sets how long an answer holds for a proxy session (5 to 1440 minutes,
+        default 480). Audited as proxy_route_justification_set. A bearer
+        caller on a route that asks is refused with justification_required.
+      operationId: setRouteJustification
+      x-openidx-handler: internal/access.(*Service).handleSetRouteJustification
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [require_justification]
+              properties:
+                require_justification:
+                  type: boolean
+                justification_ttl_minutes:
+                  type: integer
+                  minimum: 5
+                  maximum: 1440
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':

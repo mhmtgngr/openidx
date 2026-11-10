@@ -625,6 +625,14 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 		}
 	}
 
+	// Last, once everything else admitted the person: a route that asks why
+	// sends a browser navigation to the question before the edge forwards.
+	// The edge passes the caller's Accept (edge_routes.go).
+	navigation := (originalMethod == "" || originalMethod == http.MethodGet) && strings.Contains(c.GetHeader("Accept"), "text/html")
+	if !s.justificationGate(c, route, session, originalURI, navigation) {
+		return
+	}
+
 	// Update session activity (also slides the idle-timeout window)
 	s.updateSessionActivity(c, session)
 

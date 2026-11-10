@@ -71,6 +71,9 @@ interface ProxyRoute {
   guacamole_connection_id: string
   landing_path: string
   hosting_mode: string
+  // Absent on a service that predates migration 244.
+  require_justification?: boolean
+  justification_ttl_minutes?: number
   created_at: string
   updated_at: string
   // Set when an application's route_id points at this route — the same link
@@ -206,6 +209,20 @@ export function ProxyRoutesPage() {
       queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })
       setEditModal(false)
       setSelectedRoute(null)
+      toast({ title: t('pages.proxyRoutes.toast.routeUpdated'), description: t('pages.proxyRoutes.toast.routeUpdatedDesc') })
+    },
+    onError: () => {
+      toast({ title: t('common.error'), description: t('pages.proxyRoutes.toast.routeUpdateFailed'), variant: 'destructive' })
+    },
+  })
+
+  // Purpose justification has its own endpoint and audit line
+  // (PUT /routes/:id/justification), not a field of the route form.
+  const justificationMutation = useMutation({
+    mutationFn: async ({ id, require }: { id: string; require: boolean }) =>
+      api.put(`/api/v1/access/routes/${id}/justification`, { require_justification: require }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })
       toast({ title: t('pages.proxyRoutes.toast.routeUpdated'), description: t('pages.proxyRoutes.toast.routeUpdatedDesc') })
     },
     onError: () => {
@@ -404,6 +421,11 @@ export function ProxyRoutesPage() {
                         {route.require_device_trust && (
                           <Badge variant="outline" className="border-orange-300 text-orange-700">{t('pages.proxyRoutes.badges.deviceTrust')}</Badge>
                         )}
+                        {route.require_justification && (
+                          <Badge variant="outline" data-testid={`justification-badge-${route.id}`}>
+                            {t('pages.proxyRoutes.badges.justification')}
+                          </Badge>
+                        )}
                         {route.ziti_enabled && (
                           <Badge variant="default" className="bg-purple-600">Ziti</Badge>
                         )}
@@ -437,6 +459,14 @@ export function ProxyRoutesPage() {
                         ) : (
                           <><Power className="mr-2 h-4 w-4" /> {t('pages.proxyRoutes.actions.enable')}</>
                         )}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => justificationMutation.mutate({ id: route.id, require: !route.require_justification })}
+                      >
+                        <Shield className="mr-2 h-4 w-4" />{' '}
+                        {route.require_justification
+                          ? t('pages.proxyRoutes.actions.stopAskingWhy')
+                          : t('pages.proxyRoutes.actions.askWhy')}
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem

@@ -195,6 +195,22 @@ describe('ProxyRoutesPage', () => {
     expect(screen.getAllByRole('switch', { name: /browzer/i })).toHaveLength(1)
   })
 
+  it('turns the purpose question on through its own endpoint and badges a route that asks', async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      routes: [activeRoute, { ...appBackedRoute, require_justification: true }],
+      total: 2,
+    })
+    render(<ProxyRoutesPage />, { wrapper: createWrapper() })
+    expect(await screen.findByTestId('justification-badge-rt-3')).toHaveTextContent(/asks why/i)
+    expect(screen.queryByTestId('justification-badge-rt-1')).not.toBeInTheDocument()
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const menus = screen.getAllByRole('button').filter((b) => b.getAttribute('aria-haspopup') === 'menu')
+    await user.click(menus[0])
+    await user.click(await screen.findByRole('menuitem', { name: /ask why before opening/i }))
+    expect(api.put).toHaveBeenCalledWith('/api/v1/access/routes/rt-1/justification', { require_justification: true })
+  })
+
   it('shows the empty state when no routes exist', async () => {
     vi.mocked(api.get).mockResolvedValue({ routes: [], total: 0 })
 

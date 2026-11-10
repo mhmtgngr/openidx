@@ -1728,5 +1728,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamRiskyCommandsUp,
 			DownSQL:     pamRiskyCommandsDown,
 		},
+		{
+			Version:     244,
+			Name:        "route_justification",
+			Description: "Purpose justification on proxied applications. proxy_routes gains require_justification (default false) and justification_ttl_minutes (default 480, 5..1440): on such a route a signed-in person the access decision admits is asked why before the request is forwarded, once per proxy session for the TTL, and the reason is audited as proxy.access_justified. Columns under the table's existing org policy; down drops them.",
+			UpSQL:       routeJustificationUp,
+			DownSQL:     routeJustificationDown,
+		},
 	}
 }
