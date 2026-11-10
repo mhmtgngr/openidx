@@ -128,6 +128,14 @@ jobs:
           # cl.exe picks up extra flags from CL, and the variable is empty on
           # the other two runners, so this is Windows-only without an `if:`.
           CL: ${{ matrix.os == 'windows-latest' && '/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS' || '' }}
+          # The same shape on Linux: the ubuntu-26.04 runner's clang reports
+          # two warnings in third-party plugin code (tray_manager calls the
+          # deprecated app_indicator_new; flutter_secure_storage_linux vendors
+          # a json.hpp with `operator"" _json`), and the runner CMakeLists that
+          # `flutter create` generates builds plugins with -Werror. Only these
+          # two classes stop being errors; they are still printed, and every
+          # other warning still fails the build. Empty on the other runners.
+          CXXFLAGS: ${{ matrix.os == 'ubuntu-latest' && '-Wno-error=deprecated-declarations -Wno-error=deprecated-literal-operator' || '' }}
         run: flutter build ${{ matrix.build_target }} --release
 
       # Success only. Under `if: always()` a failed configure still matched the
