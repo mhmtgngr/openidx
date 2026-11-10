@@ -524,7 +524,8 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 		session = nil
 	}
 	if session == nil {
-		session = s.getSessionFromBearer(c)
+		// A bearer is held to the route's organization as the cookie is.
+		session = sessionOnRoute(s.getSessionFromBearer(c), route)
 	}
 	if session == nil {
 		// Redirect to login with path-only redirect_url.
