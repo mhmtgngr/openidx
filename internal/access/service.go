@@ -2361,8 +2361,9 @@ func (s *Service) handleProxy(c *gin.Context) {
 			session = nil
 		}
 		if session == nil {
-			// Also check for Bearer token
-			session = s.getSessionFromBearer(c)
+			// Also check for Bearer token, held to this route's organization
+			// as the cookie session is.
+			session = sessionOnRoute(s.getSessionFromBearer(c), route)
 		}
 		if session == nil {
 			// Redirect to login, back to this path on this host afterwards.
@@ -3315,6 +3316,23 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 	}
 
 	userID, _ := claims["sub"].(string)
+	// A proxy session is a person's. A machine token (client_credentials)
+	// names no subject, and a session built from it was a session of nobody:
+	// it passed a route that asks only for a signed-in caller, with an empty
+	// user id for every later check to look up.
+	if userID == "" {
+		s.logger.Debug("bearer token names no subject; not a proxy session")
+		return nil
+	}
+	// The organization the token was minted in, which VerifyBearerToken has
+	// already required. sessionOnRoute holds a session to its organization's
+	// routes and accepts one that names none; a bearer session used to name
+	// none, so a token from one organization passed another organization's
+	// route, its roles judged against that route's.
+	orgID, err := middleware.TokenOrgID(claims)
+	if err != nil || orgID == "" {
+		return nil
+	}
 	email, _ := claims["email"].(string)
 	name, _ := claims["name"].(string)
 	var roles []string
@@ -3330,6 +3348,7 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 		Name:   name,
 		Roles:  roles,
 		bearer: authHeader,
+		orgID:  orgID,
 	}
 }
 
