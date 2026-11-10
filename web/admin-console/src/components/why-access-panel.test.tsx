@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 vi.mock('../lib/api', () => ({
@@ -76,5 +76,30 @@ describe('WhyAccessPanel', () => {
     expect(screen.getByTestId('why-cond-risk_ceiling')).toHaveTextContent(/not met/i)
     expect(screen.getByTestId('why-reasons')).toHaveTextContent('not_assigned, risk_above_max')
     expect(screen.getByText(/step-up required/i)).toBeInTheDocument()
+  })
+
+  it('asks about a stated situation only once the administrator turns it on', async () => {
+    wrap(<WhyAccessPanel userId="u-1" initialAppId="app-pay" />)
+    await screen.findByTestId('why-verdict')
+    expect(screen.queryByTestId('why-not-judged')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText(/test a situation/i))
+    fireEvent.click(screen.getByLabelText(/trusted device/i))
+    fireEvent.change(screen.getByLabelText(/country/i), { target: { value: 'de' } })
+    fireEvent.change(screen.getByLabelText(/risk score/i), { target: { value: '140' } })
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(
+        '/api/v1/access/decisions/explain?user=u-1&app=app-pay&device_trusted=true&risk=100&fresh_mfa=false&country=DE',
+      ),
+    )
+    expect(screen.getByTestId('why-not-judged')).toHaveTextContent(/inline policy/i)
+  })
+
+  it('does not ask with a country that is not two letters', async () => {
+    wrap(<WhyAccessPanel userId="u-1" initialAppId="app-pay" />)
+    await screen.findByTestId('why-verdict')
+    fireEvent.click(screen.getByLabelText(/test a situation/i))
+    fireEvent.change(screen.getByLabelText(/country/i), { target: { value: 'T1' } })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining('country=T1'))
   })
 })

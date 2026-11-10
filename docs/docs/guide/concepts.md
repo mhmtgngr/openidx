@@ -44,6 +44,16 @@ enforced truth and assignments as the catalogue. PAM entry grants stay their
 own enforcement layer by design — privileged access is deliberately a
 separate decision from ordinary reach.
 
+**Testing a decision before it happens.** On a user's **Access 360** page,
+**Why can this person reach that?** shows the decision for one application:
+the grant, every condition and the audit sentence. Turn on **Test a
+situation** to state a device (trusted or not), a country, a risk score and
+whether the second factor is fresh; every condition is then judged as the
+proxy would judge that request (`GET /api/v1/access/decisions/explain` with
+`device_trusted`, `risk`, `country`, `fresh_mfa`). A route's inline policy
+and the governance policies it names are not part of this answer, and it
+says so.
+
 ## Glossary — use these words consistently
 
 | Term | Means | Does **not** mean |

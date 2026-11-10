@@ -6354,7 +6354,15 @@ paths:
     get:
       tags: [Access Control]
       summary: Why a person may or may not reach an application
-      description: The decision the enforcement points take for the given user on the given application, with the grant and every condition named, and the same sentence the audit log carries.
+      description: >-
+        The decision the enforcement points take for the given user on the given
+        application, with the grant and every condition named, and the same
+        sentence the audit log carries. Without a situation the device, risk,
+        country and fresh-factor conditions are listed unjudged. As a policy
+        tester, state one: device_trusted and risk (country optional, fresh_mfa
+        optional), and every condition is judged as the proxy would. The
+        answer carries what_if and not_judged (a route's inline policy and the
+        governance policies it names are not part of it).
       operationId: explainReach
       x-openidx-handler: internal/access.(*Service).handleExplainReach
       parameters:
@@ -6368,6 +6376,29 @@ paths:
           required: true
           schema:
             type: string
+        - name: device_trusted
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: risk
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100
+        - name: country
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[A-Za-z]{2}$'
+        - name: fresh_mfa
+          in: query
+          required: false
+          schema:
+            type: boolean
       responses:
         '200':
           description: Success
@@ -6376,6 +6407,8 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
