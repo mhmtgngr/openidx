@@ -463,6 +463,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/routes/:id", adminOnly, svc.handleGetRoute)
 		api.PUT("/routes/:id", adminOnly, svc.handleUpdateRoute)
 		api.PUT("/routes/:id/justification", adminOnly, svc.handleSetRouteJustification)
+		// Service tokens (route_service_tokens.go).
+		api.GET("/routes/:id/service-accounts", adminOnly, svc.handleListRouteServiceAccounts)
+		api.POST("/routes/:id/service-accounts", adminOnly, svc.handleAddRouteServiceAccount)
+		api.DELETE("/routes/:id/service-accounts/:sa", adminOnly, svc.handleRemoveRouteServiceAccount)
 		api.DELETE("/routes/:id", adminOnly, svc.handleDeleteRoute)
 		api.GET("/sessions", adminOnly, svc.handleListSessions)
 		api.DELETE("/sessions/:id", adminOnly, svc.handleRevokeSession)
@@ -2359,7 +2363,18 @@ func (s *Service) handleProxy(c *gin.Context) {
 
 	// Check authentication
 	var session *ProxySession
+	machine := false
 	if route.RequireAuth {
+		// A service token (route_service_tokens.go) is decided on its own
+		// path, before the person paths, and never becomes a person.
+		if id, handled, ok := s.serviceTokenReach(c, route); handled {
+			if !ok {
+				return
+			}
+			session, machine = id.asProxySession(), true
+		}
+	}
+	if route.RequireAuth && !machine {
 		session = sessionOnRoute(s.getSessionFromRequest(c, host), route)
 		// Enforce the route's idle timeout on the cookie session: if it has been
 		// idle longer than idle_timeout, revoke it and re-auth. (Bearer tokens
@@ -2537,7 +2552,15 @@ func (s *Service) handleProxy(c *gin.Context) {
 	}
 
 	// Log successful proxy
-	if session != nil {
+	if machine {
+		s.logAuditEvent(c, "proxy_access_allowed", route.ID, "proxy_route", map[string]interface{}{
+			"service_account_id": strings.TrimPrefix(session.UserID, "service-account:"),
+			"credential":         "service_token",
+			"path":               c.Request.URL.Path,
+			"method":             c.Request.Method,
+			"upstream":           route.ToURL,
+		})
+	} else if session != nil {
 		s.logAuditEvent(c, "proxy_access_allowed", route.ID, "proxy_route", map[string]interface{}{
 			"user_id":  session.UserID,
 			"path":     c.Request.URL.Path,

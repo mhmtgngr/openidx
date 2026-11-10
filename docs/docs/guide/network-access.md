@@ -124,6 +124,33 @@ Limits, stated plainly:
   `justification_required`: there is no browser session to remember the
   answer on.
 
+## Service tokens: a machine reaching a web application
+
+A script, a CI job or another service can reach a proxied web application
+without a person signing in, with the API key of a **service account**
+(created under Service Accounts; the key is shown once, stored hashed, and
+can expire or be revoked). The route must name the account:
+`POST /api/v1/access/routes/{id}/service-accounts` with its
+`service_account_id` (audited as `proxy_route_service_account_admitted`;
+remove with `DELETE .../service-accounts/{sa}`). The caller then sends
+`Authorization: Bearer oidx_...`.
+
+What the application sees: `X-Forwarded-User: service-account:<id>` and
+`X-Forwarded-Roles: service_account`, written by the proxy. The key itself is
+never forwarded. Every request is audited as `proxy_access_allowed` or
+`proxy_access_denied` with the service account and, for a refusal, why
+(`service_token_not_admitted`, `service_token_inactive`, ...).
+
+Limits, stated plainly:
+
+- **Only routes a machine can satisfy.** A route that needs a person (an
+  application with assigned people, a reason, a trusted device, posture
+  checks, governance or inline policies, a country fence, a risk ceiling,
+  roles or groups) never admits a service token, and the API refuses to
+  name one on it (409 `route_needs_a_person`).
+- **One organization.** A key reaches only its own organization's routes.
+- **mTLS** client certificates are not supported yet.
+
 ## Going fully dark
 
 The platform can take its own API off the public internet: services bind

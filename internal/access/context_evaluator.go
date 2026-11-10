@@ -511,6 +511,24 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 		return
 	}
 
+	// A service token (route_service_tokens.go) is decided on its own path,
+	// before the person paths, and never becomes a person.
+	if id, handled, ok := s.serviceTokenReach(c, route); handled {
+		if !ok {
+			return
+		}
+		session := id.asProxySession()
+		writeForwardAuthHeaders(c, session, route.Name, "", true)
+		s.logAuditEvent(c, "proxy_access_allowed", route.ID, "proxy_route", map[string]interface{}{
+			"service_account_id": id.ServiceAccountID,
+			"credential":         "service_token",
+			"path":               originalURI,
+			"method":             originalMethod,
+		})
+		c.Status(http.StatusOK)
+		return
+	}
+
 	// Authenticate
 	session := sessionOnRoute(s.getSessionFromRequest(c, originalHost), route)
 	// Enforce the route's idle timeout on the cookie session (bearer tokens carry

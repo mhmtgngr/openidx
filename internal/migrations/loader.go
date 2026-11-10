@@ -1735,5 +1735,12 @@ func allMigrations() []*Migration {
 			UpSQL:       routeJustificationUp,
 			DownSQL:     routeJustificationDown,
 		},
+		{
+			Version:     245,
+			Name:        "route_service_accounts",
+			Description: "Service tokens on proxied applications. proxy_route_service_accounts (route_id, service_account_id, org_id) lists the service accounts a route admits: an active API key of a listed, active service account of the route's organization reaches the route without a person. None listed by default; a route requiring a trusted device, a reason or application assignment never admits one. Org-scoped RLS (enabled and forced) like the other tenant tables; down drops it.",
+			UpSQL:       routeServiceAccountsUp,
+			DownSQL:     routeServiceAccountsDown,
+		},
 	}
 }
