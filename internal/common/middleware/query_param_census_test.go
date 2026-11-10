@@ -46,6 +46,12 @@ var publicQueryParams = map[string]string{
 	// nothing the caller does not already hold -- and it is the one field that
 	// makes a paging complaint reproducible.
 	"cursor": "pagination (keyset position)",
+	// The policy tester's stated situation (GET /decisions/explain,
+	// reach_decision.go): an administrator's hypothetical device trust, risk
+	// score, country and second-factor freshness. Facts about a question,
+	// not credentials, and the log line is the record of what was asked.
+	"device_trusted": "policy tester situation", "risk": "policy tester situation",
+	"country": "policy tester situation", "fresh_mfa": "policy tester situation",
 	// The network-resource CSV import's "validate only" switch: a boolean.
 	"dry_run": "request mode (validate without writing)",
 	"start":   "time window", "end": "time window", "start_date": "time window",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -140,9 +141,17 @@ func (s *Service) reachDecision(c *gin.Context, route *ProxyRoute, session *Prox
 
 // explainReach answers GET /decisions/explain?user=&app= for an
 // administrator: the decision the enforcement points would take for that
-// person on that application, with the grant and every condition named. The
-// situation (device, risk, country) is not known here, so those conditions
-// are listed as unjudged; the audit log carries the judged ones.
+// person on that application, with the grant and every condition named.
+//
+// The situation (device, risk, country, a fresh second factor) is not known
+// here, so by default those conditions are listed as unjudged and the audit
+// log carries the judged ones. An administrator can instead state one, as a
+// policy tester ("what if this person came from DE on an untrusted device at
+// risk 60?"): device_trusted, risk and optionally country, and with them
+// fresh_mfa. The answer is then the same Evaluate the proxy and the forward-auth
+// hook call, judging every condition for that situation. It decides from the
+// application's principals and conditions; a route's inline policy and the
+// governance policies it names are not part of it, and the answer says so.
 func (s *Service) handleExplainReach(c *gin.Context) {
 	org, err := orgctx.From(c.Request.Context())
 	if err != nil {
@@ -158,14 +167,78 @@ func (s *Service) handleExplainReach(c *gin.Context) {
 	if err != nil {
 		s.logger.Warn("explain: roles", zap.Error(err))
 	}
-	d, err := accessdecision.Evaluate(c.Request.Context(), s.db, s.config.AccessAssignmentEnforce,
-		accessdecision.Subject{UserID: userID, OrgID: org.ID, Roles: roles}, appID)
+	subject := accessdecision.Subject{UserID: userID, OrgID: org.ID, Roles: roles}
+	whatIf, msg := whatIfSituation(c, &subject)
+	if msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+		return
+	}
+	d, err := accessdecision.Evaluate(c.Request.Context(), s.db, s.config.AccessAssignmentEnforce, subject, appID)
 	if err != nil {
 		s.logger.Error("explain: evaluate", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "evaluation failed"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"decision": d, "explain": accessdecision.Explain(d)})
+	c.JSON(http.StatusOK, gin.H{
+		"decision": d, "explain": accessdecision.Explain(d),
+		"what_if":    whatIf,
+		"not_judged": []string{"route_inline_policy", "governance_policies"},
+	})
+}
+
+// whatIfSituation reads the stated situation off the query, when there is
+// one, into s. device_trusted, country and risk come together: judging device
+// trust from a stated country alone would report an untrusted device nobody
+// stated, and for the same reason fresh_mfa comes only with them. Inputs are
+// bounded, and anything else is a message for a 400.
+func whatIfSituation(c *gin.Context, s *accessdecision.Subject) (bool, string) {
+	dev, cc, risk, mfa := c.Query("device_trusted"), c.Query("country"), c.Query("risk"), c.Query("fresh_mfa")
+	whatIf := false
+	if dev != "" || cc != "" || risk != "" {
+		if dev == "" || risk == "" {
+			return false, "a stated situation needs device_trusted and risk (country is optional)"
+		}
+		trusted, err := strconv.ParseBool(dev)
+		if err != nil {
+			return false, "device_trusted must be true or false"
+		}
+		r, err := strconv.Atoi(risk)
+		if err != nil || r < 0 || r > 100 {
+			return false, "risk must be a whole number from 0 to 100"
+		}
+		if cc != "" && !isCountryCode(cc) {
+			return false, "country must be a two-letter code"
+		}
+		s.KnowsSituation, s.DeviceTrusted, s.RiskScore, s.Country = true, trusted, r, strings.ToUpper(cc)
+		whatIf = true
+	}
+	if mfa != "" {
+		// A fresh factor is judged only inside a known situation, so it is
+		// stated with one: on its own it would make the unstated device
+		// trust and risk read as false and zero.
+		if !whatIf {
+			return false, "fresh_mfa is stated with device_trusted and risk"
+		}
+		fresh, err := strconv.ParseBool(mfa)
+		if err != nil {
+			return false, "fresh_mfa must be true or false"
+		}
+		s.MFAKnown, s.FreshMFA = true, fresh
+	}
+	return whatIf, ""
+}
+
+// isCountryCode reports whether v is two ASCII letters.
+func isCountryCode(v string) bool {
+	if len(v) != 2 {
+		return false
+	}
+	for _, r := range v {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 // userRoleNames is the user's role names in the organization, for legacy

@@ -5,6 +5,9 @@ import { HelpCircle } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { Badge } from './ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
+import { Input } from './ui/input'
+import { Label } from './ui/label'
+import { Switch } from './ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table'
 import { QueryError } from './query-error'
 import { api } from '../lib/api'
@@ -40,6 +43,9 @@ export interface ExplainDecision {
 export interface ExplainResponse {
   decision: ExplainDecision
   explain: string
+  // Present on a service with the policy tester.
+  what_if?: boolean
+  not_judged?: string[]
 }
 
 interface AppOption {
@@ -59,18 +65,30 @@ const asArray = <T,>(v: unknown): T[] =>
 export function WhyAccessPanel({ userId, initialAppId = '' }: { userId: string; initialAppId?: string }) {
   const { t } = useTranslation()
   const [appId, setAppId] = useState(initialAppId)
+  // A stated situation, the policy tester: off by default, so the panel
+  // answers what it always did until the administrator asks "what if".
+  const [whatIf, setWhatIf] = useState(false)
+  const [deviceTrusted, setDeviceTrusted] = useState(false)
+  const [country, setCountry] = useState('')
+  const [risk, setRisk] = useState(0)
+  const [freshMfa, setFreshMfa] = useState(false)
+  const countryOk = country === '' || /^[A-Za-z]{2}$/.test(country)
+  const situation = whatIf
+    ? `&device_trusted=${deviceTrusted}&risk=${risk}&fresh_mfa=${freshMfa}` +
+      (country ? `&country=${encodeURIComponent(country.toUpperCase())}` : '')
+    : ''
 
   const apps = useQuery({
     queryKey: ['apps-for-explain'],
     queryFn: async () => asArray<AppOption>(await api.get<unknown>('/api/v1/applications')),
   })
   const explain = useQuery({
-    queryKey: ['access-explain', userId, appId],
+    queryKey: ['access-explain', userId, appId, situation],
     queryFn: () =>
       api.get<ExplainResponse>(
-        `/api/v1/access/decisions/explain?user=${encodeURIComponent(userId)}&app=${encodeURIComponent(appId)}`,
+        `/api/v1/access/decisions/explain?user=${encodeURIComponent(userId)}&app=${encodeURIComponent(appId)}${situation}`,
       ),
-    enabled: !!appId,
+    enabled: !!appId && countryOk,
   })
 
   const d = explain.data?.decision
@@ -99,6 +117,55 @@ export function WhyAccessPanel({ userId, initialAppId = '' }: { userId: string; 
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="space-y-3 rounded-md border p-3">
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <Label htmlFor="why-what-if">{t('pages.userAccess360.why.whatIf.title')}</Label>
+              <p className="text-xs text-muted-foreground">{t('pages.userAccess360.why.whatIf.hint')}</p>
+            </div>
+            <Switch id="why-what-if" checked={whatIf} onCheckedChange={setWhatIf} />
+          </div>
+          {whatIf && (
+            <div className="grid gap-3 sm:grid-cols-4">
+              <div className="flex items-center gap-2">
+                <Switch id="why-device-trusted" checked={deviceTrusted} onCheckedChange={setDeviceTrusted} />
+                <Label htmlFor="why-device-trusted">{t('pages.userAccess360.why.whatIf.deviceTrusted')}</Label>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="why-country">{t('pages.userAccess360.why.whatIf.country')}</Label>
+                <Input
+                  id="why-country"
+                  maxLength={2}
+                  placeholder="TR"
+                  value={country}
+                  aria-invalid={!countryOk}
+                  onChange={(e) => setCountry(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="why-risk">{t('pages.userAccess360.why.whatIf.risk')}</Label>
+                <Input
+                  id="why-risk"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={risk}
+                  onChange={(e) => setRisk(Math.min(100, Math.max(0, parseInt(e.target.value, 10) || 0)))}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch id="why-fresh-mfa" checked={freshMfa} onCheckedChange={setFreshMfa} />
+                <Label htmlFor="why-fresh-mfa">{t('pages.userAccess360.why.whatIf.freshMfa')}</Label>
+              </div>
+            </div>
+          )}
+          {whatIf && (
+            <p className="text-xs text-muted-foreground" data-testid="why-not-judged">
+              {t('pages.userAccess360.why.whatIf.notJudged')}
+            </p>
+          )}
         </div>
 
         {explain.isError ? (
