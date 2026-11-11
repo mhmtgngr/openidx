@@ -29,6 +29,7 @@ var installWideTables = map[string]string{
 	"system_settings":      "install-wide configuration key/value",
 	"error_catalog":        "global error-code catalog keyed by code; documentation, not data",
 	"oauth_signing_keys":   "install-wide JWKS signing material (v79); one key set serves every tenant",
+	"eam_signing_keys":     "install-wide Entra external-method signing material (v248); one Entra app registration reads one /eam/jwks for every tenant",
 	"ip_threat_list":       "shared threat-intel feed consulted before a tenant is resolved",
 	"ip_geolocation_cache": "shared IP->geo cache keyed by address; no tenant dimension",
 	"policy_sync_state":    "global governance->Ziti sync watermark",

@@ -24,6 +24,7 @@ tags:
   - name: Client Management
   - name: Device Authorization
   - name: Discovery
+  - name: Entra External MFA
   - name: Dynamic Client Registration
   - name: Logout
   - name: OIDC Discovery
@@ -689,6 +690,215 @@ paths:
                 $ref: '#/components/schemas/UserInfo'
 
   # --- Client Management ---
+  # --- Entra external authentication method (EAM_ENABLED) ---
+  /eam/.well-known/openid-configuration:
+    get:
+      tags: [Entra External MFA]
+      summary: EAM provider document
+      description: >-
+        The OpenID provider document Microsoft Entra ID reads when OpenIDX is
+        registered as an external authentication method. Issuer
+        `<OAUTH_ISSUER>/eam`, id_token by form_post, RS256, claims sub, acr,
+        amr. 404 unless `EAM_ENABLED=true`.
+      operationId: getEAMDiscovery
+      x-openidx-handler: internal/oauth.(*Service).handleEAMDiscovery
+      security: []
+      responses:
+        '200':
+          description: The provider document
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /eam/jwks:
+    get:
+      tags: [Entra External MFA]
+      summary: EAM signing keys
+      description: >-
+        Every published EAM signing key with its self-signed certificate
+        (`x5c`) and thumbprint (`x5t`), including a key rotated in that does
+        not sign yet. 404 unless `EAM_ENABLED=true`.
+      operationId: getEAMJWKS
+      x-openidx-handler: internal/oauth.(*Service).handleEAMJWKS
+      security: []
+      responses:
+        '200':
+          description: JSON Web Key Set
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: The keys could not be read
+
+  /eam/authorize:
+    get:
+      tags: [Entra External MFA]
+      summary: EAM authorization request (from Entra)
+      description: >-
+        Entra's request for the second factor. client_id must be
+        `EAM_CLIENT_ID` and redirect_uri Entra's
+        `/common/federation/externalauthprovider`, else 400 with no reply.
+        response_type id_token, response_mode form_post, scope openid, a
+        nonce, and an id_token_hint signed by Entra for an allowed tenant
+        (`EAM_TENANT_IDS`) and audience `EAM_CLIENT_ID` (expiry is not
+        checked: Entra issues it expired). The person is found by the hint's
+        oid (identity link, then directory sync), then by preferred_username as
+        a verified email. Success is a redirect to `/login?eam_session=...`;
+        a refusal is an auto-submitting form posting `error`
+        (`access_denied`, `temporarily_unavailable`) and `state` to Entra.
+      operationId: eamAuthorize
+      x-openidx-handler: internal/oauth.(*Service).handleEAMAuthorize
+      security: []
+      parameters:
+        - {name: client_id, in: query, required: true, schema: {type: string}}
+        - {name: redirect_uri, in: query, required: true, schema: {type: string}}
+        - {name: response_type, in: query, required: true, schema: {type: string, enum: [id_token]}}
+        - {name: response_mode, in: query, required: true, schema: {type: string, enum: [form_post]}}
+        - {name: scope, in: query, required: true, schema: {type: string}}
+        - {name: nonce, in: query, required: true, schema: {type: string}}
+        - {name: state, in: query, schema: {type: string}}
+        - {name: id_token_hint, in: query, required: true, schema: {type: string}}
+        - {name: claims, in: query, schema: {type: string}}
+        - {name: client-request-id, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: A refusal, as an HTML form posted to Entra
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: To the sign-in page's second-factor step
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Entra External MFA]
+      summary: EAM authorization request (form-encoded)
+      description: The same request as GET, form-encoded.
+      operationId: eamAuthorizePost
+      x-openidx-handler: internal/oauth.(*Service).handleEAMAuthorize
+      security: []
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: A refusal, as an HTML form posted to Entra
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: To the sign-in page's second-factor step
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /eam/verify:
+    post:
+      tags: [Entra External MFA]
+      summary: Complete an EAM second factor
+      description: >-
+        The sign-in page posts the factor for an EAM session. Only the factors
+        the session pinned are accepted (with `EAM_REQUIRE_STRONG_FACTORS`,
+        TOTP, passkey or push). The answer is the form the page posts to
+        Entra: an id_token (iss `<OAUTH_ISSUER>/eam`, aud `EAM_CLIENT_ID`, sub
+        from the hint, nonce, 5 minutes, acr `possessionorinherence`, amr
+        otp, fido or pop) and state. Audited as `eam.mfa_satisfied`.
+      operationId: eamVerify
+      x-openidx-handler: internal/oauth.(*Service).handleEAMVerify
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfa_session, code]
+              properties:
+                mfa_session: {type: string}
+                code: {type: string}
+                method: {type: string, enum: [totp, webauthn, push, sms, email]}
+      responses:
+        '200':
+          description: The form_post for Entra
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  form_post:
+                    type: object
+                    properties:
+                      action: {type: string}
+                      fields:
+                        type: object
+                        additionalProperties: {type: string}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/oauth/eam/keys:
+    get:
+      tags: [Entra External MFA]
+      summary: List EAM signing keys
+      description: Platform administrators only. Which key signs, which are published, when each expires.
+      operationId: listEAMKeys
+      x-openidx-handler: internal/oauth.(*Service).handleListEAMKeys
+      responses:
+        '200':
+          description: The published keys
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/oauth/eam/keys/rotate:
+    post:
+      tags: [Entra External MFA]
+      summary: Rotate the EAM signing key
+      description: >-
+        Platform administrators only. Publishes a new key at /eam/jwks now; it
+        starts to sign two days later, so Entra's cached key set has it first.
+        The previous key stays published until its certificate expires.
+        Audited as `eam.key_rotated`.
+      operationId: rotateEAMKey
+      x-openidx-handler: internal/oauth.(*Service).handleRotateEAMKey
+      responses:
+        '201':
+          description: The new key
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /api/v1/oauth/clients:
     get:
       tags: [Client Management]

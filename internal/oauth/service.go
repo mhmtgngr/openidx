@@ -326,7 +326,11 @@ type Service struct {
 	// inbound SET validation. Empty = only OpenIDX-issued SETs are accepted.
 	ssfReceiverConfig SSFReceiverConfig
 	identityService   *identity.Service
-	riskService       *risk.Service
+	// eamAuthority overrides Entra's sign-in host for the external
+	// authentication method (eam.go); empty is login.microsoftonline.com.
+	// Tests only.
+	eamAuthority string
+	riskService  *risk.Service
 	// botGate decides, before the password is checked, whether this login
 	// attempt must first prove a human (global-scale plan task 1.4).
 	botGate          *botgate.Gate
@@ -1820,6 +1824,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 	// social account onto an existing local user by email (account-takeover
 	// guard); these endpoints are the supported way to establish that link.
 	svc.RegisterSocialLinkRoutes(router)
+
+	// Entra external authentication method (eam.go). The /eam endpoints are
+	// public protocol endpoints (404 unless EAM_ENABLED); the key API is
+	// platform administration.
+	svc.registerEAMRoutes(router, clientMgmtAuth, requireAdminRole,
+		middleware.RequirePlatformAdmin(svc.db, svc.logger), svc.managementStepUp())
 }
 
 // discoverySubjectTypes returns the OIDC subject types the provider actually
@@ -2947,6 +2957,14 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 	userID := mfaData["user_id"]
 	clientIP := c.ClientIP()
 	userAgent := c.GetHeader("User-Agent")
+
+	// An Entra external-method session completes at /eam/verify, which
+	// answers Entra; finishing it here would issue an OpenIDX authorization
+	// code to a sign-in OpenIDX never authenticated the first factor of.
+	if mfaData["eam_session"] != "" {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "this sign-in completes at /eam/verify"})
+		return
+	}
 
 	// A session pinned to a specific method (e.g. passwordless phone sign-in is
 	// pinned to "push") must not be completable with any other method. Without

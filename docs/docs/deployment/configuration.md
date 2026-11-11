@@ -100,6 +100,10 @@ postgres://user:password@host:5432/openidx?sslmode=verify-full&pool_max_conns=25
 | `DCR_ORG_ID` | string | `DEFAULT_ORG_ID` | The one organization dynamic client registration creates clients in. A registration request that resolves to any other organization (by `X-Org-Slug` or a tenant's host) is refused with `401`. |
 | `SSF_RECEIVER_ISSUER` | string | - | Expected issuer for inbound SSF/CAEP events. |
 | `SSF_RECEIVER_JWKS_URL` | url | - | JWKS for verifying inbound SSF/CAEP events. |
+| `EAM_ENABLED` | bool | `false` | Serve OpenIDX as a Microsoft Entra ID external authentication method under `<OAUTH_ISSUER>/eam` (discovery, `/eam/jwks`, `/eam/authorize`). Off: every `/eam` endpoint answers 404. |
+| `EAM_CLIENT_ID` | string | - | The application id Entra sends as `client_id` and expects as the id_token audience. |
+| `EAM_TENANT_IDS` | string | - | Comma-separated Entra tenant ids whose `id_token_hint` is accepted. Any other tenant is `access_denied`. |
+| `EAM_REQUIRE_STRONG_FACTORS` | bool | `true` | Only an authenticator app, a passkey or push completes an Entra second factor (what `acr=possessionorinherence` promises). `false` also allows SMS and email codes and is reported at startup as an open gate. |
 
 **Token lifetimes are per client, not per deployment.** Access, refresh and ID
 token lifetimes are properties of the OAuth client, set on the application in

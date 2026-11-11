@@ -1749,5 +1749,12 @@ func allMigrations() []*Migration {
 			UpSQL:       federatedIdPProfileUp,
 			DownSQL:     federatedIdPProfileDown,
 		},
+		{
+			Version:     248,
+			Name:        "eam_signing_keys",
+			Description: "Signing keys for OpenIDX as a Microsoft Entra ID external authentication method. eam_signing_keys (kid, private_key_enc sealed with the install cipher, self-signed cert_pem for x5c, not_before, not_after, active) is platform level: one Entra app registration reads one /eam/jwks. A rotated key is published before it signs, because Entra caches the set. No org_id and no RLS; openidx_app reads and writes it; down drops it.",
+			UpSQL:       eamSigningKeysUp,
+			DownSQL:     eamSigningKeysDown,
+		},
 	}
 }

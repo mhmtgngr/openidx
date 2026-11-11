@@ -133,7 +133,7 @@ put openidx-deny-audit-ingest "{$H,\"uris\":[\"/api/v1/audit/events\",\"/api/v1/
 # priority than the (off-mode) /api/v1/access/* catch-all so it always wins.
 put openidx-api-enroll       "{$H,\"uri\":\"/api/v1/access/enroll\",\"priority\":45,\"plugins\":{$LC_ISSUE},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8007\":1}}}"
 # OAuth login/token/JWKS surface — required to obtain a token / for BrowZer login.
-put openidx-oauth            "{$H,\"uri\":\"/oauth/*\",\"priority\":30,\"plugins\":{$LC_ISSUE},\"upstream\":{\"type\":\"roundrobin\",$UP_ISSUE,\"nodes\":{\"127.0.0.1:8006\":1}}}"
+put openidx-oauth            "{$H,\"uris\":[\"/oauth/*\",\"/eam/*\"],\"priority\":30,\"plugins\":{$LC_ISSUE},\"upstream\":{\"type\":\"roundrobin\",$UP_ISSUE,\"nodes\":{\"127.0.0.1:8006\":1}}}"
 put openidx-wellknown        "{$H,\"uri\":\"/.well-known/*\",\"priority\":30,\"plugins\":{$LC_DISCOVERY},\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
 
 # ===========================================================================
