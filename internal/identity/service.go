@@ -1045,6 +1045,11 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	return nil
 }
 
+// identityProviderProfileColumns are the federation profile columns
+// (migration 246) every provider read returns, in the order the scans below
+// expect. discovery_url is NULL when the provider uses the standard location.
+const identityProviderProfileColumns = `COALESCE(discovery_url, ''), use_pkce, trust_upstream_mfa, claims_mapping, group_mapping, jit_policy, pass_through_params, external_id_claim`
+
 // CreateIdentityProvider creates a new identity provider
 func (s *Service) CreateIdentityProvider(ctx context.Context, idp *IdentityProvider) error {
 	s.logger.Info("Creating identity provider", zap.String("name", idp.Name))
@@ -1058,6 +1063,7 @@ func (s *Service) CreateIdentityProvider(ctx context.Context, idp *IdentityProvi
 	now := time.Now()
 	idp.CreatedAt = now
 	idp.UpdatedAt = now
+	idp.NormalizeFederationProfile()
 
 	encSecret, err := s.idpCipher.Encrypt(idp.ClientSecret)
 	if err != nil {
@@ -1065,9 +1071,11 @@ func (s *Service) CreateIdentityProvider(ctx context.Context, idp *IdentityProvi
 	}
 
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO identity_providers (id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, encSecret, idp.Scopes, idp.Enabled, idp.CreatedAt, idp.UpdatedAt, org.ID)
+		INSERT INTO identity_providers (id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at, org_id,
+			discovery_url, use_pkce, trust_upstream_mfa, claims_mapping, group_mapping, jit_policy, pass_through_params, external_id_claim)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULLIF($12, ''), $13, $14, $15, $16, $17, $18, $19)
+	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, encSecret, idp.Scopes, idp.Enabled, idp.CreatedAt, idp.UpdatedAt, org.ID,
+		idp.DiscoveryURL, idp.UsePKCE, idp.TrustUpstreamMFA, idp.ClaimsMapping, idp.GroupMapping, idp.JITPolicy, idp.PassThroughParams, idp.ExternalIDClaim)
 	if err != nil {
 		return err
 	}
@@ -1095,10 +1103,12 @@ func (s *Service) GetIdentityProvider(ctx context.Context, idpID string) (*Ident
 
 	var idp IdentityProvider
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at
+		SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at,
+			`+identityProviderProfileColumns+`
 		FROM identity_providers WHERE id = $1 AND org_id = $2
 	`, idpID, org.ID).Scan(
 		&idp.ID, &idp.Name, &idp.ProviderType, &idp.IssuerURL, &idp.ClientID, &idp.ClientSecret, &idp.Scopes, &idp.Enabled, &idp.CreatedAt, &idp.UpdatedAt,
+		&idp.DiscoveryURL, &idp.UsePKCE, &idp.TrustUpstreamMFA, &idp.ClaimsMapping, &idp.GroupMapping, &idp.JITPolicy, &idp.PassThroughParams, &idp.ExternalIDClaim,
 	)
 	if err != nil {
 		return nil, err
@@ -1126,7 +1136,8 @@ func (s *Service) ListIdentityProviders(ctx context.Context, offset, limit int) 
 	}
 
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at
+		SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at,
+			`+identityProviderProfileColumns+`
 		FROM identity_providers
 		WHERE org_id = $1
 		ORDER BY name
@@ -1142,6 +1153,7 @@ func (s *Service) ListIdentityProviders(ctx context.Context, offset, limit int) 
 		var idp IdentityProvider
 		if err := rows.Scan(
 			&idp.ID, &idp.Name, &idp.ProviderType, &idp.IssuerURL, &idp.ClientID, &idp.ClientSecret, &idp.Scopes, &idp.Enabled, &idp.CreatedAt, &idp.UpdatedAt,
+			&idp.DiscoveryURL, &idp.UsePKCE, &idp.TrustUpstreamMFA, &idp.ClaimsMapping, &idp.GroupMapping, &idp.JITPolicy, &idp.PassThroughParams, &idp.ExternalIDClaim,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -1164,6 +1176,7 @@ func (s *Service) UpdateIdentityProvider(ctx context.Context, idp *IdentityProvi
 	}
 
 	idp.UpdatedAt = time.Now()
+	idp.NormalizeFederationProfile()
 
 	encSecret, err := s.idpCipher.Encrypt(idp.ClientSecret)
 	if err != nil {
@@ -1172,9 +1185,12 @@ func (s *Service) UpdateIdentityProvider(ctx context.Context, idp *IdentityProvi
 
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE identity_providers
-		SET name = $2, provider_type = $3, issuer_url = $4, client_id = $5, client_secret = $6, scopes = $7, enabled = $8, updated_at = $9
+		SET name = $2, provider_type = $3, issuer_url = $4, client_id = $5, client_secret = $6, scopes = $7, enabled = $8, updated_at = $9,
+			discovery_url = NULLIF($11, ''), use_pkce = $12, trust_upstream_mfa = $13, claims_mapping = $14, group_mapping = $15,
+			jit_policy = $16, pass_through_params = $17, external_id_claim = $18
 		WHERE id = $1 AND org_id = $10
-	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, encSecret, idp.Scopes, idp.Enabled, idp.UpdatedAt, org.ID)
+	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, encSecret, idp.Scopes, idp.Enabled, idp.UpdatedAt, org.ID,
+		idp.DiscoveryURL, idp.UsePKCE, idp.TrustUpstreamMFA, idp.ClaimsMapping, idp.GroupMapping, idp.JITPolicy, idp.PassThroughParams, idp.ExternalIDClaim)
 	if err != nil {
 		return err
 	}
@@ -4622,6 +4638,11 @@ func (s *Service) handleCreateIdentityProvider(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+	idp.NormalizeFederationProfile()
+	if err := idp.ValidateFederationProfile(); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 
 	if err := s.CreateIdentityProvider(auditCtx(c), &idp); err != nil {
 		s.logger.Error("failed to create identity provider", zap.Error(err))
@@ -4647,6 +4668,11 @@ func (s *Service) handleUpdateIdentityProvider(c *gin.Context) {
 		return
 	}
 	idp.ID = parsedID
+	idp.NormalizeFederationProfile()
+	if err := idp.ValidateFederationProfile(); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	if err := s.UpdateIdentityProvider(auditCtx(c), &idp); err != nil {
 		s.logger.Error("failed to update identity provider", logsafe.String("id", idpID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
