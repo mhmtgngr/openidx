@@ -117,11 +117,23 @@ The workflow builds and signs the MSI and publishes a GitHub Release
 - `OpenIDX-<version>.msi`
 - `latest.json` — `{ "version", "url", "sha256", "signature" }` the self-updater
   polls.
-- `install-openidx-agent.ps1` — the one-command installer, stamped with the
-  release's MSI and channel URLs and the `AGENT_DEFAULT_SERVER_URL` /
-  `AGENT_DEFAULT_SERVER_IP` repository variables. It is never stamped with an
-  enrollment token: the asset is public, and a token admits any machine that
-  presents it. Run it as `install-openidx-agent.ps1 -Token <token>`.
+- `Install-OpenIDXAgent.ps1` — the zero-touch installer (Intune Win32 app,
+  GPO startup script, by hand), stamped with the release channel's manifest URL
+  and the `AGENT_DEFAULT_SERVER_URL` repository variable. It verifies the MSI's
+  SHA-256 against the manifest and its Authenticode signature before
+  installing. It is never stamped with an enrollment token: the asset is
+  public, and a token admits any machine that presents it. Run it as
+  `Install-OpenIDXAgent.ps1 -ServerUrl https://<host> -EnrollToken <token>`;
+  `-Detect` and `-Uninstall` serve Intune's detection and uninstall commands.
+- `Uninstall-OpenIDXAgent.ps1` — silent removal by UpgradeCode.
+
+`make-mst.ps1` (beside this README) builds a GPO transform carrying the
+install properties. MSI properties: `SERVER_URL`, `ENROLL_TOKEN` (Hidden),
+`UPDATE_MANIFEST_URL`, `TUNNEL_ENABLED`, `SERVER_CA`, `PROXY_URL`, `LOG_LEVEL`,
+`KEEP_ENROLL_TOKEN` (default `1`). The install writes
+`HKLM\SOFTWARE\OpenIDX\Agent` `Version`/`InstallDir`/`ServerUrl` (the Intune
+detection rule) and an uninstall removes `%ProgramData%\OpenIDX\agent`. See
+`docs/runbooks/agent-intune.md` and `docs/runbooks/agent-gpo.md`.
 
 It then copies `latest.json`, the MSI (as `OpenIDX.msi`) and the stamped
 install script onto **`agent-latest`**, a release that never moves and whose

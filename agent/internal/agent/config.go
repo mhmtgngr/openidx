@@ -9,6 +9,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/checks"
 	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/secretfile"
+	"github.com/openidx/openidx/agent/internal/transport"
 )
 
 // AgentConfig holds the persisted configuration for a registered agent.
@@ -65,6 +66,19 @@ type AgentConfig struct {
 	// may reach: the VPN replacement. Absent means off, unless the server's
 	// org_network_policy.always_on turns it on.
 	Tunnel *TunnelConfig `json:"tunnel,omitempty"`
+	// ProxyURL is an explicit HTTP(S) proxy for the plain-HTTPS path (the
+	// MSI's PROXY_URL). Empty means the system proxy settings.
+	ProxyURL string `json:"proxy_url,omitempty"`
+	// ServerCAPEM is an extra root trusted for the server's certificate (the
+	// MSI's SERVER_CA), for a server behind a private CA.
+	ServerCAPEM string `json:"server_ca,omitempty"`
+	// LogLevel is debug, info, warn or error (the MSI's LOG_LEVEL).
+	LogLevel string `json:"log_level,omitempty"`
+}
+
+// NetworkOptions is the transport view of ProxyURL and ServerCAPEM.
+func (c *AgentConfig) NetworkOptions() transport.NetworkOptions {
+	return transport.NetworkOptions{ProxyURL: c.ProxyURL, CAPEM: c.ServerCAPEM}
 }
 
 // TunnelConfig is agent.json's "tunnel" object.

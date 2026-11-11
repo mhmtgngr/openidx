@@ -2,6 +2,7 @@ package enrollment
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,6 +51,39 @@ func ResolveManifestURL(configDir string, explicit bool, value string) string {
 // config so the service's self-updater is wired at enroll time (e.g. the MSI's
 // UPDATE_MANIFEST_URL property). Empty manifestURL keeps auto-update disabled.
 func EnrollWithManifest(logger *zap.Logger, serverURL, token, configDir, manifestURL string) (*EnrollResult, error) {
+	return EnrollWithOptions(logger, Options{
+		ServerURL: serverURL, Token: token, ConfigDir: configDir,
+		ManifestURL: manifestURL, ManifestExplicit: true,
+	})
+}
+
+// EnrollWithOptions is the whole enrolment: the installer settings (tunnel,
+// proxy, server CA, log level) land in agent.json, and with KeepToken the
+// token is sealed first, so a failed attempt can be finished by the service.
+// A 403 agent_revoked deletes a sealed token: the device was revoked and must
+// not keep presenting the fleet credential.
+func EnrollWithOptions(logger *zap.Logger, o Options) (*EnrollResult, error) {
+	serverURL, token, configDir := o.ServerURL, o.Token, o.ConfigDir
+	manifestURL := ResolveManifestURL(configDir, o.ManifestExplicit, o.ManifestURL)
+	netOpts := transport.NetworkOptions{ProxyURL: o.ProxyURL, CAPEM: o.ServerCA}
+	if err := transport.SetNetworkOptions(netOpts); err != nil {
+		return nil, fmt.Errorf("network settings: %w", err)
+	}
+	if o.KeepToken {
+		if err := SealToken(configDir, o.sealed()); err != nil {
+			return nil, err
+		}
+	}
+	res, err := enrollOnce(logger, serverURL, token, configDir, manifestURL, o)
+	if err != nil && errors.Is(err, transport.ErrAgentRevoked) {
+		if derr := DeleteSealedToken(configDir); derr != nil {
+			logger.Warn("could not delete the sealed enrolment token", zap.Error(derr))
+		}
+	}
+	return res, err
+}
+
+func enrollOnce(logger *zap.Logger, serverURL, token, configDir, manifestURL string, o Options) (*EnrollResult, error) {
 	// Step 1: HTTP enrollment with server, naming the device key so the
 	// server binds the device to it from the start. Without a key (a process
 	// that may not make a machine key, a machine with no key store) the
@@ -86,6 +120,20 @@ func EnrollWithManifest(logger *zap.Logger, serverURL, token, configDir, manifes
 		PushEnrollToken: resp.PushEnrollToken,
 		PushEnrollPath:  resp.PushEnrollPath,
 		DeviceKeyBound:  resp.DeviceKeyBound,
+		ProxyURL:        o.ProxyURL,
+		ServerCAPEM:     o.ServerCA,
+		LogLevel:        o.LogLevel,
+	}
+	// Enrolment rewrites agent.json whole; keep a tunnel setting the device
+	// already had unless the installer named one.
+	if prev, perr := agent.LoadConfig(configDir); perr == nil && prev.Tunnel != nil {
+		cfg.Tunnel = prev.Tunnel
+	}
+	if o.Tunnel != nil {
+		if cfg.Tunnel == nil {
+			cfg.Tunnel = &agent.TunnelConfig{}
+		}
+		cfg.Tunnel.Enabled = *o.Tunnel
 	}
 
 	// If the server advertises a Ziti overlay service and an identity file is

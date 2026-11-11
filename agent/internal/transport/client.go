@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -78,14 +79,15 @@ func (c *Client) SetEnrollmentDeviceKey(publicKeyB64, kind string) {
 // NewClient creates a new Client with a 30-second timeout.
 func NewClient(baseURL, authToken, agentID string) *Client {
 	return &Client{
-		baseURL:   baseURL,
-		authToken: authToken,
-		agentID:   agentID,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		baseURL:    baseURL,
+		authToken:  authToken,
+		agentID:    agentID,
+		httpClient: newHTTPClient(),
 	}
 }
+
+// defaultTimeout bounds every plain-HTTPS request.
+const defaultTimeout = 30 * time.Second
 
 // Enroll sends an enrollment request using the provided one-time token and
 // returns the enrollment response containing the agent credentials.
@@ -120,6 +122,15 @@ func (c *Client) Enroll(token string) (*EnrollResponse, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusForbidden {
+		// A 403 naming agent_revoked is final for this device: the token that
+		// enrolled it must not keep trying (a sealed fleet token is deleted).
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if strings.Contains(string(body), "agent_revoked") {
+			return nil, fmt.Errorf("enroll request: %w", ErrAgentRevoked)
+		}
+		return nil, fmt.Errorf("enroll request failed with status %d", resp.StatusCode)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("enroll request failed with status %d", resp.StatusCode)
 	}

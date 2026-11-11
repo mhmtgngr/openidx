@@ -122,6 +122,9 @@ func NewAgent(logger *zap.Logger, configDir string) (*Agent, error) {
 		return nil, fmt.Errorf("%w: agent.json names no agent", ErrNotEnrolled)
 	}
 
+	if err := transport.SetNetworkOptions(cfg.NetworkOptions()); err != nil {
+		logger.Warn("agent.json's proxy_url/server_ca is unusable; using system defaults", zap.Error(err))
+	}
 	client := transport.NewTransport(cfg.ServerURL, cfg.AuthToken, cfg.AgentID, cfg.ZitiIdentityFile, cfg.ZitiServiceName, logger)
 	registry := checks.NewRegistry()
 	engine := checks.NewEngine(registry)

@@ -63,7 +63,7 @@ sed -i 's/(-d "DefaultManifestURL=$AGENT_CHANNEL_MANIFEST")/()/' "$(WF)"
 expect red "the MSI does not default to the channel"
 
 stage
-sed -i 's#releases/download/agent-latest/latest.json#releases/latest/download/latest.json#' "$T/agent/scripts/install-openidx-agent.ps1"
+sed -i 's#releases/download/agent-latest/latest.json#releases/latest/download/latest.json#' "$T/agent/scripts/Install-OpenIDXAgent.ps1"
 expect red "the install script points at releases/latest again"
 
 stage
@@ -79,7 +79,7 @@ sed -i 's/a published script must carry no enrollment token/ok/' "$(WF)"
 expect red "the stamp step no longer asserts the placeholder"
 
 stage
-sed -i 's/= "__ENROLL_TOKEN__",/= "0123456789abcdef",/' "$T/agent/scripts/install-openidx-agent.ps1"
+sed -i 's/= "__ENROLL_TOKEN__",/= "0123456789abcdef",/' "$T/agent/scripts/Install-OpenIDXAgent.ps1"
 expect red "the script's own -Token default is a literal"
 
 echo "check-agent-release.test: $pass passed, $fail failed"

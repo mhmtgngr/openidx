@@ -27,8 +27,8 @@ agent.
    (`ZITI_CTRL_PUBLIC_ADDRESS`) and the edge router's advertised address
    (`listeners[].options.advertise` in the router config). A router that
    advertises a `*.localtest.me` name resolves to 127.0.0.1 on every device
-   and the tunnel never connects; the release's `install-openidx-agent.ps1`
-   papers over this with hosts entries, which is not a rollout. Change the
+   and the tunnel never connects; the old release install script papered
+   over this with hosts entries, which is not a rollout. Change the
    advertise to a name in corporate DNS, restart the router, and check that a
    fresh enrolment JWT carries the public names. Done once; verify from a
    device that has no hosts entries.
@@ -59,9 +59,9 @@ agent.
      made by that certificate, and installs it. `-Token` also enrolls;
      `-TrustOnly` and `-RemoveTrust` do only the certificate.
 
-   Not `install-openidx-agent.ps1` from the agent release: it imports no
-   certificate, and it writes the release's built-in server IP into the
-   machine's hosts file for the Ziti controller and router names.
+   For a managed fleet use `Install-OpenIDXAgent.ps1` from the agent release
+   instead (`-TrustCert` imports a self-signed publisher); see
+   [agent-intune.md](agent-intune.md) and [agent-gpo.md](agent-gpo.md).
 
    Whoever holds the signing key can sign software these machines then run
    without a warning, so keep the key off the application server.
