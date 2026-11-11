@@ -130,4 +130,35 @@ describe('IdentityProvidersPage', () => {
       await screen.findByText(/no identity providers found\./i),
     ).toBeInTheDocument()
   })
+  it('the Entra template sends the federation profile (external_id_claim oid)', async () => {
+    const user = userEvent.setup()
+    render(<IdentityProvidersPage />, { wrapper: createWrapper() })
+    await screen.findByText('Identity Providers')
+
+    await user.click(screen.getByText('Microsoft Entra ID'))
+    expect(await screen.findByLabelText(/external id claim/i)).toHaveValue('oid')
+    await user.type(screen.getByPlaceholderText(/^client id$/i), 'entra-app')
+    await user.click(screen.getByRole('button', { name: /^create$/i }))
+
+    expect(api.createIdentityProvider).toHaveBeenCalledTimes(1)
+    const body = vi.mocked(api.createIdentityProvider).mock.calls[0][0]
+    expect(body).toMatchObject({
+      issuer_url: 'https://login.microsoftonline.com/{tenant-id}/v2.0',
+      external_id_claim: 'oid',
+      use_pkce: true,
+      trust_upstream_mfa: false,
+      jit_policy: { provision: false, population: 'internal' },
+      group_mapping: [],
+    })
+    expect(body.claims_mapping).toMatchObject({ email: 'email', groups: 'groups' })
+    expect(body.pass_through_params).toContain('domain_hint')
+  })
+
+  it('offers the ADFS, Keycloak and Generic OIDC templates', async () => {
+    render(<IdentityProvidersPage />, { wrapper: createWrapper() })
+    await screen.findByText('Identity Providers')
+    expect(screen.getByText('AD FS')).toBeInTheDocument()
+    expect(screen.getByText('Keycloak')).toBeInTheDocument()
+    expect(screen.getByText('Generic OIDC')).toBeInTheDocument()
+  })
 })
