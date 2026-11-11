@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/openidx/openidx/internal/common/validation"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
-	"golang.org/x/oauth2"
 
 	"github.com/openidx/openidx/internal/abac"
 	"github.com/openidx/openidx/internal/accessdecision"
@@ -41,6 +41,7 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/resilience"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
+	"github.com/openidx/openidx/internal/federation/oidcrp"
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/signingkeys"
@@ -342,6 +343,12 @@ type Service struct {
 	// client_repository.go). GetByClientID reads the primary (security), List the
 	// replica; writes the primary.
 	clients OAuthClientStore
+
+	// federation is the one relying-party Discoverer every upstream OIDC
+	// sign-in shares (sso_federation.go): its metadata and key caches are per
+	// provider, so one process-wide value serves every configured IdP.
+	federationOnce sync.Once
+	federation     *oidcrp.Discoverer
 }
 
 // WebhookPublisher defines the interface for publishing webhook events
@@ -1451,6 +1458,11 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce, 
 	if len(amr) > 0 {
 		claims["amr"] = amr
 	}
+	// idp: the upstream identity provider that established this session,
+	// when it was a federated sign-in (sso_federation.go).
+	if idp := s.sessionIdP(ctx, sessionID); idp != "" {
+		claims["idp"] = idp
+	}
 	if !authenticatedAt.IsZero() {
 		claims["auth_time"] = authenticatedAt.Unix()
 	}
@@ -1886,7 +1898,7 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		// read from the other side: a relying party that trusts this list
 		// would not ask for a claim it is in fact given. The census in
 		// scope_claims_test.go keeps the list and the emitters together.
-		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "auth_time", "amr", "email", "email_verified", "name", "given_name", "family_name", "preferred_username", "sid", "roles", "groups", "permissions"},
+		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "auth_time", "amr", "email", "email_verified", "name", "given_name", "family_name", "preferred_username", "sid", "idp", "roles", "groups", "permissions"},
 		CodeChallengeMethodsSupported:     []string{"S256"},
 		RevocationEndpoint:                base + "/oauth/revoke",
 		IntrospectionEndpoint:             base + "/oauth/introspect",
@@ -3099,6 +3111,15 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 			oauthParams[k] = v
 		}
 	}
+	// A federated sign-in (sso_federation.go) proved its first factor at the
+	// upstream provider, not with a password.
+	firstFactor := "pwd"
+	if oauthParams[paramFirstFactor] == "fed" {
+		firstFactor = "fed"
+	}
+	federatedIdP := oauthParams["idp"]
+	delete(oauthParams, paramFirstFactor)
+	delete(oauthParams, "idp")
 
 	// Create a session linked to this MFA-verified login
 	session, sessionErr := s.identityService.CreateSession(c.Request.Context(), userID, oauthParams["client_id"], clientIP, userAgent, 24*time.Hour)
@@ -3107,9 +3128,12 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 	}
 	if session != nil {
 		oauthParams["session_id"] = session.ID
-		// A second factor was verified in this flow → record pwd + mfa so the
-		// token's amr activates device auto-trust.
-		s.recordSessionAuthMethods(c.Request.Context(), session.ID, []string{"pwd", "mfa"})
+		// A second factor was verified in this flow → record the first factor
+		// + mfa so the token's amr activates device auto-trust.
+		s.recordSessionAuthMethods(c.Request.Context(), session.ID, []string{firstFactor, "mfa"})
+		if firstFactor == "fed" {
+			s.recordSessionIdP(c.Request.Context(), session.ID, federatedIdP)
+		}
 	}
 
 	// Issue authorization code with optional trusted browser info
@@ -3284,293 +3308,6 @@ func parseBrowserNameFromUA(userAgent string) string {
 	default:
 		return "Unknown Browser"
 	}
-}
-
-func (s *Service) handleSSOAuthorize(c *gin.Context, q authorizeParams, idpID string) {
-	// 1. Get IdP from identity service
-	idp, err := s.identityService.GetIdentityProvider(c.Request.Context(), idpID)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid_idp"})
-		return
-	}
-
-	// 2. Store original request parameters in Redis, WITH the IdP this flow
-	// belongs to. Without idp_id the callback had nothing to resolve the
-	// provider from and used ListIdentityProviders(0, 1)[0] — so with more
-	// than one IdP configured (and the console lets an admin add many) every
-	// callback was exchanged against the wrong provider's client credentials
-	// and failed, or worse succeeded against a provider the user never
-	// authenticated to. The key is namespaced under the same sso_state entry
-	// so it expires with the flow.
-	state := GenerateRandomToken(32)
-	originalParams := map[string]string{
-		"client_id":             q.Query("client_id"),
-		"redirect_uri":          q.Query("redirect_uri"),
-		"response_type":         q.Query("response_type"),
-		"scope":                 q.Query("scope"),
-		"state":                 q.Query("state"),
-		"nonce":                 q.Query("nonce"),
-		"code_challenge":        q.Query("code_challenge"),
-		"code_challenge_method": q.Query("code_challenge_method"),
-		"idp_id":                idp.ID.String(),
-	}
-	// PKCE, before the flow leaves for the external IdP. This path is reached
-	// from handleAuthorize with an idp_hint, BEFORE that handler fetches the
-	// client, so the rule is applied here against the client this request
-	// names. The refusal is a 400 and not a redirect: this handler has not
-	// validated redirect_uri against the client, and reporting an error to an
-	// unvalidated redirect_uri is an open redirect.
-	if ssoClient, cerr := s.GetClient(c.Request.Context(), q.Query("client_id")); cerr == nil {
-		if perr := validatePKCERequest(ssoClient, q.Query("code_challenge"), q.Query("code_challenge_method"), s.isProduction()); perr != nil {
-			c.JSON(400, gin.H{"error": "invalid_request", "error_description": perr.Error()})
-			return
-		}
-	}
-
-	paramsJSON, _ := json.Marshal(originalParams)
-	s.redis.Client.Set(c.Request.Context(), "sso_state:"+state, string(paramsJSON), 10*time.Minute)
-
-	// 3. Build external IdP authorization URL
-	authURL, _ := url.Parse(idp.IssuerURL + "/protocol/openid-connect/auth")
-	query := authURL.Query()
-	query.Set("client_id", idp.ClientID)
-	query.Set("redirect_uri", s.issuer+"/oauth/callback")
-	query.Set("response_type", "code")
-	query.Set("scope", strings.Join(idp.Scopes, " "))
-	query.Set("state", state)
-	authURL.RawQuery = query.Encode()
-
-	// 4. Redirect user to external IdP
-	c.Redirect(302, authURL.String())
-}
-
-func (s *Service) handleCallback(c *gin.Context) {
-	// 1. Get state and code from callback request
-	state := c.Query("state")
-	code := c.Query("code")
-
-	// 2. Retrieve original request parameters from Redis
-	paramsJSON, err := s.redis.Client.Get(c.Request.Context(), "sso_state:"+state).Result()
-	if err != nil {
-		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
-			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "invalid_state"})
-		c.JSON(400, gin.H{"error": "invalid_state"})
-		return
-	}
-	var originalParams map[string]string
-	json.Unmarshal([]byte(paramsJSON), &originalParams)
-
-	// 3. Resolve the IdP this flow was started against, from the state.
-	idpID := originalParams["idp_id"]
-	if idpID == "" {
-		// A state written before this field existed, or a tampered one. There
-		// is no safe way to guess which provider issued the code: exchanging
-		// it against a different provider's credentials is precisely the bug
-		// this replaced.
-		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
-			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "state_missing_idp"})
-		c.JSON(400, gin.H{"error": "invalid_state"})
-		return
-	}
-	idp, err := s.identityService.GetIdentityProvider(c.Request.Context(), idpID)
-	if err != nil || idp == nil {
-		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
-			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "idp_not_found", "idp_id": idpID})
-		c.JSON(400, gin.H{"error": "invalid_idp"})
-		return
-	}
-
-	// 4. Exchange code for tokens
-	oauth2Config := &oauth2.Config{
-		ClientID:     idp.ClientID,
-		ClientSecret: idp.ClientSecret,
-		RedirectURL:  s.issuer + "/oauth/callback",
-		Endpoint: oauth2.Endpoint{
-			AuthURL:  idp.IssuerURL + "/protocol/openid-connect/auth",
-			TokenURL: idp.IssuerURL + "/protocol/openid-connect/token",
-		},
-		Scopes: idp.Scopes,
-	}
-	token, err := oauth2Config.Exchange(c.Request.Context(), code)
-	if err != nil {
-		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
-			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "token_exchange_failed", "idp_id": idp.ID.String()})
-		c.JSON(500, gin.H{"error": "failed to exchange token"})
-		return
-	}
-
-	// 5. a new user is created with the information from the ID token.
-	rawIDToken, ok := token.Extra("id_token").(string)
-	if !ok {
-		c.JSON(500, gin.H{"error": "id_token not found"})
-		return
-	}
-
-	// 6. JIT Provisioning & Session Management
-	// For simplicity, we'll just create a new user and a new session, and then generate a new authorization code
-	var claims struct {
-		Email string `json:"email"`
-		Sub   string `json:"sub"`
-		Name  string `json:"name"`
-	}
-	// Verify the ID token signature using the IdP's JWKS
-	verifiedToken, err := jwt.Parse(rawIDToken, func(t *jwt.Token) (interface{}, error) {
-		// Fetch JWKS from the IdP
-		jwksURL := idp.IssuerURL + "/protocol/openid-connect/certs"
-		return middleware.FetchJWKS(jwksURL, t)
-	})
-	if err != nil {
-		s.logger.Error("Failed to verify ID token", zap.Error(err))
-		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
-			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "id_token_verification_failed", "idp_id": idp.ID.String()})
-		c.JSON(401, gin.H{"error": "invalid_id_token", "error_description": "ID token signature verification failed"})
-		return
-	}
-	if mapClaims, ok := verifiedToken.Claims.(jwt.MapClaims); ok {
-		if email, ok := mapClaims["email"].(string); ok {
-			claims.Email = email
-		}
-		if sub, ok := mapClaims["sub"].(string); ok {
-			claims.Sub = sub
-		}
-		if name, ok := mapClaims["name"].(string); ok {
-			claims.Name = name
-		}
-	}
-
-	if claims.Email == "" {
-		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
-			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "missing_email_claim", "idp_id": idp.ID.String()})
-		c.JSON(400, gin.H{"error": "invalid_claims", "error_description": "email claim is required"})
-		return
-	}
-
-	// Check if user already exists (JIT provisioning).
-	var user *identity.User
-
-	// 1. Prefer the stable federated identity (idp_id + sub): a returning user is
-	// matched by the IdP subject even if their email changed at the IdP, which
-	// also avoids creating a duplicate that would collide with the unique
-	// (idp_id, external_user_id) index. Explicitly org-scoped (belt-and-braces
-	// with the RLS the pool acquire hook already applies).
-	if org, oerr := orgctx.From(c.Request.Context()); oerr == nil && claims.Sub != "" {
-		var uid string
-		if err := s.db.Pool.QueryRow(c.Request.Context(),
-			`SELECT id FROM users WHERE org_id = $1 AND idp_id = $2 AND external_user_id = $3 LIMIT 1`,
-			org.ID, idp.ID, claims.Sub).Scan(&uid); err == nil && uid != "" {
-			user = &identity.User{ID: uid}
-			s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_identity_matched", "success",
-				uid, c.ClientIP(), uid, "user", map[string]interface{}{"idp_id": idp.ID.String(), "external_user_id": claims.Sub})
-		}
-	}
-
-	// 2. Fall back to matching by email.
-	if user == nil {
-		existingUsers, _, _ := s.identityService.ListUsers(c.Request.Context(), 0, 1, claims.Email)
-		if len(existingUsers) > 0 {
-			user = &existingUsers[0]
-			// Backfill the federated link for a user that predates the (idp_id, sub)
-			// binding (created before #364) so subsequent logins match by subject.
-			// Only fills when currently unset; best-effort, keyed by the matched PK.
-			if claims.Sub != "" {
-				if tag, err := s.db.Pool.Exec(c.Request.Context(),
-					//orgscope:ignore keyed by globally-unique users.id (UUID PK) from the email match above
-					`UPDATE users SET idp_id = $1, external_user_id = $2 WHERE id = $3 AND external_user_id IS NULL`,
-					idp.ID, claims.Sub, user.ID); err != nil {
-					s.logger.Warn("Failed to backfill federated identity link for existing user",
-						zap.String("user_id", user.ID), zap.Error(err))
-				} else if tag.RowsAffected() > 0 {
-					s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_identity_backfilled", "success",
-						user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String(), "external_user_id": claims.Sub})
-				}
-			}
-		}
-	}
-
-	// 3. Otherwise provision a new user.
-	if user == nil {
-		user = &identity.User{
-			UserName:      claims.Email,
-			Enabled:       true,
-			EmailVerified: true,
-		}
-		user.SetEmail(claims.Email)
-		user.SetFirstName(claims.Name)
-		if err := s.identityService.CreateUser(c.Request.Context(), user); err != nil {
-			s.logger.Error("Failed to create SSO user", zap.Error(err))
-			s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
-				"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "provisioning_failed", "idp_id": idp.ID.String(), "email": claims.Email})
-			c.JSON(500, gin.H{"error": "failed to provision user"})
-			return
-		}
-		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_user_provisioned", "success",
-			user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String(), "email": claims.Email})
-		// Bind the JIT-provisioned user to the IdP subject so it is a stable
-		// federated link (users.idp_id + external_user_id), not just an
-		// email-matched account. Best-effort: a unique (idp_id, external_user_id)
-		// collision or write error must not fail the login. The UPDATE is
-		// RLS-scoped to the caller's org via the pool's acquire hook.
-		if claims.Sub != "" {
-			if _, err := s.db.Pool.Exec(c.Request.Context(),
-				//orgscope:ignore keyed by globally-unique users.id (UUID PK) just returned from CreateUser
-				`UPDATE users SET idp_id = $1, external_user_id = $2 WHERE id = $3`,
-				idp.ID, claims.Sub, user.ID); err != nil {
-				s.logger.Warn("Failed to persist federated identity link for JIT user",
-					zap.String("user_id", user.ID), zap.Error(err))
-			} else {
-				s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_identity_linked", "success",
-					user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String(), "external_user_id": claims.Sub})
-			}
-		}
-	}
-
-	s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "success",
-		user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String()})
-
-	// The identity provider proved one factor. The password login's own
-	// decision says whether that is enough (external_signin_mfa.go); a second
-	// factor continues on the login page with the pending request.
-	pending := make(map[string]string, len(originalParams))
-	for k, v := range originalParams {
-		if k != "idp_id" {
-			pending[k] = v
-		}
-	}
-	if s.externalSignInNeedsMore(c, user.ID, pending, "", "sso") {
-		return
-	}
-
-	if !s.assignmentGateAllows(c, originalParams["client_id"], user.ID, originalParams["redirect_uri"]) {
-		return
-	}
-
-	// The PKCE challenge travels with the code. It was dropped here, so a
-	// public client's code carried no challenge and the token endpoint refused
-	// it ("PKCE required for public clients"): the console's SSO buttons could
-	// never finish.
-	authCode := &AuthorizationCode{
-		Code:                GenerateRandomToken(32),
-		ClientID:            originalParams["client_id"],
-		UserID:              user.ID,
-		RedirectURI:         originalParams["redirect_uri"],
-		Scope:               originalParams["scope"],
-		State:               originalParams["state"],
-		Nonce:               originalParams["nonce"],
-		CodeChallenge:       originalParams["code_challenge"],
-		CodeChallengeMethod: originalParams["code_challenge_method"],
-	}
-	s.CreateAuthorizationCode(c.Request.Context(), authCode)
-
-	// 7. Redirect back to the original client
-	redirectURL, _ := url.Parse(originalParams["redirect_uri"])
-	query := redirectURL.Query()
-	query.Set("code", authCode.Code)
-	if authCode.State != "" {
-		query.Set("state", authCode.State)
-	}
-	redirectURL.RawQuery = query.Encode()
-
-	c.Redirect(302, redirectURL.String())
 }
 
 func (s *Service) handleAuthorizeConsent(c *gin.Context) {

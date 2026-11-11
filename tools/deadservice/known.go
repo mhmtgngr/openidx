@@ -241,7 +241,4 @@ var knownDead = map[string]string{
 	// on the STALE entry until the line is deleted. The register shrinks by
 	// being made wrong, which is the only way a backlog entry should leave.
 	"internal/common/events.Event": "the outbox's producer-side type: OutboxBus.Publish takes an Event and NewEvent builds one, and no production code writes to the outbox yet. The relay, the sink and the retention sweep all run; this is the half task 3.3 supplies. Removed when the first producer calls NewEvent inside the transaction that caused the change -- at which point this entry goes stale and fails the run until it is deleted.",
-	// Faz B1.1 ships the guarded relying-party library alone; B1.2 (#1223)
-	// wires NewDiscoverer into the oauth SSO callback and deletes this entry.
-	"internal/federation/oidcrp.Discoverer": "the upstream-OIDC relying-party discovery client, landed as a library in Faz B1.1. Its first caller is the enterprise SSO callback in Faz B1.2 (internal/oauth/sso_federation.go); delete this line in that change.",
 }

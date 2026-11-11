@@ -48,6 +48,9 @@ type fakeProvider struct {
 	key  *rsa.PrivateKey
 	mu   sync.Mutex
 	user map[string]map[string]string // code -> claims
+	// extra are further ID token claims for a code (nonce, amr, oid, ...),
+	// which override the defaults.
+	extra map[string]map[string]interface{}
 }
 
 func newFakeProvider(t *testing.T) *fakeProvider {
@@ -56,7 +59,7 @@ func newFakeProvider(t *testing.T) *fakeProvider {
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	p := &fakeProvider{key: key, user: map[string]map[string]string{}}
+	p := &fakeProvider{key: key, user: map[string]map[string]string{}, extra: map[string]map[string]interface{}{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/protocol/openid-connect/token", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -68,10 +71,16 @@ func newFakeProvider(t *testing.T) *fakeProvider {
 			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 			return
 		}
-		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		mc := jwt.MapClaims{
 			"sub": claims["sub"], "email": claims["email"], "name": "Fed User",
-			"iss": p.srv.URL, "aud": "fed-client", "exp": time.Now().Add(time.Minute).Unix(),
-		})
+			"iss": p.srv.URL, "aud": "fed-client", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Minute).Unix(),
+		}
+		p.mu.Lock()
+		for k, v := range p.extra[code] {
+			mc[k] = v
+		}
+		p.mu.Unlock()
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, mc)
 		tok.Header["kid"] = "k1"
 		idToken, _ := tok.SignedString(p.key)
 		w.Header().Set("Content-Type", "application/json")
@@ -90,6 +99,14 @@ func newFakeProvider(t *testing.T) *fakeProvider {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"sub": claims["sub"], "email": claims["email"], "name": "Fed User"})
+	})
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"issuer": p.srv.URL, "authorization_endpoint": p.srv.URL + "/protocol/openid-connect/auth",
+			"token_endpoint": p.srv.URL + "/protocol/openid-connect/token", "jwks_uri": p.srv.URL + "/protocol/openid-connect/certs",
+			"code_challenge_methods_supported": []string{"S256"},
+		})
 	})
 	mux.HandleFunc("/protocol/openid-connect/certs", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -110,6 +127,15 @@ func (p *fakeProvider) code(sub, email string) string {
 	c := GenerateRandomToken(12)
 	p.mu.Lock()
 	p.user[c] = map[string]string{"sub": sub, "email": email}
+	p.mu.Unlock()
+	return c
+}
+
+// codeWith is code with further ID token claims.
+func (p *fakeProvider) codeWith(sub, email string, extra map[string]interface{}) string {
+	c := p.code(sub, email)
+	p.mu.Lock()
+	p.extra[c] = extra
 	p.mu.Unlock()
 	return c
 }
@@ -348,7 +374,8 @@ func TestAnEnterpriseSSOSignInAsksForTheSecondFactor(t *testing.T) {
 			t.Fatalf("authorize: %d %s", w.Code, w.Body.String())
 		}
 		loc, _ := url.Parse(w.Header().Get("Location"))
-		return x.get("/oauth/callback?" + url.Values{"code": {x.provider.code(sub, email)}, "state": {loc.Query().Get("state")}}.Encode())
+		code := x.provider.codeWith(sub, email, map[string]interface{}{"nonce": loc.Query().Get("nonce")})
+		return x.get("/oauth/callback?" + url.Values{"code": {code}, "state": {loc.Query().Get("state")}}.Encode())
 	}
 	seed := func(name string, factors ...string) (string, string, string) {
 		user := x.seedUser(middleware.DefaultOrgID, name)
