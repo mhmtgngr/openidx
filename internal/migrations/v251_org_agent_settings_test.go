@@ -5,15 +5,15 @@ import (
 	"testing"
 )
 
-func TestMigrationV252OrgAgentSettingsShape(t *testing.T) {
+func TestMigrationV251OrgAgentSettingsShape(t *testing.T) {
 	var mig *Migration
 	for _, m := range allMigrations() {
-		if m.Version == 252 {
+		if m.Version == 251 {
 			mig = m
 		}
 	}
 	if mig == nil {
-		t.Fatal("migration 252 is not registered")
+		t.Fatal("migration 251 is not registered")
 	}
 	for _, want := range []string{
 		"CREATE TABLE IF NOT EXISTS org_agent_settings",
@@ -23,10 +23,10 @@ func TestMigrationV252OrgAgentSettingsShape(t *testing.T) {
 		"FORCE  ROW LEVEL SECURITY",
 	} {
 		if !strings.Contains(mig.UpSQL, want) {
-			t.Errorf("v252 up lacks %q", want)
+			t.Errorf("v251 up lacks %q", want)
 		}
 	}
 	if !strings.Contains(mig.DownSQL, "DROP TABLE IF EXISTS org_agent_settings") {
-		t.Error("v252 down does not drop the table")
+		t.Error("v251 down does not drop the table")
 	}
 }
