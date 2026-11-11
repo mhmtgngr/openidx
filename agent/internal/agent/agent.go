@@ -255,12 +255,21 @@ func (a *Agent) SyncConfig(ctx context.Context) error {
 				a.logger.Error("this device has been revoked by an administrator; " +
 					"posture reporting stops until it is enrolled again")
 			}
+			a.forgetSealedToken()
 			return fmt.Errorf("fetching server config: %w", err)
 		}
 		if errors.Is(err, transport.ErrAgentAuthInvalid) {
 			// One 401 may be a passing fault (a restore, a racing re-enrol);
 			// several in a row are a state, said once.
-			if n := a.authFails.Add(1); n >= authFailThreshold && !a.authInvalid.Swap(true) {
+			n := a.authFails.Add(1)
+			if n >= authFailThreshold && a.reenrolFromSealedToken() {
+				// The refusal was a state, and the device's sealed fleet token
+				// fixed it (sealed_token.go). Ask with the new credential.
+				if data, err = a.client.GetConfig(); err == nil {
+					return a.acceptConfig(data)
+				}
+			}
+			if n >= authFailThreshold && !a.authInvalid.Swap(true) {
 				a.logger.Error("the server no longer accepts this device's credential; "+
 					"posture reporting stops until the device is enrolled again "+
 					"(My Devices -> Add a device)", zap.Int32("refusals_in_a_row", n))
@@ -270,6 +279,12 @@ func (a *Agent) SyncConfig(ctx context.Context) error {
 		a.logger.Warn("failed to fetch server config, using defaults", zap.Error(err))
 		return fmt.Errorf("fetching server config: %w", err)
 	}
+	return a.acceptConfig(data)
+}
+
+// acceptConfig clears the refusal states after a config sync succeeded and
+// applies the config it returned.
+func (a *Agent) acceptConfig(data []byte) error {
 	if a.revoked.Swap(false) {
 		a.logger.Info("the server accepts this device again; posture reporting resumes")
 	}

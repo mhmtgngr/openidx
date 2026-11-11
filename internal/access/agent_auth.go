@@ -84,8 +84,10 @@ func verifyEnrolledAgent(ctx context.Context, db *database.PostgresDB, agentID, 
 	if stored == "" || subtle.ConstantTimeCompare([]byte(sha256Hex(token)), []byte(stored)) != 1 {
 		return "", "", false
 	}
-	if status == agentStatusRevoked {
-		return orgID, status, false
+	// A retired device (v251) is out of the fleet for good; to every agent
+	// route it is the same as a revoked one.
+	if status == agentStatusRevoked || status == agentStatusRetired {
+		return orgID, agentStatusRevoked, false
 	}
 	return orgID, status, true
 }

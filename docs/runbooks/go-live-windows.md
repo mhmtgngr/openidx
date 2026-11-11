@@ -179,7 +179,9 @@ Close the observe window (enforce-rollout.md step 3).
 | Laptop off for a while | Nothing: the next report restores trust. Meanwhile **My Devices** shows the device as Offline, so the person can see why. |
 | **Credential refused · enroll again** (Agent Fleet) / **Not accepted** (My Devices, tray) | The device reaches the server but its agent's credential no longer matches (it was enrolled again elsewhere, or its record was replaced). Nothing was revoked. On that PC: the tray's **Enroll this device again**, or My Devices → **Enroll again**, then **Open in app**. The running service picks the new credential up on its next cycle; no reboot. The audit has one `agent.auth_failed_persistent` record per run of refusals. |
 | Device shows **Unclaimed** | Enrolled with a fleet token and never claimed. Its user signs in on it and does **Add a device → Open in app**. |
-| "This device is enrolled to another person" (409) | The device already belongs to someone else in the organization. Revoke it there first if it has really changed hands, then enrol it again. |
+| "This device is enrolled to another person" (409) | The device already belongs to someone else in the organization. If it has really changed hands, Agent Fleet → **Change owner** (`PUT /agents/:id/owner`); no re-enrolment needed. |
+| Revoked device must come back | Agent Fleet → **Reinstate** first (`POST /agents/:id/reinstate`), then enrol it again (Add a device or the fleet token). Enrolment alone never lifts a revoke. |
+| Device decommissioned | **Retire** it: identity and sessions go and its fingerprint is freed; the same PC enrolling later is a new device. Purge (`DELETE ?purge=1`) removes a retired row. |
 | Device non-compliant | Agent Fleet → the device's posture shows the failing check. |
 | Device lost or stolen | Revoke it (user's devices page or Agent Fleet): sessions, identity and tokens go. |
 | Person leaves | Kill switch with disable: sessions, tokens and devices are cut. |

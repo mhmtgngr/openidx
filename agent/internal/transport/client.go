@@ -93,13 +93,19 @@ func (c *Client) Enroll(token string) (*EnrollResponse, error) {
 	url := c.baseURL + "/api/v1/access/agent/enroll"
 
 	hostname, _ := os.Hostname()
+	fp, prev := deviceFingerprints(hostname)
 	fields := map[string]interface{}{
 		"token":              token,
 		"hostname":           hostname,
 		"os":                 runtime.GOOS,
 		"arch":               runtime.GOARCH,
 		"platform":           runtime.GOOS + "/" + runtime.GOARCH,
-		"device_fingerprint": deviceFingerprint(hostname),
+		"device_fingerprint": fp,
+	}
+	if prev != "" {
+		// The fingerprint this machine had before v2 (fingerprint.go), so the
+		// server moves its row over. Sent for at least three releases.
+		fields["device_fingerprint_prev"] = prev
 	}
 	if c.enrollKey != "" {
 		// A server that predates device keys ignores the field.
@@ -120,6 +126,9 @@ func (c *Client) Enroll(token string) (*EnrollResponse, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("enroll request: %w", ErrAgentRevoked)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("enroll request failed with status %d", resp.StatusCode)
 	}

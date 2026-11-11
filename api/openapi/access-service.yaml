@@ -4511,6 +4511,14 @@ paths:
         revoked), with credential_refused_at the latest refusal.
       operationId: handleListAgents
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleListAgents
+      parameters:
+        - name: include_retired
+          in: query
+          required: false
+          description: 1 to include retired devices (hidden by default).
+          schema:
+            type: string
+            enum: ['1']
       responses:
         '200':
           description: Success
@@ -4538,6 +4546,14 @@ paths:
       summary: Handle revoke agent
       operationId: handleRevokeAgent
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleRevokeAgent
+      description: Revokes the device. With purge=1 deletes a retired device's row instead (fresh MFA).
+      parameters:
+        - name: purge
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ['1']
       responses:
         '200':
           description: Success
@@ -4592,6 +4608,115 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agents/{agent_id}/owner:
+    parameters:
+      - name: agent_id
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      tags: [Agent Fleet]
+      summary: Reassign a device to another user (fresh MFA)
+      operationId: handleReassignAgentOwner
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleReassignAgentOwner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id:
+                  type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The device is not in a state that allows this
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agents/{agent_id}/reinstate:
+    parameters:
+      - name: agent_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Agent Fleet]
+      summary: Lift a revoke so the device may enrol again (fresh MFA)
+      operationId: handleReinstateAgent
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleReinstateAgent
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The device is not in a state that allows this
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/v1/access/agents/{agent_id}/retire:
+    parameters:
+      - name: agent_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Agent Fleet]
+      summary: Retire a device and free its fingerprint (fresh MFA)
+      operationId: handleRetireAgent
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleRetireAgent
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The device is not in a state that allows this
         '500':
           $ref: '#/components/responses/ServerError'
 

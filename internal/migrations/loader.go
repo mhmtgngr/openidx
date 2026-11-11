@@ -1756,5 +1756,12 @@ func allMigrations() []*Migration {
 			UpSQL:       orgAgentSettingsUp,
 			DownSQL:     orgAgentSettingsDown,
 		},
+		{
+			Version:     252,
+			Name:        "agent_identity_continuity",
+			Description: "One machine stays one agent row. enrolled_agents gains hostname (an attribute, backfilled from metadata), retired_at, reinstated_at, owner_changed_by and owner_changed_at. Duplicate (org_id, device_fingerprint) rows among non-retired agents are collapsed by retiring all but the newest, and the per-tenant fingerprint key is rebuilt to exclude retired rows, so retiring a device frees its fingerprint. Columns under the table's existing org policy; down clears retired rows' fingerprints, restores the key and drops the columns.",
+			UpSQL:       agentIdentityContinuityUp,
+			DownSQL:     agentIdentityContinuityDown,
+		},
 	}
 }
