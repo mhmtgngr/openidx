@@ -15,6 +15,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/openidx/openidx/agent/internal/transport"
 )
 
 const (
@@ -446,7 +448,7 @@ func Revoke(ctx context.Context, serverURL, clientID, refreshToken string) error
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := transport.HTTPClient(0).Do(req)
 	if err != nil {
 		return fmt.Errorf("revocation request: %w", err)
 	}
@@ -484,7 +486,7 @@ func exchange(ctx context.Context, serverURL string, form url.Values) (*Tokens, 
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := transport.HTTPClient(0).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token request: %w", err)
 	}

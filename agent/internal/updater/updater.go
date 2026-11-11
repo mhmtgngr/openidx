@@ -48,6 +48,7 @@ import (
 	"strings"
 
 	"github.com/openidx/openidx/agent/internal/plugin"
+	"github.com/openidx/openidx/agent/internal/transport"
 )
 
 // maxArtifactBytes caps a download. The digest catches a substituted artifact,
@@ -137,7 +138,7 @@ func Fetch(ctx context.Context, manifestURL string, trust Trust) (*Manifest, err
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := transport.HTTPClient(0).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch manifest: %w", err)
 	}
@@ -263,7 +264,7 @@ func downloadVerified(ctx context.Context, dir, artifactURL, wantSHA string) (st
 	if err != nil {
 		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := transport.HTTPClient(0).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("download: %w", err)
 	}

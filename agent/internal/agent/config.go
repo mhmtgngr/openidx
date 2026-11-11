@@ -72,6 +72,9 @@ type AgentConfig struct {
 	// ServerCAPEM is an extra root trusted for the server's certificate (the
 	// MSI's SERVER_CA), for a server behind a private CA.
 	ServerCAPEM string `json:"server_ca,omitempty"`
+	// ServerCAPEMAlias accepts the documented `server_ca_pem` spelling; it is
+	// folded into ServerCAPEM on load and never written back.
+	ServerCAPEMAlias string `json:"server_ca_pem,omitempty"`
 	// LogLevel is debug, info, warn or error (the MSI's LOG_LEVEL).
 	LogLevel string `json:"log_level,omitempty"`
 }
@@ -248,6 +251,10 @@ func LoadConfig(dir string) (*AgentConfig, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing agent config: %w", err)
 	}
+	if cfg.ServerCAPEM == "" {
+		cfg.ServerCAPEM = cfg.ServerCAPEMAlias
+	}
+	cfg.ServerCAPEMAlias = ""
 
 	return &cfg, nil
 }
