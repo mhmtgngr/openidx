@@ -135,7 +135,7 @@ type ProxySession struct {
 	// IDPName is the external identity provider that authenticated this
 	// session, empty for a session created by OpenIDX's own login. An operator
 	// answering "an IdP is compromised, whose sessions came through it?" has
-	// nothing else to go on: proxy_sessions.idp_id was written by the multi-IdP
+	// nothing else to go on: proxy_sessions.idp_id is written from the id_token idp claim at the
 	// callback and read by nothing until this field existed.
 	IDPName string `json:"idp_name,omitempty"`
 	// bearer is the Authorization header value the proxy authenticated this
@@ -1937,7 +1937,7 @@ func (s *Service) handleListSessions(c *gin.Context) {
 		return
 	}
 	// The IdP join is a LEFT JOIN because most sessions have no external
-	// provider: proxy_sessions.idp_id is set only by the multi-IdP callback.
+	// provider: proxy_sessions.idp_id is set only for a federated sign-in (idp claim).
 	// It is org-scoped on both sides so a session cannot name another tenant's
 	// provider, which would put the shape of their federation setup on this
 	// tenant's page.
@@ -2061,10 +2061,23 @@ func callbackScheme(c *gin.Context) string {
 }
 
 func (s *Service) handleLogin(c *gin.Context) {
-	// Check if a specific IDP is requested
+	// A specific identity provider is requested (?idp=, or a route's idp_id).
+	// It is not spoken to directly: OpenIDX's own /oauth/authorize is asked
+	// with idp_hint, so the upstream sign-in runs through the OAuth service's
+	// verified federation callback (id_token signature, nonce, JIT, MFA) and
+	// the proxy only ever exchanges a code with its own issuer.
+	idpHint := ""
 	if idpID := c.Query("idp"); idpID != "" && idpID != "default" {
-		s.handleLoginWithIDP(c, idpID)
-		return
+		ok, err := s.idpEnabledInOrg(c.Request.Context(), idpID)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+			return
+		}
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "IDP not found or not enabled"})
+			return
+		}
+		idpHint = idpID
 	}
 
 	// Generate PKCE code verifier and challenge
@@ -2074,7 +2087,11 @@ func (s *Service) handleLogin(c *gin.Context) {
 
 	// Store verifier and original URL in Redis. Only a target the proxy may
 	// send a browser to is stored; anything else lands on the session page.
-	redirectURL := s.redirectTarget(c, c.Query("redirect_url"), "/access/.auth/session")
+	fallback := "/access/.auth/session"
+	if idpHint != "" {
+		fallback = "/"
+	}
+	redirectURL := s.redirectTarget(c, c.Query("redirect_url"), fallback)
 
 	sessionData, _ := json.Marshal(map[string]string{
 		"verifier":     verifier,
@@ -2105,6 +2122,9 @@ func (s *Service) handleLogin(c *gin.Context) {
 		url.QueryEscape(callbackURL),
 		url.QueryEscape(challenge),
 		url.QueryEscape(state))
+	if idpHint != "" {
+		authURL += "&idp_hint=" + url.QueryEscape(idpHint)
+	}
 
 	c.Redirect(http.StatusFound, authURL)
 }
@@ -2142,16 +2162,11 @@ func (s *Service) handleCallback(c *gin.Context) {
 	var storedState struct {
 		Verifier    string `json:"verifier"`
 		RedirectURL string `json:"redirect_url"`
-		IDPID       string `json:"idp_id"`
-		IDPIssuer   string `json:"idp_issuer"`
 	}
+	// A state written before B1.5 may still carry idp_id/idp_issuer; those
+	// fields are ignored and the code is exchanged with OpenIDX as for any
+	// other sign-in.
 	json.Unmarshal(stateData, &storedState)
-
-	// If this callback is from an external IDP, delegate to multi-IDP handler
-	if storedState.IDPID != "" && storedState.IDPID != "default" {
-		s.handleCallbackWithIDP(c, storedState.IDPID, storedState.IDPIssuer, storedState.Verifier, storedState.RedirectURL)
-		return
-	}
 
 	// Exchange code for tokens (callback URL must match what was sent to the authorize endpoint)
 	callbackHost := c.Request.Host
@@ -2191,6 +2206,21 @@ func (s *Service) handleCallback(c *gin.Context) {
 		return
 	}
 
+	// The upstream identity provider, when the sign-in was federated, is the
+	// id_token's idp claim (oauth GenerateIDToken). It is recorded so
+	// "this IdP is compromised, whose sessions came through it?" finds the
+	// session; a failure is logged, not fatal, as the session is valid.
+	idpID := federatedIdP(s, tokenResp)
+	if idpID != "" {
+		if _, err := s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
+			"UPDATE proxy_sessions SET idp_id=$1 WHERE id=$2 AND org_id=$3",
+			idpID, session.ID, session.orgID); err != nil {
+			s.logger.Error("a session authenticated by an external identity provider could not be marked "+
+				"with it; it will read as a local session, so revoking that provider's sessions will miss it",
+				logsafe.String("idp_id", idpID), logsafe.String("session_id", session.ID), zap.Error(err))
+		}
+	}
+
 	// Set session cookie with SameSite=Lax for CSRF protection
 	// The Secure flag is computed, not a literal, so the scanner cannot see it;
 	// sessionCookieSecure (session_cookie.go) sets it from the request's real
@@ -2209,6 +2239,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 	s.logAuditEvent(c, "proxy_session_created", session.UserID, "session", map[string]interface{}{
 		"session_id": session.ID,
 		"email":      session.Email,
+		"idp_id":     idpID,
 	})
 
 	// Redirect to original URL. It was checked when it was stored, and is
@@ -2398,6 +2429,11 @@ func (s *Service) handleProxy(c *gin.Context) {
 			// names a scheme and host of its own, and they are not this one.
 			loginURL := fmt.Sprintf("/access/.auth/login?redirect_url=%s",
 				url.QueryEscape(c.Request.URL.RequestURI()))
+			// A route bound to an identity provider signs in through it:
+			// handleLogin turns idp into OpenIDX's idp_hint (B1.5).
+			if route.IDPId != "" {
+				loginURL += "&idp=" + url.QueryEscape(route.IDPId)
+			}
 			c.Redirect(http.StatusFound, loginURL)
 			return
 		}
@@ -3565,8 +3601,9 @@ type tokenResponse struct {
 //
 // SECURITY: only call this on a token obtained over a trusted back channel — i.e.
 // one just returned by a server-to-server code exchange against our own OAuth
-// token endpoint (handleCallback) or an external IdP's token endpoint
-// (multi_idp), per OIDC Core §3.1.3.7. NEVER call it on a client-supplied bearer:
+// token endpoint (handleCallback), per OIDC Core §3.1.3.7. External IdPs are
+// never spoken to by the proxy (B1.5): their tokens are verified by the OAuth
+// service's federation callback. NEVER call it on a client-supplied bearer:
 // that is the P0-1 unsigned-JWT auth bypass. The bearer path
 // (getSessionFromBearer) uses middleware.VerifyBearerToken, which verifies the
 // signature + expiry against the OAuth JWKS — use that for any client token.

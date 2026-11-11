@@ -327,6 +327,69 @@ describe('ExternalUsersPage', () => {
     )
   })
 
+  it('asks the identity service for federated accounts only', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('Ayşe Vendor')
+    await user.selectOptions(screen.getByLabelText('Source'), 'federated')
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith('/api/v1/identity/external-users?source=federated'),
+    )
+  })
+
+  it('makes a vendor federated through its IdP, with sponsor, sliding expiry and open groups', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.put).mockResolvedValue({} as never)
+    vi.mocked(api.getWithHeaders).mockImplementation((url: string) =>
+      (url.startsWith('/api/v1/identity/providers')
+        ? Promise.resolve({ data: [{ id: 'idp-1', name: 'Partner Entra' }], headers: {} })
+        : routeGetWithHeaders(url)) as never)
+    renderPage()
+    await user.click(screen.getByRole('tab', { name: 'Vendor organizations' }))
+    const row = (await screen.findByText('supplier.example.test')).closest('tr')!
+    await user.click(within(row).getByRole('button', { name: 'Edit' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.selectOptions(within(dialog).getByLabelText('How its people arrive'), 'federated')
+    // No default sponsor yet: a federated vendor cannot be saved.
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
+    const sponsor = within(dialog).getByLabelText('Default sponsor') as HTMLSelectElement
+    await waitFor(() => expect(within(sponsor).getAllByRole('option').length).toBeGreaterThan(1))
+    await user.selectOptions(sponsor, 's-1')
+    const idp = within(dialog).getByLabelText('Identity provider')
+    await waitFor(() => expect(within(idp).getByRole('option', { name: 'Partner Entra' })).toBeInTheDocument())
+    await user.selectOptions(idp, 'idp-1')
+    await user.click(within(dialog).getByRole('checkbox', { name: /sliding expiry/i }))
+    expect(within(dialog).queryByLabelText('finance')).not.toBeInTheDocument()
+    await user.click(await within(dialog).findByLabelText('vendor-support'))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/v1/identity/vendor-orgs/v-1', expect.objectContaining({
+        onboarding_mode: 'federated', idp_id: 'idp-1', sliding_expiry: true,
+        default_group_ids: ['g-open'], default_sponsor_user_id: 's-1',
+      })),
+    )
+  })
+
+  it('changes a vendor\'s default sponsor and keeps the rest of the vendor', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.put).mockResolvedValue({} as never)
+    renderPage()
+    await user.click(screen.getByRole('tab', { name: 'Vendor organizations' }))
+    const row = (await screen.findByText('supplier.example.test')).closest('tr')!
+    await user.click(within(row).getByRole('button', { name: 'Change default sponsor' }))
+    const dialog = await screen.findByRole('dialog')
+    const sponsor = within(dialog).getByLabelText('Default sponsor') as HTMLSelectElement
+    await waitFor(() => expect(within(sponsor).getAllByRole('option').length).toBeGreaterThan(1))
+    await user.selectOptions(sponsor, 's-2')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/v1/identity/vendor-orgs/v-1', expect.objectContaining({
+        name: 'Acme Field Service', default_sponsor_user_id: 's-2', allowed_email_domains: ['supplier.example.test'],
+        default_expiry_days: 90,
+      })),
+    )
+  })
+
   it('lists, opens and closes what is open to a vendor on a closed list', async () => {
     const user = userEvent.setup()
     vi.mocked(api.pam.listEntries).mockResolvedValue({ entries: [{ id: 'e-1', name: 'prod-db' }, { id: 'e-2', name: 'jump-01' }] } as never)

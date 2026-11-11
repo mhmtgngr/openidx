@@ -5,16 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
-	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -172,218 +168,34 @@ func (s *Service) handleIDPDiscovery(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"idps": allIDPs})
 }
 
-// handleLoginWithIDP handles the OAuth login flow for a specific external IDP
-func (s *Service) handleLoginWithIDP(c *gin.Context, idpID string) {
-	ctx := c.Request.Context()
-
+// idpEnabledInOrg reports whether idpID is an enabled identity provider of the
+// request's organization. The proxy no longer talks to it (B1.5); it only
+// refuses a hint that OpenIDX's /oauth/authorize would refuse anyway, with an
+// answer the person can read.
+func (s *Service) idpEnabledInOrg(ctx context.Context, idpID string) (bool, error) {
 	org, err := orgctx.From(ctx)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
-		return
+		return false, err
 	}
-
-	// Load the IDP
-	var idp IDPConfig
-	var scopesJSON []byte
-	err = s.db.Pool.QueryRow(ctx,
-		`SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes
-		 FROM identity_providers WHERE id=$1 AND enabled=true AND org_id=$2`, idpID, org.ID).
-		Scan(&idp.ID, &idp.Name, &idp.ProviderType, &idp.IssuerURL,
-			&idp.ClientID, &idp.ClientSecret, &scopesJSON)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "IDP not found or not enabled"})
-		return
+	var ok bool
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM identity_providers WHERE id::text=$1 AND enabled=true AND org_id=$2)`,
+		idpID, org.ID).Scan(&ok); err != nil {
+		return false, nil
 	}
-	if idp.ClientSecret, err = s.idpCipher.Decrypt(idp.ClientSecret); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load IDP credential"})
-		return
-	}
-	if scopesJSON != nil {
-		if err := json.Unmarshal(scopesJSON, &idp.Scopes); err != nil {
-			s.logger.Warn("Failed to unmarshal IDP scopes", zap.String("idp_id", idp.ID), zap.Error(err))
-		}
-	}
-	if len(idp.Scopes) == 0 {
-		idp.Scopes = []string{"openid", "profile", "email"}
-	}
-
-	// Generate PKCE
-	verifier := generateCodeVerifier()
-	challenge := generateCodeChallenge(verifier)
-	state := generateState()
-
-	redirectURL := s.redirectTarget(c, c.Query("redirect_url"), "/")
-
-	// Store state with IDP info
-	sessionData, _ := json.Marshal(map[string]string{
-		"verifier":     verifier,
-		"redirect_url": redirectURL,
-		"idp_id":       idp.ID,
-		"idp_issuer":   idp.IssuerURL,
-	})
-	s.redis.Client.Set(ctx, "access_oauth_state:"+state, sessionData, 10*time.Minute)
-
-	// Build callback URL
-	callbackURL := fmt.Sprintf("%s://%s:%d/access/.auth/callback",
-		callbackScheme(c), s.config.AccessProxyDomain, s.config.Port)
-
-	// Build auth URL using the external IDP
-	scopeStr := url.QueryEscape(joinScopes(idp.Scopes))
-	authURL := fmt.Sprintf("%s/authorize?client_id=%s&response_type=code&redirect_uri=%s&code_challenge=%s&code_challenge_method=S256&state=%s&scope=%s",
-		idp.IssuerURL,
-		url.QueryEscape(idp.ClientID),
-		url.QueryEscape(callbackURL),
-		url.QueryEscape(challenge),
-		url.QueryEscape(state),
-		scopeStr)
-
-	c.Redirect(http.StatusFound, authURL)
+	return ok, nil
 }
 
-// handleCallbackWithIDP handles the OAuth callback for an external IDP
-func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifier, redirectURL string) {
-	code := c.Query("code")
-
-	org, err := orgctx.From(c.Request.Context())
+// federatedIdP returns the idp claim of the id_token OpenIDX returned from the
+// proxy's own back-channel code exchange: empty for a local sign-in.
+func federatedIdP(s *Service, tok *tokenResponse) string {
+	if tok == nil || tok.IDToken == "" {
+		return ""
+	}
+	claims, err := s.parseTokenClaims(tok.IDToken)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
-		return
+		return ""
 	}
-
-	// Load the IDP to get client_secret
-	var clientID, clientSecret string
-	err = s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT client_id, client_secret FROM identity_providers WHERE id=$1 AND org_id=$2",
-		idpID, org.ID).Scan(&clientID, &clientSecret)
-	if err != nil {
-		s.logger.Error("Failed to load IDP for callback", zap.String("idp_id", idpID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "authentication failed"})
-		return
-	}
-	if clientSecret, err = s.idpCipher.Decrypt(clientSecret); err != nil {
-		s.logger.Error("Failed to decrypt IDP client_secret", zap.String("idp_id", idpID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "authentication failed"})
-		return
-	}
-
-	callbackURL := fmt.Sprintf("%s://%s:%d/access/.auth/callback",
-		callbackScheme(c), s.config.AccessProxyDomain, s.config.Port)
-
-	// Exchange code with the external IDP
-	tokenResp, err := s.exchangeCodeWithIDP(c.Request.Context(), idpIssuer, clientID, clientSecret, code, verifier, callbackURL)
-	if err != nil {
-		s.logger.Error("Failed to exchange code with external IDP", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "authentication failed"})
-		return
-	}
-
-	// Parse the access token (or ID token) claims
-	tokenToParse := tokenResp.AccessToken
-	if tokenResp.IDToken != "" {
-		tokenToParse = tokenResp.IDToken
-	}
-
-	claims, err := s.parseTokenClaims(tokenToParse)
-	if err != nil {
-		s.logger.Error("Failed to parse token from external IDP", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse token"})
-		return
-	}
-
-	// Create proxy session
-	session, err := s.createSession(c, claims)
-	if err != nil {
-		s.logger.Error("Failed to create session", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
-		return
-	}
-
-	// Store the IdP on the session.
-	//
-	// This used to carry a waiver saying nothing read the column, which was
-	// true and is not any more: handleListSessions joins it so the console can
-	// show which provider authenticated each live session. That is the answer
-	// to "this IdP is compromised, whose sessions came through it?", and a
-	// session missing from that answer is one nobody revokes.
-	//
-	// The session itself is created and valid either way, so this does not fail
-	// the login; it is reported instead, because the gap is otherwise invisible
-	// -- the session simply looks like a local one.
-	if _, err := s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
-		"UPDATE proxy_sessions SET idp_id=$1 WHERE id=$2 AND org_id=$3",
-		idpID, session.ID, session.orgID); err != nil {
-		s.logger.Error("a session authenticated by an external identity provider could not be marked "+
-			"with it; it will read as a local session, so revoking that provider's sessions will miss it",
-			logsafe.String("idp_id", idpID), logsafe.String("session_id", session.ID), zap.Error(err))
-	}
-
-	// Set session cookie with SameSite=Lax for CSRF protection
-	// The Secure flag is computed, not a literal, so the scanner cannot see it;
-	// sessionCookieSecure (session_cookie.go) sets it from the request's real
-	// transport and is covered by session_cookie_test.go.
-	// nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "_openidx_proxy_session",
-		Value:    session.SessionToken,
-		MaxAge:   session.AbsoluteTimeout(),
-		Path:     "/",
-		Secure:   sessionCookieSecure(c, s.config),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-
-	s.logAuditEvent(c, "proxy_session_created", session.UserID, "session", map[string]interface{}{
-		"session_id": session.ID,
-		"email":      session.Email,
-		"idp_id":     idpID,
-	})
-
-	c.Redirect(http.StatusFound, s.redirectTarget(c, redirectURL, "/"))
-}
-
-// exchangeCodeWithIDP exchanges an authorization code with an external IDP's token endpoint
-func (s *Service) exchangeCodeWithIDP(ctx context.Context, issuerURL, clientID, clientSecret, code, verifier, redirectURI string) (*tokenResponse, error) {
-	tokenURL := issuerURL + "/token"
-
-	data := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {code},
-		"redirect_uri":  {redirectURI},
-		"client_id":     {clientID},
-		"code_verifier": {verifier},
-	}
-
-	if clientSecret != "" {
-		data.Set("client_secret", clientSecret)
-	}
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.PostForm(tokenURL, data)
-	if err != nil {
-		return nil, fmt.Errorf("token exchange with IDP failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("IDP token exchange returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var tokenResp tokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return nil, fmt.Errorf("failed to decode IDP token response: %w", err)
-	}
-
-	return &tokenResp, nil
-}
-
-func joinScopes(scopes []string) string {
-	result := ""
-	for i, s := range scopes {
-		if i > 0 {
-			result += " "
-		}
-		result += s
-	}
-	return result
+	idp, _ := claims["idp"].(string)
+	return idp
 }

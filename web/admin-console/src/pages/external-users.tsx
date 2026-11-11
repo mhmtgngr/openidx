@@ -19,7 +19,7 @@ import { QueryError } from '../components/query-error'
 import { ConfirmAction } from '../components/confirm-action'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
-import { SponsorPicker, apiErrorText, useVendors, type VendorOrg } from '../lib/external-access'
+import { SponsorPicker, apiErrorText, useVendors, vendorBody, type VendorOrg } from '../lib/external-access'
 export type { VendorOrg } from '../lib/external-access'
 import { EngagementsTab } from '../components/vendor-engagements'
 
@@ -45,6 +45,8 @@ export interface ExternalUser {
   status_changed_at?: string
   last_login_at?: string
   created_at: string
+  // federated: provisioned at an SSO sign-in (B2.2); local: an invitation.
+  source?: string
   expiring_soon: boolean
   has_strong_factor: boolean
   reactivate_until?: string
@@ -136,15 +138,17 @@ function AccountsTab() {
   const { toast } = useToast()
   const [vendorFilter, setVendorFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [sourceFilter, setSourceFilter] = useState('')
   const [dialog, setDialog] = useState<AccountDialog | null>(null)
   const { data: vendors = [] } = useVendors()
 
   const { data: accounts = [], isLoading, isError, error } = useQuery({
-    queryKey: ['external-users', vendorFilter, statusFilter],
+    queryKey: ['external-users', vendorFilter, statusFilter, sourceFilter],
     queryFn: async () => {
       const params = new URLSearchParams()
       if (vendorFilter) params.set('vendor_org_id', vendorFilter)
       if (statusFilter) params.set('status', statusFilter)
+      if (sourceFilter) params.set('source', sourceFilter)
       const qs = params.toString()
       const res = await api.get<{ external_users: ExternalUser[] }>(`/api/v1/identity/external-users${qs ? `?${qs}` : ''}`)
       // Whether the grace period is still open is read when the list is,
@@ -209,6 +213,19 @@ function AccountsTab() {
             >
               <option value="">{t('pages.externalUsers.filters.allStatuses')}</option>
               {ACCOUNT_STATUSES.map((s) => <option key={s} value={s}>{t(`pages.externalUsers.status.${s}`)}</option>)}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label htmlFor="xu-source-filter" className="text-xs font-medium text-muted-foreground">{t('pages.externalUsers.filters.source')}</label>
+            <select
+              id="xu-source-filter"
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
+              className="flex h-9 w-44 rounded-md border border-input bg-background px-3 py-1 text-sm"
+            >
+              <option value="">{t('pages.externalUsers.filters.allSources')}</option>
+              <option value="federated">{t('pages.externalUsers.filters.federated')}</option>
+              <option value="local">{t('pages.externalUsers.filters.invited')}</option>
             </select>
           </div>
         </div>
@@ -698,6 +715,7 @@ function VendorsTab() {
   const { toast } = useToast()
   const [editing, setEditing] = useState<VendorOrg | 'new' | null>(null)
   const [targetsFor, setTargetsFor] = useState<VendorOrg | null>(null)
+  const [sponsorFor, setSponsorFor] = useState<VendorOrg | null>(null)
   const { data: vendors = [], isLoading, isError, error } = useVendors()
 
   const close = useMutation({
@@ -778,6 +796,9 @@ function VendorsTab() {
                         {v.require_engagement && (
                           <Badge variant="outline" className="ml-2">{t('pages.externalUsers.vendors.requireEngagement')}</Badge>
                         )}
+                        {v.onboarding_mode && v.onboarding_mode !== 'invitation' && (
+                          <Badge variant="outline" className="ml-2">{t(`pages.externalUsers.vendorDialog.onboarding.${v.onboarding_mode}`)}</Badge>
+                        )}
                       </p>
                       {(v.allowed_email_domains ?? []).length > 0 && (
                         <p className="text-xs text-muted-foreground">{(v.allowed_email_domains ?? []).join(', ')}</p>
@@ -796,6 +817,7 @@ function VendorsTab() {
                       {v.status !== 'closed' && (
                         <>
                           <Button variant="outline" size="sm" onClick={() => setEditing(v)}>{t('pages.externalUsers.vendors.edit')}</Button>
+                          <Button variant="outline" size="sm" onClick={() => setSponsorFor(v)}>{t('pages.externalUsers.vendors.changeSponsor')}</Button>
                           {v.status === 'active' && (
                             <ConfirmAction
                               title={t('pages.externalUsers.confirm.suspendVendorTitle', { name: v.name })}
@@ -838,6 +860,7 @@ function VendorsTab() {
       </CardContent>
       {editing && <VendorDialog vendor={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
       {targetsFor && <VendorTargetsDialog vendor={targetsFor} onClose={() => setTargetsFor(null)} />}
+      {sponsorFor && <VendorSponsorDialog vendor={sponsorFor} onClose={() => setSponsorFor(null)} />}
     </Card>
   )
 }
@@ -860,7 +883,31 @@ function VendorDialog({ vendor, onClose }: { vendor: VendorOrg | null; onClose: 
     closed_list: !!vendor?.closed_list,
     // A new vendor starts with engagements required, as the API creates it.
     require_engagement: vendor ? !!vendor.require_engagement : true,
+    onboarding_mode: vendor?.onboarding_mode ?? 'invitation',
+    idp_id: vendor?.idp_id ?? '',
+    sliding_expiry: !!vendor?.sliding_expiry,
+    default_group_ids: vendor?.default_group_ids ?? [],
   })
+  const federated = form.onboarding_mode !== 'invitation'
+  const { data: idps = [] } = useQuery({
+    queryKey: ['identity-providers-for-vendor'],
+    queryFn: async () => {
+      const res = await api.getWithHeaders<{ id: string; name: string; enabled?: boolean }[]>('/api/v1/identity/providers?offset=0&limit=100')
+      return res.data ?? []
+    },
+  })
+  const { data: openGroups = [] } = useQuery({
+    queryKey: ['groups-external-allowed'],
+    queryFn: async () => {
+      const res = await api.getWithHeaders<Record<string, unknown>[]>('/api/v1/identity/groups?offset=0&limit=100')
+      return (res.data || [])
+        .filter((g) => ((g.attributes ?? {}) as Record<string, unknown>).externalAllowed === 'true')
+        .map((g) => ({ id: String(g.id ?? ''), name: String(g.displayName ?? g.name ?? '') }))
+    },
+  })
+  // A federated vendor needs a default sponsor: every external account has
+  // one, and a person provisioned at sign-in has nobody else.
+  const valid = form.name.trim() !== '' && (!federated || form.default_sponsor_user_id !== '')
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }))
 
@@ -880,6 +927,10 @@ function VendorDialog({ vendor, onClose }: { vendor: VendorOrg | null; onClose: 
         notes: form.notes,
         closed_list: form.closed_list,
         require_engagement: form.require_engagement,
+        onboarding_mode: form.onboarding_mode,
+        idp_id: form.idp_id,
+        sliding_expiry: form.sliding_expiry,
+        default_group_ids: form.default_group_ids,
       }
       return vendor
         ? api.put(`/api/v1/identity/vendor-orgs/${vendor.id}`, body)
@@ -900,7 +951,7 @@ function VendorDialog({ vendor, onClose }: { vendor: VendorOrg | null; onClose: 
           <DialogTitle>{vendor ? t('pages.externalUsers.vendorDialog.editTitle', { name: vendor.name }) : t('pages.externalUsers.vendorDialog.createTitle')}</DialogTitle>
           <DialogDescription>{t('pages.externalUsers.vendorDialog.description')}</DialogDescription>
         </DialogHeader>
-        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (form.name.trim()) save.mutate() }}>
+        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (valid) save.mutate() }}>
           <div className="space-y-1">
             <Label htmlFor="xv-name">{t('pages.externalUsers.vendorDialog.name')}</Label>
             <Input id="xv-name" value={form.name} onChange={set('name')} />
@@ -945,8 +996,57 @@ function VendorDialog({ vendor, onClose }: { vendor: VendorOrg | null; onClose: 
           <div className="space-y-1">
             <Label id="xv-sponsor-label" htmlFor="xv-sponsor">{t('pages.externalUsers.vendorDialog.defaultSponsor')}</Label>
             <SponsorPicker id="xv-sponsor" value={form.default_sponsor_user_id}
-              onChange={(v) => setForm((f) => ({ ...f, default_sponsor_user_id: v }))} optional />
+              onChange={(v) => setForm((f) => ({ ...f, default_sponsor_user_id: v }))} optional={!federated} />
+            {federated && !form.default_sponsor_user_id && (
+              <p className="text-xs text-red-600">{t('pages.externalUsers.vendorDialog.sponsorRequired')}</p>
+            )}
           </div>
+          <div className="space-y-1">
+            <Label htmlFor="xv-onboarding">{t('pages.externalUsers.vendorDialog.onboardingMode')}</Label>
+            <select id="xv-onboarding" value={form.onboarding_mode}
+              onChange={(e) => setForm((f) => ({ ...f, onboarding_mode: e.target.value as typeof f.onboarding_mode }))}
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm">
+              {(['invitation', 'federated', 'both'] as const).map((m) => (
+                <option key={m} value={m}>{t(`pages.externalUsers.vendorDialog.onboarding.${m}`)}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">{t('pages.externalUsers.vendorDialog.onboardingHint')}</p>
+          </div>
+          {federated && (
+            <>
+              <div className="space-y-1">
+                <Label htmlFor="xv-idp">{t('pages.externalUsers.vendorDialog.idp')}</Label>
+                <select id="xv-idp" value={form.idp_id} onChange={set('idp_id')}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm">
+                  <option value="">{t('pages.externalUsers.vendorDialog.idpByDomain')}</option>
+                  {idps.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <label className="flex items-start gap-2 text-sm">
+                <input id="xv-sliding" type="checkbox" className="mt-1" checked={form.sliding_expiry}
+                  onChange={(e) => setForm((f) => ({ ...f, sliding_expiry: e.target.checked }))} />
+                <span>
+                  <span className="font-medium">{t('pages.externalUsers.vendorDialog.slidingExpiry')}</span>
+                  <span className="block text-xs text-muted-foreground">{t('pages.externalUsers.vendorDialog.slidingExpiryHint')}</span>
+                </span>
+              </label>
+              <fieldset className="space-y-1">
+                <legend className="text-sm font-medium">{t('pages.externalUsers.vendorDialog.defaultGroups')}</legend>
+                {openGroups.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{t('pages.externalUsers.vendorDialog.noOpenGroups')}</p>
+                ) : openGroups.map((g) => (
+                  <label key={g.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={form.default_group_ids.includes(g.id)}
+                      onChange={(e) => setForm((f) => ({
+                        ...f,
+                        default_group_ids: e.target.checked ? [...f.default_group_ids, g.id] : f.default_group_ids.filter((x) => x !== g.id),
+                      }))} />
+                    {g.name}
+                  </label>
+                ))}
+              </fieldset>
+            </>
+          )}
           <div className="space-y-1">
             <Label htmlFor="xv-notes">{t('pages.externalUsers.vendorDialog.notes')}</Label>
             <Textarea id="xv-notes" value={form.notes} onChange={set('notes')} />
@@ -979,7 +1079,48 @@ function VendorDialog({ vendor, onClose }: { vendor: VendorOrg | null; onClose: 
           </label>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
-            <Button type="submit" disabled={!form.name.trim() || save.isPending}>{t('pages.externalUsers.vendorDialog.save')}</Button>
+            <Button type="submit" disabled={!valid || save.isPending}>{t('pages.externalUsers.vendorDialog.save')}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// VendorSponsorDialog changes a vendor's default sponsor: the sponsor the
+// accounts provisioned from now on get. Existing accounts keep theirs (each
+// is changed on its own row).
+function VendorSponsorDialog({ vendor, onClose }: { vendor: VendorOrg; onClose: () => void }) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const [sponsor, setSponsor] = useState(vendor.default_sponsor_user_id ?? '')
+  const save = useMutation({
+    mutationFn: () => api.put(`/api/v1/identity/vendor-orgs/${vendor.id}`, vendorBody(vendor, { default_sponsor_user_id: sponsor })),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vendor-orgs'] })
+      toast({ title: t('common.success'), description: t('pages.externalUsers.toasts.vendorSaved', { name: vendor.name }), variant: 'success' })
+      onClose()
+    },
+    onError: (err) => toast({ title: t('common.error'), description: apiErrorText(err, t('pages.externalUsers.toasts.failed')), variant: 'destructive' }),
+  })
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t('pages.externalUsers.vendorSponsorDialog.title', { name: vendor.name })}</DialogTitle>
+          <DialogDescription>{t('pages.externalUsers.vendorSponsorDialog.description')}</DialogDescription>
+        </DialogHeader>
+        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (sponsor) save.mutate() }}>
+          <div className="space-y-1">
+            <Label id="xv-new-sponsor-label" htmlFor="xv-new-sponsor">{t('pages.externalUsers.vendorDialog.defaultSponsor')}</Label>
+            <SponsorPicker id="xv-new-sponsor" value={sponsor} onChange={setSponsor} />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
+            <Button type="submit" disabled={!sponsor || sponsor === vendor.default_sponsor_user_id || save.isPending}>
+              {t('pages.externalUsers.vendorDialog.save')}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
