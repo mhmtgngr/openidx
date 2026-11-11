@@ -3347,6 +3347,15 @@ jobs:
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
                      /etc/apt/sources.list.d/google-chrome.sources
+          # The ubuntu-26.04 image's mirror list names security.ubuntu.com
+          # beside the Azure mirror. When that name does not resolve from the
+          # runner (seen for hours on 2026-11-11, "Temporary failure
+          # resolving"), apt picks it for some packages and the install fails
+          # on every retry. The Azure mirror carries the same archive.
+          if [ -f /etc/apt/apt-mirrors.txt ] && grep -qv security.ubuntu.com /etc/apt/apt-mirrors.txt; then
+            grep -v security.ubuntu.com /etc/apt/apt-mirrors.txt | sudo tee /etc/apt/apt-mirrors.txt.new >/dev/null
+            sudo mv /etc/apt/apt-mirrors.txt.new /etc/apt/apt-mirrors.txt
+          fi
           bash ../../scripts/ci-retry.sh 3 5 -- npx playwright install --with-deps chromium
 
       - name: Start the stack
