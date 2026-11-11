@@ -220,7 +220,7 @@ func (s *Service) evaluateMFAPolicies(
 			lat, lon = geo.Lat, geo.Lon
 		}
 	}
-	if a, err := s.identityService.AssessLoginRisk(ctx, &identity.LoginContext{
+	lc := &identity.LoginContext{
 		UserID:         user.ID,
 		Username:       user.UserName,
 		IPAddress:      clientIP,
@@ -231,7 +231,9 @@ func (s *Service) evaluateMFAPolicies(
 		BrowserHash:    fingerprint,
 		KnownDevice:    deviceTrusted,
 		TrustedBrowser: ev.BrowserTrusted,
-	}); err == nil && a != nil {
+	}
+	s.fillLoginHistory(ctx, lc, user)
+	if a, err := s.identityService.AssessLoginRisk(ctx, lc); err == nil && a != nil {
 		assessment = a
 		ev.RiskScore = a.Score
 		ev.RiskFactors = a.Factors

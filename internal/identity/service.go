@@ -2326,13 +2326,20 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 		}
 	}
 
-	// Reset failed login count and update last login
+	// Reset failed login count and update last login. The pre-reset values
+	// are returned in the same statement (B7.4) so the adaptive risk engine
+	// scores this login against the failures that preceded it and the
+	// previous sign-in time, instead of the zeros this UPDATE just wrote.
 	now := time.Now()
-	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE users
+	var priorFailed int
+	var priorLastLogin *time.Time
+	err = s.db.Pool.QueryRow(ctx, `
+		UPDATE users u
 		SET failed_login_count = 0, last_login_at = $2, locked_until = NULL
-		WHERE id = $1 AND org_id = $3
-	`, userID, now, org.ID)
+		FROM (SELECT failed_login_count, last_login_at FROM users WHERE id = $1 AND org_id = $3) prev
+		WHERE u.id = $1 AND u.org_id = $3
+		RETURNING prev.failed_login_count, prev.last_login_at
+	`, userID, now, org.ID).Scan(&priorFailed, &priorLastLogin)
 	if err != nil {
 		s.logger.Error("Failed to update login stats", zap.Error(err))
 	}
@@ -2343,7 +2350,13 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 		})
 
 	// Return full user object
-	return s.GetUser(ctx, userID)
+	u, gerr := s.GetUser(ctx, userID)
+	if gerr == nil && u != nil && err == nil {
+		u.PriorFailedLoginCount = priorFailed
+		u.PriorLastLoginAt = priorLastLogin
+		u.HasPriorLoginStats = true
+	}
+	return u, gerr
 }
 
 // upgradePasswordHash re-hashes a verified password under the current scheme

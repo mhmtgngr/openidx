@@ -33,6 +33,8 @@ import (
 	"github.com/openidx/openidx/internal/common/orgctx"
 
 	"github.com/openidx/openidx/internal/common/logsafe"
+
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // ZitiManager handles OpenZiti SDK integration and management API communication
@@ -70,7 +72,15 @@ type ZitiManager struct {
 	// tests that construct the struct directly; all callers fall back to
 	// cfg.ZitiCtrlURL when unset.
 	pool *controllerEndpointPool
+
+	// syncQueue is the Redis client holding on-demand user-sync requests
+	// (internal/common/zitisyncq). Nil disables the on-demand drain; the periodic
+	// sweep still runs. Set via SetSyncRequestQueue before the poller starts.
+	syncQueue *goredis.Client
 }
+
+// SetSyncRequestQueue wires the on-demand user-sync queue (B7.6).
+func (zm *ZitiManager) SetSyncRequestQueue(rc *goredis.Client) { zm.syncQueue = rc }
 
 // hostedService tracks a Ziti service listener that forwards to an upstream target
 type hostedService struct {

@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/zitisyncq"
 )
 
 // THE CLIENTLESS SIGN-IN IS JUDGED PER APPLICATION, NOT PER CLIENT.
@@ -57,4 +59,14 @@ func (s *Service) browzerRouteApp(ctx context.Context, orgID, redirectURI string
 // isBrowZerClient reports whether clientID is the shared clientless client.
 func (s *Service) isBrowZerClient(clientID string) bool {
 	return s.config != nil && clientID != "" && clientID == s.config.BrowZerClientID
+}
+
+// requestBrowZerUserSync queues an on-demand Ziti user sync for userID
+// (internal/common/zitisyncq), drained by the access service's user-sync poller.
+// Nil-safe; debounced per user inside zitisyncq.
+func (s *Service) requestBrowZerUserSync(ctx context.Context, userID string) {
+	if s.redis == nil || s.redis.Client == nil {
+		return
+	}
+	zitisyncq.Request(ctx, s.redis.Client, userID)
 }

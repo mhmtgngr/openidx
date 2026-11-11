@@ -2735,6 +2735,10 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string, 
 	// sign-in is for is the one behind the redirect's host, and assignment is
 	// required for it whatever the shared client says (browzer_gate.go).
 	if s.isBrowZerClient(clientID) {
+		// First clientless visit: ask the access service to create or
+		// refresh this user's Ziti identity now rather than on the next
+		// sweep tick (B7.6). Best-effort; the sweep is the backstop.
+		s.requestBrowZerUserSync(ctx, userID)
 		redirect := ""
 		if len(redirectURI) > 0 {
 			redirect = redirectURI[0]

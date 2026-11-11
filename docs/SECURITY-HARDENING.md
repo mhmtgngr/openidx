@@ -115,6 +115,14 @@ startup.
   the application subnet, not from the operator workstations.
 - Take encrypted backups via the same `internal/backup` path the
   v1.1.0 release wired up (see [disaster-recovery.md](./disaster-recovery.md)).
+- Size connection pools against `max_connections`. Each service opens up
+  to `DB_MAX_CONNS` (default 10) application connections plus, when
+  `DATABASE_BYPASS_URL` is set, up to 8 bypass connections. Before an
+  internet-facing pilot raise identity, oauth and access to
+  `DB_MAX_CONNS=25` (they carry the sign-in path) and raise Postgres
+  `max_connections` to match: 3×25 + 4×10 + 7×8 + headroom ≈ 190, so
+  `max_connections=200`. On the reference box `scripts/box-deploy.sh
+  preflight` prints the budget and warns when it does not fit.
 
 ### Redis
 
@@ -131,6 +139,25 @@ startup.
 - Consider Redis Sentinel if a single-node failure would page someone;
   the project already supports it (see the `redis_sentinel_*`
   config fields).
+
+### Rate limiting per account
+
+- Set `RATE_LIMIT_PER_USER=true` on any deployment reachable from the
+  internet. The limiter then keys authenticated requests on the user
+  instead of the client IP, and additionally counts the credential
+  endpoints `/oauth/login` and `/eam/*` against the **submitted username**
+  (from the JSON or form body, or `username`/`login_hint` in the query),
+  in its own bucket at the `RATE_LIMIT_AUTH_REQUESTS` limit. A password
+  spray that rotates source IPs therefore still stops at that limit for
+  any one account. The per-IP bucket keeps applying on top.
+- The username is normalised (trimmed, lower case) and hashed before it
+  becomes a Redis key, so the key never carries it in clear. The bucket
+  is only enforced while Redis answers; during an outage the per-IP auth
+  tier's fail-closed behaviour applies as before.
+- A user who is the target of a spray can be locked out of sign-in for the
+  rest of the window. That is the intended trade: account lockout via
+  `failed_login_count` still applies separately, and the window is short
+  (`RATE_LIMIT_AUTH_WINDOW`, default 60 s).
 
 ### Container / runtime
 

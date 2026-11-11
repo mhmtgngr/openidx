@@ -534,6 +534,7 @@ func main() {
 			}
 			zm.StartHealthMonitor(zitiCtx, healthLeader)
 			zm.StartCertificateMonitor(zitiCtx)
+			zm.SetSyncRequestQueue(healthLeader)
 			zm.StartUserSyncPoller(zitiCtx)
 			zm.StartPostureResultExpiryChecker(zitiCtx)
 

@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
@@ -180,6 +182,31 @@ func DistributedRateLimit(redisClient *redis.Client, cfg RateLimitConfig, logger
 
 		windowEpoch := time.Now().Unix() / int64(window.Seconds())
 		key := fmt.Sprintf("ratelimit:%s:%s:%s:%d", scope, orgSeg, identifier, windowEpoch)
+
+		// Pre-auth credential endpoints: also count against the submitted
+		// username so IP rotation cannot spray one account. Only enforced
+		// while Redis answers; on a backend error the per-IP bucket below
+		// keeps its own fail-closed semantics. The username is hashed so the
+		// key (which may be logged) never carries it in clear.
+		if cfg.PerUser && scope == "ip" && redisClient != nil && isUsernameKeyedPath(path) {
+			if uname := peekUsername(&c.Request.Body, c.GetHeader("Content-Type"), c.Request.URL.Query()); uname != "" {
+				sum := sha256.Sum256([]byte(uname))
+				ukey := fmt.Sprintf("ratelimit:uname:%s:%s:%d", orgSeg, hex.EncodeToString(sum[:12]), windowEpoch)
+				uctx, ucancel := context.WithTimeout(c.Request.Context(), 200*time.Millisecond)
+				n, uerr := redisClient.Incr(uctx, ukey).Result()
+				if uerr == nil && n == 1 {
+					redisClient.Expire(uctx, ukey, window+time.Second)
+				}
+				ucancel()
+				if uerr == nil && n > int64(limit) {
+					retryAfter := int64(window.Seconds()) - (time.Now().Unix() % int64(window.Seconds()))
+					c.Header("Retry-After", fmt.Sprintf("%d", retryAfter))
+					rlHitsTotal.WithLabelValues("uname").Inc()
+					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
+					return
+				}
+			}
+		}
 
 		// If Redis is nil, the limiter can't enforce. Fail closed for auth
 		// paths (unless explicitly opted out) so brute-force protection isn't

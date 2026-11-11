@@ -63,6 +63,14 @@ string:
 postgres://user:password@host:5432/openidx?sslmode=verify-full&pool_max_conns=25&pool_min_conns=5
 ```
 
+The services also read `DB_MAX_CONNS` (default 10) and `DB_MIN_CONNS`
+(default 2) from the environment, which override the DSN's pool settings.
+Before an internet-facing pilot run identity, oauth and access with
+`DB_MAX_CONNS=25` and raise Postgres `max_connections` so the whole fleet
+fits; see [SECURITY-HARDENING.md](../guides/SECURITY-HARDENING.md) for the
+arithmetic. On the reference box `scripts/box-deploy.sh preflight` prints
+the budget.
+
 ### Redis
 
 | Variable | Type | Default | Description |
@@ -155,7 +163,7 @@ with `POST /api/v1/admin/oauth/signing-keys/rotate`.
 | `RATE_LIMIT_WINDOW` | int | `60` | Window in seconds. |
 | `RATE_LIMIT_AUTH_REQUESTS` | int | `20` | Requests allowed per window on authentication routes, which fail **closed** when Redis is unreachable. |
 | `RATE_LIMIT_AUTH_WINDOW` | int | `60` | Window in seconds for authentication routes. |
-| `RATE_LIMIT_PER_USER` | bool | `false` | Key the limiter on the authenticated user rather than the client IP. |
+| `RATE_LIMIT_PER_USER` | bool | `false` | Key the limiter on the authenticated user rather than the client IP. Also counts `/oauth/login` and `/eam/*` against the submitted username (hashed, lower-cased) at the auth-tier limit, so rotating IPs cannot spray one account. Recommended `true` for internet-facing deployments; see [SECURITY-HARDENING.md](../guides/SECURITY-HARDENING.md). |
 | `RATE_LIMIT_LOCAL_FALLBACK_MAX` | int | `60` | Seconds the authentication tier may be enforced from a process-local counter while Redis is unreachable, before it fails closed again. `0` fails closed on the first failed call. |
 | `RATE_LIMIT_REPLICA_HINT` | int | `3` | Replica count the local fallback divides the authentication quota by, since replicas cannot see each other's counters. Too low admits more than intended; too high refuses legitimate logins early. |
 
@@ -397,6 +405,8 @@ Archival, not here: they are per organization.
 | `APISIX_CONFIG_PATH` | path | - | APISIX config file the bootstrapper writes. |
 | `BROWZER_ENABLED` | bool | `false` | Manage a BrowZer bootstrapper for clientless access. |
 | `BROWZER_CLIENT_ID` | string | `browzer-client` | OAuth client BrowZer uses. |
+| `ZITI_USER_SYNC_BATCH` | int | `100` | Users without an overlay identity the access service creates per sync tick, and stale identities it refreshes. Clamped to 1000. |
+| `ZITI_USER_SYNC_INTERVAL` | duration | `30s` | Sync tick. Minimum `5s`. A BrowZer sign-in also queues an on-demand sync of that user in Redis, drained every few seconds, so a first clientless visit does not wait for the tick. |
 | `ACCESS_PROXY_DOMAIN` | string | `localhost` | Externally reachable host of the access proxy. It is the host of every temporary vendor-access link, so it must be a name the **outside party** can resolve. Production refuses a loopback value (`localhost`, `127.0.0.0/8`, `::1`, `*.localtest.me`, `*.nip.io`): a link built from one opens the recipient's own machine. Left empty, link issuance refuses with a message naming this setting. |
 
 `ZITI_*`, `BROWZER_*` and `GUACAMOLE_*` have more variables than are useful to

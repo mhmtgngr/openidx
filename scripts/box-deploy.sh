@@ -127,7 +127,32 @@ step_preflight() {
   echo "staged migrate on live: $(DATABASE_URL=$(app_url) "$STAGE/oidx-migrate" version 2>&1 | strip_ansi | tail -1 | cut -c1-160 || true)"
   echo "owner URL found: $([ -n "$(owner_url)" ] && echo yes || echo NO)"
   echo "units: $(unit_states)"
+  pool_budget
   df -h "$HOME" | tail -1
+}
+
+# DB pool budget (Faz B7.7). Before the stakeholder pilot identity, oauth and
+# access run with DB_MAX_CONNS=25 (a systemd drop-in per unit, e.g.
+# ~/.config/systemd/user/oidx-oauth.service.d/20-db-pool.conf containing
+# "[Service]" / "Environment=DB_MAX_CONNS=25"); the other services keep the
+# default 10. Each service may also open a DATABASE_BYPASS_URL pool capped at
+# 8. The sum must stay under Postgres max_connections with headroom for
+# migrate, backups and psql, so this prints both and warns when it does not.
+POOL_HEADROOM=${POOL_HEADROOM:-15}
+pool_budget() {
+  local u v total=0 bypass=0 maxc
+  for u in $UNITS; do
+    v=$(systemctl --user show -p Environment "$u.service" 2>/dev/null | grep -oE 'DB_MAX_CONNS=[0-9]+' | tail -1 | cut -d= -f2 || true)
+    [ -n "$v" ] || v=$(grep -E '^DB_MAX_CONNS=' "$ENVF" 2>/dev/null | tail -1 | cut -d= -f2 || true)
+    total=$((total + ${v:-10}))
+    bypass=$((bypass + 8))
+  done
+  grep -qE '^DATABASE_BYPASS_URL=' "$ENVF" 2>/dev/null || bypass=0
+  maxc=$(pg -c 'show max_connections' 2>/dev/null || echo 0)
+  echo "db pool budget: app=$total bypass<=$bypass headroom=$POOL_HEADROOM max_connections=$maxc"
+  if [ "$maxc" -gt 0 ] && [ $((total + bypass + POOL_HEADROOM)) -gt "$maxc" ]; then
+    echo "WARNING: pools can exceed max_connections; raise it (podman: -c max_connections=200) before start"
+  fi
 }
 
 # Restore a dump into a throwaway postgres:16-alpine container and run the
