@@ -65,6 +65,10 @@ type DesiredRoute struct {
 	// AccessAssignmentEnforce is on; while it's off the marker is added beside the
 	// blanket grant instead of replacing it.
 	ApplicationID string
+	// SiteSlug is the slug of the route's site (proxy_routes.site_id), "" for
+	// the default site. A router-hosted route is bound to that site's routers
+	// (#site-<slug>); the default site keeps #ziti-routers.
+	SiteSlug string
 }
 
 // EffectiveMode resolves the hosting mode. identity mode is never valid for a
@@ -380,7 +384,8 @@ func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRout
 		//orgscope:ignore install-wide Ziti reconcile; keyed by globally-unique ziti_service_name across all orgs
 		`SELECT ziti_service_name, to_url, COALESCE(hosting_mode,'identity'), COALESCE(browzer_enabled,false), COALESCE(org_id::text,''),
 		        COALESCE((SELECT id::text FROM applications WHERE route_id = proxy_routes.id AND enabled = true ORDER BY id LIMIT 1), ''),
-		        COALESCE(require_device_trust, false)
+		        COALESCE(require_device_trust, false),
+		        COALESCE((SELECT slug FROM sites WHERE sites.id = proxy_routes.site_id), '')
 		 FROM proxy_routes
 		 WHERE ziti_enabled = true AND enabled = true
 		   AND ziti_service_name IS NOT NULL AND ziti_service_name != ''`)
@@ -391,7 +396,7 @@ func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRout
 	var out []DesiredRoute
 	for rows.Next() {
 		var d DesiredRoute
-		if err := rows.Scan(&d.ServiceName, &d.ToURL, &d.HostingMode, &d.BrowZerEnabled, &d.OrgID, &d.ApplicationID, &d.RequireDeviceTrust); err != nil {
+		if err := rows.Scan(&d.ServiceName, &d.ToURL, &d.HostingMode, &d.BrowZerEnabled, &d.OrgID, &d.ApplicationID, &d.RequireDeviceTrust, &d.SiteSlug); err != nil {
 			rec.logger.Warn("reconciler: scan route failed", zap.Error(err))
 			continue
 		}
@@ -517,12 +522,24 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	if isRouterHosted(d.EffectiveMode()) {
 		// The router hosts the service via host.v1, so Bind goes to the routers;
 		// BrowZer clients (synced users) dial via #browzer-users.
-		if err := zm.EnsureRouterRoleAttribute(ctx); err != nil {
-			// A persistent failure here means the #ziti-routers Bind matches no
-			// router, so the service silently has no host — warn, don't bury it.
-			rec.logger.Warn("failed to tag routers with #ziti-routers", zap.Error(err))
+		bindIdentity = siteBindRole(d.SiteSlug)
+		if isDefaultSite(d.SiteSlug) {
+			if err := zm.EnsureRouterRoleAttribute(ctx); err != nil {
+				// A persistent failure here means the #ziti-routers Bind matches no
+				// router, so the service silently has no host — warn, don't bury it.
+				rec.logger.Warn("failed to tag routers with #ziti-routers", zap.Error(err))
+			}
+		} else {
+			// A site other than the default is hosted only by its own routers.
+			// With none, the Bind would match nothing: fail closed and say so.
+			n, err := zm.routersInSite(ctx, d.SiteSlug)
+			if err != nil {
+				return fmt.Errorf("tag routers: %w", err)
+			}
+			if n == 0 {
+				return errNoRouterInSite(d.SiteSlug)
+			}
 		}
-		bindIdentity = "#ziti-routers"
 		dialIdentity = "#browzer-users"
 	}
 	// Use EnsureServicePolicy (upsert) rather than CreateServicePolicy so a

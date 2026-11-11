@@ -20,6 +20,9 @@ type DesiredNetworkService struct {
 	ServiceName        string
 	Target             NetworkTarget
 	RequireDeviceTrust bool
+	// SiteSlug is the slug of the target's site (network_targets.site_id), ""
+	// for the default site; the service is bound to that site's routers.
+	SiteSlug string
 }
 
 // loadDesiredNetworkServices reads every network resource (install-wide, like
@@ -31,9 +34,10 @@ func (rec *ZitiReconciler) loadDesiredNetworkServices(ctx context.Context) ([]De
 		//orgscope:ignore install-wide Ziti reconcile; each service is keyed by its application's globally-unique id and carries that row's org_id
 		`SELECT a.id::text, a.org_id::text, nt.hosts, COALESCE(nt.cidrs::text[], '{}'), nt.dns_names,
 		        nt.port_ranges, nt.protocols, COALESCE(nt.forward_address, ''), COALESCE(nt.forward_port, 0),
-		        COALESCE(rc.require_device_trust, false)
+		        COALESCE(rc.require_device_trust, false), COALESCE(st.slug, '')
 		   FROM applications a
 		   JOIN network_targets nt ON nt.application_id = a.id AND nt.org_id = a.org_id
+		   LEFT JOIN sites st ON st.id = nt.site_id
 		   LEFT JOIN resource_conditions rc ON rc.application_id = a.id AND rc.org_id = a.org_id
 		  WHERE a.kind = 'network' AND a.enabled = true AND a.org_id IS NOT NULL
 		  ORDER BY a.id`)
@@ -47,7 +51,7 @@ func (rec *ZitiReconciler) loadDesiredNetworkServices(ctx context.Context) ([]De
 		var t NetworkTarget
 		var portRanges []byte
 		if err := rows.Scan(&d.ApplicationID, &d.OrgID, &t.Hosts, &t.CIDRs, &t.DNSNames,
-			&portRanges, &t.Protocols, &t.ForwardAddress, &t.ForwardPort, &d.RequireDeviceTrust); err != nil {
+			&portRanges, &t.Protocols, &t.ForwardAddress, &t.ForwardPort, &d.RequireDeviceTrust, &d.SiteSlug); err != nil {
 			rec.logger.Warn("reconciler: scan network resource failed", zap.Error(err))
 			continue
 		}
@@ -121,11 +125,23 @@ func (rec *ZitiReconciler) ensureNetworkService(ctx context.Context, zm *ZitiMan
 	}
 
 	svcRole := "#" + d.ServiceName
-	if err := zm.EnsureRouterRoleAttribute(ctx); err != nil {
-		rec.logger.Warn("network service: tag routers failed", zap.String("svc", d.ServiceName), zap.Error(err))
+	if isDefaultSite(d.SiteSlug) {
+		if err := zm.EnsureRouterRoleAttribute(ctx); err != nil {
+			rec.logger.Warn("network service: tag routers failed", zap.String("svc", d.ServiceName), zap.Error(err))
+		}
+	} else {
+		// Hosted only by the routers of its site; with none it fails closed
+		// (removed from the overlay, status names the site).
+		n, err := zm.routersInSite(ctx, d.SiteSlug)
+		if err != nil {
+			return fmt.Errorf("tag routers: %w", err)
+		}
+		if n == 0 {
+			return errNoRouterInSite(d.SiteSlug)
+		}
 	}
 	if _, err := zm.EnsureServicePolicyForOrg(ctx, d.OrgID, "openidx-bind-"+d.ServiceName, "Bind",
-		[]string{svcRole}, []string{"#ziti-routers"}); err != nil {
+		[]string{svcRole}, []string{siteBindRole(d.SiteSlug)}); err != nil {
 		return fmt.Errorf("bind policy: %w", err)
 	}
 	dialRoles, semantic := networkDialPolicy(d.ApplicationID, rec.assignmentEnforce, d.RequireDeviceTrust)
