@@ -4263,6 +4263,15 @@ paths:
       tags: [MFA Configuration]
       summary: Create MFA policy
       operationId: createMFAPolicy
+      description: |
+        `conditions` may scope the policy to a population. Every condition present
+        must match; each is a non-empty list of distinct values:
+        `groups` (group names), `user_types` (internal, external, service),
+        `vendor_org_ids` (partner organization ids), `idp_ids` (identity
+        provider ids; a sign-in not through that IdP never matches) and
+        `client_ids` (OAuth client ids; a sign-in with no application never
+        matches). Any other condition (ip_ranges, time_windows, attributes, ...)
+        is refused with 400.
       x-openidx-handler: internal/admin.(*Service).handleCreateMFAPolicy
       requestBody:
         required: false
@@ -4339,6 +4348,15 @@ paths:
       tags: [MFA Configuration]
       summary: Update MFA policy
       operationId: updateMFAPolicy
+      description: |
+        `conditions` may scope the policy to a population. Every condition present
+        must match; each is a non-empty list of distinct values:
+        `groups` (group names), `user_types` (internal, external, service),
+        `vendor_org_ids` (partner organization ids), `idp_ids` (identity
+        provider ids; a sign-in not through that IdP never matches) and
+        `client_ids` (OAuth client ids; a sign-in with no application never
+        matches). Any other condition (ip_ranges, time_windows, attributes, ...)
+        is refused with 400.
       x-openidx-handler: internal/admin.(*Service).handleUpdateMFAPolicy
       requestBody:
         required: false

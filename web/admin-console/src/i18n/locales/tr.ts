@@ -3525,7 +3525,7 @@ const tr: typeof en = {
           'Bir politika etkinken, parolayla giriş yapan her kullanıcıya uygulanır. Zorunlu yöntem seçilmemişse, ikinci faktör kaydı olan kullanıcıdan bu faktör istenir ve kayıtlı herhangi bir faktör yeterlidir. Zorunlu yöntemler seçilmişse yalnızca onlar yeterlidir ve bunlardan hiçbiri olmayan kullanıcıya birini eklemesi için ek süre tanınır. Öncelik numarası en düşük etkin politika karar verir.',
         notEnforcedBadge: 'kayıtlı koşullar uygulanmıyor',
         notEnforcedBody:
-          'Bu politika, gruplar dışında istemci kimlikleri gibi koşullarla kaydedilmiş. Bu koşullar uygulanmıyor: grupları dışında politika parolayla giriş yapan her kullanıcıya uygulanır.',
+          'Bu politika, IP aralıkları gibi uygulanmayan koşullarla kaydedilmiş. Kapsam koşulları dışında politika parolayla giriş yapan her kullanıcıya uygulanır.',
         groupsBadge: 'Gruplar: {{names}}',
         groupsBody: 'Politika yalnızca bu grupların üyelerine uygulanır.',
         anyFactor: 'Kayıtlı herhangi bir faktör',
@@ -3578,6 +3578,16 @@ const tr: typeof en = {
         groups: 'Uygulanacağı gruplar',
         groupsHelp:
           'Hiçbiri seçili değilse politika herkese uygulanır. Seçim yapılırsa yalnızca seçili bir grubun üyeleri kapsama girer; birimler bu şekilde teker teker alınır.',
+        audience: {
+          user_types: 'Uygulanır: kullanıcı tipi',
+          vendor_org_ids: 'Uygulanır: paydaş kurumu',
+          idp_ids: 'Uygulanır: kimlik sağlayıcı (IdP)',
+          client_ids: 'Uygulanır: uygulama',
+        },
+        audienceNone: 'Seçilebilecek bir şey yok.',
+        audienceHelp:
+          'Seçilen her koşul sağlanmalıdır. Bir IdP veya uygulama koşulu, o IdP üzerinden ya da o uygulama için yapılmayan girişlere (örneğin parolayla, uygulamasız giriş) hiçbir zaman uygulanmaz.',
+        userType: { internal: 'İç kullanıcı', external: 'Dış kullanıcı', service: 'Servis hesabı' },
         groupsFilter: 'Grup ara…',
         groupsNone: 'Eşleşen grup yok.',
         groupsLoadFailed: 'Gruplar yüklenemedi; politika herkese uygulanır.',

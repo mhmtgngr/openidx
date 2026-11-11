@@ -35,7 +35,7 @@ interface MFAPolicy {
   description: string
   enabled: boolean
   priority: number
-  conditions: Record<string, unknown> & { groups?: string[] }
+  conditions: Record<string, unknown> & Partial<Record<AudienceKey, string[]>>
   required_methods: string[]
   grace_period_hours: number
   created_at: string
@@ -76,6 +76,52 @@ const policyMethods = ['totp', 'webauthn', 'push', 'sms', 'email']
 // The API's bound on the grace period: 30 days.
 const maxGraceHours = 720
 
+// The conditions that scope a policy to a population (B3.1). Every one present
+// has to match. A sign-in without an identity provider or an application never
+// matches an IdP or application condition.
+const audienceKeys = ['groups', 'user_types', 'vendor_org_ids', 'idp_ids', 'client_ids'] as const
+type AudienceKey = (typeof audienceKeys)[number]
+const userTypes = ['internal', 'external', 'service']
+
+// policyAudience is the population conditions a policy stores.
+function policyAudience(p: Pick<MFAPolicy, 'conditions'>): Partial<Record<AudienceKey, string[]>> {
+  const out: Partial<Record<AudienceKey, string[]>> = {}
+  for (const k of audienceKeys) {
+    const v = p.conditions?.[k]
+    if (Array.isArray(v)) {
+      const list = v.filter((x): x is string => typeof x === 'string')
+      if (list.length > 0) out[k] = list
+    }
+  }
+  return out
+}
+
+interface Option {
+  value: string
+  label: string
+}
+
+// asOptions reads a list endpoint that answers a bare array or wraps it
+// (data, or a named key) into checkbox options.
+function asOptions(v: unknown, key: string, valueField: string, labelFields: string[]): Option[] {
+  const obj = v as Record<string, unknown> | null
+  const list = Array.isArray(v)
+    ? v
+    : Array.isArray(obj?.[key])
+      ? (obj?.[key] as unknown[])
+      : Array.isArray(obj?.data)
+        ? (obj?.data as unknown[])
+        : []
+  return list
+    .map((x) => {
+      const r = x as Record<string, unknown>
+      const value = String(r[valueField] ?? '')
+      const label = labelFields.map((f) => r[f]).find((l) => typeof l === 'string' && l !== '') as string | undefined
+      return { value, label: label ?? value }
+    })
+    .filter((o) => o.value !== '')
+}
+
 // policyGroups is the groups a policy is scoped to; empty means everyone.
 function policyGroups(p: Pick<MFAPolicy, 'conditions'>): string[] {
   const groups = p.conditions?.groups
@@ -86,7 +132,7 @@ function policyGroups(p: Pick<MFAPolicy, 'conditions'>): string[] {
 // stores conditions other than groups, which nothing enforces, so the table
 // can say so.
 function storesUnenforcedConditions(p: Pick<MFAPolicy, 'conditions'>): boolean {
-  return Object.keys(p.conditions ?? {}).some((k) => k !== 'groups')
+  return Object.keys(p.conditions ?? {}).some((k) => !(audienceKeys as readonly string[]).includes(k))
 }
 
 interface GroupOption {
@@ -180,6 +226,32 @@ export default function MFAManagement() {
     g.name.toLowerCase().includes(groupFilter.trim().toLowerCase()),
   )
 
+  // The other populations a policy can be scoped to; loaded while the dialog is open.
+  const { data: vendorData } = useQuery({
+    queryKey: ['mfa-policy-vendor-orgs'],
+    queryFn: () => api.get<unknown>('/api/v1/identity/vendor-orgs'),
+    enabled: policyDialogOpen,
+    staleTime: 60_000,
+  })
+  const { data: idpData } = useQuery({
+    queryKey: ['mfa-policy-idps'],
+    queryFn: () => api.get<unknown>('/api/v1/identity/providers'),
+    enabled: policyDialogOpen,
+    staleTime: 60_000,
+  })
+  const { data: appData } = useQuery({
+    queryKey: ['mfa-policy-applications'],
+    queryFn: () => api.get<unknown>('/api/v1/applications'),
+    enabled: policyDialogOpen,
+    staleTime: 60_000,
+  })
+  const audienceOptions: Record<Exclude<AudienceKey, 'groups'>, Option[]> = {
+    user_types: userTypes.map((u) => ({ value: u, label: t(`pages.mfaManagement.dialog.userType.${u}`) })),
+    vendor_org_ids: asOptions(vendorData, 'vendor_organizations', 'id', ['name', 'display_name']),
+    idp_ids: asOptions(idpData, 'providers', 'id', ['name', 'display_name']),
+    client_ids: asOptions(appData, 'applications', 'client_id', ['name']),
+  }
+
   // Fetch user MFA status
   const { data: usersData, isLoading: usersLoading, isError: usersIsError, error: usersError } = useQuery({
     queryKey: ['mfa-user-status', userPage],
@@ -262,7 +334,7 @@ export default function MFAManagement() {
     // Only what the form edits is sent back. Groups are edited; any other
     // stored condition, which nothing enforces, is left as it is rather than
     // re-submitted.
-    const groups = policyGroups(policy)
+    const audience = policyAudience(policy)
     setFormData({
       name: policy.name,
       description: policy.description,
@@ -270,19 +342,22 @@ export default function MFAManagement() {
       priority: policy.priority,
       required_methods: [...(policy.required_methods ?? [])],
       grace_period_hours: policy.grace_period_hours ?? 0,
-      ...(groups.length > 0 ? { conditions: { groups } } : {}),
+      ...(Object.keys(audience).length > 0 ? { conditions: audience } : {}),
     })
     setGroupFilter('')
     setPolicyDialogOpen(true)
   }
 
-  const toggleGroup = (name: string, checked: boolean) => {
-    const next = checked
-      ? [...selectedGroups.filter((g) => g !== name), name]
-      : selectedGroups.filter((g) => g !== name)
+  const toggleAudience = (key: AudienceKey, value: string, checked: boolean) => {
+    const current = formData.conditions?.[key] ?? []
+    const next = checked ? [...current.filter((v) => v !== value), value] : current.filter((v) => v !== value)
+    const conditions: Partial<Record<AudienceKey, string[]>> = { ...policyAudience({ conditions: formData.conditions ?? {} }) }
+    if (next.length > 0) conditions[key] = next
+    else delete conditions[key]
     const { conditions: _dropped, ...rest } = formData
-    setFormData(next.length > 0 ? { ...rest, conditions: { groups: next } } : rest)
+    setFormData(Object.keys(conditions).length > 0 ? { ...rest, conditions } : rest)
   }
+  const toggleGroup = (name: string, checked: boolean) => toggleAudience('groups', name, checked)
 
   // A grace period is the time to add a required method, so a policy with none
   // has none: unchecking the last method clears it.
@@ -310,7 +385,8 @@ export default function MFAManagement() {
       // Groups removed from a policy that had them: send an empty object, or
       // the stored ones would stay.
       const data =
-        selectedGroups.length === 0 && policyGroups(selectedPolicy).length > 0
+        Object.keys(policyAudience({ conditions: formData.conditions ?? {} })).length === 0 &&
+        Object.keys(policyAudience(selectedPolicy)).length > 0
           ? { ...formData, conditions: {} }
           : formData
       updatePolicyMutation.mutate({ id: selectedPolicy.id, data })
@@ -490,6 +566,13 @@ export default function MFAManagement() {
                                   {t('pages.mfaManagement.policies.groupsBadge', { names: policyGroups(policy).join(', ') })}
                                 </Badge>
                               )}
+                              {(['user_types', 'vendor_org_ids', 'idp_ids', 'client_ids'] as const)
+                                .filter((k) => (policyAudience(policy)[k]?.length ?? 0) > 0)
+                                .map((k) => (
+                                  <Badge key={k} variant="secondary" className="ml-2 text-xs">
+                                    {t(`pages.mfaManagement.dialog.audience.${k}`)}: {policyAudience(policy)[k]!.length}
+                                  </Badge>
+                                ))}
                               {storesUnenforcedConditions(policy) && (
                                 <Badge
                                   variant="outline"
@@ -801,6 +884,30 @@ export default function MFAManagement() {
               </div>
               <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.dialog.groupsHelp')}</p>
             </fieldset>
+            {(['user_types', 'vendor_org_ids', 'idp_ids', 'client_ids'] as const).map((key) => (
+              <fieldset key={key} className="space-y-2">
+                <legend className="text-sm font-medium">{t(`pages.mfaManagement.dialog.audience.${key}`)}</legend>
+                <div className="max-h-32 space-y-1 overflow-y-auto rounded-md border p-2">
+                  {audienceOptions[key].length === 0 ? (
+                    <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.dialog.audienceNone')}</p>
+                  ) : (
+                    audienceOptions[key].map((o) => (
+                      <div key={o.value} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`mfa-policy-${key}-${o.value}`}
+                          checked={(formData.conditions?.[key] ?? []).includes(o.value)}
+                          onCheckedChange={(checked) => toggleAudience(key, o.value, checked === true)}
+                        />
+                        <label htmlFor={`mfa-policy-${key}-${o.value}`} className="text-sm">
+                          {o.label}
+                        </label>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </fieldset>
+            ))}
+            <p className="text-xs text-muted-foreground">{t('pages.mfaManagement.dialog.audienceHelp')}</p>
             <fieldset className="space-y-2">
               <legend className="text-sm font-medium">{t('pages.mfaManagement.dialog.requiredMethods')}</legend>
               <div className="grid grid-cols-2 gap-3 pt-1">
