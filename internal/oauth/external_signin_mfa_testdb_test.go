@@ -189,6 +189,7 @@ func (x *externalHarness) loginSession() string {
 	params, _ := json.Marshal(map[string]string{
 		"client_id": "admin-console", "redirect_uri": "http://localhost:3000/login",
 		"response_type": "code", "scope": "openid", "state": "st-1",
+		"code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method": "S256",
 	})
 	if err := x.issuer.redis.Client.Set(context.Background(), "login_session:"+id, params, 10*time.Minute).Err(); err != nil {
 		x.t.Fatalf("seed login session: %v", err)

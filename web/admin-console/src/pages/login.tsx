@@ -61,6 +61,10 @@ const linkErrors: Record<string, string> = {
   sso_mfa_enrollment_required: 'login.errors.ssoNeedsEnrollment',
   sso_high_risk_login: 'login.errors.ssoRefusedRisk',
   sso_sign_in_failed: 'login.errors.ssoFailed',
+  sso_nonce_mismatch: 'login.errors.ssoNonceMismatch',
+  sso_idp_error: 'login.errors.ssoIdpError',
+  sso_user_not_found: 'login.errors.ssoUserNotFound',
+  sso_partner_not_registered: 'login.errors.ssoPartnerNotRegistered',
   mfa_required: 'login.errors.linkNeedsSecondFactor',
   mfa_enrollment_required: 'login.errors.linkNeedsEnrollment',
   high_risk_login: 'login.errors.linkRefusedRisk',
@@ -141,6 +145,10 @@ export function LoginPage() {
   // Login form state
   const [loginSession, setLoginSession] = useState<string | null>(null)
   const [username, setUsername] = useState('')
+  // Home-realm discovery: the IdP an email's domain belongs to, when the
+  // federation rule does not redirect on its own.
+  const [suggestedIdP, setSuggestedIdP] = useState<string | null>(null)
+  const discoveredFor = useRef('')
   const [password, setPassword] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -540,8 +548,19 @@ export function LoginPage() {
     }
   }
 
-  const handleSSOLogin = async (idp: IdentityProvider) => {
+  const handleSSOLogin = async (idp: Pick<IdentityProvider, 'id'>, loginHint?: string) => {
     setError('')
+    // A pending request from another client (login_session) is completed as
+    // that client's: the server takes client_id, redirect_uri, state and PKCE
+    // from the stored request, so the page sends only the IdP and the handle.
+    if (loginSession) {
+      const authUrl = new URL(`${baseURL}/oauth/authorize`)
+      authUrl.searchParams.set('idp_hint', idp.id)
+      authUrl.searchParams.set('login_session', loginSession)
+      if (loginHint) authUrl.searchParams.set('login_hint', loginHint)
+      window.location.href = authUrl.toString()
+      return
+    }
     // PKCE, the same as the primary login button in lib/auth.tsx. This URL was
     // hand-built without a challenge, and the server accepted it because
     // /oauth/authorize enforced no part of RFC 7636 — so the code this flow
@@ -564,7 +583,38 @@ export function LoginPage() {
     authUrl.searchParams.set('code_challenge', challenge)
     authUrl.searchParams.set('code_challenge_method', method)
     authUrl.searchParams.set('idp_hint', idp.id)
+    if (loginHint) authUrl.searchParams.set('login_hint', loginHint)
     window.location.href = authUrl.toString()
+  }
+
+  // handleEmailBlur asks which IdP an email's domain signs in with
+  // (POST /api/v1/identity/federation/discover). A rule with auto_redirect
+  // goes there with the email as login_hint; otherwise the IdP's button is
+  // highlighted. Silent on any failure: discovery is a convenience.
+  const handleEmailBlur = async () => {
+    const email = username.trim()
+    if (!email.includes('@') || discoveredFor.current === email) return
+    discoveredFor.current = email
+    try {
+      const response = await fetch(`${baseURL}/api/v1/identity/federation/discover`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      if (!response.ok) return
+      const data = await response.json()
+      if (!data?.found || !data.provider_id) {
+        setSuggestedIdP(null)
+        return
+      }
+      if (data.auto_redirect) {
+        await handleSSOLogin({ id: data.provider_id }, email)
+        return
+      }
+      setSuggestedIdP(data.provider_id)
+    } catch {
+      // discovery is optional
+    }
   }
 
   const handleCredentialsSubmit = async (e: React.FormEvent) => {
@@ -1731,6 +1781,7 @@ export function LoginPage() {
                   placeholder={t('login.form.usernamePlaceholder')}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
+                  onBlur={handleEmailBlur}
                   required
                   autoComplete="username"
                   autoFocus
@@ -1913,8 +1964,9 @@ export function LoginPage() {
                   return (
                     <Button
                       key={idp.id}
-                      onClick={() => handleSSOLogin(idp)}
-                      className="w-full bg-gray-700 hover:bg-gray-800 text-white"
+                      onClick={() => handleSSOLogin(idp, suggestedIdP === idp.id ? username.trim() : undefined)}
+                      className={`w-full bg-gray-700 hover:bg-gray-800 text-white${suggestedIdP === idp.id ? ' ring-2 ring-offset-2 ring-blue-500' : ''}`}
+                      data-suggested={suggestedIdP === idp.id ? 'true' : undefined}
                       size="lg"
                       disabled={isLoading}
                     >

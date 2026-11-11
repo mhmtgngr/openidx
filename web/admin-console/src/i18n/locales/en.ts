@@ -665,6 +665,10 @@ const en = {
         'Your organization requires a sign-in method you have not added, and the time to add one has passed. Ask an administrator for a bypass code.',
       ssoRefusedRisk: 'This sign-in was refused from here. Try again from a device you have used before, or ask an administrator.',
       ssoFailed: 'This sign-in could not be completed. Try again.',
+      ssoNonceMismatch: 'The identity provider response did not match this sign-in. Start again.',
+      ssoIdpError: 'Your identity provider did not complete the sign-in. Try again or contact your administrator.',
+      ssoUserNotFound: 'No account here matches your identity provider account. Ask an administrator for access.',
+      ssoPartnerNotRegistered: 'Your organization is not registered for sign-in here. Contact your administrator.',
     },
     resume: {
       checking: 'Checking your existing session…',

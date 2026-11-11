@@ -870,4 +870,64 @@ describe('LoginPage', () => {
       expect(screen.queryByTestId('mfa-no-usable-method')).not.toBeInTheDocument()
     })
   })
+  // Home-realm discovery (B1.3): an email whose domain has a federation rule
+  // goes to that IdP carrying the pending login_session and the email.
+  describe('home-realm discovery', () => {
+    const fetchMock = vi.fn()
+    beforeEach(() => {
+      fetchMock.mockReset()
+      vi.stubGlobal('fetch', fetchMock)
+    })
+    afterEach(() => {
+      sessionStorage.clear()
+      window.location.search = ''
+      window.location.href = 'http://localhost:5173/login'
+      vi.unstubAllGlobals()
+    })
+
+    it('redirects to the discovered IdP with login_session and login_hint', async () => {
+      window.location.search = '?login_session=ls-hrd-1'
+      fetchMock.mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ found: true, provider_id: 'idp-entra', auto_redirect: true }),
+        } as Response)
+      )
+      const user = userEvent.setup()
+      renderWithRouter(<LoginPage />)
+      await user.type(screen.getByLabelText(/username or email/i), 'ayse@tdv.org')
+      await user.tab()
+      await waitFor(() => expect(window.location.href).toContain('/oauth/authorize'))
+      const [url, init] = fetchMock.mock.calls[0]
+      expect(String(url)).toContain('/api/v1/identity/federation/discover')
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual({ email: 'ayse@tdv.org' })
+      const target = new URL(window.location.href)
+      expect(target.searchParams.get('idp_hint')).toBe('idp-entra')
+      expect(target.searchParams.get('login_session')).toBe('ls-hrd-1')
+      expect(target.searchParams.get('login_hint')).toBe('ayse@tdv.org')
+      expect(target.searchParams.get('client_id')).toBeNull()
+    })
+
+    it('does not redirect without auto_redirect (control)', async () => {
+      window.location.search = '?login_session=ls-hrd-2'
+      fetchMock.mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ found: true, provider_id: 'idp-entra', auto_redirect: false }),
+        } as Response)
+      )
+      const user = userEvent.setup()
+      renderWithRouter(<LoginPage />)
+      await user.type(screen.getByLabelText(/username or email/i), 'ayse@tdv.org')
+      await user.tab()
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+      expect(window.location.href).not.toContain('/oauth/authorize')
+    })
+
+    it('says why an SSO sign-in was refused', async () => {
+      window.location.search = '?error=sso_user_not_found'
+      renderWithRouter(<LoginPage />)
+      expect(await screen.findByText(/no account here matches/i)).toBeInTheDocument()
+    })
+  })
 })
