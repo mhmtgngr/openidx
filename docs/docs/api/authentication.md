@@ -169,6 +169,11 @@ are sent; the ID token is fully verified; users are linked by the provider's
 `external_id_claim`. The [inbound federation guide](../guides/FEDERATION-INBOUND.md)
 covers provider setup, the profile fields and the login page's error codes.
 
+**Applications sign in with OpenID Connect.** SP-initiated SAML sign-on is
+refused with `403 saml_sp_initiated_unsupported`, and IdP-initiated sign-on is
+off unless `SAML_IDP_ENABLED=true`: neither path applies MFA policies,
+application assignment or device trust yet.
+
 The IdP metadata is at `/saml/idp/metadata`. Register a service provider in
 the Admin Console under **Applications > SAML Applications**, or import its
 metadata through `POST /api/v1/saml/service-providers/import-metadata`.
@@ -282,7 +287,7 @@ Access tokens and ID tokens are JWTs signed with RS256.
   "iat": 1710804000,
   "auth_time": 1710803900,
   "nonce": "n-0S6_WzA2Mj",
-  "acr": "AAL2",
+  "acr": "urn:openidx:mfa",
   "amr": ["pwd", "mfa"],
   "name": "Jane Doe",
   "email": "jane@example.com",

@@ -149,6 +149,7 @@ nav:
           - Token Exchange (RFC 8693) & Dynamic Client Registration (RFC 7591/7592): guides/TOKEN_EXCHANGE_AND_DCR.md
           - SAML 2.0 Identity Provider - OpenIDX: guides/SAML.md
           - Inbound federation (Entra ID, AD FS, OIDC): guides/FEDERATION-INBOUND.md
+          - Signing in to an ABP application with OpenIDX: guides/ABP-INTEGRATION.md
           - OpenIDX MFA Implementation Guide: guides/MFA_IMPLEMENTATION_GUIDE.md
           - Entra External MFA (EAM) Runbook: guides/ENTRA-EAM.md
           - SSF/CAEP — Shared Signals with Ziti-Honored Termination: guides/SSF_CAEP.md
