@@ -40,10 +40,21 @@ func TestAllMigrationsIntegrity(t *testing.T) {
 	// Versions must form a contiguous 1..N range. Gaps are usually a sign
 	// that a registry-list entry was forgotten when a new sql.go block was
 	// added (exactly the v30 failure mode).
-	for v := 1; v <= len(all); v++ {
-		if _, ok := seen[v]; !ok {
+	// reservedVersions are claimed by branches in flight (247: vendor
+	// federation, B2.1); a version leaves this set when its migration lands.
+	// The runner applies by version, not position, so a reserved gap is
+	// harmless at runtime.
+	reservedVersions := map[int]bool{247: true}
+	maxV := 0
+	for v := range seen {
+		if v > maxV {
+			maxV = v
+		}
+	}
+	for v := 1; v <= maxV; v++ {
+		if _, ok := seen[v]; !ok && !reservedVersions[v] {
 			t.Errorf("missing migration version %d (allMigrations has %d entries; expected 1..%d contiguous)",
-				v, len(all), len(all))
+				v, len(all), maxV)
 		}
 	}
 }
