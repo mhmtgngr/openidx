@@ -65,6 +65,10 @@ type ZitiManager struct {
 	// dropped silently or attached to a default org — see ziti_mirror.go.
 	mirrorSkippedNoOrg atomic.Int64
 
+	// siteRoutersOverride, when non-nil, replaces the site_routers read
+	// (router id -> site slug). Tests only.
+	siteRoutersOverride map[string]string
+
 	// pool holds the controller management endpoints (primary + optional HA
 	// cluster members from ZitiCtrlURLs) with cooldown-based failover. Nil in
 	// tests that construct the struct directly; all callers fall back to
@@ -2902,16 +2906,96 @@ func (zm *ZitiManager) createServiceWithConfigID(ctx context.Context, name strin
 	return resp.Data.ID, nil
 }
 
-// EnsureRouterRoleAttribute tags every edge router with the "ziti-routers" role
-// attribute (idempotent), so direct-mode Bind policies can grant the routers as
-// a stable role (#ziti-routers) instead of by id.
+// DefaultSiteSlug is the slug of the seeded default site (migration 249). A
+// route or network resource with no site, or with this one, is hosted exactly
+// as before sites existed: Bind to #ziti-routers.
+const DefaultSiteSlug = "default"
+
+// siteRouterAttrPrefix prefixes the role attribute naming a router's site.
+const siteRouterAttrPrefix = "site-"
+
+// isDefaultSite reports whether slug names the default site.
+func isDefaultSite(slug string) bool { return slug == "" || slug == DefaultSiteSlug }
+
+// siteBindRole is the identity role a router-hosted service's Bind policy
+// names: the routers of its site. The default site keeps #ziti-routers, which
+// every router carries, so an install without sites converges to exactly what
+// it did before.
+func siteBindRole(slug string) string {
+	if isDefaultSite(slug) {
+		return "#ziti-routers"
+	}
+	return "#" + siteRouterAttrPrefix + slug
+}
+
+// errNoRouterInSite is the fail-closed convergence error for a service whose
+// site has no edge router: its Bind would match nothing.
+func errNoRouterInSite(slug string) error {
+	return fmt.Errorf("no router in site %q", slug)
+}
+
+// siteRouterMap reads site_routers: Ziti edge router id -> site slug. A router
+// absent from the map belongs to the default site. Without a database (tests,
+// early boot) or before migration 249 the map is empty, which tags every
+// router into the default site.
+func (zm *ZitiManager) siteRouterMap(ctx context.Context) map[string]string {
+	if zm.siteRoutersOverride != nil {
+		return zm.siteRoutersOverride
+	}
+	out := map[string]string{}
+	if zm.db == nil || zm.db.Pool == nil {
+		return out
+	}
+	rows, err := zm.db.Pool.Query(orgctx.WithBypassRLS(ctx),
+		//orgscope:ignore install-wide platform table; site_routers has no org
+		`SELECT sr.ziti_router_id, s.slug FROM site_routers sr JOIN sites s ON s.id = sr.site_id`)
+	if err != nil {
+		zm.logger.Debug("site routers unavailable; every router is in the default site", zap.Error(err))
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, slug string
+		if rows.Scan(&id, &slug) == nil {
+			out[id] = slug
+		}
+	}
+	return out
+}
+
+// EnsureRouterRoleAttribute tags every edge router with "ziti-routers" and
+// with "site-<slug>" for its site (from site_routers; unmapped routers are in
+// the default site). Idempotent.
 func (zm *ZitiManager) EnsureRouterRoleAttribute(ctx context.Context) error {
+	_, err := zm.EnsureRouterSiteAttributes(ctx, zm.siteRouterMap(ctx))
+	return err
+}
+
+// routersInSite tags the routers and returns how many carry the given site.
+func (zm *ZitiManager) routersInSite(ctx context.Context, slug string) (int, error) {
+	counts, err := zm.EnsureRouterSiteAttributes(ctx, zm.siteRouterMap(ctx))
+	if err != nil {
+		return 0, err
+	}
+	if isDefaultSite(slug) {
+		slug = DefaultSiteSlug
+	}
+	return counts[slug], nil
+}
+
+// EnsureRouterSiteAttributes converges every edge router's role attributes so
+// it carries "ziti-routers" (kept for one release for compatibility and
+// observation) and exactly one "site-<slug>": siteByRouter[id], or the default
+// site when the router is unmapped. A site-* attribute for another site is
+// removed, so a router moved between sites stops hosting the old site's
+// services. Returns the number of routers per site slug.
+func (zm *ZitiManager) EnsureRouterSiteAttributes(ctx context.Context, siteByRouter map[string]string) (map[string]int, error) {
 	data, status, err := zm.mgmtRequest("GET", "/edge/management/v1/edge-routers?limit=1000", nil)
 	if err != nil {
-		return fmt.Errorf("list edge routers: %w", err)
+		return nil, fmt.Errorf("list edge routers: %w", err)
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("unexpected status %d listing edge routers: %s", status, string(data))
+		return nil, fmt.Errorf("unexpected status %d listing edge routers: %s", status, string(data))
 	}
 	var resp struct {
 		Data []struct {
@@ -2920,27 +3004,47 @@ func (zm *ZitiManager) EnsureRouterRoleAttribute(ctx context.Context) error {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return fmt.Errorf("parse edge routers: %w", err)
+		return nil, fmt.Errorf("parse edge routers: %w", err)
 	}
+	counts := map[string]int{}
 	for _, r := range resp.Data {
-		has := false
-		for _, a := range r.RoleAttributes {
-			if a == "ziti-routers" {
-				has = true
-				break
-			}
+		slug := siteByRouter[r.ID]
+		if isDefaultSite(slug) {
+			slug = DefaultSiteSlug
 		}
-		if has {
+		counts[slug]++
+		want := siteRouterAttrPrefix + slug
+		attrs := make([]string, 0, len(r.RoleAttributes)+2)
+		hasRouters, hasSite, changed := false, false, false
+		for _, a := range r.RoleAttributes {
+			switch {
+			case a == "ziti-routers":
+				hasRouters = true
+			case a == want:
+				hasSite = true
+			case strings.HasPrefix(a, siteRouterAttrPrefix):
+				changed = true
+				continue
+			}
+			attrs = append(attrs, a)
+		}
+		if !hasRouters {
+			attrs = append(attrs, "ziti-routers")
+			changed = true
+		}
+		if !hasSite {
+			attrs = append(attrs, want)
+			changed = true
+		}
+		if !changed {
 			continue
 		}
-		patch, _ := json.Marshal(map[string]interface{}{
-			"roleAttributes": append(r.RoleAttributes, "ziti-routers"),
-		})
+		patch, _ := json.Marshal(map[string]interface{}{"roleAttributes": attrs})
 		if _, s, perr := zm.mgmtRequest("PATCH", "/edge/management/v1/edge-routers/"+r.ID, patch); perr != nil || (s != http.StatusOK && s != http.StatusAccepted) {
-			zm.logger.Warn("failed to tag edge router with #ziti-routers", zap.String("router", r.ID), zap.Int("status", s), zap.Error(perr))
+			zm.logger.Warn("failed to tag edge router with its site", zap.String("router", r.ID), zap.String("site", slug), zap.Int("status", s), zap.Error(perr))
 		}
 	}
-	return nil
+	return counts, nil
 }
 
 // DialableServiceSpec describes an admin-created Ziti service that must be
