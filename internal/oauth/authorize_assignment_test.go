@@ -73,7 +73,7 @@ func TestEveryMintSiteCallsAssignmentGate(t *testing.T) {
 		{"browser_session.go", "func (s *Service) authorizeFromBrowserSession(", "s.CreateAuthorizationCode("},
 		{"service.go", "func (s *Service) handleAuthorizeConsent(", "s.CreateAuthorizationCode("},
 		{"service.go", "func (s *Service) handleAuthorizeConsentV2(", "s.authorizeHandler.IssueAuthorizationCode("},
-		{"service.go", "func (s *Service) handleCallback(", "s.CreateAuthorizationCode("},
+		{"sso_federation.go", "func (s *Service) handleCallback(", "s.CreateAuthorizationCode("},
 		{"handlers_passwordless.go", "func (s *Service) handleMagicLinkVerify(", "s.CreateAuthorizationCode("},
 	}
 
