@@ -38,6 +38,7 @@ import {
 } from '../components/ui/alert-dialog'
 import { useToast } from '../hooks/use-toast'
 import { ManageAppAccessDialog } from '../components/manage-app-access-dialog'
+import { AppConditionsDialog } from '../components/app-conditions-dialog'
 import { PublishToVendorDialog } from '../components/publish-to-vendor-dialog'
 
 interface Application {
@@ -267,6 +268,8 @@ export function ApplicationsPage() {
       variant: 'success',
     })
   }
+
+  const [conditionsApp, setConditionsApp] = useState<Application | null>(null)
 
   const handleSsoSettings = (app: Application) => {
     setSelectedApp(app)
@@ -533,6 +536,10 @@ export function ApplicationsPage() {
                               <DropdownMenuItem onClick={() => handleSsoSettings(app)}>
                                 <Settings className="mr-2 h-4 w-4" />
                                 {t('pages.applications.menu.ssoSettings')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => setConditionsApp(app)}>
+                                <Settings className="mr-2 h-4 w-4" />
+                                {t('pages.applications.menu.accessConditions')}
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => setManageAccessApp(app)}
@@ -878,6 +885,8 @@ export function ApplicationsPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <AppConditionsDialog app={conditionsApp} onClose={() => setConditionsApp(null)} />
 
       {/* SSO Settings Modal */}
       <Dialog open={ssoSettingsModal} onOpenChange={setSsoSettingsModal}>

@@ -375,8 +375,8 @@ func (s *Service) authorizeFromBrowserSession(c *gin.Context, oauthParams map[st
 	// acr_values (acr.go): a session that has not proved what the request
 	// asks for does not short-circuit the login. prompt=none cannot show the
 	// challenge, so it is answered with interaction_required (OIDC Core
-	// §3.1.2.6); otherwise the login page signs the person in again, and the
-	// mint after it challenges for the missing factor.
+	// §3.1.2.6); otherwise the browser goes to the login page's second-factor
+	// step, without retyping the password the session already proved.
 	if required := s.requiredACR(ctx, oauthParams); len(required) > 0 {
 		a, aerr := s.loadSessionAssurance(ctx, sess.ID)
 		if aerr != nil {
@@ -388,8 +388,14 @@ func (s *Service) authorizeFromBrowserSession(c *gin.Context, oauthParams map[st
 				s.redirectAuthorizeError(c, redirectURI, state, ErrorInteractionRequired, "the session does not satisfy the requested acr_values")
 				return true
 			}
-			delete(oauthParams, "session_id")
-			return false
+			challenge := make(map[string]string, len(oauthParams))
+			for k, v := range oauthParams {
+				if k != "session_id" {
+					challenge[k] = v
+				}
+			}
+			s.acrGateAllows(c, challenge, sess.UserID, true)
+			return true
 		}
 	}
 

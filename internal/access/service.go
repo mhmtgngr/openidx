@@ -146,6 +146,13 @@ type ProxySession struct {
 	// which is where its roles hold: a proxy session is accepted only on that
 	// organization's routes (sessionOnRoute).
 	orgID string
+	// loginSessionID is the OpenIDX login session (the token's sid) this
+	// proxy session was signed in from: the fresh-factor condition reads
+	// sessions.mfa_verified_at through it (reach_decision.go). Kept in the
+	// Redis record only, so no column is needed; a session signed in before
+	// this field existed has none and its fresh-factor condition stays
+	// unjudged, as before.
+	loginSessionID string
 }
 
 // Service provides access proxy operations
@@ -2131,6 +2138,11 @@ func (s *Service) handleLogin(c *gin.Context) {
 	if idpHint != "" {
 		authURL += "&idp_hint=" + url.QueryEscape(idpHint)
 	}
+	// A step-up refusal (reach_decision.go) sends the browser here asking for
+	// a fresh second factor; only that one class is passed on.
+	if c.Query("acr_values") == stepUpACR {
+		authURL += "&acr_values=" + url.QueryEscape(stepUpACR)
+	}
 
 	c.Redirect(http.StatusFound, authURL)
 }
@@ -3199,6 +3211,7 @@ func (s *Service) createSession(c *gin.Context, claims map[string]interface{}) (
 	userID, _ := claims["sub"].(string)
 	email, _ := claims["email"].(string)
 	name, _ := claims["name"].(string)
+	loginSID, _ := claims["sid"].(string)
 	var roles []string
 	if r, ok := claims["roles"].([]interface{}); ok {
 		for _, role := range r {
@@ -3248,6 +3261,7 @@ func (s *Service) createSession(c *gin.Context, claims map[string]interface{}) (
 		"name":        name,
 		"roles":       roles,
 		"org_id":      orgID,
+		"sid":         loginSID,
 		"host":        sessionHost(s.browserHost(c)),
 		"expires":     expiresAt.Unix(),
 		"last_active": time.Now().Unix(),
@@ -3255,18 +3269,19 @@ func (s *Service) createSession(c *gin.Context, claims map[string]interface{}) (
 	s.redis.Client.Set(c.Request.Context(), "proxy_session:"+tokenHash, sessionData, 12*time.Hour)
 
 	session := &ProxySession{
-		ID:           id,
-		UserID:       userID,
-		SessionToken: token,
-		IPAddress:    c.ClientIP(),
-		UserAgent:    c.Request.UserAgent(),
-		Email:        email,
-		Name:         name,
-		Roles:        roles,
-		StartedAt:    time.Now(),
-		LastActiveAt: time.Now(),
-		ExpiresAt:    expiresAt,
-		orgID:        orgID,
+		loginSessionID: loginSID,
+		ID:             id,
+		UserID:         userID,
+		SessionToken:   token,
+		IPAddress:      c.ClientIP(),
+		UserAgent:      c.Request.UserAgent(),
+		Email:          email,
+		Name:           name,
+		Roles:          roles,
+		StartedAt:      time.Now(),
+		LastActiveAt:   time.Now(),
+		ExpiresAt:      expiresAt,
+		orgID:          orgID,
 	}
 	if routeID != nil {
 		session.RouteID = *routeID
@@ -3352,15 +3367,17 @@ func (s *Service) getSessionFromRequest(c *gin.Context, host string) *ProxySessi
 	}
 
 	orgID, _ := sessionData["org_id"].(string)
+	loginSID, _ := sessionData["sid"].(string)
 	return &ProxySession{
-		ID:           fmt.Sprint(sessionData["id"]),
-		UserID:       fmt.Sprint(sessionData["user_id"]),
-		Email:        fmt.Sprint(sessionData["email"]),
-		Name:         fmt.Sprint(sessionData["name"]),
-		Roles:        roles,
-		LastActiveAt: lastActive,
-		ExpiresAt:    expiresAt,
-		orgID:        orgID,
+		loginSessionID: loginSID,
+		ID:             fmt.Sprint(sessionData["id"]),
+		UserID:         fmt.Sprint(sessionData["user_id"]),
+		Email:          fmt.Sprint(sessionData["email"]),
+		Name:           fmt.Sprint(sessionData["name"]),
+		Roles:          roles,
+		LastActiveAt:   lastActive,
+		ExpiresAt:      expiresAt,
+		orgID:          orgID,
 	}
 }
 
@@ -3422,6 +3439,7 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 	}
 	email, _ := claims["email"].(string)
 	name, _ := claims["name"].(string)
+	loginSID, _ := claims["sid"].(string)
 	var roles []string
 	if r, ok := claims["roles"].([]interface{}); ok {
 		for _, role := range r {
@@ -3430,12 +3448,13 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 	}
 
 	return &ProxySession{
-		UserID: userID,
-		Email:  email,
-		Name:   name,
-		Roles:  roles,
-		bearer: authHeader,
-		orgID:  orgID,
+		loginSessionID: loginSID,
+		UserID:         userID,
+		Email:          email,
+		Name:           name,
+		Roles:          roles,
+		bearer:         authHeader,
+		orgID:          orgID,
 	}
 }
 
