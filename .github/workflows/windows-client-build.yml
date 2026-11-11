@@ -335,7 +335,13 @@ jobs:
           $token = 'smoke-SECRET-enroll-token-4b1d'
           function Run-Msi($argv, $log) {
             $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList ($argv + @('/qn', '/l*v', $log))
-            if ($p.ExitCode -notin 0, 3010) { Get-Content $log -Tail 80; throw "msiexec $argv failed: $($p.ExitCode)" }
+            if ($p.ExitCode -notin 0, 3010) {
+              # The tail of a verbose log is rollback noise; the cause sits at
+              # the first "Return value 3" and the Error lines before it.
+              Select-String -Path $log -Pattern 'Return value 3','Error 1[0-9]{3}','error 1[0-9]{3}' -Context 25,2 | Select-Object -First 3 | ForEach-Object { $_.Context.PreContext; $_.Line }
+              Get-WinEvent -LogName System -MaxEvents 30 -ErrorAction SilentlyContinue | Where-Object ProviderName -eq 'Service Control Manager' | Format-List TimeCreated, Message
+              throw "msiexec $argv failed: $($p.ExitCode)"
+            }
           }
           function Wait-Running {
             for ($i = 0; $i -lt 30; $i++) {
