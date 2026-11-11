@@ -1742,5 +1742,12 @@ func allMigrations() []*Migration {
 			UpSQL:       routeServiceAccountsUp,
 			DownSQL:     routeServiceAccountsDown,
 		},
+		{
+			Version:     246,
+			Name:        "federated_idp_profile",
+			Description: "Identity provider federation profile. identity_providers gains discovery_url, use_pkce (default true), trust_upstream_mfa (default false), claims_mapping, group_mapping, jit_policy (default: no provisioning, internal population), pass_through_params (login_hint, prompt, max_age) and external_id_claim (default sub): what signing in through Entra ID, ADFS or a partner issuer needs beyond issuer and client. Every column defaults to today's behaviour; the table keeps its org policy; down drops the columns.",
+			UpSQL:       federatedIdPProfileUp,
+			DownSQL:     federatedIdPProfileDown,
+		},
 	}
 }
