@@ -1118,6 +1118,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		agentHandler := NewAgentAPIHandler(svc.logger, svc.db, svc.ziti(), svc.config)
 		// openidx_tunnel_agents_down, for the tunnel-down alert.
 		RegisterTunnelDownGauge(svc.db, svc.logger)
+		// openidx_agents_update_failing, for the update-failing alert.
+		RegisterAgentUpdateFailingGauge(svc.db, svc.logger)
 		// openidx_agents_recent / openidx_agents_silent, for the silent-fleet alert.
 		if svc.config != nil {
 			RegisterAgentSilentGauges(svc.db, svc.config.AgentLiveness(), svc.logger)

@@ -10,6 +10,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/secretfile"
 	"github.com/openidx/openidx/agent/internal/transport"
+	"github.com/openidx/openidx/agent/internal/updater"
 )
 
 // AgentConfig holds the persisted configuration for a registered agent.
@@ -120,6 +121,9 @@ type ServerConfig struct {
 	// sends one. Optional: an older server sends nothing and the device's own
 	// tunnel.enabled decides.
 	OrgNetworkPolicy *OrgNetworkPolicy `json:"org_network_policy,omitempty"`
+	// Update is the organization's update ring for this device (B8.5). Nil
+	// from an older server: the compiled-in manifest URL decides.
+	Update *updater.Target `json:"update,omitempty"`
 }
 
 // OrgNetworkPolicy is the server's org_network_policy object, as the agent

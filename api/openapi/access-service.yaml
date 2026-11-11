@@ -4070,6 +4070,10 @@ paths:
                 type: object
                 properties:
                   claim_mode: {type: string, enum: [login, logged_on_user]}
+                  update_channel: {type: string, enum: [stable, beta]}
+                  update_pin_version: {type: string}
+                  update_rollout_percent: {type: integer, minimum: 0, maximum: 100}
+                  update_paused: {type: boolean}
         '401':
           $ref: '#/components/responses/Unauthorized'
     put:
@@ -4083,9 +4087,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [claim_mode]
+              description: Every field is optional; an absent one keeps its value.
               properties:
                 claim_mode: {type: string, enum: [login, logged_on_user]}
+                update_channel: {type: string, enum: [stable, beta]}
+                update_pin_version: {type: string}
+                update_rollout_percent: {type: integer, minimum: 0, maximum: 100}
+                update_paused: {type: boolean}
       responses:
         '200':
           description: Saved
@@ -4094,7 +4102,11 @@ paths:
               schema:
                 type: object
                 properties:
-                  claim_mode: {type: string}
+                  claim_mode: {type: string, enum: [login, logged_on_user]}
+                  update_channel: {type: string, enum: [stable, beta]}
+                  update_pin_version: {type: string}
+                  update_rollout_percent: {type: integer, minimum: 0, maximum: 100}
+                  update_paused: {type: boolean}
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -4525,6 +4537,12 @@ paths:
           schema:
             type: string
             enum: ['1']
+        - name: version
+          in: query
+          required: false
+          description: Only devices that last reported this agent version.
+          schema:
+            type: string
       responses:
         '200':
           description: Success

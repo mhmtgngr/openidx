@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -227,23 +228,34 @@ func normalizeLogonName(s string) string {
 	return s
 }
 
+// agentSettingsView is GET/PUT /agent/settings.
+type agentSettingsView struct {
+	ClaimMode string `json:"claim_mode"`
+	agentUpdateSettings
+}
+
 // HandleGetAgentSettings is GET /agent/settings.
 func (h *AgentAPIHandler) HandleGetAgentSettings(c *gin.Context) {
 	ctx := c.Request.Context()
-	c.JSON(http.StatusOK, gin.H{"claim_mode": h.claimModeFor(ctx, orgIDFrom(ctx))})
+	orgID := orgIDFrom(ctx)
+	c.JSON(http.StatusOK, agentSettingsView{
+		ClaimMode:           h.claimModeFor(ctx, orgID),
+		agentUpdateSettings: h.updateSettingsFor(ctx, orgID),
+	})
 }
 
-// HandleUpdateAgentSettings is PUT /agent/settings.
+// HandleUpdateAgentSettings is PUT /agent/settings. Every field is optional;
+// what is absent keeps its value.
 func (h *AgentAPIHandler) HandleUpdateAgentSettings(c *gin.Context) {
 	var body struct {
-		ClaimMode string `json:"claim_mode"`
+		ClaimMode      *string `json:"claim_mode"`
+		Channel        *string `json:"update_channel"`
+		PinVersion     *string `json:"update_pin_version"`
+		RolloutPercent *int    `json:"update_rollout_percent"`
+		Paused         *bool   `json:"update_paused"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
-		return
-	}
-	if body.ClaimMode != claimModeLogin && body.ClaimMode != claimModeLoggedOnUser {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "claim_mode must be login or logged_on_user"})
 		return
 	}
 	ctx := c.Request.Context()
@@ -252,21 +264,52 @@ func (h *AgentAPIHandler) HandleUpdateAgentSettings(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database unavailable"})
 		return
 	}
+	next := agentSettingsView{ClaimMode: h.claimModeFor(ctx, orgID), agentUpdateSettings: h.updateSettingsFor(ctx, orgID)}
+	if body.ClaimMode != nil {
+		next.ClaimMode = *body.ClaimMode
+	}
+	if body.Channel != nil {
+		next.Channel = *body.Channel
+	}
+	if body.PinVersion != nil {
+		next.PinVersion = strings.TrimSpace(*body.PinVersion)
+	}
+	if body.RolloutPercent != nil {
+		next.RolloutPercent = *body.RolloutPercent
+	}
+	if body.Paused != nil {
+		next.Paused = *body.Paused
+	}
+	if next.ClaimMode != claimModeLogin && next.ClaimMode != claimModeLoggedOnUser {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "claim_mode must be login or logged_on_user"})
+		return
+	}
+	if msg := validUpdateSettings(next.agentUpdateSettings); msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+		return
+	}
 	var updatedBy interface{}
 	if u := c.GetString("user_id"); u != "" {
 		updatedBy = u
 	}
 	if _, err := h.db.Pool.Exec(ctx, `
-		INSERT INTO org_agent_settings (org_id, claim_mode, updated_by, updated_at)
-		VALUES ($1, $2, $3::uuid, NOW())
+		INSERT INTO org_agent_settings (org_id, claim_mode, update_channel, update_pin_version,
+		                                update_rollout_percent, update_paused, updated_by, updated_at)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7::uuid, NOW())
 		ON CONFLICT (org_id) DO UPDATE
-		   SET claim_mode = EXCLUDED.claim_mode, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
-		orgID, body.ClaimMode, updatedBy); err != nil {
+		   SET claim_mode = EXCLUDED.claim_mode, update_channel = EXCLUDED.update_channel,
+		       update_pin_version = EXCLUDED.update_pin_version,
+		       update_rollout_percent = EXCLUDED.update_rollout_percent,
+		       update_paused = EXCLUDED.update_paused,
+		       updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+		orgID, next.ClaimMode, next.Channel, next.PinVersion, next.RolloutPercent, next.Paused, updatedBy); err != nil {
 		h.logger.Error("agent settings update failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save the settings"})
 		return
 	}
-	h.logAuditEvent("agent.settings_updated", "", "success", "claim_mode="+body.ClaimMode)
-	h.logAuditEventToDB(ctx, "agent.settings_updated", "", "success", "claim_mode="+body.ClaimMode)
-	c.JSON(http.StatusOK, gin.H{"claim_mode": body.ClaimMode})
+	detail := fmt.Sprintf("claim_mode=%s update_channel=%s pin=%s rollout=%d paused=%t",
+		next.ClaimMode, next.Channel, logsafe.Clean(next.PinVersion), next.RolloutPercent, next.Paused)
+	h.logAuditEvent("agent.settings_updated", "", "success", detail)
+	h.logAuditEventToDB(ctx, "agent.settings_updated", "", "success", detail)
+	c.JSON(http.StatusOK, next)
 }

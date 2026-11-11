@@ -243,4 +243,35 @@ describe('AgentFleetPage', () => {
     expect(screen.getByText('screen_lock')).toBeInTheDocument()
     expect(screen.getByText('Device lock enrolled')).toBeInTheDocument()
   })
+
+  it('shows each device version, filters by it, and flags a failed update', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.get).mockImplementation(routeFleet([
+      { ...activeAgent, agent_version: '0.6.4' },
+      { ...nonCompliantAgent, agent_version: '0.6.3', update_state: { state: 'failed', version: '0.6.4', error: 'msiexec 1603' } },
+    ]))
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    expect(await screen.findByText('Update to 0.6.4 failed')).toBeInTheDocument()
+    expect(screen.getAllByText('0.6.4').length).toBeGreaterThan(0)
+    await user.selectOptions(screen.getByRole('combobox', { name: /filter by agent version/i }), '0.6.3')
+    expect(screen.queryByText('agt-001')).not.toBeInTheDocument()
+    expect(screen.getByText('agt-003')).toBeInTheDocument()
+  })
+
+  it('saves the update ring from the Updates card', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.get).mockImplementation(((url: string) => {
+      if (url.includes('/agent/settings')) {
+        return Promise.resolve({ claim_mode: 'login', update_channel: 'stable', update_pin_version: '', update_rollout_percent: 100, update_paused: false })
+      }
+      return routeFleet([activeAgent])(url)
+    }) as typeof api.get)
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    await user.selectOptions(await screen.findByLabelText('Channel'), 'beta')
+    await user.click(screen.getByLabelText('Pause updates'))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(api.put).toHaveBeenCalledWith('/api/v1/access/agent/settings', {
+      update_channel: 'beta', update_pin_version: '', update_rollout_percent: 100, update_paused: true,
+    })
+  })
 })

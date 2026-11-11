@@ -94,6 +94,17 @@ groups:
           summary: "{{ $value }} device(s) report in with their tunnel down"
           description: "{{ $value }} active device(s) have reported in during the last 15m while their OpenZiti tunneler was not up for 15m. The Agent Fleet page shows which (Tunnel column); check the tunneler service on the device and its enrolment."
 
+      - alert: OpenIDXAgentUpdateFailing
+        # Devices whose last self-update attempt failed (download, signature,
+        # digest or installer). One laptop on a bad network is noise; several
+        # at once is a broken release or feed.
+        expr: openidx_agents_update_failing >= 3
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} device(s) report a failed agent update"
+          description: "{{ $value }} active device(s) reported a failed self-update in the last 24h. The Agent Fleet page shows each device's update state; check the release feed (latest.json signature, MSI URL) and consider pausing the organization's update ring in Agent settings."
+
       - alert: OpenIDXAgentsMostlySilent
         # More than half of the devices seen in the last day have stopped
         # reporting for longer than AGENT_LIVENESS_TIMEOUT, so they are no

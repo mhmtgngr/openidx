@@ -1167,6 +1167,10 @@ type agentReport struct {
 	// told the service about; optional. Read only under claim_mode
 	// logged_on_user, and only to claim an ownerless device.
 	LoggedOnUser string `json:"logged_on_user,omitempty"`
+	// AgentVersion is the build the device runs; UpdateResult the outcome of
+	// its last update attempt (agent_updates.go). Both optional.
+	AgentVersion string             `json:"agent_version,omitempty"`
+	UpdateResult *agentUpdateResult `json:"update_result,omitempty"`
 }
 
 // checkResult represents a single posture check sent by the agent.
@@ -1467,6 +1471,7 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 	}
 
 	h.recordTunnelStatus(c.Request.Context(), agentID, report.TunnelStatus)
+	h.recordAgentVersion(c.Request.Context(), agentID, report.AgentVersion, report.UpdateResult)
 	// claim_mode logged_on_user: an ownerless device becomes the session
 	// user's when the directory knows them (agent_claim.go).
 	if report.LoggedOnUser != "" {
@@ -1748,6 +1753,9 @@ type agentConfigResponse struct {
 	// (tunnel_policy.go). Omitted when it cannot be read, so the agent keeps
 	// the last policy it had rather than falling back to the defaults.
 	OrgNetworkPolicy *agentNetworkPolicy `json:"org_network_policy,omitempty"`
+	// Update is the organization's update ring as it applies to this device
+	// (agent_updates.go); only an active agent gets it.
+	Update *agentUpdateBlock `json:"update,omitempty"`
 }
 
 // writeActiveAgentConfig answers /agent/config for an agent HandleConfig read
@@ -1755,6 +1763,7 @@ type agentConfigResponse struct {
 // grants it.
 func (h *AgentAPIHandler) writeActiveAgentConfig(c *gin.Context, agentID string, cfg agentConfigResponse) {
 	cfg.OrgNetworkPolicy = h.policyForActiveAgent(c.Request.Context(), agentID)
+	cfg.Update = h.updateBlockFor(c.Request.Context(), agentID)
 	c.JSON(http.StatusOK, cfg)
 }
 
@@ -2257,6 +2266,10 @@ type agentRecord struct {
 	// it again fixes it.
 	CredentialRefused   bool       `json:"credential_refused"`
 	CredentialRefusedAt *time.Time `json:"credential_refused_at"`
+	// AgentVersion is the build the device last reported; UpdateState its
+	// last update outcome (v253).
+	AgentVersion string          `json:"agent_version"`
+	UpdateState  json.RawMessage `json:"update_state,omitempty"`
 }
 
 // HandleListAgents returns a JSON array of all enrolled agents (operator tier).
@@ -2283,12 +2296,14 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 		       ea.tunnel_status, ea.tunnel_last_seen, ea.tunnel_policy_version, ea.tunnel_policy_applied_at,
 		       ea.last_report_at,
 		       COALESCE(u.id::text, ''), COALESCE(u.username, ''),
-		       ea.auth_fail_count, ea.auth_failed_at
+		       ea.auth_fail_count, ea.auth_failed_at,
+		       COALESCE(ea.agent_version, ''), ea.update_state
 		FROM enrolled_agents ea
 		LEFT JOIN users u ON u.id = ea.enrolled_by_user_id AND u.org_id = ea.org_id
 		WHERE ea.org_id = $1 AND ($2 OR ea.status <> 'retired')
+		  AND ($3 = '' OR ea.agent_version = $3)
 		ORDER BY ea.last_seen_at DESC NULLS LAST, ea.enrolled_at DESC
-	`, org.ID, c.Query("include_retired") == "1")
+	`, org.ID, c.Query("include_retired") == "1", strings.TrimSpace(c.Query("version")))
 	if err != nil {
 		h.logger.Error("HandleListAgents: failed to query enrolled_agents", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list agents"})
@@ -2314,6 +2329,7 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 		var rec agentRecord
 		var tunnelRaw []byte
 		var authFailCount int
+		var updateRaw []byte
 		if scanErr := rows.Scan(
 			&rec.AgentID,
 			&rec.DeviceID,
@@ -2333,6 +2349,8 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 			&rec.OwnerUsername,
 			&authFailCount,
 			&rec.CredentialRefusedAt,
+			&rec.AgentVersion,
+			&updateRaw,
 		); scanErr != nil {
 			h.logger.Warn("HandleListAgents: failed to scan row", zap.Error(scanErr))
 			continue
@@ -2342,6 +2360,9 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 			if json.Unmarshal(tunnelRaw, &ts) == nil {
 				rec.TunnelStatus = &ts
 			}
+		}
+		if len(updateRaw) > 0 {
+			rec.UpdateState = json.RawMessage(updateRaw)
 		}
 		rec.TunnelPolicyState = tunnelPolicyState(rec.TunnelPolicyVersion, rec.TunnelStatus != nil, current)
 		rec.CredentialRefused = credentialRefused(authFailCount, rec.Status)

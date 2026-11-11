@@ -1791,5 +1791,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agentIdentityContinuityUp,
 			DownSQL:     agentIdentityContinuityDown,
 		},
+		{
+			Version:     253,
+			Name:        "agent_update_rings",
+			Description: "Agent version telemetry and update rings. enrolled_agents gains agent_version and update_state (JSONB, the last update outcome the agent reported); org_agent_settings gains update_channel (stable|beta), update_pin_version, update_rollout_percent (0..100, default 100) and update_paused. Columns under the tables' existing org policies; down drops them.",
+			UpSQL:       agentUpdateRingsUp,
+			DownSQL:     agentUpdateRingsDown,
+		},
 	}
 }
