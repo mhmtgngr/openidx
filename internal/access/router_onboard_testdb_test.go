@@ -34,12 +34,12 @@ func TestSplitCtrlAddress(t *testing.T) {
 }
 
 func TestRouterOnboardCommandCarriesTheImageEnv(t *testing.T) {
-	cmd := routerOnboardCommand("az-r1", "JWT", "ctrl.tdv.org", "1280", "10.1.0.4", "1.6.12")
+	cmd := routerOnboardCommand("az-r1", "JWT", "ctrl.tdv.org", "1280", "192.0.2.4", "1.6.12")
 	for _, want := range []string{
 		"-e ZITI_ENROLL_TOKEN='JWT'",
 		"-e ZITI_CTRL_ADVERTISED_ADDRESS=ctrl.tdv.org",
 		"-e ZITI_CTRL_ADVERTISED_PORT=1280",
-		"-e ZITI_ROUTER_ADVERTISED_ADDRESS=10.1.0.4",
+		"-e ZITI_ROUTER_ADVERTISED_ADDRESS=192.0.2.4",
 		"-e ZITI_ROUTER_PORT=3022",
 		"-e ZITI_ROUTER_MODE=host",
 		"openziti/ziti-router:1.6.12",
@@ -123,7 +123,7 @@ func TestRouterOnboardingIntoASite(t *testing.T) {
 	if code, _ := do("PATCH", "/api/v1/access/sites/"+siteID, `{"slug":"other"}`); code != http.StatusBadRequest {
 		t.Errorf("a slug change answered %d, want 400", code)
 	}
-	if code, got := do("PATCH", "/api/v1/access/sites/"+siteID, `{"name":"Azure WE","hop_addr":"10.1.0.4"}`); code != http.StatusOK || got["name"] != "Azure WE" || got["hop_addr"] != "10.1.0.4" {
+	if code, got := do("PATCH", "/api/v1/access/sites/"+siteID, `{"name":"Azure WE","hop_addr":"192.0.2.4"}`); code != http.StatusOK || got["name"] != "Azure WE" || got["hop_addr"] != "192.0.2.4" {
 		t.Errorf("patch site answered %d: %v", code, got)
 	}
 	if code, _ := do("PATCH", "/api/v1/access/sites/00000000-0000-0000-0000-00000000dead", `{"name":"x"}`); code != http.StatusNotFound {
@@ -132,10 +132,10 @@ func TestRouterOnboardingIntoASite(t *testing.T) {
 
 	for _, bad := range []string{
 		`{"site_slug":"azure"}`,
-		`{"site_slug":"nowhere","advertised_address":"10.1.0.4"}`,
-		`{"site_slug":"azure","advertised_address":"10.1.0.4:3022"}`,
-		`{"site_slug":"azure","advertised_address":"10.1.0.4","image_tag":"1.6; rm -rf /"}`,
-		`{"name":"a b","site_slug":"azure","advertised_address":"10.1.0.4"}`,
+		`{"site_slug":"nowhere","advertised_address":"192.0.2.4"}`,
+		`{"site_slug":"azure","advertised_address":"192.0.2.4:3022"}`,
+		`{"site_slug":"azure","advertised_address":"192.0.2.4","image_tag":"1.6; rm -rf /"}`,
+		`{"name":"a b","site_slug":"azure","advertised_address":"192.0.2.4"}`,
 	} {
 		if code, _ := do("POST", "/api/v1/access/ziti/fabric/routers/enroll-token", bad); code != http.StatusBadRequest {
 			t.Errorf("%s answered %d, want 400", bad, code)

@@ -117,7 +117,7 @@ func directRouteHarness(t *testing.T, siteMap map[string]string, d DesiredRoute)
 }
 
 func TestDirectRouteInASiteIsBoundToThatSitesRouters(t *testing.T) {
-	d := DesiredRoute{ServiceName: "az-app", ToURL: "http://10.1.0.4:80", BrowZerEnabled: true, HostingMode: HostingModeDirect, SiteSlug: "azure"}
+	d := DesiredRoute{ServiceName: "az-app", ToURL: "http://192.0.2.4:80", BrowZerEnabled: true, HostingMode: HostingModeDirect, SiteSlug: "azure"}
 	bind, err := directRouteHarness(t, map[string]string{"r1": "azure"}, d)
 	if strings.Join(*bind, ",") != "#site-azure" {
 		t.Fatalf("Bind = %+v, want [#site-azure]; err %v", *bind, err)
@@ -125,7 +125,7 @@ func TestDirectRouteInASiteIsBoundToThatSitesRouters(t *testing.T) {
 }
 
 func TestDirectRouteInTheDefaultSiteKeepsZitiRouters(t *testing.T) {
-	d := DesiredRoute{ServiceName: "def-app", ToURL: "http://10.1.0.4:80", BrowZerEnabled: true, HostingMode: HostingModeDirect, SiteSlug: "default"}
+	d := DesiredRoute{ServiceName: "def-app", ToURL: "http://192.0.2.4:80", BrowZerEnabled: true, HostingMode: HostingModeDirect, SiteSlug: "default"}
 	bind, _ := directRouteHarness(t, map[string]string{}, d)
 	if strings.Join(*bind, ",") != "#ziti-routers" {
 		t.Fatalf("Bind = %+v, want [#ziti-routers]", *bind)
@@ -133,7 +133,7 @@ func TestDirectRouteInTheDefaultSiteKeepsZitiRouters(t *testing.T) {
 }
 
 func TestDirectRouteInASiteWithoutRoutersFailsClosed(t *testing.T) {
-	d := DesiredRoute{ServiceName: "az-app", ToURL: "http://10.1.0.4:80", BrowZerEnabled: true, HostingMode: HostingModeDirect, SiteSlug: "azure"}
+	d := DesiredRoute{ServiceName: "az-app", ToURL: "http://192.0.2.4:80", BrowZerEnabled: true, HostingMode: HostingModeDirect, SiteSlug: "azure"}
 	bind, err := directRouteHarness(t, map[string]string{}, d)
 	if len(*bind) != 0 {
 		t.Errorf("a Bind policy was written for a site with no router: %+v", *bind)
