@@ -132,6 +132,10 @@ func (s *Service) registerEAMRoutes(router *gin.Engine, adminChain ...gin.Handle
 	keys.Use(adminChain...)
 	keys.GET("", s.handleListEAMKeys)
 	keys.POST("/rotate", s.handleRotateEAMKey)
+
+	status := router.Group("/api/v1/oauth/eam/status")
+	status.Use(adminChain...)
+	status.GET("", s.handleEAMStatus)
 }
 
 // handleEAMDiscovery: GET /eam/.well-known/openid-configuration.

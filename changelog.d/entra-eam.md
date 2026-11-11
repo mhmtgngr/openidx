@@ -18,3 +18,11 @@
   cipher). The first key is made on first use; `POST
   /api/v1/oauth/eam/keys/rotate` (platform administrators) publishes the next
   key two days before it signs, so Entra's cached key set has it first.
+- **Entra External MFA card in the admin console.** Settings → Security shows
+  platform administrators what to register in Entra (issuer, discovery, JWKS
+  and authorization URLs, client ID), the allowed tenants, each signing key as
+  signing, waiting or retired with a **Rotate key** button, and the last 24
+  hours of satisfied and refused or failed verifications, read from the new
+  `GET /api/v1/oauth/eam/status`. A runbook, `docs/guides/ENTRA-EAM.md`, covers
+  the app registration, consent, a pilot-group external method, Conditional
+  Access "Require MFA", rotation and tracing a sign-in by `client-request-id`.

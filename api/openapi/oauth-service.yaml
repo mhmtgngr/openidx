@@ -875,6 +875,31 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /api/v1/oauth/eam/status:
+    get:
+      tags: [Entra External MFA]
+      summary: Entra external method status
+      description: >-
+        Platform administrators only. What to register in Entra (issuer,
+        discovery, JWKS and authorization URLs, client id), the allowed
+        tenants, the published keys (listing does not create one) and the
+        count of `eam.mfa_satisfied` and refused/failed attempts in the last
+        24 hours.
+      operationId: getEAMStatus
+      x-openidx-handler: internal/oauth.(*Service).handleEAMStatus
+      responses:
+        '200':
+          description: The status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /api/v1/oauth/eam/keys/rotate:
     post:
       tags: [Entra External MFA]

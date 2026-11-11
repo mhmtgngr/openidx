@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -282,4 +283,71 @@ func (s *Service) handleRotateEAMKey(c *gin.Context) {
 		c.GetString("user_id"), c.ClientIP(), k.KID, "eam_signing_key",
 		map[string]interface{}{"kid": k.KID, "signs_from": k.NotBefore})
 	c.JSON(http.StatusCreated, k.view())
+}
+
+// eamStatus is the console's view of the Entra external method: what to
+// register in Entra, the keys, the tenants and recent use.
+type eamStatus struct {
+	Enabled                bool         `json:"enabled"`
+	Issuer                 string       `json:"issuer"`
+	DiscoveryURL           string       `json:"discovery_url"`
+	JWKSURL                string       `json:"jwks_url"`
+	AuthorizeURL           string       `json:"authorize_url"`
+	ClientID               string       `json:"client_id"`
+	TenantIDs              []string     `json:"tenant_ids"`
+	RequireStrongFactors   bool         `json:"require_strong_factors"`
+	Keys                   []eamKeyView `json:"keys"`
+	Verifications24h       int64        `json:"verifications_24h"`
+	VerificationsFailed24h int64        `json:"verifications_failed_24h"`
+}
+
+func (s *Service) eamStatusView() eamStatus {
+	iss := s.eamIssuer()
+	st := eamStatus{
+		Enabled:      s.eamEnabled(),
+		Issuer:       iss,
+		DiscoveryURL: iss + "/.well-known/openid-configuration",
+		JWKSURL:      iss + "/jwks",
+		AuthorizeURL: iss + "/authorize",
+		ClientID:     s.eamClientID(),
+		TenantIDs:    []string{},
+		Keys:         []eamKeyView{},
+	}
+	if s.config != nil {
+		st.RequireStrongFactors = s.config.EAMRequireStrongFactors
+		for _, t := range strings.Split(s.config.EAMTenantIDs, ",") {
+			if t = strings.TrimSpace(t); t != "" {
+				st.TenantIDs = append(st.TenantIDs, t)
+			}
+		}
+	}
+	return st
+}
+
+// handleEAMStatus: GET /api/v1/oauth/eam/status (platform administrators).
+// Keys are listed without being created: looking does not mint a key.
+func (s *Service) handleEAMStatus(c *gin.Context) {
+	st := s.eamStatusView()
+	if s.db != nil && s.db.Pool != nil {
+		ctx := c.Request.Context()
+		keys, err := s.loadEAMKeys(ctx, time.Now())
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			s.logger.Error("eam: status keys", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+			return
+		}
+		for _, k := range keys {
+			st.Keys = append(st.Keys, k.view())
+		}
+		if err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
+			`SELECT COUNT(*) FILTER (WHERE action = 'eam.mfa_satisfied'),
+			        COUNT(*) FILTER (WHERE action IN ('eam.mfa_refused', 'eam.mfa_failed'))
+			   FROM audit_events
+			  WHERE action IN ('eam.mfa_satisfied', 'eam.mfa_refused', 'eam.mfa_failed')
+			    AND timestamp > NOW() - INTERVAL '24 hours'`,
+		).Scan(&st.Verifications24h, &st.VerificationsFailed24h); err != nil {
+			s.logger.Warn("eam: status count", zap.Error(err))
+		}
+	}
+	c.JSON(http.StatusOK, st)
 }
