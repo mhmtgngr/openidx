@@ -29,7 +29,7 @@ func winHTTPBlob(flags uint32, proxy, bypass string) []byte {
 }
 
 func TestParsesWinHttpSettingsBlob(t *testing.T) {
-	p, err := parseWinHTTPSettings(winHTTPBlob(3, "proxy.corp:3128", "<local>;*.corp.example;10.*"))
+	p, err := parseWinHTTPSettings(winHTTPBlob(3, "proxy.corp:3128", "<local>;*.corp.example;192.0.2.*"))
 	if err != nil || p == nil {
 		t.Fatalf("parse: %v %v", p, err)
 	}
@@ -37,7 +37,7 @@ func TestParsesWinHttpSettingsBlob(t *testing.T) {
 	if got := p.proxyFor(mustURL("https://idx.example.com/api")); got == nil || got.Host != "proxy.corp:3128" {
 		t.Fatalf("expected proxy.corp:3128, got %v", got)
 	}
-	for _, bypassed := range []string{"https://intranet/", "https://a.corp.example/", "http://10.1.2.3/"} {
+	for _, bypassed := range []string{"https://intranet/", "https://a.corp.example/", "http://192.0.2.3/"} {
 		if got := p.proxyFor(mustURL(bypassed)); got != nil {
 			t.Errorf("%s should bypass, got %v", bypassed, got)
 		}
