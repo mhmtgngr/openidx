@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { QueryError } from '../components/query-error'
+import { EntraEAMCard } from '../components/entra-eam-card'
 import { isPlatformAdminRequired } from '../lib/platform-admin'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
@@ -696,6 +697,8 @@ export function SettingsPage() {
                   </div>
                 </CardContent>
               </Card>
+
+              <EntraEAMCard />
             </div>
           )}
 

@@ -149,6 +149,7 @@ nav:
           - SAML 2.0 Identity Provider - OpenIDX: guides/SAML.md
           - Inbound federation (Entra ID, AD FS, OIDC): guides/FEDERATION-INBOUND.md
           - OpenIDX MFA Implementation Guide: guides/MFA_IMPLEMENTATION_GUIDE.md
+          - Entra External MFA (EAM) Runbook: guides/ENTRA-EAM.md
           - SSF/CAEP — Shared Signals with Ziti-Honored Termination: guides/SSF_CAEP.md
       - Provisioning:
           - SCIM 2.0 Provisioning - OpenIDX: guides/SCIM.md
