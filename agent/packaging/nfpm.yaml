@@ -14,6 +14,7 @@ homepage: https://github.com/mhmtgngr/openidx
 license: Apache-2.0
 scripts:
   postinstall: ./packaging/postinstall.sh
+  preremove: ./packaging/preremove.sh
 # `contents` must stay the LAST key in this file. When the build has fetched
 # and verified the bundled OpenZiti tunneler, the Makefile appends
 # packaging/nfpm-tunnel.contents.yaml to this file to make the package that
@@ -35,3 +36,24 @@ contents:
     dst: /usr/share/applications/openidx.desktop
     file_info:
       mode: 0644
+  - src: ./deploy/openidx-agent.service
+    dst: /usr/lib/systemd/system/openidx-agent.service
+    file_info:
+      mode: 0644
+  - src: ./deploy/openidx-agent-update.service
+    dst: /usr/lib/systemd/system/openidx-agent-update.service
+    file_info:
+      mode: 0644
+  - src: ./deploy/openidx-agent-update.timer
+    dst: /usr/lib/systemd/system/openidx-agent-update.timer
+    file_info:
+      mode: 0644
+  - src: ./deploy/openidx-agent.env
+    dst: /etc/openidx-agent/agent.env
+    type: config|noreplace
+    file_info:
+      mode: 0640
+  - dst: /var/lib/openidx-agent
+    type: dir
+    file_info:
+      mode: 0700

@@ -246,6 +246,178 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # ---- Install / upgrade / uninstall smoke (Faz B8.10) ----------------------
+  # The packaging is only proven by installing it. Each job installs the real
+  # artifact on a clean runner/container, upgrades over it, removes it, and
+  # checks what an administrator would check.
+  nfpm-smoke:
+    name: nfpm smoke (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    needs: linux-packages
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:bookworm
+            install: dpkg -i
+            remove: dpkg -r openidx-agent
+            glob: '*amd64.deb'
+          - image: rockylinux:9
+            install: rpm -i
+            remove: rpm -e openidx-agent
+            glob: '*x86_64.rpm'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: openidx-agent-linux-packages
+          path: pkg
+      - name: install, inspect, remove
+        env:
+          IMAGE: ${{ matrix.image }}
+          INSTALL: ${{ matrix.install }}
+          REMOVE: ${{ matrix.remove }}
+          GLOB: ${{ matrix.glob }}
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD/pkg:/pkg:ro" -e INSTALL -e REMOVE -e GLOB "$IMAGE" sh -euxc '
+            # No systemd in the container: postinstall must still succeed and
+            # skip the unit steps.
+            command -v useradd >/dev/null || { command -v apt-get >/dev/null && apt-get update -qq && apt-get install -y -qq passwd >/dev/null; } || true
+            p=$(ls /pkg/$GLOB | head -1)
+            $INSTALL "$p"
+            /usr/local/bin/openidx-agent version || /usr/local/bin/openidx-agent --help >/dev/null
+            for f in /usr/lib/systemd/system/openidx-agent.service \
+                     /usr/lib/systemd/system/openidx-agent-update.service \
+                     /usr/lib/systemd/system/openidx-agent-update.timer \
+                     /etc/openidx-agent/agent.env; do test -f "$f"; done
+            getent passwd openidx-agent
+            test "$(stat -c %a /var/lib/openidx-agent)" = 700
+            test "$(stat -c %U /var/lib/openidx-agent)" = openidx-agent
+            # Config survives an upgrade (same package reinstalled over itself).
+            echo "# local edit" >> /etc/openidx-agent/agent.env
+            echo "{}" > /var/lib/openidx-agent/agent.json
+            case "$INSTALL" in dpkg*) dpkg -i "$p" ;; rpm*) rpm -U --replacepkgs "$p" ;; esac
+            grep -q "local edit" /etc/openidx-agent/agent.env
+            test -f /var/lib/openidx-agent/agent.json
+            $REMOVE
+            test ! -e /usr/local/bin/openidx-agent
+            test ! -e /usr/lib/systemd/system/openidx-agent.service
+          '
+
+  msi-smoke:
+    name: MSI install/upgrade/uninstall smoke
+    runs-on: windows-latest
+    needs: build-msi
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: openidx-windows-client-*
+          merge-multiple: true
+          path: art
+      - name: Install WiX
+        shell: pwsh
+        run: dotnet tool install --global wix --version 5.0.2; wix extension add -g WixToolset.Util.wixext/5.0.2
+      - name: install, upgrade, uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = Get-ChildItem art -Recurse -Filter 'OpenIDX-*.msi' | Select-Object -First 1
+          $exe = Get-ChildItem art -Recurse -Filter 'openidx-agent.exe' | Select-Object -First 1
+          if (-not $msi -or -not $exe) { throw 'artifact has no MSI or exe' }
+          $ver = [version]($msi.BaseName -replace '^OpenIDX-', '')
+          $next = "{0}.{1}.{2}" -f $ver.Major, $ver.Minor, ($ver.Build + 1)
+          $next_msi = Join-Path $env:RUNNER_TEMP "OpenIDX-$next.msi"
+          wix build agent/packaging/wix/OpenIDX.wxs -ext WixToolset.Util.wixext `
+            -d "Version=$next" -d "ExePath=$($exe.FullName)" -arch x64 -o $next_msi
+          if ($LASTEXITCODE -ne 0) { throw 'building the upgrade MSI failed' }
+
+          $token = 'smoke-SECRET-enroll-token-4b1d'
+          function Run-Msi($argv, $log) {
+            $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList ($argv + @('/qn', '/l*v', $log))
+            if ($p.ExitCode -notin 0, 3010) { Get-Content $log -Tail 80; throw "msiexec $argv failed: $($p.ExitCode)" }
+          }
+          function Wait-Running {
+            for ($i = 0; $i -lt 30; $i++) {
+              $s = Get-Service OpenIDXAgent -ErrorAction SilentlyContinue
+              if ($s -and $s.Status -eq 'Running') { return }
+              Start-Sleep 2
+            }
+            throw "service OpenIDXAgent is not Running: $((Get-Service OpenIDXAgent -ErrorAction SilentlyContinue).Status)"
+          }
+          $data = Join-Path $env:ProgramData 'OpenIDX\agent'
+
+          # 1. Fresh install. The server does not exist, so enrolment fails
+          #    (Return=ignore) and the service keeps the sealed token to retry.
+          $log1 = Join-Path $env:RUNNER_TEMP 'install.log'
+          Run-Msi @('/i', "`"$($msi.FullName)`"", 'SERVER_URL=https://openidx.invalid', "ENROLL_TOKEN=$token") $log1
+          Wait-Running
+          $reg = (Get-ItemProperty 'HKLM:\SOFTWARE\OpenIDX\Agent').Version
+          if ($reg -ne "$ver") { throw "registry Version is '$reg', expected $ver" }
+          if (Select-String -Path $log1 -SimpleMatch $token -Quiet) { throw 'the enrollment token appears in the verbose MSI log' }
+          if (-not (Test-Path $data)) { throw "$data was not created" }
+          'marker' | Set-Content (Join-Path $data 'smoke-marker.txt')
+          $before = (Get-ChildItem $data -Recurse -File).FullName | Sort-Object
+
+          # 2. Upgrade: configuration and enrolment state are kept.
+          $log2 = Join-Path $env:RUNNER_TEMP 'upgrade.log'
+          Run-Msi @('/i', "`"$next_msi`"") $log2
+          Wait-Running
+          $reg = (Get-ItemProperty 'HKLM:\SOFTWARE\OpenIDX\Agent').Version
+          if ($reg -ne $next) { throw "after upgrade registry Version is '$reg', expected $next" }
+          foreach ($f in $before) { if (-not (Test-Path $f)) { throw "upgrade removed $f" } }
+          if (Select-String -Path $log2 -SimpleMatch $token -Quiet) { throw 'token in upgrade log' }
+
+          # 3. Uninstall: service, data dir and any Wintun adapter are gone.
+          $log3 = Join-Path $env:RUNNER_TEMP 'uninstall.log'
+          Run-Msi @('/x', "`"$next_msi`"") $log3
+          if (Get-Service OpenIDXAgent -ErrorAction SilentlyContinue) { throw 'service still registered after uninstall' }
+          if (Test-Path $data) { throw "$data survived uninstall" }
+          if (Test-Path 'HKLM:\SOFTWARE\OpenIDX\Agent') { throw 'detection registry key survived uninstall' }
+          $wintun = Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Where-Object InterfaceDescription -like '*Wintun*'
+          if ($wintun) { throw "Wintun adapter left behind: $($wintun.Name)" }
+          Write-Host 'msi-smoke: install, upgrade and uninstall behave'
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-smoke-logs
+          path: ${{ runner.temp }}/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # macOS: universal binary in an unsigned pkg with the LaunchDaemon (no Apple
+  # Developer ID yet, so Gatekeeper needs a right-click Open or MDM).
+  macos-pkg:
+    name: macOS universal pkg (unsigned)
+    runs-on: macos-15
+    needs: smoke-crosscompile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: agent/go.sum
+      - name: Build pkg
+        working-directory: agent
+        run: make package-macos VERSION=0.1.0
+      - name: Inspect pkg
+        working-directory: agent
+        run: |
+          set -euo pipefail
+          pkg=$(ls dist/pkg/*.pkg)
+          pkgutil --payload-files "$pkg" | tee /dev/stderr | grep -q 'Library/LaunchDaemons/com.openidx.agent.plist'
+          pkgutil --payload-files "$pkg" | grep -q 'usr/local/bin/openidx-agent'
+          sudo installer -pkg "$pkg" -target /
+          lipo -archs /usr/local/bin/openidx-agent | grep -q 'x86_64 arm64'
+          plutil -lint /Library/LaunchDaemons/com.openidx.agent.plist
+          sudo launchctl print system/com.openidx.agent >/dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openidx-agent-macos-pkg
+          path: agent/dist/pkg/*.pkg
+          if-no-files-found: error
+          retention-days: 7
+
   # Real artifact: build the .exe natively + package the MSI (WiX).
   build-msi:
     name: build .exe + MSI
@@ -843,6 +1015,13 @@ jobs:
           $manifest = [ordered]@{ version = $ver; url = $url; sha256 = $sha; signature = $b64 }
           $manifest | ConvertTo-Json | Set-Content -Path dist/latest.json -Encoding utf8
           Get-Content dist/latest.json
+
+      - name: Check the versioned latest.json
+        if: steps.ver.outputs.release == 'true'
+        shell: bash
+        env:
+          AGENT_VERSION: ${{ steps.ver.outputs.version }}
+        run: bash scripts/check-agent-release.sh --manifest dist/latest.json --version "$AGENT_VERSION"
 
       - name: Stamp install script
         if: steps.ver.outputs.release == 'true'

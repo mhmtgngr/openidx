@@ -28,10 +28,39 @@
 #      reusable token stamped from a repository variable: anyone who downloaded
 #      the script could enrol a machine into the organization.
 #
+#   g. install/upgrade/uninstall smoke jobs (msi-smoke, nfpm-smoke on
+#      debian:bookworm and rockylinux:9) still gate the packages.
+#
 # Usage: check-agent-release.sh [--enforce]   (non-zero on a finding either way)
+#        check-agent-release.sh --manifest latest.json [--version X.Y.Z]
+#          validates a published, versioned latest.json: semver version (equal
+#          to --version when given), an https URL under releases/download/
+#          agent-v<version>/ naming OpenIDX-<version>.msi, a 64-hex sha256 and
+#          a non-empty base64 signature.
 #
 # OPENIDX_REPO_ROOT overrides the repository root (used by the .test.sh).
 set -euo pipefail
+
+if [ "${1:-}" = "--manifest" ]; then
+  mf="${2:-}"; want="${4:-}"
+  [ "${3:-}" = "--version" ] || want=""
+  [ -f "$mf" ] || { echo "check-agent-release: no manifest at '$mf'" >&2; exit 1; }
+  bad=0
+  m() { echo "check-agent-release: latest.json: $1" >&2; bad=1; }
+  # PowerShell writes UTF-8 with a BOM; strip it before parsing.
+  json="$(sed '1s/^\xEF\xBB\xBF//' "$mf")"
+  field() { python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get(sys.argv[1],""))' "$1" <<<"$json" 2>/dev/null || true; }
+  python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$json" 2>/dev/null || { m "not JSON"; exit 1; }
+  v="$(field version)"; u="$(field url)"; h="$(field sha256)"; sg="$(field signature)"
+  [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || m "version '$v' is not X.Y.Z"
+  [ -z "$want" ] || [ "$v" = "$want" ] || m "version is $v, release is $want"
+  [[ "$u" =~ ^https://[^/]+/.+/releases/download/agent-v${v//./\\.}/OpenIDX-${v//./\\.}\.msi$ ]] ||
+    m "url '$u' is not the versioned agent-v$v/OpenIDX-$v.msi asset (never releases/latest)"
+  [[ "$h" =~ ^[0-9a-f]{64}$ ]] || m "sha256 '$h' is not 64 lowercase hex"
+  { [ -n "$sg" ] && base64 -d >/dev/null 2>&1 <<<"$sg"; } || m "signature is missing or not base64"
+  [ "$bad" -eq 0 ] && echo "check-agent-release: latest.json ok ($v)"
+  exit "$bad"
+fi
 
 ROOT="${OPENIDX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 wf="$ROOT/.github/workflows/windows-client-build.yml"
@@ -96,6 +125,13 @@ else
 fi
 grep -qE '^ +\[string\]\$EnrollToken +=  *"__ENROLL_TOKEN__",$' "$ROOT/agent/scripts/Install-OpenIDXAgent.ps1" ||
   finding "Install-OpenIDXAgent.ps1's -EnrollToken default is not the __ENROLL_TOKEN__ placeholder"
+
+# g. The packages are installed, upgraded and removed before they ship.
+for job in 'msi-smoke:' 'nfpm-smoke:'; do
+  grep -qE "^  ${job}\$" <<<"$body" || finding "the workflow has no ${job%:} job; nothing installs the package before release"
+done
+grep -qF 'image: debian:bookworm' <<<"$body" || finding "nfpm-smoke does not install the .deb on debian:bookworm"
+grep -qF 'image: rockylinux:9' <<<"$body" || finding "nfpm-smoke does not install the .rpm on rockylinux:9"
 
 if [ "$fail" -eq 0 ]; then
   echo "check-agent-release: ok — the agent is releasable by dispatch, agents poll the agent-latest channel, and no token is published"

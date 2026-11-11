@@ -40,8 +40,18 @@ func resolveServer(cmd *cobra.Command) string {
 	return ""
 }
 
+// Unix config/credential directories. The packages, the systemd unit and the
+// LaunchDaemon all use unixConfigDir; legacyUnixConfigDir is where agents up
+// to this release kept agent.json and is still read for one release.
+const (
+	unixConfigDir       = "/var/lib/openidx-agent"
+	legacyUnixConfigDir = "/etc/openidx-agent"
+)
+
 // defaultConfigDir returns the platform-appropriate config/credential directory:
-// %ProgramData%\OpenIDX\agent on Windows, /etc/openidx-agent elsewhere.
+// %ProgramData%\OpenIDX\agent on Windows, /var/lib/openidx-agent elsewhere
+// (falling back to the legacy /etc/openidx-agent when only it holds an
+// enrolled agent.json).
 func defaultConfigDir() string {
 	if runtime.GOOS == "windows" {
 		base := os.Getenv("ProgramData")
@@ -50,7 +60,20 @@ func defaultConfigDir() string {
 		}
 		return filepath.Join(base, "OpenIDX", "agent")
 	}
-	return "/etc/openidx-agent"
+	return pickUnixConfigDir(unixConfigDir, legacyUnixConfigDir)
+}
+
+// pickUnixConfigDir prefers current; it returns legacy only when current has
+// no agent.json and legacy does, so a not-yet-migrated device keeps working.
+func pickUnixConfigDir(current, legacy string) string {
+	has := func(d string) bool {
+		fi, err := os.Stat(filepath.Join(d, "agent.json"))
+		return err == nil && !fi.IsDir()
+	}
+	if !has(current) && has(legacy) {
+		return legacy
+	}
+	return current
 }
 
 // Version information injected via ldflags at build time.

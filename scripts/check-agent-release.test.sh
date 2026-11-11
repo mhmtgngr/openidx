@@ -82,5 +82,33 @@ stage
 sed -i 's/= "__ENROLL_TOKEN__",/= "0123456789abcdef",/' "$T/agent/scripts/Install-OpenIDXAgent.ps1"
 expect red "the script's own -Token default is a literal"
 
+stage
+sed -i 's/^  msi-smoke:$/  msi-gone:/' "$(WF)"
+expect red "the MSI smoke job is gone"
+
+stage
+sed -i 's/image: rockylinux:9/image: fedora:40/' "$(WF)"
+expect red "nfpm-smoke no longer covers rockylinux:9"
+
+# --manifest mode
+mexpect() { # mexpect <ok|red> <name> <json> [version]
+  local want="$1" name="$2" rc
+  printf '%s' "$3" >"$TMP/latest.json"
+  if [ -n "${4:-}" ]; then bash "$GUARD" --manifest "$TMP/latest.json" --version "$4" >/dev/null 2>&1; rc=$?
+  else bash "$GUARD" --manifest "$TMP/latest.json" >/dev/null 2>&1; rc=$?; fi
+  if { [ "$want" = ok ] && [ $rc -eq 0 ]; } || { [ "$want" = red ] && [ $rc -ne 0 ]; }; then
+    echo "  ok   $name"; pass=$((pass+1))
+  else echo "  FAIL $name (rc=$rc)"; fail=$((fail+1)); fi
+}
+H=$(printf '%064d' 0 | tr 0 a)
+GOOD='{"version":"1.2.3","url":"https://github.com/o/r/releases/download/agent-v1.2.3/OpenIDX-1.2.3.msi","sha256":"'$H'","signature":"c2ln"}'
+mexpect ok  "a versioned latest.json passes" "$GOOD" 1.2.3
+mexpect ok  "with a UTF-8 BOM" "$(printf '\357\273\277')$GOOD"
+mexpect red "version differs from the release" "$GOOD" 1.2.4
+mexpect red "url under releases/latest" "${GOOD/releases\/download\/agent-v1.2.3/releases\/latest\/download}"
+mexpect red "url names another version" "${GOOD/OpenIDX-1.2.3.msi/OpenIDX-1.2.2.msi}"
+mexpect red "short sha256" "${GOOD/$H/abc}"
+mexpect red "no signature" "${GOOD/c2ln/}"
+
 echo "check-agent-release.test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

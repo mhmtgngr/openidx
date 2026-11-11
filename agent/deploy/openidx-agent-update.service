@@ -1,0 +1,12 @@
+# Periodic self-update check, triggered by openidx-agent-update.timer.
+# Runs as root because applying an update replaces the packaged binary.
+[Unit]
+Description=OpenIDX agent update check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/openidx-agent/agent.env
+ExecStart=/usr/local/bin/openidx-agent update --apply --config-dir /var/lib/openidx-agent
+SyslogIdentifier=openidx-agent-update

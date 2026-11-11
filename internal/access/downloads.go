@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // agentDownloadsDir is the directory holding per-OS agent installers (msi/pkg/
@@ -123,6 +124,31 @@ func installerPreference(name string) int {
 	return 0
 }
 
+// installerVariant names a Linux package or macOS pkg by format and CPU for
+// install.sh: linux-deb-amd64, linux-rpm-arm64, macos-pkg (universal). ""
+// for anything else.
+func installerVariant(name string) string {
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".")
+	switch ext {
+	case "deb", "rpm":
+		arch := "amd64"
+		if installerArmRe.MatchString(name) {
+			arch = "arm64"
+		}
+		return "linux-" + ext + "-" + arch
+	case "pkg":
+		return "macos-pkg"
+	}
+	if m := bareBinaryRe.FindStringSubmatch(name); m != nil {
+		return "bin-" + m[1] + "-" + m[2]
+	}
+	return ""
+}
+
+// bareBinaryRe matches the raw agent binaries install.sh falls back to when
+// no native package exists: openidx-agent-linux-amd64, openidx-agent-darwin-arm64.
+var bareBinaryRe = regexp.MustCompile(`^openidx-agent-(linux|darwin)-(amd64|arm64)$`)
+
 // betterInstaller reports whether a should be advertised over b for the same
 // OS: the higher version wins, then the preferred format/architecture, then
 // the lexically smaller name so the choice never depends on directory order.
@@ -166,6 +192,25 @@ func (h *AgentAPIHandler) handleAgentManifest(c *gin.Context) {
 		sum, _ := sha256File(filepath.Join(dir, name))
 		out[osKey] = gin.H{"url": "/downloads/" + name, "filename": name, "sha256": sum}
 	}
+	// Variant entries ("linux-deb-amd64", "linux-rpm-arm64", "macos-pkg") let
+	// install.sh pick the native package for its distro and CPU and check it
+	// against a sha256 in the same (signed) manifest. The wizard reads only the
+	// plain OS keys and ignores these.
+	variants := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if vk := installerVariant(e.Name()); vk != "" {
+			if cur, seen := variants[vk]; !seen || betterInstaller(e.Name(), cur) {
+				variants[vk] = e.Name()
+			}
+		}
+	}
+	for vk, name := range variants {
+		sum, _ := sha256File(filepath.Join(dir, name))
+		out[vk] = gin.H{"url": "/downloads/" + name, "filename": name, "sha256": sum}
+	}
 	// Until the MSI is signed with a public certificate, a Windows machine
 	// installs it through the trust script (agent/scripts/), which trusts the
 	// project's signing certificate, checks the MSI against this manifest and
@@ -182,6 +227,28 @@ func (h *AgentAPIHandler) handleAgentManifest(c *gin.Context) {
 			sum, _ := sha256File(androidAPKPath)
 			out["android"] = gin.H{"url": "/downloads/openidx-agent.apk", "filename": "openidx-agent.apk", "sha256": sum}
 		}
+	}
+	// Sign what the wizard, install.sh and the trust script read, when the
+	// operator configured the release key. A misconfigured key is a server
+	// fault: refuse rather than serve an unsigned manifest that looks signed.
+	key, kerr := manifestSigningKey()
+	if kerr != nil {
+		h.logger.Error("agent manifest signing key unusable", zap.Error(kerr))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "manifest signing misconfigured"})
+		return
+	}
+	if key != nil {
+		entries := make(map[string]map[string]any, len(out))
+		for k, v := range out {
+			entries[k] = v
+		}
+		sig, err := signDownloadsManifest(key, entries)
+		if err != nil {
+			h.logger.Error("agent manifest signing failed", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "manifest signing failed"})
+			return
+		}
+		c.Header(manifestSignatureHeader, sig)
 	}
 	c.JSON(http.StatusOK, out)
 }
