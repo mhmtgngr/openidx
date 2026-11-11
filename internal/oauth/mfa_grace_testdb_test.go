@@ -153,7 +153,7 @@ func (f *mfaGraceFixture) windows(u *identity.User) int {
 
 func (f *mfaGraceFixture) decide(u *identity.User, fingerprint string) mfaEvaluation {
 	f.t.Helper()
-	return f.s.evaluateMFA(f.orgCtx, u, "203.0.113.7", "evidence-run", fingerprint, "", false, 0, nil)
+	return f.s.evaluateMFA(f.orgCtx, u, "203.0.113.7", "evidence-run", fingerprint, "", false, 0, nil, identity.SignInContext{})
 }
 
 // A policy that requires methods, at the login decision (evaluateMFA), against

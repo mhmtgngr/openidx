@@ -80,7 +80,7 @@ func TestMFAPolicyRaisesTheLoginChallenge(t *testing.T) {
 	}
 	decide := func(u *identity.User) mfaEvaluation {
 		t.Helper()
-		return s.evaluateMFA(orgCtx, u, "203.0.113.7", "evidence-run", "", "", false, 0, nil)
+		return s.evaluateMFA(orgCtx, u, "203.0.113.7", "evidence-run", "", "", false, 0, nil, identity.SignInContext{})
 	}
 
 	t.Run("policy off: the user with a factor is not challenged", func(t *testing.T) {
@@ -146,6 +146,30 @@ func TestMFAPolicyRaisesTheLoginChallenge(t *testing.T) {
 		}
 		if graceRows != 0 {
 			t.Fatalf("%d grace rows written while the policy was undecidable, want 0", graceRows)
+		}
+	})
+
+	// B3.1: a policy scoped to an identity provider applies to a sign-in
+	// through that IdP (externalSignInNeedsMore passes it from the SSO
+	// callback) and to nothing else; a password sign-in, which has no IdP,
+	// falls through to the next policy.
+	t.Run("an idp-scoped policy applies only to sign-ins through that IdP", func(t *testing.T) {
+		setPolicy(true)
+		const idp = "55555555-0000-0000-0000-0000000000a1"
+		if _, err := db.Pool.Exec(ctx, `
+			INSERT INTO mfa_policies (name, description, enabled, priority, conditions, required_methods, grace_period_hours, org_id)
+			VALUES ($1, '', true, 0, $2::jsonb, '["email"]', 0, $3::uuid)`,
+			"sso-"+suffix, `{"idp_ids":["`+idp+`"]}`, org); err != nil {
+			t.Fatalf("seed idp policy: %v", err)
+		}
+		sso := s.evaluateMFA(orgCtx, withFactor, "203.0.113.7", "evidence-run", "", "", false, 0, nil,
+			identity.SignInContext{IdPID: idp, ClientID: "admin-console"})
+		if !sso.PolicyRequired || len(sso.RequiredMethods) != 1 || sso.RequiredMethods[0] != "email" {
+			t.Fatalf("an SSO sign-in through the IdP must get the IdP's policy: %+v", sso)
+		}
+		pw := decide(withFactor)
+		if len(pw.RequiredMethods) != 0 {
+			t.Fatalf("a password sign-in has no IdP and must not get the IdP's policy: %+v", pw)
 		}
 	})
 }

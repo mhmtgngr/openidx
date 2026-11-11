@@ -431,7 +431,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 	methods := []string{"fed"}
 	if upstreamMFA && !external {
 		methods = []string{"fed", "mfa"}
-	} else if s.externalSignInNeedsMore(c, user.ID, pending, loginSession, "sso") {
+	} else if s.externalSignInNeedsMore(c, user.ID, pending, loginSession, "sso", idp.ID.String()) {
 		return
 	}
 

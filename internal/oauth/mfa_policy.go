@@ -86,9 +86,10 @@ func (s *Service) evaluateMFA(
 	deviceTrusted bool,
 	riskScore int,
 	riskFactors []string,
+	signIn identity.SignInContext,
 ) mfaEvaluation {
 	return holdExternalToStrongFactors(user,
-		s.evaluateMFAPolicies(ctx, user, clientIP, userAgent, fingerprint, location, deviceTrusted, riskScore, riskFactors))
+		s.evaluateMFAPolicies(ctx, user, clientIP, userAgent, fingerprint, location, deviceTrusted, riskScore, riskFactors, signIn))
 }
 
 // holdExternalToStrongFactors is the sign-in half of the external-user rules
@@ -147,6 +148,7 @@ func (s *Service) evaluateMFAPolicies(
 	deviceTrusted bool,
 	riskScore int,
 	riskFactors []string,
+	signIn identity.SignInContext,
 ) mfaEvaluation {
 	ev := mfaEvaluation{RiskScore: riskScore, RiskFactors: riskFactors, RiskLevel: "medium"}
 	if s.identityService == nil || user == nil {
@@ -270,7 +272,7 @@ func (s *Service) evaluateMFAPolicies(
 	// asks of its members. So the sign-in is refused until the policy can be
 	// evaluated, and nothing is written.
 	var policy *identity.MFAPolicy
-	if required, matched, err := s.identityService.IsMFARequired(ctx, user.ID, clientIP); errors.Is(err, identity.ErrMFAPolicyUndecidable) {
+	if required, matched, err := s.identityService.IsMFARequired(ctx, user.ID, clientIP, signIn); errors.Is(err, identity.ErrMFAPolicyUndecidable) {
 		s.logger.Error("MFA policy conditions could not be evaluated; refusing the sign-in", zap.Error(err))
 		ev.Undecidable = true
 		ev.Challenge = false

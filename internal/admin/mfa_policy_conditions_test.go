@@ -57,7 +57,18 @@ func TestNewMFAPolicyRules(t *testing.T) {
 		// Accepted before #990 and read by nothing.
 		{"factor_enrolled", `{"factor_enrolled":true}`, ``, 0, errMFAPolicyNotEnforced},
 		{"min_risk_score", `{"min_risk_score":70}`, ``, 0, errMFAPolicyNotEnforced},
-		{"client_ids", `{"client_ids":["admin-console"]}`, ``, 0, errMFAPolicyNotEnforced},
+		// Population and sign-in conditions (B3.1).
+		{"client_ids", `{"client_ids":["admin-console"]}`, ``, 0, nil},
+		{"user_types", `{"user_types":["external","service"]}`, `["totp"]`, 0, nil},
+		{"vendor_org_ids", `{"vendor_org_ids":["44444444-0000-0000-0000-000000000001"]}`, ``, 0, nil},
+		{"idp_ids", `{"idp_ids":["55555555-0000-0000-0000-000000000001"]}`, ``, 0, nil},
+		{"all audience conditions", `{"groups":["IT"],"user_types":["external"],"vendor_org_ids":["44444444-0000-0000-0000-000000000001"],"idp_ids":["55555555-0000-0000-0000-000000000001"],"client_ids":["portal"]}`, ``, 0, nil},
+		{"an unknown user type", `{"user_types":["guest"]}`, ``, 0, errMFAPolicyInvalid},
+		{"a vendor org that is not an id", `{"vendor_org_ids":["acme"]}`, ``, 0, errMFAPolicyInvalid},
+		{"an idp that is not an id", `{"idp_ids":["google"]}`, ``, 0, errMFAPolicyInvalid},
+		{"no client ids", `{"client_ids":[]}`, ``, 0, errMFAPolicyInvalid},
+		{"a client listed twice", `{"client_ids":["a","a"]}`, ``, 0, errMFAPolicyInvalid},
+		{"user types beside ip_ranges", `{"user_types":["external"],"ip_ranges":["10.0.0.0/8"]}`, ``, 0, errMFAPolicyNotEnforced},
 		// Read by the evaluator and refused before #990 too: the console cannot
 		// show them, and a condition it cannot show narrows who is challenged.
 		{"ip_ranges", `{"ip_ranges":["10.0.0.0/8"]}`, ``, 0, errMFAPolicyNotEnforced},
@@ -119,7 +130,7 @@ func TestMFAPolicyUpdateRules(t *testing.T) {
 		{"methods cleared but the grace period kept", nil, raw(`[]`), nil, errMFAPolicyInvalid, false},
 		{"an unknown method", nil, raw(`["webauthn","password"]`), nil, errMFAPolicyInvalid, false},
 		{"a grace period over 30 days", nil, nil, hours(maxMFAGraceHours + 1), errMFAPolicyInvalid, false},
-		{"a new condition", raw(`{"client_ids":["b"]}`), nil, nil, errMFAPolicyNotEnforced, false},
+		{"a new condition", raw(`{"ip_ranges":["10.0.0.0/8"]}`), nil, nil, errMFAPolicyNotEnforced, false},
 		// Scoping a policy to groups changes who it applies to, not what they
 		// must add, so the running grace periods stay.
 		{"scoped to groups", raw(`{"groups":["Finance"]}`), nil, nil, nil, false},
@@ -216,7 +227,7 @@ func TestMFAPolicyHandlersEnforceTheRules(t *testing.T) {
 		{"an unknown method", `"required_methods":["password"]`, "not a method a policy can require"},
 		{"a grace period and no method", `"grace_period_hours":24`, "applies only to a policy that requires methods"},
 		{"a grace period over 30 days", `"required_methods":["totp"],"grace_period_hours":721`, "between 0 and 720"},
-		{"a condition", `"conditions":{"client_ids":["admin-console"]}`, "not enforced"},
+		{"a condition", `"conditions":{"time_windows":["09:00-17:00"]}`, "not enforced"},
 	} {
 		t.Run("a policy with "+tc.name+" is refused and not written", func(t *testing.T) {
 			name := "refused-" + strings.ReplaceAll(tc.name, " ", "-") + "-" + suffix

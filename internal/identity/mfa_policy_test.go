@@ -49,7 +49,7 @@ func TestIsMFARequired(t *testing.T) {
 	svc := NewService(db, nil, nil, zap.NewNop())
 
 	t.Run("no policies means not required", func(t *testing.T) {
-		required, policy, err := svc.IsMFARequired(ctx, user, "1.2.3.4")
+		required, policy, err := svc.IsMFARequired(ctx, user, "1.2.3.4", SignInContext{})
 		if err != nil {
 			t.Fatalf("IsMFARequired: %v", err)
 		}
@@ -63,7 +63,7 @@ func TestIsMFARequired(t *testing.T) {
 			VALUES ('off', false, 10, '{"factor_enrolled":true}', $1)`, org); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
-		required, _, err := svc.IsMFARequired(ctx, user, "1.2.3.4")
+		required, _, err := svc.IsMFARequired(ctx, user, "1.2.3.4", SignInContext{})
 		if err != nil {
 			t.Fatalf("IsMFARequired: %v", err)
 		}
@@ -77,7 +77,7 @@ func TestIsMFARequired(t *testing.T) {
 			VALUES ('always', true, 5, '{"factor_enrolled":true}', 12, $1)`, org); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
-		required, policy, err := svc.IsMFARequired(ctx, user, "1.2.3.4")
+		required, policy, err := svc.IsMFARequired(ctx, user, "1.2.3.4", SignInContext{})
 		if err != nil {
 			t.Fatalf("IsMFARequired: %v", err)
 		}
@@ -98,7 +98,7 @@ func TestIsMFARequired(t *testing.T) {
 			VALUES ('later', true, 99, '{"factor_enrolled":true}', $1)`, org); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
-		_, policy, err := svc.IsMFARequired(ctx, user, "1.2.3.4")
+		_, policy, err := svc.IsMFARequired(ctx, user, "1.2.3.4", SignInContext{})
 		if err != nil {
 			t.Fatalf("IsMFARequired: %v", err)
 		}
@@ -110,7 +110,7 @@ func TestIsMFARequired(t *testing.T) {
 			VALUES ('aardvark', true, 5, '{"factor_enrolled":true}', $1)`, org); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
-		_, policy, err = svc.IsMFARequired(ctx, user, "1.2.3.4")
+		_, policy, err = svc.IsMFARequired(ctx, user, "1.2.3.4", SignInContext{})
 		if err != nil {
 			t.Fatalf("IsMFARequired: %v", err)
 		}
@@ -142,7 +142,7 @@ func TestIsMFARequired(t *testing.T) {
 				t.Fatalf("seed: %v\n%s", err, stmt)
 			}
 		}
-		required, _, err := svc.IsMFARequired(ctx, user, "1.2.3.4")
+		required, _, err := svc.IsMFARequired(ctx, user, "1.2.3.4", SignInContext{})
 		if err != nil {
 			t.Fatalf("IsMFARequired: %v", err)
 		}
@@ -153,7 +153,7 @@ func TestIsMFARequired(t *testing.T) {
 			VALUES ('33333333-0000-0000-0000-0000000000d1', $1, $2)`, user, org); err != nil {
 			t.Fatalf("join group: %v", err)
 		}
-		required, policy, err := svc.IsMFARequired(ctx, user, "1.2.3.4")
+		required, policy, err := svc.IsMFARequired(ctx, user, "1.2.3.4", SignInContext{})
 		if err != nil {
 			t.Fatalf("IsMFARequired: %v", err)
 		}
@@ -171,7 +171,7 @@ func TestIsMFARequired(t *testing.T) {
 		if _, err := db.Pool.Exec(ctx, `DROP TABLE group_memberships`); err != nil {
 			t.Fatalf("drop memberships: %v", err)
 		}
-		required, policy, err = svc.IsMFARequired(ctx, user, "1.2.3.4")
+		required, policy, err = svc.IsMFARequired(ctx, user, "1.2.3.4", SignInContext{})
 		if !errors.Is(err, ErrMFAPolicyUndecidable) {
 			t.Fatalf("got (%v, %+v, %v), want ErrMFAPolicyUndecidable when membership cannot be read", required, policy, err)
 		}
@@ -182,12 +182,66 @@ func TestIsMFARequired(t *testing.T) {
 
 	t.Run("another org's policy does not apply", func(t *testing.T) {
 		otherCtx := orgctx.With(context.Background(), orgctx.Org{ID: "00000000-0000-0000-0000-0000000000d9"})
-		required, _, err := svc.IsMFARequired(otherCtx, user, "1.2.3.4")
+		required, _, err := svc.IsMFARequired(otherCtx, user, "1.2.3.4", SignInContext{})
 		if err != nil {
 			t.Fatalf("IsMFARequired: %v", err)
 		}
 		if required {
 			t.Error("policies must not leak across orgs")
+		}
+	})
+
+	// Population and sign-in conditions: user_types and vendor_org_ids read
+	// the user row, idp_ids and client_ids the SignInContext. A sign-in that
+	// lacks the context never satisfies the condition, and is never
+	// undecidable for it.
+	t.Run("population and sign-in conditions", func(t *testing.T) {
+		const vendor = "44444444-0000-0000-0000-0000000000d1"
+		const idp = "55555555-0000-0000-0000-0000000000d1"
+		for _, stmt := range []string{
+			`DELETE FROM mfa_policies WHERE org_id = '` + org + `'`,
+			`CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY, org_id UUID NOT NULL, user_type TEXT, vendor_org_id UUID)`,
+			`INSERT INTO users (id, org_id, user_type, vendor_org_id) VALUES ('` + user + `', '` + org + `', 'external', '` + vendor + `')
+				ON CONFLICT (id) DO UPDATE SET user_type = 'external', vendor_org_id = '` + vendor + `'`,
+		} {
+			if _, err := db.Pool.Exec(ctx, stmt); err != nil {
+				t.Fatalf("seed %q: %v", stmt, err)
+			}
+		}
+		cases := []struct {
+			name, conds string
+			signIn      SignInContext
+			want        bool
+		}{
+			{"user type matches", `{"user_types":["external"]}`, SignInContext{}, true},
+			{"user type does not match", `{"user_types":["internal","service"]}`, SignInContext{}, false},
+			{"partner org matches", `{"vendor_org_ids":["` + vendor + `"]}`, SignInContext{}, true},
+			{"partner org does not match", `{"vendor_org_ids":["44444444-0000-0000-0000-0000000000ff"]}`, SignInContext{}, false},
+			{"idp matches", `{"idp_ids":["` + idp + `"]}`, SignInContext{IdPID: idp}, true},
+			{"no idp on the sign-in", `{"idp_ids":["` + idp + `"]}`, SignInContext{}, false},
+			{"client matches", `{"client_ids":["admin-console"]}`, SignInContext{ClientID: "admin-console"}, true},
+			{"other client", `{"client_ids":["admin-console"]}`, SignInContext{ClientID: "portal"}, false},
+			{"no client on the sign-in", `{"client_ids":["admin-console"]}`, SignInContext{}, false},
+			{"all four must match", `{"user_types":["external"],"vendor_org_ids":["` + vendor + `"],"idp_ids":["` + idp + `"],"client_ids":["portal"]}`,
+				SignInContext{IdPID: idp, ClientID: "portal"}, true},
+			{"one of four fails", `{"user_types":["external"],"vendor_org_ids":["` + vendor + `"],"idp_ids":["` + idp + `"],"client_ids":["portal"]}`,
+				SignInContext{IdPID: idp, ClientID: "admin-console"}, false},
+		}
+		for _, tc := range cases {
+			if _, err := db.Pool.Exec(ctx, `DELETE FROM mfa_policies WHERE org_id = $1`, org); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Pool.Exec(ctx, `INSERT INTO mfa_policies (name, enabled, priority, conditions, org_id)
+				VALUES ('scoped', true, 1, $1::jsonb, $2)`, tc.conds, org); err != nil {
+				t.Fatalf("%s: seed: %v", tc.name, err)
+			}
+			required, _, err := svc.IsMFARequired(ctx, user, "1.2.3.4", tc.signIn)
+			if err != nil {
+				t.Fatalf("%s: IsMFARequired: %v", tc.name, err)
+			}
+			if required != tc.want {
+				t.Errorf("%s: required = %v, want %v", tc.name, required, tc.want)
+			}
 		}
 	})
 }

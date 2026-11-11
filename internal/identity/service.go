@@ -3018,7 +3018,18 @@ func (s *Service) GetPushDevices(ctx context.Context, userID string) ([]PushMFAD
 // applies.
 var ErrMFAPolicyUndecidable = errors.New("MFA policy conditions could not be evaluated")
 
-func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP string) (bool, *MFAPolicy, error) {
+// SignInContext is what a sign-in knows beyond the user: the identity
+// provider it came through (empty for a password or magic-link sign-in) and
+// the application (OAuth client_id) it is for (empty when there is no
+// pending authorization request). A policy scoped by idp_ids or client_ids
+// never applies to a sign-in that lacks the value: missing context means the
+// condition is not satisfied, never undecidable.
+type SignInContext struct {
+	IdPID    string
+	ClientID string
+}
+
+func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP string, signIn SignInContext) (bool, *MFAPolicy, error) {
 	s.logger.Debug("Checking MFA requirements", zap.String("user_id", userID), zap.String("client_ip", clientIP))
 
 	org, err := orgctx.From(ctx)
@@ -3057,7 +3068,7 @@ func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP str
 
 	// Evaluate each policy in the order the console lists them
 	for _, policy := range policies {
-		required, err := s.evaluateMFAPolicy(ctx, userID, clientIP, &policy)
+		required, err := s.evaluateMFAPolicy(ctx, userID, clientIP, signIn, &policy)
 		if errors.Is(err, ErrMFAPolicyUndecidable) {
 			// Falling through to the next policy would pick the wrong one
 			// for a member; the caller decides what an undecided policy
@@ -3078,7 +3089,7 @@ func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP str
 }
 
 // evaluateMFAPolicy evaluates if a specific MFA policy applies to a user
-func (s *Service) evaluateMFAPolicy(ctx context.Context, userID, clientIP string, policy *MFAPolicy) (bool, error) {
+func (s *Service) evaluateMFAPolicy(ctx context.Context, userID, clientIP string, signIn SignInContext, policy *MFAPolicy) (bool, error) {
 	// Parse conditions - Conditions is already map[string]interface{} from JSONB
 	conditions := policy.Conditions
 	if conditions == nil {
@@ -3093,6 +3104,42 @@ func (s *Service) evaluateMFAPolicy(ctx context.Context, userID, clientIP string
 			return false, err
 		}
 		if !member {
+			return false, nil
+		}
+	}
+
+	// Sign-in context: a sign-in without an IdP or client never matches.
+	if ids, exists := conditions["idp_ids"]; exists {
+		if !conditionListHas(ids, signIn.IdPID) {
+			return false, nil
+		}
+	}
+	if ids, exists := conditions["client_ids"]; exists {
+		if !conditionListHas(ids, signIn.ClientID) {
+			return false, nil
+		}
+	}
+
+	// User population: type and partner organization.
+	types, hasTypes := conditions["user_types"]
+	vendors, hasVendors := conditions["vendor_org_ids"]
+	if hasTypes || hasVendors {
+		org, err := orgctx.From(ctx)
+		if err != nil {
+			return false, err
+		}
+		var userType string
+		var vendorOrgID sql.NullString
+		if err := s.db.Pool.QueryRow(ctx,
+			`SELECT COALESCE(user_type, 'internal'), vendor_org_id::text FROM users WHERE id = $1 AND org_id = $2`,
+			userID, org.ID).Scan(&userType, &vendorOrgID); err != nil {
+			// A user whose type cannot be read decides nothing, like groups.
+			return false, fmt.Errorf("%w: %v", ErrMFAPolicyUndecidable, err)
+		}
+		if hasTypes && !conditionListHas(types, userType) {
+			return false, nil
+		}
+		if hasVendors && !conditionListHas(vendors, vendorOrgID.String) {
 			return false, nil
 		}
 	}
@@ -3120,6 +3167,30 @@ func (s *Service) evaluateMFAPolicy(ctx context.Context, userID, clientIP string
 
 	// If we reach here, all conditions are met
 	return true, nil
+}
+
+// conditionListHas reports whether a JSONB list condition contains value. An
+// empty value (context the sign-in does not have) never matches.
+func conditionListHas(list interface{}, value string) bool {
+	if value == "" {
+		return false
+	}
+	items, ok := list.([]interface{})
+	if !ok {
+		return false
+	}
+	for _, item := range items {
+		if v, ok := item.(string); ok && strings.EqualFold(v, value) && (v == value || isUUIDish(v)) {
+			return true
+		}
+	}
+	return false
+}
+
+// isUUIDish lets ids compare case-insensitively while names (user types,
+// client ids) compare exactly.
+func isUUIDish(v string) bool {
+	return len(v) == 36 && strings.Count(v, "-") == 4
 }
 
 // checkUserInGroups checks if user belongs to any of the specified groups
