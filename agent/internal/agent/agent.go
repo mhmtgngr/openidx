@@ -56,6 +56,13 @@ type Agent struct {
 	lastPosture atomic.Pointer[PostureSummary]
 	// Version is the running build, reported to the server (B8.5).
 	Version string
+	// RunCommands makes this process ask for and run fleet commands (B8.6).
+	// The service sets it; the tray never does.
+	RunCommands bool
+	// CommandHooks are the platform's half of the commands.
+	CommandHooks      CommandHooks
+	handledCommandsMu sync.Mutex
+	handledCommands   map[string]bool
 	// lastUpdate is the latest update check's outcome; updateTarget the
 	// server's update block from the last config sync.
 	lastUpdate   atomic.Pointer[updater.Result]
@@ -246,8 +253,11 @@ func (a *Agent) LoadPlugins() {
 // parses it into a ServerConfig. On any error it falls back to DefaultServerConfig
 // and logs a warning.
 func (a *Agent) SyncConfig(ctx context.Context) error {
+	// Set on every sync: a re-enrolment replaces the client.
+	transport.SetAcceptCommands(a.client, a.RunCommands)
 	data, err := a.client.GetConfig()
 	if errors.Is(err, transport.ErrAgentAuthInvalid) && a.reloadIfReenrolled() {
+		transport.SetAcceptCommands(a.client, a.RunCommands)
 		// The device was enrolled again while this process ran (a code or
 		// link enrolment: the service is already running, so nothing restarts
 		// it). Ask again with the credential that enrolment wrote.
@@ -274,6 +284,7 @@ func (a *Agent) SyncConfig(ctx context.Context) error {
 			if n >= authFailThreshold && a.reenrolFromSealedToken() {
 				// The refusal was a state, and the device's sealed fleet token
 				// fixed it (sealed_token.go). Ask with the new credential.
+				transport.SetAcceptCommands(a.client, a.RunCommands)
 				if data, err = a.client.GetConfig(); err == nil {
 					return a.acceptConfig(data)
 				}
@@ -312,6 +323,9 @@ func (a *Agent) acceptConfig(data []byte) error {
 
 	a.serverCfg = &cfg
 	a.updateTarget.Store(cfg.Update)
+	if a.RunCommands && len(cfg.Commands) > 0 {
+		a.runCommands(cfg.Commands)
+	}
 	a.logger.Info("server config synced", zap.Int("checks", len(cfg.Checks)))
 	a.applyNetworkPolicy(cfg.OrgNetworkPolicy)
 	if !a.DisableRemoteSupport {

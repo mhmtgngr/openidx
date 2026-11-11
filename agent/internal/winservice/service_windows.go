@@ -99,6 +99,7 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	h.updateNow = make(chan struct{}, 1)
 
 	// Report Running before ANY startup work: everything below may touch
 	// agent.json (DPAPI unseal), the network or files an upgrade still has
@@ -137,6 +138,8 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 		// posture/enrollment/self-update.
 		a.DisableRemoteSupport = true
 		a.Version = h.version
+		a.RunCommands = true
+		a.CommandHooks = h.commandHooks()
 		a.LoggedOnUser = consoleLogonUser
 		a.RegisterBuiltinChecks()
 		a.LoadPlugins()
@@ -156,9 +159,6 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 		}
 	}()
 	// Periodic self-update (no-op unless update_manifest_url is configured).
-	if h.updateNow == nil {
-		h.updateNow = make(chan struct{}, 1)
-	}
 	go h.updateLoop(ctx)
 	// The tray in every signed-in session, right after an install or upgrade
 	// rather than at the next sign-in.

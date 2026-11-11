@@ -152,6 +152,7 @@ func (h *AgentAPIHandler) RegisterAgentPublicRoutes(r *gin.RouterGroup) {
 	r.GET("/agent/config", h.HandleConfig)
 	// An agent that enrolled before it had a device key offers it here.
 	r.POST("/agent/device-key", h.HandleRegisterDeviceKey)
+	r.POST("/agent/commands/:command_id/result", h.HandleAgentCommandResult)
 }
 
 // RegisterAgentAdminRoutes registers endpoints that REQUIRE a valid OpenIDX
@@ -200,6 +201,11 @@ func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup, stepUp, a
 	r.POST("/agents/:agent_id/reinstate", withGate(operator, withGate(stepUp, h.HandleReinstateAgent)...)...)
 	r.POST("/agents/:agent_id/retire", withGate(operator, withGate(stepUp, h.HandleRetireAgent)...)...)
 	r.POST("/agents/:agent_id/approve", withGate(operator, h.HandleApproveAgent)...)
+	// Fleet commands (agent_commands.go); reenroll and uninstall need fresh MFA.
+	r.POST("/agents/:agent_id/commands", withGate(operator, withGate(gateCommandKind(stepUp), h.HandleQueueAgentCommand)...)...)
+	r.GET("/agents/:agent_id/commands", withGate(operator, h.HandleListAgentCommands)...)
+	r.GET("/agents/:agent_id/commands/:command_id/artifact", withGate(operator, h.HandleAgentCommandArtifact)...)
+	r.DELETE("/agents/:agent_id/commands/:command_id", withGate(operator, h.HandleCancelAgentCommand)...)
 	r.POST("/agent/qr", withGate(operator, h.HandleGenerateQR)...)
 	r.GET("/agent/apk-info", h.HandleAPKInfo)
 }
@@ -1756,6 +1762,9 @@ type agentConfigResponse struct {
 	// Update is the organization's update ring as it applies to this device
 	// (agent_updates.go); only an active agent gets it.
 	Update *agentUpdateBlock `json:"update,omitempty"`
+	// Commands are fleet commands queued for this device, handed over once
+	// (agent_commands.go).
+	Commands []agentCommandDelivery `json:"commands,omitempty"`
 }
 
 // writeActiveAgentConfig answers /agent/config for an agent HandleConfig read
@@ -1764,6 +1773,11 @@ type agentConfigResponse struct {
 func (h *AgentAPIHandler) writeActiveAgentConfig(c *gin.Context, agentID string, cfg agentConfigResponse) {
 	cfg.OrgNetworkPolicy = h.policyForActiveAgent(c.Request.Context(), agentID)
 	cfg.Update = h.updateBlockFor(c.Request.Context(), agentID)
+	// Only the process that runs commands (the service) takes them; the
+	// tray syncs with the same credential and must not drain the queue.
+	if c.GetHeader("X-Agent-Accept-Commands") == "1" {
+		cfg.Commands = h.deliverAgentCommands(c.Request.Context(), agentID)
+	}
 	c.JSON(http.StatusOK, cfg)
 }
 
@@ -1928,6 +1942,7 @@ func (h *AgentAPIHandler) StartGracePeriodEnforcer(ctx context.Context, interval
 			case <-ticker.C:
 				h.enforceExpiredGracePeriods(ctx)
 				h.sweepSilentDevices(ctx)
+				h.expireAgentCommands(ctx)
 			}
 		}
 	}()

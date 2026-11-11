@@ -62,6 +62,8 @@ type Client struct {
 	httpClient *http.Client
 	// signer signs posture reports with the device key, when there is one.
 	signer RequestSigner
+	// acceptCommands sends AcceptCommandsHeader on config syncs (commands.go).
+	acceptCommands bool
 	// enrollKey is the device key's public half and kind, sent with the
 	// enrolment so the server binds the device to it from the start.
 	enrollKey, enrollKeyKind string
@@ -204,6 +206,9 @@ func (c *Client) GetConfig() ([]byte, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+c.authToken)
 	req.Header.Set("X-Agent-ID", c.agentID)
+	if c.acceptCommands {
+		req.Header.Set(AcceptCommandsHeader, "1")
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

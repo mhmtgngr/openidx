@@ -1798,5 +1798,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agentUpdateRingsUp,
 			DownSQL:     agentUpdateRingsDown,
 		},
+		{
+			Version:     254,
+			Name:        "agent_commands",
+			Description: "Remote fleet commands. agent_commands queues restart, collect_logs, reenroll, set_options, update_now and uninstall for one device: queued, delivered once in /agent/config, done or failed by the device's result, expired after 24 hours, or cancelled. A collect_logs artifact (at most 8 MiB) is kept with its name and SHA-256. Org-scoped under FORCE RLS; down drops the table.",
+			UpSQL:       agentCommandsUp,
+			DownSQL:     agentCommandsDown,
+		},
 	}
 }

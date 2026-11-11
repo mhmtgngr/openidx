@@ -352,6 +352,26 @@ begin enforcing access policies and reporting health checks.`,
 			return fmt.Errorf("creating agent: %w", err)
 		}
 		a.Version = strings.TrimPrefix(Version, "v")
+		// A foreground run (systemd, launchd) runs fleet commands too: restart
+		// exits for the unit's Restart=always, update_now runs one check.
+		a.RunCommands = true
+		a.CommandHooks = agent.CommandHooks{
+			Restart: func() { _ = logger.Sync(); os.Exit(1) },
+			UpdateNow: func() {
+				go func() {
+					cfg, err := agent.LoadConfig(configDir)
+					if err != nil || cfg == nil {
+						return
+					}
+					trust, err := updater.TrustForConfig(cfg.UpdateTrustedCertPEM)
+					if err != nil {
+						return
+					}
+					res := updater.CheckTarget(context.Background(), a.UpdateTarget(), cfg.UpdateManifestURL, a.Version, trust)
+					a.SetUpdateResult(res)
+				}()
+			},
+		}
 
 		a.RegisterBuiltinChecks()
 		a.LoadPlugins()
@@ -481,6 +501,11 @@ var trayCmd = &cobra.Command{
 		autostart, _ := cmd.Flags().GetBool("autostart")
 		if !tray.ShouldRun(autostart) {
 			logger.Info("tray: autostart is off for this user; not starting")
+			return nil
+		}
+		// An administrator hid the tray on this device (fleet set_options).
+		if cfg, err := agent.LoadConfig(configDir); autostart && err == nil && cfg != nil && cfg.TrayHidden {
+			logger.Info("tray: hidden on this device by its organization; not starting")
 			return nil
 		}
 		// The same "v"-less form the agent_version check reports.

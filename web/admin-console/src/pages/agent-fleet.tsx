@@ -30,6 +30,7 @@ import { QueryError } from '../components/query-error'
 import { AgentChecksSection } from '../components/agent-checks-section'
 import { FleetTokensSection } from '../components/fleet-tokens-section'
 import { AgentUpdatesSection, updateStateLabel } from '../components/agent-updates-section'
+import { AgentCommandsDialog } from '../components/agent-commands-dialog'
 import { TunnelPolicyBadge, TunnelStatusBadge, type TunnelStatus } from '../components/tunnel-status-badge'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
@@ -118,6 +119,7 @@ export function AgentFleetPage() {
   const [qrDescription, setQrDescription] = useState('')
   const [qrTTLMinutes, setQrTTLMinutes] = useState(60)
   const [postureAgent, setPostureAgent] = useState<AgentRecord | null>(null)
+  const [commandsAgent, setCommandsAgent] = useState<AgentRecord | null>(null)
 
   const { data: postureData, isLoading: postureLoading } = useQuery({
     queryKey: ['agent-posture', postureAgent?.agent_id],
@@ -364,6 +366,11 @@ export function AgentFleetPage() {
                           <DropdownMenuItem onSelect={() => setPostureAgent(agent)}>
                             {t('pages.agentFleet.viewPosture')}
                           </DropdownMenuItem>
+                          {agent.status !== 'revoked' && agent.status !== 'retired' && (
+                            <DropdownMenuItem onSelect={() => setCommandsAgent(agent)}>
+                              {t('pages.agentFleet.actions')}
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem onSelect={() => copyToClipboard(agent.agent_id)}>
                             <Copy className="mr-2 h-4 w-4" /> {t('pages.agentFleet.copyAgentId')}
                           </DropdownMenuItem>
@@ -391,6 +398,13 @@ export function AgentFleetPage() {
           )}
         </CardContent>
       </Card>
+
+      <AgentCommandsDialog
+        agentId={commandsAgent?.agent_id ?? null}
+        label={commandsAgent?.hostname || commandsAgent?.agent_id || ''}
+        open={!!commandsAgent}
+        onOpenChange={(o) => { if (!o) setCommandsAgent(null) }}
+      />
 
       {/* The update ring: channel, pin, rollout, pause. */}
       <AgentUpdatesSection />

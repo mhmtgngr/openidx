@@ -7,3 +7,10 @@
   then every 6h±30m, obeys pause and pin, and downgrades to a pin with `REINSTALLMODE=vomus` (the MSI now
   allows downgrades). Beta tags (`agent-v*-beta.*`) publish to the `agent-beta` channel. Linux packages get an
   `openidx-agent-update.timer`. Alert `OpenIDXAgentUpdateFailing` on `openidx_agents_update_failing`.
+- **Remote fleet commands (v254).** The Agent Fleet row menu gains "Actions…": restart, collect logs (a tar.gz of
+  the agent and tunnel logs plus agent.json with its tokens redacted, at most 8 MiB, downloadable with its
+  SHA-256), check for updates now, change options (log level, tray hidden, tunnel on/off), enroll again with the
+  sealed fleet token, and uninstall (detached `msiexec /x`, needs a written reason). `POST/GET
+  /api/v1/access/agents/:id/commands`, `GET …/:cid/artifact`, `DELETE …/:cid` (operator; reenroll and uninstall
+  need fresh MFA). The service receives each command once in `/agent/config` (the tray never does) and answers
+  `POST /api/v1/access/agent/commands/:id/result`; unanswered commands expire after 24 hours.

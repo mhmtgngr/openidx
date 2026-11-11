@@ -274,4 +274,20 @@ describe('AgentFleetPage', () => {
       update_channel: 'beta', update_pin_version: '', update_rollout_percent: 100, update_paused: true,
     })
   })
+
+  it('queues an uninstall only with a reason, from the row Actions dialog', async () => {
+    const user = userEvent.setup()
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    expect(await screen.findByText('agt-001')).toBeInTheDocument()
+    await user.click(screen.getAllByRole('button', { name: '' })[0])
+    await user.click(await screen.findByText('Actions…'))
+    await user.selectOptions(await screen.findByLabelText('Action'), 'uninstall')
+    const send = screen.getByRole('button', { name: 'Send' })
+    expect(send).toBeDisabled()
+    await user.type(screen.getByLabelText(/Reason \(required/), 'laptop returned to IT')
+    await user.click(send)
+    expect(api.post).toHaveBeenCalledWith('/api/v1/access/agents/agt-001/commands', {
+      kind: 'uninstall', reason: 'laptop returned to IT',
+    })
+  })
 })
