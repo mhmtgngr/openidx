@@ -8,5 +8,4 @@
   only when the name matches exactly one enabled directory- or federation-sourced user.
 
 ### Upgrade notes
-- Migration 252 (`org_agent_settings`, org-scoped under FORCE RLS). 251 is reserved for agent identity
-  continuity. `RegisterAgentAdminRoutes` takes an admin gate as its third argument.
+- Migration 251 (`org_agent_settings`, org-scoped under FORCE RLS). `RegisterAgentAdminRoutes` takes an admin gate as its third argument.

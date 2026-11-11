@@ -1749,9 +1749,8 @@ func allMigrations() []*Migration {
 			UpSQL:       fleetTokensAndTagsUp,
 			DownSQL:     fleetTokensAndTagsDown,
 		},
-		// 251 is reserved (agent_identity_continuity, another branch).
 		{
-			Version:     252,
+			Version:     251,
 			Name:        "org_agent_settings",
 			Description: "One agent-fleet settings row per organization: claim_mode (login, the default: the person who signs in on the tray claims an unowned device; logged_on_user: the report's session user claims it when they are a directory- or federation-sourced user). Org-scoped under FORCE RLS; down drops the table.",
 			UpSQL:       orgAgentSettingsUp,

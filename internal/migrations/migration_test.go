@@ -49,7 +49,6 @@ func TestAllMigrationsIntegrity(t *testing.T) {
 		247: "in flight on another branch",
 		248: "in flight on another branch",
 		249: "in flight on another branch",
-		251: "agent_identity_continuity (Faz B8.4, another branch)",
 	}
 	want := len(all) + len(reservedVersions)
 	for v := 1; v <= want; v++ {

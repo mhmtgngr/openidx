@@ -1,6 +1,6 @@
 package migrations
 
-// Migration 252: per-organization agent settings.
+// Migration 251: per-organization agent settings.
 //
 // org_agent_settings is the one settings row an organization has for its
 // agent fleet. This migration brings claim_mode, how a device enrolled with
@@ -13,10 +13,9 @@ package migrations
 //	                 theirs when that name matches a directory- or
 //	                 federation-sourced user of the organization.
 //
-// Update-ring columns (B8.5) join this row later. Migration 251 is reserved
-// for agent identity continuity on another branch. No row means the defaults.
+// Update-ring columns (B8.5) join this row later. No row means the defaults.
 
-var orgAgentSettingsUp = `-- Migration 252: org agent settings.
+var orgAgentSettingsUp = `-- Migration 251: org agent settings.
 CREATE TABLE IF NOT EXISTS org_agent_settings (
     org_id     UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
     claim_mode VARCHAR(32) NOT NULL DEFAULT 'login'
@@ -33,6 +32,6 @@ ALTER TABLE org_agent_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE org_agent_settings FORCE  ROW LEVEL SECURITY;
 `
 
-var orgAgentSettingsDown = `-- Rollback migration 252.
+var orgAgentSettingsDown = `-- Rollback migration 251.
 DROP TABLE IF EXISTS org_agent_settings;
 `
