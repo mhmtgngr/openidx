@@ -5096,7 +5096,11 @@ paths:
       description: >
         A supplier whose people can be invited as external users. The name is
         unique in the organization; allowed e-mail domains are normalised; the
-        default account lifetime is at most a year.
+        default account lifetime is at most a year. `onboarding_mode`
+        (`invitation`, `federated`, `both`), `idp_id`, `sliding_expiry` and
+        `default_group_ids` (groups open to external users only) set how the
+        vendor's people arrive; a mode other than `invitation` needs
+        `default_sponsor_user_id` (`400`).
       operationId: createVendorOrganization
       x-openidx-handler: internal/identity.(*Service).handleCreateVendorOrg
       requestBody:
@@ -5138,6 +5142,10 @@ paths:
         Moving `status` to `suspended` suspends the vendor's live external
         accounts and severs them; moving it back to `active` reactivates none
         and restarts the reactivation window of its suspended accounts.
+        `onboarding_mode`, `idp_id`, `sliding_expiry` and `default_group_ids`
+        left out keep what the vendor has; `idp_id: ""` unbinds the provider.
+        A federated vendor without a default sponsor is refused (`400`,
+        `vendor_federated_needs_sponsor`).
       operationId: updateVendorOrganization
       x-openidx-handler: internal/identity.(*Service).handleUpdateVendorOrg
       parameters:
@@ -5476,7 +5484,7 @@ paths:
     get:
       tags: [External Users]
       summary: List external users
-      description: Each external account with its vendor, sponsor, status, end date and second factor; `vendor_org_id` narrows the list to one vendor.
+      description: Each external account with its vendor, sponsor, status, end date, source and second factor; `vendor_org_id` narrows the list to one vendor, `status` to one account status, `source` to how the account was made (`federated` for one provisioned at an SSO sign-in, `local` for an invitation).
       operationId: listExternalUsers
       x-openidx-handler: internal/identity.(*Service).handleListExternalUsers
       parameters:
@@ -5484,6 +5492,14 @@ paths:
           in: query
           required: false
           schema: {type: string, format: uuid}
+        - name: status
+          in: query
+          required: false
+          schema: {type: string}
+        - name: source
+          in: query
+          required: false
+          schema: {type: string, enum: [federated, local]}
       responses:
         '200':
           description: The external users

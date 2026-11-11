@@ -93,14 +93,20 @@ paths:
             type: string
         - name: idp
           in: query
-          description: The id of one of the organization's identity providers to sign in with.
+          description: >-
+            The id of one of the organization's enabled identity providers to
+            sign in with. The browser goes to OpenIDX's `/oauth/authorize` with
+            `idp_hint`, never to the provider directly; an unknown or disabled
+            provider is `400`.
           schema:
             type: string
       responses:
         '200':
           description: Login page rendered
         '302':
-          description: Redirect to identity provider
+          description: Redirect to OpenIDX `/oauth/authorize`, with `idp_hint` when `idp` is given
+        '400':
+          description: The identity provider is unknown or not enabled
 
   /access/.auth/callback:
     get:

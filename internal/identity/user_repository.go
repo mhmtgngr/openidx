@@ -214,6 +214,12 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// isCheckViolation reports whether err is a Postgres 23514 check_violation.
+func isCheckViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23514"
+}
+
 // Create implements UserRepository. WRITE — uses the primary pool. Reads-your-
 // write callers therefore see the row immediately (a replica could lag).
 func (r *PostgresUserRepository) Create(ctx context.Context, user *User) error {
