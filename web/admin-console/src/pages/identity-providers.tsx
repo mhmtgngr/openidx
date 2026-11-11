@@ -53,7 +53,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
-import { api, IdentityProvider } from '../lib/api'
+import { api, IdentityProvider, IdentityProviderJITPolicy } from '../lib/api'
+import { Textarea } from '../components/ui/textarea'
 import { useToast } from '../hooks/use-toast'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
@@ -68,6 +69,46 @@ interface ProviderFormData {
   client_secret_changed: boolean
   scopes: string
   enabled: boolean
+  // Federation profile. The structured fields are edited as JSON, the
+  // shape the API takes; an update replaces the whole profile, so every
+  // field round-trips through the form.
+  discovery_url: string
+  use_pkce: boolean
+  trust_upstream_mfa: boolean
+  external_id_claim: string
+  pass_through_params: string
+  claims_mapping: string
+  group_mapping: string
+  jit_policy: string
+}
+
+const defaultJIT: IdentityProviderJITPolicy = { provision: false, population: 'internal' }
+
+const json = (v: unknown) => JSON.stringify(v, null, 2)
+
+const csv = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean)
+
+// profileFields reads the federation profile out of the form; a JSON field
+// that does not parse is named in the error.
+function profileFields(data: ProviderFormData): Partial<IdentityProvider> {
+  const parse = <T,>(field: string, raw: string, empty: T): T => {
+    if (!raw.trim()) return empty
+    try {
+      return JSON.parse(raw) as T
+    } catch {
+      throw new Error(field)
+    }
+  }
+  return {
+    discovery_url: data.discovery_url.trim() || undefined,
+    use_pkce: data.use_pkce,
+    trust_upstream_mfa: data.trust_upstream_mfa,
+    external_id_claim: data.external_id_claim.trim() || undefined,
+    pass_through_params: csv(data.pass_through_params),
+    claims_mapping: parse('claims_mapping', data.claims_mapping, {}),
+    group_mapping: parse('group_mapping', data.group_mapping, []),
+    jit_policy: parse('jit_policy', data.jit_policy, defaultJIT),
+  }
 }
 
 const emptyForm: ProviderFormData = {
@@ -79,6 +120,14 @@ const emptyForm: ProviderFormData = {
   client_secret_changed: false,
   scopes: 'openid,profile,email',
   enabled: true,
+  discovery_url: '',
+  use_pkce: true,
+  trust_upstream_mfa: false,
+  external_id_claim: 'sub',
+  pass_through_params: 'login_hint, prompt, max_age',
+  claims_mapping: '{}',
+  group_mapping: '[]',
+  jit_policy: json(defaultJIT),
 }
 
 export function IdentityProvidersPage() {
@@ -111,6 +160,11 @@ export function IdentityProvidersPage() {
     },
   })
 
+  const invalidJSON = (err: Error) =>
+    ['claims_mapping', 'group_mapping', 'jit_policy'].includes(err.message)
+      ? t('pages.identityProviders.form.invalidJson', { field: err.message })
+      : null
+
   const createMutation = useMutation({
     mutationFn: (data: ProviderFormData) =>
       api.createIdentityProvider({
@@ -121,6 +175,7 @@ export function IdentityProvidersPage() {
         client_secret: data.client_secret,
         scopes: data.scopes.split(',').map((s) => s.trim()).filter(Boolean),
         enabled: data.enabled,
+        ...profileFields(data),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['identity-providers'] })
@@ -128,8 +183,8 @@ export function IdentityProvidersPage() {
       setFormData(emptyForm)
       toast({ title: t('pages.identityProviders.toasts.created') })
     },
-    onError: () => {
-      toast({ title: t('common.error'), description: t('pages.identityProviders.toasts.createFailed'), variant: 'destructive' })
+    onError: (err: Error) => {
+      toast({ title: t('common.error'), description: invalidJSON(err) ?? t('pages.identityProviders.toasts.createFailed'), variant: 'destructive' })
     },
   })
 
@@ -145,6 +200,7 @@ export function IdentityProvidersPage() {
         client_secret: data.client_secret_changed ? data.client_secret : undefined,
         scopes: data.scopes.split(',').map((s) => s.trim()).filter(Boolean),
         enabled: data.enabled,
+        ...profileFields(data),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['identity-providers'] })
@@ -152,8 +208,8 @@ export function IdentityProvidersPage() {
       setSelectedProvider(null)
       toast({ title: t('pages.identityProviders.toasts.updated') })
     },
-    onError: () => {
-      toast({ title: t('common.error'), description: t('pages.identityProviders.toasts.updateFailed'), variant: 'destructive' })
+    onError: (err: Error) => {
+      toast({ title: t('common.error'), description: invalidJSON(err) ?? t('pages.identityProviders.toasts.updateFailed'), variant: 'destructive' })
     },
   })
 
@@ -179,6 +235,14 @@ export function IdentityProvidersPage() {
       client_secret_changed: false,
       scopes: template.scopes,
       enabled: true,
+      discovery_url: template.discovery_url ?? '',
+      use_pkce: true,
+      trust_upstream_mfa: false,
+      external_id_claim: template.external_id_claim ?? 'sub',
+      pass_through_params: (template.pass_through_params ?? csv(emptyForm.pass_through_params)).join(', '),
+      claims_mapping: json(template.claims_mapping ?? {}),
+      group_mapping: '[]',
+      jit_policy: json(defaultJIT),
     })
     setAddModal(true)
   }
@@ -201,6 +265,14 @@ export function IdentityProvidersPage() {
       client_secret_changed: false,
       scopes: (provider.scopes || []).join(', '),
       enabled: provider.enabled,
+      discovery_url: provider.discovery_url ?? '',
+      use_pkce: provider.use_pkce ?? true,
+      trust_upstream_mfa: provider.trust_upstream_mfa ?? false,
+      external_id_claim: provider.external_id_claim ?? 'sub',
+      pass_through_params: (provider.pass_through_params ?? []).join(', '),
+      claims_mapping: json(provider.claims_mapping ?? {}),
+      group_mapping: json(provider.group_mapping ?? []),
+      jit_policy: json(provider.jit_policy ?? defaultJIT),
     })
     setEditModal(true)
   }
@@ -302,6 +374,66 @@ export function IdentityProvidersPage() {
         />
         <Label htmlFor="identity-providers-enabled">{t('pages.identityProviders.form.enabled')}</Label>
       </div>
+      {formData.provider_type === 'oidc' && (
+        <fieldset className="space-y-4 border-t pt-4">
+          <legend className="text-sm font-medium">{t('pages.identityProviders.form.federation')}</legend>
+          <div>
+            <Label htmlFor="discovery_url">{t('pages.identityProviders.form.discoveryUrl')}</Label>
+            <Input
+              id="discovery_url"
+              value={formData.discovery_url}
+              onChange={(e) => setFormData({ ...formData, discovery_url: e.target.value })}
+              placeholder={t('pages.identityProviders.form.discoveryUrlPlaceholder')}
+            />
+          </div>
+          <div>
+            <Label htmlFor="external_id_claim">{t('pages.identityProviders.form.externalIdClaim')}</Label>
+            <Input
+              id="external_id_claim"
+              value={formData.external_id_claim}
+              onChange={(e) => setFormData({ ...formData, external_id_claim: e.target.value })}
+              placeholder="sub"
+            />
+            <p className="text-xs text-muted-foreground mt-1">{t('pages.identityProviders.form.externalIdClaimHelp')}</p>
+          </div>
+          <div>
+            <Label htmlFor="pass_through_params">{t('pages.identityProviders.form.passThroughParams')}</Label>
+            <Input
+              id="pass_through_params"
+              value={formData.pass_through_params}
+              onChange={(e) => setFormData({ ...formData, pass_through_params: e.target.value })}
+              placeholder="login_hint, prompt, max_age"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch id="identity-providers-use-pkce"
+              checked={formData.use_pkce}
+              onCheckedChange={(checked) => setFormData({ ...formData, use_pkce: checked })}
+            />
+            <Label htmlFor="identity-providers-use-pkce">{t('pages.identityProviders.form.usePkce')}</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch id="identity-providers-trust-mfa"
+              checked={formData.trust_upstream_mfa}
+              onCheckedChange={(checked) => setFormData({ ...formData, trust_upstream_mfa: checked })}
+            />
+            <Label htmlFor="identity-providers-trust-mfa">{t('pages.identityProviders.form.trustUpstreamMfa')}</Label>
+          </div>
+          {(['claims_mapping', 'group_mapping', 'jit_policy'] as const).map((field) => (
+            <div key={field}>
+              <Label htmlFor={field}>{t(`pages.identityProviders.form.${field}`)}</Label>
+              <Textarea
+                id={field}
+                className="font-mono text-xs"
+                rows={field === 'jit_policy' ? 4 : 5}
+                value={formData[field]}
+                onChange={(e) => setFormData({ ...formData, [field]: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground mt-1">{t(`pages.identityProviders.form.${field}Help`)}</p>
+            </div>
+          ))}
+        </fieldset>
+      )}
       <div className="flex justify-end gap-2 pt-4">
         <Button variant="outline" onClick={() => { setAddModal(false); setEditModal(false) }}>
           {t('common.cancel')}
@@ -335,7 +467,7 @@ export function IdentityProvidersPage() {
             {PROVIDER_TEMPLATES.map((template) => {
               const IconComponent = template.id === 'google' ? GoogleIcon
                 : template.id === 'github' ? GitHubIcon
-                : template.id === 'microsoft' ? MicrosoftIcon
+                : template.id === 'microsoft' || template.id === 'adfs' ? MicrosoftIcon
                 : null
               return (
                 <button
@@ -478,7 +610,7 @@ export function IdentityProvidersPage() {
 
       {/* Add Provider Dialog */}
       <Dialog open={addModal} onOpenChange={(open) => { setAddModal(open); if (!open) setSelectedTemplate(null) }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {selectedTemplate
@@ -495,6 +627,9 @@ export function IdentityProvidersPage() {
                 {t('pages.identityProviders.addDialog.setupGuide')} <ExternalLink className="h-3 w-3" />
               </a>
             )}
+            {selectedTemplate?.noteKey && (
+              <p className="text-xs text-muted-foreground">{t(selectedTemplate.noteKey)}</p>
+            )}
           </DialogHeader>
           {formContent}
         </DialogContent>
@@ -502,7 +637,7 @@ export function IdentityProvidersPage() {
 
       {/* Edit Provider Dialog */}
       <Dialog open={editModal} onOpenChange={setEditModal}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('pages.identityProviders.editDialog.title')}</DialogTitle>
           </DialogHeader>

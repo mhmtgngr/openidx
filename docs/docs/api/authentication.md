@@ -156,9 +156,18 @@ OpenIDX is a SAML 2.0 Identity Provider (IdP). Applications that support SAML
 can use OpenIDX for sign-on and Single Logout. OpenIDX is not a SAML Service
 Provider: it has no endpoint that accepts a SAML response from an external
 IdP. A SAML provider can be added on the console's Identity Providers page,
-but nothing signs a user in through it; the
-[maturity matrix](https://github.com/mhmtgngr/openidx#feature-maturity) lists
-external identity providers as Experimental.
+but nothing signs a user in through it.
+
+## Signing in through an external OpenID Connect provider
+
+OpenIDX is an OpenID Connect relying party for enterprise providers such as
+Microsoft Entra ID, AD FS and Keycloak. `GET /oauth/authorize?idp_hint=<provider id>`
+starts the upstream sign-in (with `login_session=<handle>` the stored pending
+request is the one completed), and the provider returns to `/oauth/callback`.
+Endpoints come from the provider's discovery document; state, nonce and PKCE
+are sent; the ID token is fully verified; users are linked by the provider's
+`external_id_claim`. The [inbound federation guide](../guides/FEDERATION-INBOUND.md)
+covers provider setup, the profile fields and the login page's error codes.
 
 The IdP metadata is at `/saml/idp/metadata`. Register a service provider in
 the Admin Console under **Applications > SAML Applications**, or import its
