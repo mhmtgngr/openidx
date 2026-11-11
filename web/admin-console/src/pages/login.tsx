@@ -15,6 +15,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { LanguageSwitcher } from '../components/language-switcher'
 import { AuthCardFooter, PoweredBy } from '../components/auth-card-footer'
 import { TurnstileChallenge } from '../components/turnstile-challenge'
+import { MfaInlineEnroll } from '../components/mfa-inline-enroll'
 
 interface MFAOption {
   method: string
@@ -160,6 +161,10 @@ export function LoginPage() {
 
   // MFA state
   const [mfaRequired, setMfaRequired] = useState(false)
+  // An MFA policy refused the sign-in for want of a method the person has not
+  // added; with MFA_INLINE_ENROLLMENT the server opened an enrol session and
+  // the person adds one here (internal/oauth/mfa_enroll_inline.go).
+  const [enrollChallenge, setEnrollChallenge] = useState<{ session: string; methods: string[] } | null>(null)
   const [mfaSession, setMfaSession] = useState('')
   const [mfaCode, setMfaCode] = useState('')
   const [mfaMethods, setMfaMethods] = useState<string[]>([])
@@ -385,7 +390,14 @@ export function LoginPage() {
         setSelectedMfaMethod('totp')
       }
     }
-    if (fromUrl || linkError || handedMfa) {
+    // The same refusal through an identity provider comes back with the enrol
+    // session instead of the MFA one.
+    const handedEnroll = urlParams.get('enroll_session')
+    if (handedEnroll) {
+      const methods = (urlParams.get('methods') ?? '').split(',').filter((m) => m === 'totp' || m === 'webauthn')
+      setEnrollChallenge({ session: handedEnroll, methods: methods.length ? methods : ['totp'] })
+    }
+    if (fromUrl || linkError || handedMfa || handedEnroll) {
       // Clear the URL parameters without reloading (the session now lives in storage).
       window.history.replaceState({}, '', '/login')
     }
@@ -694,6 +706,14 @@ export function LoginPage() {
         setConcurrentLimitReached(true)
         setActiveSessions(data.active_sessions || [])
         setPendingLoginSession(data.login_session)
+        return
+      }
+
+      if (data.enroll_session) {
+        setEnrollChallenge({
+          session: data.enroll_session,
+          methods: Array.isArray(data.methods) && data.methods.length ? data.methods : ['totp'],
+        })
         return
       }
 
@@ -1221,6 +1241,41 @@ export function LoginPage() {
     } finally {
       setQrLoading(false)
     }
+  }
+
+  // Add the method the policy requires, then finish the sign-in. This replaced
+  // the dead end where the page could only say "ask an administrator".
+  if (enrollChallenge) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <div className="absolute top-4 right-4">
+          <LanguageSwitcher />
+        </div>
+        <Card className="w-full max-w-md shadow-xl">
+          <CardHeader className="text-center space-y-4">
+            <div className="flex justify-center">
+              <div className="h-16 w-16 rounded-full bg-linear-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-lg">
+                <Shield className="h-9 w-9 text-white" />
+              </div>
+            </div>
+            <CardTitle className="text-2xl font-bold">{t('login.enroll.title')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <MfaInlineEnroll
+              enrollSession={enrollChallenge.session}
+              methods={enrollChallenge.methods}
+              onDone={(result) => {
+                if (!finishAuth(result)) {
+                  setEnrollChallenge(null)
+                  setError(result.error_description || t('login.errors.loginFailed'))
+                }
+              }}
+            />
+          </CardContent>
+          <AuthCardFooter />
+        </Card>
+      </div>
+    )
   }
 
   // The policy notice, before the redirect that completes the sign-in. When

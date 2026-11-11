@@ -374,8 +374,19 @@ func TestMFAPolicyGraceAtTheLoginEndpoint(t *testing.T) {
 			t.Fatal("the start of the grace period was not audited")
 		}
 	})
-	t.Run("after the grace period the login is refused and says why", func(t *testing.T) {
+	t.Run("after the grace period, with inline enrolment on, the login opens an enrol session", func(t *testing.T) {
 		f.backdateGrace(u, 73*time.Hour)
+		f.s.config.MFAInlineEnrollment = true
+		defer func() { f.s.config.MFAInlineEnrollment = false }()
+		code, resp := login(u)
+		if code != http.StatusOK || resp["enroll_session"] == nil || resp["enroll_session"] == "" {
+			t.Fatalf("want 200 with an enroll_session, got %d %v", code, resp)
+		}
+		if methods := fmt.Sprint(resp["methods"]); methods != "[totp]" {
+			t.Fatalf("methods %s, want [totp]: an email code is not enough", methods)
+		}
+	})
+	t.Run("after the grace period, with inline enrolment off, the login is refused and says why", func(t *testing.T) {
 		code, resp := login(u)
 		if code != http.StatusForbidden || resp["error"] != "mfa_enrollment_required" {
 			t.Fatalf("want 403 mfa_enrollment_required, got %d %v", code, resp)

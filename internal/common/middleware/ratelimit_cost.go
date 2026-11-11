@@ -153,6 +153,8 @@ var routeCosts = []costRule{
 	{method: http.MethodPost, prefix: "/oauth/mfa-send-otp", cost: CostCredential},
 	{method: http.MethodPost, prefix: "/oauth/mfa-webauthn-begin", cost: CostCredential},
 	{method: http.MethodPost, prefix: "/oauth/mfa-push-begin", cost: CostCredential},
+	// Inline enrolment of a required factor during sign-in (mfa_enroll_inline.go).
+	{method: http.MethodPost, prefix: "/oauth/mfa/enroll/", cost: CostCredential},
 	{method: http.MethodPost, prefix: "/oauth/passwordless/phone/init", cost: CostCredential},
 	{method: http.MethodPost, prefix: "/oauth/stepup-challenge", cost: CostCredential},
 	{method: http.MethodPost, prefix: "/oauth/stepup-verify", cost: CostCredential},

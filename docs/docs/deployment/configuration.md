@@ -319,6 +319,7 @@ read scope holds with OPA off too.
 | `NTFY_BASE_URL` | url | - | Self-hosted ntfy server for push, the transport the OpenIDX mobile client uses. |
 | `NTFY_TOKEN` | string | - | Bearer for that server. |
 | `NTFY_TOPIC_SECRET` | string | - | Secret from which per-device topics are derived. |
+| `MFA_INLINE_ENROLLMENT` | bool | `true` | When an MFA policy refuses a sign-in because the person has none of the methods it requires (the grace period is over, or an external user has no authenticator app, passkey or push device), let them add an authenticator app or a passkey on the login page and finish the sign-in, instead of refusing it with `mfa_enrollment_required`. Email codes are never offered to external users. Read by oauth-service. |
 | `ADAPTIVE_MFA_ENABLED` | bool | `true` | Step up based on the login risk score. |
 | `SMS_ENABLED` | bool | `false` | Offer the SMS OTP factor. |
 | `SMS_PROVIDER` | string | `mock` | `twilio`, `aws_sns`, `netgsm`, `ileti_merkezi`, `verimor`, `turkcell`, `vodafone`, `turk_telekom`, `mutlucell`, `webhook`, or `mock`. **`mock` counts as not configured**: the factor refuses rather than reporting a code it never sent, and production refuses to start with `SMS_ENABLED=true` and `SMS_PROVIDER=mock`. |

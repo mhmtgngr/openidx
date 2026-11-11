@@ -1683,6 +1683,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 		// MFA verification endpoint
 		oauth.POST("/mfa-verify", svc.handleMFAVerify)
 
+		// Inline enrolment of a required factor during sign-in, against the
+		// enroll_session POST /oauth/login answers with (mfa_enroll_inline.go).
+		oauth.POST("/mfa/enroll/totp/begin", svc.handleMFAEnrollTOTPBegin)
+		oauth.POST("/mfa/enroll/totp/finish", noStore, svc.handleMFAEnrollTOTPFinish)
+		oauth.POST("/mfa/enroll/webauthn/begin", svc.handleMFAEnrollWebAuthnBegin)
+		oauth.POST("/mfa/enroll/webauthn/finish", noStore, svc.handleMFAEnrollWebAuthnFinish)
+
 		// WebAuthn MFA begin (returns credential assertion options)
 		oauth.POST("/mfa-webauthn-begin", svc.handleMFAWebAuthnBegin)
 
@@ -2538,7 +2545,20 @@ func (s *Service) handleLogin(c *gin.Context) {
 	}
 
 	// The grace period to add a method the policy requires is over, and the
-	// user has no bypass code to sign in with while they add one.
+	// user has no bypass code to sign in with while they add one. With
+	// MFA_INLINE_ENROLLMENT they add one here (mfa_enroll_inline.go).
+	if ev.EnrollmentRequired {
+		if enrollSession, methods, ok := s.offerInlineEnrollment(c.Request.Context(), user, oauthParams, ev, "pwd"); ok {
+			s.auditMFAGrace(c.Request.Context(), user.ID, clientIP, "mfa_enrollment_required", "enroll", ev)
+			s.redis.Client.Expire(c.Request.Context(), "login_session:"+req.LoginSession, 10*time.Minute)
+			c.JSON(200, gin.H{
+				"mfa_enrollment_required": true,
+				"enroll_session":          enrollSession,
+				"methods":                 methods,
+			})
+			return
+		}
+	}
 	if ev.EnrollmentRequired && ev.External {
 		s.auditMFAGrace(c.Request.Context(), user.ID, clientIP, "mfa_enrollment_required", "failure", ev)
 		c.JSON(403, gin.H{
@@ -2868,6 +2888,9 @@ func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]
 	)
 	if due := oauthParams[paramMFAEnrollmentDue]; due != "" && json.Valid([]byte(due)) {
 		body["mfa_enrollment_due"] = json.RawMessage(due)
+	}
+	if codes, ok := c.Get(ctxEnrollBackupCodes); ok {
+		body["backup_codes"] = codes
 	}
 	c.JSON(200, body)
 }

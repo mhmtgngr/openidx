@@ -353,6 +353,22 @@ func TestASocialSignInFollowsTheMFAPolicy(t *testing.T) {
 		t.Fatalf("%d codes, want 0", n)
 	}
 
+	// MFA_INLINE_ENROLLMENT on: the same sign-in is handed to the enrol step.
+	if x.issuer.config == nil {
+		x.issuer.config = &config.Config{}
+	}
+	x.issuer.config.MFAInlineEnrollment = true
+	w = x.socialSignIn(sub, email, x.loginSession())
+	loc, _ = url.Parse(w.Header().Get("Location"))
+	if w.Code != http.StatusFound || loc.Path != "/login" || loc.Query().Get("enroll_session") == "" ||
+		loc.Query().Get("methods") != "totp" || loc.Query().Get("error") != "" {
+		t.Fatalf("flag on, want /login?enroll_session=..&methods=totp, got %d %q", w.Code, w.Header().Get("Location"))
+	}
+	if n := x.codes(user); n != 0 {
+		t.Fatalf("%d codes before the factor is enrolled, want 0", n)
+	}
+	x.issuer.config.MFAInlineEnrollment = false
+
 	withTOTP, tsub, _ := x.linkedUser("policy-totp", "totp")
 	temail := x.scalar(`SELECT email FROM users WHERE id = $1::uuid`, withTOTP)
 	handedToSecondFactor(t, x.socialSignIn(tsub, temail, x.loginSession()), "totp")
