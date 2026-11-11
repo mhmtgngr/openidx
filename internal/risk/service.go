@@ -1111,3 +1111,25 @@ func (s *Service) EvaluateRiskPolicies(ctx context.Context, loginCtx EvaluateLog
 		SessionDuration: duration,
 	}, nil
 }
+
+// PreviousLoginLocation returns the IP and coordinates of the user's most
+// recent successful, geolocated sign-in recorded no later than `before`
+// (plus 30s slack for the write following the users.last_login_at
+// update). Callers pass the user's PREVIOUS last_login_at, so the row the
+// current login just wrote is never mistaken for "the last login" (B7.4).
+// ok=false when there is no such row.
+func (s *Service) PreviousLoginLocation(ctx context.Context, userID string, before time.Time) (ip string, lat, lon float64, at time.Time, ok bool) {
+	org, err := orgctx.From(ctx)
+	if err != nil || s.db == nil {
+		return "", 0, 0, time.Time{}, false
+	}
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(ip_address::text, ''), latitude, longitude, created_at FROM login_history
+		 WHERE user_id = $1 AND org_id = $2 AND success = true AND latitude != 0 AND longitude != 0
+		   AND created_at <= $3
+		 ORDER BY created_at DESC LIMIT 1`, userID, org.ID, before.Add(30*time.Second)).Scan(&ip, &lat, &lon, &at)
+	if err != nil {
+		return "", 0, 0, time.Time{}, false
+	}
+	return ip, lat, lon, at, true
+}

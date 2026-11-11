@@ -714,14 +714,24 @@ type Config struct {
 	GuacamolePerUserIdentities bool `mapstructure:"guacamole_per_user_identities"`
 
 	// BrowZer configuration (browser-native Ziti participation)
-	BrowZerEnabled          bool   `mapstructure:"browzer_enabled"`
-	BrowZerClientID         string `mapstructure:"browzer_client_id"`
-	BrowZerTargetsPath      string `mapstructure:"browzer_targets_path"`
-	BrowZerRouterConfigPath string `mapstructure:"browzer_router_config_path"`
-	BrowZerHopConfigPath    string `mapstructure:"browzer_hop_config_path"`
-	BrowZerHopCertPath      string `mapstructure:"browzer_hop_cert_path"`
-	BrowZerHopKeyPath       string `mapstructure:"browzer_hop_key_path"`
-	BrowZerCertsPath        string `mapstructure:"browzer_certs_path"`
+	BrowZerEnabled  bool   `mapstructure:"browzer_enabled"`
+	BrowZerClientID string `mapstructure:"browzer_client_id"`
+	// ZitiUserSyncBatch is how many users without a Ziti identity the user
+	// sync poller creates per tick (and how many stale identities it
+	// refreshes). Was a hardcoded 10, which lagged a bulk invite of stakeholder
+	// users by minutes. Env ZITI_USER_SYNC_BATCH, default 100.
+	ZitiUserSyncBatch int `mapstructure:"ziti_user_sync_batch"`
+	// ZitiUserSyncInterval is the user sync poller tick. Env
+	// ZITI_USER_SYNC_INTERVAL (Go duration), default 30s. A BrowZer sign-in
+	// additionally requests an on-demand sync for that user, drained within
+	// a few seconds, so a first clientless visit does not wait for the tick.
+	ZitiUserSyncInterval    time.Duration `mapstructure:"ziti_user_sync_interval"`
+	BrowZerTargetsPath      string        `mapstructure:"browzer_targets_path"`
+	BrowZerRouterConfigPath string        `mapstructure:"browzer_router_config_path"`
+	BrowZerHopConfigPath    string        `mapstructure:"browzer_hop_config_path"`
+	BrowZerHopCertPath      string        `mapstructure:"browzer_hop_cert_path"`
+	BrowZerHopKeyPath       string        `mapstructure:"browzer_hop_key_path"`
+	BrowZerCertsPath        string        `mapstructure:"browzer_certs_path"`
 	// Public per-app vhost generation (front nginx). The access-service renders
 	// one TLS server block per BrowZer route into BrowZerVHostConfigPath; the
 	// front nginx includes it and reloads. Forwards to BrowZerBootstrapperAddr.
@@ -1334,6 +1344,8 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	// BrowZer defaults
 	v.SetDefault("browzer_enabled", false)
 	v.SetDefault("browzer_client_id", "browzer-client")
+	v.SetDefault("ziti_user_sync_batch", 100)
+	v.SetDefault("ziti_user_sync_interval", 30*time.Second)
 	v.SetDefault("browzer_router_host", "browzer-router")
 	v.SetDefault("browzer_router_port", 80)
 	v.SetDefault("ziti_browzer_hop_addr", "127.0.0.1:8095")
@@ -1568,6 +1580,8 @@ func bindEnvVars(v *viper.Viper) {
 		"ai_http_timeout_seconds":             "AI_HTTP_TIMEOUT_SECONDS",
 		"browzer_enabled":                     "BROWZER_ENABLED",
 		"browzer_client_id":                   "BROWZER_CLIENT_ID",
+		"ziti_user_sync_batch":                "ZITI_USER_SYNC_BATCH",
+		"ziti_user_sync_interval":             "ZITI_USER_SYNC_INTERVAL",
 		"browzer_targets_path":                "BROWZER_TARGETS_PATH",
 		"browzer_router_config_path":          "BROWZER_ROUTER_CONFIG_PATH",
 		"browzer_hop_config_path":             "BROWZER_HOP_CONFIG_PATH",

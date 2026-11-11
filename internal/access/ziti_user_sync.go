@@ -14,6 +14,7 @@ import (
 
 	"github.com/openidx/openidx/internal/appaccess"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/zitisyncq"
 )
 
 // SyncResult represents the result of syncing a single user to Ziti.
@@ -648,15 +649,49 @@ func (zm *ZitiManager) GetSyncStatus(ctx context.Context) (*SyncStatus, error) {
 	return &status, nil
 }
 
+// userSyncBatch / userSyncInterval are the poller knobs (B7.6), clamped so a
+// zero or absurd setting cannot stop the sweep or hammer the controller.
+func (zm *ZitiManager) userSyncBatch() int {
+	n := 100
+	if zm.cfg != nil && zm.cfg.ZitiUserSyncBatch > 0 {
+		n = zm.cfg.ZitiUserSyncBatch
+	}
+	if n > 1000 {
+		n = 1000
+	}
+	return n
+}
+
+func (zm *ZitiManager) userSyncInterval() time.Duration {
+	d := 30 * time.Second
+	if zm.cfg != nil && zm.cfg.ZitiUserSyncInterval > 0 {
+		d = zm.cfg.ZitiUserSyncInterval
+	}
+	if d < 5*time.Second {
+		d = 5 * time.Second
+	}
+	return d
+}
+
+// onDemandDrainInterval is how often queued BrowZer sign-in sync requests
+// are drained, independently of the (longer) sweep interval.
+const onDemandDrainInterval = 3 * time.Second
+
 // StartUserSyncPoller starts a background goroutine that periodically checks
-// for users without Ziti identities and creates them.
+// for users without Ziti identities and creates them, and drains on-demand
+// sync requests queued by BrowZer sign-ins (internal/common/zitisyncq).
 func (zm *ZitiManager) StartUserSyncPoller(ctx context.Context) {
 	ctx = orgctx.WithBypassRLS(ctx)
+	interval := zm.userSyncInterval()
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		drain := time.NewTicker(onDemandDrainInterval)
+		defer drain.Stop()
 
-		zm.logger.Info("Ziti user sync poller started", zap.Duration("interval", 30*time.Second))
+		zm.logger.Info("Ziti user sync poller started",
+			zap.Duration("interval", interval), zap.Int("batch", zm.userSyncBatch()),
+			zap.Bool("on_demand", zm.syncQueue != nil))
 
 		// Initial delay to let services stabilize
 		select {
@@ -670,6 +705,8 @@ func (zm *ZitiManager) StartUserSyncPoller(ctx context.Context) {
 			case <-ctx.Done():
 				zm.logger.Info("Ziti user sync poller stopped")
 				return
+			case <-drain.C:
+				zm.runOnDemandSync(ctx)
 			case <-ticker.C:
 				zm.runAutoSync(ctx)
 			}
@@ -677,16 +714,28 @@ func (zm *ZitiManager) StartUserSyncPoller(ctx context.Context) {
 	}()
 }
 
+// runOnDemandSync syncs the users a BrowZer sign-in asked for. SyncUserToZiti
+// is idempotent (an existing identity only has its attributes refreshed), so
+// racing the periodic sweep is harmless.
+func (zm *ZitiManager) runOnDemandSync(ctx context.Context) {
+	for _, userID := range zitisyncq.Drain(ctx, zm.syncQueue, zm.userSyncBatch()) {
+		if _, err := zm.SyncUserToZiti(ctx, userID); err != nil {
+			zm.logger.Warn("On-demand Ziti sync failed for user", zap.String("user_id", userID), zap.Error(err))
+		}
+	}
+}
+
 // runAutoSync is called each tick to sync new users, re-sync the identities whose
 // application assignments changed, and refresh stale group attributes.
 func (zm *ZitiManager) runAutoSync(ctx context.Context) {
-	// Find up to 10 users without Ziti identities
+	batch := zm.userSyncBatch()
+	// Find up to `batch` users without Ziti identities
 	rows, err := zm.db.Pool.Query(ctx,
 		//orgscope:ignore Ziti user-sync background poller sweep across all orgs (install-wide users -> Ziti mirror)
 		`SELECT u.id FROM users u
 		 LEFT JOIN ziti_identities zi ON zi.user_id = u.id
 		 WHERE zi.id IS NULL AND u.enabled = true
-		 LIMIT 10`)
+		 LIMIT $1`, batch)
 	if err != nil {
 		zm.logger.Warn("Auto-sync query failed", zap.Error(err))
 		return
@@ -721,7 +770,7 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 		`SELECT zi.user_id FROM ziti_identities zi
 		 WHERE zi.user_id IS NOT NULL
 		 AND (zi.group_attrs_synced_at IS NULL OR zi.group_attrs_synced_at < NOW() - INTERVAL '5 minutes')
-		 LIMIT 10`)
+		 LIMIT $1`, batch)
 	if err != nil {
 		return
 	}

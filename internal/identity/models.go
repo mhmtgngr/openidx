@@ -52,6 +52,13 @@ type User struct {
 	LastFailedLoginAt  *time.Time `json:"lastFailedLoginAt,omitempty" db:"last_failed_login_at"`
 	LockedUntil        *time.Time `json:"lockedUntil,omitempty" db:"locked_until"`
 
+	// Pre-reset login stats, set only by AuthenticateUser on success (the
+	// stored columns are already reset by then). Never serialized. Read by
+	// the adaptive risk engine via RiskLoginStats.
+	PriorFailedLoginCount int        `json:"-" db:"-"`
+	PriorLastLoginAt      *time.Time `json:"-" db:"-"`
+	HasPriorLoginStats    bool       `json:"-" db:"-"`
+
 	// Timestamps
 	CreatedAt   time.Time  `json:"createdAt" db:"created_at"`
 	UpdatedAt   time.Time  `json:"updatedAt" db:"updated_at"`
@@ -598,4 +605,18 @@ func (o *Organization) UpdateMeta(baseURL string) {
 	if baseURL != "" {
 		o.Meta.Location = baseURL + "/Organizations/" + o.ID
 	}
+}
+
+// RiskLoginStats returns the failed-attempt count and last sign-in time the
+// risk engine should score against: the pre-reset values captured by a
+// successful password login when present, otherwise the stored columns
+// (non-password paths, where nothing was reset).
+func (u *User) RiskLoginStats() (failed int, lastLogin *time.Time) {
+	if u == nil {
+		return 0, nil
+	}
+	if u.HasPriorLoginStats {
+		return u.PriorFailedLoginCount, u.PriorLastLoginAt
+	}
+	return u.FailedLoginCount, u.LastLoginAt
 }

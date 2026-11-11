@@ -233,6 +233,7 @@ func (s *Service) handleZitiConnect(c *gin.Context) {
 	}
 	zm.StartHealthMonitor(mctx, healthLeader)
 	zm.StartCertificateMonitor(mctx)
+	zm.SetSyncRequestQueue(healthLeader)
 	zm.StartUserSyncPoller(mctx)
 	zm.StartPostureResultExpiryChecker(mctx)
 	// Reconciler mode: the reconciler (running on a swap-surviving context)
