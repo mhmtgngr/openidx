@@ -19,6 +19,7 @@ import (
 	"github.com/openidx/openidx/internal/externalid"
 	"github.com/openidx/openidx/internal/federation/oidcrp"
 	"github.com/openidx/openidx/internal/identity"
+	"github.com/openidx/openidx/internal/revocation"
 )
 
 // ENTERPRISE SSO IS AN OPENID CONNECT RELYING PARTY.
@@ -539,6 +540,7 @@ func (s *Service) syncFederatedGroups(ctx context.Context, idp *identity.Identit
 			want[e.GroupID] = true
 		}
 	}
+	removed := false
 	for gid := range mapped {
 		if want[gid] {
 			if external {
@@ -559,10 +561,26 @@ func (s *Service) syncFederatedGroups(ctx context.Context, idp *identity.Identit
 			}
 			continue
 		}
-		if _, err := s.db.Pool.Exec(ctx,
+		tag, err := s.db.Pool.Exec(ctx,
 			`DELETE FROM group_memberships WHERE group_id = $1::uuid AND user_id = $2::uuid AND org_id = $3`,
-			gid, userID, org.ID); err != nil {
+			gid, userID, org.ID)
+		if err != nil {
 			s.logger.Warn("SSO: group mapping remove failed", zap.String("group_id", gid), zap.Error(err))
+			continue
+		}
+		if tag.RowsAffected() > 0 {
+			removed = true
+		}
+	}
+	// A removed membership stops the next login, but a token issued before
+	// the DELETE still carries the group in its "groups" claim. Cut those
+	// tokens after the removal commits (Redis cannot join the Postgres
+	// write). The token this login is about to mint is granted after the
+	// marker, so it survives. Best-effort, like the other sever paths.
+	if removed {
+		if err := revocation.RevokeUserTokens(ctx, s.redis.RevocationDB(), userID); err != nil {
+			s.logger.Error("SSO: failed to revoke outstanding access tokens after a group mapping removal",
+				zap.String("user_id", userID), zap.Error(err))
 		}
 	}
 }
