@@ -621,6 +621,13 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// ABAC overlay, the same gate the proxy applies after the shared decision
+	// (service.go), staged through ABAC_ENFORCE=off|observe|enforce. Without
+	// it, a route fronted by the edge's forward-auth skipped the tenant's
+	// attribute policies the proxy enforces. Off costs no query.
+	if !s.abacGateAllows(c, route, session.UserID, appOrgID, appID) {
+		return
+	}
 	// The route's own conditions, unless the resource declared its own, and
 	// the inline policy.
 	decision := s.judgeRouteContext(accessCtx, risk, !conditionsRuled)

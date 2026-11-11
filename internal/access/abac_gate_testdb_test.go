@@ -155,3 +155,20 @@ func TestABACGateAtTheProxy(t *testing.T) {
 		}
 	})
 }
+
+// TestForwardAuthAppliesTheABACGate pins that the forward-auth decide path
+// applies the same ABAC overlay as the proxy, after the shared decision and
+// before the route's own conditions, so an edge-fronted route cannot skip the
+// tenant's attribute policies.
+func TestForwardAuthAppliesTheABACGate(t *testing.T) {
+	src := readSource(t, "context_evaluator.go", "func (s *Service) handleAuthDecide(")
+	reach := strings.Index(src, `s.reachDecision(c, route, session, appID, appOrgID, "forward_auth"`)
+	gate := strings.Index(src, "s.abacGateAllows(c, route, session.UserID, appOrgID, appID)")
+	judge := strings.Index(src, "s.judgeRouteContext(")
+	if reach < 0 || gate < 0 || judge < 0 {
+		t.Fatalf("decide must call reachDecision, abacGateAllows and judgeRouteContext (reach=%d gate=%d judge=%d)", reach, gate, judge)
+	}
+	if !(reach < gate && gate < judge) {
+		t.Fatalf("abacGateAllows must run after reachDecision and before judgeRouteContext")
+	}
+}
