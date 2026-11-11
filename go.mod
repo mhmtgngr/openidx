@@ -6,7 +6,7 @@ go 1.26.0
 // advisories GO-2026-6354/6355 that our broker's ssh.Dial / ssh.NewClientConn
 // calls reach — requires Go 1.26. Pin the toolchain so every build uses a
 // patched one rather than whatever the runner happens to ship.
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
