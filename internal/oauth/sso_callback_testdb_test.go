@@ -107,17 +107,18 @@ func TestSSOCallbackRefusesANonceMismatch(t *testing.T) {
 
 func TestSSOCallbackUpstreamErrorGoesToLogin(t *testing.T) {
 	x := newExternalHarness(t)
+	ls := x.loginSession()
 	q := url.Values{
 		"response_type": {"code"}, "client_id": {"admin-console"},
 		"redirect_uri": {"http://localhost:3000/login"}, "scope": {"openid"}, "state": {"s"},
 		"code_challenge": {"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"}, "code_challenge_method": {"S256"},
-		"idp_hint": {x.idp}, "login_session": {"ls-1"},
+		"idp_hint": {x.idp}, "login_session": {ls},
 	}
 	w := x.get("/oauth/authorize?" + q.Encode())
 	loc, _ := url.Parse(w.Header().Get("Location"))
 	cb := x.get("/oauth/callback?" + url.Values{"error": {"access_denied"}, "state": {loc.Query().Get("state")}}.Encode())
 	refusedWith(t, cb, ssoErrIdP)
-	if l, _ := url.Parse(cb.Header().Get("Location")); l.Query().Get("login_session") != "ls-1" {
+	if l, _ := url.Parse(cb.Header().Get("Location")); l.Query().Get("login_session") != ls {
 		t.Fatalf("login_session not carried back: %q", cb.Header().Get("Location"))
 	}
 }
@@ -265,4 +266,39 @@ func TestSSOIDTokenCarriesTheIdP(t *testing.T) {
 	if got := tok.Claims.(jwt.MapClaims)["idp"]; got != x.idp {
 		t.Fatalf("idp claim = %v, want %s", got, x.idp)
 	}
+}
+
+// B1.3: the login page holds a third-party request (login_session) and sends
+// only idp_hint + the handle. The code goes to the STORED client's
+// redirect_uri with the stored state, whatever the browser query said, and
+// the handle is spent.
+func TestSSOCompletesThePendingLoginSession(t *testing.T) {
+	x := newExternalHarness(t)
+	user := x.seedUser(middleware.DefaultOrgID, "sso-ls")
+	sub := "sso-ls-" + x.suffix
+	x.exec(`UPDATE users SET idp_id = $1::uuid, external_user_id = $2 WHERE id = $3::uuid`, x.idp, sub, user)
+	ls := x.loginSession()
+
+	w := x.get("/oauth/authorize?" + url.Values{"idp_hint": {x.idp}, "login_session": {ls},
+		"client_id": {"forged"}, "redirect_uri": {"https://evil.test/cb"}, "state": {"forged"}}.Encode())
+	if w.Code != http.StatusFound {
+		t.Fatalf("authorize: %d %s", w.Code, w.Body.String())
+	}
+	loc, _ := url.Parse(w.Header().Get("Location"))
+	code := x.provider.codeWith(sub, "", map[string]interface{}{"nonce": loc.Query().Get("nonce")})
+	cb := x.get("/oauth/callback?" + url.Values{"code": {code}, "state": {loc.Query().Get("state")}}.Encode())
+	issuedCode(t, cb)
+	got, _ := url.Parse(cb.Header().Get("Location"))
+	if got.Host != "localhost:3000" || got.Query().Get("state") != "st-1" {
+		t.Fatalf("code went to %q, want the stored request's redirect_uri and state", cb.Header().Get("Location"))
+	}
+	if n, _ := x.issuer.redis.Client.Exists(context.Background(), "login_session:"+ls).Result(); n != 0 {
+		t.Fatal("login_session not deleted after success")
+	}
+}
+
+func TestSSORefusesAnUnknownLoginSession(t *testing.T) {
+	x := newExternalHarness(t)
+	w := x.get("/oauth/authorize?" + url.Values{"idp_hint": {x.idp}, "login_session": {"nope"}}.Encode())
+	refusedWith(t, w, externalErrUnavailable)
 }

@@ -658,6 +658,10 @@ const tr: typeof en = {
         'Kuruluşunuz eklemediğiniz bir oturum açma yöntemi gerektiriyor ve ekleme süresi doldu. Bir yöneticiden atlama kodu isteyin.',
       ssoRefusedRisk: 'Bu oturum açma buradan reddedildi. Daha önce kullandığınız bir cihazdan deneyin veya bir yöneticiye başvurun.',
       ssoFailed: 'Bu oturum açma tamamlanamadı. Yeniden deneyin.',
+      ssoNonceMismatch: 'Kimlik sağlayıcısının yanıtı bu oturum açmayla eşleşmedi. Yeniden başlayın.',
+      ssoIdpError: 'Kimlik sağlayıcınız oturum açmayı tamamlamadı. Yeniden deneyin veya yöneticinize başvurun.',
+      ssoUserNotFound: 'Kimlik sağlayıcı hesabınızla eşleşen bir hesap yok. Erişim için bir yöneticiye başvurun.',
+      ssoPartnerNotRegistered: 'Kuruluşunuz burada oturum açma için kayıtlı değil. Yöneticinize başvurun.',
     },
     resume: {
       checking: 'Mevcut oturumunuz denetleniyor…',

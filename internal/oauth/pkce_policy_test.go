@@ -185,8 +185,10 @@ func TestLiveAuthorizeEnforcesPKCE(t *testing.T) {
 // entry point must now decide, in the commit that adds it, which of these two
 // lines it is on.
 var pkceEntryPointDisposition = map[string]string{
-	"handleAuthorize":        "enforces",
-	"handleSSOAuthorize":     "enforces",
+	"handleAuthorize": "enforces",
+	// handleSSOAuthorize no longer reads a request-supplied code_challenge:
+	// since Faz B1.3 it takes the challenge /oauth/authorize stashed under
+	// login_session (and re-validates it), so it is not an entry point here.
 	"handleAuthorizeConsent": "enforces",
 	"handleNativeLoginInit":  "enforces",
 
