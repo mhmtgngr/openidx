@@ -1749,5 +1749,12 @@ func allMigrations() []*Migration {
 			UpSQL:       federatedIdPProfileUp,
 			DownSQL:     federatedIdPProfileDown,
 		},
+		{
+			Version:     247,
+			Name:        "vendor_federation",
+			Description: "Partner organizations that sign in through their own identity provider. vendor_organizations gains onboarding_mode (invitation by default, federated or both), idp_id (the provider the vendor's people sign in through; indexed, SET NULL when the provider is deleted), sliding_expiry (a federated sign-in moves the account's expiry forward, capped by the contract end and 365 days) and default_group_ids (groups a provisioned person joins, only those open to external users). A CHECK requires a default sponsor for any vendor that is not invitation-only, since a person provisioned at sign-in has no other sponsor (I1). The table keeps its org policy; down drops the columns.",
+			UpSQL:       vendorFederationUp,
+			DownSQL:     vendorFederationDown,
+		},
 	}
 }

@@ -600,3 +600,25 @@ func CheckTargetOpen(ctx context.Context, q Querier, orgID, userID, targetType, 
 	}
 	return nil
 }
+
+// ExpiryForVendor is the expiry an account of a vendor gets when it is
+// created or its expiry slides forward without an administrator choosing
+// one: defaultDays from now (DefaultAccountDays when not positive), never
+// past MaxAccountDays from now and never past the last instant of the
+// contract end. A contract that has already ended yields an instant not after
+// now, which ValidateExpiry refuses.
+func ExpiryForVendor(now time.Time, defaultDays int, contractEnd *time.Time) time.Time {
+	if defaultDays <= 0 {
+		defaultDays = DefaultAccountDays
+	}
+	if defaultDays > MaxAccountDays {
+		defaultDays = MaxAccountDays
+	}
+	exp := now.AddDate(0, 0, defaultDays)
+	if contractEnd != nil {
+		if end := endOfDay(*contractEnd); exp.After(end) {
+			exp = end
+		}
+	}
+	return exp
+}
