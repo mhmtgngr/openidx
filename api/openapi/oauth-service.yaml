@@ -458,6 +458,16 @@ paths:
         MFA policy grace period is over is redirected to
         `/login?error=sso_mfa_enrollment_required`, and a sign-in the risk
         engine denies to `/login?error=sso_high_risk_login`.
+        The code is exchanged at the token endpoint the provider's discovery
+        document names, with the PKCE verifier, and the ID token is verified
+        (issuer, audience, signature, lifetime, nonce). Other refusals
+        redirect to `/login?error=` with `sso_idp_error` (the provider
+        returned `error`), `sso_nonce_mismatch`, `sso_user_not_found` (no
+        linked user, no verified exact email, provisioning off),
+        `sso_partner_not_registered` (external JIT) or `sso_sign_in_failed`,
+        plus `login_session` when the flow had one. With the IdP's
+        `trust_upstream_mfa`, an upstream MFA `amr` stands in for the second
+        factor for internal users only.
       operationId: callback
       security: []
       parameters:
@@ -467,6 +477,11 @@ paths:
             type: string
         - name: state
           in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          description: Set by the provider when it refused the sign-in.
           schema:
             type: string
       responses:
