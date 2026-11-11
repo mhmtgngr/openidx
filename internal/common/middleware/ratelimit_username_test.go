@@ -57,7 +57,7 @@ func TestDistributedRateLimit_UsernameKeyedOffByDefault(t *testing.T) {
 	router := gin.New()
 	router.Use(DistributedRateLimit(client, cfg, testLogger(t)))
 	router.POST("/oauth/login", func(c *gin.Context) { c.String(http.StatusOK, "OK") })
-	for _, ip := range []string{"10.0.1.1", "10.0.1.2"} {
+	for _, ip := range []string{"192.0.2.1", "192.0.2.2"} {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/oauth/login", strings.NewReader(`{"username":"alice"}`))
 		req.Header.Set("Content-Type", "application/json")

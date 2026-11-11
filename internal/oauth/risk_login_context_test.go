@@ -9,8 +9,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/openidx/openidx/internal/common/database"
-	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/common/zitisyncq"
+	"github.com/openidx/openidx/internal/identity"
 )
 
 func TestPopulateLoginHistory_UsesPreResetStats(t *testing.T) {
