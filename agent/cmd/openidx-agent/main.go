@@ -157,6 +157,19 @@ func deepLinkToArgs(raw string) ([]string, bool) {
 	return args, true
 }
 
+// logLevel is the production logger's level, adjustable after the logger is
+// built (the service raises or lowers it once it has reported Running).
+var logLevel = zap.NewAtomicLevel()
+
+// applyConfigLogLevel applies the installer's LOG_LEVEL from agent.json.
+func applyConfigLogLevel() {
+	if cfg, err := agent.LoadConfig(configDir); err == nil && cfg.LogLevel != "" {
+		if lvl, perr := zap.ParseAtomicLevel(cfg.LogLevel); perr == nil {
+			logLevel.SetLevel(lvl.Level())
+		}
+	}
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "openidx-agent",
 	Short: "OpenIDX endpoint agent",
@@ -169,11 +182,13 @@ It enrolls devices, enforces access policies, and reports health status back to 
 			logger, err = zap.NewDevelopment()
 		} else {
 			pc := zap.NewProductionConfig()
+			logLevel = pc.Level
 			// The installer's LOG_LEVEL, persisted in agent.json at enrolment.
-			if cfg, cerr := agent.LoadConfig(configDir); cerr == nil && cfg.LogLevel != "" {
-				if lvl, perr := zap.ParseAtomicLevel(cfg.LogLevel); perr == nil {
-					pc.Level = lvl
-				}
+			// Not for `service run`: reading agent.json there means unsealing
+			// it before svc.Run, and the SCM only waits so long for the
+			// service to connect. The service applies it once it is Running.
+			if cmd != serviceRunCmd {
+				applyConfigLogLevel()
 			}
 			logger, err = pc.Build()
 		}
@@ -480,7 +495,7 @@ var serviceRunCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run under the Windows Service control manager (invoked by the SCM)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return winservice.Run(logger, configDir, Version)
+		return winservice.Run(logger, configDir, Version, applyConfigLogLevel)
 	},
 }
 

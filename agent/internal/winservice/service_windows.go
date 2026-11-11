@@ -80,6 +80,8 @@ type handler struct {
 	logger    *zap.Logger
 	configDir string
 	version   string
+	// afterRunning runs once the service has reported Running (log level).
+	afterRunning func()
 
 	mu    sync.Mutex
 	agent *agent.Agent // the running agent, for live status (remote-support banner)
@@ -92,6 +94,16 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Report Running before ANY startup work: everything below may touch
+	// agent.json (DPAPI unseal), the network or files an upgrade still has
+	// open, and the SCM fails a start that does not report in time (MSI 1920).
+	startupSequence(func() { s <- svc.Status{State: svc.Running, Accepts: accepted} },
+		func() {
+			if h.afterRunning != nil {
+				h.afterRunning()
+			}
+		})
 
 	// An MSI install whose enrol action failed (no network yet, server
 	// down) left a sealed fleet token: finish the enrolment from here with
@@ -142,7 +154,6 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 	// rather than at the next sign-in.
 	go h.trayLoop(ctx)
 
-	s <- svc.Status{State: svc.Running, Accepts: accepted}
 	for {
 		select {
 		case <-ctx.Done():
@@ -166,8 +177,11 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 func IsWindowsService() (bool, error) { return svc.IsWindowsService() }
 
 // Run runs the agent under the Windows Service control manager.
-func Run(logger *zap.Logger, configDir, version string) error {
-	return svc.Run(ServiceName, &handler{logger: logger, configDir: configDir, version: version})
+//
+// Nothing slow may run before svc.Run: the process has to connect to the SCM
+// within its start timeout. afterRunning is deferred until Running is reported.
+func Run(logger *zap.Logger, configDir, version string, afterRunning func()) error {
+	return svc.Run(ServiceName, &handler{logger: logger, configDir: configDir, version: version, afterRunning: afterRunning})
 }
 
 // updateLoop periodically self-updates when an update manifest is configured.
