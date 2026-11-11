@@ -197,6 +197,7 @@ func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup, stepUp, a
 	// Identity continuity (v252): reassign the owner, lift a revoke so the
 	// device may enrol again, retire it for good. Each is a fleet change an
 	// operator makes with fresh MFA.
+	r.PUT("/agents/:agent_id/tags", withGate(operator, h.HandleSetAgentTags)...)
 	r.PUT("/agents/:agent_id/owner", withGate(operator, withGate(stepUp, h.HandleReassignAgentOwner)...)...)
 	r.POST("/agents/:agent_id/reinstate", withGate(operator, withGate(stepUp, h.HandleReinstateAgent)...)...)
 	r.POST("/agents/:agent_id/retire", withGate(operator, withGate(stepUp, h.HandleRetireAgent)...)...)
@@ -2065,12 +2066,13 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	var status string
 	var platform *string
 	var deviceTrusted *bool
+	var agentTags []string
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT ea.status, ea.platform, kd.trusted
+		SELECT ea.status, ea.platform, kd.trusted, COALESCE(ea.tags, '{}')
 		  FROM enrolled_agents ea
 		  LEFT JOIN known_devices kd ON kd.id = ea.known_device_id
 		 WHERE ea.agent_id = $1 AND ea.org_id = $2`, agentID, orgIDFrom(ctx),
-	).Scan(&status, &platform, &deviceTrusted)
+	).Scan(&status, &platform, &deviceTrusted, &agentTags)
 	if err != nil {
 		// Agent not found or DB error — return defaults.
 		h.logger.Warn("HandleConfig: could not fetch agent status",
@@ -2128,18 +2130,22 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		//    tests array membership. When platform is unset (legacy Go agents
 		//    enrolled before 202605150001), fall back to returning every
 		//    enabled check.
+		//    tags (v255) target the same way: NULL or empty reaches every
+		//    device, otherwise only one carrying at least one of the tags.
 		query := `SELECT check_type, parameters, severity
 		            FROM posture_checks
 		           WHERE enabled = true
+		             AND (tags IS NULL OR jsonb_array_length(tags) = 0 OR tags ?| $1::text[])
 		           ORDER BY severity`
-		args := []interface{}{}
+		args := []interface{}{agentTags}
 		if agentPlatform != "" {
 			query = `SELECT check_type, parameters, severity
 			           FROM posture_checks
 			          WHERE enabled = true
-			            AND (platforms IS NULL OR platforms ? $1 OR platforms ? 'any')
+			            AND (platforms IS NULL OR platforms ? $2 OR platforms ? 'any')
+			            AND (tags IS NULL OR jsonb_array_length(tags) = 0 OR tags ?| $1::text[])
 			          ORDER BY severity`
-			args = []interface{}{agentPlatform}
+			args = []interface{}{agentTags, agentPlatform}
 		}
 		rows, queryErr := h.db.Pool.Query(ctx, query, args...)
 		if queryErr != nil {
@@ -2285,6 +2291,8 @@ type agentRecord struct {
 	// last update outcome (v253).
 	AgentVersion string          `json:"agent_version"`
 	UpdateState  json.RawMessage `json:"update_state,omitempty"`
+	// Tags are the device's labels (v250); they target posture checks (v255).
+	Tags []string `json:"tags"`
 }
 
 // HandleListAgents returns a JSON array of all enrolled agents (operator tier).
@@ -2312,13 +2320,15 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 		       ea.last_report_at,
 		       COALESCE(u.id::text, ''), COALESCE(u.username, ''),
 		       ea.auth_fail_count, ea.auth_failed_at,
-		       COALESCE(ea.agent_version, ''), ea.update_state
+		       COALESCE(ea.agent_version, ''), ea.update_state, COALESCE(ea.tags, '{}')
 		FROM enrolled_agents ea
 		LEFT JOIN users u ON u.id = ea.enrolled_by_user_id AND u.org_id = ea.org_id
 		WHERE ea.org_id = $1 AND ($2 OR ea.status <> 'retired')
 		  AND ($3 = '' OR ea.agent_version = $3)
+		  AND ($4 = '' OR ea.tags @> ARRAY[$4]::text[])
 		ORDER BY ea.last_seen_at DESC NULLS LAST, ea.enrolled_at DESC
-	`, org.ID, c.Query("include_retired") == "1", strings.TrimSpace(c.Query("version")))
+	`, org.ID, c.Query("include_retired") == "1", strings.TrimSpace(c.Query("version")),
+		strings.ToLower(strings.TrimSpace(c.Query("tag"))))
 	if err != nil {
 		h.logger.Error("HandleListAgents: failed to query enrolled_agents", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list agents"})
@@ -2366,6 +2376,7 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 			&rec.CredentialRefusedAt,
 			&rec.AgentVersion,
 			&updateRaw,
+			&rec.Tags,
 		); scanErr != nil {
 			h.logger.Warn("HandleListAgents: failed to scan row", zap.Error(scanErr))
 			continue

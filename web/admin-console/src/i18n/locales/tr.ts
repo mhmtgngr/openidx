@@ -8395,6 +8395,13 @@ const tr: typeof en = {
       credentialRefused: 'Kimlik reddediliyor · yeniden kaydedin',
       credentialRefusedHint:
         'Sunucu bu cihazdaki ajanın kimlik bilgisini kabul etmiyor (son ret {{when}}). Cihaz sunucuya ulaşıyor, çevrimdışı değil. Hiçbir şey iptal edilmedi: o cihazda Cihazlarım → Cihaz ekle ile ya da tepsi menüsünden yeniden kaydedin.',
+      tagFilterLabel: 'Etikete göre filtrele',
+      allTags: 'Tüm etiketler',
+      editTags: 'Etiketleri düzenle…',
+      tagsTitle: '{{device}} etiketleri',
+      tagsLabel: 'Etiketler (virgülle ayrılmış)',
+      tagsHint: 'Etiketler posture denetimlerini bir cihaz grubuna yöneltir ve bu listeyi filtreler. Filo belirteci kaydettiği cihazlara varsayılan etiketlerini ekler.',
+      tagsSave: 'Etiketleri kaydet',
       actions: 'Eylemler…',
       commands: {
         title: '{{device}} için eylemler',
@@ -8503,6 +8510,8 @@ const tr: typeof en = {
         unknown: 'bilinmiyor',
       },
       toasts: {
+        tagsSaved: 'Etiketler kaydedildi',
+        tagsFailed: 'Etiketler kaydedilemedi',
         qrGenerated: 'Kayıt QR’ı oluşturuldu',
         qrFailed: 'QR oluşturulamadı',
         approved: 'Ajan onaylandı',
@@ -8640,6 +8649,8 @@ const tr: typeof en = {
           processes: 'Her satıra bir süreç adı.',
         },
         platforms: 'Platformlar',
+        tags: 'Cihaz etiketleri',
+        tagsHint: 'Virgülle ayrılmış. Boş: her cihaz. Aksi halde yalnızca bu etiketlerden en az birini taşıyan cihazlar denetimi çalıştırır.',
         platformsHint:
           'Yalnızca bu kontrolün çalışabildiği platformlar listelenir. Hepsinde uygulamak için hiçbirini işaretlemeyin.',
         enabledLabel: 'Etkin',

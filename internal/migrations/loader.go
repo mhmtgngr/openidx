@@ -1805,5 +1805,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agentCommandsUp,
 			DownSQL:     agentCommandsDown,
 		},
+		{
+			Version:     255,
+			Name:        "posture_check_tags",
+			Description: "Posture checks targeted by device tag. posture_checks gains tags (JSONB array, NULL = every device, the same semantics as platforms); /agent/config gives a tagged check only to devices carrying one of its tags. Column under the table's existing org policy; down drops it.",
+			UpSQL:       postureCheckTagsUp,
+			DownSQL:     postureCheckTagsDown,
+		},
 	}
 }

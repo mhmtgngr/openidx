@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -308,4 +309,44 @@ func (h *AgentAPIHandler) agentIsRetired(ctx context.Context, agentID, orgID str
 		return false
 	}
 	return status == agentStatusRetired
+}
+
+// HandleSetAgentTags is PUT /agents/:agent_id/tags {"tags": [...]}: the
+// device's labels, replaced. Tags target posture checks (v255) and filter
+// the fleet list (?tag=). Operator tier.
+func (h *AgentAPIHandler) HandleSetAgentTags(c *gin.Context) {
+	orgID, ok := h.fleetOrg(c)
+	if !ok {
+		return
+	}
+	var body struct {
+		Tags []string `json:"tags"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	tags, err := normalizeTokenTags(body.Tags)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	sort.Strings(tags)
+	agentID := c.Param("agent_id")
+	ctx := c.Request.Context()
+	tag, err := h.db.Pool.Exec(ctx,
+		`UPDATE enrolled_agents SET tags = $3::text[] WHERE agent_id = $1 AND org_id = $2`, agentID, orgID, tags)
+	if err != nil {
+		h.logger.Error("set agent tags failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save the tags"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		return
+	}
+	detail := "tags=" + logsafe.Clean(strings.Join(tags, ","))
+	h.logAuditEvent("agent.tags_updated", agentID, "success", detail)
+	h.logAuditEventToDB(ctx, "agent.tags_updated", agentID, "success", detail)
+	c.JSON(http.StatusOK, gin.H{"agent_id": agentID, "tags": tags})
 }

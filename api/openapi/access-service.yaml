@@ -4543,6 +4543,12 @@ paths:
           description: Only devices that last reported this agent version.
           schema:
             type: string
+        - name: tag
+          in: query
+          required: false
+          description: Only devices carrying this tag.
+          schema:
+            type: string
       responses:
         '200':
           description: Success
@@ -4711,6 +4717,36 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/access/agents/{agent_id}/tags:
+    parameters:
+      - {name: agent_id, in: path, required: true, schema: {type: string}}
+    put:
+      tags: [Agent Fleet]
+      summary: Replace a device's tags (they target posture checks and filter the list)
+      operationId: handleSetAgentTags
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleSetAgentTags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags: {type: array, items: {type: string}}
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/access/agents/{agent_id}/commands:
     parameters:
       - name: agent_id

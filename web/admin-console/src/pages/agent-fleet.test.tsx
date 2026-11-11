@@ -290,4 +290,23 @@ describe('AgentFleetPage', () => {
       kind: 'uninstall', reason: 'laptop returned to IT',
     })
   })
+
+  it('shows device tags as chips, filters by tag and saves edited tags', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.get).mockImplementation(routeFleet([
+      { ...activeAgent, tags: ['finance'] },
+      nonCompliantAgent,
+    ]))
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    expect(await screen.findAllByText('#finance')).not.toHaveLength(0)
+    await user.selectOptions(screen.getByRole('combobox', { name: /filter by tag/i }), 'finance')
+    expect(screen.queryByText('agt-003')).not.toBeInTheDocument()
+    await user.click(screen.getAllByRole('button', { name: '' })[0])
+    await user.click(await screen.findByText('Edit tags…'))
+    const input = await screen.findByLabelText('Tags (comma separated)')
+    await user.clear(input)
+    await user.type(input, 'Finance, kiosk')
+    await user.click(screen.getByRole('button', { name: 'Save tags' }))
+    expect(api.put).toHaveBeenCalledWith('/api/v1/access/agents/agt-001/tags', { tags: ['finance', 'kiosk'] })
+  })
 })

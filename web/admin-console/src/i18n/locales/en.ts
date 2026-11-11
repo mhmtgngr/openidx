@@ -8484,6 +8484,13 @@ const en = {
       credentialRefused: 'Credential refused · enroll again',
       credentialRefusedHint:
         'The server refuses the credential this device\'s agent holds (last refusal {{when}}). It is reaching the server, not offline. Nothing was revoked: enroll it again from My Devices → Add a device on that device, or from its tray menu.',
+      tagFilterLabel: 'Filter by tag',
+      allTags: 'All tags',
+      editTags: 'Edit tags…',
+      tagsTitle: 'Tags for {{device}}',
+      tagsLabel: 'Tags (comma separated)',
+      tagsHint: 'Tags target posture checks at a group of devices and filter this list. A fleet token stamps its default tags on the devices it enrols.',
+      tagsSave: 'Save tags',
       actions: 'Actions…',
       commands: {
         title: 'Actions for {{device}}',
@@ -8594,6 +8601,8 @@ const en = {
         unknown: 'unknown',
       },
       toasts: {
+        tagsSaved: 'Tags saved',
+        tagsFailed: 'The tags could not be saved',
         qrGenerated: 'Enrollment QR generated',
         qrFailed: 'Failed to generate QR',
         approved: 'Agent approved',
@@ -8735,6 +8744,8 @@ const en = {
           processes: 'One process name per line.',
         },
         platforms: 'Platforms',
+        tags: 'Device tags',
+        tagsHint: 'Comma separated. Empty: every device. Otherwise only devices carrying at least one of these tags run the check.',
         platformsHint:
           'Only the platforms this check can run on are listed. Leave all unchecked to apply it on every one of them.',
         enabledLabel: 'Enabled',

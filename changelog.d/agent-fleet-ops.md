@@ -14,3 +14,7 @@
   /api/v1/access/agents/:id/commands`, `GET …/:cid/artifact`, `DELETE …/:cid` (operator; reenroll and uninstall
   need fresh MFA). The service receives each command once in `/agent/config` (the tray never does) and answers
   `POST /api/v1/access/agent/commands/:id/result`; unanswered commands expire after 24 hours.
+- **Desktop tags (v255).** `PUT /api/v1/access/agents/:id/tags` sets a device's tags and `GET /agents?tag=` filters
+  by one; the Agent Fleet page shows tag chips, a tag filter and "Edit tags…". Agent posture checks gain `tags`
+  (empty = every device, as with platforms), so a check reaches only devices carrying one of its tags. A fleet
+  token's default tags still land on every device it enrols, merged with the ones an administrator added.
