@@ -359,6 +359,15 @@ func (s *Service) handlePasskeyFinish(c *gin.Context) {
 	clientIP := c.ClientIP()
 	userAgent := c.GetHeader("User-Agent")
 
+	// Country-based login blocking, the same rule the password login applies.
+	if err := s.checkCountryBlock(ctx, clientIP, userID, ""); err != nil {
+		c.JSON(403, gin.H{
+			"error":             "access_denied",
+			"error_description": "Authentication is not available from your location.",
+		})
+		return
+	}
+
 	// Create a session for this login
 	session, sessionErr := s.identityService.CreateSession(ctx, userID, oauthParams["client_id"], clientIP, userAgent, 24*time.Hour)
 	if sessionErr != nil {

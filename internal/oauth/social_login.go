@@ -263,6 +263,17 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 		return
 	}
 
+	// Country-based login blocking applies to every sign-in path, not only
+	// the password form: a blocked country must not get in through a social
+	// provider either.
+	if err := s.checkCountryBlock(c.Request.Context(), c.ClientIP(), userID, userInfo.Email); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":             "access_denied",
+			"error_description": "Authentication is not available from your location.",
+		})
+		return
+	}
+
 	// Log audit event in background with timeout
 	// gin pools the Context and resets it for the next request as soon as
 	// the handler returns, so a detached goroutine must read the address
