@@ -68,7 +68,7 @@ func newEnrollTokenFixture(t *testing.T) *enrollTokenFixture {
 			platform text, form_factor text, enrollment_method text, enrolled_by_user_id text,
 			management_mode text, is_device_owner boolean, device_fingerprint text,
 			ziti_identity_id text, last_seen_at timestamptz, org_id uuid not null,
-			tags text[] not null default '{}', enrolled_with_token_id uuid);
+			tags text[] not null default '{}', enrolled_with_token_id uuid, hostname text);
 		CREATE TABLE enrollment_sessions (
 			id uuid primary key, token_hash text, created_by_user_id text, org_id uuid,
 			mfa_verified boolean, status text, expires_at timestamptz);`)

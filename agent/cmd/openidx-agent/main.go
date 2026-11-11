@@ -242,6 +242,15 @@ resulting credentials in the config directory for subsequent runs.`,
 
 		cfg := result.AgentConfig
 
+		// A token from --token is the installer's fleet token (an enrolment
+		// code is single-use and comes in --code). Seal it so the service can
+		// enrol itself again if its credential is lost (Faz B8.4).
+		if flagToken, _ := cmd.Flags().GetString("token"); flagToken != "" {
+			if serr := agent.SaveSealedToken(configDir, flagToken); serr != nil {
+				logger.Warn("could not seal the enrollment token; the device will not re-enrol on its own", zap.Error(serr))
+			}
+		}
+
 		fmt.Printf("Enrollment successful!\n")
 		fmt.Printf("  Server:    %s\n", cfg.ServerURL)
 		fmt.Printf("  Agent ID:  %s\n", cfg.AgentID)

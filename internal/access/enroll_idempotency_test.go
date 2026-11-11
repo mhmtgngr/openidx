@@ -34,6 +34,7 @@ var enrolledAgentsSchema = []string{
 		management_mode TEXT,
 		known_device_id UUID,
 		device_fingerprint TEXT,
+		hostname TEXT,
 		org_id UUID NOT NULL
 	)`,
 	// v197: the stable-identity key is per-tenant.

@@ -190,7 +190,15 @@ func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup, stepUp, a
 	r.DELETE("/agent/tokens/:token_id", withGate(operator, h.HandleRevokeToken)...)
 	r.GET("/agents", withGate(operator, h.HandleListAgents)...)
 	r.GET("/agents/:agent_id/posture", withGate(operator, h.HandleAgentPosture)...)
-	r.DELETE("/agents/:agent_id", withGate(operator, h.HandleRevokeAgent)...)
+	// DELETE revokes; with ?purge=1 it deletes a retired device's row, which
+	// is irreversible and so takes fresh MFA (agent_lifecycle.go).
+	r.DELETE("/agents/:agent_id", withGate(operator, withGate(gateWhenPurging(stepUp), h.HandleRevokeAgent)...)...)
+	// Identity continuity (v252): reassign the owner, lift a revoke so the
+	// device may enrol again, retire it for good. Each is a fleet change an
+	// operator makes with fresh MFA.
+	r.PUT("/agents/:agent_id/owner", withGate(operator, withGate(stepUp, h.HandleReassignAgentOwner)...)...)
+	r.POST("/agents/:agent_id/reinstate", withGate(operator, withGate(stepUp, h.HandleReinstateAgent)...)...)
+	r.POST("/agents/:agent_id/retire", withGate(operator, withGate(stepUp, h.HandleRetireAgent)...)...)
 	r.POST("/agents/:agent_id/approve", withGate(operator, h.HandleApproveAgent)...)
 	r.POST("/agent/qr", withGate(operator, h.HandleGenerateQR)...)
 	r.GET("/agent/apk-info", h.HandleAPKInfo)
@@ -236,6 +244,11 @@ type enrollRequest struct {
 	// reuses the existing agent_id/auth_token for that device instead of minting
 	// a new row on every install — so one physical machine maps to one agent.
 	DeviceFingerprint string `json:"device_fingerprint"`
+	// DeviceFingerprintPrev is the fingerprint an older agent sent for the
+	// same machine (the hostname-folded one, v252). An agent sends it for a few
+	// releases so the row enrolled under it moves to the stable fingerprint
+	// instead of a second row appearing.
+	DeviceFingerprintPrev string `json:"device_fingerprint_prev"`
 	// DeviceKey is the public half of the key the agent keeps where it cannot
 	// be exported (agent_device_key.go). Recorded at enrolment; an enrolment
 	// without one clears any key left from before.
@@ -402,11 +415,20 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 		// enrolment with the same token would.
 		if fp := strings.TrimSpace(req.DeviceFingerprint); fp != "" {
 			var existingAgentID, existingDeviceID, existingStatus, existingOwner string
+			// The row is found by the stable fingerprint or by the one an older
+			// agent sent for this machine (v252), the stable one first. A retired
+			// row is out of the fleet: its machine enrolling again is a new row.
+			prev := strings.TrimSpace(req.DeviceFingerprintPrev)
+			if prev == "" {
+				prev = fp
+			}
 			err := h.db.Pool.QueryRow(ctx, `
                 SELECT agent_id, device_id, status, COALESCE(enrolled_by_user_id::text, '')
                   FROM enrolled_agents
-                WHERE device_fingerprint = $1 AND org_id = $2
-            `, fp, orgID).Scan(&existingAgentID, &existingDeviceID, &existingStatus, &existingOwner)
+                WHERE device_fingerprint IN ($1, $3) AND org_id = $2 AND status <> 'retired'
+                ORDER BY (device_fingerprint = $1) DESC, last_seen_at DESC NULLS LAST
+                LIMIT 1
+            `, fp, orgID, prev).Scan(&existingAgentID, &existingDeviceID, &existingStatus, &existingOwner)
 			if err == nil && existingStatus == agentStatusRevoked {
 				return issuedAgentCredentials{}, revokedAgentError{agentID: existingAgentID}
 			}
@@ -435,11 +457,14 @@ func (h *AgentAPIHandler) issueAgentCredentials(
                            enrollment_method = COALESCE(NULLIF($6,''), enrollment_method),
                            management_mode = COALESCE(NULLIF($7,''), management_mode),
                            is_device_owner = $8, last_seen_at = NOW(),
-                           enrolled_by_user_id = COALESCE(enrolled_by_user_id, $11::uuid)
-                     WHERE agent_id = $1 AND org_id = $9 AND status <> $10
+                           enrolled_by_user_id = COALESCE(enrolled_by_user_id, $11::uuid),
+                           device_fingerprint = $12,
+                           hostname = COALESCE(NULLIF($13,''), hostname)
+                     WHERE agent_id = $1 AND org_id = $9 AND status NOT IN ($10, 'retired')
                        AND ($11::uuid IS NULL OR enrolled_by_user_id IS NULL OR enrolled_by_user_id = $11::uuid)
                 `, existingAgentID, authTokenHash, metadata,
-					platform, formFactor, method, managementMode, isDeviceOwner, orgID, agentStatusRevoked, claimArg)
+					platform, formFactor, method, managementMode, isDeviceOwner, orgID, agentStatusRevoked, claimArg,
+					fp, strings.TrimSpace(req.Hostname))
 				switch {
 				case upErr != nil:
 					h.logger.Error("Failed to refresh existing agent enrollment", zap.Error(upErr))
@@ -487,14 +512,14 @@ func (h *AgentAPIHandler) issueAgentCredentials(
                 agent_id, device_id, status, auth_token_hash,
                 enrolled_at, compliance_status, metadata,
                 platform, form_factor, enrollment_method, enrolled_by_user_id,
-                management_mode, is_device_owner, device_fingerprint, org_id
+                management_mode, is_device_owner, device_fingerprint, org_id, hostname
             )
             VALUES ($1,$2,$3,$4, NOW(), 'unknown', $5,
                     NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), $9,
-                    NULLIF($10,''), $11, $12, $13)
+                    NULLIF($10,''), $11, $12, $13, NULLIF($14,''))
         `, agentID, deviceID, status, authTokenHash, metadata,
 			platform, formFactor, method, userIDArg,
-			managementMode, isDeviceOwner, fpArg, orgID)
+			managementMode, isDeviceOwner, fpArg, orgID, strings.TrimSpace(req.Hostname))
 		if err != nil {
 			h.logger.Error("Failed to persist agent enrollment", zap.Error(err))
 		} else {
@@ -554,9 +579,9 @@ func (h *AgentAPIHandler) agentOwnedByAnother(ctx context.Context, agentID, orgI
 //
 // The answer is the one every agent route gives a revoked agent, 403 with code
 // agent_revoked (see refuseRevokedAgent), so a client tells the two apart from
-// "the server is unreachable" the same way. Nothing in the admin API reinstates
-// a revoked agent or deletes its row, so the description promises no way back;
-// it says what happened.
+// "the server is unreachable" the same way. An administrator lifts the revoke
+// with POST /agents/:id/reinstate (agent_lifecycle.go); enrolment alone never
+// does.
 //
 // detail names the enrolment path and who or what admitted it, so the audit
 // trail shows who tried to bring the device back.
@@ -572,7 +597,7 @@ func (h *AgentAPIHandler) refuseRevokedReenrolment(c *gin.Context, orgID, agentI
 		"error": "agent revoked",
 		"code":  "agent_revoked",
 		"error_description": "an administrator revoked this device in this organization, " +
-			"and enrolling it again does not reinstate it",
+			"and enrolling it again does not reinstate it; an administrator must Reinstate it first",
 	})
 }
 
@@ -2253,7 +2278,7 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 	// never named here, whatever an enrolment once wrote.
 	rows, err := h.db.Pool.Query(ctx, `
 		SELECT ea.agent_id, ea.device_id,
-		       COALESCE(ea.metadata->>'hostname',''), COALESCE(ea.platform, ea.metadata->>'platform',''),
+		       COALESCE(NULLIF(ea.hostname,''), ea.metadata->>'hostname',''), COALESCE(ea.platform, ea.metadata->>'platform',''),
 		       ea.status, ea.compliance_status, ea.compliance_score, ea.last_seen_at, ea.enrolled_at,
 		       ea.tunnel_status, ea.tunnel_last_seen, ea.tunnel_policy_version, ea.tunnel_policy_applied_at,
 		       ea.last_report_at,
@@ -2261,9 +2286,9 @@ func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
 		       ea.auth_fail_count, ea.auth_failed_at
 		FROM enrolled_agents ea
 		LEFT JOIN users u ON u.id = ea.enrolled_by_user_id AND u.org_id = ea.org_id
-		WHERE ea.org_id = $1
+		WHERE ea.org_id = $1 AND ($2 OR ea.status <> 'retired')
 		ORDER BY ea.last_seen_at DESC NULLS LAST, ea.enrolled_at DESC
-	`, org.ID)
+	`, org.ID, c.Query("include_retired") == "1")
 	if err != nil {
 		h.logger.Error("HandleListAgents: failed to query enrolled_agents", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list agents"})
@@ -2439,6 +2464,10 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id is required"})
 		return
 	}
+	if c.Query("purge") == "1" {
+		h.purgeRetiredAgent(c, agentID)
+		return
+	}
 
 	if h.db != nil && h.db.Pool != nil {
 		ctx := c.Request.Context()
@@ -2469,6 +2498,10 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke agent"})
 				return
 			}
+			if h.agentIsRetired(ctx, agentID, org.ID) {
+				c.JSON(http.StatusConflict, gin.H{"error": "the device is retired; there is nothing to revoke"})
+				return
+			}
 			h.revokeDevice(ctx, org.ID, agentID, zitiIdentityID, knownDeviceID)
 			h.logger.Info("Agent revoked", logsafe.String("agent_id", agentID))
 			h.logAuditEvent("agent.revoked", agentID, "success", "admin action")
@@ -2478,7 +2511,7 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 		}
 
 		tag, err := h.db.Pool.Exec(ctx,
-			`UPDATE enrolled_agents SET status = 'revoked' WHERE agent_id = $1 AND org_id = $2`,
+			`UPDATE enrolled_agents SET status = 'revoked' WHERE agent_id = $1 AND org_id = $2 AND status <> 'retired'`,
 			agentID, org.ID,
 		)
 		if err != nil {
