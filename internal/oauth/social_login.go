@@ -299,7 +299,7 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 			if json.Unmarshal([]byte(paramsJSON), &oauthParams) == nil {
 				// The provider proved one factor. The password login's own
 				// decision says whether that is enough (external_signin_mfa.go).
-				if s.externalSignInNeedsMore(c, userID, oauthParams, loginSession, "social") {
+				if s.externalSignInNeedsMore(c, userID, oauthParams, loginSession, "social", providerID) {
 					return
 				}
 				// Create a session linked to this login
@@ -323,7 +323,7 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 	// Fallback: generate tokens directly using the SAML token flow. Only for a
 	// user whom the password login would let in without a second factor: with
 	// no pending request there is nowhere to continue a challenge.
-	if s.externalSignInNeedsMore(c, userID, nil, "", "social") {
+	if s.externalSignInNeedsMore(c, userID, nil, "", "social", providerID) {
 		return
 	}
 	samlUser := &SAMLUser{

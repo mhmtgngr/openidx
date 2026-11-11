@@ -18,6 +18,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/identity"
 )
 
 // validUUIDPattern validates UUID format only (RFC 4122)
@@ -575,7 +576,7 @@ func (s *Service) handleMagicLinkVerify(c *gin.Context) {
 	// decision). A user it would challenge or refuse goes back to the login
 	// page for the same pending request, to sign in with their password and
 	// second factor. The link is spent either way.
-	if reason := s.magicLinkNeedsMore(c, userID, clientIP, userAgent); reason != "" {
+	if reason := s.magicLinkNeedsMore(c, userID, clientIP, userAgent, oauthParams["client_id"]); reason != "" {
 		back := url.Values{"login_session": {loginSession}, "error": {reason}}
 		c.Redirect(302, "/login?"+back.Encode())
 		return
@@ -653,14 +654,14 @@ func (s *Service) handleMagicLinkVerify(c *gin.Context) {
 // challenge (a second factor enrolled, a policy, or risk), refuse under an MFA
 // policy, or deny outright is refused here, and the refusal is audited. It
 // fails closed: a user who cannot be loaded is refused.
-func (s *Service) magicLinkNeedsMore(c *gin.Context, userID, clientIP, userAgent string) string {
+func (s *Service) magicLinkNeedsMore(c *gin.Context, userID, clientIP, userAgent, clientID string) string {
 	ctx := c.Request.Context()
 	user, err := s.identityService.GetUser(ctx, userID)
 	if err != nil || user == nil {
 		s.logger.Warn("Magic link user could not be loaded; refusing the link", zap.Error(err))
 		return "invalid_magic_link"
 	}
-	ev := s.evaluateMFA(ctx, user, clientIP, userAgent, "", "", false, 0, nil)
+	ev := s.evaluateMFA(ctx, user, clientIP, userAgent, "", "", false, 0, nil, identity.SignInContext{ClientID: clientID})
 	if ev.GraceBegan {
 		s.auditMFAGrace(ctx, user.ID, clientIP, "mfa_grace_started", "success", ev)
 	}

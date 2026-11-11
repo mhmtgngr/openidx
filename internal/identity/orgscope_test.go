@@ -278,7 +278,7 @@ func TestMFA_requireOrgContext(t *testing.T) {
 		assertNoOrgContext(t, err)
 	})
 	t.Run("IsMFARequired", func(t *testing.T) {
-		_, _, err := s.IsMFARequired(ctx, "u-1", "1.2.3.4")
+		_, _, err := s.IsMFARequired(ctx, "u-1", "1.2.3.4", SignInContext{})
 		assertNoOrgContext(t, err)
 	})
 }

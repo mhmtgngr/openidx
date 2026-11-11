@@ -8,6 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/identity"
 )
 
 // A SIGN-IN THROUGH AN EXTERNAL IDENTITY ASKS THE PASSWORD LOGIN'S QUESTION.
@@ -48,7 +50,7 @@ const (
 // goes back with a refusal so the login page can continue the same pending
 // request, and is closed when the second-factor step takes over. via names the
 // path in the audit trail.
-func (s *Service) externalSignInNeedsMore(c *gin.Context, userID string, oauthParams map[string]string, loginSession, via string) bool {
+func (s *Service) externalSignInNeedsMore(c *gin.Context, userID string, oauthParams map[string]string, loginSession, via, idpID string) bool {
 	ctx := c.Request.Context()
 	clientIP := c.ClientIP()
 	userAgent := c.GetHeader("User-Agent")
@@ -83,7 +85,8 @@ func (s *Service) externalSignInNeedsMore(c *gin.Context, userID string, oauthPa
 		fingerprint = s.riskService.ComputeDeviceFingerprint(clientIP, userAgent)
 		deviceTrusted = s.riskService.IsDeviceTrusted(ctx, userID, fingerprint)
 	}
-	ev := s.evaluateMFA(ctx, user, clientIP, userAgent, fingerprint, "", deviceTrusted, 0, nil)
+	ev := s.evaluateMFA(ctx, user, clientIP, userAgent, fingerprint, "", deviceTrusted, 0, nil,
+		identity.SignInContext{IdPID: idpID, ClientID: oauthParams["client_id"]})
 	if ev.GraceBegan {
 		s.auditMFAGrace(ctx, userID, clientIP, "mfa_grace_started", "success", ev)
 	}

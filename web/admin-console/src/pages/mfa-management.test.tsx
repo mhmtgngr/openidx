@@ -65,6 +65,10 @@ const groups = [
 
 function routeGet(url: string) {
   if (url.includes('/identity/groups')) return Promise.resolve(groups)
+  if (url.includes('/identity/vendor-orgs'))
+    return Promise.resolve({ vendor_organizations: [{ id: 'v-1', name: 'Acme Partners' }] })
+  if (url.includes('/identity/providers')) return Promise.resolve([{ id: 'idp-1', name: 'Entra' }])
+  if (url.includes('/applications')) return Promise.resolve([{ id: 'a-1', client_id: 'portal', name: 'Portal' }])
   if (url.includes('/enrollment-stats')) return Promise.resolve(stats)
   if (url.includes('/policies')) return Promise.resolve({ policies: [policy], total: 1, page: 1, page_size: 20 })
   // The user-status endpoint lives at /api/v1/mfa/user-status — not /users.
@@ -251,6 +255,22 @@ describe('MFAManagementPage', () => {
         required_methods: [],
         grace_period_hours: 0,
       })
+    })
+
+    it('scopes a policy to a user type, partner org, IdP and application', async () => {
+      const user = userEvent.setup()
+      const dialog = await openCreate(user)
+      await user.click(within(dialog).getByRole('checkbox', { name: 'External user' }))
+      await user.click(await within(dialog).findByRole('checkbox', { name: 'Acme Partners' }))
+      await user.click(await within(dialog).findByRole('checkbox', { name: 'Entra' }))
+      await user.click(await within(dialog).findByRole('checkbox', { name: 'Portal' }))
+      await user.click(within(dialog).getByRole('button', { name: /^create policy$/i }))
+      expect(api.post).toHaveBeenCalledWith(
+        '/api/v1/mfa/policies',
+        expect.objectContaining({
+          conditions: { user_types: ['external'], vendor_org_ids: ['v-1'], idp_ids: ['idp-1'], client_ids: ['portal'] },
+        }),
+      )
     })
 
     it('scopes a policy to the groups picked, and sends nothing when none is', async () => {

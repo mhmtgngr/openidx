@@ -2461,7 +2461,8 @@ func (s *Service) handleLogin(c *gin.Context) {
 	// with the server-rendered form's own POST /oauth/authorize/callback,
 	// which was deleted precisely so the two could never disagree about
 	// whether a second factor is required. See mfa_policy.go.
-	ev := s.evaluateMFA(c.Request.Context(), user, clientIP, userAgent, fingerprint, location, deviceTrusted, riskScore, riskFactors)
+	ev := s.evaluateMFA(c.Request.Context(), user, clientIP, userAgent, fingerprint, location, deviceTrusted, riskScore, riskFactors,
+		identity.SignInContext{ClientID: oauthParams["client_id"]})
 	if ev.Undecidable {
 		// The policy that governs this sign-in could not be evaluated; see
 		// mfaEvaluation.Undecidable. Refused, not downgraded.

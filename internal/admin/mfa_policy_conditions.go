@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // errMFAPolicyNotEnforced marks a policy setting that nothing enforces. The
@@ -27,11 +29,10 @@ var errMFAPolicyInvalid = errors.New("MFA policy setting invalid")
 //     and signs in as before meanwhile. After it, sign-in is refused unless
 //     they have a bypass code.
 //
-// Of the conditions, only groups is accepted: a list of group names, and the
-// policy then applies only to a member of one of them (evaluateMFAPolicy in
-// internal/identity matches the names of the user's groups). It is what lets
-// an organization bring units under a policy one at a time. The rest are
-// still refused (#990): factor_enrolled, min_risk_score and client_ids, which
+// Of the conditions, groups, user_types, vendor_org_ids, idp_ids and
+// client_ids are accepted (see mfaPolicyAudienceConditions). They let an
+// organization bring units and populations under a policy one at a time. The
+// rest are still refused (#990): factor_enrolled and min_risk_score, which
 // no code reads, and ip_ranges, time_windows and attributes, which the
 // evaluator reads but the console cannot show. An update may clear them, or
 // send back the value already stored, so that a policy created before #991
@@ -152,9 +153,38 @@ func sameMethodSet(a, b []string) bool {
 	return reflect.DeepEqual(as, bs)
 }
 
-// checkMFAConditions accepts no conditions, or a groups condition alone: a
-// non-empty list of distinct, non-empty group names. An empty list would
-// apply the policy to nobody, which is what disabling it is for.
+// mfaPolicyAudienceConditions are the conditions that scope a policy to a
+// population, each a non-empty list of distinct values. The evaluator
+// (evaluateMFAPolicy in internal/identity) requires every condition present
+// to match: the user's groups by name, the user's type and partner
+// organization, the identity provider the sign-in came through and the
+// application (OAuth client) it is for. A sign-in that carries no IdP or no
+// client never satisfies an idp_ids or client_ids condition.
+var mfaPolicyAudienceConditions = map[string]func(string) error{
+	"groups": func(string) error { return nil },
+	"user_types": func(v string) error {
+		switch v {
+		case "internal", "external", "service":
+			return nil
+		}
+		return fmt.Errorf("%q is not a user type (internal, external, service)", v)
+	},
+	"vendor_org_ids": checkUUIDValue,
+	"idp_ids":        checkUUIDValue,
+	"client_ids":     func(string) error { return nil },
+}
+
+func checkUUIDValue(v string) error {
+	if _, err := uuid.Parse(v); err != nil {
+		return fmt.Errorf("%q is not an id", v)
+	}
+	return nil
+}
+
+// checkMFAConditions accepts no conditions, or any combination of the
+// audience conditions above, each a non-empty list of distinct, non-empty
+// values. An empty list would apply the policy to nobody, which is what
+// disabling it is for.
 func checkMFAConditions(raw json.RawMessage) error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
@@ -168,32 +198,42 @@ func checkMFAConditions(raw json.RawMessage) error {
 	}
 	keys := make([]string, 0, len(conds))
 	for key := range conds {
-		if key != "groups" {
+		if _, ok := mfaPolicyAudienceConditions[key]; !ok {
 			keys = append(keys, key)
 		}
 	}
 	if len(keys) > 0 {
 		sort.Strings(keys)
-		return fmt.Errorf("%w: conditions other than groups are not enforced (%s), so a policy cannot have them; "+
+		return fmt.Errorf("%w: conditions other than groups, user_types, vendor_org_ids, idp_ids and client_ids are not enforced (%s), so a policy cannot have them; "+
 			"without conditions it applies to every user who signs in with a password", errMFAPolicyNotEnforced, strings.Join(keys, ", "))
 	}
-	var groups []string
-	if err := json.Unmarshal(conds["groups"], &groups); err != nil {
-		return fmt.Errorf("%w: conditions.groups must be a list of group names", errMFAPolicyInvalid)
+	names := make([]string, 0, len(conds))
+	for key := range conds {
+		names = append(names, key)
 	}
-	if len(groups) == 0 {
-		return fmt.Errorf("%w: conditions.groups is empty, so the policy would apply to nobody; "+
-			"list at least one group, or remove the condition to apply it to everyone", errMFAPolicyInvalid)
-	}
-	seen := map[string]bool{}
-	for _, g := range groups {
-		if strings.TrimSpace(g) == "" {
-			return fmt.Errorf("%w: conditions.groups lists an empty group name", errMFAPolicyInvalid)
+	sort.Strings(names)
+	for _, key := range names {
+		var values []string
+		if err := json.Unmarshal(conds[key], &values); err != nil {
+			return fmt.Errorf("%w: conditions.%s must be a list of strings", errMFAPolicyInvalid, key)
 		}
-		if seen[g] {
-			return fmt.Errorf("%w: conditions.groups lists %q twice", errMFAPolicyInvalid, g)
+		if len(values) == 0 {
+			return fmt.Errorf("%w: conditions.%s is empty, so the policy would apply to nobody; "+
+				"list at least one value, or remove the condition", errMFAPolicyInvalid, key)
 		}
-		seen[g] = true
+		seen := map[string]bool{}
+		for _, v := range values {
+			if strings.TrimSpace(v) == "" {
+				return fmt.Errorf("%w: conditions.%s lists an empty value", errMFAPolicyInvalid, key)
+			}
+			if seen[v] {
+				return fmt.Errorf("%w: conditions.%s lists %q twice", errMFAPolicyInvalid, key, v)
+			}
+			seen[v] = true
+			if err := mfaPolicyAudienceConditions[key](v); err != nil {
+				return fmt.Errorf("%w: conditions.%s: %v", errMFAPolicyInvalid, key, err)
+			}
+		}
 	}
 	return nil
 }

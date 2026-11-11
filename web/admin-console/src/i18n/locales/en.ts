@@ -3555,7 +3555,7 @@ const en = {
           'While a policy is enabled, it applies to every user who signs in with a password. With no required methods, a user who has a second factor enrolled is asked for it, and any enrolled factor satisfies it. With required methods, only those do, and a user who has none of them gets the grace period to add one. The enabled policy with the lowest priority number decides.',
         notEnforcedBadge: 'stored conditions not enforced',
         notEnforcedBody:
-          'This policy was saved with conditions other than groups, such as client IDs. They are not enforced: apart from its groups, the policy applies to every user who signs in with a password.',
+          'This policy was saved with other conditions, such as IP ranges. They are not enforced: apart from its audience conditions, the policy applies to every user who signs in with a password.',
         groupsBadge: 'Groups: {{names}}',
         groupsBody: 'The policy applies only to members of these groups.',
         anyFactor: 'Any enrolled factor',
@@ -3608,6 +3608,16 @@ const en = {
         groups: 'Applies to groups',
         groupsHelp:
           'None selected: the policy applies to everyone. Otherwise only members of a selected group are under it, which is how units are brought in one at a time.',
+        audience: {
+          user_types: 'Applies to: user type',
+          vendor_org_ids: 'Applies to: partner organization',
+          idp_ids: 'Applies to: identity provider (IdP)',
+          client_ids: 'Applies to: application',
+        },
+        audienceNone: 'Nothing to choose from.',
+        audienceHelp:
+          'Every condition you pick must match. An IdP or application condition never applies to a sign-in that did not come through that IdP or is not for that application (for example a password sign-in with no application).',
+        userType: { internal: 'Internal user', external: 'External user', service: 'Service account' },
         groupsFilter: 'Find a group…',
         groupsNone: 'No groups match.',
         groupsLoadFailed: 'Groups could not be loaded; the policy will apply to everyone.',
