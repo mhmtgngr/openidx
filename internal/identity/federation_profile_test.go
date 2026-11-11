@@ -40,7 +40,9 @@ func TestFederationProfileValidationRefusesWhatTheSignInPathCannotUse(t *testing
 	}{
 		{"defaults are valid", func(*IdentityProvider) {}, ""},
 		{"an http issuer", func(i *IdentityProvider) { i.IssuerURL = "http://idp.example.org" }, "https"},
-		{"an http discovery url", func(i *IdentityProvider) { i.DiscoveryURL = "http://idp.example.org/adfs/.well-known/openid-configuration" }, "https"},
+		{"an http discovery url", func(i *IdentityProvider) {
+			i.DiscoveryURL = "http://idp.example.org/adfs/.well-known/openid-configuration"
+		}, "https"},
 		{"an unknown population", func(i *IdentityProvider) { i.JITPolicy.Population = "partner" }, "population"},
 		{"an unknown external id claim", func(i *IdentityProvider) { i.ExternalIDClaim = "employee_no" }, "external_id_claim"},
 		{"a claims mapping with an unknown field", func(i *IdentityProvider) { i.ClaimsMapping = oidcrp.ClaimsMapping{"colour": "x"} }, "claims mapping"},
