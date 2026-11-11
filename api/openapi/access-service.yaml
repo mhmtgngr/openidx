@@ -4327,13 +4327,24 @@ paths:
       summary: Handle generate token
       operationId: handleGenerateToken
       x-openidx-handler: internal/access.(*AgentAPIHandler).HandleGenerateToken
+      description: >-
+        Mints an enrollment token and returns the plaintext once. A reusable (fleet)
+        token defaults to 90 days, is exempt from the hourly enrolment quota, counts
+        each use and is refused at max_uses; default_tags are stamped on every device
+        it enrols. Minting requires a fresh MFA when the step-up gate is on.
       requestBody:
         required: false
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                name: {type: string, maxLength: 255}
+                description: {type: string}
+                reusable: {type: boolean}
+                ttl_hours: {type: integer, minimum: 1, maximum: 8760, description: "Default 24 (single-use) or 2160 (fleet)."}
+                max_uses: {type: integer, minimum: 0, description: "Fleet tokens only; 0 = no limit."}
+                default_tags: {type: array, items: {type: string, maxLength: 64}, maxItems: 32}
       responses:
         '200':
           description: Success

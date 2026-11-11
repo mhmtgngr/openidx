@@ -104,3 +104,12 @@ func (h *AgentAPIHandler) refuseIfEnrollmentQuotaExceeded(c *gin.Context, orgID 
 	})
 	return true
 }
+
+// enrollmentQuotaExempt reports whether a mint is outside the hourly quota.
+// A fleet (reusable) token is: it is one row that admits many devices, so
+// counting it against a quota of rows measures nothing, and an operator
+// rotating a rollout's token must not be refused because the help desk minted
+// one-time tokens that hour. It is bounded instead by its own max_uses, by a
+// lifetime of at most a year (v250's CHECK) and by the fresh-MFA gate on the
+// mint route.
+func enrollmentQuotaExempt(reusable bool) bool { return reusable }
