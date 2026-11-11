@@ -24,6 +24,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/remotesupport"
 	"github.com/openidx/openidx/agent/internal/sso"
 	"github.com/openidx/openidx/agent/internal/tray"
+	"github.com/openidx/openidx/agent/internal/tunnel"
 	"github.com/openidx/openidx/agent/internal/updater"
 	"github.com/openidx/openidx/agent/internal/winservice"
 )
@@ -144,7 +145,14 @@ It enrolls devices, enforces access policies, and reports health status back to 
 		if verbose {
 			logger, err = zap.NewDevelopment()
 		} else {
-			logger, err = zap.NewProduction()
+			pc := zap.NewProductionConfig()
+			// The installer's LOG_LEVEL, persisted in agent.json at enrolment.
+			if cfg, cerr := agent.LoadConfig(configDir); cerr == nil && cfg.LogLevel != "" {
+				if lvl, perr := zap.ParseAtomicLevel(cfg.LogLevel); perr == nil {
+					pc.Level = lvl
+				}
+			}
+			logger, err = pc.Build()
 		}
 		if err != nil {
 			return fmt.Errorf("initializing logger: %w", err)
@@ -175,14 +183,18 @@ resulting credentials in the config directory for subsequent runs.`,
 		}
 		server, _ := cmd.Flags().GetString("server")
 		flagManifest, _ := cmd.Flags().GetString("manifest-url")
-		manifestURL := enrollment.ResolveManifestURL(configDir, cmd.Flags().Changed("manifest-url"), flagManifest)
+		opts, err := enrollOptionsFromFlags(cmd, server, token, flagManifest)
+		if err != nil {
+			return err
+		}
 
 		logger.Info("enrolling agent",
 			zap.String("server", server),
 			zap.String("config_dir", configDir),
+			zap.Bool("keep_token", opts.KeepToken),
 		)
 
-		result, err := enrollment.EnrollWithManifest(logger, server, token, configDir, manifestURL)
+		result, err := enrollment.EnrollWithOptions(logger, opts)
 		if err != nil {
 			if fromDeepLink {
 				notifyDeepLink("Enrollment failed.\n\n" + err.Error())
@@ -215,6 +227,56 @@ resulting credentials in the config directory for subsequent runs.`,
 
 		return nil
 	},
+}
+
+// enrollOptionsFromFlags collects the enroll command's flags.
+func enrollOptionsFromFlags(cmd *cobra.Command, server, token, manifest string) (enrollment.Options, error) {
+	// A string, not a bool: the MSI passes --keep-token=[KEEP_ENROLL_TOKEN],
+	// which is empty when an installer clears the property, and an empty bool
+	// would fail the whole enrolment.
+	keepFlag, _ := cmd.Flags().GetString("keep-token")
+	keep := false
+	switch strings.ToLower(strings.TrimSpace(keepFlag)) {
+	case "1", "true", "yes", "on":
+		keep = true
+	case "", "0", "false", "no", "off":
+	default:
+		return enrollment.Options{}, fmt.Errorf("--keep-token must be true or false, not %q", keepFlag)
+	}
+	tunnelFlag, _ := cmd.Flags().GetString("tunnel")
+	proxy, _ := cmd.Flags().GetString("proxy-url")
+	caPath, _ := cmd.Flags().GetString("server-ca")
+	level, _ := cmd.Flags().GetString("log-level")
+	o := enrollment.Options{
+		ServerURL: server, Token: token, ConfigDir: configDir,
+		ManifestURL: manifest, ManifestExplicit: cmd.Flags().Changed("manifest-url"),
+		ProxyURL: strings.TrimSpace(proxy), KeepToken: keep,
+	}
+	switch strings.ToLower(strings.TrimSpace(tunnelFlag)) {
+	case "":
+	case "1", "true", "yes", "on":
+		v := true
+		o.Tunnel = &v
+	case "0", "false", "no", "off":
+		v := false
+		o.Tunnel = &v
+	default:
+		return o, fmt.Errorf("--tunnel must be true or false, not %q", tunnelFlag)
+	}
+	if caPath = strings.TrimSpace(caPath); caPath != "" {
+		pem, err := os.ReadFile(caPath) //nolint:gosec // operator-named file
+		if err != nil {
+			return o, fmt.Errorf("--server-ca: %w", err)
+		}
+		o.ServerCA = string(pem)
+	}
+	switch l := strings.ToLower(strings.TrimSpace(level)); l {
+	case "", "debug", "info", "warn", "error":
+		o.LogLevel = l
+	default:
+		return o, fmt.Errorf("--log-level must be debug, info, warn or error, not %q", level)
+	}
+	return o, nil
 }
 
 var runCmd = &cobra.Command{
@@ -371,6 +433,16 @@ var trayCmd = &cobra.Command{
 		// --server, so without this the tray never appeared on a fresh
 		// install until a reboot after enrolment.
 		return tray.Run(logger, configDir, resolveServer(cmd))
+	},
+}
+
+// tunnelCleanupCmd is run by the MSI on uninstall, after the service stops.
+var tunnelCleanupCmd = &cobra.Command{
+	Use:    "tunnel-cleanup",
+	Short:  "Remove the tunnel's leftover DNS (NRPT) rules and adapter (Windows)",
+	Hidden: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return tunnel.Cleanup()
 	},
 }
 
@@ -534,6 +606,12 @@ func init() {
 	enrollCmd.Flags().String("code", "", "enrollment session code from the Add-a-device wizard / deep-link")
 	enrollCmd.Flags().String("server", "https://openidx.example.com", "OpenIDX server URL")
 	enrollCmd.Flags().String("manifest-url", "", "update manifest URL to persist for self-update; an empty value turns self-update off (default: keep the device's current one, else this build's release channel)")
+	enrollCmd.Flags().String("keep-token", "", "1/true to seal the (fleet) token in the config directory so the service can finish or redo the enrolment (DPAPI on Windows, a 0600 file elsewhere)")
+	enrollCmd.Flags().Lookup("keep-token").NoOptDefVal = "true" // bare --keep-token
+	enrollCmd.Flags().String("tunnel", "", "turn the bundled tunnel on or off for this device (true/false; default: leave as is)")
+	enrollCmd.Flags().String("proxy-url", "", "explicit HTTP(S) proxy for reaching the server (default: system settings)")
+	enrollCmd.Flags().String("server-ca", "", "path to a PEM CA certificate to trust for the server")
+	enrollCmd.Flags().String("log-level", "", "agent log level to persist: debug, info, warn or error")
 	// Either --token or --code is required; validated in RunE.
 
 	serviceCmd.AddCommand(serviceRunCmd)
@@ -550,6 +628,7 @@ func init() {
 	pluginCmd.AddCommand(pluginDigestCmd)
 
 	rootCmd.AddCommand(enrollCmd)
+	rootCmd.AddCommand(tunnelCleanupCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(serviceCmd)

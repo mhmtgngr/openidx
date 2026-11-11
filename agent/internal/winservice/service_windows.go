@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 
 	"github.com/openidx/openidx/agent/internal/agent"
+	"github.com/openidx/openidx/agent/internal/enrollment"
 	"github.com/openidx/openidx/agent/internal/ipc"
 	"github.com/openidx/openidx/agent/internal/tunnel"
 	"github.com/openidx/openidx/agent/internal/updater"
@@ -91,6 +92,15 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// An MSI install whose enrol action failed (no network yet, server
+	// down) left a sealed fleet token: finish the enrolment from here with
+	// backoff, while WaitEnrolled below picks the result up.
+	go func() {
+		if err := enrollment.RetryEnroll(ctx, h.logger, h.configDir, enrollment.RealClock, nil); err != nil && ctx.Err() == nil {
+			h.logger.Warn("service: enrolment retry stopped", zap.Error(err))
+		}
+	}()
 
 	go func() {
 		// A device enrolled after the service started (every MSI install: the

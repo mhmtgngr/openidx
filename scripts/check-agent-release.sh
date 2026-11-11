@@ -94,8 +94,8 @@ else
   grep -qF 'a published script must carry no enrollment token' <<<"$stamp" ||
     finding "the stamp step no longer fails when the script's -Token default stops being the placeholder"
 fi
-grep -qE '^ +\[string\]\$Token +=  *"__ENROLL_TOKEN__",$' "$ROOT/agent/scripts/install-openidx-agent.ps1" ||
-  finding "install-openidx-agent.ps1's -Token default is not the __ENROLL_TOKEN__ placeholder"
+grep -qE '^ +\[string\]\$EnrollToken +=  *"__ENROLL_TOKEN__",$' "$ROOT/agent/scripts/Install-OpenIDXAgent.ps1" ||
+  finding "Install-OpenIDXAgent.ps1's -EnrollToken default is not the __ENROLL_TOKEN__ placeholder"
 
 if [ "$fail" -eq 0 ]; then
   echo "check-agent-release: ok — the agent is releasable by dispatch, agents poll the agent-latest channel, and no token is published"

@@ -10,7 +10,10 @@
   Installs the single openidx-agent.exe, registers + starts the Windows service
   (posture loop), and launches the tray at user login. Silent/GPO/Intune:
     msiexec /i OpenIDX.msi /qn SERVER_URL=https://openidx.example.com ENROLL_TOKEN=...
-  ENROLL_TOKEN triggers a one-shot device enrollment during install (best-effort).
+  ENROLL_TOKEN triggers a device enrollment during install and upgrade
+  (best-effort, retried by the service). Optional: TUNNEL_ENABLED, SERVER_CA,
+  PROXY_URL, LOG_LEVEL, KEEP_ENROLL_TOKEN (default 1). Intune detection:
+  HKLM\SOFTWARE\OpenIDX\Agent Version. See docs/runbooks/agent-intune.md.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
@@ -32,6 +35,35 @@
     <!-- Public properties usable from a silent msiexec command line. -->
     <Property Id="SERVER_URL" Secure="yes" />
     <Property Id="ENROLL_TOKEN" Secure="yes" Hidden="yes" />
+    <!-- TUNNEL_ENABLED=1|0 turns the bundled tunnel on or off for this device
+         (empty leaves it as it is). SERVER_CA is the path of a PEM CA file to
+         trust for the server. PROXY_URL is an explicit http(s) proxy (empty:
+         system settings). LOG_LEVEL is debug|info|warn|error.
+         KEEP_ENROLL_TOKEN=1 (the default) seals the fleet token in the config
+         directory so the service finishes an enrolment that failed here (no
+         network yet) with backoff; pass KEEP_ENROLL_TOKEN=0 to keep nothing. -->
+    <Property Id="TUNNEL_ENABLED" Secure="yes" />
+    <Property Id="SERVER_CA" Secure="yes" />
+    <Property Id="PROXY_URL" Secure="yes" Hidden="yes" />
+    <Property Id="LOG_LEVEL" Secure="yes" />
+    <Property Id="KEEP_ENROLL_TOKEN" Secure="yes" Value="1" />
+    <!-- The enrol action's command line carries ENROLL_TOKEN. Hidden keeps
+         it, and the CustomActionData built from it, out of /l*v logs. -->
+    <Property Id="EnrollDevice" Hidden="yes" />
+
+    <!-- Read back what an earlier install recorded, so an upgrade without
+         SERVER_URL on its command line keeps the server it had, and an
+         uninstall knows the data folder to remove. -->
+    <Property Id="SAVED_SERVER_URL">
+      <RegistrySearch Id="SavedServerUrl" Root="HKLM" Key="SOFTWARE\OpenIDX\Agent"
+                      Name="ServerUrl" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="AGENTDATADIR">
+      <RegistrySearch Id="SavedDataDir" Root="HKLM" Key="SOFTWARE\OpenIDX\Agent"
+                      Name="DataDir" Type="raw" Bitness="always64" />
+    </Property>
+    <SetProperty Id="SERVER_URL" Value="[SAVED_SERVER_URL]" After="AppSearch"
+                 Sequence="both" Condition="NOT SERVER_URL AND SAVED_SERVER_URL" />
     <!-- The update manifest URL persisted at enroll so the service
          self-updates. A release build defaults it to the agent release channel
          (…/releases/download/agent-latest/latest.json); pass
@@ -118,6 +150,23 @@
       </Component>
       <?endif?>
 
+      <!-- Intune / SCCM detection rule: HKLM\SOFTWARE\OpenIDX\Agent Version.
+           InstallDir and ServerUrl are for support; DataDir drives the
+           uninstall cleanup below. -->
+      <Component Id="AgentRegistry">
+        <RegistryKey Root="HKLM" Key="SOFTWARE\OpenIDX\Agent">
+          <RegistryValue Name="Version" Type="string" Value="$(var.Version)" KeyPath="yes" />
+          <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
+          <RegistryValue Name="ServerUrl" Type="string" Value="[SERVER_URL]" />
+          <RegistryValue Name="DataDir" Type="string" Value="[CommonAppDataFolder]OpenIDX\agent" />
+        </RegistryKey>
+        <!-- %ProgramData%\OpenIDX\agent (agent.json, identity, sealed token)
+             goes with an uninstall, not with the uninstall half of an upgrade,
+             which must keep the enrolment. -->
+        <util:RemoveFolderEx Id="RemoveAgentData" On="uninstall" Property="AGENTDATADIR"
+                             Condition="NOT UPGRADINGPRODUCTCODE" />
+      </Component>
+
       <!-- Launch the tray for the interactive user at login. -->
       <Component Id="TrayAutostart">
         <RegistryValue Root="HKMU"
@@ -178,18 +227,22 @@
         msiexec /i OpenIDX.msi /qn SERVER_URL=https://openidx.example.com ENROLL_TOKEN=<REUSABLE>
       Deferred + no-impersonate (runs as LocalSystem, same account as the
       service). Return=ignore so a transient enroll failure never blocks the
-      install (the service/tray can enroll later).
+      install: with KEEP_ENROLL_TOKEN=1 the service retries (1m, 5m, 15m,
+      hourly). It runs on an upgrade too, so a new SERVER_URL is written; it
+      is skipped only on uninstall. HideTarget plus the Hidden properties keep
+      the token out of a verbose log.
     -->
     <SetProperty Id="EnrollDevice"
                  Sequence="execute"
                  Before="EnrollDevice"
-                 Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; enroll --server &quot;[SERVER_URL]&quot; --token &quot;[ENROLL_TOKEN]&quot; --manifest-url &quot;[UPDATE_MANIFEST_URL]&quot; --config-dir &quot;[CommonAppDataFolder]OpenIDX\agent&quot;"
+                 Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; enroll --server &quot;[SERVER_URL]&quot; --token &quot;[ENROLL_TOKEN]&quot; --manifest-url &quot;[UPDATE_MANIFEST_URL]&quot; --keep-token=[KEEP_ENROLL_TOKEN] --tunnel &quot;[TUNNEL_ENABLED]&quot; --proxy-url &quot;[PROXY_URL]&quot; --server-ca &quot;[SERVER_CA]&quot; --log-level &quot;[LOG_LEVEL]&quot; --config-dir &quot;[CommonAppDataFolder]OpenIDX\agent&quot;"
                  Condition="SERVER_URL AND ENROLL_TOKEN" />
     <CustomAction Id="EnrollDevice"
                   BinaryRef="Wix4UtilCA_X64"
                   DllEntry="WixQuietExec64"
                   Execute="deferred"
                   Impersonate="no"
+                  HideTarget="yes"
                   Return="ignore" />
 
     <!-- The tray is not launched from here. The service starts it in every
@@ -200,9 +253,28 @@
          no command line (0x80070057), it would have blocked the install on a
          tray that never exits, and an upgrade skipped it. -->
 
+    <!-- Tunnel cleanup on uninstall. The service stops first (its job
+         object kills ziti-edge-tunnel, which on Windows cannot be asked to
+         stop), then this removes the NRPT rules and Wintun adapter the killed
+         tunneler leaves (docs/AGENT-TUNNEL.md, "Not yet verified"). It runs
+         before RemoveFiles, while the exe is still there. -->
+    <SetProperty Id="TunnelCleanup"
+                 Sequence="execute"
+                 Before="TunnelCleanup"
+                 Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; tunnel-cleanup"
+                 Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    <CustomAction Id="TunnelCleanup"
+                  BinaryRef="Wix4UtilCA_X64"
+                  DllEntry="WixQuietExec64"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
     <InstallExecuteSequence>
+      <Custom Action="TunnelCleanup" After="StopServices"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="EnrollDevice" After="InstallServices"
-              Condition="SERVER_URL AND ENROLL_TOKEN AND NOT Installed" />
+              Condition="SERVER_URL AND ENROLL_TOKEN AND NOT (REMOVE~=&quot;ALL&quot;)" />
     </InstallExecuteSequence>
   </Package>
 </Wix>
