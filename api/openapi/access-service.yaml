@@ -4026,6 +4026,79 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /api/v1/access/agent/claim:
+    post:
+      tags: [Agent Enrollment]
+      summary: Claim an ownerless device for the signed-in user
+      description: >-
+        Called by the tray after sign-in. Carries the device credential
+        (X-Agent-ID + X-Auth-Token) and the person's bearer token. An active,
+        ownerless device in the same organization becomes the caller's and is
+        bound to the caller's session. 409 agent_owned_by_another_user when
+        someone else owns it, 403 agent_other_org across organizations.
+      operationId: handleClaimAgent
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleClaimAgent
+      responses:
+        '200':
+          description: Claimed (or already the caller's)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent_id: {type: string}
+                  owner_user_id: {type: string}
+                  claimed: {type: boolean}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Device revoked or in another organization
+        '409':
+          description: Device belongs to another user or is not active
+  /api/v1/access/agent/settings:
+    get:
+      tags: [Agent Enrollment]
+      summary: Get the organization's agent settings
+      operationId: handleGetAgentSettings
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleGetAgentSettings
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  claim_mode: {type: string, enum: [login, logged_on_user]}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [Agent Enrollment]
+      summary: Update the organization's agent settings (admin, fresh MFA)
+      operationId: handleUpdateAgentSettings
+      x-openidx-handler: internal/access.(*AgentAPIHandler).HandleUpdateAgentSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [claim_mode]
+              properties:
+                claim_mode: {type: string, enum: [login, logged_on_user]}
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  claim_mode: {type: string}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/v1/access/agent/enroll/oauth:
     post:
       tags: [Agent Enrollment]

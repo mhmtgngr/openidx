@@ -22,6 +22,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/desktoppam"
 	"github.com/openidx/openidx/agent/internal/ipc"
 	"github.com/openidx/openidx/agent/internal/sso"
+	"github.com/openidx/openidx/agent/internal/transport"
 	"github.com/openidx/openidx/agent/internal/updater"
 )
 
@@ -620,6 +621,23 @@ func (a *app) signInWith(opts sso.LoginOptions) {
 	}
 	_ = authstore.Save(a.configDir, t)
 	a.setSignedIn(t)
+	a.claimAfterSignIn(t)
+}
+
+// claimAfterSignIn makes a fleet-enrolled (ownerless) device the signed-in
+// person's (claim_mode login). A failure leaves the sign-in standing.
+func (a *app) claimAfterSignIn(t *sso.Tokens) {
+	cfg, err := agent.LoadConfig(a.configDir)
+	if err != nil || cfg == nil || cfg.AgentID == "" || cfg.AuthToken == "" {
+		return
+	}
+	msg, err := sso.ClaimAfterSignIn(transport.NewClient(a.server(), cfg.AuthToken, cfg.AgentID), t)
+	if err != nil {
+		a.logger.Warn("tray: claiming the device after sign-in failed", zap.Error(err))
+	}
+	if msg != "" {
+		a.tell(msg)
+	}
 }
 
 // enrolledAgentID is the agent id this machine is enrolled as, or "" when it is
