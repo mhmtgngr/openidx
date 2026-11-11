@@ -244,3 +244,47 @@ func (c *Client) SendConsent(sessionID, decision string) error {
 func (c *Client) DialServiceConn(serviceName string) (net.Conn, error) {
 	return nil, fmt.Errorf("ziti service dial not supported on HTTPS transport")
 }
+
+// ClaimResult is the server's answer to a successful claim.
+type ClaimResult struct {
+	AgentID     string `json:"agent_id"`
+	OwnerUserID string `json:"owner_user_id"`
+	// Claimed is true when this call made the device the person's; false
+	// when it already was.
+	Claimed bool `json:"claimed"`
+}
+
+// ErrClaimOwnedByAnother is a claim refused because the device already
+// belongs to someone else in the organization (409).
+var ErrClaimOwnedByAnother = errors.New("this device belongs to another person")
+
+// Claim makes this device the signed-in person's
+// (POST /api/v1/access/agent/claim). It carries both credentials: the
+// device's own (X-Agent-ID + X-Auth-Token) and the person's access token.
+func (c *Client) Claim(accessToken string) (*ClaimResult, error) {
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/v1/access/agent/claim", nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating claim request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Agent-ID", c.agentID)
+	req.Header.Set("X-Auth-Token", c.authToken)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sending claim request: %w", err)
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusConflict:
+		return nil, ErrClaimOwnedByAnother
+	case resp.StatusCode == http.StatusForbidden:
+		return nil, fmt.Errorf("claim refused (403)")
+	case resp.StatusCode < 200 || resp.StatusCode >= 300:
+		return nil, fmt.Errorf("claim request failed with status %d", resp.StatusCode)
+	}
+	var out ClaimResult
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out); err != nil {
+		return nil, fmt.Errorf("parsing claim response: %w", err)
+	}
+	return &out, nil
+}

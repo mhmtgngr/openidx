@@ -62,6 +62,12 @@ type Agent struct {
 	// instead. Default false = enabled (single-process / foreground `run`).
 	DisableRemoteSupport bool
 
+	// LoggedOnUser, when set, names the person signed in at the console
+	// (DOMAIN\user or a UPN). The Windows service sets it; the report carries
+	// it as logged_on_user, which the server reads only under claim_mode
+	// logged_on_user to give an ownerless device its owner.
+	LoggedOnUser func() string
+
 	// revoked is set when the server answers /agent/config with 403: an
 	// administrator revoked this device. Nothing the agent sends after that
 	// is accepted, so the cycle stops at the sync until a sync succeeds again
@@ -360,6 +366,8 @@ type reportPayload struct {
 	// TunnelStatus is the bundled tunneler's state. Omitted by an agent that
 	// supervises none, so the server can tell "no tunnel support" from "off".
 	TunnelStatus *tunnel.Status `json:"tunnel_status,omitempty"`
+	// LoggedOnUser is the console session's user, when the service knows it.
+	LoggedOnUser string `json:"logged_on_user,omitempty"`
 }
 
 // engineResult is one result in the report, in the shape the access service
@@ -434,6 +442,9 @@ func (a *Agent) RunOnce(ctx context.Context) error {
 		Results:      results,
 		ReportedAt:   time.Now().UTC(),
 		TunnelStatus: a.TunnelStatus(),
+	}
+	if a.LoggedOnUser != nil {
+		payload.LoggedOnUser = a.LoggedOnUser()
 	}
 
 	data, err := json.Marshal(payload)

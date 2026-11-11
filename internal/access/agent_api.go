@@ -171,8 +171,17 @@ func (h *AgentAPIHandler) RegisterAgentPublicRoutes(r *gin.RouterGroup) {
 // token admits up to max_uses machines for up to a year, so minting one is a
 // credential issue like a PAM reveal. Revoking one is not gated (ending
 // access is never the thing to interrupt for a second factor).
-func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup, stepUp, operator gin.HandlerFunc) {
+//
+// admin is the role gate on the organization's agent settings (claim_mode);
+// requireAdminRole carries the fresh-MFA gate for its writes.
+func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup, stepUp, admin, operator gin.HandlerFunc) {
 	r.POST("/agent/enroll/oauth", h.HandleEnrollOAuth)
+	// The tray's "Sign in" claims an ownerless device for the signed-in person:
+	// the device's own credential in X-Agent-ID + X-Auth-Token, the person's in
+	// Authorization (agent_claim.go).
+	r.POST("/agent/claim", h.HandleClaimAgent)
+	r.GET("/agent/settings", withGate(admin, h.HandleGetAgentSettings)...)
+	r.PUT("/agent/settings", withGate(admin, h.HandleUpdateAgentSettings)...)
 	r.POST("/agent/enroll/session", h.HandleCreateEnrollSession)
 	r.GET("/agent/enroll/session/:id/status", h.HandleEnrollSessionStatus)
 	r.DELETE("/agent/enroll/session/:id", h.HandleCancelEnrollSession)
@@ -1129,6 +1138,10 @@ type agentReport struct {
 	// TunnelStatus is the OpenZiti tunneler's state as the agent sees it;
 	// optional, absent from agents that do not run one (tunnel_status.go).
 	TunnelStatus *agentTunnelStatus `json:"tunnel_status,omitempty"`
+	// LoggedOnUser is the interactive Windows session user (UPN) the tray
+	// told the service about; optional. Read only under claim_mode
+	// logged_on_user, and only to claim an ownerless device.
+	LoggedOnUser string `json:"logged_on_user,omitempty"`
 }
 
 // checkResult represents a single posture check sent by the agent.
@@ -1429,6 +1442,11 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 	}
 
 	h.recordTunnelStatus(c.Request.Context(), agentID, report.TunnelStatus)
+	// claim_mode logged_on_user: an ownerless device becomes the session
+	// user's when the directory knows them (agent_claim.go).
+	if report.LoggedOnUser != "" {
+		h.claimByLoggedOnUser(c.Request.Context(), c.ClientIP(), agentID, report.LoggedOnUser)
+	}
 
 	h.logAuditEvent("agent.report", agentID, "success", fmt.Sprintf("score=%.2f", complianceScore))
 	h.logAuditEventToDB(c.Request.Context(), "agent.report", agentID, "success", fmt.Sprintf("score=%.2f", complianceScore))
