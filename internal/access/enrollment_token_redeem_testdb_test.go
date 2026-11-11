@@ -67,7 +67,8 @@ func newEnrollTokenFixture(t *testing.T) *enrollTokenFixture {
 			enrolled_at timestamptz, compliance_status text, metadata jsonb,
 			platform text, form_factor text, enrollment_method text, enrolled_by_user_id text,
 			management_mode text, is_device_owner boolean, device_fingerprint text,
-			ziti_identity_id text, last_seen_at timestamptz, org_id uuid not null);
+			ziti_identity_id text, last_seen_at timestamptz, org_id uuid not null,
+			tags text[] not null default '{}', enrolled_with_token_id uuid);
 		CREATE TABLE enrollment_sessions (
 			id uuid primary key, token_hash text, created_by_user_id text, org_id uuid,
 			mfa_verified boolean, status text, expires_at timestamptz);`)
@@ -87,7 +88,7 @@ func newEnrollTokenFixture(t *testing.T) *enrollTokenFixture {
 // what this file measures is redemption.)
 func registeredEnrollmentTokenDDL(t *testing.T) string {
 	t.Helper()
-	var v43, v86, v197 string
+	var v43, v86, v197, v250 string
 	for _, m := range migrations.All() {
 		switch m.Version {
 		case 43:
@@ -96,6 +97,8 @@ func registeredEnrollmentTokenDDL(t *testing.T) string {
 			v86 = m.UpSQL
 		case 197:
 			v197 = m.UpSQL
+		case 250:
+			v250 = m.UpSQL
 		}
 	}
 	require.NotEmpty(t, v43, "migration v43 (agent_enrollment_tokens) is not registered")
@@ -106,7 +109,16 @@ func registeredEnrollmentTokenDDL(t *testing.T) string {
 	require.NotEmpty(t, stmt, "v43 no longer carries CREATE TABLE agent_enrollment_tokens")
 	addOrg := regexp.MustCompile(`ALTER TABLE agent_enrollment_tokens\s+ADD COLUMN IF NOT EXISTS org_id UUID;`).FindString(v197)
 	require.NotEmpty(t, addOrg, "v197 no longer adds agent_enrollment_tokens.org_id")
-	return stmt + "\n" + v86 + "\n" + addOrg
+	require.NotEmpty(t, v250, "migration v250 (fleet tokens) is not registered")
+	// v250's token columns; its enrolled_agents half targets a table this
+	// fixture builds by hand.
+	var tokenCols []string
+	for _, line := range strings.Split(v250, "\n") {
+		if strings.HasPrefix(line, "ALTER TABLE agent_enrollment_tokens") || strings.HasPrefix(line, "  CHECK") {
+			tokenCols = append(tokenCols, line)
+		}
+	}
+	return stmt + "\n" + v86 + "\n" + addOrg + "\n" + strings.Join(tokenCols, "\n")
 }
 
 // redeemOrg is the tenant every token in these tests is minted in.

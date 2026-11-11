@@ -1742,5 +1742,12 @@ func allMigrations() []*Migration {
 			UpSQL:       routeServiceAccountsUp,
 			DownSQL:     routeServiceAccountsDown,
 		},
+		{
+			Version:     250,
+			Name:        "fleet_tokens_and_tags",
+			Description: "Fleet enrollment tokens as console objects, and device tags. agent_enrollment_tokens gains name, max_uses (NULL = no cap), uses (incremented atomically on each redemption of a reusable token, refused at the cap), default_tags and last_used_at, and a NOT VALID check that a token lives at most 366 days (older ten-year fleet tokens keep working). enrolled_agents gains tags (GIN-indexed) and enrolled_with_token_id. Columns under the tables' existing org policies; down drops them.",
+			UpSQL:       fleetTokensAndTagsUp,
+			DownSQL:     fleetTokensAndTagsDown,
+		},
 	}
 }

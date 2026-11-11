@@ -68,7 +68,7 @@ func TestReenrolmentClaimsAnOwnerlessDeviceAndOnlyThat(t *testing.T) {
 		c.Set("scope", "openid offline_access "+enrollScope)
 		c.Next()
 	})
-	agentH.RegisterAgentAdminRoutes(admin, nil)
+	agentH.RegisterAgentAdminRoutes(admin, nil, nil)
 
 	type enrolment struct {
 		AgentID   string `json:"agent_id"`

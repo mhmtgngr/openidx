@@ -141,17 +141,6 @@ func (h *AgentAPIHandler) logAuditEventToDB(ctx context.Context, action, agentID
 	}
 }
 
-// RegisterAgentRoutes registers ALL agent API routes onto the provided router
-// group. Callers that want to apply different middleware to the public
-// (token / device-credential authenticated) and admin (JWT authenticated)
-// surfaces should use RegisterAgentPublicRoutes and RegisterAgentAdminRoutes
-// instead. Kept for backward compatibility with tests and earlier callers.
-// operator is handed to RegisterAgentAdminRoutes.
-func (h *AgentAPIHandler) RegisterAgentRoutes(r *gin.RouterGroup, operator gin.HandlerFunc) {
-	h.RegisterAgentPublicRoutes(r)
-	h.RegisterAgentAdminRoutes(r, operator)
-}
-
 // RegisterAgentPublicRoutes registers endpoints that agents reach BEFORE they
 // have a tenant JWT: enrollment (carries an enrollment token), posture report
 // (carries X-Agent-ID + auth token), and config (same). These MUST NOT be
@@ -177,12 +166,17 @@ func (h *AgentAPIHandler) RegisterAgentPublicRoutes(r *gin.RouterGroup) {
 // and the list and posture reads describe every user's devices. A user's own
 // enrollment -- the OAuth path and the enrollment session -- stays open, and
 // the APK info is public.
-func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup, operator gin.HandlerFunc) {
+//
+// stepUp is the MFA-freshness gate on minting an enrollment token: a fleet
+// token admits up to max_uses machines for up to a year, so minting one is a
+// credential issue like a PAM reveal. Revoking one is not gated (ending
+// access is never the thing to interrupt for a second factor).
+func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup, stepUp, operator gin.HandlerFunc) {
 	r.POST("/agent/enroll/oauth", h.HandleEnrollOAuth)
 	r.POST("/agent/enroll/session", h.HandleCreateEnrollSession)
 	r.GET("/agent/enroll/session/:id/status", h.HandleEnrollSessionStatus)
 	r.DELETE("/agent/enroll/session/:id", h.HandleCancelEnrollSession)
-	r.POST("/agent/tokens", withGate(operator, h.HandleGenerateToken)...)
+	r.POST("/agent/tokens", withGate(operator, withGate(stepUp, h.HandleGenerateToken)...)...)
 	r.GET("/agent/tokens", withGate(operator, h.HandleListTokens)...)
 	r.DELETE("/agent/tokens/:token_id", withGate(operator, h.HandleRevokeToken)...)
 	r.GET("/agents", withGate(operator, h.HandleListAgents)...)
@@ -191,6 +185,28 @@ func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup, operator 
 	r.POST("/agents/:agent_id/approve", withGate(operator, h.HandleApproveAgent)...)
 	r.POST("/agent/qr", withGate(operator, h.HandleGenerateQR)...)
 	r.GET("/agent/apk-info", h.HandleAPKInfo)
+}
+
+// recordEnrollmentTokenOnAgent stamps the token a device enrolled with, and
+// the fleet token's default tags, on its row (v250). Tags are merged, not
+// replaced, so a re-enrolment does not take off tags an administrator added.
+// Bookkeeping: a failure is logged, the enrolment stands.
+func (h *AgentAPIHandler) recordEnrollmentTokenOnAgent(ctx context.Context, agentID, orgID string, req enrollRequest) {
+	if req.enrolledWithTokenID == "" || h.db == nil || h.db.Pool == nil {
+		return
+	}
+	tags := req.tokenTags
+	if tags == nil {
+		tags = []string{}
+	}
+	if _, err := h.db.Pool.Exec(ctx, `
+		UPDATE enrolled_agents
+		   SET enrolled_with_token_id = $3::uuid,
+		       tags = ARRAY(SELECT DISTINCT t FROM unnest(COALESCE(tags, '{}') || $4::text[]) AS t ORDER BY t)
+		 WHERE agent_id = $1 AND org_id = $2
+	`, agentID, orgID, req.enrolledWithTokenID, tags); err != nil {
+		h.logger.Warn("could not record the enrollment token and its tags on the agent", zap.Error(err))
+	}
 }
 
 // enrollRequest is the optional JSON body accepted by HandleEnroll.
@@ -215,6 +231,11 @@ type enrollRequest struct {
 	// be exported (agent_device_key.go). Recorded at enrolment; an enrolment
 	// without one clears any key left from before.
 	DeviceKey *deviceKeyRequest `json:"device_key,omitempty"`
+
+	// Server-side only, never read from the body: the enrollment token the
+	// device presented and the tags it stamps (v250).
+	enrolledWithTokenID string
+	tokenTags           []string
 }
 
 // enrollResponse is returned by HandleEnroll on success.
@@ -436,6 +457,7 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 					// get an overlay identity and remote-support-over-Ziti would
 					// stay off for it.
 					h.ensureAgentZitiIdentity(ctx, existingAgentID, &reused)
+					h.recordEnrollmentTokenOnAgent(ctx, existingAgentID, orgID, req)
 					return reused, nil
 				}
 			}
@@ -466,6 +488,8 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 			managementMode, isDeviceOwner, fpArg, orgID)
 		if err != nil {
 			h.logger.Error("Failed to persist agent enrollment", zap.Error(err))
+		} else {
+			h.recordEnrollmentTokenOnAgent(ctx, agentID, orgID, req)
 		}
 	}
 
@@ -724,6 +748,8 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 			return
 		}
 		tokenID, reusable := tok.ID, tok.Reusable
+		enrollReq.enrolledWithTokenID = tok.ID
+		enrollReq.tokenTags = tok.DefaultTags
 		// The token's tenant is the device's tenant (v197). From here on every
 		// fleet query in this request is scoped to it; nothing below bypasses.
 		ctx = orgctx.With(ctx, orgctx.Org{ID: tok.OrgID})
@@ -2542,35 +2568,115 @@ func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
 // enrollmentTokenRecord is the response shape for list-tokens.
 type enrollmentTokenRecord struct {
 	ID          string     `json:"id"`
+	Name        string     `json:"name"`
 	Description string     `json:"description"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ExpiresAt   time.Time  `json:"expires_at"`
 	UsedAt      *time.Time `json:"used_at"`
 	Revoked     bool       `json:"revoked"`
+	Reusable    bool       `json:"reusable"`
+	MaxUses     *int       `json:"max_uses"`
+	Uses        int        `json:"uses"`
+	DefaultTags []string   `json:"default_tags"`
+	LastUsedAt  *time.Time `json:"last_used_at"`
 }
 
 // generateTokenRequest is the optional body for HandleGenerateToken.
 type generateTokenRequest struct {
+	Name        string `json:"name"`
 	Description string `json:"description"`
 	CreatedBy   string `json:"created_by"`
-	// Reusable mints a fleet/MDM bootstrap token: multi-use and long-lived
-	// (not consumed on enroll). Use for GPO/Intune silent rollout.
+	// Reusable mints a fleet/MDM bootstrap token: multi-use (up to MaxUses,
+	// or without a cap) and long-lived. Use for GPO/Intune silent rollout.
 	Reusable bool `json:"reusable"`
+	// TTLHours overrides the lifetime: at most a year (8760h). Defaults are
+	// 24h for a single-use token and 90 days for a fleet token.
+	TTLHours int `json:"ttl_hours"`
+	// MaxUses caps how many devices a fleet token enrols. 0 = no cap.
+	MaxUses int `json:"max_uses"`
+	// DefaultTags are stamped on every device the token enrols.
+	DefaultTags []string `json:"default_tags"`
+}
+
+const (
+	maxEnrollmentTokenTTLHours   = 8760 // one year; v250 checks <= 366 days
+	defaultFleetTokenTTL         = 90 * 24 * time.Hour
+	defaultSingleUseTokenTTL     = 24 * time.Hour
+	maxEnrollmentTokenTags       = 32
+	maxEnrollmentTokenTagLength  = 64
+	maxEnrollmentTokenNameLength = 255
+)
+
+// normalizeTokenTags trims, lowercases, de-duplicates and bounds tags.
+func normalizeTokenTags(in []string) ([]string, error) {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, t := range in {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t == "" || seen[t] {
+			continue
+		}
+		if len(t) > maxEnrollmentTokenTagLength {
+			return nil, fmt.Errorf("tag %q is longer than %d characters", t, maxEnrollmentTokenTagLength)
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	if len(out) > maxEnrollmentTokenTags {
+		return nil, fmt.Errorf("at most %d tags", maxEnrollmentTokenTags)
+	}
+	return out, nil
 }
 
 // HandleGenerateToken creates a new enrollment token, stores its SHA-256 hash,
 // and returns the plaintext token to the caller exactly once.
+//
+// A fleet (reusable) token is exempt from the hourly enrolment quota: the
+// quota caps a credential minting one-time tokens in a loop, and a fleet
+// token is one row that admits many devices -- it is bounded by its own
+// max_uses and its year-at-most lifetime instead, and minting it carries the
+// fresh-MFA gate (RegisterAgentAdminRoutes).
 func (h *AgentAPIHandler) HandleGenerateToken(c *gin.Context) {
 	var req generateTokenRequest
 	// Ignore parse errors — all fields are optional.
 	_ = c.ShouldBindJSON(&req)
 
+	if req.TTLHours < 0 || req.TTLHours > maxEnrollmentTokenTTLHours {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("ttl_hours must be between 1 and %d (one year)", maxEnrollmentTokenTTLHours)})
+		return
+	}
+	if req.MaxUses < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "max_uses must not be negative"})
+		return
+	}
+	if !req.Reusable && (req.MaxUses > 0 || len(req.DefaultTags) > 0) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "max_uses and default_tags apply to reusable (fleet) tokens only"})
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if len(req.Name) > maxEnrollmentTokenNameLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is too long"})
+		return
+	}
+	tags, err := normalizeTokenTags(req.DefaultTags)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	plaintext := uuid.New().String()
 	hash := sha256Hex(plaintext)
-	// Reusable (fleet) tokens are long-lived; single-use tokens expire in 24h.
-	expiresAt := time.Now().UTC().Add(24 * time.Hour)
+	ttl := defaultSingleUseTokenTTL
 	if req.Reusable {
-		expiresAt = time.Now().UTC().AddDate(10, 0, 0)
+		ttl = defaultFleetTokenTTL
+	}
+	if req.TTLHours > 0 {
+		ttl = time.Duration(req.TTLHours) * time.Hour
+	}
+	expiresAt := time.Now().UTC().Add(ttl)
+	var maxUsesArg interface{}
+	if req.MaxUses > 0 {
+		maxUsesArg = req.MaxUses
 	}
 
 	var tokenID string
@@ -2584,14 +2690,14 @@ func (h *AgentAPIHandler) HandleGenerateToken(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 			return
 		}
-		if h.refuseIfEnrollmentQuotaExceeded(c, org.ID) {
+		if !enrollmentQuotaExempt(req.Reusable) && h.refuseIfEnrollmentQuotaExceeded(c, org.ID) {
 			return
 		}
 		err = h.db.Pool.QueryRow(ctx, `
-			INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at, reusable, org_id)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			INSERT INTO agent_enrollment_tokens (token_hash, name, description, created_by, expires_at, reusable, max_uses, default_tags, org_id)
+			VALUES ($1, NULLIF($2,''), $3, $4, $5, $6, $7, $8, $9)
 			RETURNING id
-		`, hash, req.Description, req.CreatedBy, expiresAt, req.Reusable, org.ID).Scan(&tokenID)
+		`, hash, req.Name, req.Description, req.CreatedBy, expiresAt, req.Reusable, maxUsesArg, tags, org.ID).Scan(&tokenID)
 		if err != nil {
 			h.logger.Error("HandleGenerateToken: failed to insert token", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
@@ -2602,15 +2708,28 @@ func (h *AgentAPIHandler) HandleGenerateToken(c *gin.Context) {
 		tokenID = uuid.New().String()
 	}
 
-	h.logger.Info("Enrollment token generated", zap.String("token_id", tokenID))
-	h.logAuditEvent("token.generated", tokenID, "success", "")
-	h.logAuditEventToDB(c.Request.Context(), "token.generated", tokenID, "success", "")
+	kind := "single_use"
+	if req.Reusable {
+		kind = "fleet"
+	}
+	h.logger.Info("Enrollment token generated", zap.String("token_id", tokenID), zap.String("kind", kind))
+	h.logAuditEvent("token.generated", tokenID, "success", kind)
+	h.logAuditEventToDB(c.Request.Context(), "token.generated", tokenID, "success", kind)
 
-	c.JSON(http.StatusOK, gin.H{
-		"token":      plaintext,
-		"id":         tokenID,
-		"expires_at": expiresAt.Format(time.RFC3339),
-	})
+	resp := gin.H{
+		"token":        plaintext,
+		"id":           tokenID,
+		"name":         req.Name,
+		"reusable":     req.Reusable,
+		"default_tags": tags,
+		"expires_at":   expiresAt.Format(time.RFC3339),
+	}
+	if req.MaxUses > 0 {
+		resp["max_uses"] = req.MaxUses
+	} else {
+		resp["max_uses"] = nil
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // androidAPKPath is the on-disk location served by HandleAPKDownload and
@@ -2788,7 +2907,9 @@ func (h *AgentAPIHandler) HandleListTokens(c *gin.Context) {
 		return
 	}
 	rows, err := h.db.Pool.Query(ctx, `
-		SELECT id, COALESCE(description, ''), created_at, expires_at, used_at, revoked
+		SELECT id, COALESCE(name, ''), COALESCE(description, ''), created_at, expires_at, used_at,
+		       COALESCE(revoked, false), COALESCE(reusable, false), max_uses, COALESCE(uses, 0),
+		       COALESCE(default_tags, '{}'), last_used_at
 		FROM agent_enrollment_tokens
 		WHERE org_id = $1
 		ORDER BY created_at DESC
@@ -2805,11 +2926,17 @@ func (h *AgentAPIHandler) HandleListTokens(c *gin.Context) {
 		var rec enrollmentTokenRecord
 		if scanErr := rows.Scan(
 			&rec.ID,
+			&rec.Name,
 			&rec.Description,
 			&rec.CreatedAt,
 			&rec.ExpiresAt,
 			&rec.UsedAt,
 			&rec.Revoked,
+			&rec.Reusable,
+			&rec.MaxUses,
+			&rec.Uses,
+			&rec.DefaultTags,
+			&rec.LastUsedAt,
 		); scanErr != nil {
 			h.logger.Warn("HandleListTokens: failed to scan row", zap.Error(scanErr))
 			continue

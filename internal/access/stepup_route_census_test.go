@@ -92,6 +92,8 @@ var notPrivilegedLaunch = map[string]string{
 	"POST /remote-support/sessions/:id/recording/finalize": "closes out that upload; see recording/chunk.",
 	"POST /my/remote-support/sessions/:id/end": "a vendor ends their own support session (remote_support_external.go, " +
 		"which answers only for sessions the caller started). Ending access is never the thing to interrupt for a second factor.",
+	"DELETE /agent/tokens/:token_id": "revokes an enrollment token. Ending access is never the thing to " +
+		"interrupt for a second factor -- an operator who cannot revoke a leaked fleet token keeps it live.",
 	"POST /agent/remote-support/sessions/:id/consent": "the DEVICE answering attended-support consent, " +
 		"authenticated as a device (X-Agent-ID + X-Auth-Token) on the public group. There is no human " +
 		"session to step up, and this is the endpoint by which the person at the machine REFUSES -- gating " +
@@ -107,6 +109,9 @@ var privilegedSurfaces = []string{
 	"/pam/",
 	"/remote-support/",
 	"/agent/remote-support/",
+	// An enrollment token admits machines to the fleet; a fleet token admits
+	// up to max_uses of them for up to a year (v250).
+	"/agent/tokens",
 }
 
 var (

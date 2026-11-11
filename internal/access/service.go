@@ -1117,7 +1117,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		agentHandler.SetDeviceRevoker(func(ctx context.Context, orgID, agentID, zitiIdentityID, knownDeviceID string) {
 			svc.executeDeviceRevoke(ctx, orgID, agentID, zitiIdentityID, knownDeviceID)
 		})
-		agentHandler.RegisterAgentAdminRoutes(api, operatorTier)
+		agentHandler.RegisterAgentAdminRoutes(api, svc.requireFreshMFA("agent.token_mint"), operatorTier)
 		// Every minute: the same loop takes trust from devices whose agent
 		// stopped reporting (AGENT_LIVENESS_TIMEOUT), and a minute is the
 		// slack that adds to the timeout.
