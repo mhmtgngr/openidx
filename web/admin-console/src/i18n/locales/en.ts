@@ -10,6 +10,34 @@ const en = {
   // dialog every destructive action routes through -- stayed English on a
   // console that is otherwise translated.
   components: {
+    sites: {
+      label: 'Site',
+      defaultSite: 'Default site',
+      newSite: 'New site...',
+      slug: 'Site slug',
+      name: 'Site name',
+      hint: 'The routers of this site host the resource. Pick the site the application runs in.',
+      badSlug: 'A slug is 1-39 lowercase letters, digits or hyphens.',
+      router: {
+        title: 'Add router',
+        description: 'Create an edge router for a site and get the command that enrolls and runs it.',
+        name: 'Router name',
+        address: 'Advertised address',
+        addressHint: 'The host name or IP other routers and devices reach this router at, without a port. The router listens on 3022.',
+        needAddress: 'The advertised address is required.',
+        submit: 'Create router',
+        failed: 'The router could not be created.',
+        runThis: 'Run this on the router host in site {{site}}. The token is single-use and is shown only now.',
+        copy: 'Copy command',
+        copied: 'Copied',
+        status: 'Enrollment:',
+        state: {
+          waiting: 'Waiting for the router',
+          enrolled: 'Enrolled, offline',
+          online: 'Online',
+        },
+      },
+    },
     sponsoredSupport: {
       title: 'Vendor support sessions',
       description: 'Live remote-support sessions of the vendor technicians you sponsor. Watching is view-only; ending closes the session for everyone.',

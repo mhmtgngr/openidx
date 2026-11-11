@@ -590,6 +590,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// and carries every organization's traffic.
 		api.POST("/ziti/fabric/routers/enroll-token", adminOnly, platformOnly, svc.handleRouterEnrollToken)
 		api.GET("/ziti/fabric/routers/:id", adminOnly, platformOnly, svc.handleGetEdgeRouter)
+		// Sites (migration 249) are install-wide: any admin reads them to place
+		// a resource; creating or renaming one is the install administrator's.
+		// adminOnly carries the fresh-MFA gate for the writes.
+		api.GET("/sites", adminOnly, svc.handleListSites)
+		api.POST("/sites", adminOnly, platformOnly, svc.handleCreateSite)
+		api.PATCH("/sites/:id", adminOnly, platformOnly, svc.handlePatchSite)
 		api.GET("/ziti/fabric/health", operatorTier, svc.handleGetHealth)
 		api.POST("/ziti/fabric/reconnect", adminOnly, platformOnly, svc.handleReconnect)
 		api.GET("/ziti/fabric/metrics", adminOnly, platformOnly, svc.handleGetMetrics)

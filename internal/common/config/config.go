@@ -644,7 +644,12 @@ type Config struct {
 	// enrollment JWT whose controller host does NOT match this value as stale and
 	// re-issues a fresh OTT so the device gets a reachable address. Empty disables
 	// the check (single-host/dev installs where the advertised name is fine).
-	ZitiCtrlPublicAddress  string `mapstructure:"ziti_ctrl_public_address"`
+	ZitiCtrlPublicAddress string `mapstructure:"ziti_ctrl_public_address"`
+	// ZitiRouterImageTag is the openziti/ziti-router image tag the router
+	// onboarding command (POST /ziti/fabric/routers/enroll-token) pins. Keep it
+	// at the controller's version; a router newer than its controller is
+	// unsupported. Empty uses the bundled controller's version.
+	ZitiRouterImageTag     string `mapstructure:"ziti_router_image_tag"`
 	ZitiAdminUser          string `mapstructure:"ziti_admin_user"`
 	ZitiAdminPassword      string `mapstructure:"ziti_admin_password"`
 	ZitiIdentityDir        string `mapstructure:"ziti_identity_dir"`
@@ -1301,6 +1306,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("ziti_ctrl_url", "https://ziti-controller:1280")
 	v.SetDefault("ziti_ctrl_urls", "")
 	v.SetDefault("ziti_ctrl_public_address", "")
+	v.SetDefault("ziti_router_image_tag", "1.6.12")
 	v.SetDefault("ziti_admin_user", "admin")
 	v.SetDefault("ziti_admin_password", defaultZitiAdminPassword)
 	v.SetDefault("ziti_identity_dir", "/ziti")
@@ -1542,6 +1548,7 @@ func bindEnvVars(v *viper.Viper) {
 		"ziti_ctrl_url":                       "ZITI_CTRL_URL",
 		"ziti_ctrl_urls":                      "ZITI_CTRL_URLS",
 		"ziti_ctrl_public_address":            "ZITI_CTRL_PUBLIC_ADDRESS",
+		"ziti_router_image_tag":               "ZITI_ROUTER_IMAGE_TAG",
 		"ziti_admin_user":                     "ZITI_ADMIN_USER",
 		"ziti_admin_password":                 "ZITI_ADMIN_PASSWORD",
 		"ziti_identity_dir":                   "ZITI_IDENTITY_DIR",

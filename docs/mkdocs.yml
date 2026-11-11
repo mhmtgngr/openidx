@@ -101,6 +101,7 @@ nav:
       - Kubernetes (Helm): deployment/kubernetes.md
       - Operator Guide: deployment/operator-guide.md
       - AWS (Terraform): deployment/aws.md
+      - Split-site Azure Router: deployment/split-site-azure-router.md
       - Configuration Reference: deployment/configuration.md
 
   - API Reference:
