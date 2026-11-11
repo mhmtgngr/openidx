@@ -18,6 +18,9 @@ const (
 	// actionRequestAccess: the entry needs an approved access request; offer
 	// to file one from here.
 	actionRequestAccess
+	// actionJustify: the entry asks why; collect a written reason
+	// (openidx://justify) and file the request with it.
+	actionJustify
 )
 
 // refusalActionFor maps a connect error to the flow the tray offers. Kept
@@ -26,6 +29,8 @@ func refusalActionFor(err error) refusalAction {
 	switch {
 	case errors.Is(err, desktoppam.ErrStepUpRequired):
 		return actionSignInFresh
+	case errors.Is(err, desktoppam.ErrJustificationRequired):
+		return actionJustify
 	case errors.Is(err, desktoppam.ErrApprovalRequired):
 		return actionRequestAccess
 	}

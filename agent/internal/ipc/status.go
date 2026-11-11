@@ -58,6 +58,15 @@ type Status struct {
 	Tunnel *tunnel.Status `json:"tunnel,omitempty"`
 	// TunnelDetail says why the tunnel is in that state, for the tray.
 	TunnelDetail string `json:"tunnel_detail,omitempty"`
+	// Unclaimed is true while no person owns the device: the tray offers
+	// "Sign in to claim" (B8.11).
+	Unclaimed bool `json:"unclaimed,omitempty"`
+	// UpdateChannel is the organization's release channel, UpdateState and
+	// UpdateVersion the last update check's outcome, for the tray's About.
+	UpdateChannel string `json:"update_channel,omitempty"`
+	UpdateState   string `json:"update_state,omitempty"`
+	UpdateVersion string `json:"update_version,omitempty"`
+	UpdatePaused  bool   `json:"update_paused,omitempty"`
 }
 
 // PostureIssue is one check that did not pass, as the tray shows it.

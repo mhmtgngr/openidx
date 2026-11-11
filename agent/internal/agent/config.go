@@ -130,6 +130,9 @@ type ServerConfig struct {
 	// Commands are fleet commands for this device (B8.6), delivered only to
 	// a process that asked for them.
 	Commands []Command `json:"commands,omitempty"`
+	// Unclaimed is true while no person owns the device (B8.11): the tray
+	// offers "Sign in to claim".
+	Unclaimed bool `json:"unclaimed,omitempty"`
 }
 
 // OrgNetworkPolicy is the server's org_network_policy object, as the agent

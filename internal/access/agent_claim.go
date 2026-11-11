@@ -313,3 +313,18 @@ func (h *AgentAPIHandler) HandleUpdateAgentSettings(c *gin.Context) {
 	h.logAuditEventToDB(ctx, "agent.settings_updated", "", "success", detail)
 	c.JSON(http.StatusOK, next)
 }
+
+// agentUnclaimed reports whether an agent has no owner yet, for the tray's
+// "Sign in to claim" (B8.11). False when it cannot be read.
+func (h *AgentAPIHandler) agentUnclaimed(ctx context.Context, agentID string) bool {
+	if h.db == nil || h.db.Pool == nil {
+		return false
+	}
+	var unclaimed bool
+	if err := h.db.Pool.QueryRow(ctx,
+		`SELECT enrolled_by_user_id IS NULL FROM enrolled_agents WHERE agent_id = $1 AND org_id = $2`,
+		agentID, orgIDFrom(ctx)).Scan(&unclaimed); err != nil {
+		return false
+	}
+	return unclaimed
+}

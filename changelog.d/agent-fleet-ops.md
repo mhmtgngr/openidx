@@ -18,3 +18,7 @@
   by one; the Agent Fleet page shows tag chips, a tag filter and "Edit tags…". Agent posture checks gain `tags`
   (empty = every device, as with platforms), so a check reaches only devices carrying one of its tags. A fleet
   token's default tags still land on every device it enrols, merged with the ones an administrator added.
+- **Tray: written justification, richer About, claim prompt.** A connection refused with `require_justification`
+  (or `justification_required`) now opens `openidx://justify?request=<entry>`, which asks for a 10-500 character
+  reason and files the access request with it. About shows the version, update channel and last update state.
+  A device nobody owns (`/agent/config` now says `unclaimed`) shows "Sign in to claim this device" in the menu.

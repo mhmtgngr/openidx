@@ -1766,6 +1766,10 @@ type agentConfigResponse struct {
 	// Commands are fleet commands queued for this device, handed over once
 	// (agent_commands.go).
 	Commands []agentCommandDelivery `json:"commands,omitempty"`
+	// Unclaimed is true for a device no person owns yet (enrolled with a
+	// fleet token, never claimed), so the tray can offer "Sign in to claim"
+	// (B8.11).
+	Unclaimed bool `json:"unclaimed,omitempty"`
 }
 
 // writeActiveAgentConfig answers /agent/config for an agent HandleConfig read
@@ -1773,6 +1777,7 @@ type agentConfigResponse struct {
 // grants it.
 func (h *AgentAPIHandler) writeActiveAgentConfig(c *gin.Context, agentID string, cfg agentConfigResponse) {
 	cfg.OrgNetworkPolicy = h.policyForActiveAgent(c.Request.Context(), agentID)
+	cfg.Unclaimed = h.agentUnclaimed(c.Request.Context(), agentID)
 	cfg.Update = h.updateBlockFor(c.Request.Context(), agentID)
 	// Only the process that runs commands (the service) takes them; the
 	// tray syncs with the same credential and must not drain the queue.

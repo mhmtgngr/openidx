@@ -40,8 +40,14 @@ func (h *handler) statusProvider() ipc.Status {
 	var posture *agent.PostureSummary
 	var tun *tunnel.Status
 	var tunDetail string
+	var unclaimed bool
+	var target *updater.Target
+	var lastUpdate *updater.Result
 	h.mu.Lock()
 	if h.agent != nil {
+		unclaimed = h.agent.Unclaimed()
+		target = h.agent.UpdateTarget()
+		lastUpdate = h.agent.LastUpdateResult()
 		rsActive, rsControlled = h.agent.RemoteSupportState()
 		revoked = h.agent.Revoked()
 		authInvalid = h.agent.AuthInvalid()
@@ -62,6 +68,13 @@ func (h *handler) statusProvider() ipc.Status {
 		RemoteSupportControlled: rsControlled,
 		Tunnel:                  tun,
 		TunnelDetail:            tunDetail,
+	}
+	st.Unclaimed = unclaimed
+	if target != nil {
+		st.UpdateChannel, st.UpdatePaused = target.Channel, target.Paused
+	}
+	if lastUpdate != nil {
+		st.UpdateState, st.UpdateVersion = lastUpdate.State, lastUpdate.Version
 	}
 	fillPosture(&st, posture)
 	return st

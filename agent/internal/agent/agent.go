@@ -67,6 +67,8 @@ type Agent struct {
 	// server's update block from the last config sync.
 	lastUpdate   atomic.Pointer[updater.Result]
 	updateTarget atomic.Pointer[updater.Target]
+	// unclaimed is the server's word that nobody owns this device yet.
+	unclaimed atomic.Bool
 
 	// DisableRemoteSupport gates the remote-support screen-share + input path.
 	// The Windows SERVICE runs in session 0, which has no interactive desktop,
@@ -323,6 +325,7 @@ func (a *Agent) acceptConfig(data []byte) error {
 
 	a.serverCfg = &cfg
 	a.updateTarget.Store(cfg.Update)
+	a.unclaimed.Store(cfg.Unclaimed)
 	if a.RunCommands && len(cfg.Commands) > 0 {
 		a.runCommands(cfg.Commands)
 	}
@@ -626,3 +629,7 @@ func (a *Agent) SetUpdateResult(r updater.Result) { a.lastUpdate.Store(&r) }
 
 // LastUpdateResult is the latest update check's outcome, nil before one ran.
 func (a *Agent) LastUpdateResult() *updater.Result { return a.lastUpdate.Load() }
+
+// Unclaimed reports whether the server said, at the last config sync, that
+// nobody owns this device yet.
+func (a *Agent) Unclaimed() bool { return a.unclaimed.Load() }

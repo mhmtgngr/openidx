@@ -43,7 +43,9 @@ type app struct {
 	mHello    *systray.MenuItem
 	// mReEnroll opens Add a device when the server refuses this device's
 	// credential; hidden otherwise.
-	mReEnroll  *systray.MenuItem
+	mReEnroll *systray.MenuItem
+	// mClaim offers to claim an unowned (fleet-enrolled) device (B8.11).
+	mClaim     *systray.MenuItem
 	mAutostart *systray.MenuItem
 	mHealth    *systray.MenuItem
 	mNetwork   *systray.MenuItem
@@ -119,6 +121,9 @@ func (a *app) onReady() {
 	a.mReEnroll.Hide()
 	systray.AddSeparator()
 	a.mSignIn = systray.AddMenuItem("Sign in", "Sign in to OpenIDX")
+	a.mClaim = systray.AddMenuItem("Sign in to claim this device",
+		"Nobody owns this device yet; sign in to make it yours")
+	a.mClaim.Hide()
 	a.mSignOut = systray.AddMenuItem("Sign out", "Sign out")
 	a.mSignOut.Hide()
 	a.mHello = systray.AddMenuItem("Set up Windows Hello sign-in",
@@ -244,6 +249,12 @@ func (a *app) updateStatus() {
 	}
 	a.updateHealth(st)
 	a.updateNetwork(st)
+	if p := claimPrompt(signedIn, st); p != "" {
+		a.mClaim.SetTitle(p)
+		a.mClaim.Show()
+	} else {
+		a.mClaim.Hide()
+	}
 	a.mStatus.SetTitle(composeStatus(signedIn, a.server() != "", st))
 }
 
@@ -420,21 +431,12 @@ func (a *app) checkForUpdates() {
 
 // about shows what this installation is.
 func (a *app) about() {
-	server := a.server()
-	if server == "" {
-		server = "(not enrolled)"
-	}
-	msg := "OpenIDX agent " + Version + "\n\nServer: " + server
+	var agentID, deviceID string
 	if cfg, err := agent.LoadConfig(a.configDir); err == nil && cfg != nil {
-		if cfg.AgentID != "" {
-			msg += "\nAgent ID: " + cfg.AgentID
-		}
-		if cfg.DeviceID != "" {
-			msg += "\nDevice ID: " + cfg.DeviceID
-		}
+		agentID, deviceID = cfg.AgentID, cfg.DeviceID
 	}
-	msg += "\nConfiguration: " + a.configDir
-	a.tell(msg)
+	st, _ := ipc.Query()
+	a.tell(aboutText(Version, a.server(), agentID, deviceID, a.configDir, st))
 }
 
 func (a *app) statusTicker() {
@@ -509,6 +511,8 @@ func (a *app) loop(mQuit *systray.MenuItem) {
 			go a.setUpHello()
 		case <-a.mReEnroll.ClickedCh:
 			go a.reEnroll()
+		case <-a.mClaim.ClickedCh:
+			go a.claimNow()
 		case <-mQuit.ClickedCh:
 			systray.Quit()
 			return
@@ -532,6 +536,8 @@ func (a *app) offerWayThrough(entryID string, err error) {
 		if a.signedIn() {
 			a.tell("Signed in. Click the connection again to open it.")
 		}
+	case actionJustify:
+		a.openJustifyLink(entryID)
 	case actionRequestAccess:
 		if !a.ask("This connection needs an approved access request.\n\n" +
 			"Send a request now? An approver is notified; you can connect once they approve.") {
@@ -745,4 +751,18 @@ func (a *app) watchSlot(i int, mi *systray.MenuItem) {
 			}
 		}()
 	}
+}
+
+// claimNow claims an unowned device for the signed-in person, signing in
+// first when there is no session (B8.11).
+func (a *app) claimNow() {
+	if !a.signedIn() {
+		a.signIn() // ends with claimAfterSignIn
+		return
+	}
+	a.mu.Lock()
+	t := a.tokens
+	a.mu.Unlock()
+	a.claimAfterSignIn(t)
+	a.updateStatus()
 }

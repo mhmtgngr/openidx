@@ -111,6 +111,13 @@ func main() {
 	// On Windows the link arrives in the browser's unelevated process, and
 	// enrolment writes a file only SYSTEM and administrators may write, so the
 	// link is first handed to an elevated copy of this program.
+	// openidx://justify?request=<entry> asks the signed-in person why they
+	// need an entry and files the request (B8.11). It runs as the user,
+	// unelevated: it reads the user's session, writes nothing machine-wide.
+	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "openidx://justify") {
+		runJustifyLink(os.Args[1])
+		return
+	}
 	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "openidx://") {
 		if args, ok := deepLinkToArgs(os.Args[1]); ok {
 			fromDeepLink = true
