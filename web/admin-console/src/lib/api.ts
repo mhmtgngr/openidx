@@ -50,6 +50,23 @@ export interface IdentityProvider {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+  // Federation profile (internal/identity/federation_profile.go).
+  discovery_url?: string;
+  use_pkce?: boolean;
+  trust_upstream_mfa?: boolean;
+  claims_mapping?: Record<string, string>;
+  group_mapping?: { claim_value: string; group_id: string }[];
+  jit_policy?: IdentityProviderJITPolicy;
+  pass_through_params?: string[];
+  external_id_claim?: string;
+}
+
+export interface IdentityProviderJITPolicy {
+  provision: boolean;
+  population: string;
+  link_by_email?: boolean;
+  vendor_org_id?: string;
+  population_rules?: { claim: string; values: string[]; population: string }[];
 }
 
 export interface RuleCondition {
