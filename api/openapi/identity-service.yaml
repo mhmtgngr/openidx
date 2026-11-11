@@ -5952,6 +5952,69 @@ components:
             type: string
         enabled:
           type: boolean
+        discovery_url:
+          type: string
+          description: Where the provider's discovery document is when not at <issuer>/.well-known/openid-configuration (ADFS). Must be https.
+        use_pkce:
+          type: boolean
+          default: true
+        trust_upstream_mfa:
+          type: boolean
+          default: false
+          description: Whether a second factor the provider asserts (amr/acr) counts as OpenIDX's own for an internal user. External users are always held to OpenIDX's factor.
+        claims_mapping:
+          type: object
+          additionalProperties:
+            type: string
+          description: user field (email, username, first_name, last_name, external_id, groups, roles) -> claim name.
+        group_mapping:
+          type: array
+          items:
+            type: object
+            required: [claim_value, group_id]
+            properties:
+              claim_value:
+                type: string
+              group_id:
+                type: string
+                format: uuid
+        jit_policy:
+          type: object
+          properties:
+            provision:
+              type: boolean
+            population:
+              type: string
+              enum: [internal, external]
+            link_by_email:
+              type: boolean
+            vendor_org_id:
+              type: string
+              format: uuid
+            population_rules:
+              type: array
+              items:
+                type: object
+                required: [claim, values, population]
+                properties:
+                  claim:
+                    type: string
+                  values:
+                    type: array
+                    items:
+                      type: string
+                  population:
+                    type: string
+                    enum: [internal, external]
+        pass_through_params:
+          type: array
+          items:
+            type: string
+            enum: [login_hint, prompt, max_age, domain_hint, ui_locales, acr_values]
+        external_id_claim:
+          type: string
+          enum: [sub, oid, upn, email, preferred_username]
+          default: sub
 
     # --- Additional Schemas ---
     PersonalAccessToken:
@@ -6217,6 +6280,69 @@ components:
             type: string
         enabled:
           type: boolean
+        discovery_url:
+          type: string
+          description: Where the provider's discovery document is when not at <issuer>/.well-known/openid-configuration (ADFS). Must be https.
+        use_pkce:
+          type: boolean
+          default: true
+        trust_upstream_mfa:
+          type: boolean
+          default: false
+          description: Whether a second factor the provider asserts (amr/acr) counts as OpenIDX's own for an internal user. External users are always held to OpenIDX's factor.
+        claims_mapping:
+          type: object
+          additionalProperties:
+            type: string
+          description: user field (email, username, first_name, last_name, external_id, groups, roles) -> claim name.
+        group_mapping:
+          type: array
+          items:
+            type: object
+            required: [claim_value, group_id]
+            properties:
+              claim_value:
+                type: string
+              group_id:
+                type: string
+                format: uuid
+        jit_policy:
+          type: object
+          properties:
+            provision:
+              type: boolean
+            population:
+              type: string
+              enum: [internal, external]
+            link_by_email:
+              type: boolean
+            vendor_org_id:
+              type: string
+              format: uuid
+            population_rules:
+              type: array
+              items:
+                type: object
+                required: [claim, values, population]
+                properties:
+                  claim:
+                    type: string
+                  values:
+                    type: array
+                    items:
+                      type: string
+                  population:
+                    type: string
+                    enum: [internal, external]
+        pass_through_params:
+          type: array
+          items:
+            type: string
+            enum: [login_hint, prompt, max_age, domain_hint, ui_locales, acr_values]
+        external_id_claim:
+          type: string
+          enum: [sub, oid, upn, email, preferred_username]
+          default: sub
 
     # --- Additional Schemas ---
     PersonalAccessToken:

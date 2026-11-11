@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/openidx/openidx/internal/federation/oidcrp"
 )
 
 // ProviderType defines the type of the identity provider.
@@ -54,4 +56,14 @@ type IdentityProvider struct {
 	Enabled      bool         `json:"enabled" db:"enabled"`
 	CreatedAt    time.Time    `json:"created_at" db:"created_at"`
 	UpdatedAt    time.Time    `json:"updated_at" db:"updated_at"`
+
+	// The federation profile (migration 246); see federation_profile.go.
+	DiscoveryURL      string               `json:"discovery_url,omitempty" db:"discovery_url"`
+	UsePKCE           *bool                `json:"use_pkce,omitempty" db:"use_pkce"`
+	TrustUpstreamMFA  bool                 `json:"trust_upstream_mfa" db:"trust_upstream_mfa"`
+	ClaimsMapping     oidcrp.ClaimsMapping `json:"claims_mapping" db:"claims_mapping"`
+	GroupMapping      GroupMapping         `json:"group_mapping" db:"group_mapping"`
+	JITPolicy         JITPolicy            `json:"jit_policy" db:"jit_policy"`
+	PassThroughParams []string             `json:"pass_through_params" db:"pass_through_params"`
+	ExternalIDClaim   string               `json:"external_id_claim,omitempty" db:"external_id_claim"`
 }
