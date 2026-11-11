@@ -397,6 +397,9 @@ func (s *Service) handleCallback(c *gin.Context) {
 	external := false
 	if org, oerr := orgctx.From(ctx); oerr == nil {
 		external, _ = externalid.IsExternal(ctx, s.db.Pool, org.ID, user.ID)
+		if external {
+			s.slideFederatedExpiry(ctx, org.ID, user.ID)
+		}
 	}
 	s.syncFederatedGroups(ctx, idp, user.ID, external, mapped.Groups)
 
@@ -527,12 +530,38 @@ func (s *Service) resolveFederatedUser(ctx context.Context, c *gin.Context, idp 
 	if !idp.JITPolicy.Provision {
 		return nil, ssoErrUserNotFound
 	}
-	if idp.JITPolicy.Population != identity.PopulationInternal {
-		// External (vendor) JIT is B2.2: it needs a vendor, sponsor and expiry.
-		return nil, ssoErrPartnerNotRegistered
-	}
 	if email == "" {
 		return nil, ssoErrUserNotFound
+	}
+	if federatedPopulation(idp.JITPolicy, claims.Raw, claims.PreferredUsername, claims.UPN) == identity.PopulationExternal {
+		// An external (vendor) person: the vendor supplies sponsor, expiry
+		// and groups (federated_provisioning.go).
+		v, verr := s.resolveVendorForClaims(ctx, org.ID, idp.ID.String(), idp.JITPolicy, email)
+		var newID string
+		if verr == nil {
+			newID, verr = s.provisionFederatedExternal(ctx, org.ID, v, federatedPerson{
+				Email: email, Username: mapped.Username, FirstName: mapped.FirstName, LastName: mapped.LastName,
+				EmailVerified: claims.EmailVerified, IdPID: idp.ID.String(), ExternalID: externalID,
+			})
+		}
+		if verr != nil {
+			reason, detail := federatedExternalRefusal(verr)
+			if reason == externalErrUnavailable {
+				s.logger.Error("SSO: external provisioning failed", zap.Error(verr))
+			}
+			details := map[string]interface{}{"email": email, "reason": detail}
+			if v != nil {
+				details["vendor_org_id"] = v.ID
+			}
+			s.logAuditEvent(ctx, "authentication", "sso", "sso_user_provisioned", "failure", "", clientIP, "", "user", details)
+			return nil, reason
+		}
+		u, gerr := s.identityService.GetUser(ctx, newID)
+		if gerr != nil || u == nil {
+			return nil, externalErrUnavailable
+		}
+		audit("sso_user_provisioned", newID, map[string]interface{}{"email": email, "population": "external", "vendor_org_id": v.ID})
+		return u, ""
 	}
 	username := mapped.Username
 	if username == "" {

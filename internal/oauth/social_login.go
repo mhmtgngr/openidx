@@ -16,6 +16,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/openidx/openidx/internal/common/logsafe"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/externalid"
+	"github.com/openidx/openidx/internal/identity"
 	"go.uber.org/zap"
 )
 
@@ -33,6 +35,11 @@ var ErrSocialDomainNotAllowed = errors.New("this sign-in method is not available
 // user and the administrator disabled automatic account creation for the
 // provider, so an account must be created by other means first.
 var ErrSocialAutoCreateDisabled = errors.New("no account exists for this sign-in method; please contact your administrator")
+
+// ErrSocialPartnerRefused: the person belongs to a partner organization
+// that cannot take them now (vendor suspended, no valid sponsor, contract
+// ended).
+var ErrSocialPartnerRefused = errors.New("your organization's access is not available at this time; please contact your sponsor")
 
 // SocialTokens represents tokens received from a social OAuth provider
 type SocialTokens struct {
@@ -244,6 +251,13 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 		if errors.Is(err, ErrSocialDomainNotAllowed) {
 			c.JSON(http.StatusForbidden, gin.H{
 				"error":             "domain_not_allowed",
+				"error_description": err.Error(),
+			})
+			return
+		}
+		if errors.Is(err, ErrSocialPartnerRefused) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":             ssoErrPartnerNotRegistered,
 				"error_description": err.Error(),
 			})
 			return
@@ -691,6 +705,9 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 		if linkErr := s.upsertIdentityLink(ctx, org.ID, providerID, existingUserID, userInfo); linkErr != nil {
 			s.logger.Warn("Failed to refresh identity link on social login", zap.Error(linkErr))
 		}
+		if ext, _ := externalid.IsExternal(ctx, s.db.Pool, org.ID, existingUserID); ext {
+			s.slideFederatedExpiry(ctx, org.ID, existingUserID)
+		}
 
 		return existingUserID, nil
 	}
@@ -723,6 +740,37 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 			zap.String("provider_id", providerID),
 			zap.String("email", userInfo.Email))
 		return "", ErrSocialAutoCreateDisabled
+	}
+
+	// A person whose email domain belongs to a partner organization that
+	// onboards by federation becomes that vendor's external user, not an
+	// internal one (federated_provisioning.go). A vendor that takes only
+	// invitations is not matched here: its people need an invitation.
+	if userInfo.Email != "" {
+		v, verr := s.resolveVendorForClaims(ctx, org.ID, "", identity.JITPolicy{}, userInfo.Email)
+		if verr == nil {
+			uid, perr := s.provisionFederatedExternal(ctx, org.ID, v, federatedPerson{
+				Email: userInfo.Email, Username: s.deriveSocialUsername(userInfo), FirstName: userInfo.FirstName,
+				LastName: userInfo.LastName, EmailVerified: true,
+			})
+			if perr != nil {
+				if externalid.IsRefusal(perr) {
+					s.logger.Warn("Social login blocked: partner organization refused provisioning",
+						zap.String("vendor_org_id", v.ID), zap.String("code", externalid.Code(perr)))
+					return "", ErrSocialPartnerRefused
+				}
+				return "", fmt.Errorf("failed to provision external user: %w", perr)
+			}
+			if linkErr := s.createSocialAccountLink(ctx, org.ID, providerID, uid, userInfo); linkErr != nil {
+				s.logger.Warn("Failed to create social account link after external provisioning", zap.Error(linkErr))
+			}
+			if linkErr := s.upsertIdentityLink(ctx, org.ID, providerID, uid, userInfo); linkErr != nil {
+				s.logger.Warn("Failed to mirror identity link after external provisioning", zap.Error(linkErr))
+			}
+			return uid, nil
+		} else if !errors.Is(verr, errPartnerNotRegistered) {
+			return "", verr
+		}
 	}
 
 	userID := uuid.New().String()
