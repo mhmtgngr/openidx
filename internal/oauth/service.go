@@ -267,6 +267,7 @@ type OIDCDiscovery struct {
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
 	ClaimsSupported                   []string `json:"claims_supported"`
 	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported"`
+	ACRValuesSupported                []string `json:"acr_values_supported"`
 	// RFC 8414 §2. Both endpoints are routed (POST /oauth/revoke, POST
 	// /oauth/introspect) and neither was advertised, so a relying party that
 	// reads discovery to find where to revoke a token at sign-out found nowhere
@@ -1470,6 +1471,11 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce, 
 	if !authenticatedAt.IsZero() {
 		claims["auth_time"] = authenticatedAt.Unix()
 	}
+	// acr (OIDC Core §2): the strongest class this session satisfies now,
+	// read from the same server-side record as amr (acr.go).
+	if acr := s.sessionACR(ctx, sessionID...); acr != "" {
+		claims["acr"] = acr
+	}
 
 	kid, signKey := s.signingKey()
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
@@ -1915,7 +1921,10 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		// read from the other side: a relying party that trusts this list
 		// would not ask for a claim it is in fact given. The census in
 		// scope_claims_test.go keeps the list and the emitters together.
-		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "auth_time", "amr", "email", "email_verified", "name", "given_name", "family_name", "preferred_username", "sid", "idp", "roles", "groups", "permissions"},
+		ClaimsSupported: []string{"sub", "iss", "aud", "exp", "iat", "auth_time", "amr", "email", "email_verified", "name", "given_name", "family_name", "preferred_username", "sid", "idp", "roles", "groups", "permissions", "acr"},
+		// The authentication context classes acr_values may ask for and the
+		// acr claim reports (acr.go), weakest first.
+		ACRValuesSupported:                acrValuesSupported,
 		CodeChallengeMethodsSupported:     []string{"S256"},
 		RevocationEndpoint:                base + "/oauth/revoke",
 		IntrospectionEndpoint:             base + "/oauth/introspect",
@@ -1995,6 +2004,9 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 		"nonce":                 q.Query("nonce"),
 		"code_challenge":        q.Query("code_challenge"),
 		"code_challenge_method": q.Query("code_challenge_method"),
+		// acr_values (OIDC Core §3.1.2.1): the known classes only, judged
+		// when the code is minted (acr.go).
+		paramACRValues: normalizedACRValues(q.Query("acr_values")),
 	}
 	// Validate redirect_uri against the registered client.
 	//
@@ -2517,6 +2529,7 @@ func (s *Service) handleLogin(c *gin.Context) {
 		// createMFASession pins the allowed-method list into the session so a
 		// later /oauth/mfa-verify cannot be talked into a method this
 		// evaluation did not offer.
+		availableMFAMethods = narrowMFAMethodsForACR(oauthParams, availableMFAMethods)
 		mfaSession, mfaErr := s.createMFASession(c.Request.Context(), user.ID, oauthParams, riskScore, fingerprint, location, availableMFAMethods)
 		if mfaErr != nil {
 			s.logger.Error("failed to create MFA session", zap.Error(mfaErr))
@@ -2845,6 +2858,11 @@ func (s *Service) assignmentGateAllows(c *gin.Context, clientID, userID string, 
 
 func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]string, userID string) {
 	if !s.assignmentGateAllows(c, oauthParams["client_id"], userID, oauthParams["redirect_uri"]) {
+		return
+	}
+	// acr_values, and an application's require_step_up (acr.go): a session
+	// that has not proved what the request asks for is challenged first.
+	if !s.acrGateAllows(c, oauthParams, userID, false) {
 		return
 	}
 
@@ -3176,7 +3194,7 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 		oauthParams["session_id"] = session.ID
 		// A second factor was verified in this flow → record the first factor
 		// + mfa so the token's amr activates device auto-trust.
-		s.recordSessionAuthMethods(c.Request.Context(), session.ID, []string{firstFactor, "mfa"})
+		s.recordSessionAuthMethods(c.Request.Context(), session.ID, mfaAuthMethods(firstFactor, req.Method))
 		if firstFactor == "fed" {
 			s.recordSessionIdP(c.Request.Context(), session.ID, federatedIdP)
 		}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -232,4 +233,24 @@ func TestDiscoveryIsPerTenantWhenSubdomainTenancyIsOn(t *testing.T) {
 	assert.Equal(t, "https://acme.example.com", doc["issuer"])
 	assert.Equal(t, "https://acme.example.com/oauth/revoke", doc["revocation_endpoint"],
 		"every endpoint moves with the issuer, or the document describes two servers")
+}
+
+// acr_values (acr.go): discovery lists every class the acr claim can carry,
+// and claims_supported lists the claim.
+func TestDiscoveryAdvertisesACR(t *testing.T) {
+	doc, _ := serveDiscovery(t, "https://idp.example.test")
+	got := strs(t, doc, "acr_values_supported")
+	want := []string{ACRPassword, ACRMFA, ACRMFAFresh, ACRPhishingResistant}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("acr_values_supported = %v, want %v", got, want)
+	}
+	found := false
+	for _, c := range strs(t, doc, "claims_supported") {
+		if c == "acr" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("claims_supported does not list acr")
+	}
 }
