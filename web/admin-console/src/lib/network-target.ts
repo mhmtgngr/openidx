@@ -14,6 +14,8 @@ export interface NetworkTarget {
   protocols: string[]
   forward_address?: string
   forward_port?: number
+  /** Slug of the site whose routers host it; absent is the default site. */
+  site?: string
 }
 
 export interface NetworkResource {
@@ -47,10 +49,11 @@ export interface TargetDraft {
   udp: boolean
   forward_address: string
   forward_port: string
+  site: string
 }
 
 export const EMPTY_DRAFT: TargetDraft = {
-  hosts: '', cidrs: '', dns_names: '', ports: '', tcp: true, udp: true, forward_address: '', forward_port: '',
+  hosts: '', cidrs: '', dns_names: '', ports: '', tcp: true, udp: true, forward_address: '', forward_port: '', site: '',
 }
 
 const splitList = (s: string) => s.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean)
@@ -71,6 +74,7 @@ export function draftFromTarget(t: NetworkTarget | null | undefined): TargetDraf
     udp: t.protocols.includes('udp'),
     forward_address: t.forward_address ?? '',
     forward_port: t.forward_port ? String(t.forward_port) : '',
+    site: t.site ?? '',
   }
 }
 
@@ -105,6 +109,7 @@ export function targetFromDraft(d: TargetDraft): { target?: NetworkTarget; error
       hosts, cidrs, dns_names, port_ranges, protocols,
       forward_address: d.forward_address.trim() || undefined,
       forward_port,
+      site: d.site.trim() || undefined,
     },
   }
 }

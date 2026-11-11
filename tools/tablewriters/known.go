@@ -21,7 +21,8 @@ var knownUnwritten = map[string]string{
 
 	"ai_agent_activity": "the AI-agent registry has no runtime. Nothing outside internal/admin so much as reads ai_agent_credentials, so no agent ever acts through this product and there is no moment at which activity could be recorded. Three reads present the absence as measurement -- the per-agent activity list (LIMIT 100, always empty), the 24-hour top-agents ranking (every agent 0) and the recent-failures count (always 0). Recorded rather than fixed: what is missing is the agent runtime, and writing it is a feature.",
 
-	"site_routers": "read, not yet written, by design of the rollout. Migration 249 and the reconciler land first (Faz B6.1/B6.2): an unmapped router is in the default site, so the empty table means every router hosts the default site, which is exactly the behaviour before sites. The writer is router onboarding (handleRouterEnrollToken taking a site_slug, Faz B6.3), and this entry leaves when that lands.",
+	// site_routers has left this register: router onboarding
+	// (handleRouterEnrollToken with a site_slug, Faz B6.3) writes it.
 
 	// upstream_pools and upstream_pool_members have left this register: both are
 	// written now, by the CRUD surface in internal/access/upstream_pools_handlers.go.

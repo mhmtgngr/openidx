@@ -4865,6 +4865,15 @@ paths:
             schema:
               type: object
               additionalProperties: true
+              properties:
+                public_host: { type: string }
+                preserve_host: { type: boolean }
+                landing_path: { type: string }
+                site:
+                  type: string
+                  description: >-
+                    Slug of the site whose routers host the route when it is
+                    Ziti-enabled. Empty is the default site; unknown is 400.
       responses:
         '200':
           description: Success
@@ -8527,20 +8536,36 @@ paths:
       operationId: routerEnrollToken
       x-openidx-handler: internal/access.(*Service).handleRouterEnrollToken
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              required: [advertised_address]
+              properties:
+                name: { type: string, description: 'Router name; default router-<random>' }
+                site_slug: { type: string, description: 'Site the router hosts; default "default". Must exist.' }
+                advertised_address: { type: string, description: Host name or IP other routers and clients reach the router at (no port) }
+                image_tag: { type: string, description: 'openziti/ziti-router tag; default ZITI_ROUTER_IMAGE_TAG' }
       responses:
         '200':
-          description: Success
+          description: >-
+            The router was created on the controller with role attributes
+            site-<slug> and ziti-routers and recorded in site_routers. The
+            command enrolls and runs it.
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  router_id: { type: string }
+                  name: { type: string }
+                  site_slug: { type: string }
+                  image_tag: { type: string }
+                  enrollment_jwt: { type: string }
+                  controller: { type: string }
+                  onboard_command: { type: string }
+                  warning: { type: string }
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -8549,6 +8574,104 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/ServerError'
+        '502':
+          description: The controller refused or did not return an enrollment token
+        '503':
+          description: Ziti controller not connected
+
+  /api/v1/access/sites:
+    get:
+      tags: [OpenZiti Overlay]
+      summary: List sites
+      description: Admin role. Every site (install-wide), default first, with its router count.
+      operationId: listSites
+      x-openidx-handler: internal/access.(*Service).handleListSites
+      responses:
+        '200':
+          description: Sites
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sites:
+                    type: array
+                    items: { $ref: '#/components/schemas/Site' }
+                  total: { type: integer }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [OpenZiti Overlay]
+      summary: Create site
+      description: >-
+        Install administrator only, with a fresh second factor (the admin
+        write gate). The slug becomes the routers' site-<slug> attribute.
+      operationId: createSite
+      x-openidx-handler: internal/access.(*Service).handleCreateSite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              properties:
+                slug: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,38}$' }
+                name: { type: string, maxLength: 255 }
+                description: { type: string }
+                hop_addr: { type: string }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Site' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: A site with this slug exists
+
+  /api/v1/access/sites/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    patch:
+      tags: [OpenZiti Overlay]
+      summary: Update site
+      description: >-
+        Install administrator only, with a fresh second factor. Name,
+        description and hop address; the slug cannot change (400).
+      operationId: patchSite
+      x-openidx-handler: internal/access.(*Service).handlePatchSite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 255 }
+                description: { type: string }
+                hop_addr: { type: string, description: Empty clears it }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Site' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /api/v1/access/ziti/identities/{id}/attributes:
     parameters:
@@ -10179,6 +10302,22 @@ components:
           items: { type: string, enum: [tcp, udp] }
         forward_address: { type: string }
         forward_port: { type: integer, minimum: 1, maximum: 65535 }
+        site:
+          type: string
+          description: >-
+            Slug of the site whose edge routers host the resource (Bind).
+            Empty or "default" is the default site; an unknown slug is 400.
+    Site:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,38}$' }
+        name: { type: string }
+        description: { type: string }
+        hop_addr: { type: string }
+        is_default: { type: boolean }
+        routers: { type: integer, description: Routers recorded in the site (list only) }
+        created_at: { type: string, format: date-time }
     NetworkResource:
       type: object
       properties:

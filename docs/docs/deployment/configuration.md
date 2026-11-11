@@ -396,6 +396,7 @@ Archival, not here: they are per organization.
 |----------|------|---------|-------------|
 | `ZITI_ENABLED` | bool | `false` | Manage an OpenZiti overlay. |
 | `ZITI_CTRL_URL` / `ZITI_CTRL_URLS` | url | - | Controller address, or a comma-separated set for HA. |
+| `ZITI_ROUTER_IMAGE_TAG` | string | `1.6.12` | `openziti/ziti-router` image tag the console's "Add router" command pins (`POST /api/v1/access/ziti/fabric/routers/enroll-token`). Keep it at the controller's version (`ZITI_VERSION` in the compose files): a router newer than its controller is unsupported. A request may override it with `image_tag`. |
 | `ZITI_ADMIN_USER` / `ZITI_ADMIN_PASSWORD` | string | - | Controller credentials. |
 | `ZITI_IDENTITY_DIR` | path | `/ziti` | Where enrolled identities are written. |
 | `ZITI_INSECURE_SKIP_VERIFY` | bool | `false` | Never in production. |
