@@ -25,7 +25,7 @@ func protect(data []byte) (blob []byte, protected bool, err error) {
 		in.Data = &data[0]
 	}
 	var out windows.DataBlob
-	if err := windows.CryptProtectData(&in, nil, nil, 0, nil, 0, &out); err != nil {
+	if err := windows.CryptProtectData(&in, nil, nil, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &out); err != nil {
 		return nil, false, fmt.Errorf("CryptProtectData: %w", err)
 	}
 	defer func() { _, _ = windows.LocalFree(windows.Handle(unsafe.Pointer(out.Data))) }()
@@ -41,7 +41,7 @@ func unprotect(blob []byte) ([]byte, error) {
 		in.Data = &blob[0]
 	}
 	var out windows.DataBlob
-	if err := windows.CryptUnprotectData(&in, nil, nil, 0, nil, 0, &out); err != nil {
+	if err := windows.CryptUnprotectData(&in, nil, nil, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &out); err != nil {
 		return nil, fmt.Errorf("CryptUnprotectData (the secret belongs to another user or machine): %w", err)
 	}
 	defer func() { _, _ = windows.LocalFree(windows.Handle(unsafe.Pointer(out.Data))) }()

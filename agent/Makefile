@@ -105,6 +105,21 @@ package-linux: build-all
 	done; rm -f $(OUT_DIR)/$(BINARY)-linux $(OUT_DIR)/ziti-edge-tunnel-linux $(OUT_DIR)/nfpm-tunnel.yaml
 	@ls -lh $(OUT_DIR)/pkg/
 
+## package-macos: universal (amd64+arm64) unsigned .pkg with the LaunchDaemon
+## (macOS only: needs lipo, pkgbuild, productbuild). No Apple Developer ID yet,
+## so the pkg is unsigned; see docs/runbooks/agent-linux-macos.md.
+package-macos:
+	@mkdir -p $(OUT_DIR)/pkg $(OUT_DIR)/macos-root/usr/local/bin $(OUT_DIR)/macos-root/Library/LaunchDaemons
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(OUT_DIR)/$(BINARY)-darwin-amd64 $(CMD_PKG)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(OUT_DIR)/$(BINARY)-darwin-arm64 $(CMD_PKG)
+	lipo -create -output $(OUT_DIR)/macos-root/usr/local/bin/$(BINARY) $(OUT_DIR)/$(BINARY)-darwin-amd64 $(OUT_DIR)/$(BINARY)-darwin-arm64
+	install -m 0644 deploy/com.openidx.agent.plist $(OUT_DIR)/macos-root/Library/LaunchDaemons/com.openidx.agent.plist
+	pkgbuild --root $(OUT_DIR)/macos-root --identifier com.openidx.agent --version $(VERSION) \
+		--scripts packaging/macos/scripts --install-location / $(OUT_DIR)/openidx-agent-component.pkg
+	productbuild --package $(OUT_DIR)/openidx-agent-component.pkg $(OUT_DIR)/pkg/OpenIDX-$(VERSION).pkg
+	rm -rf $(OUT_DIR)/macos-root $(OUT_DIR)/openidx-agent-component.pkg
+	@ls -lh $(OUT_DIR)/pkg/
+
 ## help: print this help
 help:
 	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //'

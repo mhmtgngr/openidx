@@ -40,8 +40,18 @@ func resolveServer(cmd *cobra.Command) string {
 	return ""
 }
 
+// Unix config/credential directories. The packages, the systemd unit and the
+// LaunchDaemon all use unixConfigDir; legacyUnixConfigDir is where agents up
+// to this release kept agent.json and is still read for one release.
+const (
+	unixConfigDir       = "/var/lib/openidx-agent"
+	legacyUnixConfigDir = "/etc/openidx-agent"
+)
+
 // defaultConfigDir returns the platform-appropriate config/credential directory:
-// %ProgramData%\OpenIDX\agent on Windows, /etc/openidx-agent elsewhere.
+// %ProgramData%\OpenIDX\agent on Windows, /var/lib/openidx-agent elsewhere
+// (falling back to the legacy /etc/openidx-agent when only it holds an
+// enrolled agent.json).
 func defaultConfigDir() string {
 	if runtime.GOOS == "windows" {
 		base := os.Getenv("ProgramData")
@@ -50,7 +60,20 @@ func defaultConfigDir() string {
 		}
 		return filepath.Join(base, "OpenIDX", "agent")
 	}
-	return "/etc/openidx-agent"
+	return pickUnixConfigDir(unixConfigDir, legacyUnixConfigDir)
+}
+
+// pickUnixConfigDir prefers current; it returns legacy only when current has
+// no agent.json and legacy does, so a not-yet-migrated device keeps working.
+func pickUnixConfigDir(current, legacy string) string {
+	has := func(d string) bool {
+		fi, err := os.Stat(filepath.Join(d, "agent.json"))
+		return err == nil && !fi.IsDir()
+	}
+	if !has(current) && has(legacy) {
+		return legacy
+	}
+	return current
 }
 
 // Version information injected via ldflags at build time.
@@ -134,6 +157,19 @@ func deepLinkToArgs(raw string) ([]string, bool) {
 	return args, true
 }
 
+// logLevel is the production logger's level, adjustable after the logger is
+// built (the service raises or lowers it once it has reported Running).
+var logLevel = zap.NewAtomicLevel()
+
+// applyConfigLogLevel applies the installer's LOG_LEVEL from agent.json.
+func applyConfigLogLevel() {
+	if cfg, err := agent.LoadConfig(configDir); err == nil && cfg.LogLevel != "" {
+		if lvl, perr := zap.ParseAtomicLevel(cfg.LogLevel); perr == nil {
+			logLevel.SetLevel(lvl.Level())
+		}
+	}
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "openidx-agent",
 	Short: "OpenIDX endpoint agent",
@@ -146,11 +182,13 @@ It enrolls devices, enforces access policies, and reports health status back to 
 			logger, err = zap.NewDevelopment()
 		} else {
 			pc := zap.NewProductionConfig()
+			logLevel = pc.Level
 			// The installer's LOG_LEVEL, persisted in agent.json at enrolment.
-			if cfg, cerr := agent.LoadConfig(configDir); cerr == nil && cfg.LogLevel != "" {
-				if lvl, perr := zap.ParseAtomicLevel(cfg.LogLevel); perr == nil {
-					pc.Level = lvl
-				}
+			// Not for `service run`: reading agent.json there means unsealing
+			// it before svc.Run, and the SCM only waits so long for the
+			// service to connect. The service applies it once it is Running.
+			if cmd != serviceRunCmd {
+				applyConfigLogLevel()
 			}
 			logger, err = pc.Build()
 		}
@@ -457,7 +495,7 @@ var serviceRunCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run under the Windows Service control manager (invoked by the SCM)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return winservice.Run(logger, configDir, Version)
+		return winservice.Run(logger, configDir, Version, applyConfigLogLevel)
 	},
 }
 

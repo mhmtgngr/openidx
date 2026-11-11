@@ -1,0 +1,16 @@
+#!/bin/sh
+# OpenIDX agent macOS pkg postinstall: the unified config dir, a legacy
+# /etc/openidx-agent copy, and (re)loading the LaunchDaemon.
+set -e
+CONF=/var/lib/openidx-agent
+LEGACY=/etc/openidx-agent
+PLIST=/Library/LaunchDaemons/com.openidx.agent.plist
+install -d -m 0700 -o root -g wheel "$CONF"
+if [ ! -f "$CONF/agent.json" ] && [ -f "$LEGACY/agent.json" ]; then
+	cp -p "$LEGACY"/*.json "$CONF"/ 2>/dev/null || true
+fi
+chown root:wheel "$PLIST"
+chmod 0644 "$PLIST"
+launchctl bootout system "$PLIST" 2>/dev/null || true
+launchctl bootstrap system "$PLIST"
+exit 0
