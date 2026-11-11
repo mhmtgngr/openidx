@@ -176,3 +176,29 @@ func TestHandleAuthorizeRedirectsEveryClientToTheOneLoginUI(t *testing.T) {
 		})
 	}
 }
+
+// TestSSOOriginalParamsComeFromTheLoginSession pins B1.3: with a
+// login_session the pending third-party request is what SSO completes, and
+// the browser's own client_id / redirect_uri / PKCE are ignored.
+func TestSSOOriginalParamsComeFromTheLoginSession(t *testing.T) {
+	svc := newLoginUITestService(t, "", nil)
+	ctx := context.Background()
+	stored := `{"client_id":"third-party","redirect_uri":"https://app.example.test/cb","state":"s1","code_challenge":"cc","code_challenge_method":"S256"}`
+	if err := svc.redis.Client.Set(ctx, "login_session:ls", stored, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	q := authorizeParams{values: url.Values{"client_id": {"admin-console"}, "redirect_uri": {"https://evil.test"}, "code_challenge": {"x"}}}
+
+	got, ok := svc.ssoOriginalParams(ctx, q, "ls")
+	if !ok || got["client_id"] != "third-party" || got["redirect_uri"] != "https://app.example.test/cb" ||
+		got["code_challenge"] != "cc" || got["state"] != "s1" {
+		t.Fatalf("got %v %v, want the stored request", got, ok)
+	}
+	if _, ok := svc.ssoOriginalParams(ctx, q, "missing"); ok {
+		t.Fatal("an unknown login_session was accepted")
+	}
+	got, ok = svc.ssoOriginalParams(ctx, q, "")
+	if !ok || got["client_id"] != "admin-console" {
+		t.Fatalf("no login_session: got %v, want the request's own params", got)
+	}
+}

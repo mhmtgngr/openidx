@@ -90,14 +90,28 @@ func (s *Service) handleSSOAuthorize(c *gin.Context, q authorizeParams, idpID st
 	}
 	idp.NormalizeFederationProfile()
 
+	// The request being completed. A login page that already holds a pending
+	// third-party request (login_session) sends only idp_hint and the handle:
+	// the client_id, redirect_uri, state, nonce and PKCE challenge are the
+	// ones /oauth/authorize stashed under login_session:<id>, never values
+	// the browser supplies now. Without a handle the request carries them.
+	loginSession := q.Query("login_session")
+	orig, ok := s.ssoOriginalParams(ctx, q, loginSession)
+	if !ok {
+		s.logAuditEvent(ctx, "authentication", "sso", "sso_login", "failure",
+			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "invalid_login_session", "idp_id": idp.ID.String()})
+		ssoRefuse(c, externalErrUnavailable, "")
+		return
+	}
+
 	// PKCE, before the flow leaves for the external IdP. This path is reached
 	// from handleAuthorize with an idp_hint, BEFORE that handler fetches the
 	// client, so the rule is applied here against the client this request
 	// names. The refusal is a 400 and not a redirect: this handler has not
 	// validated redirect_uri against the client, and reporting an error to an
 	// unvalidated redirect_uri is an open redirect.
-	if ssoClient, cerr := s.GetClient(ctx, q.Query("client_id")); cerr == nil {
-		if perr := validatePKCERequest(ssoClient, q.Query("code_challenge"), q.Query("code_challenge_method"), s.isProduction()); perr != nil {
+	if ssoClient, cerr := s.GetClient(ctx, orig["client_id"]); cerr == nil {
+		if perr := validatePKCERequest(ssoClient, orig["code_challenge"], orig["code_challenge_method"], s.isProduction()); perr != nil {
 			c.JSON(400, gin.H{"error": "invalid_request", "error_description": perr.Error()})
 			return
 		}
@@ -108,7 +122,7 @@ func (s *Service) handleSSOAuthorize(c *gin.Context, q authorizeParams, idpID st
 		s.logger.Warn("SSO: provider discovery failed", zap.String("idp_id", idp.ID.String()), zap.Error(err))
 		s.logAuditEvent(ctx, "authentication", "sso", "sso_login", "failure",
 			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "discovery_failed", "idp_id": idp.ID.String()})
-		ssoRefuse(c, externalErrUnavailable, q.Query("login_session"))
+		ssoRefuse(c, externalErrUnavailable, loginSession)
 		return
 	}
 
@@ -117,25 +131,19 @@ func (s *Service) handleSSOAuthorize(c *gin.Context, q authorizeParams, idpID st
 	// else), and this sign-in's nonce and PKCE verifier.
 	state := GenerateRandomToken(32)
 	nonce := GenerateRandomToken(32)
-	pending := map[string]string{
-		"client_id":             q.Query("client_id"),
-		"redirect_uri":          q.Query("redirect_uri"),
-		"response_type":         q.Query("response_type"),
-		"scope":                 q.Query("scope"),
-		"state":                 q.Query("state"),
-		"nonce":                 q.Query("nonce"),
-		"code_challenge":        q.Query("code_challenge"),
-		"code_challenge_method": q.Query("code_challenge_method"),
-		"idp_id":                idp.ID.String(),
-		"upstream_nonce":        nonce,
+	pending := make(map[string]string, len(orig)+4)
+	for k, v := range orig {
+		pending[k] = v
 	}
-	if ls := q.Query("login_session"); ls != "" {
-		pending["login_session"] = ls
+	pending["idp_id"] = idp.ID.String()
+	pending["upstream_nonce"] = nonce
+	if loginSession != "" {
+		pending["login_session"] = loginSession
 	}
 
 	authURL, err := url.Parse(md.AuthorizationEndpoint)
 	if err != nil || md.AuthorizationEndpoint == "" {
-		ssoRefuse(c, externalErrUnavailable, q.Query("login_session"))
+		ssoRefuse(c, externalErrUnavailable, loginSession)
 		return
 	}
 	query := authURL.Query()
@@ -169,6 +177,38 @@ func (s *Service) handleSSOAuthorize(c *gin.Context, q authorizeParams, idpID st
 		return
 	}
 	c.Redirect(302, authURL.String())
+}
+
+// ssoOriginalParams is the authorization request an SSO sign-in completes:
+// the pending one stored at login_session:<id> when the login page names it,
+// else the request's own parameters. ok is false for a handle that names
+// nothing (expired, already used, or forged).
+func (s *Service) ssoOriginalParams(ctx context.Context, q authorizeParams, loginSession string) (map[string]string, bool) {
+	keys := []string{"client_id", "redirect_uri", "response_type", "scope", "state",
+		"nonce", "code_challenge", "code_challenge_method", "prompt", "max_age"}
+	out := make(map[string]string, len(keys))
+	if loginSession == "" {
+		for _, k := range keys {
+			if v := q.Query(k); v != "" {
+				out[k] = v
+			}
+		}
+		return out, true
+	}
+	raw, err := s.redis.Client.Get(ctx, "login_session:"+loginSession).Result()
+	if err != nil {
+		return nil, false
+	}
+	var stored map[string]string
+	if json.Unmarshal([]byte(raw), &stored) != nil || stored["client_id"] == "" || stored["redirect_uri"] == "" {
+		return nil, false
+	}
+	for _, k := range keys {
+		if v := stored[k]; v != "" {
+			out[k] = v
+		}
+	}
+	return out, true
 }
 
 func containsString(l []string, v string) bool {
