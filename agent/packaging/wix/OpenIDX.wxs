@@ -23,7 +23,7 @@
            UpgradeCode="6f4a1e2c-2b7d-4b1a-9c3e-0a1b2c3d4e5f"
            Scope="perMachine">
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of OpenIDX Agent is already installed." />
+    <MajorUpgrade Schedule="afterInstallValidate" DowngradeErrorMessage="A newer version of OpenIDX Agent is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
     <!-- Branding: the multi-resolution shield icon, shown in Add/Remove
