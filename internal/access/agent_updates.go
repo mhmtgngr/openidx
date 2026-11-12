@@ -45,7 +45,8 @@ const (
 // defaultChannelManifest is the release feed per channel: where
 // windows-client-build.yml publishes (github.com/<this repo>). An installation
 // that mirrors releases overrides them with AGENT_UPDATE_MANIFEST_STABLE and
-// AGENT_UPDATE_MANIFEST_BETA.
+// AGENT_UPDATE_MANIFEST_BETA. Either is only a fallback: when the box mirrors
+// a channel (agent_mirror.go) /agent/config names the box instead.
 var defaultChannelManifest = map[string]string{
 	updateChannelStable: "https://github.com/mhmtgngr/openidx/releases/download/agent-latest/latest.json",
 	updateChannelBeta:   "https://github.com/mhmtgngr/openidx/releases/download/agent-beta/latest.json",
@@ -148,6 +149,11 @@ func (h *AgentAPIHandler) updateSettingsFor(ctx context.Context, orgID string) a
 // updateBlockFor is the /agent/config update block for agentID.
 func (h *AgentAPIHandler) updateBlockFor(ctx context.Context, agentID string) *agentUpdateBlock {
 	b := updateTarget(agentID, h.updateSettingsFor(ctx, orgIDFrom(ctx)))
+	// The box's own mirror wins over the GitHub default (and the env
+	// overrides): endpoints then never reach github.com for an update.
+	if u := h.mirrorManifestURL(b.Channel); u != "" {
+		b.ManifestURL = u
+	}
 	return &b
 }
 

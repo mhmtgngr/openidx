@@ -119,6 +119,8 @@ var publicAccessRoutes = map[string]publicRoute{
 	// --- artefacts and secret-bearing links.
 	"GET /downloads/:file": {refusesWithoutState,
 		"serves agent installers to a machine that has no identity yet; the name is matched against ^[A-Za-z0-9._-]+$ and a directory is refused, so it cannot escape the downloads dir"},
+	"GET /downloads/agent/:channel/:file": {refusesWithoutState,
+		"the box's agent update mirror: channel must be stable or beta and the name ^[A-Za-z0-9._-]+$ and either latest.json or the one artifact the mirrored manifest names, so it serves nothing else"},
 	"GET /temp-access/:token": {servesAnonymously,
 		"temporary access links are retired (D2): every token gets the same static 410 page saying how vendor access works now, and the handler reads nothing -- no database, no token lookup -- so it grants nothing and tells a visitor nothing about which tokens exist (TestARetiredLinkGetsTheSamePageWhateverItsToken)"},
 }

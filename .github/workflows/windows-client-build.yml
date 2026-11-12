@@ -464,6 +464,14 @@ jobs:
       AGENT_CHANNEL: agent-latest
       AGENT_CHANNEL_MANIFEST: https://github.com/${{ github.repository }}/releases/download/agent-latest/latest.json
       AGENT_CHANNEL_MSI: https://github.com/${{ github.repository }}/releases/download/agent-latest/OpenIDX.msi
+      # The manifest URL STAMPED into release builds (DefaultManifestURL in the
+      # exe and the MSI, and the install script's default). Repo variable
+      # AGENT_CHANNEL_MANIFEST overrides the GitHub channel so endpoints never
+      # reach github.com: set it to the box mirror,
+      # https://openidx.tdv.org/downloads/agent/stable/latest.json
+      # (docs/runbooks/agent-updates.md). AGENT_CHANNEL_MANIFEST above stays the
+      # GitHub channel this workflow publishes to and checks.
+      AGENT_STAMP_MANIFEST: ${{ vars.AGENT_CHANNEL_MANIFEST || format('https://github.com/{0}/releases/download/agent-latest/latest.json', github.repository) }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
@@ -689,7 +697,7 @@ jobs:
           # itself. A development build is left without one and never replaces
           # itself with a published release.
           if [ "$IS_RELEASE" = true ]; then
-            LDFLAGS="$LDFLAGS -X github.com/openidx/openidx/agent/internal/updater.DefaultManifestURL=$AGENT_CHANNEL_MANIFEST"
+            LDFLAGS="$LDFLAGS -X github.com/openidx/openidx/agent/internal/updater.DefaultManifestURL=$AGENT_STAMP_MANIFEST"
           fi
           # Pin the bundled tunneler: the agent runs only a ziti-edge-tunnel.exe
           # with this SHA-256 (set by the fetch step when it bundled one).
@@ -864,7 +872,7 @@ jobs:
           # passes UPDATE_MANIFEST_URL="" to turn it off.
           CHANNEL_ARG=()
           if [ "$IS_RELEASE" = true ]; then
-            CHANNEL_ARG=(-d "DefaultManifestURL=$AGENT_CHANNEL_MANIFEST")
+            CHANNEL_ARG=(-d "DefaultManifestURL=$AGENT_STAMP_MANIFEST")
           fi
           # The verified OpenZiti tunneler, when the fetch step bundled it.
           ZITI_ARG=()
@@ -1070,7 +1078,7 @@ jobs:
           $repo    = $env:GH_REPOSITORY
           $tag     = $env:GH_REF_NAME
           $msiUrl  = "https://github.com/$repo/releases/download/$tag/OpenIDX-$ver.msi"
-          $manUrl  = $env:AGENT_CHANNEL_MANIFEST
+          $manUrl  = $env:AGENT_STAMP_MANIFEST
           $server  = $env:DEFAULT_SERVER_URL
           $serverIp= $env:DEFAULT_SERVER_IP
           $src = Get-Content agent/scripts/Install-OpenIDXAgent.ps1 -Raw

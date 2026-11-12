@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -472,5 +473,69 @@ func TestTrustForConfigRefusesSomethingThatIsNotACertificate(t *testing.T) {
 				t.Errorf("TrustForConfig returned an error AND a non-empty Trust (%s)", tr.Describe())
 			}
 		})
+	}
+}
+
+// The overlap release: a Trust built from current + next accepts a manifest
+// signed by either key, so the release that switches keys is not a flag day.
+func TestReleaseTrustAcceptsTheNextPublisherDuringAnOverlap(t *testing.T) {
+	cur, next, stranger := publisher(t), impostor(t), newTestPublisher(t, "Stranger", time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	tr := releaseTrustFrom(cur.cert.Raw, next.cert.Raw)
+	if len(tr.certs) != 2 {
+		t.Fatalf("want two pinned publishers, got %s", tr.Describe())
+	}
+	for name, p := range map[string]*testPublisher{"current": cur, "next": next} {
+		if err := Verify(p.signedManifest(t, "1.0.0", "https://box/a.msi", strings.Repeat("a", 64)), tr); err != nil {
+			t.Errorf("%s publisher refused during the overlap: %v", name, err)
+		}
+	}
+	if err := Verify(stranger.signedManifest(t, "1.0.0", "https://box/a.msi", strings.Repeat("a", 64)), tr); err == nil {
+		t.Error("a third key was accepted")
+	}
+}
+
+func TestReleaseTrustWithoutANextPublisherPinsOne(t *testing.T) {
+	cur := publisher(t)
+	for _, next := range [][]byte{nil, {}, []byte("\n  \n")} {
+		tr := releaseTrustFrom(cur.cert.Raw, next)
+		if len(tr.certs) != 1 || !tr.certs[0].Equal(cur.cert) {
+			t.Fatalf("empty next (%q) changed the trust: %s", next, tr.Describe())
+		}
+		if err := Verify(impostor(t).signedManifest(t, "1.0.0", "https://box/a.msi", strings.Repeat("a", 64)), tr); err == nil {
+			t.Fatal("an unpinned key was accepted")
+		}
+	}
+}
+
+func TestABrokenNextPublisherKeepsTheCurrentOne(t *testing.T) {
+	cur := publisher(t)
+	tr := releaseTrustFrom(cur.cert.Raw, []byte("not a certificate"))
+	if len(tr.certs) != 1 || !strings.Contains(tr.Describe(), "next publisher unparseable") {
+		t.Fatalf("got %s", tr.Describe())
+	}
+	if err := Verify(cur.signedManifest(t, "1.0.0", "https://box/a.msi", strings.Repeat("a", 64)), tr); err != nil {
+		t.Fatalf("current publisher lost: %v", err)
+	}
+}
+
+// The committed next certificate is either empty or parses: a garbage file
+// would silently be ignored by ReleaseTrust, so it fails loudly here.
+func TestTheCommittedNextPublisherIsEmptyOrValid(t *testing.T) {
+	if len(bytes.TrimSpace(releasePublisherNextDER)) == 0 {
+		return
+	}
+	if _, err := x509.ParseCertificate(releasePublisherNextDER); err != nil {
+		t.Fatalf("release-publisher-next.cer is not a DER certificate: %v", err)
+	}
+	if len(ReleaseTrust().certs) != 2 {
+		t.Fatal("release-publisher-next.cer is set but ReleaseTrust does not pin it")
+	}
+}
+
+// update_trusted_cert still REPLACES the pins, both of them.
+func TestUpdateTrustedCertReplacesBothPins(t *testing.T) {
+	tr, err := TrustForConfig(impostor(t).pemCert())
+	if err != nil || len(tr.certs) != 1 || !tr.certs[0].Equal(impostor(t).cert) {
+		t.Fatalf("got %s, %v", tr.Describe(), err)
 	}
 }
