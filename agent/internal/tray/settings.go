@@ -95,7 +95,7 @@ func claimPrompt(signedIn bool, st *ipc.Status) string {
 		return ""
 	}
 	if signedIn {
-		return "Claim this device"
+		return T.ClaimNow
 	}
-	return "Sign in to claim this device"
+	return T.ClaimSignIn
 }

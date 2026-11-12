@@ -23,3 +23,17 @@ func securityKeysURL(server string) string {
 	}
 	return server + securityKeysPath
 }
+
+// myAppsPath is the end-user portal listing the person's apps and network
+// resources. The console's older /my-apps and /app-launcher routes redirect
+// here; linking it directly saves a hop.
+const myAppsPath = "/my-network"
+
+// myAppsURL is the app portal on server, or "" when there is no server.
+func myAppsURL(server string) string {
+	server = strings.TrimRight(strings.TrimSpace(server), "/")
+	if server == "" {
+		return ""
+	}
+	return server + myAppsPath
+}

@@ -49,6 +49,8 @@ type app struct {
 	mAutostart *systray.MenuItem
 	mHealth    *systray.MenuItem
 	mNetwork   *systray.MenuItem
+	// mApps opens the end-user app portal; shown only while signed in.
+	mApps *systray.MenuItem
 
 	mu       sync.Mutex
 	tokens   *sso.Tokens
@@ -102,8 +104,8 @@ func (a *app) resolveServer() {
 
 func (a *app) onReady() {
 	systray.SetIcon(assets.OpenIDXICO)
-	systray.SetTitle("OpenIDX")
-	systray.SetTooltip("OpenIDX")
+	systray.SetTitle(T.AppName)
+	systray.SetTooltip(T.AppName)
 	go a.promoteIconOnce()
 
 	// Remote-support banner: hidden until a session is live, then shown at the
@@ -114,22 +116,21 @@ func (a *app) onReady() {
 	a.mBanner.Hide()
 	systray.AddSeparator()
 
-	a.mStatus = systray.AddMenuItem("Not signed in", "")
+	a.mStatus = systray.AddMenuItem(T.NotSignedIn, "")
 	a.mStatus.Disable()
-	a.mReEnroll = systray.AddMenuItem("Enroll this device again",
-		"The server no longer accepts this device's credential; enroll it again from the console")
+	a.mReEnroll = systray.AddMenuItem(T.ReEnroll, T.ReEnrollTip)
 	a.mReEnroll.Hide()
 	systray.AddSeparator()
-	a.mSignIn = systray.AddMenuItem("Sign in", "Sign in to OpenIDX")
-	a.mClaim = systray.AddMenuItem("Sign in to claim this device",
-		"Nobody owns this device yet; sign in to make it yours")
+	a.mSignIn = systray.AddMenuItem(T.SignIn, T.SignInTip)
+	a.mClaim = systray.AddMenuItem(T.ClaimSignIn, T.ClaimTip)
 	a.mClaim.Hide()
-	a.mSignOut = systray.AddMenuItem("Sign out", "Sign out")
+	a.mSignOut = systray.AddMenuItem(T.SignOut, T.SignOutTip)
 	a.mSignOut.Hide()
-	a.mHello = systray.AddMenuItem("Set up Windows Hello sign-in",
-		"Register Windows Hello or a security key as your passkey; no phone needed")
+	a.mApps = systray.AddMenuItem(T.OpenApps, T.OpenAppsTip)
+	a.mApps.Hide()
+	a.mHello = systray.AddMenuItem(T.Hello, T.HelloTip)
 	systray.AddSeparator()
-	a.mConnRoot = systray.AddMenuItem("My Connections", "Launch a privileged session")
+	a.mConnRoot = systray.AddMenuItem(T.Connections, T.ConnectionsTip)
 	for i := 0; i < maxConnSlots; i++ {
 		mi := a.mConnRoot.AddSubMenuItem("", "")
 		mi.Hide()
@@ -138,7 +139,7 @@ func (a *app) onReady() {
 		go a.watchSlot(i, mi)
 	}
 	systray.AddSeparator()
-	a.mHealth = systray.AddMenuItem("Device health", "Security checks on this device")
+	a.mHealth = systray.AddMenuItem(T.Health, T.HealthTip)
 	for i := 0; i < maxHealthSlots; i++ {
 		mi := a.mHealth.AddSubMenuItem("", "")
 		mi.Hide()
@@ -149,7 +150,7 @@ func (a *app) onReady() {
 	a.mHealth.Hide()
 	// Network: the bundled tunneler's state and the services it intercepts.
 	// The lines are information, not actions, so they are disabled.
-	a.mNetwork = systray.AddMenuItem("Network", "The OpenIDX network tunnel")
+	a.mNetwork = systray.AddMenuItem(T.Network, T.NetworkTip)
 	for i := 0; i < maxTunnelSlots; i++ {
 		mi := a.mNetwork.AddSubMenuItem("", "")
 		mi.Disable()
@@ -157,13 +158,13 @@ func (a *app) onReady() {
 		a.tunnelSlot = append(a.tunnelSlot, mi)
 	}
 	a.mNetwork.Hide()
-	mSettings := systray.AddMenuItem("Settings", "")
-	a.mAutostart = mSettings.AddSubMenuItemCheckbox("Start when I sign in", "Start the OpenIDX tray at Windows sign-in", !AutostartDisabled())
-	mUpdates := mSettings.AddSubMenuItem("Check for updates", "Ask the update server whether a newer OpenIDX is published")
-	mAbout := mSettings.AddSubMenuItem("About OpenIDX", "Version, server and device")
+	mSettings := systray.AddMenuItem(T.Settings, "")
+	a.mAutostart = mSettings.AddSubMenuItemCheckbox(T.Autostart, T.AutostartTip, !AutostartDisabled())
+	mUpdates := mSettings.AddSubMenuItem(T.Updates, T.UpdatesTip)
+	mAbout := mSettings.AddSubMenuItem(T.About, T.AboutTip)
 	go a.watchSettings(mUpdates, mAbout)
 	systray.AddSeparator()
-	mQuit := systray.AddMenuItem("Quit", "Quit OpenIDX")
+	mQuit := systray.AddMenuItem(T.Quit, T.QuitTip)
 
 	// Restore a saved session, if any, and renew it at once if it is about to
 	// expire: the tray may have been closed for days.
@@ -260,14 +261,14 @@ func (a *app) updateStatus() {
 
 // updateNetwork shows the tunnel's state and its services under Network.
 func (a *app) updateNetwork(st *ipc.Status) {
-	title := tunnelTitle(st)
+	title := tunnelTitle(st, T)
 	if title == "" {
 		a.mNetwork.Hide()
 		return
 	}
 	a.mNetwork.SetTitle(title)
 	a.mNetwork.Show()
-	lines := tunnelLines(st)
+	lines := tunnelLines(st, T)
 	for i, mi := range a.tunnelSlot {
 		if i < len(lines) {
 			mi.SetTitle(lines[i])
@@ -292,9 +293,9 @@ func (a *app) updateHealth(st *ipc.Status) {
 		a.mHealth.Hide()
 	} else {
 		a.mHealth.Show()
-		title := "Device health: all checks pass"
+		title := T.HealthOK
 		if n := postureNote(st); n != "" {
-			title = "Device health: " + n
+			title = T.HealthPrefix + n
 		}
 		a.mHealth.SetTitle(title)
 	}
@@ -319,7 +320,7 @@ func (a *app) updateHealth(st *ipc.Status) {
 		a.mReEnroll.Hide()
 	}
 	if becameAuthInvalid(prev, st) {
-		go a.tell(reEnrollMessage)
+		go a.tell(T.ReEnrollMessage)
 	}
 }
 
@@ -374,12 +375,12 @@ func (a *app) updateBanner(active, controlled bool) {
 	}
 	if !active {
 		a.mBanner.Hide()
-		systray.SetTooltip("OpenIDX")
+		systray.SetTooltip(T.AppName)
 		return
 	}
-	msg := "🔴 An OpenIDX admin can see this device"
+	msg := T.AdminSees
 	if controlled {
-		msg = "🔴 An OpenIDX admin can see and CONTROL this device"
+		msg = T.AdminControls
 	}
 	a.mBanner.SetTitle(msg)
 	a.mBanner.Show()
@@ -394,7 +395,7 @@ func (a *app) watchSettings(mUpdates, mAbout *systray.MenuItem) {
 			enable := !a.mAutostart.Checked()
 			if err := setAutostart(enable); err != nil {
 				a.logger.Warn("tray: could not store the autostart preference", zap.Error(err))
-				a.tell("The preference could not be saved.\n\n" + err.Error())
+				a.tell(T.PrefNotSaved + err.Error())
 				continue
 			}
 			if enable {
@@ -497,7 +498,8 @@ func (a *app) sessionExpired() {
 	}
 	a.mSignIn.Show()
 	a.mSignOut.Hide()
-	a.mStatus.SetTitle("Session expired · sign in again")
+	a.mApps.Hide()
+	a.mStatus.SetTitle(T.SessionExpired)
 }
 
 func (a *app) loop(mQuit *systray.MenuItem) {
@@ -507,6 +509,8 @@ func (a *app) loop(mQuit *systray.MenuItem) {
 			go a.signIn()
 		case <-a.mSignOut.ClickedCh:
 			a.signOut()
+		case <-a.mApps.ClickedCh:
+			go a.openURL(myAppsURL(a.server()), "app portal")
 		case <-a.mHello.ClickedCh:
 			go a.setUpHello()
 		case <-a.mReEnroll.ClickedCh:
@@ -526,21 +530,18 @@ func (a *app) loop(mQuit *systray.MenuItem) {
 func (a *app) offerWayThrough(entryID string, err error) {
 	switch refusalActionFor(err) {
 	case actionSignInFresh:
-		if !a.ask("This connection needs a recently verified second factor.\n\n" +
-			"Sign in again now? Your browser will ask for your second factor; " +
-			"the connection is then one click away.") {
+		if !a.ask(T.FreshMFAAsk) {
 			return
 		}
 		a.signOut()
 		a.signInWith(sso.LoginOptions{Fresh: true})
 		if a.signedIn() {
-			a.tell("Signed in. Click the connection again to open it.")
+			a.tell(T.SignedInAgain)
 		}
 	case actionJustify:
 		a.openJustifyLink(entryID)
 	case actionRequestAccess:
-		if !a.ask("This connection needs an approved access request.\n\n" +
-			"Send a request now? An approver is notified; you can connect once they approve.") {
+		if !a.ask(T.AccessAsk) {
 			return
 		}
 		a.requestAccess(entryID)
@@ -563,10 +564,10 @@ func (a *app) requestAccess(entryID string) {
 	defer cancel()
 	if err := desktoppam.RequestAccess(ctx, a.server(), t.AccessToken, entryID, reason); err != nil {
 		a.logger.Warn("tray: access request failed", zap.String("entry", entryID), zap.Error(err))
-		a.tell("The request could not be sent.\n\n" + desktoppam.UserMessage(err))
+		a.tell(T.AccessSendFail + desktoppam.UserMessage(err))
 		return
 	}
-	a.tell("Your request was sent. You can connect once it is approved.")
+	a.tell(T.AccessSent)
 }
 
 // signedIn reports whether the tray holds a session.
@@ -584,12 +585,12 @@ func (a *app) signedIn() bool {
 func (a *app) setUpHello() {
 	url := securityKeysURL(a.server())
 	if url == "" {
-		a.tell(notEnrolledMessage)
+		a.tell(T.NotEnrolled)
 		return
 	}
 	if err := sso.OpenURL(url); err != nil {
 		a.logger.Warn("tray: could not open the Security Keys page", zap.Error(err))
-		a.tell("The browser could not be opened.\n\nOpen this page yourself:\n" + url)
+		a.tell(T.BrowserFailed + url)
 	}
 }
 
@@ -603,18 +604,18 @@ func (a *app) signIn() { a.signInWith(sso.LoginOptions{}) }
 func (a *app) reEnroll() {
 	url := addDeviceURL(a.server())
 	if url == "" {
-		a.tell(notEnrolledMessage)
+		a.tell(T.NotEnrolled)
 		return
 	}
 	if err := sso.OpenURL(url); err != nil {
 		a.logger.Warn("tray: could not open the Add a device page", zap.Error(err))
-		a.tell("The browser could not be opened.\n\nOpen this page yourself:\n" + url)
+		a.tell(T.BrowserFailed + url)
 	}
 }
 
 func (a *app) signInWith(opts sso.LoginOptions) {
 	if a.server() == "" {
-		a.tell(notEnrolledMessage)
+		a.tell(T.NotEnrolled)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
@@ -622,7 +623,7 @@ func (a *app) signInWith(opts sso.LoginOptions) {
 	t, err := sso.LoginWithDeviceOptions(ctx, a.server(), a.enrolledAgentID(), opts)
 	if err != nil {
 		a.logger.Warn("tray: sign-in failed", zap.Error(err))
-		a.mStatus.SetTitle("Sign-in failed")
+		a.mStatus.SetTitle(T.SignInFailed)
 		return
 	}
 	_ = authstore.Save(a.configDir, t)
@@ -678,6 +679,7 @@ func (a *app) signOut() {
 	a.mu.Unlock()
 	a.mSignIn.Show()
 	a.mSignOut.Hide()
+	a.mApps.Hide()
 	a.updateStatus()
 	for i, mi := range a.connSlot {
 		mi.Hide()
@@ -691,6 +693,7 @@ func (a *app) setSignedIn(t *sso.Tokens) {
 	a.mu.Unlock()
 	a.mSignIn.Hide()
 	a.mSignOut.Show()
+	a.mApps.Show()
 	a.updateStatus()
 	go a.refreshConnections()
 }
@@ -765,4 +768,17 @@ func (a *app) claimNow() {
 	a.mu.Unlock()
 	a.claimAfterSignIn(t)
 	a.updateStatus()
+}
+
+// openURL opens url in the browser, telling the person what to do when the
+// device has no server yet or no browser opens.
+func (a *app) openURL(url, what string) {
+	if url == "" {
+		a.tell(T.NotEnrolled)
+		return
+	}
+	if err := sso.OpenURL(url); err != nil {
+		a.logger.Warn("tray: could not open the "+what, zap.Error(err))
+		a.tell(T.BrowserFailed + url)
+	}
 }

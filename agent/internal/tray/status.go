@@ -11,9 +11,9 @@ import "github.com/openidx/openidx/agent/internal/ipc"
 // install, before any enrolment, and "device: unknown" told the person
 // nothing.
 func composeStatus(signedIn, serverKnown bool, st *ipc.Status) string {
-	signPart := "Not signed in"
+	signPart := T.NotSignedIn
 	if signedIn {
-		signPart = "Signed in"
+		signPart = T.SignedIn
 	}
 	switch {
 	case st != nil && st.Revoked:
@@ -30,7 +30,7 @@ func composeStatus(signedIn, serverKnown bool, st *ipc.Status) string {
 		}
 		return signPart + " · " + dev
 	case st != nil && !st.Enrolled, !serverKnown:
-		return "Not enrolled · open your enrollment link"
+		return T.NotEnrolledStatus
 	}
 	return signPart + " · device: unknown"
 }
