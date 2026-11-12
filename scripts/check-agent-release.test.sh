@@ -111,6 +111,9 @@ mexpect ok  "with a UTF-8 BOM" "$(printf '\357\273\277')$GOOD"
 mexpect red "version differs from the release" "$GOOD" 1.2.4
 mexpect red "url under releases/latest" "${GOOD/releases\/download\/agent-v1.2.3/releases\/latest\/download}"
 mexpect red "url names another version" "${GOOD/OpenIDX-1.2.3.msi/OpenIDX-1.2.2.msi}"
+BETA='{"version":"1.2.3-beta.1","url":"https://github.com/o/r/releases/download/agent-v1.2.3-beta.1/OpenIDX-1.2.3-beta.1.msi","sha256":"'$H'","signature":"c2ln"}'
+mexpect ok  "a beta latest.json passes" "$BETA" 1.2.3-beta.1
+mexpect red "a version with a stray suffix" "${GOOD/\"1.2.3\"/\"1.2.3-\"}"
 mexpect red "short sha256" "${GOOD/$H/abc}"
 mexpect red "no signature" "${GOOD/c2ln/}"
 

@@ -32,6 +32,18 @@ func TestNewer(t *testing.T) {
 		{"", "0.1.0", true},
 		{"2.0.0", "1.9.9", false},
 		{"1.0.0-91", "1.0.0-92", true},
+		{"1.0.0", "1.0.0-91", true},
+		// Pre-releases sort before their release.
+		{"0.5.0", "0.6.0-beta.1", true},
+		{"0.6.0-beta.1", "0.6.0", true},
+		{"0.6.0", "0.6.0-beta.1", false},
+		{"0.6.0-beta.1", "0.6.0-beta.2", true},
+		{"0.6.0-beta.2", "0.6.0-beta.10", true},
+		{"0.6.0-beta.2", "0.6.0-beta.1", false},
+		{"0.6.0-beta.1", "0.6.0-beta.1", false},
+		{"0.6.0-beta.1", "0.6.1-beta.1", true},
+		{"0.6.0-beta", "0.6.0-beta.1", true},
+		{"0.6.0-beta.1", "0.6.0-rc.1", true},
 	}
 	for _, c := range cases {
 		if got := Newer(c.current, c.candidate); got != c.want {

@@ -173,13 +173,86 @@ func Fetch(ctx context.Context, manifestURL string, trust Trust) (*Manifest, err
 }
 
 // Newer reports whether candidate is a strictly higher version than current.
-// Compares dot/dash-separated numeric segments; a non-numeric current (e.g.
-// "dev") is always considered older.
+// A non-numeric current (e.g. "dev") is always considered older.
+//
+// Versions are X.Y.Z, optionally with a suffix after the first '-':
+//   - all digits ("1.0.0-91", a development build counter): an extra numeric
+//     segment, so it sorts after 1.0.0 and 1.0.0-92 after 1.0.0-91;
+//   - anything else ("0.6.0-beta.1"): a pre-release, which sorts BEFORE its
+//     release, so 0.6.0 replaces 0.6.0-beta.1 and beta.2 replaces beta.1.
+//     Comparing the numbers alone made 0.6.0-beta.1 equal to 0.6.0, and a
+//     device on the beta never took the stable release.
 func Newer(current, candidate string) bool {
 	if current == "dev" || current == "" {
 		return true
 	}
-	return compare(segments(candidate), segments(current)) > 0
+	return compareVersions(candidate, current) > 0
+}
+
+func compareVersions(a, b string) int {
+	ac, ap := splitVersion(a)
+	bc, bp := splitVersion(b)
+	if c := compare(ac, bc); c != 0 {
+		return c
+	}
+	switch {
+	case ap == "" && bp == "":
+		return 0
+	case ap == "":
+		return 1 // a release is newer than its pre-release
+	case bp == "":
+		return -1
+	}
+	return comparePrerelease(ap, bp)
+}
+
+// splitVersion returns the numeric core and the pre-release suffix ("" for
+// none). A purely numeric suffix is a build counter and joins the core.
+func splitVersion(v string) ([]int, string) {
+	core, pre, _ := strings.Cut(v, "-")
+	nums := segments(core)
+	if pre != "" && allDigits(pre) {
+		nums = append(nums, segments(pre)...)
+		pre = ""
+	}
+	return nums, pre
+}
+
+// comparePrerelease orders dot-separated identifiers as semver does: numeric
+// ones numerically and below alphanumeric ones, shorter lists first on a tie.
+func comparePrerelease(a, b string) int {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		x, y := as[i], bs[i]
+		xn, yn := allDigits(x), allDigits(y)
+		switch {
+		case xn && yn:
+			if c := compare(segments(x), segments(y)); c != 0 {
+				return c
+			}
+		case xn:
+			return -1
+		case yn:
+			return 1
+		default:
+			if c := strings.Compare(x, y); c != 0 {
+				return c
+			}
+		}
+	}
+	return compare([]int{len(as)}, []int{len(bs)})
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, ch := range s {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func segments(v string) []int {

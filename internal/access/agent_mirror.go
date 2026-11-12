@@ -90,18 +90,25 @@ func (h *AgentAPIHandler) mirrorDir(channel string) string {
 	return filepath.Join(h.agentDownloadsDir(), "agent", channel)
 }
 
-// boxOrigin is the public origin agents reach the box at: PublicBaseURL, else
-// the OAuth issuer's origin. "" when neither is configured.
+// boxOrigin is the public origin agents reach the box at: the OAuth issuer's
+// origin (agents already reach it to enrol and sign in), else PublicBaseURL.
+// A loopback origin is skipped: PublicBaseURL defaults to
+// http://localhost:3000, which outranked the issuer and sent every agent to
+// an MSI at "localhost". "" when nothing usable is configured.
 func (h *AgentAPIHandler) boxOrigin() string {
 	c := h.cfg()
 	if c == nil {
 		return ""
 	}
-	for _, raw := range []string{c.PublicBaseURL, c.OAuthIssuer} {
+	for _, raw := range []string{c.OAuthIssuer, c.PublicBaseURL} {
 		u, err := url.Parse(strings.TrimSpace(raw))
-		if err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" {
-			return u.Scheme + "://" + u.Host
+		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+			continue
 		}
+		if isLoopbackHost(u.Hostname()) {
+			continue
+		}
+		return u.Scheme + "://" + u.Host
 	}
 	return ""
 }
