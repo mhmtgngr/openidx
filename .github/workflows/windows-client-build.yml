@@ -328,15 +328,24 @@ jobs:
           $ver = [version]($msi.BaseName -replace '^OpenIDX-', '')
           $next = "{0}.{1}.{2}" -f $ver.Major, $ver.Minor, ($ver.Build + 1)
           $next_msi = Join-Path $env:RUNNER_TEMP "OpenIDX-$next.msi"
-          # Same optional runtime DLLs as the real MSI; without them the
-          # upgrade removes libvpx and the service cannot start.
-          $dllArgs = @()
-          $vpx = Get-ChildItem art -Recurse -Filter '*vpx*.dll' | Select-Object -First 1
-          if ($vpx) { $dllArgs += @('-d', "VpxDll=$($vpx.FullName)") }
-          $pth = Get-ChildItem art -Recurse -Filter 'libwinpthread*.dll' | Select-Object -First 1
-          if ($pth) { $dllArgs += @('-d', "PthreadDll=$($pth.FullName)") }
+          # The upgrade MSI must ship the same payload as the one it replaces.
+          # Built from the exe alone it dropped libvpx-1.dll, which the
+          # screen-share exe imports: the upgraded exe then failed to load
+          # (0xC0000135) before reaching the SCM, i.e. "timeout waiting for the
+          # service to connect" and Error 1920. Take every file from the
+          # built MSI with an administrative install.
+          $payload = Join-Path $env:RUNNER_TEMP 'payload'
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @('/a', "`"$($msi.FullName)`"", '/qn', "TARGETDIR=`"$payload`"")
+          if ($p.ExitCode -ne 0) { throw "administrative extract failed: $($p.ExitCode)" }
+          $extra = @()
+          $find = { param($n) Get-ChildItem $payload -Recurse -Filter $n | Select-Object -First 1 }
+          if ($f = & $find 'libvpx*.dll') { $extra += @('-d', "VpxDll=$($f.FullName)") }
+          if ($f = & $find 'libwinpthread*.dll') { $extra += @('-d', "PthreadDll=$($f.FullName)") }
+          $zt = & $find 'ziti-edge-tunnel.exe'; $wt = & $find 'wintun.dll'
+          if ($zt -and $wt) { $extra += @('-d', "ZitiTunnelExe=$($zt.FullName)", '-d', "WintunDll=$($wt.FullName)") }
+          Write-Host "upgrade MSI extra payload: $extra"
           wix build agent/packaging/wix/OpenIDX.wxs -ext WixToolset.Util.wixext `
-            -d "Version=$next" -d "ExePath=$($exe.FullName)" @dllArgs -arch x64 -o $next_msi
+            -d "Version=$next" -d "ExePath=$($exe.FullName)" @extra -arch x64 -o $next_msi
           if ($LASTEXITCODE -ne 0) { throw 'building the upgrade MSI failed' }
 
           $token = 'smoke-SECRET-enroll-token-4b1d'
@@ -346,6 +355,8 @@ jobs:
               # The tail of a verbose log is rollback noise; the cause sits at
               # the first "Return value 3" and the Error lines before it.
               Select-String -Path $log -Pattern 'Return value 3','Error 1[0-9]{3}','error 1[0-9]{3}' -Context 25,2 | Select-Object -First 3 | ForEach-Object { $_.Context.PreContext; $_.Line }
+              sc.exe qc OpenIDXAgent
+              Get-ChildItem "$env:ProgramFiles\OpenIDX" -ErrorAction SilentlyContinue | Format-Table Name, Length
               Get-WinEvent -LogName System -MaxEvents 30 -ErrorAction SilentlyContinue | Where-Object ProviderName -eq 'Service Control Manager' | Format-List TimeCreated, Message
               throw "msiexec $argv failed: $($p.ExitCode)"
             }
@@ -929,12 +940,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: openidx-windows-client-${{ steps.ver.outputs.version }}
-          # The runtime DLLs ride along so msi-smoke's upgrade MSI carries
-          # the same files as the real one (a major upgrade without libvpx
-          # removes it, and the new exe then cannot load: 1920).
           path: |
             agent/dist/openidx-agent.exe
-            agent/dist/*.dll
             dist/OpenIDX-*.msi
           if-no-files-found: error
 

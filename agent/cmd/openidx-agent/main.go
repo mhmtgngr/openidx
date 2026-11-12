@@ -95,6 +95,15 @@ var (
 var fromDeepLink bool
 
 func main() {
+	// The SCM waits only so long for a service to connect: dispatch first.
+	if dir, ok := serviceRunArgs(os.Args[1:]); ok {
+		wireBuildVersion()
+		if err := runServiceFast(dir); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	wireBuildVersion()
 	// Deep-link entry: the OS invokes `openidx-agent openidx://enroll?code=..&server=..`
 	// (from a scanned QR / clicked link). Rewrite it into the enroll command.
