@@ -23,13 +23,13 @@ func TestMigrationV255PostureCheckTagsShape(t *testing.T) {
 	}
 }
 
-// The fleet migrations of this series are contiguous: 250..255, no gap.
+// The fleet migrations of this series are contiguous: 250..256, no gap.
 func TestFleetMigrationsAreContiguous(t *testing.T) {
 	seen := map[int]bool{}
 	for _, m := range allMigrations() {
 		seen[m.Version] = true
 	}
-	for v := 250; v <= 255; v++ {
+	for v := 250; v <= 256; v++ {
 		if !seen[v] {
 			t.Errorf("migration %d is missing", v)
 		}

@@ -20,7 +20,7 @@ import { api } from '../lib/api'
 import { SiteSelect } from './site-select'
 import {
   EMPTY_DRAFT, draftFromTarget, formatPorts, targetFromDraft,
-  type NetworkPolicy, type NetworkResource, type NetworkTarget, type TargetDraft,
+  type NetworkPolicy, type NetworkResource, type TunnelScope, type NetworkTarget, type TargetDraft,
 } from '../lib/network-target'
 
 // Network resources: the server side of the VPN replacement. A network
@@ -119,7 +119,63 @@ export function NetworkPolicyCard() {
     onError: (err: unknown) =>
       toast({ title: apiError(err, t('pages.networkResources.policy.saveFailed')), variant: 'destructive' }),
   })
-  const toggle = (key: 'always_on' | 'split_tunnel' | 'block_direct_corporate_cidrs', id: string) => (
+  const { data: agents } = useQuery({
+    queryKey: ['agents'],
+    queryFn: () => api.get<{ tags?: string[] | null }[]>('/api/v1/access/agents'),
+  })
+  const scope: TunnelScope = data?.tunnel_scope ?? (data?.always_on ? 'all' : 'off')
+  const chosen = data?.tunnel_tags ?? []
+  const knownTags = Array.from(
+    new Set([...(Array.isArray(agents) ? agents.flatMap((a) => a.tags ?? []) : []), ...chosen]),
+  ).sort()
+  const toggleTag = (tag: string) =>
+    save.mutate({
+      tunnel_tags: chosen.includes(tag) ? chosen.filter((x) => x !== tag) : [...chosen, tag].sort(),
+    })
+  const scopeControl = (
+    <fieldset className="space-y-2" data-testid="np-scope">
+      <legend className="text-sm font-medium">{t('pages.networkResources.policy.scope.title')}</legend>
+      <p className="text-xs text-muted-foreground">{t('pages.networkResources.policy.scope.hint')}</p>
+      {(['all', 'tagged', 'off'] as TunnelScope[]).map((v) => (
+        <label key={v} className="flex items-center gap-2 text-sm">
+          <input
+            type="radio"
+            name="np-scope"
+            value={v}
+            checked={scope === v}
+            disabled={save.isPending}
+            onChange={() => save.mutate({ tunnel_scope: v })}
+          />
+          {t(`pages.networkResources.policy.scope.${v}`)}
+        </label>
+      ))}
+      {scope === 'tagged' && (
+        <div className="ml-6 space-y-1" data-testid="np-scope-tags">
+          {knownTags.length === 0 ? (
+            <p className="text-xs text-muted-foreground">{t('pages.networkResources.policy.scope.noTags')}</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {knownTags.map((tag) => (
+                <label key={tag} className="flex items-center gap-1 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={chosen.includes(tag)}
+                    disabled={save.isPending}
+                    onChange={() => toggleTag(tag)}
+                  />
+                  <Badge variant="outline">{tag}</Badge>
+                </label>
+              ))}
+            </div>
+          )}
+          {chosen.length === 0 && knownTags.length > 0 && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">{t('pages.networkResources.policy.scope.noneChosen')}</p>
+          )}
+        </div>
+      )}
+    </fieldset>
+  )
+  const toggle = (key: 'split_tunnel' | 'block_direct_corporate_cidrs', id: string) => (
     <div className="flex items-start justify-between gap-4">
       <div>
         <Label htmlFor={id}>{t(`pages.networkResources.policy.${key}`)}</Label>
@@ -144,7 +200,7 @@ export function NetworkPolicyCard() {
           <LoadingSpinner />
         ) : (
           <>
-            {toggle('always_on', 'np-always-on')}
+            {scopeControl}
             {toggle('split_tunnel', 'np-split')}
             {data && !data.split_tunnel && (
               <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="np-full-tunnel-gap">

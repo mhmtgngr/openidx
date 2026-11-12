@@ -6837,6 +6837,15 @@ const tr: typeof en = {
       policy: {
         title: 'Ağ politikası',
         subtitle: 'Kuruluşunuzun cihazlarının tüneli nasıl kullandığı.',
+        scope: {
+          title: 'Tünel kimin için açılır',
+          hint: 'Kapsamdaki cihazlarda tünel cihazla başlar ve kapatılamaz.',
+          all: 'Herkes',
+          tagged: 'Bu etiketlere sahip cihazlar',
+          off: 'Hiç kimse',
+          noTags: 'Henüz etiketli cihaz yok. Cihazları Ajan Filosu sayfasında etiketleyin.',
+          noneChosen: 'Etiket seçilmedi: tünel hiçbir cihazda açılmaz.',
+        },
         always_on: 'Her zaman açık',
         always_onHint: 'Tünel cihazla birlikte başlar ve kullanıcı tarafından kapatılamaz.',
         split_tunnel: 'Bölünmüş tünel',

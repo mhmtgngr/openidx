@@ -10730,7 +10730,25 @@ components:
     NetworkPolicy:
       type: object
       properties:
-        always_on: { type: boolean, default: false }
+        always_on:
+          type: boolean
+          default: false
+          description: >-
+            True when tunnel_scope is all. On PUT without tunnel_scope, true
+            sets tunnel_scope all and false sets it off.
+        tunnel_scope:
+          type: string
+          enum: [all, tagged, off]
+          default: tagged
+          description: >-
+            Who the tunnel turns on for: every device, the devices carrying
+            one of tunnel_tags, or none. Each device receives its own
+            always_on (and policy version) in /agent/config.
+        tunnel_tags:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 64 }
+          description: Device tags the tagged scope covers (trimmed, deduplicated, sorted).
         split_tunnel: { type: boolean, default: true }
         block_direct_corporate_cidrs: { type: boolean, default: false }
         updated_at: { type: string, format: date-time }
@@ -10755,7 +10773,8 @@ components:
       type: object
       description: >-
         The organization's tunnel policy as an agent receives it in
-        /agent/config and in the /agent/report answer. The agent echoes
+        /agent/config and in the /agent/report answer. always_on is this
+        device's own, from tunnel_scope and the device's tags. The agent echoes
         version in tunnel_status.policy_version once applied.
       properties:
         always_on: { type: boolean }

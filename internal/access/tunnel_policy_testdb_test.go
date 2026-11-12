@@ -72,8 +72,8 @@ func TestTunnelPolicyDeliveryAndRolloutOnTheMigratedSchema(t *testing.T) {
 		t.Errorf("with the block off the policy carries %v, version %s (default %s)", p.CorporateCIDRs, p.Version, defaultVersion)
 	}
 
-	if _, err := db.Pool.Exec(ctx, `INSERT INTO org_network_policy (org_id, always_on, block_direct_corporate_cidrs)
-		VALUES ($1, true, true)`, org); err != nil {
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO org_network_policy (org_id, always_on, block_direct_corporate_cidrs, tunnel_scope)
+		VALUES ($1, true, true, 'all')`, org); err != nil {
 		t.Fatalf("set policy: %v", err)
 	}
 	p, err = loadAgentNetworkPolicy(ctx, db, org)
@@ -111,7 +111,11 @@ func TestTunnelPolicyDeliveryAndRolloutOnTheMigratedSchema(t *testing.T) {
 		t.Errorf("applied version stored as %v, applied_at set %v", stored, appliedAtSet)
 	}
 
-	d, err := countTunnelPolicyDevices(ctx, db, org, current)
+	o, err := loadOrgTunnelPolicy(ctx, db, org)
+	if err != nil {
+		t.Fatalf("load org policy: %v", err)
+	}
+	d, err := countTunnelPolicyDevices(ctx, db, org, o)
 	if err != nil || d != (tunnelPolicyDevices{Applied: 1, Pending: 1, Unreported: 1}) {
 		t.Errorf("devices = %+v, %v", d, err)
 	}
@@ -191,8 +195,8 @@ func TestTunnelPolicyGoesOnlyToAnActiveAgent(t *testing.T) {
 		VALUES ($1, $2, '{198.51.100.0/24}')`, app, org); err != nil {
 		t.Fatalf("seed target: %v", err)
 	}
-	if _, err := db.Pool.Exec(ctx, `INSERT INTO org_network_policy (org_id, always_on, block_direct_corporate_cidrs)
-		VALUES ($1, true, true)`, org); err != nil {
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO org_network_policy (org_id, always_on, block_direct_corporate_cidrs, tunnel_scope)
+		VALUES ($1, true, true, 'all')`, org); err != nil {
 		t.Fatalf("set policy: %v", err)
 	}
 	for _, a := range []struct{ id, status string }{
@@ -276,5 +280,92 @@ func TestTunnelPolicyGoesOnlyToAnActiveAgent(t *testing.T) {
 		if code, has := call(rt.method, rt.path, "gate-active"); has || code >= 300 {
 			t.Errorf("%s %s with an unreadable policy: %d, policy %v; want the answer without it", rt.method, rt.path, code, has)
 		}
+	}
+}
+
+// Migration 256: the tunnel scope. Scope all turns it on on every device (as
+// always_on did); tagged on the devices carrying one of tunnel_tags, and a
+// retag moves that device's version; off on none. The backfill maps
+// always_on true to all and false to off.
+func TestTunnelScopePerDeviceOnTheMigratedSchema(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	if db == nil {
+		t.SkipNow()
+	}
+	t.Cleanup(cleanup)
+	bg := context.Background()
+	m := migrations.NewMigrator(db.Pool.Raw(), zap.NewNop())
+	if err := m.MigrateTo(bg, 255); err != nil {
+		t.Fatalf("migrate to 255: %v", err)
+	}
+	const orgOn = "00000000-0000-0000-0000-000000000010"
+	var orgOff string
+	if err := db.Pool.Raw().QueryRow(bg, `INSERT INTO organizations (name, slug) VALUES ('scope-off', 'scope-off') RETURNING id::text`).Scan(&orgOff); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	if _, err := db.Pool.Raw().Exec(bg, `INSERT INTO org_network_policy (org_id, always_on) VALUES ($1, true), ($2, false)`, orgOn, orgOff); err != nil {
+		t.Fatalf("seed pre-256 policies: %v", err)
+	}
+	if err := m.MigrateTo(bg, -1); err != nil {
+		t.Fatalf("migrate to latest: %v", err)
+	}
+	for org, want := range map[string]string{orgOn: "all", orgOff: "off"} {
+		var scope string
+		if err := db.Pool.Raw().QueryRow(bg, `SELECT tunnel_scope FROM org_network_policy WHERE org_id = $1`, org).Scan(&scope); err != nil || scope != want {
+			t.Errorf("backfill for %s = %q (%v), want %q", org, scope, err, want)
+		}
+	}
+
+	const org = orgOn
+	ctx := orgctx.With(bg, orgctx.Org{ID: org})
+	for id, tags := range map[string]string{"dev-tagged": "{laptops,eng}", "dev-plain": "{}"} {
+		if _, err := db.Pool.Exec(ctx, `INSERT INTO enrolled_agents (agent_id, device_id, auth_token_hash, status, org_id, tags)
+			VALUES ($1, $1, 'x', 'active', $2, $3::text[])`, id, org, tags); err != nil {
+			t.Fatalf("seed agent: %v", err)
+		}
+	}
+	h := NewAgentAPIHandler(zap.NewNop(), db, nil, &config.Config{})
+	get := func(id string) *agentNetworkPolicy {
+		t.Helper()
+		p := h.policyForActiveAgent(ctx, id)
+		if p == nil {
+			t.Fatalf("no policy for %s", id)
+		}
+		return p
+	}
+
+	// Scope all (the backfilled always_on=true): today's behaviour.
+	if !get("dev-tagged").AlwaysOn || !get("dev-plain").AlwaysOn {
+		t.Error("scope all: every device should have always_on")
+	}
+	allVersion := get("dev-plain").Version
+
+	if _, err := db.Pool.Exec(ctx, `UPDATE org_network_policy SET tunnel_scope = 'tagged', always_on = false, tunnel_tags = '{eng}' WHERE org_id = $1`, org); err != nil {
+		t.Fatal(err)
+	}
+	tagged, plain := get("dev-tagged"), get("dev-plain")
+	if !tagged.AlwaysOn || plain.AlwaysOn {
+		t.Errorf("scope tagged: tagged=%v plain=%v, want true/false", tagged.AlwaysOn, plain.AlwaysOn)
+	}
+	if tagged.Version != allVersion || plain.Version == allVersion {
+		t.Errorf("versions: tagged %s plain %s all %s", tagged.Version, plain.Version, allVersion)
+	}
+
+	// Retag the plain device into the scope: its version moves.
+	if _, err := db.Pool.Exec(ctx, `UPDATE enrolled_agents SET tags = '{eng}' WHERE agent_id = 'dev-plain' AND org_id = $1`, org); err != nil {
+		t.Fatal(err)
+	}
+	if p := get("dev-plain"); !p.AlwaysOn || p.Version == plain.Version {
+		t.Errorf("after retag: %+v (was %s)", p, plain.Version)
+	}
+
+	if _, err := db.Pool.Exec(ctx, `UPDATE org_network_policy SET tunnel_scope = 'off' WHERE org_id = $1`, org); err != nil {
+		t.Fatal(err)
+	}
+	if get("dev-tagged").AlwaysOn {
+		t.Error("scope off: no device should have always_on")
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE org_network_policy SET tunnel_scope = 'everyone' WHERE org_id = $1`, org); err == nil {
+		t.Error("the CHECK accepted tunnel_scope 'everyone'")
 	}
 }
