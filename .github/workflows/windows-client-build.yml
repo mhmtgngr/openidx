@@ -742,11 +742,14 @@ jobs:
             # installed without it and failed on a clean PC with 0xC0000135
             # (service 1920, install 1603). The vcpkg triplet's own copy
             # comes first, then the MinGW toolchains.
-            for d in "$VCPKG_TRIPLET_DIR/bin" /mingw64/bin /c/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin /c/msys64/mingw64/bin; do
-              [ -f "$d/libwinpthread-1.dll" ] && cp "$d/libwinpthread-1.dll" dist/ 2>/dev/null && break
+            gccdir="$(dirname "$(command -v gcc 2>/dev/null || echo /nonexistent/gcc)")"
+            for d in "$VCPKG_TRIPLET_DIR/bin" "$gccdir" /mingw64/bin /c/mingw64/bin /c/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin /c/msys64/mingw64/bin /c/msys64/ucrt64/bin; do
+              [ -f "$d/libwinpthread-1.dll" ] && cp "$d/libwinpthread-1.dll" dist/ 2>/dev/null && echo "bundling libwinpthread-1.dll from $d" && break
             done || true
             if ls dist/*vpx*.dll >/dev/null 2>&1 && ! [ -f dist/libwinpthread-1.dll ]; then
               if objdump -p dist/*vpx*.dll 2>/dev/null | grep -qi 'DLL Name: libwinpthread-1.dll'; then
+                echo "gcc: $(command -v gcc || true)"
+                where.exe libwinpthread-1.dll 2>/dev/null || true
                 echo "::error::libvpx imports libwinpthread-1.dll and no copy was found to bundle"
                 exit 1
               fi
