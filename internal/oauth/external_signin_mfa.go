@@ -124,6 +124,17 @@ func (s *Service) externalSignInNeedsMore(c *gin.Context, userID string, oauthPa
 		c.Redirect(http.StatusFound, "/login?"+q.Encode())
 		return true
 	case ev.EnrollmentRequired:
+		if enrollSession, methods, ok := s.offerInlineEnrollment(ctx, user, oauthParams, ev, "fed"); ok {
+			s.auditMFAGrace(ctx, userID, clientIP, "mfa_enrollment_required", "enroll", ev)
+			if loginSession != "" {
+				s.redis.Client.Del(ctx, "login_session:"+loginSession)
+			}
+			c.Redirect(http.StatusFound, "/login?"+url.Values{
+				"enroll_session": {enrollSession},
+				"methods":        {strings.Join(methods, ",")},
+			}.Encode())
+			return true
+		}
 		s.auditMFAGrace(ctx, userID, clientIP, "mfa_enrollment_required", "failure", ev)
 		return refuse(externalErrEnrollmentRequired)
 	case ev.DenyAccess:

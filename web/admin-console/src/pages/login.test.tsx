@@ -431,7 +431,7 @@ describe('LoginPage', () => {
       expect(source.match(/completeOIDCRedirect\(pendingRedirect\.url\)/g) ?? []).toHaveLength(1)
       const redirectReads = source.match(/\.redirect_url\b/g) ?? []
       expect(redirectReads, 'redirect_url is read inside finishAuth only').toHaveLength(3)
-      expect(source.match(/finishAuth\(/g) ?? [], 'seven completion paths, the consent decision and the browser-session resume').toHaveLength(9)
+      expect(source.match(/finishAuth\(/g) ?? [], 'eight completion paths (inline enrolment included), the consent decision and the browser-session resume').toHaveLength(10)
     })
   })
 
@@ -868,6 +868,64 @@ describe('LoginPage', () => {
       await reachPicker(['push', 'bypass'])
       await screen.findAllByRole('button', { name: /bypass/i })
       expect(screen.queryByTestId('mfa-no-usable-method')).not.toBeInTheDocument()
+    })
+  })
+
+  // An MFA policy refused the sign-in for want of a method the person has not
+  // added; the server opened an enrol session (MFA_INLINE_ENROLLMENT) and the
+  // page sets the method up and finishes the sign-in.
+  describe('inline enrolment', () => {
+    const fetchMock = vi.fn()
+    beforeEach(() => {
+      sessionStorage.setItem('oidc_login_session', 'test-session')
+      fetchMock.mockReset()
+      vi.stubGlobal('fetch', fetchMock)
+    })
+    afterEach(() => {
+      sessionStorage.clear()
+      vi.unstubAllGlobals()
+      window.location.search = ''
+    })
+    const jsonOnce = (body: unknown, ok = true) =>
+      fetchMock.mockImplementationOnce(() =>
+        Promise.resolve({ ok, json: () => Promise.resolve(body) } as Response)
+      )
+
+    it('sets up an authenticator app, shows the backup codes, then redirects', async () => {
+      jsonOnce({ mfa_enrollment_required: true, enroll_session: 'es-1', methods: ['totp', 'webauthn'] })
+      jsonOnce({ qr_code_url: 'otpauth://totp/x?secret=ABC', manual_key: 'ABCDEF' })
+      const user = userEvent.setup()
+      renderWithRouter(<LoginPage />)
+      await user.type(screen.getByLabelText(/username or email/i), 'testuser')
+      await user.type(screen.getByLabelText(/^password$/i), 'password123')
+      await user.click(screen.getByRole('button', { name: /sign in$/i }))
+
+      expect(await screen.findByText('ABCDEF')).toBeInTheDocument()
+      expect(screen.getByTestId('qrcode')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /use a passkey instead/i })).toBeInTheDocument()
+      const [beginURL, beginInit] = fetchMock.mock.calls[1]
+      expect(String(beginURL)).toContain('/oauth/mfa/enroll/totp/begin')
+      expect(JSON.parse((beginInit as RequestInit).body as string)).toMatchObject({ enroll_session: 'es-1' })
+
+      jsonOnce({ redirect_url: 'https://app.example.com/callback?code=abc', backup_codes: ['aaaa-1111', 'bbbb-2222'] })
+      await user.type(screen.getByLabelText(/code from the app/i), '123456')
+      await user.click(screen.getByRole('button', { name: /verify and sign in/i }))
+      const [finishURL, finishInit] = fetchMock.mock.calls[2]
+      expect(String(finishURL)).toContain('/oauth/mfa/enroll/totp/finish')
+      expect(JSON.parse((finishInit as RequestInit).body as string)).toMatchObject({ enroll_session: 'es-1', code: '123456' })
+
+      expect(await screen.findByText('aaaa-1111')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /i saved them, continue/i }))
+      expect(mockLocation.href).toBe('https://app.example.com/callback?code=abc')
+    })
+
+    it('an identity-provider sign-in handed back with an enrol session opens the step', async () => {
+      jsonOnce({ qr_code_url: 'otpauth://totp/x', manual_key: 'KEY-SSO' })
+      window.location.search = '?enroll_session=es-sso&methods=totp,email'
+      renderWithRouter(<LoginPage />)
+      expect(await screen.findByText('KEY-SSO')).toBeInTheDocument()
+      // email is never an enrolable method here, and there is no passkey option.
+      expect(screen.queryByRole('button', { name: /use a passkey instead/i })).not.toBeInTheDocument()
     })
   })
   // Home-realm discovery (B1.3): an email whose domain has a federation rule

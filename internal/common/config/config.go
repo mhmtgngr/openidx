@@ -520,6 +520,14 @@ type Config struct {
 	// step-up asks a person to touch a key, and there is nobody to ask.
 	StepUpGate string `mapstructure:"stepup_gate"`
 
+	// MFAInlineEnrollment, when true (the default), lets a sign-in that a
+	// policy refuses for want of a required factor (grace period over, or an
+	// external user with no strong factor) enrol one on the spot: the login
+	// answers with an enroll_session instead of a dead-end 403, and the page
+	// walks the person through an authenticator app or a passkey before the
+	// code is issued. False restores the 403. MFA_INLINE_ENROLLMENT.
+	MFAInlineEnrollment bool `mapstructure:"mfa_inline_enrollment"`
+
 	// BotGate is the tri-state BOT_GATE (off|observe|enforce) for the login
 	// door: after LoginFailChallengeAfter failed password checks against one
 	// typed account name in LoginFailWindowSeconds — from ANY address — the
@@ -1208,6 +1216,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("pam_require_ztna", "off")
 	v.SetDefault("abac_enforce", "off")
 	v.SetDefault("stepup_gate", "off")
+	v.SetDefault("mfa_inline_enrollment", true)
 	v.SetDefault("bot_gate", "off")
 	v.SetDefault("login_fail_challenge_after", 5)
 	v.SetDefault("login_fail_window_seconds", 900)
@@ -1514,6 +1523,7 @@ func bindEnvVars(v *viper.Viper) {
 		"pam_ssh_require_host_key":            "PAM_SSH_REQUIRE_HOST_KEY",
 		"abac_enforce":                        "ABAC_ENFORCE",
 		"stepup_gate":                         "STEPUP_GATE",
+		"mfa_inline_enrollment":               "MFA_INLINE_ENROLLMENT",
 		"bot_gate":                            "BOT_GATE",
 		"login_fail_challenge_after":          "LOGIN_FAIL_CHALLENGE_AFTER",
 		"login_fail_window_seconds":           "LOGIN_FAIL_WINDOW_SECONDS",

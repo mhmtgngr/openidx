@@ -44,4 +44,27 @@ func TestHoldExternalToStrongFactors(t *testing.T) {
 	if want := []string{"totp", "webauthn", "push"}; !reflect.DeepEqual(got.RequiredMethods, want) {
 		t.Errorf("required methods = %v, want %v", got.RequiredMethods, want)
 	}
+	// Inline enrolment offers what the login page can set up, never a code.
+	if m := inlineEnrollMethods(got, "external"); !reflect.DeepEqual(m, []string{"totp", "webauthn"}) {
+		t.Errorf("inline enrolment for an external user = %v, want [totp webauthn]", m)
+	}
+}
+
+func TestInlineEnrollMethodsNeverOfferCodes(t *testing.T) {
+	cases := []struct {
+		ev   mfaEvaluation
+		typ  string
+		want []string
+	}{
+		{mfaEvaluation{RequiredMethods: []string{"email", "sms"}}, "internal", []string{}},
+		{mfaEvaluation{RequiredMethods: []string{"email", "totp"}}, "internal", []string{"totp"}},
+		{mfaEvaluation{}, "internal", []string{"totp", "webauthn"}},
+		{mfaEvaluation{RequiredMethods: []string{"email"}, External: true}, "external", []string{}},
+		{mfaEvaluation{RequiredMethods: []string{"push", "webauthn"}}, "", []string{"webauthn"}},
+	}
+	for _, c := range cases {
+		if got := inlineEnrollMethods(c.ev, c.typ); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("inlineEnrollMethods(%v, %q) = %v, want %v", c.ev.RequiredMethods, c.typ, got, c.want)
+		}
+	}
 }

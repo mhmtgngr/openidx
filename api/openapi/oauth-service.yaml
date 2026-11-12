@@ -1785,6 +1785,130 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
+  /oauth/mfa/enroll/totp/begin:
+    post:
+      tags: [Step-up and MFA]
+      summary: MFA inline enrolment TOTP begin
+      description: Inline enrolment of a factor an MFA policy requires, against the enroll_session POST /oauth/login answers with (MFA_INLINE_ENROLLMENT). Public; the enrol session is the credential. Returns qr_code_url and manual_key.
+      operationId: mfaEnrollTOTPBegin
+      x-openidx-handler: internal/oauth.(*Service).handleMFAEnrollTOTPBegin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Too many attempts; the enrolment session is closed.
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/mfa/enroll/totp/finish:
+    post:
+      tags: [Step-up and MFA]
+      summary: MFA inline enrolment TOTP finish
+      description: Inline enrolment of a factor an MFA policy requires, against the enroll_session POST /oauth/login answers with (MFA_INLINE_ENROLLMENT). Public; the enrol session is the credential. Stores the factor and answers like a completed sign-in, with backup_codes.
+      operationId: mfaEnrollTOTPFinish
+      x-openidx-handler: internal/oauth.(*Service).handleMFAEnrollTOTPFinish
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Too many attempts; the enrolment session is closed.
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/mfa/enroll/webauthn/begin:
+    post:
+      tags: [Step-up and MFA]
+      summary: MFA inline enrolment passkey begin
+      description: Inline enrolment of a factor an MFA policy requires, against the enroll_session POST /oauth/login answers with (MFA_INLINE_ENROLLMENT). Public; the enrol session is the credential. Returns the credential creation options.
+      operationId: mfaEnrollWebAuthnBegin
+      x-openidx-handler: internal/oauth.(*Service).handleMFAEnrollWebAuthnBegin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Too many attempts; the enrolment session is closed.
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /oauth/mfa/enroll/webauthn/finish:
+    post:
+      tags: [Step-up and MFA]
+      summary: MFA inline enrolment passkey finish
+      description: Inline enrolment of a factor an MFA policy requires, against the enroll_session POST /oauth/login answers with (MFA_INLINE_ENROLLMENT). Public; the enrol session is the credential. Stores the passkey and answers like a completed sign-in, with backup_codes.
+      operationId: mfaEnrollWebAuthnFinish
+      x-openidx-handler: internal/oauth.(*Service).handleMFAEnrollWebAuthnFinish
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Too many attempts; the enrolment session is closed.
+        '500':
+          $ref: '#/components/responses/ServerError'
+
   /oauth/mfa-webauthn-begin:
     post:
       tags: [Step-up and MFA]
