@@ -41,14 +41,17 @@ var postureWireSchema = []string{
 		-- them to decide whether a signature is due, and against a table
 		-- without them every report is answered with a 500
 		device_public_key TEXT,
-		device_key_kind   VARCHAR(16))`,
+		device_key_kind   VARCHAR(16),
+		-- device tags (v250) the posture-check targeting (v255) matches
+		tags TEXT[])`,
 	`CREATE TABLE posture_checks (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		check_type VARCHAR(100) NOT NULL,
 		parameters JSONB DEFAULT '{}',
 		enabled    BOOLEAN DEFAULT true,
 		severity   VARCHAR(50) DEFAULT 'medium',
-		platforms  JSONB)`,
+		platforms  JSONB,
+		tags       JSONB)`,
 	`CREATE TABLE agent_posture_results (
 		id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		agent_id           VARCHAR(64) NOT NULL,

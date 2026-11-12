@@ -74,6 +74,11 @@ func unknownPostureCheckType(c *gin.Context, checkType string) {
 
 // validateAgentPostureCheck checks a row against the agent vocabulary.
 func validateAgentPostureCheck(check *PostureCheck) *posturevocab.Error {
+	tags, err := normalizeTokenTags(check.Tags)
+	if err != nil {
+		return &posturevocab.Error{Code: "invalid_tags", Field: "tags", Message: err.Error()}
+	}
+	check.Tags = tags
 	return posturevocab.ValidateAgentCheck(check.Name, check.CheckType, check.Parameters, check.Severity, check.Platforms)
 }
 
@@ -121,6 +126,7 @@ func createAgentPostureCheck(ctx context.Context, db *database.PostgresDB, check
 	if err != nil {
 		return err
 	}
+	tagsJSON := postureTagsJSON(check.Tags)
 	check.ID = uuid.New().String()
 	check.ZitiID = ""
 	check.Kind = string(posturevocab.KindAgent)
@@ -128,10 +134,10 @@ func createAgentPostureCheck(ctx context.Context, db *database.PostgresDB, check
 	check.CreatedAt, check.UpdatedAt = now, now
 	_, err = db.Pool.Exec(ctx,
 		`INSERT INTO posture_checks (id, ziti_id, name, check_type, parameters, enabled, severity,
-		                             remediation_hint, platforms, created_at, updated_at, org_id)
-		 VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		                             remediation_hint, platforms, created_at, updated_at, org_id, tags)
+		 VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		check.ID, check.Name, check.CheckType, paramsJSON, check.Enabled, check.Severity,
-		check.RemediationHint, platformsJSON, now, now, postureOrgID(ctx))
+		check.RemediationHint, platformsJSON, now, now, postureOrgID(ctx), tagsJSON)
 	if err != nil {
 		return fmt.Errorf("insert agent posture check: %w", err)
 	}
@@ -147,6 +153,7 @@ func updateAgentPostureCheck(ctx context.Context, db *database.PostgresDB, id st
 	if err != nil {
 		return err
 	}
+	tagsJSON := postureTagsJSON(check.Tags)
 	check.ID = id
 	check.ZitiID = ""
 	check.Kind = string(posturevocab.KindAgent)
@@ -154,12 +161,12 @@ func updateAgentPostureCheck(ctx context.Context, db *database.PostgresDB, id st
 	err = db.Pool.QueryRow(ctx,
 		`UPDATE posture_checks
 		    SET name = $1, check_type = $2, parameters = $3, enabled = $4, severity = $5,
-		        remediation_hint = $6, platforms = $7, updated_at = $8
+		        remediation_hint = $6, platforms = $7, updated_at = $8, tags = $12
 		  WHERE id = $9 AND org_id = $10 AND ziti_id IS NULL AND check_type = ANY($11)
 		 RETURNING created_at`,
 		check.Name, check.CheckType, paramsJSON, check.Enabled, check.Severity,
 		check.RemediationHint, platformsJSON, check.UpdatedAt, id, postureOrgID(ctx),
-		agentCheckTypes()).Scan(&check.CreatedAt)
+		agentCheckTypes(), tagsJSON).Scan(&check.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errPostureCheckNotFound
 	}
@@ -202,7 +209,7 @@ func listPostureChecks(ctx context.Context, db *database.PostgresDB, logger *zap
 	// string fails the whole listing.
 	rows, err := db.Pool.Query(ctx,
 		`SELECT id, COALESCE(ziti_id, ''), name, check_type, parameters, enabled,
-		        COALESCE(severity, ''), COALESCE(remediation_hint, ''), platforms, created_at, updated_at
+		        COALESCE(severity, ''), COALESCE(remediation_hint, ''), platforms, created_at, updated_at, tags
 		   FROM posture_checks WHERE org_id = $1 ORDER BY created_at DESC`, postureOrgID(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query posture checks: %w", err)
@@ -212,9 +219,9 @@ func listPostureChecks(ctx context.Context, db *database.PostgresDB, logger *zap
 	checks := []PostureCheck{}
 	for rows.Next() {
 		var c PostureCheck
-		var paramsJSON, platformsJSON []byte
+		var paramsJSON, platformsJSON, tagsJSON []byte
 		if err := rows.Scan(&c.ID, &c.ZitiID, &c.Name, &c.CheckType, &paramsJSON,
-			&c.Enabled, &c.Severity, &c.RemediationHint, &platformsJSON, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&c.Enabled, &c.Severity, &c.RemediationHint, &platformsJSON, &c.CreatedAt, &c.UpdatedAt, &tagsJSON); err != nil {
 			return nil, fmt.Errorf("failed to scan posture check row: %w", err)
 		}
 		rowKind := postureRowKind(c.CheckType)
@@ -237,10 +244,23 @@ func listPostureChecks(ctx context.Context, db *database.PostgresDB, logger *zap
 					logsafe.String("check_id", c.ID), zap.Error(err))
 			}
 		}
+		if tagsJSON != nil {
+			_ = json.Unmarshal(tagsJSON, &c.Tags)
+		}
 		checks = append(checks, c)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("failed to read posture checks: %w", err)
 	}
 	return checks, nil
+}
+
+// postureTagsJSON is a check's tags as stored: NULL when empty, which
+// GET /agent/config reads as "every device".
+func postureTagsJSON(tags []string) []byte {
+	if len(tags) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(tags)
+	return b
 }

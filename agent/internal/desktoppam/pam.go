@@ -41,6 +41,10 @@ type ConnectResult struct {
 // ErrApprovalRequired indicates the entry needs an approved access request.
 var ErrApprovalRequired = errors.New("this connection requires an approved access request")
 
+// ErrJustificationRequired indicates the entry needs a written reason
+// (require_justification, Faz A1) before an access request is filed.
+var ErrJustificationRequired = errors.New("this connection asks why you are opening it")
+
 // ErrStepUpRequired indicates the session's last verified second factor is
 // older than the server allows for a privileged launch (STEPUP_GATE). The
 // person has to verify a factor again; no approval would help.
@@ -66,6 +70,9 @@ type Refusal struct {
 	// ApprovalRequired is the server's explicit flag that an access request
 	// would unlock the entry.
 	ApprovalRequired bool
+	// JustificationRequired is the server's flag that the person must write
+	// why they need the entry (require_justification).
+	JustificationRequired bool
 }
 
 func (r *Refusal) Error() string {
@@ -94,6 +101,7 @@ func refusalFrom(status int, body io.Reader) *Refusal {
 		Description      string `json:"error_description"`
 		Message          string `json:"message"`
 		ApprovalRequired bool   `json:"approval_required"`
+		RequireJustif    bool   `json:"require_justification"`
 	}
 	if json.Unmarshal(raw, &b) != nil {
 		return r
@@ -110,6 +118,7 @@ func refusalFrom(status int, body io.Reader) *Refusal {
 		// With a separate code, the "error" field is the human reason.
 		r.Detail = b.Error
 	}
+	r.JustificationRequired = b.RequireJustif || r.Code == "justification_required"
 	r.ApprovalRequired = b.ApprovalRequired ||
 		strings.Contains(strings.ToLower(b.Error), "requires approval")
 	return r
@@ -127,6 +136,8 @@ func classify(err error) error {
 		return fmt.Errorf("%w: %w", ErrNotSignedIn, ref)
 	case ref.Status == http.StatusForbidden && ref.Code == "step_up_required":
 		return fmt.Errorf("%w: %w", ErrStepUpRequired, ref)
+	case ref.Status == http.StatusForbidden && ref.JustificationRequired:
+		return fmt.Errorf("%w: %w", ErrJustificationRequired, ref)
 	case ref.Status == http.StatusForbidden && ref.ApprovalRequired:
 		return fmt.Errorf("%w: %w", ErrApprovalRequired, ref)
 	}
@@ -142,6 +153,8 @@ func UserMessage(err error) string {
 		return ""
 	case errors.Is(err, ErrStepUpRequired):
 		return "This connection needs a recently verified second factor. Sign out, sign in again, and retry."
+	case errors.Is(err, ErrJustificationRequired):
+		return "This connection asks why you are opening it. Write a reason and send the request."
 	case errors.Is(err, ErrApprovalRequired):
 		return "This connection needs an approved access request. Ask your administrator, or file a request in the OpenIDX portal."
 	case errors.Is(err, ErrNotSignedIn):

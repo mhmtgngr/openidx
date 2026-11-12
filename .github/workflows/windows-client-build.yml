@@ -1128,6 +1128,14 @@ jobs:
           AGENT_TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
+          # A beta build (agent-v1.2.3-beta.1) feeds the agent-beta channel,
+          # which organizations on update_channel=beta read (Faz B8.5); the
+          # stable channel never sees it. The versioned release keeps its own
+          # latest.json either way, so an update ring can pin any build.
+          if [[ "$AGENT_VERSION" == *-beta.* ]]; then
+            AGENT_CHANNEL=agent-beta
+            AGENT_CHANNEL_MANIFEST="https://github.com/$GH_REPO/releases/download/agent-beta/latest.json"
+          fi
           cp "dist/OpenIDX-$AGENT_VERSION.msi" dist/OpenIDX.msi
           if ! gh release view "$AGENT_CHANNEL" >/dev/null 2>&1; then
             gh release create "$AGENT_CHANNEL" --target "$GITHUB_SHA" --latest=false \

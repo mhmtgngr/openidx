@@ -33,11 +33,11 @@ var agentStateSchema = []string{
 	`CREATE TABLE IF NOT EXISTS enrolled_agents (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id VARCHAR(64) UNIQUE,
 		org_id UUID NOT NULL, auth_token_hash VARCHAR(128), status VARCHAR(20) DEFAULT 'pending',
-		platform VARCHAR(32), known_device_id UUID, enrolled_by_user_id UUID)`,
+		platform VARCHAR(32), known_device_id UUID, enrolled_by_user_id UUID, tags TEXT[])`,
 	`CREATE TABLE IF NOT EXISTS posture_checks (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), check_type VARCHAR(64),
 		parameters JSONB, severity VARCHAR(10), enabled BOOLEAN DEFAULT true,
-		platforms JSONB)`,
+		platforms JSONB, tags JSONB)`,
 }
 
 func TestAgentConfig_TellsTheDeviceItsOwnState(t *testing.T) {

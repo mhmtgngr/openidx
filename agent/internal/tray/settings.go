@@ -3,6 +3,8 @@ package tray
 import (
 	"fmt"
 
+	"github.com/openidx/openidx/agent/internal/ipc"
+
 	"github.com/openidx/openidx/agent/internal/updater"
 )
 
@@ -40,4 +42,60 @@ func updateMessage(current string, manifestURL string, m *updater.Manifest, err 
 			"The OpenIDX service installs updates on its own, within six hours.", m.Version, current)
 	}
 	return "OpenIDX " + current + " is up to date."
+}
+
+// aboutText is the About box: build, update channel and the last update
+// check's outcome, server and device (B8.11).
+func aboutText(version, server, agentID, deviceID, configDir string, st *ipc.Status) string {
+	if server == "" {
+		server = "(not enrolled)"
+	}
+	msg := "OpenIDX agent " + version
+	if st != nil {
+		ch := st.UpdateChannel
+		if ch == "" {
+			ch = "stable"
+		}
+		msg += "\nUpdate channel: " + ch
+		switch {
+		case st.UpdatePaused:
+			msg += " (updates paused by your organization)"
+		case st.UpdateState == "failed":
+			msg += "\nLast update: failed" + versionSuffix(st.UpdateVersion)
+		case st.UpdateState == "applying":
+			msg += "\nLast update: installing" + versionSuffix(st.UpdateVersion)
+		case st.UpdateState == "ok":
+			msg += "\nLast update check: up to date"
+		}
+	}
+	msg += "\n\nServer: " + server
+	if agentID != "" {
+		msg += "\nAgent ID: " + agentID
+	}
+	if deviceID != "" {
+		msg += "\nDevice ID: " + deviceID
+	}
+	if st != nil && st.Unclaimed {
+		msg += "\nOwner: nobody yet. Sign in to claim this device."
+	}
+	return msg + "\nConfiguration: " + configDir
+}
+
+func versionSuffix(v string) string {
+	if v == "" {
+		return ""
+	}
+	return " (" + v + ")"
+}
+
+// claimPrompt is what the tray shows for an unclaimed device, "" when it is
+// not one (B8.11).
+func claimPrompt(signedIn bool, st *ipc.Status) string {
+	if st == nil || !st.Unclaimed || st.Revoked || !st.Enrolled {
+		return ""
+	}
+	if signedIn {
+		return "Claim this device"
+	}
+	return "Sign in to claim this device"
 }

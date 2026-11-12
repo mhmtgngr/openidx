@@ -103,6 +103,8 @@ var publicAccessRoutes = map[string]publicRoute{
 		"binds a device key to an agent that has none; requireEnrolledAgent runs before the body is read, and the key must sign its own registration"},
 	"POST /api/v1/access/agent/windows-apps/report": {refusesWithoutState,
 		"windows-app discovery from an agent bound to a host; same X-Agent-ID + X-Auth-Token check as /agent/report"},
+	"POST /api/v1/access/agent/commands/:command_id/result": {refusesWithoutState,
+		"a device's answer to a fleet command (B8.6); requireEnrolledAgent runs before the body is read, the body is device-signed, and only a command queued for that agent can be updated"},
 	"POST /api/v1/access/enroll": {refusesWithoutState,
 		"the Tier-0 dark-platform door: trades a session bearer or enrollment token for a one-time Ziti enrollment JWT, and verifies it itself"},
 

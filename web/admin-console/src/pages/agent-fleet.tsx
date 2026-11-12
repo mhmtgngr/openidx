@@ -29,6 +29,8 @@ import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { QueryError } from '../components/query-error'
 import { AgentChecksSection } from '../components/agent-checks-section'
 import { FleetTokensSection } from '../components/fleet-tokens-section'
+import { AgentUpdatesSection, updateStateLabel } from '../components/agent-updates-section'
+import { AgentCommandsDialog } from '../components/agent-commands-dialog'
 import { TunnelPolicyBadge, TunnelStatusBadge, type TunnelStatus } from '../components/tunnel-status-badge'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
@@ -67,6 +69,11 @@ interface AgentRecord {
   // reaching the server and being turned away, not offline.
   credential_refused?: boolean
   credential_refused_at?: string | null
+  // The build the device last reported and its last update outcome (B8.5).
+  agent_version?: string
+  update_state?: { state?: string; version?: string; error?: string; at?: string } | null
+  // Labels that target posture checks and filter the list (v250, v255).
+  tags?: string[]
 }
 
 interface QrPayloadResponse {
@@ -107,12 +114,17 @@ export function AgentFleetPage() {
   const [search, setSearch] = useState('')
   const [platformFilter, setPlatformFilter] = useState<string>('all')
   const [ownerFilter, setOwnerFilter] = useState<'all' | 'unclaimed' | 'refused'>('all')
+  const [versionFilter, setVersionFilter] = useState<string>('all')
+  const [tagFilter, setTagFilter] = useState<string>('all')
+  const [tagsAgent, setTagsAgent] = useState<AgentRecord | null>(null)
+  const [tagsDraft, setTagsDraft] = useState('')
   const [confirmRevoke, setConfirmRevoke] = useState<AgentRecord | null>(null)
   const [qrOpen, setQrOpen] = useState(false)
   const [qrData, setQrData] = useState<QrPayloadResponse | null>(null)
   const [qrDescription, setQrDescription] = useState('')
   const [qrTTLMinutes, setQrTTLMinutes] = useState(60)
   const [postureAgent, setPostureAgent] = useState<AgentRecord | null>(null)
+  const [commandsAgent, setCommandsAgent] = useState<AgentRecord | null>(null)
 
   const { data: postureData, isLoading: postureLoading } = useQuery({
     queryKey: ['agent-posture', postureAgent?.agent_id],
@@ -152,6 +164,17 @@ export function AgentFleetPage() {
       toast({ title: t('pages.agentFleet.toasts.approveFailed'), variant: 'destructive' }),
   })
 
+  const tagsMutation = useMutation({
+    mutationFn: ({ id, tags }: { id: string; tags: string[] }) =>
+      api.put(`/api/v1/access/agents/${id}/tags`, { tags }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agent-fleet'] })
+      setTagsAgent(null)
+      toast({ title: t('pages.agentFleet.toasts.tagsSaved') })
+    },
+    onError: () => toast({ title: t('pages.agentFleet.toasts.tagsFailed'), variant: 'destructive' }),
+  })
+
   const revokeMutation = useMutation({
     mutationFn: (agentId: string) =>
       api.delete<{ status: string }>(`/api/v1/access/agents/${agentId}`),
@@ -176,8 +199,12 @@ export function AgentFleetPage() {
       ownerFilter === 'all' ||
       (ownerFilter === 'unclaimed' && isUnclaimed(a)) ||
       (ownerFilter === 'refused' && !!a.credential_refused)
-    return matchesSearch && matchesPlatform && matchesOwner
+    const matchesVersion = versionFilter === 'all' || (a.agent_version || '') === versionFilter
+    const matchesTag = tagFilter === 'all' || (a.tags ?? []).includes(tagFilter)
+    return matchesSearch && matchesPlatform && matchesOwner && matchesVersion && matchesTag
   })
+  const allTags = Array.from(new Set(agents.flatMap((a) => a.tags ?? []))).sort()
+  const versions = Array.from(new Set(agents.map((a) => a.agent_version || '').filter(Boolean))).sort()
 
   const counts = {
     total: agents.length,
@@ -248,6 +275,28 @@ export function AgentFleetPage() {
               <option value="unclaimed">{t('pages.agentFleet.ownerFilterUnclaimed')}</option>
               <option value="refused">{t('pages.agentFleet.ownerFilterRefused')}</option>
             </select>
+            <select
+              aria-label={t('pages.agentFleet.versionFilterLabel')}
+              value={versionFilter}
+              onChange={(e) => setVersionFilter(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="all">{t('pages.agentFleet.allVersions')}</option>
+              {versions.map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+            <select
+              aria-label={t('pages.agentFleet.tagFilterLabel')}
+              value={tagFilter}
+              onChange={(e) => setTagFilter(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="all">{t('pages.agentFleet.allTags')}</option>
+              {allTags.map((tag) => (
+                <option key={tag} value={tag}>#{tag}</option>
+              ))}
+            </select>
             <div className="relative">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -271,6 +320,7 @@ export function AgentFleetPage() {
                   <TableHead>{t('pages.agentFleet.colAgent')}</TableHead>
                   <TableHead>{t('pages.agentFleet.colOwner')}</TableHead>
                   <TableHead>{t('pages.agentFleet.colPlatform')}</TableHead>
+                  <TableHead>{t('pages.agentFleet.colVersion')}</TableHead>
                   <TableHead>{t('pages.agentFleet.colStatus')}</TableHead>
                   <TableHead>{t('pages.agentFleet.colCompliance')}</TableHead>
                   <TableHead>{t('pages.agentFleet.colTunnel')}</TableHead>
@@ -289,6 +339,13 @@ export function AgentFleetPage() {
                           <div className="text-xs text-muted-foreground">
                             {agent.hostname ? agent.agent_id : agent.device_id}
                           </div>
+                          {(agent.tags ?? []).length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {(agent.tags ?? []).map((tag) => (
+                                <Badge key={tag} variant="secondary" className="text-xs">#{tag}</Badge>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </TableCell>
@@ -301,6 +358,9 @@ export function AgentFleetPage() {
                           ? `${agent.platform}${agent.form_factor ? ` · ${agent.form_factor}` : ''}`
                           : t('pages.agentFleet.unknownPlatform')}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <VersionCell agent={agent} />
                     </TableCell>
                     <TableCell>
                       <StatusBadge status={agent.status} />
@@ -342,6 +402,14 @@ export function AgentFleetPage() {
                           <DropdownMenuItem onSelect={() => setPostureAgent(agent)}>
                             {t('pages.agentFleet.viewPosture')}
                           </DropdownMenuItem>
+                          {agent.status !== 'revoked' && agent.status !== 'retired' && (
+                            <DropdownMenuItem onSelect={() => setCommandsAgent(agent)}>
+                              {t('pages.agentFleet.actions')}
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem onSelect={() => { setTagsAgent(agent); setTagsDraft((agent.tags ?? []).join(', ')) }}>
+                            {t('pages.agentFleet.editTags')}
+                          </DropdownMenuItem>
                           <DropdownMenuItem onSelect={() => copyToClipboard(agent.agent_id)}>
                             <Copy className="mr-2 h-4 w-4" /> {t('pages.agentFleet.copyAgentId')}
                           </DropdownMenuItem>
@@ -359,7 +427,7 @@ export function AgentFleetPage() {
                 ))}
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                       {t('pages.agentFleet.empty')}
                     </TableCell>
                   </TableRow>
@@ -369,6 +437,38 @@ export function AgentFleetPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!tagsAgent} onOpenChange={(o) => { if (!o) setTagsAgent(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('pages.agentFleet.tagsTitle', { device: tagsAgent?.hostname || tagsAgent?.agent_id || '' })}</DialogTitle>
+          </DialogHeader>
+          <label htmlFor="agent-tags-input" className="text-sm font-medium">{t('pages.agentFleet.tagsLabel')}</label>
+          <Input id="agent-tags-input" value={tagsDraft} placeholder="finance, kiosk" onChange={(e) => setTagsDraft(e.target.value)} />
+          <p className="text-xs text-muted-foreground">{t('pages.agentFleet.tagsHint')}</p>
+          <DialogFooter>
+            <Button
+              disabled={tagsMutation.isPending}
+              onClick={() => tagsAgent && tagsMutation.mutate({
+                id: tagsAgent.agent_id,
+                tags: tagsDraft.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
+              })}
+            >
+              {t('pages.agentFleet.tagsSave')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AgentCommandsDialog
+        agentId={commandsAgent?.agent_id ?? null}
+        label={commandsAgent?.hostname || commandsAgent?.agent_id || ''}
+        open={!!commandsAgent}
+        onOpenChange={(o) => { if (!o) setCommandsAgent(null) }}
+      />
+
+      {/* The update ring: channel, pin, rollout, pause. */}
+      <AgentUpdatesSection />
 
       {/* Fleet enrollment tokens and the one-time Deploy panel. */}
       <FleetTokensSection />
@@ -610,6 +710,25 @@ function isUnclaimed(a: AgentRecord): boolean {
 
 // OwnerCell names the device's owner, or says nobody has claimed it and how
 // that changes: the person using it enrolls it again from My Devices.
+function VersionCell({ agent }: { agent: AgentRecord }) {
+  const { t } = useTranslation()
+  const state = updateStateLabel(agent.update_state)
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <span className="text-sm">{agent.agent_version || '—'}</span>
+      {state === 'failed' && (
+        <Badge variant="destructive" title={agent.update_state?.error || ''}>
+          {t('pages.agentFleet.updateFailed', { version: agent.update_state?.version || '' })}
+        </Badge>
+      )}
+      {state === 'applying' && (
+        <Badge variant="outline">{t('pages.agentFleet.updateApplying', { version: agent.update_state?.version || '' })}</Badge>
+      )}
+      {state === 'held' && <Badge variant="outline">{t('pages.agentFleet.updateHeld')}</Badge>}
+    </div>
+  )
+}
+
 function OwnerCell({ agent }: { agent: AgentRecord }) {
   const { t } = useTranslation()
   if (agent.owner_username) {

@@ -7,6 +7,7 @@ package winservice
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"sync"
 	"time"
@@ -39,8 +40,14 @@ func (h *handler) statusProvider() ipc.Status {
 	var posture *agent.PostureSummary
 	var tun *tunnel.Status
 	var tunDetail string
+	var unclaimed bool
+	var target *updater.Target
+	var lastUpdate *updater.Result
 	h.mu.Lock()
 	if h.agent != nil {
+		unclaimed = h.agent.Unclaimed()
+		target = h.agent.UpdateTarget()
+		lastUpdate = h.agent.LastUpdateResult()
 		rsActive, rsControlled = h.agent.RemoteSupportState()
 		revoked = h.agent.Revoked()
 		authInvalid = h.agent.AuthInvalid()
@@ -61,6 +68,13 @@ func (h *handler) statusProvider() ipc.Status {
 		RemoteSupportControlled: rsControlled,
 		Tunnel:                  tun,
 		TunnelDetail:            tunDetail,
+	}
+	st.Unclaimed = unclaimed
+	if target != nil {
+		st.UpdateChannel, st.UpdatePaused = target.Channel, target.Paused
+	}
+	if lastUpdate != nil {
+		st.UpdateState, st.UpdateVersion = lastUpdate.State, lastUpdate.Version
 	}
 	fillPosture(&st, posture)
 	return st
@@ -85,6 +99,10 @@ type handler struct {
 
 	mu    sync.Mutex
 	agent *agent.Agent // the running agent, for live status (remote-support banner)
+
+	// updateNow asks updateLoop for an immediate check (fleet command
+	// update_now).
+	updateNow chan struct{}
 }
 
 // Execute implements svc.Handler.
@@ -94,6 +112,7 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	h.updateNow = make(chan struct{}, 1)
 
 	// Report Running before ANY startup work: everything below may touch
 	// agent.json (DPAPI unseal), the network or files an upgrade still has
@@ -131,6 +150,9 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 		// support runs in the TRAY (user session) instead; the service only does
 		// posture/enrollment/self-update.
 		a.DisableRemoteSupport = true
+		a.Version = h.version
+		a.RunCommands = true
+		a.CommandHooks = h.commandHooks()
 		a.LoggedOnUser = consoleLogonUser
 		a.RegisterBuiltinChecks()
 		a.LoadPlugins()
@@ -185,44 +207,71 @@ func Run(logger *zap.Logger, configDir, version string, afterRunning func()) err
 	return svc.Run(ServiceName, &handler{logger: logger, configDir: configDir, version: version, afterRunning: afterRunning})
 }
 
-// updateLoop periodically self-updates when an update manifest is configured.
+// updateLoop self-updates under the organization's update ring (B8.5). The
+// first check waits 5 to 15 minutes after start, later ones about six hours,
+// so a fleet that boots together does not fetch together. The server's
+// update block (from the agent's last config sync) names the feed, the
+// target version and whether to move at all; agent.json's
+// update_manifest_url is the fallback for a server that sends none.
 func (h *handler) updateLoop(ctx context.Context) {
-	t := time.NewTicker(6 * time.Hour)
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	t := time.NewTimer(updater.FirstCheckDelay(r))
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			cfg, err := agent.LoadConfig(h.configDir)
-			if err != nil || cfg == nil || cfg.UpdateManifestURL == "" {
-				continue
-			}
-			// The manifest URL and the publisher certificate decide what this
-			// service installs as SYSTEM. They are obeyed only from a file that
-			// nobody but SYSTEM and an administrator could have written.
-			if err := agent.ConfigTrusted(h.configDir); err != nil {
-				h.logger.Error("service: not updating: agent.json could have been written by an "+
-					"account this service does not trust", zap.Error(err))
-				continue
-			}
-			// Resolved per poll rather than once at startup so an operator who
-			// corrects update_trusted_cert does not have to restart the service
-			// — and so a malformed one is reported every six hours instead of
-			// silently disabling updates for the life of the process.
-			trust, err := updater.TrustForConfig(cfg.UpdateTrustedCertPEM)
-			if err != nil {
-				h.logger.Warn("service: no usable update publisher; not updating", zap.Error(err))
-				continue
-			}
-			applied, newV, err := updater.CheckAndApply(ctx, cfg.UpdateManifestURL, h.version, trust)
-			if err != nil {
-				h.logger.Warn("service: update check failed",
-					zap.String("publisher", trust.Describe()), zap.Error(err))
-			} else if applied {
-				h.logger.Info("service: applying update", zap.String("version", newV))
-			}
+			h.checkForUpdate(ctx)
+			t.Reset(updater.NextCheckDelay(r))
+		case <-h.updateNow:
+			h.checkForUpdate(ctx)
 		}
+	}
+}
+
+// checkForUpdate runs one update check and records its outcome for the next
+// report.
+func (h *handler) checkForUpdate(ctx context.Context) {
+	cfg, err := agent.LoadConfig(h.configDir)
+	if err != nil || cfg == nil {
+		return
+	}
+	h.mu.Lock()
+	a := h.agent
+	h.mu.Unlock()
+	var target *updater.Target
+	if a != nil {
+		target = a.UpdateTarget()
+	}
+	if cfg.UpdateManifestURL == "" && (target == nil || target.ManifestURL == "") {
+		return
+	}
+	// The manifest URL and the publisher certificate decide what this
+	// service installs as SYSTEM. They are obeyed only from a file that
+	// nobody but SYSTEM and an administrator could have written.
+	if err := agent.ConfigTrusted(h.configDir); err != nil {
+		h.logger.Error("service: not updating: agent.json could have been written by an "+
+			"account this service does not trust", zap.Error(err))
+		return
+	}
+	// Resolved per check so an operator who corrects update_trusted_cert
+	// does not have to restart the service.
+	trust, err := updater.TrustForConfig(cfg.UpdateTrustedCertPEM)
+	if err != nil {
+		h.logger.Warn("service: no usable update publisher; not updating", zap.Error(err))
+		return
+	}
+	res := updater.CheckTarget(ctx, target, cfg.UpdateManifestURL, h.version, trust)
+	switch res.State {
+	case "failed":
+		h.logger.Warn("service: update check failed",
+			zap.String("publisher", trust.Describe()), zap.String("error", res.Error))
+	case "applying":
+		h.logger.Info("service: applying update", zap.String("version", res.Version))
+	}
+	if a != nil {
+		a.SetUpdateResult(res)
 	}
 }
 

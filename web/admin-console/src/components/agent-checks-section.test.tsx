@@ -109,6 +109,7 @@ describe('AgentChecksSection', () => {
       severity: 'critical',
       enabled: true,
       platforms: ['windows'],
+      tags: [],
       parameters: { max_days: 14 },
     })
   })
@@ -134,6 +135,7 @@ describe('AgentChecksSection', () => {
     expect(api.post).toHaveBeenCalledWith('/api/v1/access/ziti/posture/checks', expect.objectContaining({
       check_type: 'process_running',
       platforms: [],
+      tags: [],
       parameters: { processes: ['auditd', 'sshd'] },
     }))
   })
@@ -155,6 +157,7 @@ describe('AgentChecksSection', () => {
     expect(api.post).toHaveBeenCalledWith('/api/v1/access/ziti/posture/checks', expect.objectContaining({
       check_type: 'play_integrity',
       platforms: ['android'],
+      tags: [],
       parameters: { require_play_recognized: true },
     }))
   })
@@ -181,6 +184,7 @@ describe('AgentChecksSection', () => {
       severity: 'high',
       enabled: false,
       platforms: ['windows'],
+      tags: [],
       parameters: { min_version: '10.0.22631' },
     })
   })

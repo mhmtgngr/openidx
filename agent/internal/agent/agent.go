@@ -54,6 +54,21 @@ type Agent struct {
 	remoteSupportControlled atomic.Bool
 	// lastPosture is the outcome of the latest posture cycle, for the tray.
 	lastPosture atomic.Pointer[PostureSummary]
+	// Version is the running build, reported to the server (B8.5).
+	Version string
+	// RunCommands makes this process ask for and run fleet commands (B8.6).
+	// The service sets it; the tray never does.
+	RunCommands bool
+	// CommandHooks are the platform's half of the commands.
+	CommandHooks      CommandHooks
+	handledCommandsMu sync.Mutex
+	handledCommands   map[string]bool
+	// lastUpdate is the latest update check's outcome; updateTarget the
+	// server's update block from the last config sync.
+	lastUpdate   atomic.Pointer[updater.Result]
+	updateTarget atomic.Pointer[updater.Target]
+	// unclaimed is the server's word that nobody owns this device yet.
+	unclaimed atomic.Bool
 
 	// DisableRemoteSupport gates the remote-support screen-share + input path.
 	// The Windows SERVICE runs in session 0, which has no interactive desktop,
@@ -240,8 +255,11 @@ func (a *Agent) LoadPlugins() {
 // parses it into a ServerConfig. On any error it falls back to DefaultServerConfig
 // and logs a warning.
 func (a *Agent) SyncConfig(ctx context.Context) error {
+	// Set on every sync: a re-enrolment replaces the client.
+	transport.SetAcceptCommands(a.client, a.RunCommands)
 	data, err := a.client.GetConfig()
 	if errors.Is(err, transport.ErrAgentAuthInvalid) && a.reloadIfReenrolled() {
+		transport.SetAcceptCommands(a.client, a.RunCommands)
 		// The device was enrolled again while this process ran (a code or
 		// link enrolment: the service is already running, so nothing restarts
 		// it). Ask again with the credential that enrolment wrote.
@@ -268,6 +286,7 @@ func (a *Agent) SyncConfig(ctx context.Context) error {
 			if n >= authFailThreshold && a.reenrolFromSealedToken() {
 				// The refusal was a state, and the device's sealed fleet token
 				// fixed it (sealed_token.go). Ask with the new credential.
+				transport.SetAcceptCommands(a.client, a.RunCommands)
 				if data, err = a.client.GetConfig(); err == nil {
 					return a.acceptConfig(data)
 				}
@@ -305,6 +324,11 @@ func (a *Agent) acceptConfig(data []byte) error {
 	}
 
 	a.serverCfg = &cfg
+	a.updateTarget.Store(cfg.Update)
+	a.unclaimed.Store(cfg.Unclaimed)
+	if a.RunCommands && len(cfg.Commands) > 0 {
+		a.runCommands(cfg.Commands)
+	}
 	a.logger.Info("server config synced", zap.Int("checks", len(cfg.Checks)))
 	a.applyNetworkPolicy(cfg.OrgNetworkPolicy)
 	if !a.DisableRemoteSupport {
@@ -386,6 +410,10 @@ type reportPayload struct {
 	TunnelStatus *tunnel.Status `json:"tunnel_status,omitempty"`
 	// LoggedOnUser is the console session's user, when the service knows it.
 	LoggedOnUser string `json:"logged_on_user,omitempty"`
+	// AgentVersion is this build; UpdateResult the last update check's
+	// outcome, when the service ran one (B8.5).
+	AgentVersion string          `json:"agent_version,omitempty"`
+	UpdateResult *updater.Result `json:"update_result,omitempty"`
 }
 
 // engineResult is one result in the report, in the shape the access service
@@ -464,6 +492,8 @@ func (a *Agent) RunOnce(ctx context.Context) error {
 	if a.LoggedOnUser != nil {
 		payload.LoggedOnUser = a.LoggedOnUser()
 	}
+	payload.AgentVersion = a.Version
+	payload.UpdateResult = a.lastUpdate.Load()
 
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -589,3 +619,17 @@ func parseInterval(s string, fallback time.Duration) time.Duration {
 // LastPosture returns the outcome of the latest posture cycle, or nil before
 // the first one has run.
 func (a *Agent) LastPosture() *PostureSummary { return a.lastPosture.Load() }
+
+// UpdateTarget is the server's update block from the last config sync, nil
+// when the server sent none.
+func (a *Agent) UpdateTarget() *updater.Target { return a.updateTarget.Load() }
+
+// SetUpdateResult records an update check's outcome for the next report.
+func (a *Agent) SetUpdateResult(r updater.Result) { a.lastUpdate.Store(&r) }
+
+// LastUpdateResult is the latest update check's outcome, nil before one ran.
+func (a *Agent) LastUpdateResult() *updater.Result { return a.lastUpdate.Load() }
+
+// Unclaimed reports whether the server said, at the last config sync, that
+// nobody owns this device yet.
+func (a *Agent) Unclaimed() bool { return a.unclaimed.Load() }

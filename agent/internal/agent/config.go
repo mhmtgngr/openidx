@@ -10,6 +10,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/secretfile"
 	"github.com/openidx/openidx/agent/internal/transport"
+	"github.com/openidx/openidx/agent/internal/updater"
 )
 
 // AgentConfig holds the persisted configuration for a registered agent.
@@ -77,6 +78,9 @@ type AgentConfig struct {
 	ServerCAPEMAlias string `json:"server_ca_pem,omitempty"`
 	// LogLevel is debug, info, warn or error (the MSI's LOG_LEVEL).
 	LogLevel string `json:"log_level,omitempty"`
+	// TrayHidden is set by a fleet set_options command (B8.6) and keeps the
+	// tray from starting at sign-in on this device.
+	TrayHidden bool `json:"tray_hidden,omitempty"`
 }
 
 // NetworkOptions is the transport view of ProxyURL and ServerCAPEM.
@@ -120,6 +124,15 @@ type ServerConfig struct {
 	// sends one. Optional: an older server sends nothing and the device's own
 	// tunnel.enabled decides.
 	OrgNetworkPolicy *OrgNetworkPolicy `json:"org_network_policy,omitempty"`
+	// Update is the organization's update ring for this device (B8.5). Nil
+	// from an older server: the compiled-in manifest URL decides.
+	Update *updater.Target `json:"update,omitempty"`
+	// Commands are fleet commands for this device (B8.6), delivered only to
+	// a process that asked for them.
+	Commands []Command `json:"commands,omitempty"`
+	// Unclaimed is true while no person owns the device (B8.11): the tray
+	// offers "Sign in to claim".
+	Unclaimed bool `json:"unclaimed,omitempty"`
 }
 
 // OrgNetworkPolicy is the server's org_network_policy object, as the agent

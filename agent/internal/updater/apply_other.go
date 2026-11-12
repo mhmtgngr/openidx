@@ -151,3 +151,13 @@ func atomicReplaceExecutable(src, dst string) error {
 	}
 	return nil
 }
+
+// applyDowngrade installs an older package. dpkg -i and the self-replace
+// strategy take an older build as they take a newer one; rpm needs
+// --oldpackage.
+func applyDowngrade(artifactPath string) error {
+	if selectStrategy(runtime.GOOS, artifactPath) == strategyRPMPkg {
+		return runInstaller("rpm", "-U", "--force", "--oldpackage", artifactPath)
+	}
+	return apply(artifactPath)
+}

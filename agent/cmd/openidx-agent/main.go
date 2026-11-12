@@ -23,6 +23,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/remotesupport"
 	"github.com/openidx/openidx/agent/internal/sso"
+	"github.com/openidx/openidx/agent/internal/transport"
 	"github.com/openidx/openidx/agent/internal/tray"
 	"github.com/openidx/openidx/agent/internal/tunnel"
 	"github.com/openidx/openidx/agent/internal/updater"
@@ -110,6 +111,13 @@ func main() {
 	// On Windows the link arrives in the browser's unelevated process, and
 	// enrolment writes a file only SYSTEM and administrators may write, so the
 	// link is first handed to an elevated copy of this program.
+	// openidx://justify?request=<entry> asks the signed-in person why they
+	// need an entry and files the request (B8.11). It runs as the user,
+	// unelevated: it reads the user's session, writes nothing machine-wide.
+	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "openidx://justify") {
+		runJustifyLink(os.Args[1])
+		return
+	}
 	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "openidx://") {
 		if args, ok := deepLinkToArgs(os.Args[1]); ok {
 			fromDeepLink = true
@@ -350,6 +358,27 @@ begin enforcing access policies and reporting health checks.`,
 		if err != nil {
 			return fmt.Errorf("creating agent: %w", err)
 		}
+		a.Version = strings.TrimPrefix(Version, "v")
+		// A foreground run (systemd, launchd) runs fleet commands too: restart
+		// exits for the unit's Restart=always, update_now runs one check.
+		a.RunCommands = true
+		a.CommandHooks = agent.CommandHooks{
+			Restart: func() { _ = logger.Sync(); os.Exit(1) },
+			UpdateNow: func() {
+				go func() {
+					cfg, err := agent.LoadConfig(configDir)
+					if err != nil || cfg == nil {
+						return
+					}
+					trust, err := updater.TrustForConfig(cfg.UpdateTrustedCertPEM)
+					if err != nil {
+						return
+					}
+					res := updater.CheckTarget(context.Background(), a.UpdateTarget(), cfg.UpdateManifestURL, a.Version, trust)
+					a.SetUpdateResult(res)
+				}()
+			},
+		}
 
 		a.RegisterBuiltinChecks()
 		a.LoadPlugins()
@@ -481,6 +510,11 @@ var trayCmd = &cobra.Command{
 			logger.Info("tray: autostart is off for this user; not starting")
 			return nil
 		}
+		// An administrator hid the tray on this device (fleet set_options).
+		if cfg, err := agent.LoadConfig(configDir); autostart && err == nil && cfg != nil && cfg.TrayHidden {
+			logger.Info("tray: hidden on this device by its organization; not starting")
+			return nil
+		}
 		// The same "v"-less form the agent_version check reports.
 		tray.Version = strings.TrimPrefix(strings.TrimSpace(Version), "v")
 		// An unenrolled device has no server yet. The tray still runs: it says
@@ -541,21 +575,28 @@ var updateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if !updater.Newer(Version, m.Version) {
-			fmt.Printf("Up to date (current %s, latest %s).\n", Version, m.Version)
-			return nil
+		target := serverUpdateTarget()
+		if updater.Newer(Version, m.Version) {
+			fmt.Printf("Update available: %s -> %s\n", Version, m.Version)
+		} else {
+			fmt.Printf("Feed's latest is %s; this build is %s.\n", m.Version, Version)
 		}
-		fmt.Printf("Update available: %s -> %s\n", Version, m.Version)
 		if apply, _ := cmd.Flags().GetBool("apply"); !apply {
-			fmt.Println("Run with --apply to install.")
+			fmt.Println("Run with --apply to install under the organization's update ring.")
 			return nil
 		}
-		applied, newV, err := updater.CheckAndApply(cmd.Context(), url, Version, trust)
-		if err != nil {
-			return fmt.Errorf("update failed: %w", err)
-		}
-		if applied {
-			fmt.Printf("Installing %s (msiexec launched)...\n", newV)
+		// Under the organization's update ring when the device is enrolled
+		// and the server names one (Faz B8.5): pause, pin and downgrade.
+		res := updater.CheckTarget(cmd.Context(), target, url, strings.TrimPrefix(Version, "v"), trust)
+		switch res.State {
+		case "failed":
+			return fmt.Errorf("update failed: %s", res.Error)
+		case "held":
+			fmt.Println("Updates are paused for this device by its organization.")
+		case "applying":
+			fmt.Printf("Installing %s...\n", res.Version)
+		default:
+			fmt.Println("Nothing to install under the organization's update ring.")
 		}
 		return nil
 	},
@@ -694,4 +735,24 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(capabilitiesCmd)
 	rootCmd.AddCommand(pluginCmd)
+}
+
+// serverUpdateTarget asks the server for this device's update block; nil when
+// the device is not enrolled or the server sends none.
+func serverUpdateTarget() *updater.Target {
+	cfg, err := agent.LoadConfig(configDir)
+	if err != nil || cfg == nil || cfg.AgentID == "" || cfg.AuthToken == "" {
+		return nil
+	}
+	t := transport.NewTransport(cfg.ServerURL, cfg.AuthToken, cfg.AgentID,
+		cfg.ZitiIdentityFile, cfg.ZitiServiceName, zap.NewNop())
+	data, err := t.GetConfig()
+	if err != nil {
+		return nil
+	}
+	var sc agent.ServerConfig
+	if json.Unmarshal(data, &sc) != nil {
+		return nil
+	}
+	return sc.Update
 }

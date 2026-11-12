@@ -243,4 +243,70 @@ describe('AgentFleetPage', () => {
     expect(screen.getByText('screen_lock')).toBeInTheDocument()
     expect(screen.getByText('Device lock enrolled')).toBeInTheDocument()
   })
+
+  it('shows each device version, filters by it, and flags a failed update', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.get).mockImplementation(routeFleet([
+      { ...activeAgent, agent_version: '0.6.4' },
+      { ...nonCompliantAgent, agent_version: '0.6.3', update_state: { state: 'failed', version: '0.6.4', error: 'msiexec 1603' } },
+    ]))
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    expect(await screen.findByText('Update to 0.6.4 failed')).toBeInTheDocument()
+    expect(screen.getAllByText('0.6.4').length).toBeGreaterThan(0)
+    await user.selectOptions(screen.getByRole('combobox', { name: /filter by agent version/i }), '0.6.3')
+    expect(screen.queryByText('agt-001')).not.toBeInTheDocument()
+    expect(screen.getByText('agt-003')).toBeInTheDocument()
+  })
+
+  it('saves the update ring from the Updates card', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.get).mockImplementation(((url: string) => {
+      if (url.includes('/agent/settings')) {
+        return Promise.resolve({ claim_mode: 'login', update_channel: 'stable', update_pin_version: '', update_rollout_percent: 100, update_paused: false })
+      }
+      return routeFleet([activeAgent])(url)
+    }) as typeof api.get)
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    await user.selectOptions(await screen.findByLabelText('Channel'), 'beta')
+    await user.click(screen.getByLabelText('Pause updates'))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(api.put).toHaveBeenCalledWith('/api/v1/access/agent/settings', {
+      update_channel: 'beta', update_pin_version: '', update_rollout_percent: 100, update_paused: true,
+    })
+  })
+
+  it('queues an uninstall only with a reason, from the row Actions dialog', async () => {
+    const user = userEvent.setup()
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    expect(await screen.findByText('agt-001')).toBeInTheDocument()
+    await user.click(screen.getAllByRole('button', { name: '' })[0])
+    await user.click(await screen.findByText('Actions…'))
+    await user.selectOptions(await screen.findByLabelText('Action'), 'uninstall')
+    const send = screen.getByRole('button', { name: 'Send' })
+    expect(send).toBeDisabled()
+    await user.type(screen.getByLabelText(/Reason \(required/), 'laptop returned to IT')
+    await user.click(send)
+    expect(api.post).toHaveBeenCalledWith('/api/v1/access/agents/agt-001/commands', {
+      kind: 'uninstall', reason: 'laptop returned to IT',
+    })
+  })
+
+  it('shows device tags as chips, filters by tag and saves edited tags', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.get).mockImplementation(routeFleet([
+      { ...activeAgent, tags: ['finance'] },
+      nonCompliantAgent,
+    ]))
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    expect(await screen.findAllByText('#finance')).not.toHaveLength(0)
+    await user.selectOptions(screen.getByRole('combobox', { name: /filter by tag/i }), 'finance')
+    expect(screen.queryByText('agt-003')).not.toBeInTheDocument()
+    await user.click(screen.getAllByRole('button', { name: '' })[0])
+    await user.click(await screen.findByText('Edit tags…'))
+    const input = await screen.findByLabelText('Tags (comma separated)')
+    await user.clear(input)
+    await user.type(input, 'Finance, kiosk')
+    await user.click(screen.getByRole('button', { name: 'Save tags' }))
+    expect(api.put).toHaveBeenCalledWith('/api/v1/access/agents/agt-001/tags', { tags: ['finance', 'kiosk'] })
+  })
 })

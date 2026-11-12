@@ -65,6 +65,8 @@ export interface AgentCheckRow {
   enabled: boolean
   severity: string
   platforms?: string[] | null
+  // Device tags the check is limited to; empty = every device (v255).
+  tags?: string[] | null
   created_at?: string
 }
 
@@ -90,6 +92,7 @@ interface FormState {
   severity: string
   enabled: boolean
   platforms: string[]
+  tags: string
   params: ParamValues
 }
 
@@ -182,6 +185,7 @@ export function AgentChecksSection() {
       severity: 'high',
       enabled: true,
       platforms: [],
+      tags: '',
       params: emptyParams(first),
     })
     setFormOpen(true)
@@ -196,6 +200,7 @@ export function AgentChecksSection() {
       severity: row.severity,
       enabled: row.enabled,
       platforms: Array.isArray(row.platforms) ? row.platforms : [],
+      tags: Array.isArray(row.tags) ? row.tags.join(', ') : '',
       params: paramsFromRow(specFor(row.check_type), row.parameters),
     })
     setFormOpen(true)
@@ -221,6 +226,7 @@ export function AgentChecksSection() {
         severity: f.severity,
         enabled: f.enabled,
         platforms: f.platforms,
+        tags: f.tags.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
         parameters: paramsForRequest(specFor(f.check_type), f.params),
       }
       return editing ? api.put(`${CHECKS_URL}/${editing.id}`, body) : api.post(CHECKS_URL, body)
@@ -303,6 +309,11 @@ export function AgentChecksSection() {
                       {Array.isArray(row.platforms) && row.platforms.length > 0
                         ? row.platforms.map((p) => PLATFORM_LABELS[p] ?? p).join(', ')
                         : t('pages.agentFleet.checks.allPlatforms')}
+                      {Array.isArray(row.tags) && row.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {row.tags.map((tag) => <Badge key={tag} variant="secondary">#{tag}</Badge>)}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{paramSummary(row)}</TableCell>
                     <TableCell>
@@ -422,6 +433,17 @@ export function AgentChecksSection() {
                   ))}
                 </div>
                 <p className="text-xs text-muted-foreground">{t('pages.agentFleet.checks.platformsHint')}</p>
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="agent-check-tags" className="text-sm font-medium">{t('pages.agentFleet.checks.tags')}</label>
+                <Input
+                  id="agent-check-tags"
+                  placeholder="finance, kiosk"
+                  value={form.tags}
+                  onChange={(e) => setForm({ ...form, tags: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">{t('pages.agentFleet.checks.tagsHint')}</p>
               </div>
 
               <div className="flex items-center gap-2">

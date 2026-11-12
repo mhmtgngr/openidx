@@ -29,6 +29,10 @@ type PostureCheck struct {
 	// ["ios"], ["android","ios"]). Empty/nil means all platforms — the agent
 	// config endpoint treats a NULL platforms column as "runs everywhere".
 	Platforms []string `json:"platforms,omitempty"`
+	// Tags scopes an agent check to devices carrying at least one of these
+	// tags (enrolled_agents.tags). Empty/nil means every device, like
+	// Platforms (v255).
+	Tags []string `json:"tags,omitempty"`
 	// Kind is "agent" for a check the OpenIDX agents run and "ziti" for one
 	// the controller enforces. It is derived from CheckType on the way out
 	// (posturevocab); a value sent in a request is ignored.
