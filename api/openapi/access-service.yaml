@@ -8596,7 +8596,8 @@ paths:
                 properties:
                   sites:
                     type: array
-                    items: { $ref: '#/components/schemas/Site' }
+                    items:
+                      $ref: '#/components/schemas/Site'
                   total: { type: integer }
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -8627,7 +8628,8 @@ paths:
           description: Created
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Site' }
+              schema:
+                $ref: '#/components/schemas/Site'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -8663,7 +8665,8 @@ paths:
           description: Updated
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Site' }
+              schema:
+                $ref: '#/components/schemas/Site'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
