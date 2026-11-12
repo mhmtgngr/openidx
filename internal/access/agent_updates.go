@@ -42,12 +42,13 @@ const (
 	updateChannelBeta   = "beta"
 )
 
-// defaultChannelManifest is the release feed per channel. An installation
+// defaultChannelManifest is the release feed per channel: where
+// windows-client-build.yml publishes (github.com/<this repo>). An installation
 // that mirrors releases overrides them with AGENT_UPDATE_MANIFEST_STABLE and
 // AGENT_UPDATE_MANIFEST_BETA.
 var defaultChannelManifest = map[string]string{
-	updateChannelStable: "https://github.com/openidx/openidx/releases/download/agent-latest/latest.json",
-	updateChannelBeta:   "https://github.com/openidx/openidx/releases/download/agent-beta/latest.json",
+	updateChannelStable: "https://github.com/mhmtgngr/openidx/releases/download/agent-latest/latest.json",
+	updateChannelBeta:   "https://github.com/mhmtgngr/openidx/releases/download/agent-beta/latest.json",
 }
 
 func channelManifestURL(channel string) string {
