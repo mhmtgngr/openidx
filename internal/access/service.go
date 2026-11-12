@@ -209,6 +209,15 @@ func (s *Service) handleAgentDownload(c *gin.Context) {
 	s.agentHandler.HandleAgentDownload(c)
 }
 
+// handleAgentMirror serves the box's agent update mirror without auth.
+func (s *Service) handleAgentMirror(c *gin.Context) {
+	if s.agentHandler == nil {
+		c.JSON(503, gin.H{"error": "agent handler not initialized"})
+		return
+	}
+	s.agentHandler.HandleAgentMirror(c)
+}
+
 // SetGuacamoleClient sets the "direct" PAM broker (guacd dials targets directly).
 func (s *Service) SetGuacamoleClient(gc *GuacamoleClient) {
 	s.guacamoleClient = gc
@@ -1332,6 +1341,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 	// Android APK (fetched during factory-reset provisioning before any auth
 	// context exists). One param route avoids a gin static-vs-wildcard conflict.
 	router.GET("/downloads/:file", svc.handleAgentDownload)
+	// The box's agent update mirror (agent_mirror.go): latest.json, re-signed
+	// with the box URL, and the MSI it names, per channel.
+	router.GET("/downloads/agent/:channel/:file", svc.handleAgentMirror)
 
 	// A retired temporary access link: the page says how access works now.
 	router.GET("/temp-access/:token", svc.handleRetiredTempAccess)

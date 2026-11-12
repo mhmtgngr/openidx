@@ -162,6 +162,8 @@ nav:
       - Operations:
           - OpenIDX Disaster Recovery Runbook: guides/disaster-recovery.md
           - Releasing OpenIDX: guides/RELEASING.md
+          - Agent Updates: guides/runbooks/agent-updates.md
+          - Agent Code Signing: guides/runbooks/agent-code-signing.md
       - Users:
           - Getting Started with OpenIDX: guides/GETTING-STARTED.md
           - OpenIDX User Guide: guides/USER_GUIDE.md

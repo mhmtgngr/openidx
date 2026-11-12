@@ -97,10 +97,14 @@ grep -qE '^ +AGENT_CHANNEL: agent-latest$' <<<"$body" ||
 grep -qF 'gh release upload "$AGENT_CHANNEL" --clobber' <<<"$body" ||
   finding "a release does not replace the agent-latest channel's assets, so agents polling it never see it"
 
-# d. Release builds know their channel.
-grep -qF 'updater.DefaultManifestURL=$AGENT_CHANNEL_MANIFEST' <<<"$body" ||
+# d. Release builds know their channel. They are stamped with
+# AGENT_STAMP_MANIFEST: the box mirror when the repo variable
+# AGENT_CHANNEL_MANIFEST names one, else the GitHub channel.
+grep -qE '^ +AGENT_STAMP_MANIFEST: \$\{\{ vars\.AGENT_CHANNEL_MANIFEST \|\| ' <<<"$body" ||
+  finding "AGENT_STAMP_MANIFEST is not the repo variable falling back to the GitHub channel"
+grep -qF 'updater.DefaultManifestURL=$AGENT_STAMP_MANIFEST' <<<"$body" ||
   finding "release builds are not stamped with the channel, so a device enrolled from the console's link never updates"
-grep -qF 'DefaultManifestURL=$AGENT_CHANNEL_MANIFEST' <<<"$(grep -A3 'CHANNEL_ARG=(' "$wf" || true)" ||
+grep -qF 'DefaultManifestURL=$AGENT_STAMP_MANIFEST' <<<"$(grep -A3 'CHANNEL_ARG=(' "$wf" || true)" ||
   finding "the release MSI does not default UPDATE_MANIFEST_URL to the channel"
 
 # e. No URL at releases/latest/download for the agent.

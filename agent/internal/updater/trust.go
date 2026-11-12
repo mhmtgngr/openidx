@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -49,6 +50,16 @@ import (
 //go:embed release-publisher.cer
 var releasePublisherDER []byte
 
+// release-publisher-next.cer is the publisher an agent ALSO trusts while the
+// release key changes (self-signed to OV/EV, or a rotation): empty means none.
+// A release carrying both is the overlap release. Once the fleet runs it,
+// releases are signed with the new key, and a later release moves the new
+// certificate into release-publisher.cer and empties this file
+// (docs/runbooks/agent-code-signing.md).
+//
+//go:embed release-publisher-next.cer
+var releasePublisherNextDER []byte
+
 // Trust is the set of publishers whose manifests this agent will act on.
 //
 // Empty means empty: no key, no update. Construct it with ReleaseTrust (the
@@ -63,14 +74,33 @@ type Trust struct {
 
 // ReleaseTrust returns the pinned OpenIDX release publisher.
 func ReleaseTrust() Trust {
-	c, err := x509.ParseCertificate(releasePublisherDER)
+	return releaseTrustFrom(releasePublisherDER, releasePublisherNextDER)
+}
+
+// releaseTrustFrom is ReleaseTrust over explicit DER bytes: current is
+// required, next is optional (empty or whitespace means no second publisher).
+func releaseTrustFrom(current, next []byte) Trust {
+	c, err := x509.ParseCertificate(current)
 	if err != nil {
 		// Unreachable short of a corrupted build: the file is embedded from the
 		// repository and parsed by trust_test.go. Returning an empty Trust is
 		// the fail-closed answer if it ever happens — no key, no update.
 		return Trust{source: "pinned release publisher (unparseable: " + err.Error() + ")"}
 	}
-	return Trust{certs: []*x509.Certificate{c}, source: "pinned release publisher"}
+	t := Trust{certs: []*x509.Certificate{c}, source: "pinned release publisher"}
+	if len(bytes.TrimSpace(next)) == 0 {
+		return t
+	}
+	n, err := x509.ParseCertificate(next)
+	if err != nil {
+		// A broken next certificate must not cost the fleet its current
+		// publisher: keep trusting that one alone, and say so.
+		t.source = "pinned release publisher (next publisher unparseable: " + err.Error() + ")"
+		return t
+	}
+	t.certs = append(t.certs, n)
+	t.source = "pinned release publishers (current and next)"
+	return t
 }
 
 // TrustFromPEM builds a Trust from one or more PEM CERTIFICATE blocks, for an

@@ -40,6 +40,10 @@
 #   REHEARSE_DUMP   dump to rehearse on (default: newest $RT/backups/*.dump)
 #   REHEARSE_PORT   loopback port for the throwaway Postgres (default 55499)
 #   REHEARSE_KEEP=1 leave the throwaway container running afterwards
+#   AGENT_MIRROR_TAG  optional agent release (agent-vX.Y.Z) for the agent-mirror
+#                   step: copies it into the box's update mirror
+#                   (scripts/agent-mirror.sh; DEST defaults to
+#                   AGENT_DOWNLOADS_DIR from $ENVF, else deployments/downloads)
 #   OWNER_DATABASE_URL  owner URL; default: the postgres://openidx:... URL in
 #                   the comment at the top of $ENVF. Never printed.
 #
@@ -67,9 +71,9 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 say() { printf '==> %s\n' "$*"; }
 
 usage() {
-  sed -n '2,47p' "$0"
+  sed -n '2,51p' "$0"
   echo
-  echo "usage: $0 preflight|rehearse|dump|stop|migrate|swap|start|verify|rollback|help"
+  echo "usage: $0 preflight|rehearse|dump|stop|migrate|swap|start|verify|agent-mirror|rollback|help"
 }
 
 need_stage() {
@@ -294,6 +298,18 @@ step_verify() {
   echo "Background work runs on a 5-minute tick: run verify again after it."
 }
 
+# Optional: mirror an agent release onto the box so Windows agents update from
+# here, never from github.com (docs/runbooks/agent-updates.md). Independent of
+# the server release; a no-op without AGENT_MIRROR_TAG.
+step_agent_mirror() {
+  if [ -z "${AGENT_MIRROR_TAG:-}" ]; then
+    echo "AGENT_MIRROR_TAG not set: agent update mirror left as is"; return 0
+  fi
+  local dest
+  dest=$(grep -E '^AGENT_DOWNLOADS_DIR=' "$ENVF" 2>/dev/null | head -1 | cut -d= -f2- || true)
+  DEST=${DEST:-${dest:-}} "$(dirname "$0")/agent-mirror.sh" "$AGENT_MIRROR_TAG"
+}
+
 step_rollback() {
   need_stage
   say "rolling back binaries and console to suffix $TS (database untouched)"
@@ -344,6 +360,7 @@ case "${1:-help}" in
   swap)      step_swap ;;
   start)     step_start ;;
   verify)    step_verify ;;
+  agent-mirror) step_agent_mirror ;;
   rollback)  step_rollback ;;
   help|-h|--help) usage ;;
   *) usage; exit 2 ;;
