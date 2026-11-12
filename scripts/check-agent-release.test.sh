@@ -55,12 +55,16 @@ sed -i 's/gh release upload "$AGENT_CHANNEL" --clobber/echo skip/' "$(WF)"
 expect red "the channel is not updated"
 
 stage
-sed -i 's/updater.DefaultManifestURL=$AGENT_CHANNEL_MANIFEST/updater.Unused=$AGENT_CHANNEL_MANIFEST/' "$(WF)"
+sed -i 's/updater.DefaultManifestURL=$AGENT_STAMP_MANIFEST/updater.Unused=$AGENT_STAMP_MANIFEST/' "$(WF)"
 expect red "release builds carry no channel"
 
 stage
-sed -i 's/(-d "DefaultManifestURL=$AGENT_CHANNEL_MANIFEST")/()/' "$(WF)"
+sed -i 's/(-d "DefaultManifestURL=$AGENT_STAMP_MANIFEST")/()/' "$(WF)"
 expect red "the MSI does not default to the channel"
+
+stage
+sed -i 's/AGENT_STAMP_MANIFEST: ${{ vars.AGENT_CHANNEL_MANIFEST || /AGENT_STAMP_MANIFEST: ${{ /' "$(WF)"
+expect red "the stamp ignores the box mirror variable"
 
 stage
 sed -i 's#releases/download/agent-latest/latest.json#releases/latest/download/latest.json#' "$T/agent/scripts/Install-OpenIDXAgent.ps1"
