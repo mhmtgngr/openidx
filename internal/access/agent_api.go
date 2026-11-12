@@ -1816,25 +1816,6 @@ func (h *AgentAPIHandler) policyForActiveAgent(ctx context.Context, agentID stri
 	return p
 }
 
-// orgNetworkPolicy is the caller's organization's tunnel policy, or nil when
-// there is no database or it cannot be read (logged). Callers that hand it to
-// a device go through policyForActiveAgent.
-func (h *AgentAPIHandler) orgNetworkPolicy(ctx context.Context) *agentNetworkPolicy {
-	if h.db == nil || h.db.Pool == nil {
-		return nil
-	}
-	orgID := orgIDFrom(ctx)
-	if orgID == "" {
-		return nil
-	}
-	p, err := loadAgentNetworkPolicy(ctx, h.db, orgID)
-	if err != nil {
-		h.logger.Warn("could not read the organization's tunnel policy for an agent", zap.Error(err))
-		return nil
-	}
-	return p
-}
-
 // windowsAppDiscoveryJob is the discovery hint handed to an agent bound to a
 // Windows app host. The agent runs Prepare-OpenIDXAppHost.ps1 -Report and POSTs
 // the emitted discoveryReport JSON to ReportPath (using its X-Agent-ID +
