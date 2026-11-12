@@ -1762,6 +1762,8 @@ func allMigrations() []*Migration {
 			Description: "Signing keys for OpenIDX as a Microsoft Entra ID external authentication method. eam_signing_keys (kid, private_key_enc sealed with the install cipher, self-signed cert_pem for x5c, not_before, not_after, active) is platform level: one Entra app registration reads one /eam/jwks. A rotated key is published before it signs, because Entra caches the set. No org_id and no RLS; openidx_app reads and writes it; down drops it.",
 			UpSQL:       eamSigningKeysUp,
 			DownSQL:     eamSigningKeysDown,
+		},
+		{
 			Version:     249,
 			Name:        "sites",
 			Description: "Sites for split-site hosting. sites (slug, name, hop_addr, is_default; one default, seeded 'default') and site_routers (Ziti edge router id -> site) are platform tables without RLS. network_targets.site_id and proxy_routes.site_id choose the site whose routers host the resource; NULL is the default site, so nothing changes on upgrade. Down drops the columns and tables.",
