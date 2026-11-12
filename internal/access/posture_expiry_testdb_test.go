@@ -52,7 +52,7 @@ func seedPosture(t *testing.T, pool *pgxpool.Pool) (*ZitiManager, context.Contex
 			id uuid primary key, ziti_id text NOT NULL DEFAULT '', name text NOT NULL,
 			check_type text NOT NULL, parameters jsonb, enabled boolean NOT NULL DEFAULT true,
 			severity text NOT NULL DEFAULT 'high', remediation_hint text NOT NULL DEFAULT '',
-			platforms jsonb, created_at timestamptz NOT NULL DEFAULT NOW(),
+			platforms jsonb, tags jsonb, created_at timestamptz NOT NULL DEFAULT NOW(),
 			updated_at timestamptz NOT NULL DEFAULT NOW(), org_id uuid NOT NULL);
 		CREATE TABLE device_posture_results (
 			id uuid primary key, identity_id uuid NOT NULL, check_id uuid NOT NULL,
