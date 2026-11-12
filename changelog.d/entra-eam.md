@@ -23,6 +23,6 @@
   and authorization URLs, client ID), the allowed tenants, each signing key as
   signing, waiting or retired with a **Rotate key** button, and the last 24
   hours of satisfied and refused or failed verifications, read from the new
-  `GET /api/v1/oauth/eam/status`. A runbook, `docs/guides/ENTRA-EAM.md`, covers
+  `GET /api/v1/oauth/eam/status`. A runbook, `docs/docs/guides/ENTRA-EAM.md`, covers
   the app registration, consent, a pilot-group external method, Conditional
   Access "Require MFA", rotation and tracing a sign-in by `client-request-id`.
