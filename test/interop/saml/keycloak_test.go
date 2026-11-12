@@ -246,48 +246,18 @@ func TestKeycloakServiceProvider(t *testing.T) {
 		unsolicited.acs = fmt.Sprintf("%s/broker/%s/endpoint/clients/%s", realmURL, kcUnsolAlias, kcSAMLClientName)
 		h.registerSP("Keycloak interop (unsolicited)", unsolicited, profile.encrypt)
 
-		signOn := func(t *testing.T) (*browser, string, string, string) {
-			t.Helper()
-			b, token := h.signedInBrowser(alice, kcStop)
+		// SP-initiated sign-on is not offered (B4.3): Keycloak's AuthnRequest
+		// is validated and then refused, so no brokered session (and so no
+		// SP-initiated or IdP-initiated SLO against one) can be set up here.
+		t.Run(profile.name+"/SP-initiated SSO is refused", func(t *testing.T) {
+			b, _ := h.signedInBrowser(alice, kcStop)
 			p := b.get(authURL)
-			if !strings.HasPrefix(p.stoppedAt, kcCallback) {
-				t.Fatalf("Keycloak did not complete the brokered sign-on: %d at %s: %.800s", p.status, p.url, p.body)
+			if p.status != 403 || !strings.Contains(p.body, "saml_sp_initiated_unsupported") {
+				t.Fatalf("Keycloak's AuthnRequest was not refused: %d at %s: %.800s", p.status, p.url, p.body)
 			}
-			resp, ok := p.lastResponse()
-			if !ok {
-				t.Fatal("no SAMLResponse reached Keycloak")
+			if _, ok := p.lastResponse(); ok {
+				t.Fatal("a SAMLResponse reached Keycloak for an SP-initiated request")
 			}
-			if got := strings.Contains(decodeMessage(t, resp.value), "EncryptedAssertion"); got != profile.encrypt {
-				t.Fatalf("EncryptedAssertion present = %v, want %v", got, profile.encrypt)
-			}
-			idt, refresh, claims := k.exchange(p.stoppedAt)
-			if claims.Email != alice.email || claims.GivenName != alice.first || claims.FamilyName != alice.last {
-				t.Fatalf("Keycloak's user is not the one OpenIDX asserted: %+v", claims)
-			}
-			return b, token, idt, refresh
-		}
-
-		t.Run(profile.name+"/SP-initiated SSO then SP-initiated SLO", func(t *testing.T) {
-			b, token, idt, refresh := signOn(t)
-			p := b.get(realmURL + "/protocol/openid-connect/logout?" + url.Values{
-				"id_token_hint": {idt}, "post_logout_redirect_uri": {kcLoggedOut}, "client_id": {"interop-app"}}.Encode())
-			if !strings.HasPrefix(p.stoppedAt, kcLoggedOut) {
-				t.Fatalf("Keycloak's logout did not complete through the IdP: %d at %s: %.800s", p.status, p.url, p.body)
-			}
-			if h.sessionAlive(token) {
-				t.Fatal("the IdP session outlived Keycloak's LogoutRequest")
-			}
-			if k.sessionActive(refresh) {
-				t.Fatal("the Keycloak session outlived its own logout")
-			}
-		})
-
-		t.Run(profile.name+"/IdP-initiated SLO", func(t *testing.T) {
-			b, token, _, refresh := signOn(t)
-			if p := b.get(env.idpURL + "/saml/idp/slo"); p.status != 200 || h.sessionAlive(token) {
-				t.Fatalf("IdP-initiated logout answered %d; IdP session alive = %v", p.status, h.sessionAlive(token))
-			}
-			eventually(t, "Keycloak to end the brokered session", func() bool { return !k.sessionActive(refresh) })
 		})
 
 		t.Run(profile.name+"/IdP-initiated SSO", func(t *testing.T) {
