@@ -4,6 +4,7 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -749,6 +750,9 @@ type PublishAppRequest struct {
 	// LandingPath is where the launcher tile opens (e.g. "/ui/") for apps whose
 	// UI is not at the site root. Defaults to "/".
 	LandingPath string `json:"landing_path"`
+	// Site is the slug of the site whose routers host the route when it is
+	// Ziti-enabled (proxy_routes.site_id). Empty is the default site.
+	Site string `json:"site"`
 }
 
 type PublishAppResult struct {
@@ -811,6 +815,16 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 	fromURL := "https://" + publicHost
 	publicURL := fromURL + landingPath
 
+	siteID, serr := s.resolveSiteID(ctx, req.Site)
+	if serr != nil {
+		if errors.Is(serr, errUnknownSite) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": serr.Error()})
+			return
+		}
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to read sites", serr), s.logger)
+		return
+	}
+
 	routeID, err := s.ensureHostRoute(ctx, org.ID, appName, fromURL, targetURL, preserveHost)
 	if s.answerRouteHostTaken(c, org.ID, fromURL, err) {
 		return
@@ -820,6 +834,11 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 		return
 	}
 
+	if err := s.appWrite(ctx, "record route site",
+		`UPDATE proxy_routes SET site_id=$1 WHERE id=$2 AND org_id=$3`, siteID, routeID, org.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "The route was created but its site could not be recorded; publish it again."})
+		return
+	}
 	s.upsertAppLauncherTile(ctx, org.ID, appID, appName, appDesc, publicURL)
 	s.registerAccessProxyCallback(ctx, publicHost)
 

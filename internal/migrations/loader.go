@@ -1763,5 +1763,12 @@ func allMigrations() []*Migration {
 			UpSQL:       eamSigningKeysUp,
 			DownSQL:     eamSigningKeysDown,
 		},
+		{
+			Version:     249,
+			Name:        "sites",
+			Description: "Sites for split-site hosting. sites (slug, name, hop_addr, is_default; one default, seeded 'default') and site_routers (Ziti edge router id -> site) are platform tables without RLS. network_targets.site_id and proxy_routes.site_id choose the site whose routers host the resource; NULL is the default site, so nothing changes on upgrade. Down drops the columns and tables.",
+			UpSQL:       sitesUp,
+			DownSQL:     sitesDown,
+		},
 	}
 }

@@ -2,13 +2,16 @@ package access
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -215,26 +218,117 @@ func (s *Service) handleBulkRoutes(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// handleRouterEnrollToken mints a new edge-router enrollment JWT and returns a
-// copy-paste command to stand the router up — one-command site/gateway
-// expansion. The router joins the mesh via the #all bootstrap with zero policy
-// changes.
+// routerImageTagPattern is a docker tag: what may follow "openziti/ziti-router:".
+var routerImageTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+
+// routerNamePattern keeps a router name safe to put in a shell command.
+var routerNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+
+// defaultRouterImageTag is used when ZITI_ROUTER_IMAGE_TAG is unset: the
+// version the bundled controller runs (deployments/docker, ZITI_VERSION).
+const defaultRouterImageTag = "1.6.12"
+
+// routerOnboardRequest is the body of POST /ziti/fabric/routers/enroll-token.
+type routerOnboardRequest struct {
+	Name              string `json:"name"`
+	SiteSlug          string `json:"site_slug"`
+	AdvertisedAddress string `json:"advertised_address"`
+	ImageTag          string `json:"image_tag"`
+}
+
+// splitCtrlAddress splits ZITI_CTRL_PUBLIC_ADDRESS (host or host:port) into
+// what the router image takes as ZITI_CTRL_ADVERTISED_ADDRESS and _PORT.
+func splitCtrlAddress(addr string) (string, string) {
+	addr = strings.TrimSpace(addr)
+	addr = strings.TrimPrefix(strings.TrimPrefix(addr, "https://"), "tls:")
+	addr = strings.TrimSuffix(addr, "/")
+	if h, p, err := net.SplitHostPort(addr); err == nil {
+		return h, p
+	}
+	return addr, "1280"
+}
+
+// routerOnboardCommand is the docker one-liner a router host runs. The env
+// names are the ones the openziti/ziti-router image's /bootstrap.bash reads:
+// ZITI_ENROLL_TOKEN holds the JWT itself (not a path) and is enrolled on the
+// first start; ZITI_ROUTER_MODE=host makes it a hosting (Bind) router without
+// tproxy. The volume keeps the enrolled identity across restarts.
+func routerOnboardCommand(name, jwt, ctrlHost, ctrlPort, advertised, tag string) string {
+	return fmt.Sprintf("docker run -d --name %s --restart=unless-stopped "+
+		"-p 3022:3022 -v %s-data:/ziti-router "+
+		"-e ZITI_ENROLL_TOKEN='%s' "+
+		"-e ZITI_CTRL_ADVERTISED_ADDRESS=%s -e ZITI_CTRL_ADVERTISED_PORT=%s "+
+		"-e ZITI_ROUTER_ADVERTISED_ADDRESS=%s -e ZITI_ROUTER_PORT=3022 "+
+		"-e ZITI_ROUTER_MODE=host "+
+		"openziti/ziti-router:%s",
+		name, name, jwt, ctrlHost, ctrlPort, advertised, tag)
+}
+
+// handleRouterEnrollToken onboards an edge router into a site: it creates the
+// router on the controller tagged site-<slug> and ziti-routers, records it in
+// site_routers (the table the reconciler reads to decide which routers host
+// which site), and returns a copy-paste docker command that enrolls and runs
+// it. The router joins the mesh via the #all bootstrap with zero policy
+// changes; services of its site Bind to it on the next reconcile.
 func (s *Service) handleRouterEnrollToken(c *gin.Context) {
 	zm := s.ziti()
 	if zm == nil || !zm.IsInitialized() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ziti controller not connected"})
 		return
 	}
-	var req struct {
-		Name string `json:"name"`
+	var req routerOnboardRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
-	_ = c.ShouldBindJSON(&req)
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "router-" + uuid.New().String()[:8]
 	}
+	if !routerNamePattern.MatchString(name) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name must be 1-64 letters, digits, dots, hyphens or underscores"})
+		return
+	}
+	advertised := strings.TrimSpace(req.AdvertisedAddress)
+	if advertised == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "advertised_address is required: the host name or IP other routers and clients reach this router at"})
+		return
+	}
+	if net.ParseIP(advertised) == nil && !validHostName(advertised) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "advertised_address must be a host name or an IP address (no port)"})
+		return
+	}
+	tag := strings.TrimSpace(req.ImageTag)
+	if tag == "" && s.config != nil {
+		tag = strings.TrimSpace(s.config.ZitiRouterImageTag)
+	}
+	if tag == "" {
+		tag = defaultRouterImageTag
+	}
+	if !routerImageTagPattern.MatchString(tag) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "image_tag is not a valid image tag"})
+		return
+	}
+	slug := strings.TrimSpace(req.SiteSlug)
+	if slug == "" {
+		slug = DefaultSiteSlug
+	}
+	ctx := c.Request.Context()
+	var siteID string
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
+		//orgscope:ignore install-wide platform table; sites has no org
+		`SELECT id::text FROM sites WHERE slug = $1`, slug).Scan(&siteID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown site %q; create it first", slug)})
+		return
+	}
+	if err != nil {
+		s.logger.Error("router enroll-token: site lookup failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read sites"})
+		return
+	}
 
-	id, jwt, err := zm.CreateEdgeRouter(c.Request.Context(), name, nil)
+	id, jwt, err := zm.CreateEdgeRouter(ctx, name, []string{"site-" + slug, "ziti-routers"})
 	if err != nil {
 		s.logger.Error("router enroll-token: create failed", zap.Error(err))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to create edge router"})
@@ -244,27 +338,46 @@ func (s *Service) handleRouterEnrollToken(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "router created but no enrollment token returned"})
 		return
 	}
+	if _, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
+		//orgscope:ignore install-wide platform table; site_routers has no org
+		`INSERT INTO site_routers (ziti_router_id, site_id, name, advertised_host, image_tag)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (ziti_router_id) DO UPDATE SET site_id = EXCLUDED.site_id, name = EXCLUDED.name,
+		   advertised_host = EXCLUDED.advertised_host, image_tag = EXCLUDED.image_tag`,
+		id, siteID, name, advertised, tag); err != nil {
+		// Without the row the reconciler would retag the router into the
+		// default site. Remove it rather than leave a router in the wrong site.
+		s.logger.Error("router enroll-token: site_routers insert failed; deleting the router", zap.String("router_id", id), zap.Error(err))
+		if _, _, derr := zm.mgmtRequest("DELETE", "/edge/management/v1/edge-routers/"+id, nil); derr != nil {
+			s.logger.Error("router enroll-token: cleanup delete failed", zap.String("router_id", id), zap.Error(derr))
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record the router's site"})
+		return
+	}
 
 	ctrl := ""
 	if zm.cfg != nil {
 		ctrl = zm.cfg.ZitiCtrlPublicAddress
 	}
-	// A ready-to-run one-liner: write the JWT to a file and enroll+run the
-	// official router image against it. Generalizes deployments/apisix-edge/
-	// ziti-router/setup-router-wss.sh into a single command.
-	onboard := fmt.Sprintf(
-		"docker run -d --name openidx-ziti-router --restart=always "+
-			"-e ZITI_ENROLL_TOKEN='%s' -e ZITI_CTRL_ADVERTISED_ADDRESS='%s' "+
-			"openziti/ziti-router:latest",
-		jwt, ctrl)
-
-	c.JSON(http.StatusOK, gin.H{
+	if ctrl == "" && s.config != nil {
+		ctrl = s.config.ZitiCtrlPublicAddress
+	}
+	ctrlHost, ctrlPort := splitCtrlAddress(ctrl)
+	resp := gin.H{
 		"router_id":       id,
 		"name":            name,
+		"site_slug":       slug,
+		"image_tag":       tag,
 		"enrollment_jwt":  jwt,
 		"controller":      ctrl,
-		"onboard_command": onboard,
-	})
+		"onboard_command": routerOnboardCommand(name, jwt, ctrlHost, ctrlPort, advertised, tag),
+	}
+	if ctrlHost == "" {
+		resp["warning"] = "ZITI_CTRL_PUBLIC_ADDRESS is not set; fill in ZITI_CTRL_ADVERTISED_ADDRESS with the controller address this router reaches"
+	}
+	s.logAuditEvent(c, "ziti_router.onboard", id, "edge_router", map[string]interface{}{"name": name, "site": slug, "advertised_address": advertised})
+	s.enqueueReconcile()
+	c.JSON(http.StatusOK, resp)
 }
 
 // bulkHostConflict is one host a bulk request cannot have.

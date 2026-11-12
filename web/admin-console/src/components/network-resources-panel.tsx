@@ -17,6 +17,7 @@ import { ConfirmAction } from './confirm-action'
 import { ManageAppAccessDialog } from './manage-app-access-dialog'
 import { useToast } from '../hooks/use-toast'
 import { api } from '../lib/api'
+import { SiteSelect } from './site-select'
 import {
   EMPTY_DRAFT, draftFromTarget, formatPorts, targetFromDraft,
   type NetworkPolicy, type NetworkResource, type NetworkTarget, type TargetDraft,
@@ -95,6 +96,7 @@ export function NetworkTargetSection({ value, onChange }: { value: TargetDraft; 
         </div>
       </div>
       <p className="text-xs text-muted-foreground">{t('pages.networkResources.target.forwardHint')}</p>
+      <SiteSelect id="nt-site" value={value.site} onChange={(site) => onChange({ ...value, site })} />
     </fieldset>
   )
 }

@@ -45,6 +45,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 import { ConfirmAction } from '../components/confirm-action'
 import { QueryError } from '../components/query-error'
 import { api } from '../lib/api'
+import { SiteSelect } from '../components/site-select'
 import { useToast } from '../hooks/use-toast'
 
 // ---- Types ----
@@ -148,6 +149,7 @@ export function AppPublishPage() {
   const [publishAppTarget, setPublishAppTarget] = useState<PublishedApp | null>(null)
   const [publicHost, setPublicHost] = useState('')
   const [landingPath, setLandingPath] = useState('/')
+  const [publishSite, setPublishSite] = useState('')
 
   // ---- Queries ----
 
@@ -286,7 +288,7 @@ export function AppPublishPage() {
 
   // One-click publish: expose the whole app at a public host + launcher tile.
   const publishApp = useMutation({
-    mutationFn: (data: { public_host?: string; landing_path?: string }) =>
+    mutationFn: (data: { public_host?: string; landing_path?: string; site?: string }) =>
       api.post<{ public_url: string; public_host: string }>(
         `/api/v1/access/apps/${publishAppTarget!.id}/publish-app`,
         data,
@@ -989,6 +991,7 @@ export function AppPublishPage() {
                 {t('pages.appPublish.publishAppDialog.landingHintAfter')}
               </p>
             </div>
+            <SiteSelect id="publish-site" value={publishSite} onChange={setPublishSite} />
             <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
               {t('pages.appPublish.publishAppDialog.internalTarget')}
               <span className="font-mono">{publishAppTarget?.target_url}</span>
@@ -1003,6 +1006,7 @@ export function AppPublishPage() {
                 publishApp.mutate({
                   public_host: publicHost.trim() || undefined,
                   landing_path: landingPath.trim() || '/',
+                  site: publishSite || undefined,
                 })
               }
               disabled={publishApp.isPending}

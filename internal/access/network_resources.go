@@ -52,6 +52,9 @@ type NetworkTarget struct {
 	Protocols      []string    `json:"protocols"`
 	ForwardAddress string      `json:"forward_address,omitempty"`
 	ForwardPort    int         `json:"forward_port,omitempty"`
+	// Site is the slug of the site whose routers host the resource
+	// (network_targets.site_id); empty is the default site.
+	Site string `json:"site,omitempty"`
 }
 
 // hostLabel is one DNS label; a host name is one or more of them.
@@ -100,7 +103,12 @@ func appendUnique(list []string, s string) []string {
 // tcp+udp, an empty port list meaning every port.
 func normalizeNetworkTarget(t NetworkTarget) (NetworkTarget, error) {
 	var errs []string
-	out := NetworkTarget{ApplicationID: t.ApplicationID}
+	out := NetworkTarget{ApplicationID: t.ApplicationID, Site: strings.TrimSpace(t.Site)}
+	if isDefaultSite(out.Site) {
+		out.Site = ""
+	} else if !siteSlugPattern.MatchString(out.Site) {
+		errs = append(errs, fmt.Sprintf("site %q is not a site slug", out.Site))
+	}
 
 	// Every address is canonicalised once (network_target_guard.go), and the
 	// canonical form is what is checked, stored and written to Ziti, so the

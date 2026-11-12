@@ -23,6 +23,8 @@ import "github.com/openidx/openidx/internal/migrations"
 // hold install configuration, a global catalog, infrastructure state, or the
 // tenant registry itself.
 var installWideTables = map[string]string{
+	"sites":                "install-wide overlay topology (v249): where edge routers run, shared by every tenant's routes and resources",
+	"site_routers":         "install-wide overlay topology (v249): Ziti edge router id -> site; routers serve every tenant",
 	"organizations":        "the tenant registry itself",
 	"organization_members": "join table; its column is organization_id, not org_id",
 	"permissions":          "global permission-string catalog, identical for every tenant",

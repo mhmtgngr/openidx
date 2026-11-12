@@ -36,6 +36,7 @@ import { isPlatformAdminRequired } from '../lib/platform-admin'
 import { useToast } from '../hooks/use-toast'
 import { ConfirmAction } from '../components/confirm-action'
 import { NetworkResourcesPanel } from '../components/network-resources-panel'
+import { AddRouterDialog } from '../components/site-select'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -675,6 +676,7 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
   })
 
   const routers = Array.isArray(routersData) ? routersData : []
+  const [addRouterOpen, setAddRouterOpen] = useState(false)
 
   if (statusLoading) return <Spinner />
 
@@ -753,10 +755,15 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
       </div>
 
       {/* Routers section */}
+      <AddRouterDialog open={addRouterOpen} onOpenChange={setAddRouterOpen} />
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold">{t('pages.zitiNetwork.overview.edgeRouters')}</h3>
           <div className="flex gap-2">
+            <Button size="sm" onClick={() => setAddRouterOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              {t('components.sites.router.title')}
+            </Button>
             <Button variant="outline" size="sm" onClick={() => healthCheckMutation.mutate()} disabled={healthCheckMutation.isPending}>
               <CheckCircle className="mr-2 h-4 w-4" />
               {healthCheckMutation.isPending ? t('pages.zitiNetwork.overview.checking') : t('pages.zitiNetwork.overview.healthCheck')}

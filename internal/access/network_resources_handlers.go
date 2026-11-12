@@ -103,9 +103,10 @@ func (s *Service) loadNetworkTarget(ctx context.Context, orgID, appID string) (N
 	var fwdPort *int
 	var fwdAddr *string
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT hosts, COALESCE(cidrs::text[], '{}'), dns_names, port_ranges, protocols, forward_address, forward_port
+		`SELECT hosts, COALESCE(cidrs::text[], '{}'), dns_names, port_ranges, protocols, forward_address, forward_port,
+		        COALESCE((SELECT slug FROM sites WHERE sites.id = network_targets.site_id AND NOT sites.is_default), '')
 		   FROM network_targets WHERE application_id = $1 AND org_id = $2`, appID, orgID).
-		Scan(&t.Hosts, &t.CIDRs, &t.DNSNames, &portRanges, &t.Protocols, &fwdAddr, &fwdPort)
+		Scan(&t.Hosts, &t.CIDRs, &t.DNSNames, &portRanges, &t.Protocols, &fwdAddr, &fwdPort, &t.Site)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return t, false, nil
 	}
@@ -161,16 +162,20 @@ func (s *Service) upsertNetworkTarget(ctx context.Context, exec func(context.Con
 	if t.DNSNames == nil {
 		t.DNSNames = []string{}
 	}
+	siteID, err := s.resolveSiteID(ctx, t.Site)
+	if err != nil {
+		return err
+	}
 	return exec(ctx,
-		`INSERT INTO network_targets (application_id, org_id, hosts, cidrs, dns_names, port_ranges, protocols, forward_address, forward_port)
-		 VALUES ($1, $2, $3, $4::cidr[], $5, $6, $7, $8, $9)
+		`INSERT INTO network_targets (application_id, org_id, hosts, cidrs, dns_names, port_ranges, protocols, forward_address, forward_port, site_id)
+		 VALUES ($1, $2, $3, $4::cidr[], $5, $6, $7, $8, $9, $10)
 		 ON CONFLICT (application_id) DO UPDATE SET
 		   hosts = EXCLUDED.hosts, cidrs = EXCLUDED.cidrs, dns_names = EXCLUDED.dns_names,
 		   port_ranges = EXCLUDED.port_ranges, protocols = EXCLUDED.protocols,
 		   forward_address = EXCLUDED.forward_address, forward_port = EXCLUDED.forward_port,
-		   updated_at = NOW()
+		   site_id = EXCLUDED.site_id, updated_at = NOW()
 		 WHERE network_targets.org_id = EXCLUDED.org_id`,
-		t.ApplicationID, orgID, t.Hosts, t.CIDRs, t.DNSNames, string(pr), t.Protocols, fwdAddr, fwdPort)
+		t.ApplicationID, orgID, t.Hosts, t.CIDRs, t.DNSNames, string(pr), t.Protocols, fwdAddr, fwdPort, siteID)
 }
 
 // handleListNetworkResources lists the organization's network resources.
@@ -276,6 +281,10 @@ func (s *Service) handleCreateNetworkResource(c *gin.Context) {
 		target = &norm
 	}
 	id, err := s.createNetworkResource(ctx, org.ID, req.Name, req.Description, target)
+	if errors.Is(err, errUnknownSite) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if err != nil {
 		s.logger.Error("create network resource", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create network resource"})
@@ -363,7 +372,10 @@ func (s *Service) handlePutNetworkTarget(c *gin.Context) {
 	if err := s.upsertNetworkTarget(ctx, func(ctx context.Context, q string, args ...interface{}) error {
 		_, e := s.db.Pool.Exec(ctx, q, args...)
 		return e
-	}, org.ID, norm); err != nil {
+	}, org.ID, norm); errors.Is(err, errUnknownSite) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	} else if err != nil {
 		s.logger.Error("save network target", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save network target"})
 		return
@@ -522,7 +534,8 @@ func parsePortList(s string) ([]PortRange, error) {
 
 // parseNetworkImportCSV reads the import format. The header names the columns
 // (any order, case-insensitive): name (required), hosts, cidrs, dns_names,
-// ports, protocols, forward_address, forward_port, group. Lists inside a cell
+// ports, protocols, forward_address, forward_port, group, site (a site
+// slug; empty is the default site). Lists inside a cell
 // are separated by ';'. Each row is validated on its own; a bad row carries
 // its error and does not stop the others.
 func parseNetworkImportCSV(r io.Reader) ([]networkImportRow, error) {
@@ -567,6 +580,7 @@ func parseNetworkImportCSV(r io.Reader) ([]networkImportRow, error) {
 			DNSNames:       splitCell(cell(rec, "dns_names")),
 			Protocols:      splitCell(cell(rec, "protocols")),
 			ForwardAddress: cell(rec, "forward_address"),
+			Site:           cell(rec, "site"),
 		}
 		var problems []string
 		if row.Name == "" {
@@ -642,6 +656,12 @@ func (s *Service) handleImportNetworkResources(c *gin.Context) {
 	created, failed := 0, 0
 	for _, r := range rows {
 		res := result{networkImportRow: r}
+		if r.Error == "" {
+			if _, serr := s.resolveSiteID(ctx, r.Target.Site); serr != nil {
+				res.Error = serr.Error()
+				r.Error = res.Error
+			}
+		}
 		if r.Error != "" || dryRun {
 			if r.Error != "" {
 				failed++

@@ -258,3 +258,40 @@ func TestAResourceLeftOutOfTheLoadIsRemoved(t *testing.T) {
 		t.Error("a resource left out of the load is still live")
 	}
 }
+
+// A network resource in a site with no edge router is not left half-hosted:
+// it is removed and its status says why.
+func TestANetworkResourceInASiteWithoutRoutersFailsClosed(t *testing.T) {
+	f, zm, rec, d := failClosedFixture(t)
+	resetRouterHosts(t, false)
+	d.SiteSlug = "azure"
+	rec.loadNetwork = func(context.Context) ([]DesiredNetworkService, error) { return []DesiredNetworkService{d}, nil }
+	rec.reconcileNetworkServices(context.Background(), zm)
+	if f.has("service", d.ServiceName) || f.has("policy", "openidx-dial-"+d.ServiceName) {
+		t.Error("a resource whose site has no router is still on the overlay")
+	}
+	if got := rec.StatusSnapshot()[d.ServiceName]; !strings.Contains(got, "no router in site") {
+		t.Errorf("status = %q, want 'no router in site'", got)
+	}
+}
+
+// With a router in its site, the resource is bound to #site-<slug>.
+func TestANetworkResourceInASiteIsBoundToItsRouters(t *testing.T) {
+	f, zm, rec, d := failClosedFixture(t)
+	resetRouterHosts(t, false)
+	zm.siteRoutersOverride = map[string]string{"er-1": "azure"}
+	d.SiteSlug = "azure"
+	rec.loadNetwork = func(context.Context) ([]DesiredNetworkService, error) { return []DesiredNetworkService{d}, nil }
+	rec.reconcileNetworkServices(context.Background(), zm)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, p := range f.policies {
+		if p["name"] == "openidx-bind-"+d.ServiceName {
+			if got := asStrings(p["identityRoles"]); len(got) != 1 || got[0] != "#site-azure" {
+				t.Fatalf("Bind roles = %v, want [#site-azure]", got)
+			}
+			return
+		}
+	}
+	t.Fatalf("no Bind policy; status %q", rec.StatusSnapshot()[d.ServiceName])
+}
