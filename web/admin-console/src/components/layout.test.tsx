@@ -83,3 +83,16 @@ describe('Layout organization selector', () => {
     expect(api.get).not.toHaveBeenCalledWith('/api/v1/organizations')
   })
 })
+
+// Edge filled the saved sign-in e-mail into the menu search box, and the menu
+// then showed "No menu items match" for a signed-in user.
+describe('Layout menu search', () => {
+  it('tells the browser not to autofill it', async () => {
+    mockUser = { roles: ['user'], orgId: DEFAULT_ORG }
+    renderLayout()
+    const box = await screen.findByLabelText('Search menu')
+    expect(box).toHaveAttribute('autocomplete', 'off')
+    expect(box).toHaveAttribute('name', 'openidx-menu-search')
+    expect(box).toHaveValue('')
+  })
+})
