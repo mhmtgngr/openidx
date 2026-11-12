@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -84,15 +85,30 @@ func (c *DiskEncryptionCheck) checkLinux() *CheckResult {
 	}
 }
 
+// manageBdePath is manage-bde.exe by absolute path. Looked up by bare name
+// the service's PATH resolved it relative to the working directory, which Go
+// refuses (exec: "manage-bde": cannot run executable found relative to
+// current directory), so every Windows device reported disk encryption as an
+// error. System32 is right for this 64-bit agent; Sysnative is only for a
+// 32-bit process.
+func manageBdePath() string {
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	return filepath.Join(root, "System32", "manage-bde.exe")
+}
+
 // checkWindows uses `manage-bde -status` to determine whether BitLocker
 // protection is on for the system drive. "Protection Status: Protection On"
 // indicates an encrypted, protected volume.
 func (c *DiskEncryptionCheck) checkWindows() *CheckResult {
-	out, err := exec.Command("manage-bde", "-status", "C:").Output()
+	bde := manageBdePath()
+	out, err := exec.Command(bde, "-status", "C:").Output()
 	if err != nil {
 		// Fall back to the OS drive via the SystemDrive env if C: is wrong.
 		if sd := os.Getenv("SystemDrive"); sd != "" && sd != "C:" {
-			out, err = exec.Command("manage-bde", "-status", sd).Output()
+			out, err = exec.Command(bde, "-status", sd).Output()
 		}
 	}
 	if err != nil {
