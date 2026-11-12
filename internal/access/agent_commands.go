@@ -191,8 +191,14 @@ func (h *AgentAPIHandler) HandleQueueAgentCommand(c *gin.Context) {
 		return
 	}
 	var queued int
-	_ = h.db.Pool.QueryRow(ctx, `SELECT count(*) FROM agent_commands
-		WHERE org_id = $1 AND agent_id = $2 AND status IN ('queued', 'delivered')`, orgID, agentID).Scan(&queued)
+	// Fail closed: an unread count must not read as zero and wave a command
+	// past the per-device limit.
+	if err := h.db.Pool.QueryRow(ctx, `SELECT count(*) FROM agent_commands
+		WHERE org_id = $1 AND agent_id = $2 AND status IN ('queued', 'delivered')`, orgID, agentID).Scan(&queued); err != nil {
+		h.logger.Error("count queued agent commands failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to queue the command"})
+		return
+	}
 	if queued >= maxQueuedCommandsPerAgent {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "this device already has too many commands waiting"})
 		return
